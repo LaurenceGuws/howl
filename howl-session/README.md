@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 5. All multi-byte
+This document is the client contract for framing version 6. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v5-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v6-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -70,6 +70,8 @@ Frame kinds are:
 | 27 | `image_end` | endpoint → client |
 | 28 | `observe_raw` | client → endpoint |
 | 29 | `snapshot_raw_data` | endpoint → client |
+| 30 | `observe_delta` | client → endpoint |
+| 31 | `snapshot_delta_data` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -133,11 +135,12 @@ Bits 13..31 are reserved and must be zero.
 ## Observation model
 
 Observation is request-driven. A client has at most one outstanding observation
-request, either ordinary `observe` or `observe_raw`. There is no server-side
+request: ordinary `observe`, complete `observe_raw`, or revision-relative
+`observe_delta`. There is no server-side
 stream queue per observer, so a slow observer never paces the PTY or canonical
 VT.
 
-`observe` and `observe_raw` use the same 12-byte payload:
+All three observation requests use the same 12-byte payload:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -155,20 +158,31 @@ snapshot reports the effective history offset actually used.
 Each observation is:
 
 1. one `snapshot_begin`;
-2. one or more text transport chunks: `snapshot_data` for `observe`, or
-   `snapshot_raw_data` for `observe_raw`;
+2. one or more text transport chunks: `snapshot_data` for `observe`,
+   `snapshot_raw_data` for complete raw/fallback responses, or
+   `snapshot_delta_data` for an accepted revision-relative delta;
 3. one `snapshot_graphics` manifest;
 4. one `snapshot_end` with the same observation revision.
 
-A single snapshot never mixes compressed and raw text chunks. The endpoint
+A single snapshot never mixes compressed, raw, and delta text chunks. The endpoint
 materializes the coherent snapshot before emitting `snapshot_begin`. PTY/VT
 progress may continue while those already-copied bytes drain to the observer.
 
 `observe` is the ordinary transport and keeps the bounded zlib/DEFLATE envelope.
-`observe_raw` is an explicit framing-v5 lane for clients that prefer lower CPU
-cost over compressed transport bytes. It changes only the text transport
-envelope; snapshot semantics, history selection, graphics manifests, revisions,
-and `text_v1` records are identical. There is still no feature negotiation.
+`observe_raw` remains the complete standalone raw lane: it changes only the
+text transport envelope; snapshot semantics, history selection, graphics
+manifests, revisions, and `text_v1` records are identical.
+
+`observe_delta` is the framing-v6 revision-relative lane. Its `after_revision`
+names the caller's exact baseline. If the endpoint cannot prove that baseline
+against its bounded row mirror, it responds with ordinary `snapshot_raw_data`;
+that fallback is a complete standalone `text_v1` snapshot. When the baseline is
+proven, the endpoint may instead emit `snapshot_delta_data` carrying
+`text_delta_v1`. The endpoint retains one bounded delta-row baseline total, not
+one copy per client. A valid client baseline can therefore still receive a
+complete raw fallback when another delta observer has advanced or replaced the
+endpoint cache; clients must treat that fallback as the normal resynchronization
+path. There is still no feature negotiation.
 
 ### `snapshot_begin`
 
@@ -213,8 +227,9 @@ Flag byte bits are:
 `text_v1` remains the frozen renderer-neutral terminal-text representation.
 There are no font file names, glyph ids, GPU objects, Flutter types, or
 window-system concepts on this wire. Framing v4 added terminal graphics beside
-it rather than changing its record grammar. Framing v5 adds a raw transport
-lane without changing the `text_v1` record grammar.
+it rather than changing its record grammar. Framing v5 added a raw transport lane without changing the `text_v1` record
+grammar. Framing v6 adds explicit revision-relative `text_delta_v1` beside the
+unchanged complete representation.
 
 For ordinary `observe`, the `snapshot_data` payloads are transport chunks only.
 Concatenate them in order. The resulting bytes are:
@@ -229,11 +244,20 @@ stream must finish exactly, with no trailing or unconsumed bytes, and inflate to
 exactly the declared length. Every compressed snapshot is independently
 decompressible; no previous client revision is needed to recover or validate it.
 
-For `observe_raw`, concatenate the `snapshot_raw_data` payloads in order. Those
-bytes are the complete bounded `text_v1` record body directly, with no four-byte
-length prefix and no zlib stream. An empty or larger-than-4-MiB raw body is
-invalid. Compression is therefore a framing-v5 transport choice, not part of
-the semantic `text_v1` grammar.
+For `observe_raw` or a delta fallback, concatenate the `snapshot_raw_data`
+payloads in order. Those bytes are the complete bounded `text_v1` record body
+directly, with no four-byte length prefix and no zlib stream. An empty or
+larger-than-4-MiB raw body is invalid. Compression is therefore a transport
+choice, not part of the semantic `text_v1` grammar.
+
+For an accepted `observe_delta`, concatenate `snapshot_delta_data` payloads in
+order. The resulting bounded `text_delta_v1` body uses the same presentation,
+row, and hyperlink record headers and strict record order as `text_v1`, with one
+additional rule: a row record with zero payload means "reuse this row from the
+exact `after_revision` baseline." Zero-payload rows are invalid in complete
+`text_v1`. Presentation and hyperlink resolver records remain complete on every
+delta, and a client must reject delta data unless it owns the exact requested
+baseline revision, history offset, and geometry.
 
 After inflation or direct raw assembly, the body is a concatenation of
 self-delimiting records. The eight-byte record header is:
@@ -622,7 +646,8 @@ The minimal client implementation order is:
 
 1. stream-safe 12-byte frame reader/writer and frame-version validation;
 2. empty `hello`, `welcome`, and connection-local client identity;
-3. request-driven `observe` (or explicit `observe_raw`) and `text_v1` record decoding;
+3. request-driven `observe`, complete `observe_raw`, or revision-relative
+   `observe_delta`, with `text_v1` / `text_delta_v1` decoding;
 4. semantic key/mouse/focus plus paste/raw-byte input;
 5. explicit resize leadership, history offsets, and interaction-state queries as needed.
 
@@ -630,7 +655,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v5-vectors.json
+python3 tools/validate_vectors.py protocol/v6-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

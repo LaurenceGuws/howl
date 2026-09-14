@@ -14,6 +14,10 @@ const protocol = howl.protocol;
 const maximum_clients: usize = 8;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
+// A delta mirror never admits more cells than could fit even as fixed text_v1
+// cell headers in one otherwise-empty bounded snapshot body.
+const maximum_delta_cells: usize =
+    protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes;
 const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
@@ -236,6 +240,8 @@ comptime {
         @compileError("typed key legacy-text bound must match canonical VT scratch bound");
 }
 
+const ObserveMode = enum { compressed, raw, delta };
+
 const Client = struct {
     fd: posix.fd_t,
     id: protocol.ClientId,
@@ -245,7 +251,7 @@ const Client = struct {
     output: std.ArrayList(u8) = .empty,
     output_offset: usize = 0,
     observe: ?protocol.Observe = null,
-    observe_raw: bool = false,
+    observe_mode: ObserveMode = .compressed,
     snapshot_images: ImageResourceCache = .{},
 
     fn outputPending(self: *const Client) bool {
@@ -273,6 +279,76 @@ const Client = struct {
 // =============================================================================
 // Canonical Session endpoint
 // =============================================================================
+
+const DeltaRowCache = struct {
+    const Entry = struct {
+        wrapped: bool = false,
+        geometry: howl.LineGeometry = .single_width,
+        valid: bool = false,
+    };
+
+    cells: []howl.Cell = &.{},
+    entries: []Entry = &.{},
+    row_count: u16 = 0,
+    column_count: u16 = 0,
+    history_offset: u32 = 0,
+    revision: u64 = 0,
+
+    fn deinit(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
+        self.clear(allocator);
+        self.* = undefined;
+    }
+
+    fn clear(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
+        if (self.entries.len != 0) allocator.free(self.entries);
+        if (self.cells.len != 0) allocator.free(self.cells);
+        self.* = .{};
+    }
+
+    fn invalidate(self: *DeltaRowCache) void {
+        for (self.entries) |*entry| entry.valid = false;
+        self.revision = 0;
+    }
+
+    fn ensure(
+        self: *DeltaRowCache,
+        allocator: std.mem.Allocator,
+        rows: u16,
+        columns: u16,
+        history_offset: u32,
+    ) !void {
+        if (self.row_count == rows and self.column_count == columns and
+            self.history_offset == history_offset and self.entries.len == rows)
+            return;
+        self.clear(allocator);
+        const cell_count = std.math.mul(usize, rows, columns) catch
+            return error.SnapshotTooLarge;
+        if (cell_count == 0 or cell_count > maximum_delta_cells)
+            return error.SnapshotTooLarge;
+        self.cells = try allocator.alloc(howl.Cell, cell_count);
+        errdefer {
+            allocator.free(self.cells);
+            self.cells = &.{};
+        }
+        self.entries = try allocator.alloc(Entry, rows);
+        errdefer {
+            allocator.free(self.entries);
+            self.entries = &.{};
+        }
+        for (self.entries) |*entry| entry.* = .{};
+        self.row_count = rows;
+        self.column_count = columns;
+        self.history_offset = history_offset;
+    }
+
+    fn rowCells(self: *DeltaRowCache, row: u16, columns: u16) []howl.Cell {
+        std.debug.assert(row < self.row_count);
+        std.debug.assert(columns == self.column_count);
+        const start = @as(usize, row) * columns;
+        std.debug.assert(start + columns <= self.cells.len);
+        return self.cells[start .. start + columns];
+    }
+};
 
 const Server = struct {
     // -------------------------------------------------------------------------
@@ -303,6 +379,9 @@ const Server = struct {
     // retain bounded scratch across observer cuts instead of returning the
     // same hot allocations to the allocator every frame.
     snapshot_cells: std.ArrayList(howl.Cell) = .empty,
+    // Bounded exact visible-row mirror owned only by the revision-relative
+    // delta lane. Complete observation lanes never allocate or maintain it.
+    delta_rows: DeltaRowCache = .{},
     snapshot_body: std.ArrayList(u8) = .empty,
     snapshot_compressed: std.Io.Writer.Allocating,
     snapshot_flate_work: []u8,
@@ -346,6 +425,7 @@ const Server = struct {
             client.* = null;
         }
         self.snapshot_cells.deinit(self.allocator);
+        self.delta_rows.deinit(self.allocator);
         self.snapshot_body.deinit(self.allocator);
         self.snapshot_compressed.deinit();
         self.allocator.free(self.snapshot_flate_work);
@@ -558,7 +638,7 @@ const Server = struct {
         }
 
         switch (kind) {
-            .observe, .observe_raw => {
+            .observe, .observe_raw, .observe_delta => {
                 const request = protocol.decodeObserve(payload) catch {
                     try self.queueResult(client, kind, .malformed);
                     return;
@@ -568,7 +648,12 @@ const Server = struct {
                     return;
                 }
                 client.observe = request;
-                client.observe_raw = kind == .observe_raw;
+                client.observe_mode = switch (kind) {
+                    .observe => .compressed,
+                    .observe_raw => .raw,
+                    .observe_delta => .delta,
+                    else => unreachable,
+                };
             },
             .input => try self.handleInput(client, payload),
             .assign_leader => try self.handleAssignLeader(client, payload),
@@ -913,16 +998,21 @@ const Server = struct {
             const request = client.observe orelse continue;
             if (client.outputPending()) continue;
             if (request.after_revision != 0 and request.after_revision >= self.observation_revision) continue;
-            const raw = client.observe_raw;
-            self.queueSnapshot(client, request.history_offset, raw) catch |err| {
+            const mode = client.observe_mode;
+            self.queueSnapshot(client, request, mode) catch |err| {
                 if (err != error.SnapshotTooLarge) return err;
                 client.observe = null;
-                client.observe_raw = false;
-                try self.queueResult(client, if (raw) .observe_raw else .observe, .rejected);
+                client.observe_mode = .compressed;
+                const request_kind: protocol.Kind = switch (mode) {
+                    .compressed => .observe,
+                    .raw => .observe_raw,
+                    .delta => .observe_delta,
+                };
+                try self.queueResult(client, request_kind, .rejected);
                 continue;
             };
             client.observe = null;
-            client.observe_raw = false;
+            client.observe_mode = .compressed;
         }
     }
 
@@ -933,19 +1023,21 @@ const Server = struct {
     fn queueSnapshot(
         self: *Server,
         client: *Client,
-        history_offset: u32,
-        raw: bool,
+        request: protocol.Observe,
+        mode: ObserveMode,
     ) !void {
-        return self.queueTextSnapshot(client, history_offset, raw);
+        return self.queueTextSnapshot(client, request, mode);
     }
 
     fn queueTextSnapshot(
         self: *Server,
         client: *Client,
-        history_offset: u32,
-        raw: bool,
+        request: protocol.Observe,
+        mode: ObserveMode,
     ) !void {
-        const status = howl.status(self.session, history_offset);
+        const status = howl.status(self.session, request.history_offset);
+        const raw = mode != .compressed;
+        const delta = mode == .delta;
         var graphics = howl.images(self.session, status.history_offset);
         const graphics_counts = try countSnapshotGraphics(&graphics);
         const observed_ns = nowNs(self.io);
@@ -957,6 +1049,18 @@ const Server = struct {
 
         try self.snapshot_cells.resize(self.allocator, status.columns);
         const cells = self.snapshot_cells.items;
+        if (delta) try self.delta_rows.ensure(
+            self.allocator,
+            status.rows,
+            status.columns,
+            status.history_offset,
+        );
+        errdefer if (delta) self.delta_rows.invalidate();
+        const delta_reuse_allowed = delta and request.after_revision != 0 and
+            request.after_revision == self.delta_rows.revision and
+            self.delta_rows.history_offset == status.history_offset and
+            self.delta_rows.row_count == status.rows and
+            self.delta_rows.column_count == status.columns;
         self.snapshot_body.clearRetainingCapacity();
         const body = &self.snapshot_body;
         try self.appendPresentationRecord(body, cursor_age_ns);
@@ -968,50 +1072,72 @@ const Server = struct {
         var row: u16 = 0;
         while (row < status.rows) : (row += 1) {
             const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-            const record = try self.beginTextRecord(body, .row);
-            var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
-                @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
-                richLineGeometry(howl.lineGeometry(self.session, status.history_offset, row)),
-                @truncate(status.columns >> 8),
-                @truncate(status.columns),
-            };
-            try body.appendSlice(self.allocator, &row_header);
-            for (copied, 0..) |cell, column| {
-                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
-                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
-                    howl.copyCellScalars(
-                        self.session,
-                        status.history_offset,
-                        row,
-                        @intCast(column),
-                        &scalar_storage,
-                    )
-                else
-                    &.{};
-                if (scalars.len > protocol.text_v1.maximum_cell_scalars)
-                    return error.InvalidSnapshot;
-                if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
-                    if (scalars.len == 0 or scalars[0] != cell.codepoint)
-                        return error.InvalidSnapshot;
-                } else if (scalars.len != 0) return error.InvalidSnapshot;
+            const wrapped = howl.rowWrapped(self.session, status.history_offset, row);
+            const geometry = howl.lineGeometry(self.session, status.history_offset, row);
+            const cache: ?*DeltaRowCache.Entry = if (delta)
+                &self.delta_rows.entries[@as(usize, row)]
+            else
+                null;
+            const cached_cells: []howl.Cell = if (delta)
+                self.delta_rows.rowCells(row, status.columns)
+            else
+                &.{};
 
-                if (cell.attrs.link_id != 0) {
-                    if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
+            // Delta rows must retain current hyperlink references even when no
+            // cell bytes are emitted. Complete lanes collect links while encoding.
+            if (delta) for (copied) |cell| try self.noteSnapshotLink(cell, &referenced_links);
+
+            const reusable = if (cache) |value|
+                delta_reuse_allowed and value.valid and
+                    value.wrapped == wrapped and value.geometry == geometry and
+                    rowCellsExactlyReusable(copied, cached_cells)
+            else
+                false;
+            if (reusable) {
+                var unchanged_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+                protocol.encodeTextRecordHeader(&unchanged_header, .{ .kind = .row, .payload_len = 0 });
+                try body.appendSlice(self.allocator, &unchanged_header);
+            } else {
+                const record = try self.beginTextRecord(body, .row);
+                var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
+                    @intFromBool(wrapped),
+                    richLineGeometry(geometry),
+                    @truncate(status.columns >> 8),
+                    @truncate(status.columns),
+                };
+                try body.appendSlice(self.allocator, &row_header);
+                for (copied, 0..) |cell, column| {
+                    if (!delta) try self.noteSnapshotLink(cell, &referenced_links);
+                    var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
+                    const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
+                        howl.copyCellScalars(
+                            self.session,
+                            status.history_offset,
+                            row,
+                            @intCast(column),
+                            &scalar_storage,
+                        )
+                    else
+                        &.{};
+                    if (scalars.len > protocol.text_v1.maximum_cell_scalars)
                         return error.InvalidSnapshot;
-                    const link_index: usize = @intCast(cell.attrs.link_id);
-                    if (!referenced_links[link_index]) {
-                        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
+                    if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
+                        if (scalars.len == 0 or scalars[0] != cell.codepoint)
                             return error.InvalidSnapshot;
-                        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
-                            return error.InvalidSnapshot;
-                        referenced_links[link_index] = true;
-                    }
+                    } else if (scalars.len != 0) return error.InvalidSnapshot;
+                    try self.appendTextCell(body, cell, scalars);
+                    if (body.items.len > protocol.maximum_text_snapshot_bytes)
+                        return error.SnapshotTooLarge;
                 }
-                try self.appendTextCell(body, cell, scalars);
-                if (body.items.len > protocol.maximum_text_snapshot_bytes)
-                    return error.SnapshotTooLarge;
+                try finishTextRecord(body, record);
             }
-            try finishTextRecord(body, record);
+
+            if (cache) |value| {
+                @memcpy(cached_cells, copied);
+                value.wrapped = wrapped;
+                value.geometry = geometry;
+                value.valid = true;
+            }
         }
 
         var link_id: usize = 1;
@@ -1102,7 +1228,11 @@ const Server = struct {
         try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
 
         if (raw) {
-            try self.appendSnapshotRawData(&client.output, body.items);
+            try self.appendSnapshotRawData(
+                &client.output,
+                body.items,
+                if (delta_reuse_allowed) .snapshot_delta_data else .snapshot_raw_data,
+            );
         } else {
             var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
             encodeU32(&raw_len, @intCast(body_bytes));
@@ -1121,6 +1251,24 @@ const Server = struct {
         client.output_offset = 0;
         client.snapshot_images.deinit(self.allocator);
         client.snapshot_images = snapshot_images;
+        if (delta) self.delta_rows.revision = self.observation_revision;
+    }
+
+    fn noteSnapshotLink(
+        self: *Server,
+        cell: howl.Cell,
+        referenced_links: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    ) !void {
+        if (cell.attrs.link_id == 0) return;
+        if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
+            return error.InvalidSnapshot;
+        const link_index: usize = @intCast(cell.attrs.link_id);
+        if (referenced_links[link_index]) return;
+        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
+            return error.InvalidSnapshot;
+        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
+            return error.InvalidSnapshot;
+        referenced_links[link_index] = true;
     }
 
     fn appendSnapshotData(
@@ -1164,7 +1312,9 @@ const Server = struct {
         self: *Server,
         output: *std.ArrayList(u8),
         body: []const u8,
+        kind: protocol.Kind,
     ) !void {
+        std.debug.assert(kind == .snapshot_raw_data or kind == .snapshot_delta_data);
         if (body.len == 0 or body.len > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
         var offset: usize = 0;
@@ -1175,7 +1325,7 @@ const Server = struct {
             );
             try self.appendFrame(
                 output,
-                .snapshot_raw_data,
+                kind,
                 body[offset .. offset + count],
             );
             offset += count;
@@ -1537,6 +1687,20 @@ fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffset
         output.items[offsets.record_header..offsets.payload_start],
         &record_header,
     );
+}
+
+fn rowCellsExactlyReusable(current: []const howl.Cell, cached: []const howl.Cell) bool {
+    if (current.len != cached.len) return false;
+    for (current, cached) |now, before| {
+        // Cell owns the base scalar and up to three combining scalars inline.
+        // Longer clusters use a VT sidecar; conservatively re-encode such rows
+        // rather than retaining a parallel scalar cache here.
+        if (now.combining_len > now.combining.len or
+            before.combining_len > before.combining.len or
+            !std.meta.eql(now, before))
+            return false;
+    }
+    return true;
 }
 
 fn richLineGeometry(value: howl.LineGeometry) u8 {
@@ -1950,6 +2114,7 @@ const TestWireSnapshot = struct {
     body: []u8,
     graphics: []u8,
     raw: bool = false,
+    delta: bool = false,
 
     fn deinit(self: *TestWireSnapshot) void {
         self.allocator.free(self.body);
@@ -2031,6 +2196,17 @@ fn attach(peer: *TestPeer, server: *Server) !void {
 // =============================================================================
 // Harness behavior and snapshot decoding
 // =============================================================================
+
+test "delta row cache rejects a mirror larger than the bounded text body" {
+    var cache = DeltaRowCache{};
+    defer cache.deinit(std.testing.allocator);
+    try std.testing.expectError(
+        error.SnapshotTooLarge,
+        cache.ensure(std.testing.allocator, 512, 512, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 0), cache.cells.len);
+    try std.testing.expectEqual(@as(usize, 0), cache.entries.len);
+}
 
 test "endpoint poll timeout follows animation and publication boundaries" {
     try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null, null));
@@ -2145,6 +2321,167 @@ test "raw observer returns the same bounded text_v1 body without DEFLATE" {
     try std.testing.expect(wire.body.len != 0);
     try std.testing.expect(wire.begin.revision != 0);
     try std.testing.expect(wire.begin.revision <= server.observation_revision);
+    try std.testing.expectEqual(@as(usize, 0), server.delta_rows.entries.len);
+    try std.testing.expectEqual(@as(u64, 0), server.delta_rows.revision);
+}
+
+test "delta observation falls back raw then reuses rows from exact requested baseline" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-delta-baseline.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "printf RAW; dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf NEXT; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    try sendObserve(&peer, &server, 0);
+    var ordinary = try receiveWireSnapshot(&peer, &server);
+    defer ordinary.deinit();
+    try std.testing.expect(!ordinary.raw);
+    try std.testing.expectEqual(@as(usize, 0), server.delta_rows.entries.len);
+    try std.testing.expectEqual(@as(u64, 0), server.delta_rows.revision);
+
+    // Revision zero has no baseline. The explicit delta request therefore falls
+    // back to one ordinary complete raw text_v1 snapshot.
+    try sendDeltaObserve(&peer, &server, 0);
+    var baseline = try receiveWireSnapshot(&peer, &server);
+    defer baseline.deinit();
+    try std.testing.expect(baseline.raw);
+    try std.testing.expect(!baseline.delta);
+    try std.testing.expectEqual(@as(usize, 0), try zeroPayloadRowCount(baseline.body));
+    const baseline_revision = baseline.begin.revision;
+
+    try sendInput(&peer, &server, "x");
+    try expectResult(&peer, &server, .input, .ok);
+    var attempts: usize = 0;
+    while (server.observation_revision <= baseline_revision and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(server.observation_revision > baseline_revision);
+
+    // The same connection now requests exactly the cached baseline. Only row 0
+    // changed, so the other three rows are explicit text_delta_v1 reuse records.
+    try sendDeltaObserve(&peer, &server, baseline_revision);
+    var delta = try receiveWireSnapshot(&peer, &server);
+    defer delta.deinit();
+    try std.testing.expect(delta.raw);
+    try std.testing.expect(delta.delta);
+    try std.testing.expectEqual(@as(usize, 3), try zeroPayloadRowCount(delta.body));
+
+    // Complete raw remains a standalone text_v1 lane in framing v6.
+    try sendRawObserve(&peer, &server, 0);
+    var complete = try receiveWireSnapshot(&peer, &server);
+    defer complete.deinit();
+    try std.testing.expect(complete.raw);
+    try std.testing.expect(!complete.delta);
+    try std.testing.expectEqual(@as(usize, 0), try zeroPayloadRowCount(complete.body));
+}
+
+test "delta observers fall back rather than reuse another observer's advanced baseline" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-delta-two-observers.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "printf BASE; dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf NEXT; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var first = try TestPeer.connect(std.testing.allocator, path);
+    defer first.deinit();
+    try attach(&first, &server);
+    var second = try TestPeer.connect(std.testing.allocator, path);
+    defer second.deinit();
+    try attach(&second, &server);
+
+    // Arm both before driving publication so they receive the same coherent cut.
+    try sendDeltaObserve(&first, &server, 0);
+    try sendDeltaObserve(&second, &server, 0);
+    var first_baseline = try receiveWireSnapshot(&first, &server);
+    defer first_baseline.deinit();
+    try std.testing.expect(!first_baseline.delta);
+    const baseline_revision = first_baseline.begin.revision;
+
+    var second_baseline = try receiveWireSnapshot(&second, &server);
+    defer second_baseline.deinit();
+    try std.testing.expect(!second_baseline.delta);
+    try std.testing.expectEqual(baseline_revision, second_baseline.begin.revision);
+
+    try sendInput(&first, &server, "x");
+    try expectResult(&first, &server, .input, .ok);
+    var attempts: usize = 0;
+    while (server.observation_revision <= baseline_revision and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(server.observation_revision > baseline_revision);
+
+    // Both requests are already in their sockets before publication. The first
+    // client advances the single bounded endpoint cache; the second must then
+    // receive a complete raw fallback rather than a delta from the wrong base.
+    try sendDeltaObserve(&first, &server, baseline_revision);
+    try sendDeltaObserve(&second, &server, baseline_revision);
+    var first_next = try receiveWireSnapshot(&first, &server);
+    defer first_next.deinit();
+    var second_next = try receiveWireSnapshot(&second, &server);
+    defer second_next.deinit();
+    try std.testing.expect(first_next.delta);
+    try std.testing.expect(second_next.raw);
+    try std.testing.expect(!second_next.delta);
+    try std.testing.expectEqual(@as(usize, 0), try zeroPayloadRowCount(second_next.body));
+    try std.testing.expectEqual(first_next.begin.revision, second_next.begin.revision);
+}
+
+fn zeroPayloadRowCount(body: []const u8) !usize {
+    var offset: usize = 0;
+    var count: usize = 0;
+    while (offset < body.len) {
+        if (body.len - offset < protocol.text_v1.record_header_bytes)
+            return error.MalformedTestSnapshot;
+        var encoded: [protocol.text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded, body[offset..][0..protocol.text_v1.record_header_bytes]);
+        const header = protocol.decodeTextRecordHeader(&encoded) catch
+            return error.MalformedTestSnapshot;
+        const record_len = std.math.add(
+            usize,
+            protocol.text_v1.record_header_bytes,
+            @as(usize, header.payload_len),
+        ) catch return error.MalformedTestSnapshot;
+        if (record_len > body.len - offset) return error.MalformedTestSnapshot;
+        if (header.kind == .row and header.payload_len == 0) count += 1;
+        offset += record_len;
+    }
+    return count;
 }
 
 test "synchronized output withholds observer until coherent release" {
@@ -2657,9 +2994,15 @@ fn sendRawObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
     try peer.sendFrame(server, .observe_raw, &payload);
 }
 
-/// Receives one current compressed or raw snapshot wire.
+fn sendDeltaObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
+    var payload: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&payload, .{ .after_revision = after_revision });
+    try peer.sendFrame(server, .observe_delta, &payload);
+}
+
+/// Receives one current compressed, complete-raw, or delta snapshot wire.
 ///
-/// Keep both framing-v5 transport lanes validated here so every semantic
+/// Keep framing-v6 transport lanes validated here so every semantic
 /// endpoint test consumes the same raw `text_v1` record body.
 fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     var begin_frame = try awaitFrame(peer, server);
@@ -2669,18 +3012,24 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
 
     var encoded: std.ArrayList(u8) = .empty;
     defer encoded.deinit(peer.allocator);
-    var raw: ?bool = null;
+    const Encoding = enum { compressed, raw, delta };
+    var encoding: ?Encoding = null;
     var graphics: ?[]u8 = null;
     errdefer if (graphics) |value| peer.allocator.free(value);
     while (true) {
         var frame = try awaitFrame(peer, server);
         defer frame.deinit();
         switch (frame.kind) {
-            .snapshot_data, .snapshot_raw_data => {
+            .snapshot_data, .snapshot_raw_data, .snapshot_delta_data => {
                 if (graphics != null) return error.MalformedTestSnapshot;
-                const is_raw = frame.kind == .snapshot_raw_data;
-                if (raw != null and raw.? != is_raw) return error.MalformedTestSnapshot;
-                raw = is_raw;
+                const current: Encoding = switch (frame.kind) {
+                    .snapshot_data => .compressed,
+                    .snapshot_raw_data => .raw,
+                    .snapshot_delta_data => .delta,
+                    else => unreachable,
+                };
+                if (encoding != null and encoding.? != current) return error.MalformedTestSnapshot;
+                encoding = current;
                 if (encoded.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                     return error.MalformedTestSnapshot;
                 try encoded.appendSlice(peer.allocator, frame.payload);
@@ -2700,7 +3049,8 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
         }
     }
 
-    const is_raw = raw orelse return error.MalformedTestSnapshot;
+    const body_encoding = encoding orelse return error.MalformedTestSnapshot;
+    const is_raw = body_encoding != .compressed;
     const body = if (is_raw) blk: {
         if (encoded.items.len == 0) return error.MalformedTestSnapshot;
         break :blk try peer.allocator.dupe(u8, encoded.items);
@@ -2729,6 +3079,7 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
         .body = body,
         .graphics = graphics.?,
         .raw = is_raw,
+        .delta = body_encoding == .delta,
     };
 }
 

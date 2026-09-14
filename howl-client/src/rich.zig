@@ -1,4 +1,4 @@
-//! Lossless native `text_v1` snapshot model for Howl clients.
+//! Lossless native terminal snapshot model for `text_v1` and `text_delta_v1`.
 //!
 //! This decoder preserves every transported terminal fact without choosing a
 //! renderer, CLI schema, JSON representation, font, or platform presentation.
@@ -11,6 +11,8 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     UnexpectedFrame,
     SnapshotTooLarge,
     InvalidSnapshot,
+    ObservationPending,
+    DeltaBaselineMismatch,
 };
 
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -138,10 +140,16 @@ const CachedRowRecord = struct {
     link_ids: []u16 = &.{},
 };
 
-/// Reuses already-validated row facts across complete v5 raw observations.
+const CacheBaseline = struct {
+    revision: u64,
+    history_offset: u32,
+};
+
+/// Reuses already-validated row facts across framing-v6 raw/delta observations.
 ///
-/// The endpoint still transports a complete snapshot. This owner compares each
-/// self-delimiting row record byte-for-byte and decodes only records that changed.
+/// Complete raw snapshots establish a standalone baseline. Explicit delta bodies
+/// may then reuse rows from the exact revision named by the ordered request; full
+/// row records are still compared byte-for-byte and decoded only when changed.
 /// Geometry changes invalidate the complete row cache. Invalid input likewise
 /// clears cached rows before returning an error, so stale partial facts can never
 /// become an accepted borrowed view.
@@ -151,6 +159,8 @@ pub const RawCache = struct {
     rows: []Row = &.{},
     row_records: []CachedRowRecord = &.{},
     changed_rows: []bool = &.{},
+    baseline: ?CacheBaseline = null,
+    pending_delta: ?CacheBaseline = null,
     columns: u16 = 0,
     hyperlinks: []Hyperlink = &.{},
     graphics: Graphics = .{},
@@ -167,10 +177,18 @@ pub const RawCache = struct {
         self.* = undefined;
     }
 
-    /// Receives one previously armed `observe_raw` response and returns a
-    /// borrowed complete semantic view. Compressed snapshot bodies are rejected.
+    /// Receives one previously armed complete-raw or delta observation.
+    ///
+    /// `snapshot_delta_data` is accepted only against the exact revision and
+    /// history window armed through `sendDeltaRequest`; complete raw fallback
+    /// remains independently decodable.
     pub fn receive(self: *RawCache, connection: *client.Connection) Error!View {
         self.text_body.clearRetainingCapacity();
+        const pending_delta = self.pending_delta;
+        errdefer {
+            self.pending_delta = null;
+            self.baseline = null;
+        }
         var total_bytes: usize = 0;
         var begin_frame = try connection.receive();
         defer begin_frame.deinit();
@@ -178,17 +196,24 @@ pub const RawCache = struct {
         if (begin_frame.kind != .snapshot_begin) return error.UnexpectedFrame;
         const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
 
+        const BodyEncoding = enum { none, raw, delta };
+        var body_encoding: BodyEncoding = .none;
         var next_graphics: ?Graphics = null;
         errdefer if (next_graphics) |*value| value.deinit(self.allocator);
-        var raw_seen = false;
         while (true) {
             var frame = try connection.receive();
             defer frame.deinit();
             try accountFrame(&total_bytes, frame.payload.len);
             switch (frame.kind) {
-                .snapshot_raw_data => {
+                .snapshot_raw_data, .snapshot_delta_data => {
                     if (next_graphics != null) return error.InvalidSnapshot;
-                    raw_seen = true;
+                    const encoding: BodyEncoding = if (frame.kind == .snapshot_delta_data)
+                        .delta
+                    else
+                        .raw;
+                    if (body_encoding != .none and body_encoding != encoding)
+                        return error.InvalidSnapshot;
+                    body_encoding = encoding;
                     if (self.text_body.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                         return error.SnapshotTooLarge;
                     try self.text_body.appendSlice(self.allocator, frame.payload);
@@ -199,11 +224,31 @@ pub const RawCache = struct {
                     next_graphics = try decodeGraphics(self.allocator, begin, frame.payload);
                 },
                 .snapshot_end => {
-                    if (!raw_seen or next_graphics == null) return error.InvalidSnapshot;
+                    if (body_encoding == .none or next_graphics == null) return error.InvalidSnapshot;
                     const end = try protocol.decodeSnapshotEnd(frame.payload);
                     if (end.revision != begin.revision) return error.InvalidSnapshot;
-                    const result = try self.decodeRaw(begin, self.text_body.items, next_graphics.?);
+                    const delta = body_encoding == .delta;
+                    if (delta) {
+                        const expected = pending_delta orelse return error.InvalidSnapshot;
+                        const baseline = self.baseline orelse return error.InvalidSnapshot;
+                        if (expected.revision == 0 or baseline.revision != expected.revision or
+                            baseline.history_offset != expected.history_offset or
+                            begin.history_offset != expected.history_offset or
+                            self.rows.len != begin.rows or self.columns != begin.columns)
+                            return error.InvalidSnapshot;
+                    }
+                    const result = try self.decodeRaw(
+                        begin,
+                        self.text_body.items,
+                        next_graphics.?,
+                        delta,
+                    );
                     next_graphics = null;
+                    self.baseline = .{
+                        .revision = begin.revision,
+                        .history_offset = begin.history_offset,
+                    };
+                    self.pending_delta = null;
                     return result;
                 },
                 else => return error.UnexpectedFrame,
@@ -216,6 +261,7 @@ pub const RawCache = struct {
         begin: protocol.SnapshotBegin,
         encoded: []const u8,
         next_graphics: Graphics,
+        allow_row_reuse: bool,
     ) Error!View {
         if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
@@ -263,7 +309,10 @@ pub const RawCache = struct {
                         return error.InvalidSnapshot;
                     const row_index: usize = row_count;
                     const cached = self.row_records[row_index].encoded;
-                    if (cached.len != 0 and std.mem.eql(u8, cached, record)) {
+                    if (payload.len == 0) {
+                        if (!allow_row_reuse or cached.len == 0) return error.InvalidSnapshot;
+                        for (self.row_records[row_index].link_ids) |link_id| referenced[link_id] = true;
+                    } else if (cached.len != 0 and std.mem.eql(u8, cached, record)) {
                         for (self.row_records[row_index].link_ids) |link_id| referenced[link_id] = true;
                     } else {
                         const replacement = try self.decodeCachedRow(begin, payload, record, &referenced);
@@ -406,6 +455,35 @@ pub const RawCache = struct {
         if (self.hyperlinks.len != 0) self.allocator.free(self.hyperlinks);
         self.hyperlinks = &.{};
     }
+
+    /// Arms one revision-relative delta observation for this reusable cache.
+    ///
+    /// The endpoint may fall back to a complete raw snapshot. Nonzero
+    /// `after_revision` must name this cache's current accepted baseline exactly;
+    /// revision zero explicitly requests resynchronization without a baseline.
+    pub fn sendDeltaRequest(
+        self: *RawCache,
+        connection: *client.Connection,
+        after_revision: u64,
+        history_offset: u32,
+    ) Error!void {
+        if (self.pending_delta != null) return error.ObservationPending;
+        if (after_revision != 0) {
+            const baseline = self.baseline orelse return error.DeltaBaselineMismatch;
+            if (baseline.revision != after_revision or baseline.history_offset != history_offset)
+                return error.DeltaBaselineMismatch;
+        }
+        var payload: [protocol.payload_bytes.observe]u8 = undefined;
+        protocol.encodeObserve(&payload, .{
+            .after_revision = after_revision,
+            .history_offset = history_offset,
+        });
+        try connection.send(.observe_delta, &payload);
+        self.pending_delta = .{
+            .revision = after_revision,
+            .history_offset = history_offset,
+        };
+    }
 };
 
 /// Sends one ordinary request-driven rich observation without receiving it yet.
@@ -425,7 +503,7 @@ pub fn sendRequest(
     try connection.send(.observe, &payload);
 }
 
-/// Sends one raw rich observation request. Framing v5 keeps this lane distinct
+/// Sends one complete raw rich observation request. Framing v6 keeps this lane distinct
 /// from ordinary compressed `observe`; text_v1 record bytes are unchanged.
 pub fn sendRawRequest(
     connection: *client.Connection,
@@ -450,7 +528,7 @@ pub fn request(
     return receive(connection, allocator);
 }
 
-/// Requests one raw text_v1 observation. Snapshot ownership is identical to
+/// Requests one complete raw text_v1 observation. Snapshot ownership is identical to
 /// `request`; only the transport envelope skips DEFLATE.
 pub fn requestRaw(
     connection: *client.Connection,
@@ -462,7 +540,8 @@ pub fn requestRaw(
     return receive(connection, allocator);
 }
 
-/// Receives one rich snapshot after the caller has sent `observe` or `observe_raw`.
+/// Receives one complete rich snapshot after `observe` or `observe_raw`.
+/// Revision-relative delta responses are owned by `RawCache`.
 pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
     return receiveFrom(connection, allocator);
 }
@@ -1545,7 +1624,7 @@ test "raw cache reuses byte-identical decoded rows" {
     };
     const first_body = try testRawCacheBody(allocator, 'A', 'Z');
     defer allocator.free(first_body);
-    const first = try cache.decodeRaw(begin, first_body, .{});
+    const first = try cache.decodeRaw(begin, first_body, .{}, false);
     try std.testing.expectEqualSlices(bool, &.{ true, true }, first.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'A'), first.rows[0].cells[0].scalars[0]);
     const first_row_cells = first.rows[0].cells.ptr;
@@ -1554,7 +1633,7 @@ test "raw cache reuses byte-identical decoded rows" {
     var second_begin = begin;
     second_begin.revision = 2;
     second_begin.terminal_revision = 2;
-    const second = try cache.decodeRaw(second_begin, first_body, .{});
+    const second = try cache.decodeRaw(second_begin, first_body, .{}, false);
     try std.testing.expectEqualSlices(bool, &.{ false, false }, second.changed_rows.?);
     try std.testing.expectEqual(first_row_cells, second.rows[0].cells.ptr);
     try std.testing.expectEqual(second_row_cells, second.rows[1].cells.ptr);
@@ -1564,10 +1643,74 @@ test "raw cache reuses byte-identical decoded rows" {
     var third_begin = begin;
     third_begin.revision = 3;
     third_begin.terminal_revision = 3;
-    const third = try cache.decodeRaw(third_begin, changed_body, .{});
+    const third = try cache.decodeRaw(third_begin, changed_body, .{}, false);
     try std.testing.expectEqualSlices(bool, &.{ true, false }, third.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
     try std.testing.expectEqual(second_row_cells, third.rows[1].cells.ptr);
+}
+
+test "raw cache accepts row reuse only in explicit delta bodies" {
+    const allocator = std.testing.allocator;
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+
+    const begin = protocol.SnapshotBegin{
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 2,
+        .columns = 1,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    const baseline_body = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(baseline_body);
+    const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
+    try std.testing.expectEqual(@as(u32, 'A'), baseline.rows[0].cells[0].scalars[0]);
+
+    const delta_body = try testRawCacheDeltaBody(allocator, 'B');
+    defer allocator.free(delta_body);
+    var next_begin = begin;
+    next_begin.revision = 2;
+    next_begin.terminal_revision = 2;
+    const delta = try cache.decodeRaw(next_begin, delta_body, .{}, true);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, delta.changed_rows.?);
+    try std.testing.expectEqual(@as(u32, 'B'), delta.rows[0].cells[0].scalars[0]);
+    try std.testing.expectEqual(@as(u32, 'Z'), delta.rows[1].cells[0].scalars[0]);
+
+    var complete_only = RawCache.init(allocator);
+    defer complete_only.deinit();
+    const complete_baseline = try complete_only.decodeRaw(begin, baseline_body, .{}, false);
+    try std.testing.expectEqual(@as(u32, 'Z'), complete_baseline.rows[1].cells[0].scalars[0]);
+    try std.testing.expectError(
+        error.InvalidSnapshot,
+        complete_only.decodeRaw(next_begin, delta_body, .{}, false),
+    );
+}
+
+fn testRawCacheDeltaBody(allocator: std.mem.Allocator, first: u32) ![]u8 {
+    const full = try testRawCacheBody(allocator, first, 'Z');
+    defer allocator.free(full);
+    const presentation_record = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
+    const row_payload = protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + @sizeOf(u32);
+    const row_record = protocol.text_v1.record_header_bytes + row_payload;
+    const body = try allocator.alloc(u8, presentation_record + row_record + protocol.text_v1.record_header_bytes);
+    @memcpy(body[0 .. presentation_record + row_record], full[0 .. presentation_record + row_record]);
+    protocol.encodeTextRecordHeader(body[presentation_record + row_record ..][0..protocol.text_v1.record_header_bytes], .{
+        .kind = .row,
+        .payload_len = 0,
+    });
+    return body;
 }
 
 fn testRawCacheBody(allocator: std.mem.Allocator, first: u32, second: u32) ![]u8 {

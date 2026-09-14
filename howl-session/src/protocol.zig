@@ -1,8 +1,8 @@
 //! Small transport-neutral contract for attaching to one shared Howl session.
 //!
 //! The wire is request-driven. A client has at most one outstanding observation
-//! request (`observe` or `observe_raw`). The endpoint answers with one coherent
-//! snapshot at a single
+//! request (`observe`, `observe_raw`, or `observe_delta`). The endpoint answers
+//! with one coherent snapshot at a single
 //! revision, then the client asks again from that revision. This deliberately
 //! avoids a server-side stream queue per observer: slow clients may see a newer
 //! snapshot later, but they never pace PTY or VT progress.
@@ -33,7 +33,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 5;
+pub const framing_version: u8 = 6;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -83,6 +83,10 @@ pub const Kind = enum(u8) {
     observe_raw = 28,
     /// Carries raw bounded text_v1 record bytes for one `observe_raw` response.
     snapshot_raw_data = 29,
+    /// Requests a row-delta observation from `after_revision`, with raw fallback.
+    observe_delta = 30,
+    /// Carries `text_delta_v1`: full presentation/hyperlinks plus full or reused rows.
+    snapshot_delta_data = 31,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -546,9 +550,11 @@ pub const ConsequenceReply = struct {
 
 /// Record classes carried inside the compressed renderer-complete snapshot body.
 ///
-/// There is deliberately one current snapshot representation. The body is a
-/// bounded zlib/DEFLATE stream over concatenated self-delimiting `text_v1`
-/// records. Compression is part of `text_v1`, not a negotiated alternative.
+/// There is deliberately one complete terminal-text representation: `text_v1`.
+/// Ordinary observations wrap it in bounded zlib/DEFLATE; complete-raw
+/// observations carry the same records directly. Revision-relative
+/// `text_delta_v1` is a separate framing-v6 transport and never masquerades as
+/// a standalone `text_v1` body.
 /// Every decompressed record starts with one fixed eight-byte header so clients
 /// can validate the body without depending on Zig struct layout.
 pub const TextRecordKind = enum(u8) {
@@ -854,11 +860,11 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     @as(usize, maximum_payload_bytes),
 ) catch unreachable;
 
-/// Hard upper bound for one complete v5 observation response.
+/// Hard upper bound for one complete v6 observation response.
 ///
 /// This includes the bounded `text_v1` transport body, all possible compressed
-/// or raw data-frame
-/// headers, one complete `graphics_v2` manifest, and the begin/end envelopes.
+/// raw, or delta data-frame headers, one complete `graphics_v2` manifest, and
+/// the begin/end envelopes.
 /// Demand-fetched RGBA image resources are separate transactions and do not
 /// consume this budget.
 pub const maximum_observation_bytes: usize =

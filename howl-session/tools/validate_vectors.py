@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v5 wire-vector decoder and validator.
+"""Independent Howl session v6 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 5
+FRAMING_VERSION = 6
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -53,6 +53,8 @@ KINDS = {
     27: "image_end",
     28: "observe_raw",
     29: "snapshot_raw_data",
+    30: "observe_delta",
+    31: "snapshot_delta_data",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -520,7 +522,7 @@ def decode_hyperlink(payload: bytes, resolved_links: dict[int, str]) -> dict:
     return {"link_id": link_id, "uri_hex": uri_hex}
 
 
-def new_snapshot(begin: dict) -> dict:
+def new_snapshot(begin: dict, delta_request: dict | None = None, baseline: dict | None = None) -> dict:
     return {
         "begin": begin,
         "encoded_body": bytearray(),
@@ -532,6 +534,8 @@ def new_snapshot(begin: dict) -> dict:
         "resolved_links": {},
         "phase": "presentation",
         "graphics": None,
+        "delta_request": delta_request,
+        "baseline": baseline,
     }
 
 
@@ -559,11 +563,22 @@ def decode_text_records(payload: bytes, snapshot: dict) -> list[dict]:
         elif name == "row":
             require(snapshot["phase"] == "rows", "text_record_order")
             require(len(snapshot["text_rows"]) < snapshot["begin"]["rows"], "text_row_count")
-            decoded = decode_text_row(
-                record_payload,
-                snapshot["begin"]["columns"],
-                snapshot["referenced_links"],
-            )
+            row_index = len(snapshot["text_rows"])
+            if not record_payload:
+                require(snapshot["body_encoding"] == "delta", "text_row_reuse_encoding")
+                baseline = snapshot["baseline"]
+                require(baseline is not None, "snapshot_delta_baseline")
+                require(row_index < len(baseline["rows"]), "snapshot_delta_baseline_rows")
+                decoded = baseline["rows"][row_index]
+                for cell in decoded["cells"]:
+                    if cell["link_id"]:
+                        snapshot["referenced_links"].add(cell["link_id"])
+            else:
+                decoded = decode_text_row(
+                    record_payload,
+                    snapshot["begin"]["columns"],
+                    snapshot["referenced_links"],
+                )
             snapshot["text_rows"].append(decoded)
             if len(snapshot["text_rows"]) == snapshot["begin"]["rows"]:
                 snapshot["phase"] = "links"
@@ -581,8 +596,16 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
     encoded = bytes(snapshot["encoded_body"])
     encoding = snapshot["body_encoding"]
     require(encoding is not None, "snapshot_data_missing")
-    if encoding == "raw":
+    if encoding == "raw" or encoding == "delta":
         require(0 < len(encoded) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
+        if encoding == "delta":
+            request = snapshot["delta_request"]
+            baseline = snapshot["baseline"]
+            require(request is not None and request["after_revision"] != 0, "snapshot_delta_request")
+            require(baseline is not None, "snapshot_delta_baseline")
+            require(baseline["begin"]["revision"] == request["after_revision"], "snapshot_delta_revision")
+            require(baseline["begin"]["history_offset"] == request["history_offset"], "snapshot_delta_history")
+            require(baseline["begin"]["rows"] == begin["rows"] and baseline["begin"]["columns"] == begin["columns"], "snapshot_delta_geometry")
         body = encoded
     else:
         require(len(encoded) > 4, "snapshot_compressed_size")
@@ -608,6 +631,7 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
         "hyperlinks": snapshot["hyperlinks"],
         "graphics": snapshot["graphics"],
         "end": end,
+        "encoding": encoding,
     }
 
 
@@ -748,7 +772,7 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_hello(payload)
     if kind == 2:
         return decode_welcome(payload)
-    if kind == 3 or kind == 28:
+    if kind == 3 or kind == 28 or kind == 30:
         return decode_observe(payload)
     if kind == 4:
         return decode_snapshot_begin(payload)
@@ -785,6 +809,7 @@ def decode_stream(data: bytes) -> dict:
     image_resources = []
     snapshot = None
     image_resource = None
+    pending_delta_request = None
     offset = 0
     while offset < len(data):
         require(len(data) - offset >= HEADER_BYTES, "truncated_header")
@@ -805,11 +830,20 @@ def decode_stream(data: bytes) -> dict:
         if kind == 4:
             require(snapshot is None and image_resource is None, "snapshot_nested")
             decoded = decode_snapshot_begin(payload)
-            snapshot = new_snapshot(decoded)
-        elif kind == 5 or kind == 29:
+            baseline = None
+            if pending_delta_request is not None:
+                for prior in reversed(snapshots):
+                    if (prior["begin"]["revision"] == pending_delta_request["after_revision"] and
+                            prior["begin"]["history_offset"] == pending_delta_request["history_offset"]):
+                        baseline = prior
+                        break
+            snapshot = new_snapshot(decoded, pending_delta_request, baseline)
+        elif kind == 5 or kind == 29 or kind == 31:
             require(snapshot is not None, "snapshot_data_without_begin")
             require(snapshot["graphics"] is None, "snapshot_graphics_order")
-            encoding = "compressed" if kind == 5 else "raw"
+            encoding = "compressed" if kind == 5 else ("raw" if kind == 29 else "delta")
+            if encoding == "delta":
+                require(snapshot["delta_request"] is not None, "snapshot_delta_request")
             require(snapshot["body_encoding"] is None or snapshot["body_encoding"] == encoding, "snapshot_data_encoding")
             snapshot["body_encoding"] = encoding
             require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_text_limit")
@@ -824,6 +858,8 @@ def decode_stream(data: bytes) -> dict:
             require(snapshot is not None, "snapshot_end_without_begin")
             decoded = decode_snapshot_end(payload)
             snapshots.append(finish_snapshot(snapshot, decoded))
+            if snapshot["delta_request"] is not None:
+                pending_delta_request = None
             snapshot = None
         elif kind == 25:
             require(snapshot is None and image_resource is None, "image_begin_nested")
@@ -846,6 +882,8 @@ def decode_stream(data: bytes) -> dict:
         else:
             require(snapshot is None and image_resource is None, "snapshot_interleaved")
             decoded = decode_fixed_payload(kind, payload)
+            if kind == 30:
+                pending_delta_request = decoded
         frames.append({"kind": name, "payload": decoded})
 
     require(snapshot is None, "snapshot_unterminated")
@@ -891,7 +929,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v5/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v6/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -904,7 +942,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v5-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v6-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

@@ -46,11 +46,11 @@ pub fn build(b: *std.Build) void {
     const wire_command = b.addSystemCommand(&.{
         "python3",
         "tools/validate_vectors.py",
-        "protocol/v5-vectors.json",
+        "protocol/v6-vectors.json",
     });
     wire_command.setName("howl-session wire vectors");
     wire_command.setCwd(b.path("."));
-    const wire = b.step("wire", "Validate the language-neutral session v5 wire corpus");
+    const wire = b.step("wire", "Validate the language-neutral session v6 wire corpus");
     wire.dependOn(&wire_command.step);
     const check = b.step("check", "Compile the canonical PTY and VT session owner");
     check.dependOn(wire);
