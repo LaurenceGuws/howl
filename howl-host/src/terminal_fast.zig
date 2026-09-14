@@ -143,7 +143,7 @@ pub const Adapter = struct {
 
     pub fn prepare(
         self: *Adapter,
-        snapshot: *const client.rich.Snapshot,
+        snapshot: *const client.rich.View,
         width: u16,
         height: u16,
     ) !?Prepared {
@@ -663,8 +663,9 @@ test "dense terminal adapter retains ordinary ASCII and overlays fixture overhan
     var a_cells = [_]client.rich.Cell{testCell(&a_scalar)};
     var a_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &a_cells }};
     var a_snapshot = testSnapshot(&a_rows, 1, 17, false);
+    const a_view = a_snapshot.view();
     const a = (try adapter.prepare(
-        &a_snapshot,
+        &a_view,
         metrics.advance_width,
         metrics.line_height,
     )) orelse return error.ExpectedDenseAdmission;
@@ -679,8 +680,9 @@ test "dense terminal adapter retains ordinary ASCII and overlays fixture overhan
     var j_cells = [_]client.rich.Cell{testCell(&j_scalar)};
     var j_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &j_cells }};
     var j_snapshot = testSnapshot(&j_rows, 1, 18, false);
+    const j_view = j_snapshot.view();
     const j = (try adapter.prepare(
-        &j_snapshot,
+        &j_view,
         metrics.advance_width,
         metrics.line_height,
     )) orelse return error.ExpectedDenseAdmission;
@@ -714,8 +716,9 @@ test "prepared dense borrows survive adapter value movement" {
     var cells = [_]client.rich.Cell{ testCell(&a_scalar), testCell(&j_scalar) };
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var snapshot = testSnapshot(&rows, 2, 19, false);
+    const snapshot_view = snapshot.view();
     const width = try std.math.mul(u16, metrics.advance_width, 2);
-    const prepared = (try original.prepare(&snapshot, width, metrics.line_height)) orelse
+    const prepared = (try original.prepare(&snapshot_view, width, metrics.line_height)) orelse
         return error.ExpectedDenseAdmission;
     try std.testing.expectEqual(@as(usize, 1), prepared.slots.len);
     try std.testing.expectEqual(@as(usize, 1), prepared.rasters.len);
@@ -747,8 +750,9 @@ test "dense terminal adapter refuses semantics it cannot reproduce exactly" {
     var punctuation_cells = [_]client.rich.Cell{testCell(&punctuation)};
     var punctuation_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &punctuation_cells }};
     var punctuation_snapshot = testSnapshot(&punctuation_rows, 1, 21, false);
+    const punctuation_view = punctuation_snapshot.view();
     try std.testing.expect((try adapter.prepare(
-        &punctuation_snapshot,
+        &punctuation_view,
         metrics.advance_width,
         metrics.line_height,
     )) == null);
@@ -758,8 +762,9 @@ test "dense terminal adapter refuses semantics it cannot reproduce exactly" {
     dim_cells[0].style_bits = style_dim;
     var dim_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &dim_cells }};
     var dim_snapshot = testSnapshot(&dim_rows, 1, 22, false);
+    const dim_view = dim_snapshot.view();
     try std.testing.expect((try adapter.prepare(
-        &dim_snapshot,
+        &dim_view,
         metrics.advance_width,
         metrics.line_height,
     )) == null);
@@ -768,8 +773,9 @@ test "dense terminal adapter refuses semantics it cannot reproduce exactly" {
     var cursor_cells = [_]client.rich.Cell{testCell(&j_scalar)};
     var cursor_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cursor_cells }};
     var cursor_snapshot = testSnapshot(&cursor_rows, 1, 23, true);
+    const cursor_view = cursor_snapshot.view();
     try std.testing.expect((try adapter.prepare(
-        &cursor_snapshot,
+        &cursor_view,
         metrics.advance_width,
         metrics.line_height,
     )) == null);

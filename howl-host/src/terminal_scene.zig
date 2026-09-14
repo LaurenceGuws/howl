@@ -69,6 +69,7 @@ pub fn measureCellSize(
 pub const Scene = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    raw_cache: client.rich.RawCache,
     fonts: *text.FontSet,
     fast: terminal_fast.Adapter,
     content: *terminal.Content,
@@ -98,6 +99,8 @@ pub const Scene = struct {
         if (font_pixels == 0) return error.InvalidFontPixels;
         var connection = try client.Connection.connect(allocator, endpoint);
         errdefer connection.deinit();
+        var raw_cache = client.rich.RawCache.init(allocator);
+        errdefer raw_cache.deinit();
         const fonts = try text.FontSet.init(allocator, .{
             .primary = font_path,
             .size = .{ .pixels = font_pixels },
@@ -183,6 +186,7 @@ pub const Scene = struct {
         return .{
             .allocator = allocator,
             .connection = connection,
+            .raw_cache = raw_cache,
             .fonts = fonts,
             .fast = fast,
             .content = content,
@@ -221,6 +225,7 @@ pub const Scene = struct {
         terminal.deinitContent(self.content);
         self.fast.deinit();
         self.fonts.deinit();
+        self.raw_cache.deinit();
         self.connection.deinit();
         self.* = undefined;
     }
@@ -244,9 +249,8 @@ pub const Scene = struct {
     /// Receives and projects exactly one previously armed raw observation.
     pub fn receivePrepared(self: *Scene) !Prepared {
         if (!self.observation_pending) return error.ObservationNotPending;
-        var rich = try client.rich.receive(&self.connection, self.allocator);
+        const rich = try self.raw_cache.receive(&self.connection);
         self.observation_pending = false;
-        defer rich.deinit();
         const begin = rich.begin;
         const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch
             return error.InvalidGeometry;
@@ -278,7 +282,7 @@ pub const Scene = struct {
             };
         }
 
-        const view = try client.view.project(self.allocator, &rich);
+        const view = try client.view.projectView(self.allocator, &rich);
         defer client.view.deinit(view);
         if (client.view.graphics(view).images.len != 0)
             return error.GraphicsRefillNotImplemented;

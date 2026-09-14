@@ -135,6 +135,12 @@ comptime {
 /// The caller owns the returned view and must call `deinit`. The source may be
 /// released immediately after this returns.
 pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error!*Snapshot {
+    const borrowed = source.view();
+    return projectView(allocator, &borrowed);
+}
+
+/// Projects one borrowed rich view into one immutable owned coarse snapshot.
+pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error!*Snapshot {
     const counts = try validateAndCount(source);
 
     const rows_offset = alignAfter(Row, @sizeOf(Impl));
@@ -422,7 +428,7 @@ const Counts = struct {
     uri_bytes: usize,
 };
 
-fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
+fn validateAndCount(source: *const rich.View) Error!Counts {
     if (source.rows.len != source.begin.rows) {
         return error.InvalidRichSnapshot;
     }
@@ -477,7 +483,7 @@ fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
     return .{ .cells = cell_count, .scalars = scalar_count, .uri_bytes = uri_bytes };
 }
 
-fn validGraphics(source: *const rich.Snapshot) bool {
+fn validGraphics(source: *const rich.View) bool {
     if (source.graphics.images.len > protocol.graphics_v2.maximum_images or
         source.graphics.placements.len > protocol.graphics_v2.maximum_placements)
         return false;

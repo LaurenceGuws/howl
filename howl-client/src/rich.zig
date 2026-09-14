@@ -88,6 +88,16 @@ pub const Snapshot = struct {
     hyperlinks: []Hyperlink,
     graphics: Graphics = .{},
 
+    pub fn view(self: *const Snapshot) View {
+        return .{
+            .begin = self.begin,
+            .presentation = self.presentation,
+            .rows = self.rows,
+            .hyperlinks = self.hyperlinks,
+            .graphics = self.graphics,
+        };
+    }
+
     pub fn deinit(self: *Snapshot) void {
         for (self.rows) |row| {
             if (row.scalar_storage.len != 0) {
@@ -102,6 +112,282 @@ pub const Snapshot = struct {
         self.allocator.free(self.hyperlinks);
         self.graphics.deinit(self.allocator);
         self.* = undefined;
+    }
+};
+
+
+/// Borrows one complete decoded rich snapshot from a reusable raw-observation cache.
+///
+/// Every slice remains valid only until the owning `RawCache` receives again or
+/// is deinitialized. Session remains canonical; `changed_rows` reports only
+/// exact encoded-row record inequality against the cache's previous accepted cut.
+pub const View = struct {
+    begin: protocol.SnapshotBegin,
+    presentation: Presentation,
+    rows: []const Row,
+    hyperlinks: []const Hyperlink,
+    graphics: Graphics,
+};
+
+const CachedRowRecord = struct {
+    encoded: []u8 = &.{},
+    link_ids: []u16 = &.{},
+};
+
+/// Reuses already-validated row facts across complete v5 raw observations.
+///
+/// The endpoint still transports a complete snapshot. This owner compares each
+/// self-delimiting row record byte-for-byte and decodes only records that changed.
+/// Geometry changes invalidate the complete row cache. Invalid input likewise
+/// clears cached rows before returning an error, so stale partial facts can never
+/// become an accepted borrowed view.
+pub const RawCache = struct {
+    allocator: std.mem.Allocator,
+    text_body: std.ArrayList(u8) = .empty,
+    rows: []Row = &.{},
+    row_records: []CachedRowRecord = &.{},
+    columns: u16 = 0,
+    hyperlinks: []Hyperlink = &.{},
+    graphics: Graphics = .{},
+
+    pub fn init(allocator: std.mem.Allocator) RawCache {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *RawCache) void {
+        self.clearRows();
+        self.clearHyperlinks();
+        self.graphics.deinit(self.allocator);
+        self.text_body.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    /// Receives one previously armed `observe_raw` response and returns a
+    /// borrowed complete semantic view. Compressed snapshot bodies are rejected.
+    pub fn receive(self: *RawCache, connection: *client.Connection) Error!View {
+        self.text_body.clearRetainingCapacity();
+        var total_bytes: usize = 0;
+        var begin_frame = try connection.receive();
+        defer begin_frame.deinit();
+        try accountFrame(&total_bytes, begin_frame.payload.len);
+        if (begin_frame.kind != .snapshot_begin) return error.UnexpectedFrame;
+        const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
+
+        var next_graphics: ?Graphics = null;
+        errdefer if (next_graphics) |*value| value.deinit(self.allocator);
+        var raw_seen = false;
+        while (true) {
+            var frame = try connection.receive();
+            defer frame.deinit();
+            try accountFrame(&total_bytes, frame.payload.len);
+            switch (frame.kind) {
+                .snapshot_raw_data => {
+                    if (next_graphics != null) return error.InvalidSnapshot;
+                    raw_seen = true;
+                    if (self.text_body.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
+                        return error.SnapshotTooLarge;
+                    try self.text_body.appendSlice(self.allocator, frame.payload);
+                },
+                .snapshot_data => return error.UnexpectedFrame,
+                .snapshot_graphics => {
+                    if (next_graphics != null) return error.InvalidSnapshot;
+                    next_graphics = try decodeGraphics(self.allocator, begin, frame.payload);
+                },
+                .snapshot_end => {
+                    if (!raw_seen or next_graphics == null) return error.InvalidSnapshot;
+                    const end = try protocol.decodeSnapshotEnd(frame.payload);
+                    if (end.revision != begin.revision) return error.InvalidSnapshot;
+                    const result = try self.decodeRaw(begin, self.text_body.items, next_graphics.?);
+                    next_graphics = null;
+                    return result;
+                },
+                else => return error.UnexpectedFrame,
+            }
+        }
+    }
+
+    fn decodeRaw(
+        self: *RawCache,
+        begin: protocol.SnapshotBegin,
+        encoded: []const u8,
+        next_graphics: Graphics,
+    ) Error!View {
+        if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
+            return error.SnapshotTooLarge;
+        try self.ensureGeometry(begin.rows, begin.columns);
+        var cache_mutated = false;
+        errdefer if (cache_mutated) self.invalidateRows();
+
+        var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+        var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+        var presentation: Presentation = undefined;
+        var presentation_seen = false;
+        var row_count: u16 = 0;
+        var phase: DecodePhase = .presentation;
+        var links: std.ArrayList(Hyperlink) = .empty;
+        errdefer {
+            for (links.items) |link| self.allocator.free(link.uri_bytes);
+            links.deinit(self.allocator);
+        }
+
+        var offset: usize = 0;
+        while (offset < encoded.len) {
+            if (encoded.len - offset < protocol.text_v1.record_header_bytes)
+                return error.InvalidSnapshot;
+            var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+            @memcpy(&encoded_header, encoded[offset..][0..protocol.text_v1.record_header_bytes]);
+            const header = try protocol.decodeTextRecordHeader(&encoded_header);
+            const record_len = std.math.add(
+                usize,
+                protocol.text_v1.record_header_bytes,
+                header.payload_len,
+            ) catch return error.InvalidSnapshot;
+            if (record_len > encoded.len - offset) return error.InvalidSnapshot;
+            const record = encoded[offset..][0..record_len];
+            const payload = record[protocol.text_v1.record_header_bytes..];
+            switch (header.kind) {
+                .presentation => {
+                    if (phase != .presentation or presentation_seen) return error.InvalidSnapshot;
+                    presentation = try decodePresentation(payload);
+                    presentation_seen = true;
+                    phase = .rows;
+                },
+                .row => {
+                    if (phase != .rows or !presentation_seen or row_count >= begin.rows)
+                        return error.InvalidSnapshot;
+                    const row_index: usize = row_count;
+                    const cached = self.row_records[row_index].encoded;
+                    if (cached.len != 0 and std.mem.eql(u8, cached, record)) {
+                        for (self.row_records[row_index].link_ids) |link_id| referenced[link_id] = true;
+                    } else {
+                        const replacement = try self.decodeCachedRow(begin, payload, record, &referenced);
+                        errdefer replacement.deinit(self.allocator);
+                        self.replaceRow(row_index, replacement);
+                        cache_mutated = true;
+                    }
+                    row_count += 1;
+                    if (row_count == begin.rows) phase = .hyperlinks;
+                },
+                .hyperlink => {
+                    if (phase != .hyperlinks) return error.InvalidSnapshot;
+                    try links.append(
+                        self.allocator,
+                        try decodeHyperlink(self.allocator, payload, &referenced, &resolved),
+                    );
+                },
+            }
+            offset += record_len;
+        }
+        if (!presentation_seen or row_count != begin.rows) return error.InvalidSnapshot;
+        for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
+            return error.InvalidSnapshot;
+
+        const accepted_links = try links.toOwnedSlice(self.allocator);
+        self.clearHyperlinks();
+        self.hyperlinks = accepted_links;
+        self.graphics.deinit(self.allocator);
+        self.graphics = next_graphics;
+        return .{
+            .begin = begin,
+            .presentation = presentation,
+            .rows = self.rows,
+            .hyperlinks = self.hyperlinks,
+            .graphics = self.graphics,
+        };
+    }
+
+    const RowReplacement = struct {
+        row: Row,
+        encoded: []u8,
+        link_ids: []u16,
+
+        fn deinit(self: RowReplacement, allocator: std.mem.Allocator) void {
+            deinitRows(allocator, @as(*const [1]Row, &self.row));
+            allocator.free(self.encoded);
+            allocator.free(self.link_ids);
+        }
+    };
+
+    fn decodeCachedRow(
+        self: *RawCache,
+        begin: protocol.SnapshotBegin,
+        payload: []const u8,
+        record: []const u8,
+        referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    ) Error!RowReplacement {
+        const row = try decodeRow(self.allocator, begin, payload, referenced);
+        errdefer deinitRows(self.allocator, @as(*const [1]Row, &row));
+        var link_count: usize = 0;
+        for (row.cells) |cell| {
+            if (cell.link_id != 0) link_count += 1;
+        }
+        const link_ids = try self.allocator.alloc(u16, link_count);
+        errdefer self.allocator.free(link_ids);
+        var used: usize = 0;
+        for (row.cells) |cell| {
+            if (cell.link_id == 0) continue;
+            link_ids[used] = @intCast(cell.link_id);
+            used += 1;
+        }
+        const copied = try self.allocator.dupe(u8, record);
+        return .{ .row = row, .encoded = copied, .link_ids = link_ids };
+    }
+
+    fn replaceRow(self: *RawCache, index: usize, replacement: RowReplacement) void {
+        std.debug.assert(index < self.rows.len);
+        if (self.row_records[index].encoded.len != 0) {
+            deinitRows(self.allocator, self.rows[index .. index + 1]);
+            self.allocator.free(self.row_records[index].encoded);
+            self.allocator.free(self.row_records[index].link_ids);
+        }
+        self.rows[index] = replacement.row;
+        self.row_records[index] = .{
+            .encoded = replacement.encoded,
+            .link_ids = replacement.link_ids,
+        };
+    }
+
+    fn ensureGeometry(self: *RawCache, rows: u16, columns: u16) Error!void {
+        if (rows == 0 or columns == 0) return error.InvalidSnapshot;
+        if (self.rows.len == rows and self.columns == columns) return;
+        self.clearRows();
+        self.rows = try self.allocator.alloc(Row, rows);
+        errdefer {
+            self.allocator.free(self.rows);
+            self.rows = &.{};
+        }
+        self.row_records = try self.allocator.alloc(CachedRowRecord, rows);
+        errdefer {
+            self.allocator.free(self.row_records);
+            self.row_records = &.{};
+        }
+        for (self.row_records) |*record| record.* = .{};
+        self.columns = columns;
+    }
+
+    fn invalidateRows(self: *RawCache) void {
+        for (self.row_records, 0..) |*record, index| {
+            if (record.encoded.len == 0) continue;
+            deinitRows(self.allocator, self.rows[index .. index + 1]);
+            self.allocator.free(record.encoded);
+            self.allocator.free(record.link_ids);
+            record.* = .{};
+        }
+    }
+
+    fn clearRows(self: *RawCache) void {
+        self.invalidateRows();
+        if (self.row_records.len != 0) self.allocator.free(self.row_records);
+        if (self.rows.len != 0) self.allocator.free(self.rows);
+        self.rows = &.{};
+        self.row_records = &.{};
+        self.columns = 0;
+    }
+
+    fn clearHyperlinks(self: *RawCache) void {
+        for (self.hyperlinks) |link| self.allocator.free(link.uri_bytes);
+        if (self.hyperlinks.len != 0) self.allocator.free(self.hyperlinks);
+        self.hyperlinks = &.{};
     }
 };
 
@@ -1214,4 +1500,88 @@ test "buffered frames reject truncation trailing data and mismatched revision" {
     frames[frames.len - 1] ^= 1;
     frames[0] = 0;
     try std.testing.expectError(error.InvalidMagic, decodeFrames(std.testing.allocator, frames));
+}
+
+test "raw cache reuses byte-identical decoded rows" {
+    const allocator = std.testing.allocator;
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+
+    const begin = protocol.SnapshotBegin{
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 2,
+        .columns = 1,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    const first_body = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(first_body);
+    const first = try cache.decodeRaw(begin, first_body, .{});
+    try std.testing.expectEqual(@as(u32, 'A'), first.rows[0].cells[0].scalars[0]);
+    const first_row_cells = first.rows[0].cells.ptr;
+    const second_row_cells = first.rows[1].cells.ptr;
+
+    var second_begin = begin;
+    second_begin.revision = 2;
+    second_begin.terminal_revision = 2;
+    const second = try cache.decodeRaw(second_begin, first_body, .{});
+    try std.testing.expectEqual(first_row_cells, second.rows[0].cells.ptr);
+    try std.testing.expectEqual(second_row_cells, second.rows[1].cells.ptr);
+
+    const changed_body = try testRawCacheBody(allocator, 'B', 'Z');
+    defer allocator.free(changed_body);
+    var third_begin = begin;
+    third_begin.revision = 3;
+    third_begin.terminal_revision = 3;
+    const third = try cache.decodeRaw(third_begin, changed_body, .{});
+    try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
+    try std.testing.expectEqual(second_row_cells, third.rows[1].cells.ptr);
+}
+
+fn testRawCacheBody(allocator: std.mem.Allocator, first: u32, second: u32) ![]u8 {
+    const presentation_record = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
+    const row_payload = protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + @sizeOf(u32);
+    const row_record = protocol.text_v1.record_header_bytes + row_payload;
+    const body = try allocator.alloc(u8, presentation_record + 2 * row_record);
+    @memset(body, 0);
+
+    protocol.encodeTextRecordHeader(body[0..protocol.text_v1.record_header_bytes], .{
+        .kind = .presentation,
+        .payload_len = protocol.text_v1.presentation_bytes,
+    });
+    var at = presentation_record;
+    for ([_]u32{ first, second }) |scalar| {
+        protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
+            .kind = .row,
+            .payload_len = row_payload,
+        });
+        at += protocol.text_v1.record_header_bytes;
+        const row = body[at..][0..row_payload];
+        encodeU16(row[2..4], 1);
+        const cell = row[protocol.text_v1.row_header_bytes..][0..protocol.text_v1.cell_header_bytes];
+        cell[0] = 1;
+        cell[1] = 1;
+        cell[2] = 1;
+        var color: [protocol.text_v1.color_bytes]u8 = undefined;
+        try protocol.encodeTextColor(&color, .{ .kind = .default, .value = 0 });
+        @memcpy(cell[16..21], &color);
+        @memcpy(cell[21..26], &color);
+        @memcpy(cell[26..31], &color);
+        encodeU32(row[row_payload - 4 ..], scalar);
+        at += row_payload;
+    }
+    std.debug.assert(at == body.len);
+    return body;
 }
