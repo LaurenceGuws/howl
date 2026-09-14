@@ -67,6 +67,9 @@ pub const Prepared = struct {
     metrics: text.Metrics,
     clear_color: [4]f32,
     overlay_frame: surface.Frame,
+    /// Exact changed-row mask for an admitted incremental frame. `null` means
+    /// the retained backend must replace the complete instance grid.
+    changed_rows: ?[]const bool = null,
 };
 
 pub const Adapter = struct {
@@ -284,6 +287,7 @@ pub const Adapter = struct {
                 .removals = &.{},
                 .commands = self.overlay_commands[0..overlay_count],
             },
+            .changed_rows = null,
         };
     }
 
@@ -369,6 +373,7 @@ pub const Adapter = struct {
                 .removals = &.{},
                 .commands = &.{},
             },
+            .changed_rows = changed_rows,
         };
     }
 
@@ -554,6 +559,7 @@ pub const Gpu = struct {
     resources: backend.Resources,
     pane: backend.PaneResources,
     store: backend.Store,
+    cell_updates: []backend.CellWriteInput,
     first: bool = true,
     pending: bool = false,
 
@@ -566,10 +572,12 @@ pub const Gpu = struct {
         gpu_limit: u64,
         frame: Prepared,
     ) !Gpu {
+        const sparse_rows = @max(@as(usize, 1), @as(usize, frame.rows) / 4);
+        const sparse_cells = try std.math.mul(usize, sparse_rows, frame.cols);
         const limits = backend.Limits{
             .rows = frame.rows,
             .cols = frame.cols,
-            .sparse_cell_updates = 1,
+            .sparse_cell_updates = sparse_cells,
             .structured_updates = 1,
         };
         var font = try backend.FontGpu.init(allocator, .{
@@ -597,6 +605,8 @@ pub const Gpu = struct {
         errdefer pane.deinit(device, resources.descriptor_pool, gpu_bytes);
         var store = try backend.Store.init(allocator, limits, .initialization);
         errdefer store.deinit();
+        const cell_updates = try allocator.alloc(backend.CellWriteInput, sparse_cells);
+        errdefer allocator.free(cell_updates);
         return .{
             .allocator = allocator,
             .limits = limits,
@@ -604,11 +614,13 @@ pub const Gpu = struct {
             .resources = resources,
             .pane = pane,
             .store = store,
+            .cell_updates = cell_updates,
         };
     }
 
     pub fn deinit(self: *Gpu, device: vk.VkDevice, gpu_bytes: *u64) void {
         if (self.pending) self.discard();
+        self.allocator.free(self.cell_updates);
         self.store.deinit();
         self.pane.deinit(device, self.resources.descriptor_pool, gpu_bytes);
         self.resources.deinit(device, gpu_bytes);
@@ -626,25 +638,37 @@ pub const Gpu = struct {
             return error.InvalidGeometry;
         try self.font.prepare(frame.slots, frame.rasters);
         errdefer self.font.discard() catch {};
+        const sparse = if (!self.first and frame.changed_rows != null)
+            try sparseCellWrites(
+                frame.rows,
+                frame.cols,
+                frame.instances,
+                frame.changed_rows.?,
+                self.cell_updates,
+            )
+        else
+            null;
         const prepared = try self.store.prepare(.{
             .rows = frame.rows,
             .cols = frame.cols,
-            .replacement = .{
+            .replacement = if (sparse == null) .{
                 .kind = if (self.first) .initialization else .resize,
                 .rows = frame.rows,
                 .cols = frame.cols,
                 .instances = frame.instances,
-            },
+            } else null,
             .row_rotations = &.{},
             .fills = &.{},
-            .cells = &.{},
+            .cells = sparse orelse &.{},
             .glyph_slots = frame.slots,
             .cursor = frame.cursor,
         }, &self.font);
-        const expected_bytes = std.math.mul(usize, frame.instances.len, @sizeOf(backend.Instance)) catch
+        const expected_instances = if (sparse) |writes| writes.len else frame.instances.len;
+        const expected_bytes = std.math.mul(usize, expected_instances, @sizeOf(backend.Instance)) catch
             return error.InvalidGeometry;
         if (prepared.rows != frame.rows or prepared.cols != frame.cols or
-            prepared.replacement == null or prepared.instance_staging_bytes != expected_bytes)
+            (prepared.replacement != null) != (sparse == null) or
+            prepared.instance_staging_bytes != expected_bytes)
             return error.InvalidGeometry;
         errdefer self.store.discard() catch {};
         try self.font.stagePhysical();
@@ -712,6 +736,33 @@ pub const Gpu = struct {
     }
 };
 
+fn sparseCellWrites(
+    rows: u16,
+    cols: u16,
+    instances: []const backend.Instance,
+    changed_rows: []const bool,
+    output: []backend.CellWriteInput,
+) ![]const backend.CellWriteInput {
+    const cell_count = try std.math.mul(usize, rows, cols);
+    if (rows == 0 or cols == 0 or instances.len != cell_count or changed_rows.len != rows)
+        return error.InvalidGeometry;
+    var count: usize = 0;
+    for (changed_rows, 0..) |changed, row| {
+        if (!changed) continue;
+        const first = try std.math.mul(usize, row, cols);
+        for (instances[first .. first + cols], 0..) |instance_value, column| {
+            if (count == output.len) return error.InvalidGeometry;
+            output[count] = .{
+                .physical_index = std.math.cast(u32, first + column) orelse
+                    return error.InvalidGeometry,
+                .instance = instance_value,
+            };
+            count += 1;
+        }
+    }
+    return output[0..count];
+}
+
 fn cursor(
     begin: @FieldType(client.rich.Snapshot, "begin"),
     presentation: *const client.rich.Presentation,
@@ -776,6 +827,29 @@ fn pack(value: [4]u8) u32 {
         (@as(u32, value[1]) << 8) |
         (@as(u32, value[2]) << 16) |
         (@as(u32, value[3]) << 24);
+}
+
+test "sparse retained GPU writes only changed rows at identity physical cells" {
+    var instances: [6]backend.Instance = undefined;
+    for (&instances, 1..) |*instance_value, slot| instance_value.* = .{
+        .glyph_slot = @intCast(slot),
+        .flags = .{},
+        .foreground = 0,
+        .background = 0,
+        .underline_color = 0,
+    };
+    var changed = [_]bool{ false, true, false };
+    var output: [2]backend.CellWriteInput = undefined;
+    const writes = try sparseCellWrites(3, 2, &instances, &changed, &output);
+    try std.testing.expectEqual(@as(usize, 2), writes.len);
+    try std.testing.expectEqual(@as(u32, 2), writes[0].physical_index);
+    try std.testing.expectEqual(@as(u16, 3), writes[0].instance.glyph_slot);
+    try std.testing.expectEqual(@as(u32, 3), writes[1].physical_index);
+    try std.testing.expectEqual(@as(u16, 4), writes[1].instance.glyph_slot);
+
+    @memset(&changed, false);
+    const cursor_only = try sparseCellWrites(3, 2, &instances, &changed, &output);
+    try std.testing.expectEqual(@as(usize, 0), cursor_only.len);
 }
 
 test "dense terminal adapter retains ordinary ASCII and overlays fixture overhang" {
