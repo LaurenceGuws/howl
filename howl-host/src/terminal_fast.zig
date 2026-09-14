@@ -70,6 +70,13 @@ pub const Prepared = struct {
     /// Exact changed-row mask for an admitted incremental frame. `null` means
     /// the retained backend must replace the complete instance grid.
     changed_rows: ?[]const bool = null,
+    /// Canonical visible rows moved upward before `changed_rows` repairs.
+    row_shift: ?u16 = null,
+};
+
+const RetainedGlyphs = struct {
+    slots: []const u16,
+    rasters: []const backend.GlyphRaster,
 };
 
 pub const Adapter = struct {
@@ -157,6 +164,7 @@ pub const Adapter = struct {
         width: u16,
         height: u16,
     ) !?Prepared {
+        if (try self.prepareShifted(snapshot, width, height)) |prepared| return prepared;
         if (try self.prepareIncremental(snapshot, width, height)) |prepared| return prepared;
         return self.prepareFull(snapshot, width, height);
     }
@@ -288,6 +296,79 @@ pub const Adapter = struct {
                 .commands = self.overlay_commands[0..overlay_count],
             },
             .changed_rows = null,
+            .row_shift = null,
+        };
+    }
+
+    fn prepareShifted(
+        self: *Adapter,
+        snapshot: *const client.rich.View,
+        width: u16,
+        height: u16,
+    ) !?Prepared {
+        if (!self.incremental_ready) return null;
+        const rows_up = snapshot.row_shift orelse return null;
+        const repairs = snapshot.changed_rows orelse return null;
+        const begin = snapshot.begin;
+        if (rows_up == 0 or rows_up >= begin.rows or
+            std.math.cast(i16, rows_up) == null or
+            begin.rows != self.cached_rows or begin.columns != self.cached_cols or
+            snapshot.rows.len != begin.rows or repairs.len != begin.rows or
+            snapshot.graphics.images.len != 0 or snapshot.graphics.placements.len != 0)
+            return null;
+        const cell_count = std.math.mul(usize, begin.rows, begin.columns) catch return null;
+        if (cell_count != self.instances.len or self.overlay_commands.len != cell_count or
+            !self.sameCellPresentation(&snapshot.presentation))
+            return null;
+
+        const repair_limit = @max(@as(usize, 1), repairs.len / 3);
+        var repair_count: usize = 0;
+        for (repairs) |repair| {
+            if (!repair) continue;
+            repair_count += 1;
+            if (repair_count > repair_limit) return null;
+        }
+        const exposed_first = begin.rows - rows_up;
+        for (repairs[exposed_first..]) |repair| if (!repair) return null;
+
+        const cursor_draw = cursor(begin, &snapshot.presentation) catch |failure| switch (failure) {
+            error.UnsupportedTransparency => return null,
+        };
+        self.incremental_ready = false;
+        const shifted_cells = std.math.mul(usize, rows_up, begin.columns) catch
+            return error.InvalidGeometry;
+        const retained_cells = cell_count - shifted_cells;
+        std.mem.copyForwards(
+            backend.Instance,
+            self.instances[0..retained_cells],
+            self.instances[shifted_cells..],
+        );
+        for (snapshot.rows, repairs, 0..) |row, repair, row_index| {
+            if (!repair) continue;
+            if (!try self.projectRetainedRow(row, row_index, begin.columns, &snapshot.presentation))
+                return null;
+        }
+        const glyphs = (try self.collectRetainedGlyphs()) orelse return null;
+        self.rememberRetained(begin, &snapshot.presentation);
+        return .{
+            .rows = begin.rows,
+            .cols = begin.columns,
+            .width = width,
+            .height = height,
+            .instances = self.instances,
+            .slots = glyphs.slots,
+            .rasters = glyphs.rasters,
+            .cursor = cursor_draw,
+            .metrics = self.metrics,
+            .clear_color = rgbaFloat(snapshot.presentation.background),
+            .overlay_frame = .{
+                .revision = begin.revision,
+                .uploads = &.{},
+                .removals = &.{},
+                .commands = &.{},
+            },
+            .changed_rows = repairs,
+            .row_shift = rows_up,
         };
     }
 
@@ -320,26 +401,61 @@ pub const Adapter = struct {
         };
         for (snapshot.rows, changed_rows, 0..) |row, changed, row_index| {
             if (!changed) continue;
-            if (row.line_geometry != 0 or row.cells.len != begin.columns) return null;
-            const first = row_index * @as(usize, begin.columns);
-            for (row.cells, 0..) |cell, column| {
-                const projected = try self.instance(cell, &snapshot.presentation) orelse return null;
-                if (projected.glyph_slot != backend.blank_glyph) {
-                    const glyph_index: usize = projected.glyph_slot;
-                    if (glyph_index >= ascii_count) return null;
-                    const cached = try self.ensureGlyph(glyph_index) orelse return null;
-                    switch (cached) {
-                        .retained => {},
-                        // Incremental frames are admitted only while the prior
-                        // accepted frame had no overlay resources. Let the full
-                        // path rebuild exact overhang state when one appears.
-                        .overlay => return null,
-                    }
-                }
-                self.instances[first + column] = projected;
-            }
+            if (!try self.projectRetainedRow(row, row_index, begin.columns, &snapshot.presentation))
+                return null;
         }
 
+        const glyphs = (try self.collectRetainedGlyphs()) orelse return null;
+        return .{
+            .rows = begin.rows,
+            .cols = begin.columns,
+            .width = width,
+            .height = height,
+            .instances = self.instances,
+            .slots = glyphs.slots,
+            .rasters = glyphs.rasters,
+            .cursor = cursor_draw,
+            .metrics = self.metrics,
+            .clear_color = rgbaFloat(snapshot.presentation.background),
+            .overlay_frame = .{
+                .revision = begin.revision,
+                .uploads = &.{},
+                .removals = &.{},
+                .commands = &.{},
+            },
+            .changed_rows = changed_rows,
+            .row_shift = null,
+        };
+    }
+
+    fn projectRetainedRow(
+        self: *Adapter,
+        row: client.rich.Row,
+        row_index: usize,
+        columns: u16,
+        presentation: *const client.rich.Presentation,
+    ) !bool {
+        if (row.line_geometry != 0 or row.cells.len != columns) return false;
+        const first = row_index * @as(usize, columns);
+        for (row.cells, 0..) |cell, column| {
+            const projected = try self.instance(cell, presentation) orelse return false;
+            if (projected.glyph_slot != backend.blank_glyph) {
+                const glyph_index: usize = projected.glyph_slot;
+                if (glyph_index >= ascii_count) return false;
+                const cached = try self.ensureGlyph(glyph_index) orelse return false;
+                switch (cached) {
+                    .retained => {},
+                    // Sparse retained updates cannot recreate exceptional
+                    // overhang overlays; the caller falls back to full state.
+                    .overlay => return false,
+                }
+            }
+            self.instances[first + column] = projected;
+        }
+        return true;
+    }
+
+    fn collectRetainedGlyphs(self: *Adapter) !?RetainedGlyphs {
         var slot_seen: [ascii_count]bool = @splat(false);
         var slot_count: usize = 0;
         for (self.instances) |instance_value| {
@@ -357,23 +473,8 @@ pub const Adapter = struct {
             slot_count += 1;
         }
         return .{
-            .rows = begin.rows,
-            .cols = begin.columns,
-            .width = width,
-            .height = height,
-            .instances = self.instances,
             .slots = self.slots[0..slot_count],
             .rasters = self.rasters[0..slot_count],
-            .cursor = cursor_draw,
-            .metrics = self.metrics,
-            .clear_color = rgbaFloat(snapshot.presentation.background),
-            .overlay_frame = .{
-                .revision = begin.revision,
-                .uploads = &.{},
-                .removals = &.{},
-                .commands = &.{},
-            },
-            .changed_rows = changed_rows,
         };
     }
 
@@ -560,6 +661,7 @@ pub const Gpu = struct {
     pane: backend.PaneResources,
     store: backend.Store,
     cell_updates: []backend.CellWriteInput,
+    physical_rows: []u32,
     first: bool = true,
     pending: bool = false,
 
@@ -572,7 +674,7 @@ pub const Gpu = struct {
         gpu_limit: u64,
         frame: Prepared,
     ) !Gpu {
-        const sparse_rows = @max(@as(usize, 1), @as(usize, frame.rows) / 4);
+        const sparse_rows = @max(@as(usize, 1), @as(usize, frame.rows) / 3);
         const sparse_cells = try std.math.mul(usize, sparse_rows, frame.cols);
         const limits = backend.Limits{
             .rows = frame.rows,
@@ -607,6 +709,8 @@ pub const Gpu = struct {
         errdefer store.deinit();
         const cell_updates = try allocator.alloc(backend.CellWriteInput, sparse_cells);
         errdefer allocator.free(cell_updates);
+        const physical_rows = try allocator.alloc(u32, frame.rows);
+        errdefer allocator.free(physical_rows);
         return .{
             .allocator = allocator,
             .limits = limits,
@@ -615,11 +719,13 @@ pub const Gpu = struct {
             .pane = pane,
             .store = store,
             .cell_updates = cell_updates,
+            .physical_rows = physical_rows,
         };
     }
 
     pub fn deinit(self: *Gpu, device: vk.VkDevice, gpu_bytes: *u64) void {
         if (self.pending) self.discard();
+        self.allocator.free(self.physical_rows);
         self.allocator.free(self.cell_updates);
         self.store.deinit();
         self.pane.deinit(device, self.resources.descriptor_pool, gpu_bytes);
@@ -638,16 +744,43 @@ pub const Gpu = struct {
             return error.InvalidGeometry;
         try self.font.prepare(frame.slots, frame.rasters);
         errdefer self.font.discard() catch {};
-        const sparse = if (!self.first and frame.changed_rows != null)
-            try sparseCellWrites(
-                frame.rows,
-                frame.cols,
-                frame.instances,
-                frame.changed_rows.?,
-                self.cell_updates,
-            )
-        else
-            null;
+        var rotation_storage: [1]backend.RowRotation = undefined;
+        var row_rotations: []const backend.RowRotation = &.{};
+        var sparse: ?[]const backend.CellWriteInput = null;
+        if (!self.first) {
+            if (frame.row_shift) |rows_up| {
+                const repairs = frame.changed_rows orelse return error.InvalidGeometry;
+                const signed_shift = std.math.cast(i16, rows_up) orelse
+                    return error.InvalidGeometry;
+                rotation_storage[0] = .{
+                    .first = 0,
+                    .count = frame.rows,
+                    .shift = -signed_shift,
+                };
+                row_rotations = &rotation_storage;
+                const physical_rows = try self.store.projectPhysicalRows(
+                    row_rotations,
+                    self.physical_rows,
+                );
+                sparse = try sparseCellWrites(
+                    frame.rows,
+                    frame.cols,
+                    frame.instances,
+                    repairs,
+                    physical_rows,
+                    self.cell_updates,
+                );
+            } else if (frame.changed_rows) |changed_rows| {
+                sparse = try sparseCellWrites(
+                    frame.rows,
+                    frame.cols,
+                    frame.instances,
+                    changed_rows,
+                    null,
+                    self.cell_updates,
+                );
+            }
+        }
         const prepared = try self.store.prepare(.{
             .rows = frame.rows,
             .cols = frame.cols,
@@ -657,7 +790,7 @@ pub const Gpu = struct {
                 .cols = frame.cols,
                 .instances = frame.instances,
             } else null,
-            .row_rotations = &.{},
+            .row_rotations = row_rotations,
             .fills = &.{},
             .cells = sparse orelse &.{},
             .glyph_slots = frame.slots,
@@ -668,6 +801,7 @@ pub const Gpu = struct {
             return error.InvalidGeometry;
         if (prepared.rows != frame.rows or prepared.cols != frame.cols or
             (prepared.replacement != null) != (sparse == null) or
+            (prepared.row_copy != null) != (sparse == null or row_rotations.len != 0) or
             prepared.instance_staging_bytes != expected_bytes)
             return error.InvalidGeometry;
         errdefer self.store.discard() catch {};
@@ -741,19 +875,26 @@ fn sparseCellWrites(
     cols: u16,
     instances: []const backend.Instance,
     changed_rows: []const bool,
+    physical_rows: ?[]const u32,
     output: []backend.CellWriteInput,
 ) ![]const backend.CellWriteInput {
     const cell_count = try std.math.mul(usize, rows, cols);
-    if (rows == 0 or cols == 0 or instances.len != cell_count or changed_rows.len != rows)
+    if (rows == 0 or cols == 0 or instances.len != cell_count or changed_rows.len != rows or
+        (physical_rows != null and physical_rows.?.len != rows))
         return error.InvalidGeometry;
     var count: usize = 0;
     for (changed_rows, 0..) |changed, row| {
         if (!changed) continue;
-        const first = try std.math.mul(usize, row, cols);
-        for (instances[first .. first + cols], 0..) |instance_value, column| {
+        const source_first = try std.math.mul(usize, row, cols);
+        const physical_row: usize = if (physical_rows) |mapping| blk: {
+            if (mapping[row] >= rows) return error.InvalidGeometry;
+            break :blk mapping[row];
+        } else row;
+        const destination_first = try std.math.mul(usize, physical_row, cols);
+        for (instances[source_first .. source_first + cols], 0..) |instance_value, column| {
             if (count == output.len) return error.InvalidGeometry;
             output[count] = .{
-                .physical_index = std.math.cast(u32, first + column) orelse
+                .physical_index = std.math.cast(u32, destination_first + column) orelse
                     return error.InvalidGeometry,
                 .instance = instance_value,
             };
@@ -829,7 +970,7 @@ fn pack(value: [4]u8) u32 {
         (@as(u32, value[3]) << 24);
 }
 
-test "sparse retained GPU writes only changed rows at identity physical cells" {
+test "sparse retained GPU writes target identity and projected physical rows" {
     var instances: [6]backend.Instance = undefined;
     for (&instances, 1..) |*instance_value, slot| instance_value.* = .{
         .glyph_slot = @intCast(slot),
@@ -840,15 +981,23 @@ test "sparse retained GPU writes only changed rows at identity physical cells" {
     };
     var changed = [_]bool{ false, true, false };
     var output: [2]backend.CellWriteInput = undefined;
-    const writes = try sparseCellWrites(3, 2, &instances, &changed, &output);
+    const writes = try sparseCellWrites(3, 2, &instances, &changed, null, &output);
     try std.testing.expectEqual(@as(usize, 2), writes.len);
     try std.testing.expectEqual(@as(u32, 2), writes[0].physical_index);
     try std.testing.expectEqual(@as(u16, 3), writes[0].instance.glyph_slot);
     try std.testing.expectEqual(@as(u32, 3), writes[1].physical_index);
     try std.testing.expectEqual(@as(u16, 4), writes[1].instance.glyph_slot);
 
+    changed = .{ true, false, false };
+    const physical_rows = [_]u32{ 2, 0, 1 };
+    const mapped = try sparseCellWrites(3, 2, &instances, &changed, &physical_rows, &output);
+    try std.testing.expectEqual(@as(u32, 4), mapped[0].physical_index);
+    try std.testing.expectEqual(@as(u16, 1), mapped[0].instance.glyph_slot);
+    try std.testing.expectEqual(@as(u32, 5), mapped[1].physical_index);
+    try std.testing.expectEqual(@as(u16, 2), mapped[1].instance.glyph_slot);
+
     @memset(&changed, false);
-    const cursor_only = try sparseCellWrites(3, 2, &instances, &changed, &output);
+    const cursor_only = try sparseCellWrites(3, 2, &instances, &changed, null, &output);
     try std.testing.expectEqual(@as(usize, 0), cursor_only.len);
 }
 
@@ -1004,6 +1153,60 @@ test "dense terminal adapter updates sparse rows and rejects broad churn" {
         metrics.advance_width,
         height,
     )) == null);
+}
+
+test "dense terminal adapter rotates retained rows and repairs exact exceptions" {
+    const fonts = try text.FontSet.init(std.testing.allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer fonts.deinit();
+    var adapter = try Adapter.init(std.testing.allocator, fonts);
+    defer adapter.deinit();
+    const metrics = fonts.metrics();
+
+    var initial_scalars = [_][1]u32{
+        .{'A'}, .{'B'}, .{'C'}, .{'D'}, .{'E'}, .{'F'},
+    };
+    var initial_cells: [6][1]client.rich.Cell = undefined;
+    var initial_rows: [6]client.rich.Row = undefined;
+    for (&initial_cells, &initial_rows, 0..) |*cells, *row, index| {
+        cells.* = .{testCell(&initial_scalars[index])};
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var initial_snapshot = testSnapshot(&initial_rows, 1, 30, false);
+    const initial_view = initial_snapshot.view();
+    const height = try std.math.mul(u16, metrics.line_height, 6);
+    const initial = (try adapter.prepare(&initial_view, metrics.advance_width, height)) orelse
+        return error.ExpectedDenseAdmission;
+    try std.testing.expectEqual(@as(usize, 6), initial.instances.len);
+
+    var next_scalars = [_][1]u32{
+        .{'B'}, .{'X'}, .{'D'}, .{'E'}, .{'F'}, .{'G'},
+    };
+    var next_cells: [6][1]client.rich.Cell = undefined;
+    var next_rows: [6]client.rich.Row = undefined;
+    for (&next_cells, &next_rows, 0..) |*cells, *row, index| {
+        cells.* = .{testCell(&next_scalars[index])};
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var next_snapshot = testSnapshot(&next_rows, 1, 31, false);
+    var next_view = next_snapshot.view();
+    var broad_changed: [6]bool = @splat(true);
+    var repairs = [_]bool{ false, true, false, false, false, true };
+    next_view.changed_rows = &broad_changed;
+    next_view.row_shift = 1;
+    next_view.changed_rows = &repairs;
+    const shifted = (try adapter.prepare(&next_view, metrics.advance_width, height)) orelse
+        return error.ExpectedShiftAdmission;
+
+    try std.testing.expectEqual(@as(?u16, 1), shifted.row_shift);
+    try std.testing.expectEqualSlices(bool, &repairs, shifted.changed_rows.?);
+    for ([_]u8{ 'B', 'X', 'D', 'E', 'F', 'G' }, shifted.instances) |scalar, instance_value|
+        try std.testing.expectEqual(
+            try backend.stableGlyphSlot(scalar, false, false),
+            instance_value.glyph_slot,
+        );
 }
 
 test "dense terminal adapter refuses semantics it cannot reproduce exactly" {

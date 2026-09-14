@@ -1642,6 +1642,25 @@ pub const Store = struct {
         return self.accepted_instances[physical_index];
     }
 
+    /// Projects accepted logical rows through proposed rotations without
+    /// mutating accepted or candidate state. Host adapters use this to resolve
+    /// logical repair rows to the exact physical destinations consumed by the
+    /// same rotations in `prepare`.
+    pub fn projectPhysicalRows(
+        self: *const Store,
+        rotations: []const RowRotation,
+        output: []u32,
+    ) Error![]const u32 {
+        if (self.candidate_pending) return error.CandidatePending;
+        if (self.rows == 0 or output.len < self.rows) return error.InvalidGeometry;
+        if (rotations.len > self.limits.structured_updates)
+            return error.StructuredUpdateLimit;
+        const result = output[0..self.rows];
+        @memcpy(result, self.accepted_rows[0..self.rows]);
+        for (rotations) |rotation| try applyRotation(result, rotation);
+        return result;
+    }
+
     /// Returns the exact candidate or accepted draw-count and cursor state;
     /// the Host adapter supplies placement and font geometry per opportunity.
     pub fn currentDraw(self: *const Store) Error!Draw {
@@ -2972,6 +2991,16 @@ test "T006 one-row scroll uploads row map and exposed row but no moved cells" {
     const a_slot = testSlot('a', false, false);
     const initial: [20]Instance = @splat(testInstance('a'));
     try acceptInitial(&store, &font, 4, 5, &initial, &.{a_slot}, &.{testRaster(a_slot, &pixels)});
+    var projected_storage: [4]u32 = undefined;
+    const projected = try store.projectPhysicalRows(
+        &.{.{ .first = 0, .count = 4, .shift = -1 }},
+        &projected_storage,
+    );
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 0 }, projected);
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        store.projectPhysicalRows(&.{.{ .first = 0, .count = 4, .shift = -1 }}, projected_storage[0..3]),
+    );
     const prepared = try prepareWithFont(&store, &font, .{
         .rows = 4,
         .cols = 5,
