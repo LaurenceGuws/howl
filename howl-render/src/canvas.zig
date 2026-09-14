@@ -1330,34 +1330,36 @@ pub const Composer = struct {
         try self.validateFrameAliases(residency, buffers);
         try self.validateResidencies(residency);
 
-        var needed_commands: usize = 0;
-        var needed_uploads: usize = 0;
-        var needed_removals: usize = 0;
-        var needed_pixels: usize = 0;
-        try self.measureFrame(
-            residency,
-            &needed_commands,
-            &needed_uploads,
-            &needed_removals,
-            &needed_pixels,
-        );
-        if (!include_cursor) {
-            var cursor_commands: usize = 0;
-            for (self.composition[0..self.composition_count]) |placement| {
-                const source = self.sources[try self.sourceIndex(placement.source)];
-                cursor_commands = std.math.add(
-                    usize,
-                    cursor_commands,
-                    try self.cursorOverlayCountFor(source, null),
-                ) catch return error.ArithmeticOverflow;
+        if (!(try self.conservativeFrameCapacityFits(residency, buffers, include_cursor))) {
+            var needed_commands: usize = 0;
+            var needed_uploads: usize = 0;
+            var needed_removals: usize = 0;
+            var needed_pixels: usize = 0;
+            try self.measureFrame(
+                residency,
+                &needed_commands,
+                &needed_uploads,
+                &needed_removals,
+                &needed_pixels,
+            );
+            if (!include_cursor) {
+                var cursor_commands: usize = 0;
+                for (self.composition[0..self.composition_count]) |placement| {
+                    const source = self.sources[try self.sourceIndex(placement.source)];
+                    cursor_commands = std.math.add(
+                        usize,
+                        cursor_commands,
+                        try self.cursorOverlayCountFor(source, null),
+                    ) catch return error.ArithmeticOverflow;
+                }
+                needed_commands = std.math.sub(usize, needed_commands, cursor_commands) catch
+                    return error.ArithmeticOverflow;
             }
-            needed_commands = std.math.sub(usize, needed_commands, cursor_commands) catch
-                return error.ArithmeticOverflow;
+            if (needed_commands > buffers.commands.len) return error.CommandLimit;
+            if (needed_uploads > buffers.uploads.len) return error.ResourceLimit;
+            if (needed_removals > buffers.removals.len) return error.ResourceLimit;
+            if (needed_pixels > buffers.pixels.len) return error.PixelLimit;
         }
-        if (needed_commands > buffers.commands.len) return error.CommandLimit;
-        if (needed_uploads > buffers.uploads.len) return error.ResourceLimit;
-        if (needed_removals > buffers.removals.len) return error.ResourceLimit;
-        if (needed_pixels > buffers.pixels.len) return error.PixelLimit;
 
         var command_count: usize = 0;
         var upload_count: usize = 0;
@@ -1379,6 +1381,43 @@ pub const Composer = struct {
             .commands = buffers.commands[0..command_count],
             .pixels = buffers.pixels[0..pixel_count],
         };
+    }
+
+    /// Proves the common one-source terminal frame fits caller storage without
+    /// re-walking every retained command. Richer Composer topologies deliberately
+    /// keep exact preflight.
+    fn conservativeFrameCapacityFits(
+        self: *const Composer,
+        residency: []const Residency,
+        buffers: FrameBuffers,
+        include_cursor: bool,
+    ) Composer.Error!bool {
+        if (self.source_count != 1 or self.composition_count != 1 or
+            self.shared_resource_count != 0)
+            return false;
+        const placement = self.composition[0];
+        const source = self.sources[try self.sourceIndex(placement.source)];
+        if (source.resource_count != self.resource_count or
+            source.pixel_count != self.pixel_count)
+            return false;
+        for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource|
+            if (resource.recovery == .external) return false;
+
+        var command_bound = source.command_count;
+        if (include_cursor and self.focused_source == source.id) {
+            if (source.cursor_binding) |binding| {
+                if (binding.visible and binding.shape != .none) {
+                    command_bound = std.math.add(usize, command_bound, 1) catch return false;
+                    if (binding.shape == .block)
+                        command_bound = std.math.add(usize, command_bound, source.command_count) catch
+                            return false;
+                }
+            }
+        }
+        return command_bound <= buffers.commands.len and
+            source.resource_count <= buffers.uploads.len and
+            residency.len <= buffers.removals.len and
+            source.pixel_count <= buffers.pixels.len;
     }
 
     // -------------------------------------------------------------------------
