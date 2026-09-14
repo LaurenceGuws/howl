@@ -82,6 +82,13 @@ pub const Adapter = struct {
     slots: []u16,
     rasters: []backend.GlyphRaster,
     overlay_uploads: []surface.Upload,
+    incremental_ready: bool = false,
+    cached_rows: u16 = 0,
+    cached_cols: u16 = 0,
+    cached_reverse_screen: bool = false,
+    cached_palette: [256]client.rich.Rgba = undefined,
+    cached_foreground: client.rich.Rgba = undefined,
+    cached_background: client.rich.Rgba = undefined,
 
     pub fn init(allocator: std.mem.Allocator, fonts: *text.FontSet) !Adapter {
         const metrics = fonts.metrics();
@@ -147,6 +154,17 @@ pub const Adapter = struct {
         width: u16,
         height: u16,
     ) !?Prepared {
+        if (try self.prepareIncremental(snapshot, width, height)) |prepared| return prepared;
+        return self.prepareFull(snapshot, width, height);
+    }
+
+    fn prepareFull(
+        self: *Adapter,
+        snapshot: *const client.rich.View,
+        width: u16,
+        height: u16,
+    ) !?Prepared {
+        self.incremental_ready = false;
         const begin = snapshot.begin;
         if (begin.revision == 0 or begin.rows == 0 or begin.columns == 0 or
             snapshot.rows.len != begin.rows or snapshot.graphics.images.len != 0 or
@@ -248,6 +266,7 @@ pub const Adapter = struct {
             }
         }
         std.debug.assert(instance_index == cell_count);
+        if (overlay_count == 0) self.rememberRetained(begin, &snapshot.presentation);
         return .{
             .rows = begin.rows,
             .cols = begin.columns,
@@ -268,8 +287,118 @@ pub const Adapter = struct {
         };
     }
 
+    fn prepareIncremental(
+        self: *Adapter,
+        snapshot: *const client.rich.View,
+        width: u16,
+        height: u16,
+    ) !?Prepared {
+        if (!self.incremental_ready) return null;
+        const changed_rows = snapshot.changed_rows orelse return null;
+        const begin = snapshot.begin;
+        if (begin.revision == 0 or begin.rows != self.cached_rows or begin.columns != self.cached_cols or
+            snapshot.rows.len != begin.rows or changed_rows.len != begin.rows or
+            snapshot.graphics.images.len != 0 or snapshot.graphics.placements.len != 0)
+            return null;
+        const cell_count = std.math.mul(usize, begin.rows, begin.columns) catch return null;
+        if (cell_count != self.instances.len or self.overlay_commands.len != cell_count) return null;
+        const changed_limit = @max(@as(usize, 1), changed_rows.len / 4);
+        var changed_count: usize = 0;
+        for (changed_rows) |changed| {
+            if (!changed) continue;
+            changed_count += 1;
+            if (changed_count > changed_limit) return null;
+        }
+        if (!self.sameCellPresentation(&snapshot.presentation)) return null;
+
+        const cursor_draw = cursor(begin, &snapshot.presentation) catch |failure| switch (failure) {
+            error.UnsupportedTransparency => return null,
+        };
+        for (snapshot.rows, changed_rows, 0..) |row, changed, row_index| {
+            if (!changed) continue;
+            if (row.line_geometry != 0 or row.cells.len != begin.columns) return null;
+            const first = row_index * @as(usize, begin.columns);
+            for (row.cells, 0..) |cell, column| {
+                const projected = try self.instance(cell, &snapshot.presentation) orelse return null;
+                if (projected.glyph_slot != backend.blank_glyph) {
+                    const glyph_index: usize = projected.glyph_slot;
+                    if (glyph_index >= ascii_count) return null;
+                    const cached = try self.ensureGlyph(glyph_index) orelse return null;
+                    switch (cached) {
+                        .retained => {},
+                        // Incremental frames are admitted only while the prior
+                        // accepted frame had no overlay resources. Let the full
+                        // path rebuild exact overhang state when one appears.
+                        .overlay => return null,
+                    }
+                }
+                self.instances[first + column] = projected;
+            }
+        }
+
+        var slot_seen: [ascii_count]bool = @splat(false);
+        var slot_count: usize = 0;
+        for (self.instances) |instance_value| {
+            if (instance_value.glyph_slot == backend.blank_glyph) continue;
+            const glyph_index: usize = instance_value.glyph_slot;
+            if (glyph_index >= ascii_count or slot_seen[glyph_index]) continue;
+            const cached = try self.ensureGlyph(glyph_index) orelse return null;
+            const raster = switch (cached) {
+                .retained => |value| value,
+                .overlay => return null,
+            };
+            slot_seen[glyph_index] = true;
+            self.slots[slot_count] = instance_value.glyph_slot;
+            self.rasters[slot_count] = raster;
+            slot_count += 1;
+        }
+        return .{
+            .rows = begin.rows,
+            .cols = begin.columns,
+            .width = width,
+            .height = height,
+            .instances = self.instances,
+            .slots = self.slots[0..slot_count],
+            .rasters = self.rasters[0..slot_count],
+            .cursor = cursor_draw,
+            .metrics = self.metrics,
+            .clear_color = rgbaFloat(snapshot.presentation.background),
+            .overlay_frame = .{
+                .revision = begin.revision,
+                .uploads = &.{},
+                .removals = &.{},
+                .commands = &.{},
+            },
+        };
+    }
+
+    fn rememberRetained(
+        self: *Adapter,
+        begin: @FieldType(client.rich.View, "begin"),
+        presentation: *const client.rich.Presentation,
+    ) void {
+        self.cached_rows = begin.rows;
+        self.cached_cols = begin.columns;
+        self.cached_reverse_screen = presentation.reverse_screen;
+        self.cached_palette = presentation.palette;
+        self.cached_foreground = presentation.foreground;
+        self.cached_background = presentation.background;
+        self.incremental_ready = true;
+    }
+
+    fn sameCellPresentation(
+        self: *const Adapter,
+        presentation: *const client.rich.Presentation,
+    ) bool {
+        return self.cached_reverse_screen == presentation.reverse_screen and
+            std.meta.eql(self.cached_palette, presentation.palette) and
+            std.meta.eql(self.cached_foreground, presentation.foreground) and
+            std.meta.eql(self.cached_background, presentation.background);
+    }
+
     fn ensureCapacity(self: *Adapter, cell_count: usize) !void {
         if (self.instances.len == cell_count and self.overlay_commands.len == cell_count) return;
+        self.incremental_ready = false;
         if (self.instances.len != 0) self.allocator.free(self.instances);
         if (self.overlay_commands.len != 0) self.allocator.free(self.overlay_commands);
         self.instances = &.{};
@@ -734,6 +863,73 @@ test "prepared dense borrows survive adapter value movement" {
     try std.testing.expectEqual(expected_slot, prepared.slots[0]);
     try std.testing.expectEqual(expected_raster_slot, prepared.rasters[0].slot);
     try std.testing.expectEqual(expected_upload_resource, prepared.overlay_frame.uploads[0].resource);
+}
+
+test "dense terminal adapter updates sparse rows and rejects broad churn" {
+    const fonts = try text.FontSet.init(std.testing.allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer fonts.deinit();
+    var adapter = try Adapter.init(std.testing.allocator, fonts);
+    defer adapter.deinit();
+    const metrics = fonts.metrics();
+
+    var a0 = [_]u32{'A'};
+    var a1 = [_]u32{'A'};
+    var a2 = [_]u32{'A'};
+    var a3 = [_]u32{'A'};
+    var initial_cells = [_][1]client.rich.Cell{
+        .{testCell(&a0)}, .{testCell(&a1)}, .{testCell(&a2)}, .{testCell(&a3)},
+    };
+    var initial_rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &initial_cells[0] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &initial_cells[1] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &initial_cells[2] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &initial_cells[3] },
+    };
+    var initial_snapshot = testSnapshot(&initial_rows, 1, 24, false);
+    const initial_view = initial_snapshot.view();
+    const height = try std.math.mul(u16, metrics.line_height, 4);
+    const initial = (try adapter.prepare(&initial_view, metrics.advance_width, height)) orelse
+        return error.ExpectedDenseAdmission;
+    try std.testing.expectEqual(@as(usize, 4), initial.instances.len);
+
+    var b0 = [_]u32{'B'};
+    var next_cells = [_][1]client.rich.Cell{
+        .{testCell(&b0)}, .{testCell(&a1)}, .{testCell(&a2)}, .{testCell(&a3)},
+    };
+    var next_rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &next_cells[0] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &next_cells[1] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &next_cells[2] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &next_cells[3] },
+    };
+    var next_snapshot = testSnapshot(&next_rows, 1, 25, false);
+    var next_view = next_snapshot.view();
+    var sparse_changed = [_]bool{ true, false, false, false };
+    next_view.changed_rows = &sparse_changed;
+    const sparse = (try adapter.prepareIncremental(
+        &next_view,
+        metrics.advance_width,
+        height,
+    )) orelse return error.ExpectedIncrementalAdmission;
+    try std.testing.expectEqual(
+        try backend.stableGlyphSlot('B', false, false),
+        sparse.instances[0].glyph_slot,
+    );
+    try std.testing.expectEqual(
+        try backend.stableGlyphSlot('A', false, false),
+        sparse.instances[1].glyph_slot,
+    );
+
+    var broad_changed = [_]bool{ true, true, false, false };
+    next_view.changed_rows = &broad_changed;
+    try std.testing.expect((try adapter.prepareIncremental(
+        &next_view,
+        metrics.advance_width,
+        height,
+    )) == null);
 }
 
 test "dense terminal adapter refuses semantics it cannot reproduce exactly" {
