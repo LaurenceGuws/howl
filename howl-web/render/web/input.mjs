@@ -39,6 +39,14 @@ export function singleScalar(value) {
   return scalars.length === 1 ? scalars[0].codePointAt(0) : null;
 }
 
+// The hidden editor is the sole DOM keyboard/IME focus owner. Canvas pointer
+// interactions may change terminal-local selection state, but must not strand
+// browser keyboard focus on the canvas itself.
+export function focusKeyboardCapture(target, {composing=false} = {}) {
+  target.focus({preventScroll:true});
+  return !composing;
+}
+
 export function committedActions(text) {
   if (!text) return [];
   const actions = [];

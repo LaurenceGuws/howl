@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   TerminalInputStager, guardText, leftGuard, rightGuard, committedActions,
-  namedKeyForCode, NamedKey, modifierBits, singleScalar,
+  namedKeyForCode, NamedKey, modifierBits, singleScalar, focusKeyboardCapture,
 } from '../web/input.mjs';
 
 const stager = new TerminalInputStager();
@@ -21,4 +21,9 @@ assert.equal(namedKeyForCode('ArrowLeft'), NamedKey.ArrowLeft);
 assert.equal(namedKeyForCode('KeyA'), null);
 assert.equal(modifierBits({shiftKey:true,altKey:false,ctrlKey:true,metaKey:false,getModifierState:k=>k==='CapsLock'}), 1|4|64);
 assert.equal(singleScalar('λ'), 0x03bb); assert.equal(singleScalar('🐺'), 0x1f43a); assert.equal(singleScalar('ab'), null);
-console.log(JSON.stringify({status:'pass', guards:true, composition:true, editKeys:true, newlines:true, unicode:true, physicalNames:true}));
+const focusCalls = [];
+const focusTarget = {focus:options => focusCalls.push(options)};
+assert.equal(focusKeyboardCapture(focusTarget), true);
+assert.equal(focusKeyboardCapture(focusTarget, {composing:true}), false);
+assert.deepEqual(focusCalls, [{preventScroll:true}, {preventScroll:true}]);
+console.log(JSON.stringify({status:'pass', guards:true, composition:true, editKeys:true, newlines:true, unicode:true, physicalNames:true, keyboardFocusOwner:true}));

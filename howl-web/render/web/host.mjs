@@ -1,7 +1,7 @@
 import {assertTextImports, createTextRuntime} from './runtime.mjs';
 import {
   TerminalInputStager, guardText, namedKeyForCode, NamedKey, KeyAction,
-  Modifier, MouseKind, modifierBits, singleScalar,
+  Modifier, MouseKind, modifierBits, singleScalar, focusKeyboardCapture,
 } from './input.mjs';
 import {TerminalPointerAdapter, TerminalPointerGeometry, LatestPointerMoveScheduler} from './pointer_input.mjs';
 import {HistoryViewport} from './history.mjs';
@@ -940,8 +940,7 @@ function processEditor(composing) {
 }
 
 function focusKeyboardPreservingHistory() {
-  keyboard.focus({preventScroll:true});
-  if (!compositionActive) resetEditor();
+  if (focusKeyboardCapture(keyboard, {composing:compositionActive})) resetEditor();
 }
 
 function focusKeyboard() {
@@ -1077,7 +1076,7 @@ function startLocalSelection(event) {
     columns:located.viewport.columns,
     alternateScreen:located.viewport.alternateScreen,
   });
-  terminal.focus({preventScroll:true});
+  focusKeyboardPreservingHistory();
   renderSelectionOverlay();
   updateFacts();
   return true;
