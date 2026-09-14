@@ -95,6 +95,7 @@ pub const Snapshot = struct {
             .rows = self.rows,
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
+            .changed_rows = null,
         };
     }
 
@@ -127,6 +128,9 @@ pub const View = struct {
     rows: []const Row,
     hyperlinks: []const Hyperlink,
     graphics: Graphics,
+    /// Exact changed-row mask when supplied by a reusable raw cache. `null`
+    /// means callers must treat every row as potentially changed.
+    changed_rows: ?[]const bool = null,
 };
 
 const CachedRowRecord = struct {
@@ -146,6 +150,7 @@ pub const RawCache = struct {
     text_body: std.ArrayList(u8) = .empty,
     rows: []Row = &.{},
     row_records: []CachedRowRecord = &.{},
+    changed_rows: []bool = &.{},
     columns: u16 = 0,
     hyperlinks: []Hyperlink = &.{},
     graphics: Graphics = .{},
@@ -215,6 +220,7 @@ pub const RawCache = struct {
         if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
         try self.ensureGeometry(begin.rows, begin.columns);
+        @memset(self.changed_rows, false);
         var cache_mutated = false;
         errdefer if (cache_mutated) self.invalidateRows();
 
@@ -263,6 +269,7 @@ pub const RawCache = struct {
                         const replacement = try self.decodeCachedRow(begin, payload, record, &referenced);
                         errdefer replacement.deinit(self.allocator);
                         self.replaceRow(row_index, replacement);
+                        self.changed_rows[row_index] = true;
                         cache_mutated = true;
                     }
                     row_count += 1;
@@ -293,6 +300,7 @@ pub const RawCache = struct {
             .rows = self.rows,
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
+            .changed_rows = self.changed_rows,
         };
     }
 
@@ -361,7 +369,13 @@ pub const RawCache = struct {
             self.allocator.free(self.row_records);
             self.row_records = &.{};
         }
+        self.changed_rows = try self.allocator.alloc(bool, rows);
+        errdefer {
+            self.allocator.free(self.changed_rows);
+            self.changed_rows = &.{};
+        }
         for (self.row_records) |*record| record.* = .{};
+        @memset(self.changed_rows, true);
         self.columns = columns;
     }
 
@@ -373,14 +387,17 @@ pub const RawCache = struct {
             self.allocator.free(record.link_ids);
             record.* = .{};
         }
+        if (self.changed_rows.len != 0) @memset(self.changed_rows, true);
     }
 
     fn clearRows(self: *RawCache) void {
         self.invalidateRows();
+        if (self.changed_rows.len != 0) self.allocator.free(self.changed_rows);
         if (self.row_records.len != 0) self.allocator.free(self.row_records);
         if (self.rows.len != 0) self.allocator.free(self.rows);
         self.rows = &.{};
         self.row_records = &.{};
+        self.changed_rows = &.{};
         self.columns = 0;
     }
 
@@ -1529,6 +1546,7 @@ test "raw cache reuses byte-identical decoded rows" {
     const first_body = try testRawCacheBody(allocator, 'A', 'Z');
     defer allocator.free(first_body);
     const first = try cache.decodeRaw(begin, first_body, .{});
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, first.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'A'), first.rows[0].cells[0].scalars[0]);
     const first_row_cells = first.rows[0].cells.ptr;
     const second_row_cells = first.rows[1].cells.ptr;
@@ -1537,6 +1555,7 @@ test "raw cache reuses byte-identical decoded rows" {
     second_begin.revision = 2;
     second_begin.terminal_revision = 2;
     const second = try cache.decodeRaw(second_begin, first_body, .{});
+    try std.testing.expectEqualSlices(bool, &.{ false, false }, second.changed_rows.?);
     try std.testing.expectEqual(first_row_cells, second.rows[0].cells.ptr);
     try std.testing.expectEqual(second_row_cells, second.rows[1].cells.ptr);
 
@@ -1546,6 +1565,7 @@ test "raw cache reuses byte-identical decoded rows" {
     third_begin.revision = 3;
     third_begin.terminal_revision = 3;
     const third = try cache.decodeRaw(third_begin, changed_body, .{});
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, third.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
     try std.testing.expectEqual(second_row_cells, third.rows[1].cells.ptr);
 }
