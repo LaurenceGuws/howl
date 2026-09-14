@@ -1182,6 +1182,18 @@ pub const Composer = struct {
         value: Composition,
     ) Composer.Error!void {
         try self.validateVisibleCursorBindingSources();
+        // Every accepted source mutation is already validated against the
+        // currently retained composition by `apply` / `applyCandidate`. An
+        // exact composition replay therefore cannot make any retained command
+        // newly invalid and may return before re-walking the complete source.
+        if (std.meta.eql(self.surface, value.surface) and
+            self.composition_count == value.sources.len and
+            self.focused_source == value.focused_source and
+            placementsEqual(
+                self.composition[0..self.composition_count],
+                value.sources,
+            ))
+            return;
         if (value.surface.width == 0 or value.surface.height == 0)
             return error.InvalidGeometry;
         if (value.sources.len > self.composition.len)
@@ -1204,14 +1216,6 @@ pub const Composer = struct {
                 if (prior.source == placement.source) return error.DuplicateSource;
             }
         }
-        if (std.meta.eql(self.surface, value.surface) and
-            self.composition_count == value.sources.len and
-            self.focused_source == value.focused_source and
-            placementsEqual(
-                self.composition[0..self.composition_count],
-                value.sources,
-            ))
-            return;
         if (self.frame_revision == std.math.maxInt(u64))
             return error.RevisionExhausted;
         @memcpy(self.composition[0..value.sources.len], value.sources);
