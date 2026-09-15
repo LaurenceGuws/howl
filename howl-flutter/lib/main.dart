@@ -448,19 +448,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() {});
         }
-        await WidgetsBinding.instance.endOfFrame;
-        displayClock.stop();
-        _framePerf.recordTerminal(
+        unawaited(_retireLiveFrameAfterDisplay(
+          prepared,
+          displayClock,
           observeUs: observeClock.elapsedMicroseconds,
           prepareUs: prepareClock.elapsedMicroseconds,
-          displayWaitUs: displayClock.elapsedMicroseconds,
           revisionGap: previousRevision == 0 || revision < previousRevision
               ? null
               : revision - previousRevision,
-        );
-        for (final image in prepared.retired) {
-          image.dispose();
-        }
+        ));
       }
     } finally {
       if (identical(_nativeObserver, observer)) _nativeObserver = null;
@@ -468,6 +464,26 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (generation == _transportGeneration) _transportFault = null;
       if (observer != null) unawaited(observer.close().catchError((_) {}));
       if (control != null) unawaited(control.close().catchError((_) {}));
+    }
+  }
+
+  Future<void> _retireLiveFrameAfterDisplay(
+    NativeCanvasLeaseUpdate prepared,
+    Stopwatch displayClock, {
+    required int observeUs,
+    required int prepareUs,
+    required int? revisionGap,
+  }) async {
+    await WidgetsBinding.instance.endOfFrame;
+    displayClock.stop();
+    _framePerf.recordTerminal(
+      observeUs: observeUs,
+      prepareUs: prepareUs,
+      displayWaitUs: displayClock.elapsedMicroseconds,
+      revisionGap: revisionGap,
+    );
+    for (final image in prepared.retired) {
+      image.dispose();
     }
   }
 
