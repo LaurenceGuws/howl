@@ -24,6 +24,10 @@ Current canary:
   Up/Down/Tab move selection, Enter executes the selected action, and commands
   such as new tab, attach Home Session, Settings, and close tab are no longer
   display-only rows;
+- Settings is a real navigable application surface rather than one static mock:
+  Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
+  and Home Session pages expose the client's current truthful configuration and
+  ownership state;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;

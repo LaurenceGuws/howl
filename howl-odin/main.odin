@@ -30,6 +30,16 @@ App_Action :: enum {
     Close_Tab,
 }
 
+Settings_Page :: enum {
+    Startup,
+    Interaction,
+    Appearance,
+    Color_Schemes,
+    Actions,
+    Profile_Defaults,
+    Profile_Home,
+}
+
 Palette :: struct {
     window_bg: SDL.Color,
     title_bg: SDL.Color,
@@ -71,6 +81,7 @@ App :: struct {
     palette_open: bool,
     palette_selection: int,
     settings_open: bool,
+    settings_page: Settings_Page,
     session: rawptr,
     session_text: []u8,
     session_text_len: int,
@@ -409,6 +420,22 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         }
         return true
     }
+    if app.settings_open {
+        page := int(app.settings_page)
+        switch event.key.key {
+        case SDL.K_UP:
+            app.settings_page = Settings_Page((page + 6) % 7)
+        case SDL.K_DOWN, SDL.K_TAB:
+            app.settings_page = Settings_Page((page + 1) % 7)
+        case SDL.K_HOME:
+            app.settings_page = .Startup
+        case SDL.K_END:
+            app.settings_page = .Profile_Home
+        case:
+            return false
+        }
+        return true
+    }
     return false
 }
 
@@ -417,8 +444,35 @@ profile_menu_rect :: proc(tab_count: int) -> SDL.FRect {
     return {menu.x - 8, 44, 310, 166}
 }
 
+settings_panel_rect :: proc(width, height: f32) -> SDL.FRect {
+    return {width - 620, 58, 602, height - 76}
+}
+
+settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool) {
+    panel := settings_panel_rect(width, height)
+    sidebar := SDL.FRect{panel.x, panel.y, 178, panel.h}
+    if !inside(x, y, sidebar) {
+        return .Startup, false
+    }
+    tops := [7]f32{52, 86, 120, 154, 188, 272, 306}
+    for top, index in tops {
+        row := SDL.FRect{sidebar.x + 8, sidebar.y + top, sidebar.w - 16, 30}
+        if inside(x, y, row) {
+            return Settings_Page(index), true
+        }
+    }
+    return .Startup, false
+}
+
 handle_click :: proc(app: ^App, x, y, width, height: f32) {
     plus, menu, settings := tab_controls(app.tab_count, width)
+
+    if app.settings_open {
+        if page, ok := settings_page_at(x, y, width, height); ok {
+            app.settings_page = page
+            return
+        }
+    }
 
     if app.palette_open {
         box_w := f32(520)
@@ -697,36 +751,93 @@ draw_palette :: proc(app: ^App, width, height: f32) {
     }
 }
 
+settings_page_title :: proc(page: Settings_Page) -> string {
+    switch page {
+    case .Startup:          return "Startup"
+    case .Interaction:      return "Interaction"
+    case .Appearance:       return "Appearance"
+    case .Color_Schemes:    return "Color schemes"
+    case .Actions:          return "Actions"
+    case .Profile_Defaults: return "Profile defaults"
+    case .Profile_Home:     return "Home Session"
+    }
+    return ""
+}
+
+draw_setting_field :: proc(app: ^App, label, value: string, x, y, width: f32) {
+    draw_text(app, app.ui_font, label, x, y, palette.text_muted)
+    box := SDL.FRect{x, y + 24, width, 38}
+    draw_fill(app.renderer, box, palette.terminal_bg)
+    draw_outline(app.renderer, box, palette.border)
+    draw_text(app, app.ui_font, value, box.x + 12, box.y + 9, palette.text)
+}
+
 draw_settings :: proc(app: ^App, width, height: f32) {
-    panel := SDL.FRect{width - 620, 58, 602, height - 76}
+    panel := settings_panel_rect(width, height)
     draw_fill(app.renderer, panel, palette.title_bg)
     draw_outline(app.renderer, panel, palette.border)
 
     sidebar := SDL.FRect{panel.x, panel.y, 178, panel.h}
     draw_fill(app.renderer, sidebar, palette.tab_idle)
     draw_text(app, app.ui_font, "Settings", sidebar.x + 18, sidebar.y + 18, palette.text)
-    draw_text(app, app.ui_font, "Startup", sidebar.x + 18, sidebar.y + 64, palette.text_muted)
-    draw_text(app, app.ui_font, "Interaction", sidebar.x + 18, sidebar.y + 98, palette.text_muted)
-    draw_text(app, app.ui_font, "Appearance", sidebar.x + 18, sidebar.y + 132, palette.accent)
-    draw_text(app, app.ui_font, "Color schemes", sidebar.x + 18, sidebar.y + 166, palette.text_muted)
-    draw_text(app, app.ui_font, "Actions", sidebar.x + 18, sidebar.y + 200, palette.text_muted)
+
+    labels := [7]string{"Startup", "Interaction", "Appearance", "Color schemes", "Actions", "  Defaults", "  Home Session"}
+    tops := [7]f32{52, 86, 120, 154, 188, 272, 306}
+    for label, index in labels {
+        row := SDL.FRect{sidebar.x + 8, sidebar.y + tops[index], sidebar.w - 16, 30}
+        selected := int(app.settings_page) == index
+        if selected {
+            draw_fill(app.renderer, row, palette.tab_active)
+        }
+        draw_text(app, app.ui_font, label, row.x + 10, row.y + 6, selected ? palette.accent : palette.text_muted)
+    }
     draw_text(app, app.ui_font, "Profiles", sidebar.x + 18, sidebar.y + 250, palette.text)
-    draw_text(app, app.ui_font, "  Defaults", sidebar.x + 18, sidebar.y + 284, palette.text_muted)
-    draw_text(app, app.ui_font, "  Home", sidebar.x + 18, sidebar.y + 318, palette.text_muted)
 
     content_x := sidebar.x + sidebar.w + 28
-    draw_text(app, app.ui_font, "Appearance", content_x, panel.y + 22, palette.text)
-    draw_text(app, app.ui_font, "Theme", content_x, panel.y + 74, palette.text_muted)
-    value := SDL.FRect{content_x, panel.y + 100, 248, 38}
-    draw_fill(app.renderer, value, palette.terminal_bg)
-    draw_outline(app.renderer, value, palette.border)
-    draw_text(app, app.ui_font, "Dark", value.x + 12, value.y + 9, palette.text)
+    content_y := panel.y + 22
+    draw_text(app, app.ui_font, settings_page_title(app.settings_page), content_x, content_y, palette.text)
 
-    draw_text(app, app.ui_font, "Tab width mode", content_x, panel.y + 162, palette.text_muted)
-    value2 := SDL.FRect{content_x, panel.y + 188, 248, 38}
-    draw_fill(app.renderer, value2, palette.terminal_bg)
-    draw_outline(app.renderer, value2, palette.border)
-    draw_text(app, app.ui_font, "Equal", value2.x + 12, value2.y + 9, palette.text)
+    switch app.settings_page {
+    case .Startup:
+        draw_setting_field(app, "Default profile", "Home Session", content_x, content_y + 48, 300)
+        draw_setting_field(app, "Startup action", "Attach existing Session", content_x, content_y + 126, 300)
+        draw_setting_field(app, "Endpoint", HOME_ENDPOINT, content_x, content_y + 204, 360)
+    case .Interaction:
+        draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, 340)
+        draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
+        draw_setting_field(app, "Clipboard / selection", "Not wired yet", content_x, content_y + 204, 340)
+    case .Appearance:
+        draw_setting_field(app, "Theme", "Dark", content_x, content_y + 48, 248)
+        draw_setting_field(app, "Terminal font", "JetBrainsMono Nerd Font", content_x, content_y + 126, 340)
+        draw_setting_field(app, "Font size", "15 px", content_x, content_y + 204, 248)
+        draw_setting_field(app, "Coordinate space", "Window-logical / HiDPI scaled", content_x, content_y + 282, 340)
+    case .Color_Schemes:
+        draw_setting_field(app, "Current scheme", "Howl Dark", content_x, content_y + 48, 300)
+        draw_text(app, app.ui_font, "Palette", content_x, content_y + 134, palette.text_muted)
+        colors := [6]SDL.Color{palette.terminal_bg, palette.tab_idle, palette.border, palette.text_muted, palette.text, palette.accent}
+        for color, index in colors {
+            swatch := SDL.FRect{content_x + f32(index) * 52, content_y + 164, 40, 40}
+            draw_fill(app.renderer, swatch, color)
+            draw_outline(app.renderer, swatch, palette.border)
+        }
+    case .Actions:
+        action_names := [5]string{"New tab", "Close tab", "Command Palette", "Profile menu", "Settings"}
+        action_keys := [5]string{"Ctrl+T", "Ctrl+Shift+W", "Ctrl+Shift+P", "Ctrl+Shift+Space", "Ctrl+,"}
+        for name, index in action_names {
+            y := content_y + 54 + f32(index) * 42
+            draw_text(app, app.ui_font, name, content_x, y, palette.text)
+            draw_text(app, app.ui_font, action_keys[index], content_x + 230, y, palette.text_muted)
+        }
+    case .Profile_Defaults:
+        draw_setting_field(app, "Profile kind", "Attach recipe", content_x, content_y + 48, 300)
+        draw_setting_field(app, "Geometry leadership", "Observer only", content_x, content_y + 126, 300)
+        draw_setting_field(app, "Session lifetime", "Node-owned canonical Session", content_x, content_y + 204, 340)
+    case .Profile_Home:
+        draw_setting_field(app, "Name", "Home Session", content_x, content_y + 48, 300)
+        draw_setting_field(app, "Endpoint", HOME_ENDPOINT, content_x, content_y + 126, 360)
+        draw_setting_field(app, "Transport", "TCP / howl-client", content_x, content_y + 204, 300)
+        draw_setting_field(app, "Geometry", "Attach without resize leadership", content_x, content_y + 282, 360)
+    }
 }
 
 draw :: proc(app: ^App) {
