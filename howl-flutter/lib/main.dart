@@ -298,7 +298,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         presentation: nativePresentation,
-        armNextLiveObservation: true,
+        // Rain crossover canary: use the same compressed complete snapshot
+        // lane as Web while leaving native decode/render/presentation unchanged.
+        armNextLiveObservation: false,
       );
       _diagnostics.record(
         'Observer',
