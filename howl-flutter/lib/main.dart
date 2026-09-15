@@ -24,6 +24,7 @@ import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
 import 'terminal_key_repeat.dart';
+import 'terminal_pixel_center.dart';
 import 'terminal_presentation.dart';
 import 'terminal_selection.dart';
 import 'terminal_selection_chrome.dart';
@@ -1073,6 +1074,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       columns: metadata.columns,
       cellWidth: _cellWidth,
       rowHeight: _lineHeight,
+      devicePixelRatio: View.of(context).devicePixelRatio,
     );
     final cell = clamped
         ? geometry.clampedCellAt(position)
@@ -1184,6 +1186,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         columns: columns,
         cellWidth: _cellWidth,
         rowHeight: _lineHeight,
+        devicePixelRatio: View.of(context).devicePixelRatio,
       ),
       modifiers: howlModifierBits(),
     );
@@ -1258,6 +1261,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         columns: metadata.columns,
         cellWidth: _cellWidth,
         rowHeight: _lineHeight,
+        devicePixelRatio: View.of(context).devicePixelRatio,
       ),
       modifiers: howlModifierBits(),
     );
@@ -1494,6 +1498,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       columns: metadata.columns,
       cellWidth: _cellWidth,
       rowHeight: _lineHeight,
+      devicePixelRatio: View.of(context).devicePixelRatio,
     );
     final cell = geometry.cellAt(details.localPosition);
     if (cell == null) return;
@@ -1747,7 +1752,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       } else {
         content = ColoredBox(
           color: const Color(0xff090b0e),
-          child: Center(
+          child: TerminalPixelAlignedCenter(
+            devicePixelRatio: View.of(context).devicePixelRatio,
             child: RepaintBoundary(
               child: CustomPaint(
                 size: Size(
@@ -1758,6 +1764,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                   lease: nativeLease,
                   logicalWidth: nativeMetadata.columns * _cellWidth,
                   logicalHeight: nativeMetadata.rows * _lineHeight,
+                  devicePixelRatio: View.of(context).devicePixelRatio,
                 ),
               ),
             ),
@@ -1823,6 +1830,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                               columns: nativeMetadata.columns,
                               cellWidth: _cellWidth,
                               rowHeight: _lineHeight,
+                              devicePixelRatio: View.of(context).devicePixelRatio,
                             ),
                           ),
                         ),
@@ -1838,6 +1846,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                                 columns: nativeMetadata.columns,
                                 cellWidth: _cellWidth,
                                 rowHeight: _lineHeight,
+                                devicePixelRatio: View.of(context).devicePixelRatio,
                               ),
                               onStartChanged: _changeSelectionStart,
                               onEndChanged: _changeSelectionEnd,

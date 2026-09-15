@@ -229,6 +229,7 @@ final class TerminalSelectionGeometry {
     required this.columns,
     required this.cellWidth,
     required this.rowHeight,
+    this.devicePixelRatio,
   });
 
   final Size viewportSize;
@@ -236,10 +237,12 @@ final class TerminalSelectionGeometry {
   final int columns;
   final double cellWidth;
   final double rowHeight;
+  final double? devicePixelRatio;
 
   TerminalFit? get _fit => TerminalFit.contain(
     viewportSize: viewportSize,
     logicalSize: Size(columns * cellWidth, rows * rowHeight),
+    devicePixelRatio: devicePixelRatio,
   );
 
   double? get scale => _fit?.scale;

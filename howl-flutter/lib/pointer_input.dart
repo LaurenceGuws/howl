@@ -26,6 +26,7 @@ final class TerminalPointerGeometry {
     required this.columns,
     required this.cellWidth,
     required this.rowHeight,
+    this.devicePixelRatio,
   });
 
   final Size viewport;
@@ -33,6 +34,7 @@ final class TerminalPointerGeometry {
   final int columns;
   final double cellWidth;
   final double rowHeight;
+  final double? devicePixelRatio;
 
   TerminalPointerLocation? locate(Offset position) {
     if (rows <= 0 || columns <= 0 || cellWidth <= 0 || rowHeight <= 0) {
@@ -41,6 +43,7 @@ final class TerminalPointerGeometry {
     final fit = TerminalFit.contain(
       viewportSize: viewport,
       logicalSize: Size(columns * cellWidth, rows * rowHeight),
+      devicePixelRatio: devicePixelRatio,
     );
     final logical = fit?.logicalOffset(position);
     if (logical == null) return null;
