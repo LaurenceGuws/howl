@@ -13,7 +13,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v40-retina';
+const CANARY_GENERATION = 'v41-retina';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -57,7 +57,7 @@ const modifiedKeys = new Map();
 const presentationPixels = [16, 12, 9];
 const presentationCellWidths = [10, 8, 6];
 const presentationLineHeights = [20, 15, 12];
-const rasterScale = clamp(Math.ceil(devicePixelRatio || 1), 1, 4);
+const rasterScale = Math.max(1, Math.min(4, Math.ceil(devicePixelRatio || 1)));
 let presentationIndex = 0;
 let presentationChanging = false;
 let renderAssets = null;
