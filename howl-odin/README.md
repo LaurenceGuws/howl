@@ -17,6 +17,9 @@ Current canary:
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
+- the `+` action and `Ctrl+T` create additional Home Session views; tabs have
+  real selection/close semantics and the dropdown exposes the attach recipe,
+  command palette, and Settings actions rather than prototype labels;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
@@ -24,8 +27,11 @@ Current canary:
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
   `howl-client`'s duplicate-socket cancellation primitive;
-- additional tabs remain UI-only placeholders while profile/session ownership is
-  designed rather than guessed.
+- SDL rendering uses the window-logical coordinate space and lets the renderer
+  scale to high-density output, keeping chrome, cursor placement, and converted
+  pointer coordinates on one geometry contract;
+- profile/session launch policy beyond the current Home attach recipe remains
+  deliberately deferred rather than faked.
 
 ## Toolchain
 

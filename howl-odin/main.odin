@@ -12,6 +12,16 @@ UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
 SESSION_RETRY_MS :: 50
+MAX_TABS :: 8
+
+Tab_Kind :: enum {
+    Session,
+}
+
+Tab :: struct {
+    kind: Tab_Kind,
+    title: string,
+}
 
 Palette :: struct {
     window_bg: SDL.Color,
@@ -46,8 +56,10 @@ App :: struct {
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     running: bool,
+    tabs: [MAX_TABS]Tab,
     tab_count: int,
     active_tab: int,
+    profile_menu_open: bool,
     palette_open: bool,
     settings_open: bool,
     session: rawptr,
@@ -253,7 +265,7 @@ named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
 }
 
 send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
-    if app.session == nil || app.active_tab != 0 || app.palette_open || app.settings_open {
+    if app.session == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
         return false
     }
     key, ok := named_bridge_key(event.key.key)
@@ -292,22 +304,94 @@ tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.F
 }
 
 new_tab :: proc(app: ^App) {
-    if app.tab_count >= 4 {
+    if app.tab_count >= MAX_TABS {
         return
     }
+    app.tabs[app.tab_count] = Tab{kind = .Session, title = "Home Session"}
     app.tab_count += 1
     app.active_tab = app.tab_count - 1
+    app.profile_menu_open = false
+    app.palette_open = false
+    app.settings_open = false
+}
+
+close_tab :: proc(app: ^App, index: int) {
+    if app.tab_count <= 1 || index < 0 || index >= app.tab_count {
+        return
+    }
+    for i in index..<app.tab_count - 1 {
+        app.tabs[i] = app.tabs[i + 1]
+    }
+    app.tabs[app.tab_count - 1] = {}
+    app.tab_count -= 1
+    if app.active_tab > index {
+        app.active_tab -= 1
+    } else if app.active_tab >= app.tab_count {
+        app.active_tab = app.tab_count - 1
+    }
+}
+
+active_tab_is_session :: proc(app: ^App) -> bool {
+    return app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].kind == .Session
+}
+
+profile_menu_rect :: proc(tab_count: int) -> SDL.FRect {
+    _, menu, _ := tab_controls(tab_count, 0)
+    return {menu.x - 8, 44, 310, 166}
 }
 
 handle_click :: proc(app: ^App, x, y, width, height: f32) {
     plus, menu, settings := tab_controls(app.tab_count, width)
+
+    if app.palette_open {
+        box_w := f32(520)
+        box := SDL.FRect{(width - box_w) / 2, 92, box_w, 286}
+        if inside(x, y, {box.x + 18, box.y + 70, box.w - 36, 36}) {
+            new_tab(app)
+            return
+        }
+        if inside(x, y, {box.x + 18, box.y + 138, box.w - 36, 36}) {
+            new_tab(app)
+            return
+        }
+        if inside(x, y, {box.x + 18, box.y + 172, box.w - 36, 36}) {
+            app.palette_open = false
+            app.settings_open = true
+            return
+        }
+        if !inside(x, y, box) {
+            app.palette_open = false
+        }
+    }
+
+    if app.profile_menu_open {
+        panel := profile_menu_rect(app.tab_count)
+        if inside(x, y, {panel.x + 8, panel.y + 8, panel.w - 16, 40}) {
+            new_tab(app)
+            return
+        }
+        if inside(x, y, {panel.x + 8, panel.y + 62, panel.w - 16, 36}) {
+            app.profile_menu_open = false
+            app.palette_open = true
+            return
+        }
+        if inside(x, y, {panel.x + 8, panel.y + 108, panel.w - 16, 36}) {
+            app.profile_menu_open = false
+            app.settings_open = true
+            return
+        }
+        if !inside(x, y, panel) {
+            app.profile_menu_open = false
+        }
+    }
 
     if inside(x, y, plus) {
         new_tab(app)
         return
     }
     if inside(x, y, menu) {
-        app.palette_open = !app.palette_open
+        app.profile_menu_open = !app.profile_menu_open
+        app.palette_open = false
         app.settings_open = false
         return
     }
@@ -322,6 +406,11 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     for i in 0..<app.tab_count {
         rect := SDL.FRect{tab_x, 7, tab_w, 32}
         if inside(x, y, rect) {
+            close_rect := SDL.FRect{rect.x + rect.w - 30, rect.y, 30, rect.h}
+            if app.tab_count > 1 && inside(x, y, close_rect) {
+                close_tab(app, i)
+                return
+            }
             app.active_tab = i
             return
         }
@@ -339,18 +428,27 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         alt := .LALT in event.key.mod || .RALT in event.key.mod
         if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_P {
             app.palette_open = !app.palette_open
+            app.profile_menu_open = false
+            app.settings_open = false
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_SPACE {
+            app.profile_menu_open = !app.profile_menu_open
+            app.palette_open = false
             app.settings_open = false
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_COMMA {
             app.settings_open = !app.settings_open
+            app.profile_menu_open = false
             app.palette_open = false
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
-        } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.palette_open || app.settings_open) {
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
+            close_tab(app, app.active_tab)
+        } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
+            app.profile_menu_open = false
             app.palette_open = false
             app.settings_open = false
         } else if send_bridge_key(app, event) {
             // The active real Session consumed this named physical key.
-        } else if event.type == .KEY_DOWN && app.session != nil && app.active_tab == 0 && !app.palette_open && !app.settings_open && (ctrl || alt) {
+        } else if event.type == .KEY_DOWN && app.session != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
             scalar := u32(event.key.key)
             if scalar > 0 && scalar < 0x80 {
                 action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
@@ -366,7 +464,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .TEXT_INPUT:
-        if app.session != nil && app.active_tab == 0 && !app.palette_open && !app.settings_open && event.text.text != nil {
+        if app.session != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
             if len(text) != 0 {
                 result := send_text(app.session, raw_data(text), c.size_t(len(text)))
@@ -375,9 +473,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
         }
-    case .MOUSE_BUTTON_DOWN:
+    case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
+        _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
-        if SDL.GetCurrentRenderOutputSize(app.renderer, &w, &h) {
+        if event.type == .MOUSE_BUTTON_UP && SDL.GetWindowSize(app.window, &w, &h) {
             handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
         }
     case:
@@ -397,17 +496,13 @@ draw_tabs :: proc(app: ^App, width: f32) {
             draw_fill(app.renderer, underline, palette.accent)
         }
 
-        if i == 0 {
-            draw_text(app, app.ui_font, "Home", tab_x + 14, 14, active ? palette.text : palette.text_muted)
-            if session_attached(app) {
-                draw_fill(app.renderer, {tab_x + tab_w - 16, 20, 5, 5}, palette.accent)
-            }
-        } else if i == 1 {
-            draw_text(app, app.ui_font, "PowerShell", tab_x + 14, 14, active ? palette.text : palette.text_muted)
-        } else if i == 2 {
-            draw_text(app, app.ui_font, "Development", tab_x + 14, 14, active ? palette.text : palette.text_muted)
-        } else {
-            draw_text(app, app.ui_font, "Session", tab_x + 14, 14, active ? palette.text : palette.text_muted)
+        draw_text(app, app.ui_font, app.tabs[i].title, tab_x + 14, 14, active ? palette.text : palette.text_muted)
+        if app.tabs[i].kind == .Session && session_attached(app) {
+            indicator_x := tab_x + tab_w - (app.tab_count > 1 ? 38 : 16)
+            draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
+        }
+        if app.tab_count > 1 {
+            draw_text(app, app.ui_font, "x", tab_x + tab_w - 21, 14, palette.text_muted)
         }
         tab_x += tab_w + 4
     }
@@ -419,6 +514,20 @@ draw_tabs :: proc(app: ^App, width: f32) {
     draw_text(app, app.ui_font, "+", plus.x + 11, plus.y + 6, palette.text)
     draw_text(app, app.ui_font, "v", menu.x + 11, menu.y + 6, palette.text_muted)
     draw_text(app, app.ui_font, "Settings", settings.x + 12, settings.y + 6, palette.text_muted)
+}
+
+draw_profile_menu :: proc(app: ^App) {
+    panel := profile_menu_rect(app.tab_count)
+    draw_fill(app.renderer, panel, palette.title_bg)
+    draw_outline(app.renderer, panel, palette.border)
+
+    draw_text(app, app.ui_font, "Home Session", panel.x + 18, panel.y + 17, palette.text)
+    draw_text(app, app.ui_font, HOME_ENDPOINT, panel.x + 18, panel.y + 39, palette.text_muted)
+    draw_fill(app.renderer, {panel.x + 10, panel.y + 57, panel.w - 20, 1}, palette.border)
+    draw_text(app, app.ui_font, "Command Palette", panel.x + 18, panel.y + 72, palette.text)
+    draw_text(app, app.ui_font, "Ctrl+Shift+P", panel.x + 178, panel.y + 72, palette.text_muted)
+    draw_text(app, app.ui_font, "Settings", panel.x + 18, panel.y + 118, palette.text)
+    draw_text(app, app.ui_font, "Ctrl+,", panel.x + 228, panel.y + 118, palette.text_muted)
 }
 
 draw_real_session :: proc(app: ^App, width, height: f32) {
@@ -470,7 +579,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
     inset := SDL.FRect{18, 52, width - 36, height - 64}
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
-    if app.active_tab == 0 {
+    if active_tab_is_session(app) {
         draw_real_session(app, width, height)
     } else {
         draw_placeholder_session(app)
@@ -531,9 +640,10 @@ draw_settings :: proc(app: ^App, width, height: f32) {
 
 draw :: proc(app: ^App) {
     w, h: c.int
-    if !SDL.GetCurrentRenderOutputSize(app.renderer, &w, &h) {
+    if !SDL.GetWindowSize(app.window, &w, &h) {
         return
     }
+    _ = SDL.SetRenderLogicalPresentation(app.renderer, w, h, .STRETCH)
     width := f32(w)
     height := f32(h)
 
@@ -545,13 +655,16 @@ draw :: proc(app: ^App) {
     draw_tabs(app, width)
     draw_terminal(app, width, height)
 
+    if app.profile_menu_open {
+        draw_profile_menu(app)
+    }
+
     if app.palette_open {
         draw_palette(app, width, height)
     }
     if app.settings_open {
         draw_settings(app, width, height)
     }
-
     _ = SDL.RenderPresent(app.renderer)
 }
 
@@ -647,11 +760,12 @@ main :: proc() {
         ui_font = ui_font,
         terminal_font = terminal_font,
         running = true,
-        tab_count = 2,
+        tab_count = 1,
         active_tab = 0,
         session = session,
         session_text = session_text,
     }
+    app.tabs[0] = Tab{kind = .Session, title = "Home Session"}
 
     if session == nil {
         publish_initial_error(&app, string(control_diagnostic[:int(control_diagnostic_len)]))
