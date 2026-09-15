@@ -13,6 +13,8 @@ HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
 SESSION_RETRY_MS :: 50
 MAX_TABS :: 8
+FONT_PRESET_MIN :: 0
+FONT_PRESET_MAX :: 2
 
 Tab_Kind :: enum {
     Session,
@@ -72,6 +74,7 @@ App :: struct {
     text_engine: ^TTF.TextEngine,
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
+    terminal_font_preset: int,
     running: bool,
     tabs: [MAX_TABS]Tab,
     tab_count: int,
@@ -106,6 +109,32 @@ Session_Worker :: struct {
     app: ^App,
     observer: rawptr,
     scratch: []u8,
+}
+
+font_size_for_preset :: proc(preset: int) -> f32 {
+    switch preset {
+    case 0: return 12
+    case 1: return 15
+    case:   return 18
+    }
+}
+
+font_size_label :: proc(preset: int) -> string {
+    switch preset {
+    case 0: return "12 px"
+    case 1: return "15 px"
+    case:   return "18 px"
+    }
+}
+
+adjust_terminal_font :: proc(app: ^App, delta: int) {
+    next := clamp(app.terminal_font_preset + delta, FONT_PRESET_MIN, FONT_PRESET_MAX)
+    if next == app.terminal_font_preset {
+        return
+    }
+    if TTF.SetFontSize(app.terminal_font, font_size_for_preset(next)) {
+        app.terminal_font_preset = next
+    }
 }
 
 sdl_error :: proc(label: string) {
@@ -423,6 +452,18 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     if app.settings_open {
         page := int(app.settings_page)
         switch event.key.key {
+        case SDL.K_LEFT, SDL.K_MINUS:
+            if app.settings_page == .Appearance {
+                adjust_terminal_font(app, -1)
+                return true
+            }
+            return false
+        case SDL.K_RIGHT, SDL.K_EQUALS, SDL.K_PLUS:
+            if app.settings_page == .Appearance {
+                adjust_terminal_font(app, 1)
+                return true
+            }
+            return false
         case SDL.K_UP:
             app.settings_page = Settings_Page((page + 6) % 7)
         case SDL.K_DOWN, SDL.K_TAB:
@@ -568,6 +609,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             app.palette_open = false
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
+        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
+            adjust_terminal_font(app, -1)
+        } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
+            adjust_terminal_font(app, 1)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
             execute_action(app, .Close_Tab)
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
@@ -809,7 +854,7 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     case .Appearance:
         draw_setting_field(app, "Theme", "Dark", content_x, content_y + 48, 248)
         draw_setting_field(app, "Terminal font", "JetBrainsMono Nerd Font", content_x, content_y + 126, 340)
-        draw_setting_field(app, "Font size", "15 px", content_x, content_y + 204, 248)
+        draw_setting_field(app, "Font size   Left/Right or -/+", font_size_label(app.terminal_font_preset), content_x, content_y + 204, 248)
         draw_setting_field(app, "Coordinate space", "Window-logical / HiDPI scaled", content_x, content_y + 282, 340)
     case .Color_Schemes:
         draw_setting_field(app, "Current scheme", "Howl Dark", content_x, content_y + 48, 300)
@@ -961,6 +1006,7 @@ main :: proc() {
         text_engine = engine,
         ui_font = ui_font,
         terminal_font = terminal_font,
+        terminal_font_preset = 1,
         running = true,
         tab_count = 1,
         active_tab = 0,

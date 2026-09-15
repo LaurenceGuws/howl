@@ -28,6 +28,9 @@ Current canary:
   Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages expose the client's current truthful configuration and
   ownership state;
+- Appearance owns the first live presentation setting: terminal font size has
+  12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
+  and changing it never mutates canonical Session geometry;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
