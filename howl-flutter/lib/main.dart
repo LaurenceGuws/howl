@@ -156,6 +156,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _geometryLeader = widget.geometryLeader;
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
+      backspaceRunway: _platformInput.backspaceRunway,
       onCommit: (text) {
         _returnToLiveForInput();
         final modifiers = _takeModifierLatch();

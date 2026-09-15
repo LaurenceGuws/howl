@@ -24,6 +24,11 @@ final class TerminalPlatformInput {
   TextInputType get inputType =>
       usesAndroidImeHost ? TextInputType.visiblePassword : TextInputType.text;
 
+  /// iOS repeats software-keyboard Backspace by repeatedly mutating the native
+  /// editable. Keep enough private guard text to let that repeat run at native
+  /// cadence instead of restaging the editor after every deletion.
+  int get backspaceRunway => platform == TargetPlatform.iOS ? 64 : 1;
+
   Future<void> show(VoidCallback flutterShow) async {
     if (usesAndroidImeHost) {
       await _androidIme.invokeMethod<void>('show');

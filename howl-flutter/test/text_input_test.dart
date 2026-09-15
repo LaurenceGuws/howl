@@ -91,6 +91,45 @@ void main() {
     expect(staging.value, TerminalInputStager.canonicalValue);
   });
 
+  test(
+    'backspace runway preserves native repeat without per-key restaging',
+    () {
+      final staging = TerminalInputStager(backspaceRunway: 64);
+
+      TextEditingValue runway(int remaining) {
+        final left = List<String>.filled(
+          remaining,
+          TerminalInputStager.leftGuard,
+        ).join();
+        return TextEditingValue(
+          text: '$left${TerminalInputStager.rightGuard}',
+          selection: TextSelection.collapsed(offset: left.length),
+        );
+      }
+
+      expect(actionValues(staging.update(runway(63))), <Object>[
+        TerminalEditKey.backspace,
+      ]);
+      expect(staging.value, runway(63));
+
+      expect(actionValues(staging.update(runway(58))), <Object>[
+        for (var i = 0; i < 5; i += 1) TerminalEditKey.backspace,
+      ]);
+      expect(staging.value, runway(58));
+
+      expect(actionValues(staging.update(runway(38))), <Object>[
+        for (var i = 0; i < 20; i += 1) TerminalEditKey.backspace,
+      ]);
+      expect(staging.value, runway(38));
+
+      expect(actionValues(staging.update(runway(16))), <Object>[
+        for (var i = 0; i < 22; i += 1) TerminalEditKey.backspace,
+      ]);
+      expect(staging.value.text.length, 65);
+      expect(staging.value.selection.baseOffset, 64);
+    },
+  );
+
   test('committed newline forms become ordered semantic Enter actions', () {
     final staging = TerminalInputStager();
     expect(actionValues(staging.update(guardedValue('a\r\nb\n\rz'))), <Object>[
