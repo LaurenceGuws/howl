@@ -19,6 +19,7 @@ import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
+import 'terminal_key_repeat.dart';
 import 'terminal_presentation.dart';
 import 'terminal_selection.dart';
 import 'terminal_selection_chrome.dart';
@@ -151,6 +152,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool _selectionUsesTouchChrome = false;
   int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
+  late final TerminalKeyRepeatDrainer _softwareBackspaceRepeat;
 
   @override
   void initState() {
@@ -161,10 +163,21 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       'start platform=${Platform.operatingSystem} endpoint=${widget.endpoint} '
           'backspace_runway=${_platformInput.backspaceRunway}',
     );
+    _softwareBackspaceRepeat = TerminalKeyRepeatDrainer(
+      interval: const Duration(milliseconds: 25),
+      onTick: () => _queueControl(
+        (control) => control.namedKey(
+          keyName: HowlInput.namedBackspace,
+          action: HowlInput.keyPress,
+          modifiers: 0,
+        ),
+      ),
+    );
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       backspaceRunway: _platformInput.backspaceRunway,
       onCommit: (text) {
+        _softwareBackspaceRepeat.cancelPending();
         _returnToLiveForInput();
         final modifiers = _takeModifierLatch();
         final runes = text.runes.toList(growable: false);
@@ -174,19 +187,28 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           _sendCommittedText(text);
         }
       },
-      onEditKey: (key) {
+      onEditKey: (key, count) {
         _returnToLiveForInput();
         final modifiers = _takeModifierLatch();
+        if (_platformInput.platform == TargetPlatform.iOS &&
+            key == TerminalEditKey.backspace &&
+            modifiers == 0) {
+          _sendIosBackspaceBatch(count);
+          return;
+        }
+        _softwareBackspaceRepeat.cancelPending();
         final keyName = switch (key) {
           TerminalEditKey.enter => HowlInput.namedEnter,
           TerminalEditKey.backspace => HowlInput.namedBackspace,
           TerminalEditKey.delete => HowlInput.namedDelete,
         };
-        _sendNamedKey(
-          keyName: keyName,
-          action: HowlInput.keyPress,
-          modifiers: modifiers,
-        );
+        for (var index = 0; index < count; index += 1) {
+          _sendNamedKey(
+            keyName: keyName,
+            action: HowlInput.keyPress,
+            modifiers: index == 0 ? modifiers : 0,
+          );
+        }
       },
     );
     unawaited(_observe());
@@ -477,6 +499,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void _dropTransport(int generation) {
     if (generation != _transportGeneration) return;
     _diagnostics.record('Transport', 'drop generation=$generation');
+    _softwareBackspaceRepeat.cancelPending();
     _transportGeneration += 1;
     final observer = _nativeObserver;
     final control = _nativeControl;
@@ -587,6 +610,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _queueControl((control) => control.committedText(text));
   }
 
+  void _sendIosBackspaceBatch(int count) {
+    if (count <= 0) return;
+    var remaining = count;
+    if (!_softwareBackspaceRepeat.active) {
+      _sendNamedKey(
+        keyName: HowlInput.namedBackspace,
+        action: HowlInput.keyPress,
+      );
+      remaining -= 1;
+    }
+    if (count > 1) {
+      _diagnostics.record(
+        'Input',
+        'ios_backspace_batch count=$count pending=${_softwareBackspaceRepeat.pending}',
+      );
+    }
+    if (remaining == 0) return;
+    if (_softwareBackspaceRepeat.add(remaining)) return;
+    _reportFailure(const NativeHostException('ios_backspace_repeat_overflow'));
+  }
+
   void _sendNamedKey({
     required int keyName,
     required int action,
@@ -654,12 +698,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _sendToolbarKey(int keyName) {
+    _softwareBackspaceRepeat.cancelPending();
     final modifiers = _takeModifierLatch();
     _sendNamedKeyCycle(keyName, modifiers: modifiers);
     _activateTextInput();
   }
 
   void _pasteClipboard() {
+    _softwareBackspaceRepeat.cancelPending();
     _returnToLiveForInput();
     _takeModifierLatch();
     unawaited(_pasteClipboardAsync());
@@ -1552,6 +1598,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    _softwareBackspaceRepeat.close();
     _historyWheelTimer?.cancel();
     _historyWheelTimer = null;
     _textInput.detach();

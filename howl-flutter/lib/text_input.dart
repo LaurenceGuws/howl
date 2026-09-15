@@ -15,9 +15,10 @@ final class TerminalCommittedText extends TerminalInputAction {
 }
 
 final class TerminalEditKeyAction extends TerminalInputAction {
-  const TerminalEditKeyAction(this.key);
+  const TerminalEditKeyAction(this.key, {this.count = 1}) : assert(count > 0);
 
   final TerminalEditKey key;
+  final int count;
 }
 
 /// Small platform-editing model for a terminal, not a retained text document.
@@ -94,9 +95,9 @@ final class TerminalInputStager {
     if (nextRunway != null) {
       if (previousRunway != null && nextRunway < previousRunway) {
         final removed = previousRunway - nextRunway;
-        for (var index = 0; index < removed; index += 1) {
-          actions.add(const TerminalEditKeyAction(TerminalEditKey.backspace));
-        }
+        actions.add(
+          TerminalEditKeyAction(TerminalEditKey.backspace, count: removed),
+        );
         final recenterAt = backspaceRunway ~/ 4;
         if (nextRunway <= recenterAt) _value = _canonicalValue;
       }
@@ -174,7 +175,7 @@ final class TerminalTextInputClient with TextInputClient {
   }) : _stager = TerminalInputStager(backspaceRunway: backspaceRunway);
 
   final void Function(String text) onCommit;
-  final void Function(TerminalEditKey key) onEditKey;
+  final void Function(TerminalEditKey key, int count) onEditKey;
   final TextInputType inputType;
   final TerminalInputStager _stager;
   TextInputConnection? _connection;
@@ -239,15 +240,15 @@ final class TerminalTextInputClient with TextInputClient {
       switch (action) {
         case TerminalCommittedText(:final text):
           onCommit(text);
-        case TerminalEditKeyAction(:final key):
-          onEditKey(key);
+        case TerminalEditKeyAction(:final key, :final count):
+          onEditKey(key, count);
       }
     }
   }
 
   @override
   void performAction(TextInputAction action) {
-    if (action == TextInputAction.newline) onEditKey(TerminalEditKey.enter);
+    if (action == TextInputAction.newline) onEditKey(TerminalEditKey.enter, 1);
   }
 
   @override

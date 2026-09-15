@@ -18,13 +18,18 @@ TextEditingValue guardedValue(
   );
 }
 
-List<Object> actionValues(List<TerminalInputAction> actions) => [
-  for (final action in actions)
+List<Object> actionValues(List<TerminalInputAction> actions) {
+  final values = <Object>[];
+  for (final action in actions) {
     switch (action) {
-      TerminalCommittedText(:final text) => text,
-      TerminalEditKeyAction(:final key) => key,
-    },
-];
+      case TerminalCommittedText(:final text):
+        values.add(text);
+      case TerminalEditKeyAction(:final key, :final count):
+        values.addAll(List<Object>.filled(count, key));
+    }
+  }
+  return values;
+}
 
 void main() {
   test('active IME composition stays local until final guarded commit', () {
@@ -115,10 +120,15 @@ void main() {
       expect(actionValues(staging.update(runway(58))), <Object>[
         for (var i = 0; i < 5; i += 1) TerminalEditKey.backspace,
       ]);
-      expect(staging.value, runway(58));
+      final batch = staging.update(runway(53));
+      expect(batch, hasLength(1));
+      expect((batch.single as TerminalEditKeyAction).count, 5);
+      expect(staging.value, runway(53));
 
+      // Reset the expected runway for the remaining exact-count checks.
+      staging.reset();
       expect(actionValues(staging.update(runway(38))), <Object>[
-        for (var i = 0; i < 20; i += 1) TerminalEditKey.backspace,
+        for (var i = 0; i < 26; i += 1) TerminalEditKey.backspace,
       ]);
       expect(staging.value, runway(38));
 
@@ -159,7 +169,9 @@ void main() {
       final editKeys = <TerminalEditKey>[];
       final client = TerminalTextInputClient(
         onCommit: committed.add,
-        onEditKey: editKeys.add,
+        onEditKey: (key, count) {
+          editKeys.addAll(List<TerminalEditKey>.filled(count, key));
+        },
       );
       client.attach(viewId: tester.view.viewId);
       addTearDown(client.detach);
@@ -201,7 +213,9 @@ void main() {
     final editKeys = <TerminalEditKey>[];
     final client = TerminalTextInputClient(
       onCommit: (_) {},
-      onEditKey: editKeys.add,
+      onEditKey: (key, count) {
+        editKeys.addAll(List<TerminalEditKey>.filled(count, key));
+      },
     );
     client.attach(viewId: tester.view.viewId);
     addTearDown(client.detach);
@@ -236,7 +250,7 @@ void main() {
       final client = TerminalTextInputClient(
         inputType: platformInput.inputType,
         onCommit: (_) {},
-        onEditKey: (_) {},
+        onEditKey: (_, _) {},
       );
       client.attach(viewId: tester.view.viewId);
       addTearDown(client.detach);
