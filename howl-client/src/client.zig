@@ -48,6 +48,7 @@ pub const ConnectStage = enum(u8) {
 pub const ConnectDiagnostic = struct {
     stage: ConnectStage = .start,
     os_error: i32 = 0,
+    poll_interrupts: u16 = 0,
 };
 
 pub const Frame = struct {
@@ -245,16 +246,31 @@ fn connectTcp(
 
     if (!connected) {
         diagnostic.stage = .socket_poll;
-        var fds = [_]posix.pollfd{.{
-            .fd = fd,
-            .events = posix.POLL.OUT,
-            .revents = 0,
-        }};
-        const ready = posix.poll(&fds, tcp_connect_timeout_ms) catch
-            return error.SocketConnectFailed;
-        if (ready == 0) return error.SocketConnectTimedOut;
-        if (fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL | posix.POLL.OUT) == 0)
-            return error.SocketConnectFailed;
+        const deadline_ms = try std.math.add(i64, try monotonicMilliseconds(), tcp_connect_timeout_ms);
+        while (true) {
+            const now_ms = try monotonicMilliseconds();
+            if (now_ms >= deadline_ms) return error.SocketConnectTimedOut;
+            const remaining_ms: i32 = @intCast(@min(deadline_ms - now_ms, std.math.maxInt(i32)));
+            var fds = [_]posix.pollfd{.{
+                .fd = fd,
+                .events = posix.POLL.OUT,
+                .revents = 0,
+            }};
+            const ready_raw = system.poll(&fds, 1, remaining_ms);
+            switch (posix.errno(ready_raw)) {
+                .SUCCESS => {
+                    if (ready_raw == 0) return error.SocketConnectTimedOut;
+                    if (fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL | posix.POLL.OUT) == 0)
+                        return error.SocketConnectFailed;
+                    break;
+                },
+                .INTR => {
+                    diagnostic.poll_interrupts +|= 1;
+                    continue;
+                },
+                else => return error.SocketConnectFailed,
+            }
+        }
         diagnostic.stage = .socket_verify;
         try verifySocketConnected(fd, diagnostic);
     }
@@ -268,6 +284,14 @@ fn connectTcp(
 
 fn errnoCode(value: posix.E) i32 {
     return @intCast(@backingInt(value));
+}
+
+fn monotonicMilliseconds() error{SocketConnectFailed}!i64 {
+    var now: posix.timespec = undefined;
+    if (posix.errno(system.clock_gettime(.MONOTONIC, &now)) != .SUCCESS)
+        return error.SocketConnectFailed;
+    const nanoseconds = @as(i128, now.sec) * std.time.ns_per_s + now.nsec;
+    return @intCast(@divFloor(nanoseconds, std.time.ns_per_ms));
 }
 
 fn nonblockingFlag() usize {

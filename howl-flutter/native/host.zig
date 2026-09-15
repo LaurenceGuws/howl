@@ -296,8 +296,13 @@ fn writeConnectDiagnostic(
     if (output_capacity == 0) return;
     const rendered = std.fmt.bufPrint(
         output_ptr[0..output_capacity],
-        "{s} stage={s} os_error={d}",
-        .{ failure_name, @tagName(diagnostic.stage), diagnostic.os_error },
+        "{s} stage={s} os_error={d} poll_interrupts={d}",
+        .{
+            failure_name,
+            @tagName(diagnostic.stage),
+            diagnostic.os_error,
+            diagnostic.poll_interrupts,
+        },
     ) catch return;
     output_len.* = rendered.len;
 }
