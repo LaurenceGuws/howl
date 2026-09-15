@@ -46,6 +46,10 @@ Current canary:
   preset persists across app restarts in a small schema-versioned
   `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file + rename rather
   than in-place truncation;
+- Startup owns the second persisted setting: the default profile can be Home
+  Session (attach) or Local shell (create owned Session). Missing fields in the
+  earlier schema-1 file retain defaults, and later saves update the existing
+  config directory instead of treating its normal `.Exist` result as failure;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;

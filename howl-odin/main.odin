@@ -26,6 +26,7 @@ CONFIG_SCHEMA :: 1
 User_Config :: struct {
     schema: int `json:"schema"`,
     terminal_font_pixels: int `json:"terminal_font_pixels"`,
+    startup_profile: int `json:"startup_profile"`,
 }
 
 Tab_Kind :: enum {
@@ -153,6 +154,7 @@ App :: struct {
     settings_open: bool,
     settings_page: Settings_Page,
     next_session_identity: u32,
+    startup_profile: int,
 }
 
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
@@ -195,7 +197,7 @@ font_preset_from_pixels :: proc(pixels: int) -> int {
 }
 
 load_user_config :: proc() -> User_Config {
-    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15}
+    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15, startup_profile = 0}
     _, path, _, ok := config_paths()
     if !ok {
         return result
@@ -211,6 +213,9 @@ load_user_config :: proc() -> User_Config {
     if candidate.terminal_font_pixels != 12 && candidate.terminal_font_pixels != 15 && candidate.terminal_font_pixels != 18 {
         return result
     }
+    if candidate.startup_profile < 0 || candidate.startup_profile > 1 {
+        return result
+    }
     return candidate
 }
 
@@ -219,12 +224,13 @@ save_user_config :: proc(app: ^App) {
     if !ok {
         return
     }
-    if err := os.make_directory_all(directory); err != nil {
+    if err := os.make_directory_all(directory); err != nil && err != .Exist {
         return
     }
     value := User_Config{
         schema = CONFIG_SCHEMA,
         terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
+        startup_profile = app.startup_profile,
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
     if err != nil {
@@ -236,6 +242,23 @@ save_user_config :: proc(app: ^App) {
     if os.rename(temporary, path) != nil {
         _ = os.remove(temporary)
     }
+}
+
+startup_profile_label :: proc(value: int) -> string {
+    return value == 1 ? "Local shell" : "Home Session"
+}
+
+startup_action_label :: proc(value: int) -> string {
+    return value == 1 ? "Create owned Session" : "Attach existing Session"
+}
+
+adjust_startup_profile :: proc(app: ^App, delta: int) {
+    next := clamp(app.startup_profile + delta, 0, 1)
+    if next == app.startup_profile {
+        return
+    }
+    app.startup_profile = next
+    save_user_config(app)
 }
 
 font_size_for_preset :: proc(preset: int) -> f32 {
@@ -1222,12 +1245,20 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         page := int(app.settings_page)
         switch event.key.key {
         case SDL.K_LEFT, SDL.K_MINUS:
+            if app.settings_page == .Startup {
+                adjust_startup_profile(app, -1)
+                return true
+            }
             if app.settings_page == .Appearance {
                 adjust_terminal_font(app, -1)
                 return true
             }
             return false
         case SDL.K_RIGHT, SDL.K_EQUALS, SDL.K_PLUS:
+            if app.settings_page == .Startup {
+                adjust_startup_profile(app, 1)
+                return true
+            }
             if app.settings_page == .Appearance {
                 adjust_terminal_font(app, 1)
                 return true
@@ -1658,9 +1689,9 @@ draw_settings :: proc(app: ^App, width, height: f32) {
 
     switch app.settings_page {
     case .Startup:
-        draw_setting_field(app, "Default profile", "Home Session", content_x, content_y + 48, 300)
-        draw_setting_field(app, "Startup action", "Attach existing Session", content_x, content_y + 126, 300)
-        draw_setting_field(app, "Endpoint", HOME_ENDPOINT, content_x, content_y + 204, 360)
+        draw_setting_field(app, "Default profile   Left/Right", startup_profile_label(app.startup_profile), content_x, content_y + 48, 300)
+        draw_setting_field(app, "Startup action", startup_action_label(app.startup_profile), content_x, content_y + 126, 300)
+        draw_setting_field(app, app.startup_profile == 1 ? "Session owner" : "Endpoint", app.startup_profile == 1 ? "Sibling howl-sessiond" : HOME_ENDPOINT, content_x, content_y + 204, 360)
     case .Interaction:
         draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, 340)
         draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
@@ -1804,8 +1835,13 @@ main :: proc() {
         tab_count = 0,
         active_tab = -1,
         next_session_identity = 1,
+        startup_profile = user_config.startup_profile,
     }
-    attach_home_tab(&app)
+    if app.startup_profile == 1 {
+        new_tab(&app)
+    } else {
+        attach_home_tab(&app)
+    }
 
     for app.running {
         event: SDL.Event
