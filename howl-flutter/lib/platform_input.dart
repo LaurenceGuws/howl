@@ -29,6 +29,10 @@ final class TerminalPlatformInput {
   /// cadence instead of restaging the editor after every deletion.
   int get backspaceRunway => platform == TargetPlatform.iOS ? 64 : 1;
 
+  /// iOS reports Return both through the editing value and performAction.
+  /// The editing mutation is authoritative so one Return stays one Enter.
+  bool get newlineActionFallback => platform != TargetPlatform.iOS;
+
   Future<void> show(VoidCallback flutterShow) async {
     if (usesAndroidImeHost) {
       await _androidIme.invokeMethod<void>('show');
