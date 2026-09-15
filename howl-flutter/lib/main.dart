@@ -12,6 +12,7 @@ import 'platform_input.dart';
 import 'history_viewport.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
+import 'ios_network_probe.dart';
 import 'launch_config.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
@@ -105,6 +106,7 @@ final class _PresentationRestart implements Exception {
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final HowlDiagnostics _diagnostics = HowlDiagnostics();
+  final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
   final HistoryViewport _history = HistoryViewport();
@@ -712,6 +714,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   Future<void> _copyDiagnostics() async {
+    final networkProbe = await _iosNetworkProbe.probe(widget.endpoint);
+    if (networkProbe != null) {
+      _diagnostics.record('iOS Network', networkProbe);
+    }
     _diagnostics.record(
       'App',
       'copy_log entries=${_diagnostics.entries.length}',
