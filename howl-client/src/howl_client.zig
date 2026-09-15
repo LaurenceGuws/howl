@@ -8,6 +8,8 @@
 const impl = @import("client.zig");
 
 pub const Error = impl.Error;
+pub const ConnectStage = impl.ConnectStage;
+pub const ConnectDiagnostic = impl.ConnectDiagnostic;
 pub const Frame = impl.Frame;
 pub const Cancellation = impl.Cancellation;
 pub const Connection = impl.Connection;

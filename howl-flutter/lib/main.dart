@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'desktop_selection.dart';
+import 'diagnostics.dart';
 import 'platform_input.dart';
 import 'history_viewport.dart';
 import 'howl_endpoint.dart';
@@ -102,6 +103,7 @@ final class _PresentationRestart implements Exception {
 
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
+  final HowlDiagnostics _diagnostics = HowlDiagnostics();
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
   final HistoryViewport _history = HistoryViewport();
@@ -154,6 +156,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void initState() {
     super.initState();
     _geometryLeader = widget.geometryLeader;
+    _diagnostics.record(
+      'App',
+      'start platform=${Platform.operatingSystem} endpoint=${widget.endpoint} '
+          'backspace_runway=${_platformInput.backspaceRunway}',
+    );
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       backspaceRunway: _platformInput.backspaceRunway,
@@ -191,13 +198,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     while (!_stopping) {
       final generation = ++_transportGeneration;
       var attached = false;
+      _diagnostics.record('Transport', 'generation=$generation start');
       try {
         await _observeNativeLifetime(generation, () => attached = true);
         return;
       } catch (error) {
         if (_stopping || !mounted) return;
+        _diagnostics.record(
+          'Transport',
+          'generation=$generation failure attached=$attached error=$error',
+        );
         _dropTransport(generation);
         if (error is _PresentationRestart) {
+          _diagnostics.record('Transport', 'presentation restart');
           _transportRecovery.succeeded();
           final oldLive = _nativeLiveLease;
           _proposedRows = 0;
@@ -221,6 +234,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _proposedRows = 0;
         _proposedColumns = 0;
         final delay = _transportRecovery.failed();
+        _diagnostics.record(
+          'Transport',
+          'retry in ${delay.inMilliseconds}ms failures=${_transportRecovery.failures}',
+        );
         setState(() {
           _failure = error;
           _reconnecting = true;
@@ -244,17 +261,24 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         zoomPreset != _zoomPreset ||
         rasterScale != terminalRasterScale(View.of(context).devicePixelRatio);
     try {
+      _diagnostics.record('Control', 'create generation=$generation');
       control = await NativeHostControl.create(
         endpoint: widget.endpoint.toString(),
       );
+      _diagnostics.record('Control', 'attached generation=$generation');
       if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       markAttached();
 
+      _diagnostics.record('Observer', 'create generation=$generation');
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         presentation: nativePresentation,
         armNextLiveObservation: true,
+      );
+      _diagnostics.record(
+        'Observer',
+        'attached generation=$generation bounds=${observer.maximumRows}x${observer.maximumColumns}',
       );
       if (presentationChanged()) throw const _PresentationRestart();
       _presentationMaximumRows = observer.maximumRows;
@@ -294,6 +318,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _restoreImeAfterPresentationRestart = null;
       }
       var revision = 0;
+      var loggedFirstFrame = false;
       while (!_stopping && generation == _transportGeneration) {
         // Match Web's latest-frame policy: only ask Session for the next live
         // observation after the previous frame reached the display boundary.
@@ -327,6 +352,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           preloaded: observed.preloaded,
         );
         revision = packet.metadata.revision;
+        if (!loggedFirstFrame) {
+          loggedFirstFrame = true;
+          _diagnostics.record(
+            'Observer',
+            'first_frame revision=$revision geometry=${packet.metadata.rows}x${packet.metadata.columns}',
+          );
+        }
         if (presentationChanged()) {
           disposeNativeCanvasLeaseCandidate(prepared);
           throw const _PresentationRestart();
@@ -444,6 +476,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _dropTransport(int generation) {
     if (generation != _transportGeneration) return;
+    _diagnostics.record('Transport', 'drop generation=$generation');
     _transportGeneration += 1;
     final observer = _nativeObserver;
     final control = _nativeControl;
@@ -465,6 +498,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _reportFailure(Object error) {
     if (!mounted || _stopping) return;
+    _diagnostics.record('App', 'hard_failure error=$error');
     setState(() {
       _failure = error;
       _reconnecting = false;
@@ -629,6 +663,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _returnToLiveForInput();
     _takeModifierLatch();
     unawaited(_pasteClipboardAsync());
+  }
+
+  Future<void> _copyDiagnostics() async {
+    _diagnostics.record(
+      'App',
+      'copy_log entries=${_diagnostics.entries.length}',
+    );
+    await Clipboard.setData(ClipboardData(text: _diagnostics.export()));
   }
 
   void _copyVisibleText() {
@@ -1677,6 +1719,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             onKeyboard: _showSoftKeyboard,
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
+            onLog: () => unawaited(_copyDiagnostics()),
           ),
         ],
       ),

@@ -19,6 +19,7 @@ final class TerminalControlStrip extends StatelessWidget {
     required this.onKeyboard,
     required this.onCopy,
     required this.onPaste,
+    required this.onLog,
   });
 
   final int modifierLatch;
@@ -31,6 +32,7 @@ final class TerminalControlStrip extends StatelessWidget {
   final VoidCallback onKeyboard;
   final VoidCallback onCopy;
   final VoidCallback onPaste;
+  final VoidCallback onLog;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -55,6 +57,7 @@ final class TerminalControlStrip extends StatelessWidget {
           _action('Lead', onLead, latched: geometryLeader),
           _action('Copy', onCopy),
           _action('Paste', onPaste),
+          _action('Log', onLog),
         ],
       ),
     ),

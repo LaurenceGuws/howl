@@ -22,6 +22,7 @@ const int _nativeHostMaximumImageRefillBytes =
     _nativeHostImageRefillHeaderBytes + _nativeHostMaximumImageBytes;
 const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 32;
+const int _nativeCreateDiagnosticBytes = 256;
 
 final class NativeHostException implements Exception {
   const NativeHostException(this.code);
@@ -666,6 +667,9 @@ typedef _CreateNative =
       ffi.Uint16,
       ffi.Uint16,
       ffi.Uint16,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
     );
 typedef _CreateDart =
     ffi.Pointer<ffi.Void> Function(
@@ -680,6 +684,9 @@ typedef _CreateDart =
       int,
       int,
       int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Size>,
     );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
@@ -741,6 +748,17 @@ ffi.DynamicLibrary _nativeHostLibrary() =>
     Platform.isIOS
         ? ffi.DynamicLibrary.process()
         : ffi.DynamicLibrary.open('libhowl_native_host.so');
+
+String _nativeCreateDiagnostic(
+  ffi.Pointer<ffi.Uint8> bytes,
+  int length,
+) {
+  if (length <= 0 || length > _nativeCreateDiagnosticBytes) return '';
+  return utf8
+      .decode(bytes.asTypedList(length), allowMalformed: true)
+      .replaceAll(RegExp(r'[\r\n]+'), ' ')
+      .trim();
+}
 
 Future<void> _nativeHostWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
@@ -827,6 +845,8 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       secondaryFallbackBytes.isEmpty
           ? ffi.nullptr
           : copyString(secondaryFallback);
+  final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
+  final diagnosticLength = calloc<ffi.Size>();
   final host = create(
     endpointPointer,
     endpointBytes.length,
@@ -839,6 +859,9 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     fontPixels,
     cellWidth,
     lineHeight,
+    diagnosticPointer,
+    _nativeCreateDiagnosticBytes,
+    diagnosticLength,
   );
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);
@@ -847,10 +870,22 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     calloc.free(secondaryFallbackPointer);
   }
   if (host == ffi.nullptr) {
-    ready.send('worker_host_create');
+    final diagnostic = _nativeCreateDiagnostic(
+      diagnosticPointer,
+      diagnosticLength.value,
+    );
+    calloc.free(diagnosticPointer);
+    calloc.free(diagnosticLength);
+    ready.send(
+      diagnostic.isEmpty
+          ? 'worker_host_create'
+          : 'worker_host_create:$diagnostic',
+    );
     commands.close();
     return;
   }
+  calloc.free(diagnosticPointer);
+  calloc.free(diagnosticLength);
 
   if (armNextLiveObservation && setLiveObservePipeline(host, 1) != 0) {
     destroy(host);
@@ -1184,9 +1219,21 @@ enum _NativeControlOperation {
 }
 
 typedef _ControlCreateNative =
-    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Uint8>, ffi.Size);
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
+    );
 typedef _ControlCreateDart =
-    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Uint8>, int);
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Size>,
+    );
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlTextNative =
@@ -1316,13 +1363,33 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final endpointBytes = utf8.encode(endpoint);
   final endpointPointer = calloc<ffi.Uint8>(endpointBytes.length);
   endpointPointer.asTypedList(endpointBytes.length).setAll(0, endpointBytes);
-  final control = create(endpointPointer, endpointBytes.length);
+  final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
+  final diagnosticLength = calloc<ffi.Size>();
+  final control = create(
+    endpointPointer,
+    endpointBytes.length,
+    diagnosticPointer,
+    _nativeCreateDiagnosticBytes,
+    diagnosticLength,
+  );
   calloc.free(endpointPointer);
   if (control == ffi.nullptr) {
-    ready.send('control_host_create');
+    final diagnostic = _nativeCreateDiagnostic(
+      diagnosticPointer,
+      diagnosticLength.value,
+    );
+    calloc.free(diagnosticPointer);
+    calloc.free(diagnosticLength);
+    ready.send(
+      diagnostic.isEmpty
+          ? 'control_host_create'
+          : 'control_host_create:$diagnostic',
+    );
     commands.close();
     return;
   }
+  calloc.free(diagnosticPointer);
+  calloc.free(diagnosticLength);
   final selectionOutput = calloc<ffi.Uint8>(nativeSelectionOutputBytes);
   final selectionLength = calloc<ffi.Size>();
   final interactionOutput = calloc<ffi.Uint8>(nativeInteractionStateBytes);

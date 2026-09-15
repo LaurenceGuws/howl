@@ -34,6 +34,15 @@ void main() {
     );
     expect(
       retriableTransportFailure(
+        const NativeHostException(
+          'control_host_create:SocketConnectFailed stage=socket_verify os_error=65',
+        ),
+        attached: false,
+      ),
+      true,
+    );
+    expect(
+      retriableTransportFailure(
         const NativeHostException('observe_4'),
         attached: true,
       ),

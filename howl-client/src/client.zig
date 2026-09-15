@@ -26,6 +26,30 @@ pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.Pa
     SocketPathTooLong,
 };
 
+pub const ConnectStage = enum(u8) {
+    start,
+    endpoint,
+    socket_create,
+    file_status_read,
+    nonblocking_enable,
+    socket_connect,
+    socket_poll,
+    socket_verify,
+    blocking_restore,
+    tcp_nodelay,
+    close_on_exec,
+    hello_write,
+    welcome_read,
+    welcome_kind,
+    welcome_payload,
+    ready,
+};
+
+pub const ConnectDiagnostic = struct {
+    stage: ConnectStage = .start,
+    os_error: i32 = 0,
+};
+
 pub const Frame = struct {
     allocator: std.mem.Allocator,
     kind: protocol.Kind,
@@ -58,13 +82,24 @@ pub const Connection = struct {
     client_id: protocol.ClientId,
 
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
+        var diagnostic: ConnectDiagnostic = .{};
+        return connectDiagnosed(allocator, endpoint, &diagnostic);
+    }
+
+    pub fn connectDiagnosed(
+        allocator: std.mem.Allocator,
+        endpoint: []const u8,
+        diagnostic: *ConnectDiagnostic,
+    ) Error!Connection {
+        diagnostic.* = .{};
+        diagnostic.stage = .endpoint;
         const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-            try connectTcp(try tcpEndpoint(endpoint))
+            try connectTcp(try tcpEndpoint(endpoint), diagnostic)
         else if (std.mem.startsWith(u8, endpoint, unix_prefix))
             try connectUnix(endpoint[unix_prefix.len..])
         else
             return error.InvalidEndpoint;
-        return initOwnedFd(allocator, fd);
+        return initOwnedFd(allocator, fd, diagnostic);
     }
 
     pub fn deinit(self: *Connection) void {
@@ -108,20 +143,32 @@ pub const Connection = struct {
     }
 };
 
-fn initOwnedFd(allocator: std.mem.Allocator, fd: posix.fd_t) Error!Connection {
+fn initOwnedFd(
+    allocator: std.mem.Allocator,
+    fd: posix.fd_t,
+    diagnostic: *ConnectDiagnostic,
+) Error!Connection {
     errdefer closeFd(fd);
+    diagnostic.stage = .close_on_exec;
     try setCloseOnExec(fd);
     var connection = Connection{
         .allocator = allocator,
         .fd = fd,
         .client_id = protocol.no_client,
     };
+    diagnostic.stage = .hello_write;
     try connection.send(.hello, &.{});
+    diagnostic.stage = .welcome_read;
     var frame = try connection.receive();
     defer frame.deinit();
-    if (frame.kind != .welcome) return error.UnexpectedHandshakeFrame;
+    if (frame.kind != .welcome) {
+        diagnostic.stage = .welcome_kind;
+        return error.UnexpectedHandshakeFrame;
+    }
+    diagnostic.stage = .welcome_payload;
     const welcome = try protocol.decodeWelcome(frame.payload);
     connection.client_id = welcome.client_id;
+    diagnostic.stage = .ready;
     return connection;
 }
 
@@ -157,31 +204,47 @@ fn tcpEndpoint(endpoint: []const u8) error{InvalidEndpoint}!TcpEndpoint {
 
 const tcp_connect_timeout_ms = 15_000;
 
-fn connectTcp(endpoint: TcpEndpoint) error{ SocketCreateFailed, SocketConnectFailed, SocketConnectTimedOut, SocketOptionFailed }!posix.fd_t {
+fn connectTcp(
+    endpoint: TcpEndpoint,
+    diagnostic: *ConnectDiagnostic,
+) error{ SocketCreateFailed, SocketConnectFailed, SocketConnectTimedOut, SocketOptionFailed }!posix.fd_t {
+    diagnostic.stage = .socket_create;
     const raw = system.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-    if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+    const socket_errno = posix.errno(raw);
+    if (socket_errno != .SUCCESS) {
+        diagnostic.os_error = errnoCode(socket_errno);
+        return error.SocketCreateFailed;
+    }
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
 
+    diagnostic.stage = .file_status_read;
     const original_flags = try fileStatusFlags(fd);
+    diagnostic.stage = .nonblocking_enable;
     try setFileStatusFlags(fd, original_flags | nonblockingFlag());
 
     var address = ipv4Address(endpoint.address, endpoint.port);
     var connected = false;
+    diagnostic.stage = .socket_connect;
     while (true) {
         const result = system.connect(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in));
-        switch (posix.errno(result)) {
+        const connect_errno = posix.errno(result);
+        switch (connect_errno) {
             .SUCCESS, .ISCONN => {
                 connected = true;
                 break;
             },
             .INTR => continue,
             .INPROGRESS, .ALREADY, .AGAIN => break,
-            else => return error.SocketConnectFailed,
+            else => {
+                diagnostic.os_error = errnoCode(connect_errno);
+                return error.SocketConnectFailed;
+            },
         }
     }
 
     if (!connected) {
+        diagnostic.stage = .socket_poll;
         var fds = [_]posix.pollfd{.{
             .fd = fd,
             .events = posix.POLL.OUT,
@@ -192,12 +255,19 @@ fn connectTcp(endpoint: TcpEndpoint) error{ SocketCreateFailed, SocketConnectFai
         if (ready == 0) return error.SocketConnectTimedOut;
         if (fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL | posix.POLL.OUT) == 0)
             return error.SocketConnectFailed;
-        try verifySocketConnected(fd);
+        diagnostic.stage = .socket_verify;
+        try verifySocketConnected(fd, diagnostic);
     }
 
+    diagnostic.stage = .blocking_restore;
     try setFileStatusFlags(fd, original_flags);
+    diagnostic.stage = .tcp_nodelay;
     try setTcpNoDelay(fd);
     return fd;
+}
+
+fn errnoCode(value: posix.E) i32 {
+    return @intCast(@backingInt(value));
 }
 
 fn nonblockingFlag() usize {
@@ -226,7 +296,10 @@ fn setFileStatusFlags(fd: posix.fd_t, flags: usize) error{SocketOptionFailed}!vo
     }
 }
 
-fn verifySocketConnected(fd: posix.fd_t) error{ SocketConnectFailed, SocketOptionFailed }!void {
+fn verifySocketConnected(
+    fd: posix.fd_t,
+    diagnostic: *ConnectDiagnostic,
+) error{ SocketConnectFailed, SocketOptionFailed }!void {
     var socket_error: c_int = 0;
     var length: posix.socklen_t = @sizeOf(c_int);
     const result = system.getsockopt(
@@ -236,9 +309,15 @@ fn verifySocketConnected(fd: posix.fd_t) error{ SocketConnectFailed, SocketOptio
         @ptrCast(&socket_error),
         &length,
     );
-    if (posix.errno(result) != .SUCCESS or length != @sizeOf(c_int))
+    const option_errno = posix.errno(result);
+    if (option_errno != .SUCCESS or length != @sizeOf(c_int)) {
+        diagnostic.os_error = errnoCode(option_errno);
         return error.SocketOptionFailed;
-    if (socket_error != 0) return error.SocketConnectFailed;
+    }
+    if (socket_error != 0) {
+        diagnostic.os_error = socket_error;
+        return error.SocketConnectFailed;
+    }
 }
 
 fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed, SocketPathTooLong }!posix.fd_t {
@@ -404,19 +483,22 @@ fn testBlockedReceive(probe: *CancelReceiveProbe) void {
 test "handshake establishes client identity without transport policy" {
     const pair = testSocketPair();
     const thread = try std.Thread.spawn(.{}, testHandshakePeer, .{pair[1]});
-    var connection = try initOwnedFd(std.testing.allocator, pair[0]);
+    var diagnostic: ConnectDiagnostic = .{};
+    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic);
     defer connection.deinit();
     thread.join();
     const fd_flags = system.fcntl(connection.fd, posix.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(fd_flags));
     try std.testing.expect(fd_flags & posix.FD_CLOEXEC != 0);
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
+    try std.testing.expectEqual(ConnectStage.ready, diagnostic.stage);
 }
 
 test "connection cancellation wakes a blocked receive while owner retains close" {
     const pair = testSocketPair();
     const peer = try std.Thread.spawn(.{}, testHandshakePeerUntilClosed, .{pair[1]});
-    var connection = try initOwnedFd(std.testing.allocator, pair[0]);
+    var diagnostic: ConnectDiagnostic = .{};
+    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic);
     defer connection.deinit();
     try std.testing.expectEqual(@as(protocol.ClientId, 72), connection.client_id);
 
@@ -428,6 +510,16 @@ test "connection cancellation wakes a blocked receive while owner retains close"
     reader.join();
     peer.join();
     try std.testing.expect(probe.closed);
+}
+
+test "diagnosed connect retains the failing endpoint stage" {
+    var diagnostic: ConnectDiagnostic = .{};
+    try std.testing.expectError(
+        error.InvalidEndpoint,
+        Connection.connectDiagnosed(std.testing.allocator, "tcp://named-host:43127", &diagnostic),
+    );
+    try std.testing.expectEqual(ConnectStage.endpoint, diagnostic.stage);
+    try std.testing.expectEqual(@as(i32, 0), diagnostic.os_error);
 }
 
 test "endpoint parser accepts explicit numeric IPv4 and refuses ambiguous TCP" {

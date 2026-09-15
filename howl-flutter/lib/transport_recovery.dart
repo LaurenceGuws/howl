@@ -31,10 +31,13 @@ final class TransportRecovery {
 
 bool retriableTransportFailure(Object error, {required bool attached}) {
   if (error is! NativeHostException) return false;
+  if (error.code.startsWith('worker_host_create') ||
+      error.code.startsWith('control_host_create')) {
+    return true;
+  }
   return switch (error.code) {
     // Dart already validated platform/font policy before entering the private
     // native create seam, leaving endpoint availability as the useful retry.
-    'worker_host_create' || 'control_host_create' => true,
     // These coarse private-binding codes are retryable only after a pair was
     // successfully attached. Invalid packets/buffers/actions remain hard.
     'observe_4' ||

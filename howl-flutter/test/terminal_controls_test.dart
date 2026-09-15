@@ -13,6 +13,7 @@ void main() {
       var keyboards = 0;
       var copies = 0;
       var pastes = 0;
+      var logs = 0;
       var leads = 0;
       final zooms = <TerminalZoomPreset>[];
       await tester.pumpWidget(
@@ -29,6 +30,7 @@ void main() {
               onKeyboard: () => keyboards += 1,
               onCopy: () => copies += 1,
               onPaste: () => pastes += 1,
+              onLog: () => logs += 1,
             ),
           ),
         ),
@@ -48,6 +50,7 @@ void main() {
         'Lead',
         'Copy',
         'Paste',
+        'Log',
       ]) {
         expect(find.text(label), findsOneWidget);
       }
@@ -60,6 +63,7 @@ void main() {
       await tester.tap(find.text('Lead'));
       await tester.tap(find.text('Copy'));
       await tester.tap(find.text('Paste'));
+      await tester.tap(find.text('Log'));
       expect(modifiers, <int>[
         HowlInput.modifierControl,
         HowlInput.modifierAlt,
@@ -70,6 +74,7 @@ void main() {
       expect(leads, 1);
       expect(copies, 1);
       expect(pastes, 1);
+      expect(logs, 1);
       expect(HowlInput.maximumPasteBytes, 65535);
 
       final toggled = tester

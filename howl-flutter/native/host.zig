@@ -254,6 +254,54 @@ fn imageRefillFetchFailureCode(failure: client.images.Error) i32 {
     return if (failure == error.ServerRejected) 5 else 4;
 }
 
+fn resetCreateDiagnostic(output_len: *usize) void {
+    output_len.* = 0;
+}
+
+fn writeCreateDiagnostic(
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    message: []const u8,
+) void {
+    if (output_capacity == 0) return;
+    const length = @min(output_capacity, message.len);
+    @memcpy(output_ptr[0..length], message[0..length]);
+    output_len.* = length;
+}
+
+fn writeCreateStageFailure(
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    stage: []const u8,
+    failure_name: []const u8,
+) void {
+    if (output_capacity == 0) return;
+    const rendered = std.fmt.bufPrint(
+        output_ptr[0..output_capacity],
+        "{s}:{s}",
+        .{ stage, failure_name },
+    ) catch return;
+    output_len.* = rendered.len;
+}
+
+fn writeConnectDiagnostic(
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    failure_name: []const u8,
+    diagnostic: client.ConnectDiagnostic,
+) void {
+    if (output_capacity == 0) return;
+    const rendered = std.fmt.bufPrint(
+        output_ptr[0..output_capacity],
+        "{s} stage={s} os_error={d}",
+        .{ failure_name, @tagName(diagnostic.stage), diagnostic.os_error },
+    ) catch return;
+    output_len.* = rendered.len;
+}
+
 pub export fn howl_native_host_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -266,19 +314,49 @@ pub export fn howl_native_host_create(
     font_pixels: u16,
     cell_width: u16,
     cell_height: u16,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
 ) ?*HostHandle {
+    resetCreateDiagnostic(diagnostic_len);
     if (endpoint_len == 0 or primary_len == 0 or
         font_pixels == 0 or cell_width == 0 or cell_height == 0)
+    {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
-    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse return null;
-    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch return null;
+    }
+    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
+        return null;
+    };
+    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", @errorName(failure));
+        return null;
+    };
     const atlas_pixel_capacity = std.math.mul(
         usize,
         @as(usize, atlas_extent),
         @as(usize, atlas_extent),
-    ) catch return null;
+    ) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_capacity", @errorName(failure));
+        return null;
+    };
     const allocator = std.heap.c_allocator;
-    var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch return null;
+    var connect_diagnostic: client.ConnectDiagnostic = .{};
+    var connection = client.Connection.connectDiagnosed(
+        allocator,
+        endpoint_ptr[0..endpoint_len],
+        &connect_diagnostic,
+    ) catch |failure| {
+        writeConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+            connect_diagnostic,
+        );
+        return null;
+    };
     errdefer connection.deinit();
     var raw_cache = client.rich.RawCache.init(allocator);
     errdefer raw_cache.deinit();
@@ -289,7 +367,10 @@ pub export fn howl_native_host_create(
         fallback_count += 1;
     }
     if (secondary_fallback_len != 0) {
-        const pointer = secondary_fallback_ptr orelse return null;
+        const pointer = secondary_fallback_ptr orelse {
+            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "secondary_fallback_pointer");
+            return null;
+        };
         fallback_storage[fallback_count] = pointer[0..secondary_fallback_len];
         fallback_count += 1;
     }
@@ -299,13 +380,19 @@ pub export fn howl_native_host_create(
         .primary = primary_ptr[0..primary_len],
         .fallbacks = fallbacks,
         .size = .{ .pixels = font_pixels },
-    }) catch return null;
+    }) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "font_set", @errorName(failure));
+        return null;
+    };
     errdefer fonts.deinit();
     const content = terminal.initContent(
         allocator,
         fonts,
         contentConfig(cell_width, cell_height, atlas_extent),
-    ) catch return null;
+    ) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_content", @errorName(failure));
+        return null;
+    };
     errdefer terminal.deinitContent(content);
     var composer = canvas.Composer.init(allocator, .{
         .sources = 1,
@@ -316,12 +403,24 @@ pub export fn howl_native_host_create(
         .candidate_resources = maximum_frame_resources,
         .candidate_commands = command_capacity,
         .candidate_pixel_bytes = atlas_pixel_capacity,
-    }) catch return null;
+    }) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "composer", @errorName(failure));
+        return null;
+    };
     errdefer composer.deinit();
-    const source = composer.registerSource() catch return null;
-    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch return null;
+    const source = composer.registerSource() catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "composer_source", @errorName(failure));
+        return null;
+    };
+    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", @errorName(failure));
+        return null;
+    };
     errdefer allocator.free(observation_scratch);
-    const host = allocator.create(Host) catch return null;
+    const host = allocator.create(Host) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "host_alloc", @errorName(failure));
+        return null;
+    };
     host.* = .{
         .allocator = allocator,
         .connection = connection,
@@ -339,13 +438,36 @@ pub export fn howl_native_host_create(
 pub export fn howl_native_control_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
 ) ?*ControlHandle {
-    if (endpoint_len == 0) return null;
-    const allocator = std.heap.c_allocator;
-    var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch
+    resetCreateDiagnostic(diagnostic_len);
+    if (endpoint_len == 0) {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
         return null;
+    }
+    const allocator = std.heap.c_allocator;
+    var connect_diagnostic: client.ConnectDiagnostic = .{};
+    var connection = client.Connection.connectDiagnosed(
+        allocator,
+        endpoint_ptr[0..endpoint_len],
+        &connect_diagnostic,
+    ) catch |failure| {
+        writeConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+            connect_diagnostic,
+        );
+        return null;
+    };
     errdefer connection.deinit();
-    const control = allocator.create(Control) catch return null;
+    const control = allocator.create(Control) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", @errorName(failure));
+        return null;
+    };
     control.* = .{ .allocator = allocator, .connection = connection };
     return @ptrCast(control);
 }
