@@ -6,6 +6,9 @@ import SDL "vendor:sdl3"
 import TTF "vendor:sdl3/ttf"
 
 UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
+HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
+SESSION_TEXT_BYTES :: 512 * 1024
+SESSION_POLL_MS :: u64(50)
 
 Palette :: struct {
     window_bg: SDL.Color,
@@ -44,6 +47,23 @@ App :: struct {
     active_tab: int,
     palette_open: bool,
     settings_open: bool,
+    session: rawptr,
+    session_text: []u8,
+    session_text_len: int,
+    session_revision: u64,
+    session_terminal_revision: u64,
+    session_rows: u16,
+    session_columns: u16,
+    session_cursor_row: u16,
+    session_cursor_column: u16,
+    session_cursor_visible: bool,
+    session_cursor_shape: u8,
+    session_history_count: u32,
+    session_alternate_screen: bool,
+    session_text_truncated: bool,
+    session_error: [160]u8,
+    session_error_len: int,
+    next_session_poll_ms: u64,
 }
 
 sdl_error :: proc(label: string) {
@@ -66,14 +86,129 @@ draw_outline :: proc(renderer: ^SDL.Renderer, rect: SDL.FRect, color: SDL.Color)
     _ = SDL.RenderRect(renderer, &draw_rect)
 }
 
-draw_text :: proc(app: ^App, font: ^TTF.Font, text: cstring, x, y: f32, color: SDL.Color) {
-    label := TTF.CreateText(app.text_engine, font, text, 0)
+draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SDL.Color) {
+    if len(text) == 0 {
+        return
+    }
+    label := TTF.CreateText(app.text_engine, font, cstring(raw_data(text)), c.size_t(len(text)))
     if label == nil {
         return
     }
     defer TTF.DestroyText(label)
     _ = TTF.SetTextColor(label, color[0], color[1], color[2], color[3])
     _ = TTF.DrawRendererText(label, x, y)
+}
+
+copy_bridge_error :: proc(app: ^App) {
+    if app.session == nil {
+        return
+    }
+    error_len: c.size_t
+    copy_error(
+        app.session,
+        raw_data(app.session_error[:]),
+        c.size_t(len(app.session_error)),
+        &error_len,
+    )
+    app.session_error_len = int(error_len)
+}
+
+refresh_session :: proc(app: ^App, force := false) {
+    if app.session == nil {
+        return
+    }
+    now := SDL.GetTicks()
+    if !force && now < app.next_session_poll_ms {
+        return
+    }
+    app.next_session_poll_ms = now + SESSION_POLL_MS
+
+    output_len: c.size_t
+    result := snapshot(
+        app.session,
+        0,
+        0,
+        raw_data(app.session_text),
+        c.size_t(len(app.session_text)),
+        &output_len,
+    )
+    if result != 0 {
+        copy_bridge_error(app)
+        return
+    }
+
+    app.session_text_len = int(output_len)
+    app.session_revision = revision(app.session)
+    app.session_terminal_revision = terminal_revision(app.session)
+    app.session_rows = rows(app.session)
+    app.session_columns = columns(app.session)
+    app.session_cursor_row = cursor_row(app.session)
+    app.session_cursor_column = cursor_column(app.session)
+    app.session_cursor_visible = cursor_visible(app.session) != 0
+    app.session_cursor_shape = cursor_shape(app.session)
+    app.session_history_count = history_count(app.session)
+    app.session_alternate_screen = alternate_screen(app.session) != 0
+    app.session_text_truncated = text_truncated(app.session) != 0
+    app.session_error_len = 0
+}
+
+bridge_modifiers :: proc(mods: SDL.Keymod) -> u8 {
+    result: u8
+    if .LSHIFT in mods || .RSHIFT in mods do result |= BRIDGE_MOD_SHIFT
+    if .LALT in mods || .RALT in mods do result |= BRIDGE_MOD_ALT
+    if .LCTRL in mods || .RCTRL in mods do result |= BRIDGE_MOD_CTRL
+    if .LGUI in mods || .RGUI in mods do result |= BRIDGE_MOD_SUPER
+    if .CAPS in mods do result |= BRIDGE_MOD_CAPS
+    if .NUM in mods do result |= BRIDGE_MOD_NUM
+    return result
+}
+
+named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
+    switch key {
+    case SDL.K_RETURN:    return .Enter, true
+    case SDL.K_TAB:       return .Tab, true
+    case SDL.K_BACKSPACE: return .Backspace, true
+    case SDL.K_ESCAPE:    return .Escape, true
+    case SDL.K_UP:        return .Up, true
+    case SDL.K_DOWN:      return .Down, true
+    case SDL.K_LEFT:      return .Left, true
+    case SDL.K_RIGHT:     return .Right, true
+    case SDL.K_INSERT:    return .Insert, true
+    case SDL.K_DELETE:    return .Delete, true
+    case SDL.K_HOME:      return .Home, true
+    case SDL.K_END:       return .End, true
+    case SDL.K_PAGEUP:    return .Page_Up, true
+    case SDL.K_PAGEDOWN:  return .Page_Down, true
+    case:                  return .Enter, false
+    }
+}
+
+send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
+    if app.session == nil || app.active_tab != 0 || app.palette_open || app.settings_open {
+        return false
+    }
+    key, ok := named_bridge_key(event.key.key)
+    if !ok {
+        return false
+    }
+    action := Bridge_Key_Action.Press
+    if event.type == .KEY_UP {
+        action = .Release
+    } else if event.key.repeat {
+        action = .Repeat
+    }
+    result := send_named_key(
+        app.session,
+        u8(key),
+        u8(action),
+        bridge_modifiers(event.key.mod),
+    )
+    if result != 0 {
+        copy_bridge_error(app)
+    } else if event.type == .KEY_DOWN {
+        refresh_session(app, true)
+    }
+    return true
 }
 
 inside :: proc(x, y: f32, rect: SDL.FRect) -> bool {
@@ -131,23 +266,50 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
         app.running = false
-    case .KEY_DOWN:
+    case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
-        if ctrl && shift && event.key.key == SDL.K_P {
+        alt := .LALT in event.key.mod || .RALT in event.key.mod
+        if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_P {
             app.palette_open = !app.palette_open
             app.settings_open = false
-        } else if ctrl && event.key.key == SDL.K_COMMA {
+        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_COMMA {
             app.settings_open = !app.settings_open
             app.palette_open = false
-        } else if ctrl && event.key.key == SDL.K_T {
+        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
-        } else if event.key.key == SDL.K_ESCAPE {
-            if app.palette_open || app.settings_open {
-                app.palette_open = false
-                app.settings_open = false
-            } else {
-                app.running = false
+        } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.palette_open || app.settings_open) {
+            app.palette_open = false
+            app.settings_open = false
+        } else if send_bridge_key(app, event) {
+            // The active real Session consumed this named physical key.
+        } else if event.type == .KEY_DOWN && app.session != nil && app.active_tab == 0 && !app.palette_open && !app.settings_open && (ctrl || alt) {
+            scalar := u32(event.key.key)
+            if scalar > 0 && scalar < 0x80 {
+                action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
+                result := send_unicode_key(
+                    app.session,
+                    scalar,
+                    u8(action),
+                    bridge_modifiers(event.key.mod),
+                )
+                if result != 0 {
+                    copy_bridge_error(app)
+                } else {
+                    refresh_session(app, true)
+                }
+            }
+        }
+    case .TEXT_INPUT:
+        if app.session != nil && app.active_tab == 0 && !app.palette_open && !app.settings_open && event.text.text != nil {
+            text := string(event.text.text)
+            if len(text) != 0 {
+                result := send_text(app.session, raw_data(text), c.size_t(len(text)))
+                if result != 0 {
+                    copy_bridge_error(app)
+                } else {
+                    refresh_session(app, true)
+                }
             }
         }
     case .MOUSE_BUTTON_DOWN:
@@ -174,6 +336,9 @@ draw_tabs :: proc(app: ^App, width: f32) {
 
         if i == 0 {
             draw_text(app, app.ui_font, "Home", tab_x + 14, 14, active ? palette.text : palette.text_muted)
+            if app.session != nil && app.session_error_len == 0 {
+                draw_fill(app.renderer, {tab_x + tab_w - 16, 20, 5, 5}, palette.accent)
+            }
         } else if i == 1 {
             draw_text(app, app.ui_font, "PowerShell", tab_x + 14, 14, active ? palette.text : palette.text_muted)
         } else if i == 2 {
@@ -193,24 +358,58 @@ draw_tabs :: proc(app: ^App, width: f32) {
     draw_text(app, app.ui_font, "Settings", settings.x + 12, settings.y + 6, palette.text_muted)
 }
 
+draw_real_session :: proc(app: ^App, width, height: f32) {
+    origin_x := f32(28)
+    origin_y := f32(58)
+    if app.session_error_len != 0 {
+        draw_text(app, app.ui_font, string(app.session_error[:app.session_error_len]), origin_x, origin_y, palette.accent)
+        return
+    }
+    if app.session_text_len != 0 {
+        draw_text(app, app.terminal_font, string(app.session_text[:app.session_text_len]), origin_x, origin_y, palette.text)
+    }
+
+    if app.session_cursor_visible && app.session_rows != 0 && app.session_columns != 0 {
+        cell_w, cell_h: c.int
+        if TTF.GetStringSize(app.terminal_font, "M", 1, &cell_w, &cell_h) {
+            line_h := TTF.GetFontLineSkip(app.terminal_font)
+            cursor_x := origin_x + f32(int(app.session_cursor_column) * int(cell_w))
+            cursor_y := origin_y + f32(int(app.session_cursor_row) * int(line_h))
+            switch app.session_cursor_shape {
+            case 1:
+                draw_fill(app.renderer, {cursor_x, cursor_y + f32(line_h - 2), f32(cell_w), 2}, palette.text)
+            case 2:
+                draw_fill(app.renderer, {cursor_x, cursor_y, 2, f32(line_h)}, palette.text)
+            case 3:
+            case:
+                draw_outline(app.renderer, {cursor_x, cursor_y, f32(cell_w), f32(line_h)}, palette.text_muted)
+            }
+        }
+    }
+
+    if app.session_text_truncated {
+        draw_text(app, app.ui_font, "visible-text projection truncated", width - 286, height - 26, palette.accent)
+    }
+}
+
+draw_placeholder_session :: proc(app: ^App) {
+    draw_text(app, app.terminal_font, "Profile shell placeholder", 34, 86, palette.text_muted)
+    draw_text(app, app.terminal_font, "The Home tab is the real canonical Howl Session.", 34, 116, palette.text)
+}
+
 draw_terminal :: proc(app: ^App, width, height: f32) {
     body := SDL.FRect{0, 46, width, height - 46}
     draw_fill(app.renderer, body, palette.terminal_bg)
 
-    inset := SDL.FRect{18, 64, width - 36, height - 84}
+    inset := SDL.FRect{18, 52, width - 36, height - 64}
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
-    draw_text(app, app.terminal_font, "Howl Desktop / Odin canary", 34, 86, palette.text_muted)
-    draw_text(app, app.terminal_font, "Session protocol: not attached yet", 34, 116, palette.text_muted)
-    draw_text(app, app.terminal_font, "", 34, 144, palette.text_muted)
-    draw_text(app, app.terminal_font, "PS C:\\Users\\Captain> ", 34, 158, palette.text)
+    if app.active_tab == 0 {
+        draw_real_session(app, width, height)
+    } else {
+        draw_placeholder_session(app)
+    }
 
-    cursor := SDL.FRect{236, 158, 9, 20}
-    draw_fill(app.renderer, cursor, palette.text)
-
-    hint := SDL.FRect{34, height - 62, 370, 30}
-    draw_outline(app.renderer, hint, palette.border)
-    draw_text(app, app.ui_font, "+ new tab    v palette    Settings", 46, height - 55, palette.text_muted)
 }
 
 draw_palette :: proc(app: ^App, width, height: f32) {
@@ -312,6 +511,11 @@ main :: proc() {
     defer SDL.DestroyRenderer(renderer)
     defer SDL.DestroyWindow(window)
 
+    _ = SDL.StartTextInput(window)
+    defer {
+        _ = SDL.StopTextInput(window)
+    }
+
     _ = SDL.SetRenderVSync(renderer, 1)
 
     engine := TTF.CreateRendererTextEngine(renderer)
@@ -328,12 +532,30 @@ main :: proc() {
     }
     defer TTF.CloseFont(ui_font)
 
-    terminal_font := TTF.OpenFont(UI_FONT_PATH, 17)
+    terminal_font := TTF.OpenFont(UI_FONT_PATH, 15)
     if terminal_font == nil {
         sdl_error("TTF_OpenFont terminal failed")
         return
     }
     defer TTF.CloseFont(terminal_font)
+
+    session_text := make([]u8, SESSION_TEXT_BYTES)
+    defer delete(session_text)
+    diagnostic: [160]u8
+    diagnostic_len: c.size_t
+    endpoint: string = HOME_ENDPOINT
+    session := create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(diagnostic[:]),
+        c.size_t(len(diagnostic)),
+        &diagnostic_len,
+    )
+    defer {
+        if session != nil {
+            destroy(session)
+        }
+    }
 
     app := App{
         window = window,
@@ -344,12 +566,24 @@ main :: proc() {
         running = true,
         tab_count = 2,
         active_tab = 0,
+        session = session,
+        session_text = session_text,
+    }
+
+    if session == nil {
+        app.session_error_len = int(diagnostic_len)
+        copy(app.session_error[:], diagnostic[:int(diagnostic_len)])
+    } else {
+        refresh_session(&app, true)
     }
 
     for app.running {
         event: SDL.Event
         for SDL.PollEvent(&event) {
             handle_event(&app, &event)
+        }
+        if app.active_tab == 0 {
+            refresh_session(&app)
         }
         draw(&app)
     }

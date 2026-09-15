@@ -6,20 +6,41 @@ The client owns desktop application policy only: windows, tabs, pane layout,
 profiles, settings, command palette, keybindings, and OS integration. It must
 not duplicate VT, PTY, Session, text shaping, or terminal raster semantics.
 
-Current proof: Odin + SDL3 + SDL3_ttf application shell on Home. The terminal
-surface is intentionally a placeholder until the shell/event/layout foundation
-is accepted.
+The current Linux proof uses Odin + SDL3 + SDL3_ttf. `native/` is a tiny
+C-shaped Zig bridge over the existing `howl-client` owner. The bridge exports no
+wire layout or client backing structs: Odin receives one bounded visible-text
+projection plus scalar metadata and sends semantic input through `howl-client`.
+The semantic text surface is intentionally temporary; the accepted Howl render
+owners remain the destination for the real terminal renderer.
 
-Tested with `odin version dev-2026-09:a2fb372b7`. This experiment does not yet
-own or install an Odin toolchain; the compiler remains host input while the
-client architecture is being proven.
+Current canary:
 
-Current shell proof includes dynamic tabs, a command palette, a Windows-familiar
-settings layout, `Ctrl+T`, `Ctrl+Shift+P`, and `Ctrl+,`. None of those actions
-create or mutate terminal semantics yet.
+- native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
+  command palette, and Settings surface;
+- Home tab observes the existing canonical Howl Session at
+  `tcp://127.0.0.1:39601` without taking geometry leadership;
+- committed text plus named/control keys round-trip through `howl-client`;
+- additional tabs remain UI-only placeholders while profile/session ownership is
+  designed rather than guessed.
 
-Build:
+## Toolchain
+
+This experiment deliberately pins both compilers used by its build:
+
+- Zig follows the repository root `.zigversion`;
+- Odin follows `.odinversion` in this module.
+
+## Build
 
 ```sh
-odin build . -out:zig-out/bin/howl-odin -debug
+./howl-odin/build.sh
+```
+
+The script runs the native bridge tests, builds the bridge ReleaseSafe, checks
+and builds the Odin client, then places the bridge shared object beside the
+executable so Odin's `$ORIGIN` runpath resolves it without system installation.
+The result is:
+
+```text
+howl-odin/zig-out/bin/howl-odin
 ```
