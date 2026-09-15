@@ -1,7 +1,7 @@
 project:
   name: howl
   mission: small, correct native terminal sessions shared by humans and agents
-  shape: one repository of small Zig modules with explicit local dependencies and semantic ownership
+  shape: one repository of small native modules with explicit local dependencies and semantic ownership
 
 core:
   howl-vt:
@@ -15,7 +15,7 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 planned:
-  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries that deliberately pressure the same canonical session through different transport/platform paths; iOS and web remain client-only with no PTY/userland ownership
+  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; every client deliberately pressures the same canonical session and keeps PTY/VT ownership out of presentation code
 
 experimental:
   - howl-client
@@ -26,6 +26,7 @@ experimental:
   - howl-wayland
   - howl-flutter
   - howl-web
+  - howl-odin
 
 ownership:
   - a session lives on the node, not in a client

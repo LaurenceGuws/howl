@@ -63,3 +63,9 @@ experimental:
     and an Access-protected Home tunnel edge; Chromium is the primary fast
     acceptance lane while Safari/Home-Screen is the WebKit/PWA platform canary;
     outside the root core gate
+  howl-odin: >-
+    experimental polished desktop application shell in Odin over SDL3 and
+    SDL3_ttf; owns windows, tabs, future pane/profile/settings/action UI and OS
+    integration only, with terminal semantics remaining behind the existing
+    Howl client/session boundaries; current terminal body is a placeholder;
+    outside the root core gate
