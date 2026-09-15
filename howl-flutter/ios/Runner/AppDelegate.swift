@@ -4,6 +4,8 @@ import UIKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private var repeatFeedback: UISelectionFeedbackGenerator?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -13,6 +15,27 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let repeatHapticChannel = FlutterMethodChannel(
+      name: "howl.flutter/ios_repeat_haptic",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    repeatHapticChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "tick" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let feedback: UISelectionFeedbackGenerator
+      if let existing = self?.repeatFeedback {
+        feedback = existing
+      } else {
+        feedback = UISelectionFeedbackGenerator()
+        self?.repeatFeedback = feedback
+        feedback.prepare()
+      }
+      feedback.selectionChanged()
+      feedback.prepare()
+      result(nil)
+    }
     let networkChannel = FlutterMethodChannel(
       name: "howl.flutter/ios_network_probe",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

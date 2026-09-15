@@ -13,6 +13,7 @@ import 'history_viewport.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
 import 'ios_network_probe.dart';
+import 'ios_repeat_haptic.dart';
 import 'launch_config.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
@@ -154,6 +155,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool _selectionUsesTouchChrome = false;
   int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
+  final IosRepeatHaptic _iosRepeatHaptic = const IosRepeatHaptic();
   late final TerminalKeyRepeatDrainer _softwareBackspaceRepeat;
 
   @override
@@ -168,6 +170,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _softwareBackspaceRepeat = TerminalKeyRepeatDrainer(
       interval: const Duration(milliseconds: 25),
       onTick: () async {
+        if (Platform.isIOS) {
+          unawaited(_iosRepeatHaptic.tick());
+        }
         await _queueControl(
           (control) => control.namedKey(
             keyName: HowlInput.namedBackspace,
@@ -175,9 +180,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifiers: 0,
           ),
         );
-        if (Platform.isIOS) {
-          unawaited(HapticFeedback.selectionClick());
-        }
       },
     );
     _textInput = TerminalTextInputClient(
