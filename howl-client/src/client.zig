@@ -246,7 +246,11 @@ fn connectTcp(
 
     if (!connected) {
         diagnostic.stage = .socket_poll;
-        const deadline_ms = try std.math.add(i64, try monotonicMilliseconds(), tcp_connect_timeout_ms);
+        const deadline_ms = std.math.add(
+            i64,
+            try monotonicMilliseconds(),
+            tcp_connect_timeout_ms,
+        ) catch return error.SocketConnectFailed;
         while (true) {
             const now_ms = try monotonicMilliseconds();
             if (now_ms >= deadline_ms) return error.SocketConnectTimedOut;
