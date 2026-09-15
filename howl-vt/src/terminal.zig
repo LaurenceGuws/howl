@@ -4491,6 +4491,7 @@ const CursorSavepoint = struct {
 // Stores cursor presentation, rendition, charset, origin, and wrap state for one screen-bank save slot.
 const Savepoint = struct {
     valid: bool = false,
+    reflow_on_resize: bool = false,
     cursor: CursorSavepoint = .{},
     current_attrs: Screen.CellAttrs = Screen.default_cell_attrs,
     reverse_screen_mode: bool = false,
@@ -4505,6 +4506,41 @@ const Savepoint = struct {
     fn clear(self: *Savepoint) void {
         self.* = .{};
     }
+
+    /// True when this save slot names the screen's current cursor anchor.
+    ///
+    /// DECSET 1049 captures exactly this state before switching banks. While
+    /// the alternate screen is active, the hidden primary cursor is still
+    /// reflowed on resize, so an anchored savepoint can reuse that exact
+    /// translated position instead of restoring stale pre-resize coordinates.
+    fn followsCursor(self: Savepoint, screen: *const Screen) bool {
+        return self.valid and self.reflow_on_resize and
+            self.cursor.row == screen.cursor.row and
+            self.cursor.col == screen.cursor.col;
+    }
+
+    /// Copies the reflowed cursor anchor while preserving saved presentation,
+    /// wrap, and mode state. Blank columns beyond retained row content are
+    /// advanced from the reflowed content cursor and then clamped to the new
+    /// visible page.
+    fn followResizedCursor(
+        self: *Savepoint,
+        screen: *const Screen,
+        trailing_blank_columns: u16,
+    ) void {
+        if (screen.rows == 0 or screen.cols == 0) {
+            self.cursor.row = 0;
+            self.cursor.col = 0;
+            return;
+        }
+        const linear = @as(u32, screen.cursor.col) + trailing_blank_columns;
+        const row_advance = linear / screen.cols;
+        self.cursor.row = @intCast(@min(
+            @as(u32, screen.cursor.row) + row_advance,
+            @as(u32, screen.rows - 1),
+        ));
+        self.cursor.col = @intCast(linear % screen.cols);
+    }
 };
 
 // Owns resize implementation state without widening Terminal's public surface
@@ -4512,6 +4548,7 @@ const Savepoint = struct {
 const PreparedResizeState = struct {
     primary: Screen,
     alternate: Screen,
+    primary_savepoint_trailing_blank_columns: ?u16,
     replies: replies.Buffer,
     semantic_sequence: u64,
     reply_len: u32,
@@ -4723,6 +4760,11 @@ pub const Terminal = struct {
             std.mem.swap(Screen, &self.terminal.screen_state.alternate, &alternate);
             primary.deinit(self.terminal.allocator);
             alternate.deinit(self.terminal.allocator);
+            if (state.primary_savepoint_trailing_blank_columns) |trailing_blank_columns|
+                self.terminal.primary_savepoint.followResizedCursor(
+                    &self.terminal.screen_state.primary,
+                    trailing_blank_columns,
+                );
             var old_replies = state.replies;
             std.mem.swap(
                 replies.Buffer,
@@ -5622,10 +5664,17 @@ pub const Terminal = struct {
         errdefer primary.deinit(self.allocator);
         var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
         errdefer alternate.deinit(self.allocator);
+        const primary_savepoint_trailing_blank_columns = if (self.primary_savepoint.followsCursor(
+            &self.screen_state.primary,
+        ))
+            self.screen_state.primary.cursorTrailingBlankColumns()
+        else
+            null;
         const state = try self.allocator.create(PreparedResizeState);
         state.* = .{
             .primary = primary,
             .alternate = alternate,
+            .primary_savepoint_trailing_blank_columns = primary_savepoint_trailing_blank_columns,
             .replies = prepared_replies,
             .semantic_sequence = self.semantic_sequence,
             .reply_len = self.reply_buffer.len(),
@@ -5868,17 +5917,18 @@ pub const Terminal = struct {
     ///
     /// The result reports whether the bank-local savepoint changed.
     fn saveCursor(self: *Terminal) bool {
-        const next = self.captureSavepoint();
+        const next = self.captureSavepoint(false);
         const savepoint = self.activeSavepoint();
         if (std.meta.eql(savepoint.*, next)) return false;
         savepoint.* = next;
         return true;
     }
 
-    fn captureSavepoint(self: *const Terminal) Savepoint {
+    fn captureSavepoint(self: *const Terminal, reflow_on_resize: bool) Savepoint {
         const active = self.screen_state.activeConst();
         return .{
             .valid = true,
+            .reflow_on_resize = reflow_on_resize,
             .cursor = .{
                 .row = active.cursor.row,
                 .col = active.cursor.col,
@@ -5961,7 +6011,7 @@ pub const Terminal = struct {
     fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
         if (enable_alt) {
             if (self.screen_state.alt_active) return false;
-            if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint();
+            if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint(true);
             self.screen_state.alt_active = true;
             if (clear_alt) {
                 self.screen_state.alternate.clearVisibleCells();
@@ -5974,7 +6024,10 @@ pub const Terminal = struct {
 
         if (!self.screen_state.alt_active) return false;
         self.screen_state.alt_active = false;
-        if (save_restore_cursor) self.restoreCursorState();
+        if (save_restore_cursor) {
+            self.restoreCursorState();
+            self.primary_savepoint.reflow_on_resize = false;
+        }
         return true;
     }
 
@@ -7180,6 +7233,50 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
     try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
     try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
+}
+
+test "1049 saved primary cursor follows hidden-screen resize reflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 10, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("1234567890abcdefghij")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 9), terminal.screen_state.primary.cursor.col);
+    try std.testing.expect(terminal.screen_state.primary.wrap_pending);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
+    try std.testing.expect(terminal.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u16, 1), terminal.primary_savepoint.cursor.row);
+    try std.testing.expectEqual(@as(u16, 9), terminal.primary_savepoint.cursor.col);
+    try std.testing.expect(terminal.primary_savepoint.wrap_pending);
+
+    try terminal.resize(3, 5);
+    try std.testing.expectEqual(@as(u32, 1), terminal.screen_state.primary.historyCount());
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.primary_savepoint.cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.primary_savepoint.cursor.col);
+    try std.testing.expect(terminal.primary_savepoint.wrap_pending);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
+    try std.testing.expect(!terminal.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cursor.col);
+    try std.testing.expect(terminal.screen_state.primary.wrap_pending);
+}
+
+test "discarded resize leaves 1049 saved cursor unchanged" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 10, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("1234567890abcdefghij\x1b[?1049h")).stateChanged());
+    const before = terminal.primary_savepoint;
+    var prepared = try terminal.prepareResize(3, 5);
+    prepared.deinit();
+
+    try std.testing.expect(std.meta.eql(before, terminal.primary_savepoint));
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 9), terminal.screen_state.primary.cursor.col);
 }
 
 // Observation, mutation, and consequence proofs.

@@ -977,6 +977,20 @@ pub const Screen = struct {
         return self.cursor.col;
     }
 
+    /// Reports blank columns between retained row content and the cursor anchor.
+    ///
+    /// Screen reflow intentionally bounds the live cursor to retained logical
+    /// content. Terminal savepoints additionally need this trailing distance so
+    /// a saved cursor in blank space can preserve its horizontal anchor across
+    /// a resize without changing the content projection itself.
+    pub fn cursorTrailingBlankColumns(self: *const Screen) u16 {
+        if (self.rows == 0 or self.cols == 0) return 0;
+        const cursor_offset = self.cursorOffsetInRow();
+        const content_len: u32 = self.visibleRowContentLen(self.cursor.row);
+        if (cursor_offset <= content_len) return 0;
+        return @intCast(cursor_offset - content_len);
+    }
+
     fn visibleRowContentLen(self: *const Screen, row: u16) u16 {
         const line_cols = self.lineColumnCount(row);
         var col = line_cols;
