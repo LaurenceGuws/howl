@@ -167,13 +167,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     );
     _softwareBackspaceRepeat = TerminalKeyRepeatDrainer(
       interval: const Duration(milliseconds: 25),
-      onTick: () => _queueControl(
-        (control) => control.namedKey(
-          keyName: HowlInput.namedBackspace,
-          action: HowlInput.keyPress,
-          modifiers: 0,
-        ),
-      ),
+      onTick: () async {
+        await _queueControl(
+          (control) => control.namedKey(
+            keyName: HowlInput.namedBackspace,
+            action: HowlInput.keyPress,
+            modifiers: 0,
+          ),
+        );
+        if (Platform.isIOS) {
+          unawaited(HapticFeedback.selectionClick());
+        }
+      },
     );
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
