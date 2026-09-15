@@ -26,6 +26,12 @@ Current canary:
   existing `tcp://127.0.0.1:39601` Session;
 - tabs have real selection/close semantics plus Ctrl+Tab cycling, and closing a
   created tab retires only that tab's owned child Session;
+- one tab may own a real two-pane split: `Alt+Shift+D` creates an independent
+  local Session in the secondary pane, `Alt+Left/Right` moves input focus, and
+  `Ctrl+Shift+W` closes only the active pane when split; the survivor is
+  promoted and reacquires full-pane geometry without restarting its Session;
+- Canvas commands are pane-clipped even during the brief resize transition, so
+  an old wider frame can never paint across the split into its sibling;
 - dropdown and command-palette commands share one application action model;
   Up/Down/Tab move selection, Enter executes the selected action, and commands
   such as new tab, attach Home Session, Settings, and close tab are no longer

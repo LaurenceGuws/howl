@@ -28,6 +28,8 @@ Tab :: struct {
     kind: Tab_Kind,
     title: string,
     session: ^Session_View,
+    secondary_session: ^Session_View,
+    active_pane: int,
 }
 
 Canvas_Texture :: struct {
@@ -83,9 +85,10 @@ Session_View :: struct {
 
 App_Action :: enum {
     New_Tab,
+    Split_Pane,
     Attach_Home,
     Open_Settings,
-    Close_Tab,
+    Close_Pane,
 }
 
 Settings_Page :: enum {
@@ -169,6 +172,7 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
         app.terminal_font_preset = next
         for index in 0..<app.tab_count {
             reset_canvas(app.tabs[index].session)
+            reset_canvas(app.tabs[index].secondary_session)
         }
     }
 }
@@ -254,7 +258,7 @@ reset_canvas :: proc(view: ^Session_View) {
 resize_owned_session_to_pane :: proc(
     app: ^App,
     view: ^Session_View,
-    width, height, origin_x, origin_y: f32,
+    available_width, available_height: f32,
 ) {
     if view == nil || view.owned_process == nil || view.control == nil {
         return
@@ -267,15 +271,15 @@ resize_owned_session_to_pane :: proc(
     if cell_width == 0 || cell_height == 0 {
         return
     }
-    available_width := max(1, int(width - origin_x - 18))
-    available_height := max(1, int(height - origin_y - 12))
+    width_cells := max(1, int(available_width))
+    height_cells := max(1, int(available_height))
     desired_columns := u16(clamp(
-        available_width / int(cell_width),
+        width_cells / int(cell_width),
         1,
         int(render_maximum_columns()),
     ))
     desired_rows := u16(clamp(
-        available_height / int(cell_height),
+        height_cells / int(cell_height),
         1,
         int(render_maximum_rows()),
     ))
@@ -506,10 +510,11 @@ rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
     return u8((bits >> shift) & 0xff)
 }
 
-draw_canvas_session :: proc(app: ^App, view: ^Session_View, origin_x, origin_y: f32) -> bool {
+draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, origin_x, origin_y: f32) -> bool {
     if !update_canvas(app, view) {
         return false
     }
+    pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
     for command in view.canvas_commands {
         destination := SDL.FRect{
             origin_x + f32(command.destination_x),
@@ -518,7 +523,7 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, origin_x, origin_y: 
             f32(command.destination_height),
         }
         if command.tag == 0 {
-            _ = SDL.SetRenderClipRect(app.renderer, nil)
+            _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
             set_draw_color(app.renderer, SDL.Color{
                 rgba_channel(command.color_rgba, 0),
                 rgba_channel(command.color_rgba, 8),
@@ -534,11 +539,15 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, origin_x, origin_y: 
             set_canvas_error(view, "Canvas command references missing texture")
             return false
         }
-        clip := SDL.Rect{
+        command_clip := SDL.Rect{
             c.int(origin_x) + c.int(command.clip_x),
             c.int(origin_y) + c.int(command.clip_y),
             c.int(command.clip_width),
             c.int(command.clip_height),
+        }
+        clip: SDL.Rect
+        if !SDL.GetRectIntersection(command_clip, pane_clip, &clip) {
+            continue
         }
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
         source := SDL.FRect{
@@ -826,7 +835,11 @@ active_session_view :: proc(app: ^App) -> ^Session_View {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return nil
     }
-    return app.tabs[app.active_tab].session
+    tab := &app.tabs[app.active_tab]
+    if tab.active_pane == 1 && tab.secondary_session != nil {
+        return tab.secondary_session
+    }
+    return tab.session
 }
 
 session_endpoint :: proc(view: ^Session_View) -> string {
@@ -984,6 +997,7 @@ close_tab :: proc(app: ^App, index: int) {
         return
     }
     retiring := app.tabs[index].session
+    retiring_secondary := app.tabs[index].secondary_session
     for i in index..<app.tab_count - 1 {
         app.tabs[i] = app.tabs[i + 1]
     }
@@ -995,6 +1009,47 @@ close_tab :: proc(app: ^App, index: int) {
         app.active_tab = app.tab_count - 1
     }
     destroy_session_view(retiring)
+    destroy_session_view(retiring_secondary)
+}
+
+split_active_pane :: proc(app: ^App) {
+    if app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return
+    }
+    tab := &app.tabs[app.active_tab]
+    if tab.secondary_session != nil {
+        tab.active_pane = 1
+        return
+    }
+    view := create_owned_session_view(app)
+    if view == nil {
+        return
+    }
+    tab.secondary_session = view
+    tab.active_pane = 1
+    app.profile_menu_open = false
+    app.palette_open = false
+    app.settings_open = false
+}
+
+close_active_pane :: proc(app: ^App) {
+    if app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return
+    }
+    tab := &app.tabs[app.active_tab]
+    if tab.secondary_session == nil {
+        close_tab(app, app.active_tab)
+        return
+    }
+    if tab.active_pane == 1 {
+        destroy_session_view(tab.secondary_session)
+        tab.secondary_session = nil
+    } else {
+        destroy_session_view(tab.session)
+        tab.session = tab.secondary_session
+        tab.secondary_session = nil
+    }
+    tab.active_pane = 0
 }
 
 active_tab_is_session :: proc(app: ^App) -> bool {
@@ -1005,14 +1060,16 @@ execute_action :: proc(app: ^App, action: App_Action) {
     switch action {
     case .New_Tab:
         new_tab(app)
+    case .Split_Pane:
+        split_active_pane(app)
     case .Attach_Home:
         attach_home_tab(app)
     case .Open_Settings:
         app.profile_menu_open = false
         app.palette_open = false
         app.settings_open = true
-    case .Close_Tab:
-        close_tab(app, app.active_tab)
+    case .Close_Pane:
+        close_active_pane(app)
         app.palette_open = false
     }
 }
@@ -1020,9 +1077,10 @@ execute_action :: proc(app: ^App, action: App_Action) {
 palette_action :: proc(index: int) -> App_Action {
     switch index {
     case 0: return .New_Tab
-    case 1: return .Attach_Home
-    case 2: return .Open_Settings
-    case:   return .Close_Tab
+    case 1: return .Split_Pane
+    case 2: return .Attach_Home
+    case 3: return .Open_Settings
+    case:   return .Close_Pane
     }
 }
 
@@ -1035,9 +1093,9 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         case SDL.K_ESCAPE:
             app.palette_open = false
         case SDL.K_UP:
-            app.palette_selection = (app.palette_selection + 3) % 4
+            app.palette_selection = (app.palette_selection + 4) % 5
         case SDL.K_DOWN, SDL.K_TAB:
-            app.palette_selection = (app.palette_selection + 1) % 4
+            app.palette_selection = (app.palette_selection + 1) % 5
         case SDL.K_RETURN:
             execute_action(app, palette_action(app.palette_selection))
         case:
@@ -1136,8 +1194,8 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 
     if app.palette_open {
         box_w := f32(520)
-        box := SDL.FRect{(width - box_w) / 2, 92, box_w, 252}
-        for i in 0..<4 {
+        box := SDL.FRect{(width - box_w) / 2, 92, box_w, 288}
+        for i in 0..<5 {
             row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
             if inside(x, y, row) {
                 execute_action(app, palette_action(i))
@@ -1234,12 +1292,18 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             } else {
                 app.active_tab = (app.active_tab + 1) % app.tab_count
             }
+        } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_D {
+            execute_action(app, .Split_Pane)
+        } else if event.type == .KEY_DOWN && alt && (event.key.key == SDL.K_LEFT || event.key.key == SDL.K_RIGHT) {
+            if app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].secondary_session != nil {
+                app.tabs[app.active_tab].active_pane = event.key.key == SDL.K_RIGHT ? 1 : 0
+            }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
             adjust_terminal_font(app, -1)
         } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
             adjust_terminal_font(app, 1)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
-            execute_action(app, .Close_Tab)
+            execute_action(app, .Close_Pane)
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
             app.profile_menu_open = false
             app.palette_open = false
@@ -1338,16 +1402,23 @@ draw_profile_menu :: proc(app: ^App) {
     draw_text(app, app.ui_font, "Ctrl+,", panel.x + 228, panel.y + 118, palette.text_muted)
 }
 
-draw_real_session :: proc(app: ^App, view: ^Session_View, width, height: f32) {
+draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view == nil {
         return
     }
-    origin_x := f32(28)
-    origin_y := f32(58)
-    resize_owned_session_to_pane(app, view, width, height, origin_x, origin_y)
-    if draw_canvas_session(app, view, origin_x, origin_y) {
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
+    if draw_canvas_session(app, view, pane, origin_x, origin_y) {
         return
     }
+
+    pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
+    _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
+    defer {
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+    }
+
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
 
@@ -1378,7 +1449,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, width, height: f32) {
     }
 
     if view.text_truncated {
-        draw_text(app, app.ui_font, "visible-text projection truncated", width - 286, height - 26, palette.accent)
+        draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
     }
 }
 
@@ -1394,17 +1465,33 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
     inset := SDL.FRect{18, 52, width - 36, height - 64}
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
-    if active_tab_is_session(app) {
-        draw_real_session(app, active_session_view(app), width, height)
-    } else {
+    if !active_tab_is_session(app) {
         draw_placeholder_session(app)
+        return
+    }
+    tab := &app.tabs[app.active_tab]
+    if tab.secondary_session == nil {
+        draw_real_session(app, tab.session, inset)
+        return
     }
 
+    gap := f32(4)
+    left_width := (inset.w - gap) / 2
+    left := SDL.FRect{inset.x, inset.y, left_width, inset.h}
+    right := SDL.FRect{inset.x + left_width + gap, inset.y, inset.w - left_width - gap, inset.h}
+    draw_fill(app.renderer, left, palette.terminal_panel)
+    draw_fill(app.renderer, right, palette.terminal_panel)
+    divider := SDL.FRect{left.x + left.w, inset.y, gap, inset.h}
+    draw_fill(app.renderer, divider, palette.border)
+
+    draw_real_session(app, tab.session, left)
+    draw_real_session(app, tab.secondary_session, right)
+    draw_outline(app.renderer, tab.active_pane == 0 ? left : right, palette.accent)
 }
 
 draw_palette :: proc(app: ^App, width, height: f32) {
     box_w := f32(520)
-    box_h := f32(252)
+    box_h := f32(288)
     box := SDL.FRect{(width - box_w) / 2, 92, box_w, box_h}
     draw_fill(app.renderer, box, palette.title_bg)
     draw_outline(app.renderer, box, palette.border)
@@ -1414,14 +1501,15 @@ draw_palette :: proc(app: ^App, width, height: f32) {
     draw_outline(app.renderer, search, palette.accent)
     draw_text(app, app.ui_font, "> Command Palette", search.x + 12, search.y + 10, palette.text)
 
-    labels := [4]string{"New tab", "Attach Home Session", "Open settings", "Close tab"}
-    shortcuts := [4]string{"Ctrl+T", "", "Ctrl+,", "Ctrl+Shift+W"}
+    labels := [5]string{"New tab", "Split pane", "Attach Home Session", "Open settings", "Close pane / tab"}
+    shortcuts := [5]string{"Ctrl+T", "Alt+Shift+D", "", "Ctrl+,", "Ctrl+Shift+W"}
     for label, i in labels {
         row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
         if app.palette_selection == i {
             draw_fill(app.renderer, row, palette.tab_active)
         }
-        enabled := i != 3 || app.tab_count > 1
+        has_split := app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].secondary_session != nil
+        enabled := i != 4 || has_split || app.tab_count > 1
         color := enabled ? palette.text : palette.text_muted
         draw_text(app, app.ui_font, label, row.x + 10, row.y + 8, color)
         if len(shortcuts[i]) != 0 {
@@ -1500,17 +1588,17 @@ draw_settings :: proc(app: ^App, width, height: f32) {
             draw_outline(app.renderer, swatch, palette.border)
         }
     case .Actions:
-        action_names := [5]string{"New tab", "Close tab", "Command Palette", "Profile menu", "Settings"}
-        action_keys := [5]string{"Ctrl+T", "Ctrl+Shift+W", "Ctrl+Shift+P", "Ctrl+Shift+Space", "Ctrl+,"}
+        action_names := [7]string{"New tab", "Split pane", "Close pane / tab", "Focus left pane", "Focus right pane", "Command Palette", "Profile menu"}
+        action_keys := [7]string{"Ctrl+T", "Alt+Shift+D", "Ctrl+Shift+W", "Alt+Left", "Alt+Right", "Ctrl+Shift+P", "Ctrl+Shift+Space"}
         for name, index in action_names {
             y := content_y + 54 + f32(index) * 42
             draw_text(app, app.ui_font, name, content_x, y, palette.text)
             draw_text(app, app.ui_font, action_keys[index], content_x + 230, y, palette.text_muted)
         }
     case .Profile_Defaults:
-        draw_setting_field(app, "Profile kind", "Attach recipe", content_x, content_y + 48, 300)
-        draw_setting_field(app, "Geometry leadership", "Observer only", content_x, content_y + 126, 300)
-        draw_setting_field(app, "Session lifetime", "Node-owned canonical Session", content_x, content_y + 204, 340)
+        draw_setting_field(app, "Profile kind", "Created local shell", content_x, content_y + 48, 300)
+        draw_setting_field(app, "Geometry leadership", "Pane-owned", content_x, content_y + 126, 300)
+        draw_setting_field(app, "Session lifetime", "Tab / pane-owned child Session", content_x, content_y + 204, 340)
     case .Profile_Home:
         draw_setting_field(app, "Name", "Home Session", content_x, content_y + 48, 300)
         draw_setting_field(app, "Endpoint", HOME_ENDPOINT, content_x, content_y + 126, 360)
@@ -1636,6 +1724,7 @@ main :: proc() {
     for app.tab_count > 0 {
         app.tab_count -= 1
         destroy_session_view(app.tabs[app.tab_count].session)
+        destroy_session_view(app.tabs[app.tab_count].secondary_session)
         app.tabs[app.tab_count] = {}
     }
 }
