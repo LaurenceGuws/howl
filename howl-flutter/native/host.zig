@@ -1,4 +1,6 @@
 const std = @import("std");
+const posix = std.posix;
+const system = posix.system;
 const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
 const text = @import("howl_text");
@@ -82,6 +84,15 @@ const Control = struct {
 
 const HostImageBinding = terminal.ExternalImageBinding;
 
+const ObserveTiming = struct {
+    receive_decode_us: u64 = 0,
+    project_us: u64 = 0,
+    compose_us: u64 = 0,
+    serialize_us: u64 = 0,
+};
+
+const observe_timing_fields: usize = 4;
+
 const PendingImage = struct {
     binding: HostImageBinding,
     external: canvas.FrameExternalResource,
@@ -109,6 +120,7 @@ const Host = struct {
     armed_live_after_revision: ?u64 = null,
     live_resync_required: bool = false,
     observation_scratch: []u8,
+    last_observe_timing: ObserveTiming = .{},
 };
 
 fn maintainedRasterScale(font_pixels: u16, cell_width: u16, cell_height: u16) ?u16 {
@@ -683,6 +695,25 @@ pub export fn howl_native_host_set_live_observe_pipeline(
     return 0;
 }
 
+pub export fn howl_native_host_observe_timing(
+    raw: ?*HostHandle,
+    output_ptr: [*]u64,
+    output_capacity: usize,
+) usize {
+    if (output_capacity < observe_timing_fields) return 0;
+    const raw_host = raw orelse return 0;
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    const timing = host.last_observe_timing;
+    const values = [_]u64{
+        timing.receive_decode_us,
+        timing.project_us,
+        timing.compose_us,
+        timing.serialize_us,
+    };
+    @memcpy(output_ptr[0..observe_timing_fields], &values);
+    return observe_timing_fields;
+}
+
 pub export fn howl_native_host_observe(
     raw: ?*HostHandle,
     after_revision: u64,
@@ -767,6 +798,7 @@ fn observe(
     output: []u8,
 ) !usize {
     if (output.len < output_minimum_bytes) return error.BufferTooSmall;
+    host.last_observe_timing = .{};
     const residency = try decodeResidencies(host, residency_bytes);
     var scratch = std.heap.FixedBufferAllocator.init(host.observation_scratch);
     const frame_allocator = scratch.allocator();
@@ -775,18 +807,23 @@ fn observe(
     var owned_rich: ?client.rich.Snapshot = null;
     defer if (owned_rich) |*value| value.deinit();
     var cached_rich: ?client.rich.View = null;
+    var stage_started = monotonicMicroseconds();
     if (live) {
         cached_rich = try receiveLiveRich(host, after_revision, history_offset);
     } else {
         owned_rich = try receiveRich(host, frame_allocator, after_revision, history_offset);
     }
+    host.last_observe_timing.receive_decode_us = elapsedMicroseconds(stage_started, monotonicMicroseconds());
     const begin = if (cached_rich) |value| value.begin else owned_rich.?.begin;
+    stage_started = monotonicMicroseconds();
     const view = if (cached_rich) |*value|
         try client.view.projectView(frame_allocator, value)
     else
         try client.view.project(frame_allocator, &owned_rich.?);
     defer client.view.deinit(view);
+    host.last_observe_timing.project_us = elapsedMicroseconds(stage_started, monotonicMicroseconds());
 
+    stage_started = monotonicMicroseconds();
     const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
     const placement = canvas.Composer.Placement{
         .source = host.source,
@@ -820,7 +857,9 @@ fn observe(
         else => return failure,
     };
     host.pending_image = null;
+    host.last_observe_timing.compose_us = elapsedMicroseconds(stage_started, monotonicMicroseconds());
 
+    stage_started = monotonicMicroseconds();
     var writer = Writer{ .bytes = output };
     try writeHostHeader(&writer, begin);
     const hcr_start = writer.offset;
@@ -861,7 +900,21 @@ fn observe(
         host.armed_live_after_revision = begin.revision;
         host.live_resync_required = false;
     }
+    host.last_observe_timing.serialize_us = elapsedMicroseconds(stage_started, monotonicMicroseconds());
     return total;
+}
+
+fn monotonicMicroseconds() i64 {
+    var now: posix.timespec = undefined;
+    if (posix.errno(system.clock_gettime(.MONOTONIC, &now)) != .SUCCESS) return 0;
+    const nanoseconds = @as(i128, now.sec) * std.time.ns_per_s + now.nsec;
+    if (nanoseconds <= 0 or nanoseconds > std.math.maxInt(i64) * @as(i128, std.time.ns_per_us)) return 0;
+    return @intCast(@divFloor(nanoseconds, std.time.ns_per_us));
+}
+
+fn elapsedMicroseconds(started: i64, finished: i64) u64 {
+    if (started <= 0 or finished < started) return 0;
+    return @intCast(finished - started);
 }
 
 fn takeHostContentUpdate(

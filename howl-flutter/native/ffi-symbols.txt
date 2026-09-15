@@ -10,6 +10,7 @@ howl_native_host_fetch_image_refill
 howl_native_host_create
 howl_native_host_destroy
 howl_native_host_observe
+howl_native_host_observe_timing
 howl_native_host_set_live_observe_pipeline
 howl_native_control_create
 howl_native_control_destroy

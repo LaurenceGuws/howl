@@ -385,6 +385,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           transportGeneration: generation,
         );
         observeClock.stop();
+        _framePerf.recordNative(
+          receiveDecodeUs: observed.timing.receiveDecodeUs,
+          projectUs: observed.timing.projectUs,
+          composeUs: observed.timing.composeUs,
+          serializeUs: observed.timing.serializeUs,
+        );
         if (presentationChanged()) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           throw const _PresentationRestart();
@@ -496,8 +502,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     ]);
   }
 
-  Future<({Uint8List bytes, List<NativeCanvasPreloadedResource> preloaded})>
-  _observeNativeFrame({
+  Future<({
+    Uint8List bytes,
+    List<NativeCanvasPreloadedResource> preloaded,
+    NativeHostObserveTiming timing,
+  })> _observeNativeFrame({
     required NativeHostObserver observer,
     required int afterRevision,
     required int historyOffset,
@@ -523,6 +532,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           return (
             bytes: observation.bytes,
             preloaded: preloaded.values.toList(growable: false),
+            timing: observation.timing,
           );
         }
         if (observation is NativeHostImageSupersededObservation) {
@@ -778,6 +788,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _diagnostics.record('iOS Network', networkProbe);
     }
     _diagnostics.record('Perf Terminal', _framePerf.terminalSummary());
+    _diagnostics.record('Perf Native', _framePerf.nativeSummary());
     _diagnostics.record('Perf Flutter', _framePerf.flutterSummary());
     _diagnostics.record(
       'App',

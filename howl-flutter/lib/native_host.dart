@@ -131,9 +131,24 @@ sealed class NativeHostObservation {
   const NativeHostObservation();
 }
 
+final class NativeHostObserveTiming {
+  const NativeHostObserveTiming({
+    required this.receiveDecodeUs,
+    required this.projectUs,
+    required this.composeUs,
+    required this.serializeUs,
+  });
+
+  final int receiveDecodeUs;
+  final int projectUs;
+  final int composeUs;
+  final int serializeUs;
+}
+
 final class NativeHostFrameObservation extends NativeHostObservation {
-  const NativeHostFrameObservation(this.bytes);
+  const NativeHostFrameObservation(this.bytes, this.timing);
   final Uint8List bytes;
+  final NativeHostObserveTiming timing;
 }
 
 final class NativeHostImageRefillObservation extends NativeHostObservation {
@@ -558,7 +573,25 @@ final class NativeHostObserver {
       }
       return;
     }
-    completer.complete(NativeHostFrameObservation(bytes));
+    if (message.length < 7 ||
+        message[3] is! int ||
+        message[4] is! int ||
+        message[5] is! int ||
+        message[6] is! int) {
+      completer.completeError(const NativeHostException('worker_timing'));
+      return;
+    }
+    completer.complete(
+      NativeHostFrameObservation(
+        bytes,
+        NativeHostObserveTiming(
+          receiveDecodeUs: message[3]! as int,
+          projectUs: message[4]! as int,
+          composeUs: message[5]! as int,
+          serializeUs: message[6]! as int,
+        ),
+      ),
+    );
   }
 }
 
@@ -738,6 +771,18 @@ typedef _ObserveDart =
       int,
       ffi.Pointer<ffi.Size>,
     );
+typedef _ObserveTimingNative =
+    ffi.Size Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Uint64>,
+      ffi.Size,
+    );
+typedef _ObserveTimingDart =
+    int Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Uint64>,
+      int,
+    );
 typedef _SetLiveObservePipelineNative =
     ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
 typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
@@ -822,6 +867,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final observe = dylib.lookupFunction<_ObserveNative, _ObserveDart>(
     'howl_native_host_observe',
   );
+  final observeTiming = dylib.lookupFunction<
+    _ObserveTimingNative,
+    _ObserveTimingDart
+  >('howl_native_host_observe_timing');
   final setLiveObservePipeline = dylib.lookupFunction<
     _SetLiveObservePipelineNative,
     _SetLiveObservePipelineDart
@@ -896,12 +945,14 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
 
   final output = calloc<ffi.Uint8>(outputMinimumBytes);
   final outputLength = calloc<ffi.Size>();
+  final observeTimingValues = calloc<ffi.Uint64>(4);
   final residency = calloc<ffi.Uint8>(8 * _residencyRecordBytes);
   final cancellation = createCancellation(host);
   if (cancellation == ffi.nullptr) {
     destroy(host);
     calloc.free(output);
     calloc.free(outputLength);
+    calloc.free(observeTimingValues);
     calloc.free(residency);
     ready.send('worker_cancellation_create');
     commands.close();
@@ -996,12 +1047,21 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
         responses.send(<Object?>[id, code == 0 ? 5 : code, null]);
         continue;
       }
+      final timingCount = observeTiming(host, observeTimingValues, 4);
+      if (timingCount != 4) {
+        responses.send(<Object?>[id, 5, null]);
+        continue;
+      }
       responses.send(<Object?>[
         id,
         0,
         TransferableTypedData.fromList(<Uint8List>[
           output.asTypedList(outputLength.value),
         ]),
+        observeTimingValues[0],
+        observeTimingValues[1],
+        observeTimingValues[2],
+        observeTimingValues[3],
       ]);
     }
   } finally {

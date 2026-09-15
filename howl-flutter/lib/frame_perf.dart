@@ -34,6 +34,10 @@ final class TerminalFramePerf {
   final _BoundedSamples _prepareUs = _BoundedSamples();
   final _BoundedSamples _displayWaitUs = _BoundedSamples();
   final _BoundedSamples _revisionGap = _BoundedSamples();
+  final _BoundedSamples _nativeReceiveDecodeUs = _BoundedSamples();
+  final _BoundedSamples _nativeProjectUs = _BoundedSamples();
+  final _BoundedSamples _nativeComposeUs = _BoundedSamples();
+  final _BoundedSamples _nativeSerializeUs = _BoundedSamples();
   final _BoundedSamples _buildUs = _BoundedSamples();
   final _BoundedSamples _rasterUs = _BoundedSamples();
   final _BoundedSamples _totalUs = _BoundedSamples();
@@ -49,6 +53,18 @@ final class TerminalFramePerf {
     _prepareUs.add(prepareUs);
     _displayWaitUs.add(displayWaitUs);
     if (revisionGap != null) _revisionGap.add(revisionGap);
+  }
+
+  void recordNative({
+    required int receiveDecodeUs,
+    required int projectUs,
+    required int composeUs,
+    required int serializeUs,
+  }) {
+    _nativeReceiveDecodeUs.add(receiveDecodeUs);
+    _nativeProjectUs.add(projectUs);
+    _nativeComposeUs.add(composeUs);
+    _nativeSerializeUs.add(serializeUs);
   }
 
   void recordFlutterFrame({
@@ -70,6 +86,13 @@ final class TerminalFramePerf {
       'display_wait=${_durationSummary(_displayWaitUs)} '
       'rev_gap=${_integerSummary(_revisionGap)}';
 
+  String nativeSummary() =>
+      'n=${_nativeReceiveDecodeUs.length} '
+      'receive_decode=${_durationSummary(_nativeReceiveDecodeUs)} '
+      'project=${_durationSummary(_nativeProjectUs)} '
+      'compose=${_durationSummary(_nativeComposeUs)} '
+      'serialize=${_durationSummary(_nativeSerializeUs)}';
+
   String flutterSummary() =>
       'n=${_totalUs.length} '
       'build=${_durationSummary(_buildUs)} '
@@ -83,6 +106,10 @@ final class TerminalFramePerf {
       _prepareUs,
       _displayWaitUs,
       _revisionGap,
+      _nativeReceiveDecodeUs,
+      _nativeProjectUs,
+      _nativeComposeUs,
+      _nativeSerializeUs,
       _buildUs,
       _rasterUs,
       _totalUs,
