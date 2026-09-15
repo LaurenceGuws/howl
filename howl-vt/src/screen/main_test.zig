@@ -163,6 +163,25 @@ test "screen: erase ops no-op without cell buffer" {
     try std.testing.expectEqual(@as(u16, 3), s.cursor.col);
 }
 
+test "screen: line feed admits a no-op partial-region scroll" {
+    const gpa = std.testing.allocator;
+    var s = try Grid.initWithCells(gpa, 4, 4);
+    defer s.deinit(gpa);
+
+    try std.testing.expect(s.setScrollRegion(1, 3));
+    s.cursor.setPositionByClient(3, 0);
+
+    // Blank rows make the exact mutation result false even though the scroll
+    // operation is valid. Line feed must not treat that as an invariant breach.
+    try std.testing.expect(!s.scrollUpRegion(1, 3, 1));
+    s.cursor.setPositionByClient(3, 0);
+    s.lineFeed();
+
+    try std.testing.expectEqual(@as(u16, 3), s.cursor.row);
+    for (1..4) |row| for (0..4) |col|
+        try std.testing.expectEqual(@as(u21, 0), s.cellAt(@intCast(row), @intCast(col)));
+}
+
 test "screen: DECSTBM and IL shift rows down inside region" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCells(gpa, 4, 4);

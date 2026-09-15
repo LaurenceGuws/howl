@@ -3179,7 +3179,10 @@ pub const Screen = struct {
             return;
         }
         if (self.cursor.row == bottom) {
-            std.debug.assert(self.scrollUpRegion(self.scroll_top, bottom, 1));
+            // A valid scroll over already-blank/equivalent rows may have no
+            // retained mutation. The boolean reports mutation, not validity.
+            const retained_mutation = self.scrollUpRegion(self.scroll_top, bottom, 1);
+            if (!retained_mutation) return;
             return;
         }
         if (self.cursor.row < self.rows - 1) self.setCursorRowClamped(self.cursor.row + 1);
