@@ -2,6 +2,7 @@ package main
 
 import "core:c"
 import "core:fmt"
+import "core:os"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -13,6 +14,8 @@ HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
 SESSION_RETRY_MS :: 50
 MAX_TABS :: 8
+OWNED_SESSION_ROWS :: u16(37)
+OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
 FONT_PRESET_MAX :: 2
 
@@ -23,6 +26,35 @@ Tab_Kind :: enum {
 Tab :: struct {
     kind: Tab_Kind,
     title: string,
+    session: ^Session_View,
+}
+
+Session_View :: struct {
+    owned_process: rawptr,
+    control: rawptr,
+    observer: rawptr,
+    cancellation: rawptr,
+    observer_thread: ^thread.Thread,
+    endpoint: [160]u8,
+    endpoint_len: int,
+    text: []u8,
+    scratch: []u8,
+    text_len: int,
+    revision: u64,
+    terminal_revision: u64,
+    rows: u16,
+    columns: u16,
+    cursor_row: u16,
+    cursor_column: u16,
+    cursor_visible: bool,
+    cursor_shape: u8,
+    history_count: u32,
+    alternate_screen: bool,
+    text_truncated: bool,
+    error: [160]u8,
+    error_len: int,
+    mutex: sync.Mutex,
+    worker_stop: bool,
 }
 
 App_Action :: enum {
@@ -85,30 +117,7 @@ App :: struct {
     palette_selection: int,
     settings_open: bool,
     settings_page: Settings_Page,
-    session: rawptr,
-    session_text: []u8,
-    session_text_len: int,
-    session_revision: u64,
-    session_terminal_revision: u64,
-    session_rows: u16,
-    session_columns: u16,
-    session_cursor_row: u16,
-    session_cursor_column: u16,
-    session_cursor_visible: bool,
-    session_cursor_shape: u8,
-    session_history_count: u32,
-    session_alternate_screen: bool,
-    session_text_truncated: bool,
-    session_error: [160]u8,
-    session_error_len: int,
-    session_mutex: sync.Mutex,
-    session_worker_stop: bool,
-}
-
-Session_Worker :: struct {
-    app: ^App,
-    observer: rawptr,
-    scratch: []u8,
+    next_session_identity: u32,
 }
 
 font_size_for_preset :: proc(preset: int) -> f32 {
@@ -170,8 +179,8 @@ draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SD
     _ = TTF.DrawRendererText(label, x, y)
 }
 
-publish_bridge_error :: proc(app: ^App, handle: rawptr) {
-    if handle == nil {
+publish_bridge_error :: proc(view: ^Session_View, handle: rawptr) {
+    if view == nil || handle == nil {
         return
     }
     message: [160]u8
@@ -182,21 +191,20 @@ publish_bridge_error :: proc(app: ^App, handle: rawptr) {
         c.size_t(len(message)),
         &error_len,
     )
-    sync.mutex_lock(&app.session_mutex)
-    copy(app.session_error[:], message[:int(error_len)])
-    app.session_error_len = int(error_len)
-    sync.mutex_unlock(&app.session_mutex)
+    sync.mutex_lock(&view.mutex)
+    copy(view.error[:], message[:int(error_len)])
+    view.error_len = int(error_len)
+    sync.mutex_unlock(&view.mutex)
 }
 
 observe_session :: proc(data: rawptr) {
-    worker := (^Session_Worker)(data)
-    app := worker.app
-    observer := worker.observer
+    view := (^Session_View)(data)
+    observer := view.observer
     after_revision: u64
     for {
-        sync.mutex_lock(&app.session_mutex)
-        stop := app.session_worker_stop
-        sync.mutex_unlock(&app.session_mutex)
+        sync.mutex_lock(&view.mutex)
+        stop := view.worker_stop
+        sync.mutex_unlock(&view.mutex)
         if stop {
             break
         }
@@ -206,18 +214,18 @@ observe_session :: proc(data: rawptr) {
             observer,
             after_revision,
             0,
-            raw_data(worker.scratch),
-            c.size_t(len(worker.scratch)),
+            raw_data(view.scratch),
+            c.size_t(len(view.scratch)),
             &output_len,
         )
         if result != 0 {
-            sync.mutex_lock(&app.session_mutex)
-            stopped := app.session_worker_stop
-            sync.mutex_unlock(&app.session_mutex)
+            sync.mutex_lock(&view.mutex)
+            stopped := view.worker_stop
+            sync.mutex_unlock(&view.mutex)
             if stopped {
                 break
             }
-            publish_bridge_error(app, observer)
+            publish_bridge_error(view, observer)
             after_revision = 0
             time.sleep(SESSION_RETRY_MS * time.Millisecond)
             continue
@@ -236,50 +244,223 @@ observe_session :: proc(data: rawptr) {
         snapshot_alternate_screen := alternate_screen(observer) != 0
         snapshot_text_truncated := text_truncated(observer) != 0
 
-        sync.mutex_lock(&app.session_mutex)
-        copy(app.session_text[:int(output_len)], worker.scratch[:int(output_len)])
-        app.session_text_len = int(output_len)
-        app.session_revision = snapshot_revision
-        app.session_terminal_revision = snapshot_terminal_revision
-        app.session_rows = snapshot_rows
-        app.session_columns = snapshot_columns
-        app.session_cursor_row = snapshot_cursor_row
-        app.session_cursor_column = snapshot_cursor_column
-        app.session_cursor_visible = snapshot_cursor_visible
-        app.session_cursor_shape = snapshot_cursor_shape
-        app.session_history_count = snapshot_history_count
-        app.session_alternate_screen = snapshot_alternate_screen
-        app.session_text_truncated = snapshot_text_truncated
-        app.session_error_len = 0
-        sync.mutex_unlock(&app.session_mutex)
+        sync.mutex_lock(&view.mutex)
+        copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
+        view.text_len = int(output_len)
+        view.revision = snapshot_revision
+        view.terminal_revision = snapshot_terminal_revision
+        view.rows = snapshot_rows
+        view.columns = snapshot_columns
+        view.cursor_row = snapshot_cursor_row
+        view.cursor_column = snapshot_cursor_column
+        view.cursor_visible = snapshot_cursor_visible
+        view.cursor_shape = snapshot_cursor_shape
+        view.history_count = snapshot_history_count
+        view.alternate_screen = snapshot_alternate_screen
+        view.text_truncated = snapshot_text_truncated
+        view.error_len = 0
+        sync.mutex_unlock(&view.mutex)
     }
 }
 
-publish_initial_error :: proc(app: ^App, message: string) {
-    sync.mutex_lock(&app.session_mutex)
-    count := min(len(message), len(app.session_error))
+publish_initial_error :: proc(view: ^Session_View, message: string) {
+    if view == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    count := min(len(message), len(view.error))
     for byte, index in message[:count] {
-        app.session_error[index] = u8(byte)
+        view.error[index] = u8(byte)
     }
-    app.session_error_len = count
-    sync.mutex_unlock(&app.session_mutex)
+    view.error_len = count
+    sync.mutex_unlock(&view.mutex)
 }
 
-stop_session_worker :: proc(app: ^App) {
-    sync.mutex_lock(&app.session_mutex)
-    app.session_worker_stop = true
-    sync.mutex_unlock(&app.session_mutex)
-}
-
-session_attached :: proc(app: ^App) -> bool {
-    sync.mutex_lock(&app.session_mutex)
-    attached := app.session != nil && app.session_revision != 0 && app.session_error_len == 0
-    sync.mutex_unlock(&app.session_mutex)
+session_attached :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    attached := view.control != nil && view.revision != 0 && view.error_len == 0
+    sync.mutex_unlock(&view.mutex)
     return attached
 }
 
-copy_bridge_error :: proc(app: ^App) {
-    publish_bridge_error(app, app.session)
+copy_bridge_error :: proc(view: ^Session_View) {
+    if view != nil {
+        publish_bridge_error(view, view.control)
+    }
+}
+
+allocate_session_view :: proc(owned_process: rawptr) -> ^Session_View {
+    view := new(Session_View)
+    if view == nil {
+        return nil
+    }
+    view.owned_process = owned_process
+    view.text = make([]u8, SESSION_TEXT_BYTES)
+    view.scratch = make([]u8, SESSION_TEXT_BYTES)
+    if view.text == nil || view.scratch == nil {
+        if view.text != nil do delete(view.text)
+        if view.scratch != nil do delete(view.scratch)
+        free(view)
+        return nil
+    }
+    return view
+}
+
+create_session_view :: proc(endpoint: string, owned_process: rawptr) -> ^Session_View {
+    view := allocate_session_view(owned_process)
+    if view == nil {
+        return nil
+    }
+    endpoint_count := min(len(endpoint), len(view.endpoint))
+    for byte, index in endpoint[:endpoint_count] {
+        view.endpoint[index] = u8(byte)
+    }
+    view.endpoint_len = endpoint_count
+
+    control_diagnostic: [160]u8
+    control_diagnostic_len: c.size_t
+    view.control = create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(control_diagnostic[:]),
+        c.size_t(len(control_diagnostic)),
+        &control_diagnostic_len,
+    )
+    if view.control == nil {
+        publish_initial_error(view, string(control_diagnostic[:int(control_diagnostic_len)]))
+        return view
+    }
+
+    observer_diagnostic: [160]u8
+    observer_diagnostic_len: c.size_t
+    view.observer = create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(observer_diagnostic[:]),
+        c.size_t(len(observer_diagnostic)),
+        &observer_diagnostic_len,
+    )
+    if view.observer == nil {
+        publish_initial_error(view, string(observer_diagnostic[:int(observer_diagnostic_len)]))
+        return view
+    }
+    view.cancellation = cancellation_create(view.observer)
+    if view.cancellation == nil {
+        publish_initial_error(view, "observer_cancellation_failed")
+        return view
+    }
+    view.observer_thread = thread.create_and_start_with_data(
+        rawptr(view),
+        observe_session,
+        name = "howl-odin-observe",
+    )
+    if view.observer_thread == nil {
+        publish_initial_error(view, "observer_thread_failed")
+    }
+    return view
+}
+
+create_error_session_view :: proc(message: string) -> ^Session_View {
+    view := allocate_session_view(rawptr(nil))
+    if view != nil {
+        publish_initial_error(view, message)
+    }
+    return view
+}
+
+destroy_session_view :: proc(view: ^Session_View) {
+    if view == nil {
+        return
+    }
+    if view.observer_thread != nil {
+        sync.mutex_lock(&view.mutex)
+        view.worker_stop = true
+        sync.mutex_unlock(&view.mutex)
+        if view.cancellation != nil {
+            _ = cancellation_cancel(view.cancellation)
+        }
+        thread.destroy(view.observer_thread)
+        view.observer_thread = nil
+    }
+    if view.cancellation != nil {
+        cancellation_destroy(view.cancellation)
+    }
+    if view.observer != nil {
+        destroy(view.observer)
+    }
+    if view.control != nil {
+        destroy(view.control)
+    }
+    if view.owned_process != nil {
+        owned_session_destroy(view.owned_process)
+    }
+    delete(view.scratch)
+    delete(view.text)
+    free(view)
+}
+
+active_session_view :: proc(app: ^App) -> ^Session_View {
+    if app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return nil
+    }
+    return app.tabs[app.active_tab].session
+}
+
+session_endpoint :: proc(view: ^Session_View) -> string {
+    if view == nil || view.endpoint_len <= 0 {
+        return ""
+    }
+    return string(view.endpoint[:view.endpoint_len])
+}
+
+create_owned_session_view :: proc(app: ^App) -> ^Session_View {
+    runtime_dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
+    if len(runtime_dir) == 0 {
+        return create_error_session_view("Missing XDG_RUNTIME_DIR")
+    }
+    shell := os.get_env("SHELL", context.temp_allocator)
+    if len(shell) == 0 {
+        shell = "/bin/sh"
+    }
+    identity := app.next_session_identity
+    app.next_session_identity += 1
+    diagnostic: [160]u8
+    diagnostic_len: c.size_t
+    owned := owned_session_create(
+        raw_data(runtime_dir),
+        c.size_t(len(runtime_dir)),
+        raw_data(shell),
+        c.size_t(len(shell)),
+        OWNED_SESSION_ROWS,
+        OWNED_SESSION_COLUMNS,
+        identity,
+        raw_data(diagnostic[:]),
+        c.size_t(len(diagnostic)),
+        &diagnostic_len,
+    )
+    if owned == nil {
+        return create_error_session_view(string(diagnostic[:int(diagnostic_len)]))
+    }
+    endpoint_storage: [160]u8
+    endpoint_len: c.size_t
+    if owned_session_copy_endpoint(
+        owned,
+        raw_data(endpoint_storage[:]),
+        c.size_t(len(endpoint_storage)),
+        &endpoint_len,
+    ) != 0 {
+        owned_session_destroy(owned)
+        return create_error_session_view("owned_session_endpoint_failed")
+    }
+    endpoint := string(endpoint_storage[:int(endpoint_len)])
+    view := create_session_view(endpoint, owned)
+    if view == nil {
+        owned_session_destroy(owned)
+    }
+    return view
 }
 
 bridge_modifiers :: proc(mods: SDL.Keymod) -> u8 {
@@ -314,7 +495,8 @@ named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
 }
 
 send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
-    if app.session == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
+    view := active_session_view(app)
+    if view == nil || view.control == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
         return false
     }
     key, ok := named_bridge_key(event.key.key)
@@ -328,13 +510,13 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         action = .Repeat
     }
     result := send_named_key(
-        app.session,
+        view.control,
         u8(key),
         u8(action),
         bridge_modifiers(event.key.mod),
     )
     if result != 0 {
-        copy_bridge_error(app)
+        copy_bridge_error(view)
     }
     return true
 }
@@ -352,22 +534,36 @@ tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.F
     return
 }
 
-new_tab :: proc(app: ^App) {
+add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
     if app.tab_count >= MAX_TABS {
-        return
+        if view != nil do destroy_session_view(view)
+        return false
     }
-    app.tabs[app.tab_count] = Tab{kind = .Session, title = "Home Session"}
+    if view == nil {
+        return false
+    }
+    app.tabs[app.tab_count] = Tab{kind = .Session, title = title, session = view}
     app.tab_count += 1
     app.active_tab = app.tab_count - 1
     app.profile_menu_open = false
     app.palette_open = false
     app.settings_open = false
+    return true
+}
+
+new_tab :: proc(app: ^App) {
+    _ = add_session_tab(app, create_owned_session_view(app), "Local shell")
+}
+
+attach_home_tab :: proc(app: ^App) {
+    _ = add_session_tab(app, create_session_view(HOME_ENDPOINT, rawptr(nil)), "Home Session")
 }
 
 close_tab :: proc(app: ^App, index: int) {
     if app.tab_count <= 1 || index < 0 || index >= app.tab_count {
         return
     }
+    retiring := app.tabs[index].session
     for i in index..<app.tab_count - 1 {
         app.tabs[i] = app.tabs[i + 1]
     }
@@ -378,6 +574,7 @@ close_tab :: proc(app: ^App, index: int) {
     } else if app.active_tab >= app.tab_count {
         app.active_tab = app.tab_count - 1
     }
+    destroy_session_view(retiring)
 }
 
 active_tab_is_session :: proc(app: ^App) -> bool {
@@ -386,8 +583,10 @@ active_tab_is_session :: proc(app: ^App) -> bool {
 
 execute_action :: proc(app: ^App, action: App_Action) {
     switch action {
-    case .New_Tab, .Attach_Home:
+    case .New_Tab:
         new_tab(app)
+    case .Attach_Home:
+        attach_home_tab(app)
     case .Open_Settings:
         app.profile_menu_open = false
         app.palette_open = false
@@ -609,6 +808,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             app.palette_open = false
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
+        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_TAB && app.tab_count > 1 {
+            if shift {
+                app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
+            } else {
+                app.active_tab = (app.active_tab + 1) % app.tab_count
+            }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
             adjust_terminal_font(app, -1)
         } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
@@ -623,28 +828,30 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             // Overlay-owned navigation never reaches the terminal.
         } else if send_bridge_key(app, event) {
             // The active real Session consumed this named physical key.
-        } else if event.type == .KEY_DOWN && app.session != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
+        } else if event.type == .KEY_DOWN && active_session_view(app) != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
+            view := active_session_view(app)
             scalar := u32(event.key.key)
             if scalar > 0 && scalar < 0x80 {
                 action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
                 result := send_unicode_key(
-                    app.session,
+                    view.control,
                     scalar,
                     u8(action),
                     bridge_modifiers(event.key.mod),
                 )
                 if result != 0 {
-                    copy_bridge_error(app)
+                    copy_bridge_error(view)
                 }
             }
         }
     case .TEXT_INPUT:
-        if app.session != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
+        view := active_session_view(app)
+        if view != nil && view.control != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
             if len(text) != 0 {
-                result := send_text(app.session, raw_data(text), c.size_t(len(text)))
+                result := send_text(view.control, raw_data(text), c.size_t(len(text)))
                 if result != 0 {
-                    copy_bridge_error(app)
+                    copy_bridge_error(view)
                 }
             }
         }
@@ -672,7 +879,7 @@ draw_tabs :: proc(app: ^App, width: f32) {
         }
 
         draw_text(app, app.ui_font, app.tabs[i].title, tab_x + 14, 14, active ? palette.text : palette.text_muted)
-        if app.tabs[i].kind == .Session && session_attached(app) {
+        if app.tabs[i].kind == .Session && session_attached(app.tabs[i].session) {
             indicator_x := tab_x + tab_w - (app.tab_count > 1 ? 38 : 16)
             draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
         }
@@ -711,27 +918,30 @@ draw_profile_menu :: proc(app: ^App) {
     draw_text(app, app.ui_font, "Ctrl+,", panel.x + 228, panel.y + 118, palette.text_muted)
 }
 
-draw_real_session :: proc(app: ^App, width, height: f32) {
-    sync.mutex_lock(&app.session_mutex)
-    defer sync.mutex_unlock(&app.session_mutex)
+draw_real_session :: proc(app: ^App, view: ^Session_View, width, height: f32) {
+    if view == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
 
     origin_x := f32(28)
     origin_y := f32(58)
-    if app.session_error_len != 0 {
-        draw_text(app, app.ui_font, string(app.session_error[:app.session_error_len]), origin_x, origin_y, palette.accent)
+    if view.error_len != 0 {
+        draw_text(app, app.ui_font, string(view.error[:view.error_len]), origin_x, origin_y, palette.accent)
         return
     }
-    if app.session_text_len != 0 {
-        draw_text(app, app.terminal_font, string(app.session_text[:app.session_text_len]), origin_x, origin_y, palette.text)
+    if view.text_len != 0 {
+        draw_text(app, app.terminal_font, string(view.text[:view.text_len]), origin_x, origin_y, palette.text)
     }
 
-    if app.session_cursor_visible && app.session_rows != 0 && app.session_columns != 0 {
+    if view.cursor_visible && view.rows != 0 && view.columns != 0 {
         cell_w, cell_h: c.int
         if TTF.GetStringSize(app.terminal_font, "M", 1, &cell_w, &cell_h) {
             line_h := TTF.GetFontLineSkip(app.terminal_font)
-            cursor_x := origin_x + f32(int(app.session_cursor_column) * int(cell_w))
-            cursor_y := origin_y + f32(int(app.session_cursor_row) * int(line_h))
-            switch app.session_cursor_shape {
+            cursor_x := origin_x + f32(int(view.cursor_column) * int(cell_w))
+            cursor_y := origin_y + f32(int(view.cursor_row) * int(line_h))
+            switch view.cursor_shape {
             case 1:
                 draw_fill(app.renderer, {cursor_x, cursor_y + f32(line_h - 2), f32(cell_w), 2}, palette.text)
             case 2:
@@ -743,7 +953,7 @@ draw_real_session :: proc(app: ^App, width, height: f32) {
         }
     }
 
-    if app.session_text_truncated {
+    if view.text_truncated {
         draw_text(app, app.ui_font, "visible-text projection truncated", width - 286, height - 26, palette.accent)
     }
 }
@@ -761,7 +971,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
     if active_tab_is_session(app) {
-        draw_real_session(app, width, height)
+        draw_real_session(app, active_session_view(app), width, height)
     } else {
         draw_placeholder_session(app)
     }
@@ -965,41 +1175,6 @@ main :: proc() {
     }
     defer TTF.CloseFont(terminal_font)
 
-    session_text := make([]u8, SESSION_TEXT_BYTES)
-    defer delete(session_text)
-    observer_scratch := make([]u8, SESSION_TEXT_BYTES)
-    defer delete(observer_scratch)
-
-    endpoint: string = HOME_ENDPOINT
-    control_diagnostic: [160]u8
-    control_diagnostic_len: c.size_t
-    session := create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(control_diagnostic[:]),
-        c.size_t(len(control_diagnostic)),
-        &control_diagnostic_len,
-    )
-    defer {
-        if session != nil {
-            destroy(session)
-        }
-    }
-
-    observer_diagnostic: [160]u8
-    observer_diagnostic_len: c.size_t
-    observer := create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(observer_diagnostic[:]),
-        c.size_t(len(observer_diagnostic)),
-        &observer_diagnostic_len,
-    )
-    observer_cancellation := rawptr(nil)
-    if observer != nil {
-        observer_cancellation = cancellation_create(observer)
-    }
-
     app := App{
         window = window,
         renderer = renderer,
@@ -1008,37 +1183,11 @@ main :: proc() {
         terminal_font = terminal_font,
         terminal_font_preset = 1,
         running = true,
-        tab_count = 1,
-        active_tab = 0,
-        session = session,
-        session_text = session_text,
+        tab_count = 0,
+        active_tab = -1,
+        next_session_identity = 1,
     }
-    app.tabs[0] = Tab{kind = .Session, title = "Home Session"}
-
-    if session == nil {
-        publish_initial_error(&app, string(control_diagnostic[:int(control_diagnostic_len)]))
-    } else if observer == nil {
-        publish_initial_error(&app, string(observer_diagnostic[:int(observer_diagnostic_len)]))
-    } else if observer_cancellation == nil {
-        publish_initial_error(&app, "observer_cancellation_failed")
-    }
-
-    worker_context := Session_Worker{
-        app = &app,
-        observer = observer,
-        scratch = observer_scratch,
-    }
-    observer_thread: ^thread.Thread = nil
-    if session != nil && observer != nil && observer_cancellation != nil {
-        observer_thread = thread.create_and_start_with_data(
-            rawptr(&worker_context),
-            observe_session,
-            name = "howl-odin-observe",
-        )
-        if observer_thread == nil {
-            publish_initial_error(&app, "observer_thread_failed")
-        }
-    }
+    attach_home_tab(&app)
 
     for app.running {
         event: SDL.Event
@@ -1048,16 +1197,9 @@ main :: proc() {
         draw(&app)
     }
 
-    if observer_thread != nil {
-        stop_session_worker(&app)
-        _ = cancellation_cancel(observer_cancellation)
-        thread.destroy(observer_thread)
+    for app.tab_count > 0 {
+        app.tab_count -= 1
+        destroy_session_view(app.tabs[app.tab_count].session)
+        app.tabs[app.tab_count] = {}
     }
-    if observer_cancellation != nil {
-        cancellation_destroy(observer_cancellation)
-    }
-    if observer != nil {
-        destroy(observer)
-    }
-
 }

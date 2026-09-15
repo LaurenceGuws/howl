@@ -7,6 +7,9 @@ foreign import howl_bridge "bridge:libhowl_odin_bridge.so"
 @(default_calling_convention="c", link_prefix="howl_odin_bridge_")
 foreign howl_bridge {
     version            :: proc() -> u32 ---
+    owned_session_create :: proc(runtime_dir: [^]u8, runtime_dir_len: c.size_t, shell: [^]u8, shell_len: c.size_t, rows, columns: u16, identity: u32, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    owned_session_destroy :: proc(handle: rawptr) ---
+    owned_session_copy_endpoint :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     create             :: proc(endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     destroy            :: proc(handle: rawptr) ---
     cancellation_create  :: proc(handle: rawptr) -> rawptr ---

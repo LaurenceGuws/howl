@@ -17,9 +17,13 @@ Current canary:
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
-- the `+` action and `Ctrl+T` create additional Home Session views; tabs have
-  real selection/close semantics and the dropdown exposes the attach recipe,
-  command palette, and Settings actions rather than prototype labels;
+- the `+` action and `Ctrl+T` launch a new canonical local Session through the
+  same `SessionProcess` owner used by the native Howl host; each created tab
+  owns its own `howl-sessiond`, PTY, observer/control clients, cancellation, and
+  teardown while **Attach Home Session** remains a non-owning view of the
+  existing `tcp://127.0.0.1:39601` Session;
+- tabs have real selection/close semantics plus Ctrl+Tab cycling, and closing a
+  created tab retires only that tab's owned child Session;
 - dropdown and command-palette commands share one application action model;
   Up/Down/Tab move selection, Enter executes the selected action, and commands
   such as new tab, attach Home Session, Settings, and close tab are no longer
@@ -41,8 +45,9 @@ Current canary:
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;
-- profile/session launch policy beyond the current Home attach recipe remains
-  deliberately deferred rather than faked.
+- the current created-session profile inherits the desktop client's process
+  environment and launches the configured shell; richer profile persistence and
+  environment editing remain deliberately deferred rather than faked.
 
 ## Toolchain
 
@@ -57,9 +62,10 @@ This experiment deliberately pins both compilers used by its build:
 ./howl-odin/build.sh
 ```
 
-The script runs the native bridge tests, builds the bridge ReleaseSafe, checks
-and builds the Odin client, then places the bridge shared object beside the
-executable so Odin's `$ORIGIN` runpath resolves it without system installation.
+The script runs the native bridge tests, builds the bridge ReleaseSafe, builds
+the exact matching `howl-sessiond`, checks and builds the Odin client, then
+atomically places the bridge and Session daemon beside the executable so live
+created Sessions do not make rebuilds fail with `ETXTBSY`.
 The result is:
 
 ```text

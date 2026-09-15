@@ -7,9 +7,17 @@
 const std = @import("std");
 const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
+const session_process = @import("session_process");
 
 const Handle = opaque {};
 const CancellationHandle = opaque {};
+const OwnedSessionHandle = opaque {};
+
+const OwnedSession = struct {
+    allocator: std.mem.Allocator,
+    threaded: std.Io.Threaded,
+    process: ?session_process.SessionProcess = null,
+};
 
 const Bridge = struct {
     allocator: std.mem.Allocator,
@@ -37,7 +45,82 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 1;
+    return 2;
+}
+
+/// Launches one client-owned canonical Session using the existing native
+/// SessionProcess owner. The matching `howl-sessiond` must be packaged beside
+/// the Odin executable. A null environment map deliberately inherits the
+/// desktop client's current environment.
+pub export fn howl_odin_bridge_owned_session_create(
+    runtime_dir_ptr: [*]const u8,
+    runtime_dir_len: usize,
+    shell_ptr: [*]const u8,
+    shell_len: usize,
+    rows: u16,
+    columns: u16,
+    identity: u32,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*OwnedSessionHandle {
+    diagnostic_len.* = 0;
+    if (runtime_dir_len == 0 or shell_len == 0 or rows == 0 or columns == 0 or identity == 0) {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_launch");
+        return null;
+    }
+    const allocator = std.heap.c_allocator;
+    const owned = allocator.create(OwnedSession) catch {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
+        return null;
+    };
+    owned.* = .{
+        .allocator = allocator,
+        .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{}),
+    };
+    errdefer {
+        owned.threaded.deinit();
+        allocator.destroy(owned);
+    }
+    owned.process = session_process.SessionProcess.launchSibling(
+        allocator,
+        owned.threaded.io(),
+        runtime_dir_ptr[0..runtime_dir_len],
+        shell_ptr[0..shell_len],
+        null,
+        rows,
+        columns,
+        identity,
+    ) catch |failure| {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+        return null;
+    };
+    return @ptrCast(owned);
+}
+
+pub export fn howl_odin_bridge_owned_session_destroy(raw: ?*OwnedSessionHandle) void {
+    const value = raw orelse return;
+    const owned: *OwnedSession = @ptrCast(@alignCast(value));
+    const allocator = owned.allocator;
+    if (owned.process) |*process| process.deinit();
+    owned.threaded.deinit();
+    allocator.destroy(owned);
+}
+
+pub export fn howl_odin_bridge_owned_session_copy_endpoint(
+    raw: ?*OwnedSessionHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const value = raw orelse return 1;
+    const owned: *OwnedSession = @ptrCast(@alignCast(value));
+    const process = owned.process orelse return 2;
+    if (output_capacity < process.endpoint.len) return 3;
+    @memcpy(output_ptr[0..process.endpoint.len], process.endpoint);
+    output_len.* = process.endpoint.len;
+    return 0;
 }
 
 pub export fn howl_odin_bridge_create(

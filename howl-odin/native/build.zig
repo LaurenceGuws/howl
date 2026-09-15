@@ -5,6 +5,12 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const session_dependency = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const session_process = b.createModule(.{
+        .root_source_file = b.path("../../howl-host/src/session_process.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    session_process.addImport("howl_client", client_dependency.module("howl_client"));
 
     const root = b.createModule(.{
         .root_source_file = b.path("bridge.zig"),
@@ -15,6 +21,7 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("howl_client", client_dependency.module("howl_client"));
     root.addImport("howl_session", session_dependency.module("howl_session"));
+    root.addImport("session_process", session_process);
 
     const library = b.addLibrary(.{
         .name = "howl_odin_bridge",

@@ -1,6 +1,7 @@
 //! Owns one host-created canonical Session process and its private Unix socket.
 //!
-//! The native Host packages the exact matching `howl-sessiond` beside itself.
+//! Native graphical clients package the exact matching `howl-sessiond` beside
+//! themselves.
 //! This owner never consults PATH and never changes externally attached Session
 //! lifetimes. It exists only for panes the Host itself creates.
 
@@ -22,7 +23,7 @@ pub const SessionProcess = struct {
         io: std.Io,
         runtime_dir: []const u8,
         shell: []const u8,
-        environ_map: *const std.process.Environ.Map,
+        environ_map: ?*const std.process.Environ.Map,
         rows: u16,
         cols: u16,
         identity: u32,
@@ -52,7 +53,7 @@ pub const SessionProcess = struct {
         sessiond_path: []const u8,
         runtime_dir: []const u8,
         shell: []const u8,
-        environ_map: *const std.process.Environ.Map,
+        environ_map: ?*const std.process.Environ.Map,
         rows: u16,
         cols: u16,
         identity: u32,
