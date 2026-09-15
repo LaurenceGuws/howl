@@ -163,6 +163,38 @@ fn fail(message: []const u8) u32 {
 }
 
 export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_length: usize, font_pixels: u32) u32 {
+    return initRenderer(font_length, fallback_font_length, symbol_font_length, font_pixels, null);
+}
+
+/// Initializes one explicit physical-pixel presentation lattice.
+///
+/// Browser HiDPI hosts rasterize the font at a physical size while retaining
+/// the maintained terminal cell geometry. Keeping those inputs separate avoids
+/// letting size-specific FreeType hinting silently change columns or line
+/// spacing when DPR changes.
+export fn rv_init_presentation(
+    font_length: usize,
+    fallback_font_length: usize,
+    symbol_font_length: usize,
+    font_pixels: u32,
+    cell_width: u32,
+    line_height: u32,
+) u32 {
+    if (cell_width == 0 or cell_width > std.math.maxInt(u16) or
+        line_height == 0 or line_height > std.math.maxInt(u16)) return 0;
+    return initRenderer(font_length, fallback_font_length, symbol_font_length, font_pixels, .{
+        .width = @intCast(cell_width),
+        .height = @intCast(line_height),
+    });
+}
+
+fn initRenderer(
+    font_length: usize,
+    fallback_font_length: usize,
+    symbol_font_length: usize,
+    font_pixels: u32,
+    requested_cell: ?canvas.Size,
+) u32 {
     if (composer_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
         fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
         symbol_font_length == 0 or symbol_font_length > symbol_font_input.len) return 0;
@@ -194,8 +226,12 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     @memset(fallback_font_input[0..fallback_font_length], 0x5a);
     @memset(symbol_font_input[0..symbol_font_length], 0x3c);
     const metrics = new_fonts.metrics();
+    const presentation_cell = requested_cell orelse canvas.Size{
+        .width = metrics.advance_width,
+        .height = metrics.line_height,
+    };
     const new_content = render.terminal.initContent(allocator, new_fonts, .{
-        .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+        .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -229,7 +265,7 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     content = new_content;
     composer = new_composer;
     producer = new_producer;
-    cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height };
+    cell_size = presentation_cell;
     composer_ready = true;
     return 1;
 }

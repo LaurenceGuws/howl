@@ -24,6 +24,9 @@ assert(index.includes('id="zoom-button"'), 'browser shell must expose the native
 assert(index.includes('id="selection-overlay"'), 'browser shell must expose the client-local selection overlay');
 assert(index.includes('>16px</button>'), 'browser presentation zoom must boot at the normal 16px preset');
 assert(host.includes('const presentationPixels = [16, 12, 9];'), 'browser presentation presets drifted from maintained native presets');
+assert(host.includes('const presentationCellWidths = [10, 8, 6];'), 'browser cell widths drifted from maintained native presets');
+assert(host.includes('const presentationLineHeights = [20, 15, 12];'), 'browser line heights drifted from maintained native presets');
+assert(host.includes('rv_init_presentation'), 'browser renderer must expose explicit HiDPI presentation geometry');
 assert(host.includes("telemetry.record('presentation_zoom'"), 'browser presentation zoom must remain observable in telemetry');
 
 for (const asset of ['nerd-font.bin', 'nerd-font-license.txt']) {
