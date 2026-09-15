@@ -31,6 +31,24 @@ foreign howl_bridge {
     alternate_screen   :: proc(handle: rawptr) -> u8 ---
     history_count      :: proc(handle: rawptr) -> u32 ---
     text_truncated     :: proc(handle: rawptr) -> u8 ---
+    render_create      :: proc(endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    render_destroy     :: proc(handle: rawptr) ---
+    render_observe     :: proc(handle: rawptr) -> i32 ---
+    render_surface_width  :: proc(handle: rawptr) -> u16 ---
+    render_surface_height :: proc(handle: rawptr) -> u16 ---
+    render_frame_revision :: proc(handle: rawptr) -> u64 ---
+    render_session_revision :: proc(handle: rawptr) -> u64 ---
+    render_upload_count  :: proc(handle: rawptr) -> u32 ---
+    render_removal_count :: proc(handle: rawptr) -> u32 ---
+    render_command_count :: proc(handle: rawptr) -> u32 ---
+    render_upload_info    :: proc(handle: rawptr, index: u32, output: ^Canvas_Resource_Info) -> i32 ---
+    render_upload_copy    :: proc(handle: rawptr, index: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    render_removal_info   :: proc(handle: rawptr, index: u32, output: ^Canvas_Removal_Info) -> i32 ---
+    render_command_info   :: proc(handle: rawptr, index: u32, output: ^Canvas_Command_Info) -> i32 ---
+    render_copy_error     :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
+    render_resource_info_size :: proc() -> u32 ---
+    render_removal_info_size  :: proc() -> u32 ---
+    render_command_info_size  :: proc() -> u32 ---
 }
 
 Bridge_Key :: enum u8 {
@@ -62,3 +80,46 @@ BRIDGE_MOD_CTRL  :: u8(1 << 2)
 BRIDGE_MOD_SUPER :: u8(1 << 3)
 BRIDGE_MOD_CAPS  :: u8(1 << 6)
 BRIDGE_MOD_NUM   :: u8(1 << 7)
+
+Canvas_Resource_Info :: struct {
+    source: u64,
+    resource: u64,
+    generation: u64,
+    pixel_count: u64,
+    stride: u64,
+    width: u16,
+    height: u16,
+    format: u8,
+    _reserved: [7]u8,
+}
+
+Canvas_Removal_Info :: struct {
+    source: u64,
+    resource: u64,
+    generation: u64,
+}
+
+Canvas_Command_Info :: struct {
+    resource_source: u64,
+    resource: u64,
+    generation: u64,
+    color_rgba: u32,
+    destination_x: i32,
+    destination_y: i32,
+    clip_x: i32,
+    clip_y: i32,
+    destination_width: u16,
+    destination_height: u16,
+    clip_width: u16,
+    clip_height: u16,
+    source_x: u16,
+    source_y: u16,
+    source_width: u16,
+    source_height: u16,
+    resource_width: u16,
+    resource_height: u16,
+    tag: u8,
+    format: u8,
+    cursor_component: u8,
+    _reserved: u8,
+}

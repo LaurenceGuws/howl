@@ -6,12 +6,14 @@ The client owns desktop application policy only: windows, tabs, pane layout,
 profiles, settings, command palette, keybindings, and OS integration. It must
 not duplicate VT, PTY, Session, text shaping, or terminal raster semantics.
 
-The current Linux proof uses Odin + SDL3 + SDL3_ttf. `native/` is a tiny
-C-shaped Zig bridge over the existing `howl-client` owner. The bridge exports no
-wire layout or client backing structs: Odin receives one bounded visible-text
-projection plus scalar metadata and sends semantic input through `howl-client`.
-The semantic text surface is intentionally temporary; the accepted Howl render
-owners remain the destination for the real terminal renderer.
+The current Linux proof uses Odin + SDL3 for the application/backend shell and
+the existing Howl native render owners for terminal presentation. `native/` is
+a C-shaped Zig seam over `howl-client`, `howl-render`, and the existing
+`SessionProcess` owner. It exports neither wire/client backing structs nor a
+copied terminal renderer: Odin receives canonical Canvas resource/command facts
+and sends semantic input through `howl-client`. SDL3_ttf remains only for app
+chrome and as a fail-soft semantic-text fallback while the Canvas backend is
+being hardened.
 
 Current canary:
 
@@ -42,6 +44,14 @@ Current canary:
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
   `howl-client`'s duplicate-socket cancellation primitive;
+- terminal content is now projected by the real `howl-render` terminal Content
+  and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
+  records, while SDL caches Canvas resources and paints ordered solid,
+  alpha-mask, and RGBA commands without parsing terminal cells itself;
+- Canvas residency survives unchanged revisions, so the first frame uploads the
+  glyph atlas and later frames reuse it instead of re-uploading presentation
+  resources; terminal-image resources remain an explicit not-yet-admitted
+  boundary in this first backend canary;
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;

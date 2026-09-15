@@ -14,6 +14,7 @@ HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
 SESSION_RETRY_MS :: 50
 MAX_TABS :: 8
+MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
@@ -27,6 +28,16 @@ Tab :: struct {
     kind: Tab_Kind,
     title: string,
     session: ^Session_View,
+}
+
+Canvas_Texture :: struct {
+    source: u64,
+    resource: u64,
+    generation: u64,
+    texture: ^SDL.Texture,
+    format: u8,
+    width: u16,
+    height: u16,
 }
 
 Session_View :: struct {
@@ -55,6 +66,17 @@ Session_View :: struct {
     error_len: int,
     mutex: sync.Mutex,
     worker_stop: bool,
+    canvas: rawptr,
+    canvas_font_pixels: u16,
+    canvas_session_revision: u64,
+    canvas_frame_revision: u64,
+    canvas_surface_width: u16,
+    canvas_surface_height: u16,
+    canvas_resources: [MAX_CANVAS_RESOURCES]Canvas_Texture,
+    canvas_resource_count: int,
+    canvas_commands: []Canvas_Command_Info,
+    canvas_error: [160]u8,
+    canvas_error_len: int,
 }
 
 App_Action :: enum {
@@ -143,7 +165,361 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
     }
     if TTF.SetFontSize(app.terminal_font, font_size_for_preset(next)) {
         app.terminal_font_preset = next
+        for index in 0..<app.tab_count {
+            reset_canvas(app.tabs[index].session)
+        }
     }
+}
+
+
+font_pixels_for_preset :: proc(preset: int) -> u16 {
+    switch preset {
+    case 0: return 12
+    case 1: return 15
+    case:   return 18
+    }
+}
+
+set_canvas_error :: proc(view: ^Session_View, message: string) {
+    if view == nil {
+        return
+    }
+    count := min(len(message), len(view.canvas_error))
+    for byte, index in message[:count] {
+        view.canvas_error[index] = u8(byte)
+    }
+    view.canvas_error_len = count
+}
+
+copy_canvas_bridge_error :: proc(view: ^Session_View) {
+    if view == nil || view.canvas == nil {
+        return
+    }
+    count: c.size_t
+    render_copy_error(
+        view.canvas,
+        raw_data(view.canvas_error[:]),
+        c.size_t(len(view.canvas_error)),
+        &count,
+    )
+    view.canvas_error_len = int(count)
+}
+
+remove_canvas_resource_at :: proc(view: ^Session_View, index: int) {
+    if index < 0 || index >= view.canvas_resource_count {
+        return
+    }
+    texture := view.canvas_resources[index].texture
+    if texture != nil {
+        SDL.DestroyTexture(texture)
+    }
+    view.canvas_resource_count -= 1
+    if index != view.canvas_resource_count {
+        view.canvas_resources[index] = view.canvas_resources[view.canvas_resource_count]
+    }
+    view.canvas_resources[view.canvas_resource_count] = {}
+}
+
+clear_canvas_resources :: proc(view: ^Session_View) {
+    for view.canvas_resource_count > 0 {
+        remove_canvas_resource_at(view, view.canvas_resource_count - 1)
+    }
+}
+
+reset_canvas :: proc(view: ^Session_View) {
+    if view == nil {
+        return
+    }
+    clear_canvas_resources(view)
+    if view.canvas != nil {
+        render_destroy(view.canvas)
+        view.canvas = nil
+    }
+    if view.canvas_commands != nil {
+        delete(view.canvas_commands)
+        view.canvas_commands = nil
+    }
+    view.canvas_font_pixels = 0
+    view.canvas_session_revision = 0
+    view.canvas_frame_revision = 0
+    view.canvas_surface_width = 0
+    view.canvas_surface_height = 0
+    view.canvas_error_len = 0
+}
+
+find_canvas_resource :: proc(view: ^Session_View, source, resource, generation: u64) -> ^Canvas_Texture {
+    for index in 0..<view.canvas_resource_count {
+        value := &view.canvas_resources[index]
+        if value.source == source && value.resource == resource && value.generation == generation {
+            return value
+        }
+    }
+    return nil
+}
+
+remove_canvas_resource_key :: proc(view: ^Session_View, source, resource, generation: u64, exact_generation: bool) {
+    index := 0
+    for index < view.canvas_resource_count {
+        value := view.canvas_resources[index]
+        if value.source == source && value.resource == resource && (!exact_generation || value.generation == generation) {
+            remove_canvas_resource_at(view, index)
+            if !exact_generation {
+                continue
+            }
+            return
+        }
+        index += 1
+    }
+}
+
+create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> bool {
+    info: Canvas_Resource_Info
+    if render_upload_info(view.canvas, index, &info) != 0 || info.width == 0 || info.height == 0 {
+        set_canvas_error(view, "invalid Canvas upload metadata")
+        return false
+    }
+    if info.pixel_count == 0 || info.pixel_count > 16 * 1024 * 1024 {
+        set_canvas_error(view, "invalid Canvas upload bytes")
+        return false
+    }
+    source_bytes := make([]u8, int(info.pixel_count))
+    defer delete(source_bytes)
+    copied: c.size_t
+    if render_upload_copy(
+        view.canvas,
+        index,
+        raw_data(source_bytes),
+        c.size_t(len(source_bytes)),
+        &copied,
+    ) != 0 || int(copied) != len(source_bytes) {
+        set_canvas_error(view, "Canvas upload copy failed")
+        return false
+    }
+
+    rgba: []u8
+    converted: []u8
+    defer {
+        if converted != nil {
+            delete(converted)
+        }
+    }
+    pitch: c.int
+    if info.format == 0 {
+        converted = make([]u8, int(info.width) * int(info.height) * 4)
+        rgba = converted
+        if info.stride < u64(info.width) {
+            set_canvas_error(view, "invalid alpha atlas stride")
+            return false
+        }
+        for y in 0..<int(info.height) {
+            for x in 0..<int(info.width) {
+                src := y * int(info.stride) + x
+                dst := (y * int(info.width) + x) * 4
+                rgba[dst + 0] = 255
+                rgba[dst + 1] = 255
+                rgba[dst + 2] = 255
+                rgba[dst + 3] = source_bytes[src]
+            }
+        }
+        pitch = c.int(int(info.width) * 4)
+    } else if info.format == 1 {
+        rgba = source_bytes
+        pitch = c.int(info.stride)
+    } else {
+        set_canvas_error(view, "unsupported Canvas resource format")
+        return false
+    }
+
+    texture := SDL.CreateTexture(
+        app.renderer,
+        .RGBA32,
+        .STATIC,
+        c.int(info.width),
+        c.int(info.height),
+    )
+    if texture == nil {
+        set_canvas_error(view, string(SDL.GetError()))
+        return false
+    }
+    if !SDL.SetTextureScaleMode(texture, .NEAREST) ||
+       !SDL.SetTextureBlendMode(texture, SDL.BLENDMODE_BLEND) ||
+       !SDL.UpdateTexture(texture, nil, raw_data(rgba), pitch) {
+        set_canvas_error(view, string(SDL.GetError()))
+        SDL.DestroyTexture(texture)
+        return false
+    }
+
+    remove_canvas_resource_key(view, info.source, info.resource, 0, false)
+    if view.canvas_resource_count >= MAX_CANVAS_RESOURCES {
+        set_canvas_error(view, "Canvas resource cache full")
+        SDL.DestroyTexture(texture)
+        return false
+    }
+    view.canvas_resources[view.canvas_resource_count] = Canvas_Texture{
+        source = info.source,
+        resource = info.resource,
+        generation = info.generation,
+        texture = texture,
+        format = info.format,
+        width = info.width,
+        height = info.height,
+    }
+    view.canvas_resource_count += 1
+    return true
+}
+
+ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    pixels := font_pixels_for_preset(app.terminal_font_preset)
+    if view.canvas != nil && view.canvas_font_pixels == pixels {
+        return true
+    }
+    reset_canvas(view)
+    endpoint := session_endpoint(view)
+    if len(endpoint) == 0 {
+        set_canvas_error(view, "missing Session endpoint")
+        return false
+    }
+    font: string = UI_FONT_PATH
+    diagnostic: [160]u8
+    diagnostic_len: c.size_t
+    view.canvas = render_create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(font),
+        c.size_t(len(font)),
+        pixels,
+        raw_data(diagnostic[:]),
+        c.size_t(len(diagnostic)),
+        &diagnostic_len,
+    )
+    if view.canvas == nil {
+        set_canvas_error(view, string(diagnostic[:int(diagnostic_len)]))
+        return false
+    }
+    view.canvas_font_pixels = pixels
+    return true
+}
+
+update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
+    if !ensure_canvas(app, view) {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    target_revision := view.revision
+    sync.mutex_unlock(&view.mutex)
+    if target_revision == 0 {
+        return false
+    }
+    if view.canvas_session_revision >= target_revision && len(view.canvas_commands) != 0 {
+        return true
+    }
+    if render_observe(view.canvas) != 0 {
+        copy_canvas_bridge_error(view)
+        return false
+    }
+
+    for index in 0..<int(render_removal_count(view.canvas)) {
+        info: Canvas_Removal_Info
+        if render_removal_info(view.canvas, u32(index), &info) != 0 {
+            set_canvas_error(view, "Canvas removal decode failed")
+            reset_canvas(view)
+            return false
+        }
+        remove_canvas_resource_key(view, info.source, info.resource, info.generation, true)
+    }
+    for index in 0..<int(render_upload_count(view.canvas)) {
+        if !create_canvas_texture(app, view, u32(index)) {
+            reset_canvas(view)
+            return false
+        }
+    }
+
+    count := int(render_command_count(view.canvas))
+    commands := make([]Canvas_Command_Info, count)
+    for index in 0..<count {
+        if render_command_info(view.canvas, u32(index), &commands[index]) != 0 {
+            delete(commands)
+            set_canvas_error(view, "Canvas command decode failed")
+            reset_canvas(view)
+            return false
+        }
+    }
+    if view.canvas_commands != nil {
+        delete(view.canvas_commands)
+    }
+    view.canvas_commands = commands
+    view.canvas_surface_width = render_surface_width(view.canvas)
+    view.canvas_surface_height = render_surface_height(view.canvas)
+    view.canvas_frame_revision = render_frame_revision(view.canvas)
+    view.canvas_session_revision = render_session_revision(view.canvas)
+    view.canvas_error_len = 0
+    return true
+}
+
+rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
+    return u8((bits >> shift) & 0xff)
+}
+
+draw_canvas_session :: proc(app: ^App, view: ^Session_View, origin_x, origin_y: f32) -> bool {
+    if !update_canvas(app, view) {
+        return false
+    }
+    for command in view.canvas_commands {
+        destination := SDL.FRect{
+            origin_x + f32(command.destination_x),
+            origin_y + f32(command.destination_y),
+            f32(command.destination_width),
+            f32(command.destination_height),
+        }
+        if command.tag == 0 {
+            _ = SDL.SetRenderClipRect(app.renderer, nil)
+            set_draw_color(app.renderer, SDL.Color{
+                rgba_channel(command.color_rgba, 0),
+                rgba_channel(command.color_rgba, 8),
+                rgba_channel(command.color_rgba, 16),
+                rgba_channel(command.color_rgba, 24),
+            })
+            draw_rect := destination
+            _ = SDL.RenderFillRect(app.renderer, &draw_rect)
+            continue
+        }
+        resource := find_canvas_resource(view, command.resource_source, command.resource, command.generation)
+        if resource == nil || resource.texture == nil {
+            set_canvas_error(view, "Canvas command references missing texture")
+            return false
+        }
+        clip := SDL.Rect{
+            c.int(origin_x) + c.int(command.clip_x),
+            c.int(origin_y) + c.int(command.clip_y),
+            c.int(command.clip_width),
+            c.int(command.clip_height),
+        }
+        _ = SDL.SetRenderClipRect(app.renderer, &clip)
+        source := SDL.FRect{
+            f32(command.source_x),
+            f32(command.source_y),
+            f32(command.source_width),
+            f32(command.source_height),
+        }
+        if command.tag == 1 {
+            _ = SDL.SetTextureColorMod(
+                resource.texture,
+                rgba_channel(command.color_rgba, 0),
+                rgba_channel(command.color_rgba, 8),
+                rgba_channel(command.color_rgba, 16),
+            )
+            _ = SDL.SetTextureAlphaMod(resource.texture, rgba_channel(command.color_rgba, 24))
+        } else {
+            _ = SDL.SetTextureColorMod(resource.texture, 255, 255, 255)
+            _ = SDL.SetTextureAlphaMod(resource.texture, 255)
+        }
+        _ = SDL.RenderTexture(app.renderer, resource.texture, &source, &destination)
+    }
+    _ = SDL.SetRenderClipRect(app.renderer, nil)
+    return true
 }
 
 sdl_error :: proc(label: string) {
@@ -375,6 +751,7 @@ destroy_session_view :: proc(view: ^Session_View) {
     if view == nil {
         return
     }
+    reset_canvas(view)
     if view.observer_thread != nil {
         sync.mutex_lock(&view.mutex)
         view.worker_stop = true
@@ -922,11 +1299,14 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, width, height: f32) {
     if view == nil {
         return
     }
+    origin_x := f32(28)
+    origin_y := f32(58)
+    if draw_canvas_session(app, view, origin_x, origin_y) {
+        return
+    }
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
 
-    origin_x := f32(28)
-    origin_y := f32(58)
     if view.error_len != 0 {
         draw_text(app, app.ui_font, string(view.error[:view.error_len]), origin_x, origin_y, palette.accent)
         return
@@ -1126,6 +1506,9 @@ draw :: proc(app: ^App) {
 }
 
 main :: proc() {
+    assert(size_of(Canvas_Resource_Info) == int(render_resource_info_size()))
+    assert(size_of(Canvas_Removal_Info) == int(render_removal_info_size()))
+    assert(size_of(Canvas_Command_Info) == int(render_command_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return
@@ -1137,15 +1520,24 @@ main :: proc() {
         return
     }
 
-    window: ^SDL.Window = nil
-    renderer: ^SDL.Renderer = nil
     flags := SDL.WindowFlags{.RESIZABLE, .HIGH_PIXEL_DENSITY}
-    if !SDL.CreateWindowAndRenderer("Howl Desktop - Odin canary", 1180, 760, flags, &window, &renderer) {
-        sdl_error("SDL_CreateWindowAndRenderer failed")
+    window := SDL.CreateWindow("Howl Desktop - Odin canary", 1180, 760, flags)
+    if window == nil {
+        sdl_error("SDL_CreateWindow failed")
+        return
+    }
+    defer SDL.DestroyWindow(window)
+
+    renderer_name: cstring = nil
+    if os.get_env("HOWL_ODIN_SDL_RENDERER", context.temp_allocator) == "software" {
+        renderer_name = "software"
+    }
+    renderer := SDL.CreateRenderer(window, renderer_name)
+    if renderer == nil {
+        sdl_error("SDL_CreateRenderer failed")
         return
     }
     defer SDL.DestroyRenderer(renderer)
-    defer SDL.DestroyWindow(window)
 
     _ = SDL.StartTextInput(window)
     defer {
