@@ -1,8 +1,10 @@
 package main
 
 import "core:c"
+import json "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -19,6 +21,12 @@ OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
 FONT_PRESET_MAX :: 2
+CONFIG_SCHEMA :: 1
+
+User_Config :: struct {
+    schema: int `json:"schema"`,
+    terminal_font_pixels: int `json:"terminal_font_pixels"`,
+}
 
 Tab_Kind :: enum {
     Session,
@@ -147,6 +155,89 @@ App :: struct {
     next_session_identity: u32,
 }
 
+config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
+    root := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+    if len(root) == 0 {
+        home := os.get_env("HOME", context.temp_allocator)
+        if len(home) == 0 {
+            return "", "", "", false
+        }
+        value, err := filepath.join([]string{home, ".config"}, allocator=context.temp_allocator)
+        if err != nil {
+            return "", "", "", false
+        }
+        root = value
+    }
+    directory_value, directory_err := filepath.join([]string{root, "howl"}, allocator=context.temp_allocator)
+    if directory_err != nil {
+        return "", "", "", false
+    }
+    directory = directory_value
+    path_value, path_err := filepath.join([]string{directory, "odin.json"}, allocator=context.temp_allocator)
+    if path_err != nil {
+        return "", "", "", false
+    }
+    path = path_value
+    temporary_value, temporary_err := filepath.join([]string{directory, "odin.json.tmp"}, allocator=context.temp_allocator)
+    if temporary_err != nil {
+        return "", "", "", false
+    }
+    temporary = temporary_value
+    return directory, path, temporary, true
+}
+
+font_preset_from_pixels :: proc(pixels: int) -> int {
+    switch pixels {
+    case 12: return 0
+    case 18: return 2
+    case:    return 1
+    }
+}
+
+load_user_config :: proc() -> User_Config {
+    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15}
+    _, path, _, ok := config_paths()
+    if !ok {
+        return result
+    }
+    data, err := os.read_entire_file(path, context.temp_allocator)
+    if err != nil {
+        return result
+    }
+    candidate := result
+    if json.unmarshal(data, &candidate) != nil || candidate.schema != CONFIG_SCHEMA {
+        return result
+    }
+    if candidate.terminal_font_pixels != 12 && candidate.terminal_font_pixels != 15 && candidate.terminal_font_pixels != 18 {
+        return result
+    }
+    return candidate
+}
+
+save_user_config :: proc(app: ^App) {
+    directory, path, temporary, ok := config_paths()
+    if !ok {
+        return
+    }
+    if err := os.make_directory_all(directory); err != nil {
+        return
+    }
+    value := User_Config{
+        schema = CONFIG_SCHEMA,
+        terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
+    }
+    data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
+    if err != nil {
+        return
+    }
+    if os.write_entire_file(temporary, data) != nil {
+        return
+    }
+    if os.rename(temporary, path) != nil {
+        _ = os.remove(temporary)
+    }
+}
+
 font_size_for_preset :: proc(preset: int) -> f32 {
     switch preset {
     case 0: return 12
@@ -174,6 +265,7 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
             reset_canvas(app.tabs[index].session)
             reset_canvas(app.tabs[index].secondary_session)
         }
+        save_user_config(app)
     }
 }
 
@@ -1692,7 +1784,9 @@ main :: proc() {
     }
     defer TTF.CloseFont(ui_font)
 
-    terminal_font := TTF.OpenFont(UI_FONT_PATH, 15)
+    user_config := load_user_config()
+    terminal_font_preset := font_preset_from_pixels(user_config.terminal_font_pixels)
+    terminal_font := TTF.OpenFont(UI_FONT_PATH, font_size_for_preset(terminal_font_preset))
     if terminal_font == nil {
         sdl_error("TTF_OpenFont terminal failed")
         return
@@ -1705,7 +1799,7 @@ main :: proc() {
         text_engine = engine,
         ui_font = ui_font,
         terminal_font = terminal_font,
-        terminal_font_preset = 1,
+        terminal_font_preset = terminal_font_preset,
         running = true,
         tab_count = 0,
         active_tab = -1,
