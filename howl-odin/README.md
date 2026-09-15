@@ -52,6 +52,10 @@ Current canary:
   glyph atlas and later frames reuse it instead of re-uploading presentation
   resources; terminal-image resources remain an explicit not-yet-admitted
   boundary in this first backend canary;
+- created Local-shell tabs own Session geometry leadership: the client derives
+  rows/columns from the actual Howl Canvas cell metrics and current pane extent,
+  while attached Home Session views remain observer-only and never resize the
+  canonical Session merely because their desktop window is larger;
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;

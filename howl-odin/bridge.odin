@@ -19,6 +19,7 @@ foreign howl_bridge {
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_named_key     :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---
     send_unicode_key   :: proc(handle: rawptr, scalar: u32, action, modifiers: u8) -> i32 ---
+    send_resize        :: proc(handle: rawptr, rows, columns: u16) -> i32 ---
     copy_error         :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     revision           :: proc(handle: rawptr) -> u64 ---
     terminal_revision  :: proc(handle: rawptr) -> u64 ---
@@ -36,6 +37,10 @@ foreign howl_bridge {
     render_observe     :: proc(handle: rawptr) -> i32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---
     render_surface_height :: proc(handle: rawptr) -> u16 ---
+    render_cell_width     :: proc(handle: rawptr) -> u16 ---
+    render_cell_height    :: proc(handle: rawptr) -> u16 ---
+    render_maximum_rows   :: proc() -> u16 ---
+    render_maximum_columns :: proc() -> u16 ---
     render_frame_revision :: proc(handle: rawptr) -> u64 ---
     render_session_revision :: proc(handle: rawptr) -> u64 ---
     render_upload_count  :: proc(handle: rawptr) -> u32 ---

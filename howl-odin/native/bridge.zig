@@ -365,6 +365,26 @@ pub export fn howl_odin_bridge_render_surface_height(raw: ?*RenderHandle) u16 {
     return renderer.surface.height;
 }
 
+pub export fn howl_odin_bridge_render_cell_width(raw: ?*RenderHandle) u16 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return renderer.cell_size.width;
+}
+
+pub export fn howl_odin_bridge_render_cell_height(raw: ?*RenderHandle) u16 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return renderer.cell_size.height;
+}
+
+pub export fn howl_odin_bridge_render_maximum_rows() u16 {
+    return render.presentation.maximum_rows;
+}
+
+pub export fn howl_odin_bridge_render_maximum_columns() u16 {
+    return render.presentation.maximum_columns;
+}
+
 pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
@@ -844,6 +864,21 @@ pub export fn howl_odin_bridge_send_unicode_key(
     const action = std.enums.fromInt(protocol.InputKeyAction, action_value) orelse return 3;
     client.actions.unicodeKey(&bridge.connection, scalar, action, modifiers) catch |failure| {
         bridge.setError("unicode_key", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_send_resize(
+    raw: ?*Handle,
+    rows: u16,
+    columns: u16,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    client.actions.resize(&bridge.connection, rows, columns) catch |failure| {
+        bridge.setError("resize", @errorName(failure));
         return 2;
     };
     return 0;

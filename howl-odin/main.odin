@@ -77,6 +77,8 @@ Session_View :: struct {
     canvas_commands: []Canvas_Command_Info,
     canvas_error: [160]u8,
     canvas_error_len: int,
+    requested_rows: u16,
+    requested_columns: u16,
 }
 
 App_Action :: enum {
@@ -245,6 +247,47 @@ reset_canvas :: proc(view: ^Session_View) {
     view.canvas_surface_width = 0
     view.canvas_surface_height = 0
     view.canvas_error_len = 0
+    view.requested_rows = 0
+    view.requested_columns = 0
+}
+
+resize_owned_session_to_pane :: proc(
+    app: ^App,
+    view: ^Session_View,
+    width, height, origin_x, origin_y: f32,
+) {
+    if view == nil || view.owned_process == nil || view.control == nil {
+        return
+    }
+    if !ensure_canvas(app, view) {
+        return
+    }
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 {
+        return
+    }
+    available_width := max(1, int(width - origin_x - 18))
+    available_height := max(1, int(height - origin_y - 12))
+    desired_columns := u16(clamp(
+        available_width / int(cell_width),
+        1,
+        int(render_maximum_columns()),
+    ))
+    desired_rows := u16(clamp(
+        available_height / int(cell_height),
+        1,
+        int(render_maximum_rows()),
+    ))
+    if view.requested_rows == desired_rows && view.requested_columns == desired_columns {
+        return
+    }
+    if send_resize(view.control, desired_rows, desired_columns) != 0 {
+        copy_bridge_error(view)
+        return
+    }
+    view.requested_rows = desired_rows
+    view.requested_columns = desired_columns
 }
 
 find_canvas_resource :: proc(view: ^Session_View, source, resource, generation: u64) -> ^Canvas_Texture {
@@ -1301,6 +1344,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, width, height: f32) {
     }
     origin_x := f32(28)
     origin_y := f32(58)
+    resize_owned_session_to_pane(app, view, width, height, origin_x, origin_y)
     if draw_canvas_session(app, view, origin_x, origin_y) {
         return
     }
