@@ -2,6 +2,9 @@ package main
 
 import "core:c"
 import "core:fmt"
+import "core:sync"
+import "core:thread"
+import "core:time"
 import SDL "vendor:sdl3"
 import TTF "vendor:sdl3/ttf"
 
@@ -63,7 +66,14 @@ App :: struct {
     session_text_truncated: bool,
     session_error: [160]u8,
     session_error_len: int,
-    next_session_poll_ms: u64,
+    session_mutex: sync.Mutex,
+    session_worker_stop: bool,
+}
+
+Session_Worker :: struct {
+    app: ^App,
+    observer: rawptr,
+    scratch: []u8,
 }
 
 sdl_error :: proc(label: string) {
@@ -99,57 +109,109 @@ draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SD
     _ = TTF.DrawRendererText(label, x, y)
 }
 
-copy_bridge_error :: proc(app: ^App) {
-    if app.session == nil {
+publish_bridge_error :: proc(app: ^App, handle: rawptr) {
+    if handle == nil {
         return
     }
+    message: [160]u8
     error_len: c.size_t
     copy_error(
-        app.session,
-        raw_data(app.session_error[:]),
-        c.size_t(len(app.session_error)),
+        handle,
+        raw_data(message[:]),
+        c.size_t(len(message)),
         &error_len,
     )
+    sync.mutex_lock(&app.session_mutex)
+    copy(app.session_error[:], message[:int(error_len)])
     app.session_error_len = int(error_len)
+    sync.mutex_unlock(&app.session_mutex)
 }
 
-refresh_session :: proc(app: ^App, force := false) {
-    if app.session == nil {
-        return
-    }
-    now := SDL.GetTicks()
-    if !force && now < app.next_session_poll_ms {
-        return
-    }
-    app.next_session_poll_ms = now + SESSION_POLL_MS
+observe_session :: proc(data: rawptr) {
+    worker := (^Session_Worker)(data)
+    app := worker.app
+    observer := worker.observer
+    for {
+        sync.mutex_lock(&app.session_mutex)
+        stop := app.session_worker_stop
+        sync.mutex_unlock(&app.session_mutex)
+        if stop {
+            break
+        }
 
-    output_len: c.size_t
-    result := snapshot(
-        app.session,
-        0,
-        0,
-        raw_data(app.session_text),
-        c.size_t(len(app.session_text)),
-        &output_len,
-    )
-    if result != 0 {
-        copy_bridge_error(app)
-        return
-    }
+        output_len: c.size_t
+        result := snapshot(
+            observer,
+            0,
+            0,
+            raw_data(worker.scratch),
+            c.size_t(len(worker.scratch)),
+            &output_len,
+        )
+        if result != 0 {
+            publish_bridge_error(app, observer)
+            time.sleep(time.Duration(SESSION_POLL_MS) * time.Millisecond)
+            continue
+        }
 
-    app.session_text_len = int(output_len)
-    app.session_revision = revision(app.session)
-    app.session_terminal_revision = terminal_revision(app.session)
-    app.session_rows = rows(app.session)
-    app.session_columns = columns(app.session)
-    app.session_cursor_row = cursor_row(app.session)
-    app.session_cursor_column = cursor_column(app.session)
-    app.session_cursor_visible = cursor_visible(app.session) != 0
-    app.session_cursor_shape = cursor_shape(app.session)
-    app.session_history_count = history_count(app.session)
-    app.session_alternate_screen = alternate_screen(app.session) != 0
-    app.session_text_truncated = text_truncated(app.session) != 0
-    app.session_error_len = 0
+        snapshot_revision := revision(observer)
+        snapshot_terminal_revision := terminal_revision(observer)
+        snapshot_rows := rows(observer)
+        snapshot_columns := columns(observer)
+        snapshot_cursor_row := cursor_row(observer)
+        snapshot_cursor_column := cursor_column(observer)
+        snapshot_cursor_visible := cursor_visible(observer) != 0
+        snapshot_cursor_shape := cursor_shape(observer)
+        snapshot_history_count := history_count(observer)
+        snapshot_alternate_screen := alternate_screen(observer) != 0
+        snapshot_text_truncated := text_truncated(observer) != 0
+
+        sync.mutex_lock(&app.session_mutex)
+        copy(app.session_text[:int(output_len)], worker.scratch[:int(output_len)])
+        app.session_text_len = int(output_len)
+        app.session_revision = snapshot_revision
+        app.session_terminal_revision = snapshot_terminal_revision
+        app.session_rows = snapshot_rows
+        app.session_columns = snapshot_columns
+        app.session_cursor_row = snapshot_cursor_row
+        app.session_cursor_column = snapshot_cursor_column
+        app.session_cursor_visible = snapshot_cursor_visible
+        app.session_cursor_shape = snapshot_cursor_shape
+        app.session_history_count = snapshot_history_count
+        app.session_alternate_screen = snapshot_alternate_screen
+        app.session_text_truncated = snapshot_text_truncated
+        app.session_error_len = 0
+        sync.mutex_unlock(&app.session_mutex)
+
+        time.sleep(time.Duration(SESSION_POLL_MS) * time.Millisecond)
+    }
+}
+
+publish_initial_error :: proc(app: ^App, message: string) {
+    sync.mutex_lock(&app.session_mutex)
+    count := min(len(message), len(app.session_error))
+    for byte, index in message[:count] {
+        app.session_error[index] = u8(byte)
+    }
+    app.session_error_len = count
+    sync.mutex_unlock(&app.session_mutex)
+}
+
+stop_session_worker :: proc(app: ^App) {
+    sync.mutex_lock(&app.session_mutex)
+    app.session_worker_stop = true
+    sync.mutex_unlock(&app.session_mutex)
+}
+
+session_attached :: proc(app: ^App) -> bool {
+    sync.mutex_lock(&app.session_mutex)
+    attached := app.session != nil && app.session_revision != 0 && app.session_error_len == 0
+    sync.mutex_unlock(&app.session_mutex)
+    return attached
+}
+
+copy_bridge_error :: proc(app: ^App) {
+    publish_bridge_error(app, app.session)
 }
 
 bridge_modifiers :: proc(mods: SDL.Keymod) -> u8 {
@@ -205,8 +267,6 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     )
     if result != 0 {
         copy_bridge_error(app)
-    } else if event.type == .KEY_DOWN {
-        refresh_session(app, true)
     }
     return true
 }
@@ -295,8 +355,6 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 )
                 if result != 0 {
                     copy_bridge_error(app)
-                } else {
-                    refresh_session(app, true)
                 }
             }
         }
@@ -307,8 +365,6 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 result := send_text(app.session, raw_data(text), c.size_t(len(text)))
                 if result != 0 {
                     copy_bridge_error(app)
-                } else {
-                    refresh_session(app, true)
                 }
             }
         }
@@ -336,7 +392,7 @@ draw_tabs :: proc(app: ^App, width: f32) {
 
         if i == 0 {
             draw_text(app, app.ui_font, "Home", tab_x + 14, 14, active ? palette.text : palette.text_muted)
-            if app.session != nil && app.session_error_len == 0 {
+            if session_attached(app) {
                 draw_fill(app.renderer, {tab_x + tab_w - 16, 20, 5, 5}, palette.accent)
             }
         } else if i == 1 {
@@ -359,6 +415,9 @@ draw_tabs :: proc(app: ^App, width: f32) {
 }
 
 draw_real_session :: proc(app: ^App, width, height: f32) {
+    sync.mutex_lock(&app.session_mutex)
+    defer sync.mutex_unlock(&app.session_mutex)
+
     origin_x := f32(28)
     origin_y := f32(58)
     if app.session_error_len != 0 {
@@ -541,21 +600,34 @@ main :: proc() {
 
     session_text := make([]u8, SESSION_TEXT_BYTES)
     defer delete(session_text)
-    diagnostic: [160]u8
-    diagnostic_len: c.size_t
+    observer_scratch := make([]u8, SESSION_TEXT_BYTES)
+    defer delete(observer_scratch)
+
     endpoint: string = HOME_ENDPOINT
+    control_diagnostic: [160]u8
+    control_diagnostic_len: c.size_t
     session := create(
         raw_data(endpoint),
         c.size_t(len(endpoint)),
-        raw_data(diagnostic[:]),
-        c.size_t(len(diagnostic)),
-        &diagnostic_len,
+        raw_data(control_diagnostic[:]),
+        c.size_t(len(control_diagnostic)),
+        &control_diagnostic_len,
     )
     defer {
         if session != nil {
             destroy(session)
         }
     }
+
+    observer_diagnostic: [160]u8
+    observer_diagnostic_len: c.size_t
+    observer := create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(observer_diagnostic[:]),
+        c.size_t(len(observer_diagnostic)),
+        &observer_diagnostic_len,
+    )
 
     app := App{
         window = window,
@@ -571,10 +643,26 @@ main :: proc() {
     }
 
     if session == nil {
-        app.session_error_len = int(diagnostic_len)
-        copy(app.session_error[:], diagnostic[:int(diagnostic_len)])
-    } else {
-        refresh_session(&app, true)
+        publish_initial_error(&app, string(control_diagnostic[:int(control_diagnostic_len)]))
+    } else if observer == nil {
+        publish_initial_error(&app, string(observer_diagnostic[:int(observer_diagnostic_len)]))
+    }
+
+    worker_context := Session_Worker{
+        app = &app,
+        observer = observer,
+        scratch = observer_scratch,
+    }
+    observer_thread: ^thread.Thread = nil
+    if session != nil && observer != nil {
+        observer_thread = thread.create_and_start_with_data(
+            rawptr(&worker_context),
+            observe_session,
+            name = "howl-odin-observe",
+        )
+        if observer_thread == nil {
+            publish_initial_error(&app, "observer_thread_failed")
+        }
     }
 
     for app.running {
@@ -582,9 +670,15 @@ main :: proc() {
         for SDL.PollEvent(&event) {
             handle_event(&app, &event)
         }
-        if app.active_tab == 0 {
-            refresh_session(&app)
-        }
         draw(&app)
     }
+
+    if observer_thread != nil {
+        stop_session_worker(&app)
+        thread.destroy(observer_thread)
+    }
+    if observer != nil {
+        destroy(observer)
+    }
+
 }
