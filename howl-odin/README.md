@@ -20,6 +20,10 @@ Current canary:
 - the `+` action and `Ctrl+T` create additional Home Session views; tabs have
   real selection/close semantics and the dropdown exposes the attach recipe,
   command palette, and Settings actions rather than prototype labels;
+- dropdown and command-palette commands share one application action model;
+  Up/Down/Tab move selection, Enter executes the selected action, and commands
+  such as new tab, attach Home Session, Settings, and close tab are no longer
+  display-only rows;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
