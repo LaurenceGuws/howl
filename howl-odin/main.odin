@@ -95,6 +95,7 @@ Session_View :: struct {
 App_Action :: enum {
     New_Tab,
     Split_Pane,
+    Open_Local,
     Attach_Home,
     Open_Settings,
     Close_Pane,
@@ -1099,12 +1100,28 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
     return true
 }
 
+profile_view :: proc(app: ^App, profile: int) -> (view: ^Session_View, title: string) {
+    if profile == 1 {
+        return create_owned_session_view(app), "Local shell"
+    }
+    return create_session_view(HOME_ENDPOINT, rawptr(nil)), "Home Session"
+}
+
+open_profile_tab :: proc(app: ^App, profile: int) {
+    view, title := profile_view(app, profile)
+    _ = add_session_tab(app, view, title)
+}
+
 new_tab :: proc(app: ^App) {
-    _ = add_session_tab(app, create_owned_session_view(app), "Local shell")
+    open_profile_tab(app, app.startup_profile)
+}
+
+open_local_tab :: proc(app: ^App) {
+    open_profile_tab(app, 1)
 }
 
 attach_home_tab :: proc(app: ^App) {
-    _ = add_session_tab(app, create_session_view(HOME_ENDPOINT, rawptr(nil)), "Home Session")
+    open_profile_tab(app, 0)
 }
 
 close_tab :: proc(app: ^App, index: int) {
@@ -1136,7 +1153,7 @@ split_active_pane :: proc(app: ^App) {
         tab.active_pane = 1
         return
     }
-    view := create_owned_session_view(app)
+    view, _ := profile_view(app, app.startup_profile)
     if view == nil {
         return
     }
@@ -1177,6 +1194,8 @@ execute_action :: proc(app: ^App, action: App_Action) {
         new_tab(app)
     case .Split_Pane:
         split_active_pane(app)
+    case .Open_Local:
+        open_local_tab(app)
     case .Attach_Home:
         attach_home_tab(app)
     case .Open_Settings:
@@ -1223,13 +1242,15 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         case SDL.K_ESCAPE:
             app.profile_menu_open = false
         case SDL.K_UP:
-            app.profile_menu_selection = (app.profile_menu_selection + 2) % 3
+            app.profile_menu_selection = (app.profile_menu_selection + 3) % 4
         case SDL.K_DOWN, SDL.K_TAB:
-            app.profile_menu_selection = (app.profile_menu_selection + 1) % 3
+            app.profile_menu_selection = (app.profile_menu_selection + 1) % 4
         case SDL.K_RETURN:
             if app.profile_menu_selection == 0 {
-                execute_action(app, .Attach_Home)
+                execute_action(app, .Open_Local)
             } else if app.profile_menu_selection == 1 {
+                execute_action(app, .Attach_Home)
+            } else if app.profile_menu_selection == 2 {
                 app.profile_menu_open = false
                 app.palette_open = true
                 app.palette_selection = 0
@@ -1282,7 +1303,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 
 profile_menu_rect :: proc(tab_count: int) -> SDL.FRect {
     _, menu, _ := tab_controls(tab_count, 0)
-    return {menu.x - 8, 44, 310, 166}
+    return {menu.x - 8, 44, 330, 224}
 }
 
 settings_panel_rect :: proc(width, height: f32) -> SDL.FRect {
@@ -1332,17 +1353,21 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 
     if app.profile_menu_open {
         panel := profile_menu_rect(app.tab_count)
-        if inside(x, y, {panel.x + 8, panel.y + 8, panel.w - 16, 40}) {
+        if inside(x, y, {panel.x + 8, panel.y + 8, panel.w - 16, 48}) {
+            execute_action(app, .Open_Local)
+            return
+        }
+        if inside(x, y, {panel.x + 8, panel.y + 60, panel.w - 16, 48}) {
             execute_action(app, .Attach_Home)
             return
         }
-        if inside(x, y, {panel.x + 8, panel.y + 62, panel.w - 16, 36}) {
+        if inside(x, y, {panel.x + 8, panel.y + 126, panel.w - 16, 36}) {
             app.profile_menu_open = false
             app.palette_open = true
             app.palette_selection = 0
             return
         }
-        if inside(x, y, {panel.x + 8, panel.y + 108, panel.w - 16, 36}) {
+        if inside(x, y, {panel.x + 8, panel.y + 172, panel.w - 16, 36}) {
             execute_action(app, .Open_Settings)
             return
         }
@@ -1510,19 +1535,31 @@ draw_profile_menu :: proc(app: ^App) {
     draw_fill(app.renderer, panel, palette.title_bg)
     draw_outline(app.renderer, panel, palette.border)
 
-    rows := [3]SDL.FRect{
-        {panel.x + 8, panel.y + 8, panel.w - 16, 40},
-        {panel.x + 8, panel.y + 62, panel.w - 16, 36},
-        {panel.x + 8, panel.y + 108, panel.w - 16, 36},
+    rows := [4]SDL.FRect{
+        {panel.x + 8, panel.y + 8, panel.w - 16, 48},
+        {panel.x + 8, panel.y + 60, panel.w - 16, 48},
+        {panel.x + 8, panel.y + 126, panel.w - 16, 36},
+        {panel.x + 8, panel.y + 172, panel.w - 16, 36},
     }
     draw_fill(app.renderer, rows[app.profile_menu_selection], palette.tab_active)
-    draw_text(app, app.ui_font, "Home Session", panel.x + 18, panel.y + 17, palette.text)
-    draw_text(app, app.ui_font, HOME_ENDPOINT, panel.x + 18, panel.y + 39, palette.text_muted)
-    draw_fill(app.renderer, {panel.x + 10, panel.y + 57, panel.w - 20, 1}, palette.border)
-    draw_text(app, app.ui_font, "Command Palette", panel.x + 18, panel.y + 72, palette.text)
-    draw_text(app, app.ui_font, "Ctrl+Shift+P", panel.x + 178, panel.y + 72, palette.text_muted)
-    draw_text(app, app.ui_font, "Settings", panel.x + 18, panel.y + 118, palette.text)
-    draw_text(app, app.ui_font, "Ctrl+,", panel.x + 228, panel.y + 118, palette.text_muted)
+
+    draw_text(app, app.ui_font, "Local shell", panel.x + 18, panel.y + 14, palette.text)
+    draw_text(app, app.ui_font, "Create owned Session", panel.x + 18, panel.y + 34, palette.text_muted)
+    if app.startup_profile == 1 {
+        draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 14, palette.accent)
+    }
+
+    draw_text(app, app.ui_font, "Home Session", panel.x + 18, panel.y + 66, palette.text)
+    draw_text(app, app.ui_font, HOME_ENDPOINT, panel.x + 18, panel.y + 86, palette.text_muted)
+    if app.startup_profile == 0 {
+        draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 66, palette.accent)
+    }
+
+    draw_fill(app.renderer, {panel.x + 10, panel.y + 116, panel.w - 20, 1}, palette.border)
+    draw_text(app, app.ui_font, "Command Palette", panel.x + 18, panel.y + 136, palette.text)
+    draw_text(app, app.ui_font, "Ctrl+Shift+P", panel.x + 190, panel.y + 136, palette.text_muted)
+    draw_text(app, app.ui_font, "Settings", panel.x + 18, panel.y + 182, palette.text)
+    draw_text(app, app.ui_font, "Ctrl+,", panel.x + 248, panel.y + 182, palette.text_muted)
 }
 
 draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
@@ -1837,11 +1874,7 @@ main :: proc() {
         next_session_identity = 1,
         startup_profile = user_config.startup_profile,
     }
-    if app.startup_profile == 1 {
-        new_tab(&app)
-    } else {
-        attach_home_tab(&app)
-    }
+    new_tab(&app)
 
     for app.running {
         event: SDL.Event

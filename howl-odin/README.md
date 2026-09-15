@@ -50,6 +50,11 @@ Current canary:
   Session (attach) or Local shell (create owned Session). Missing fields in the
   earlier schema-1 file retain defaults, and later saves update the existing
   config directory instead of treating its normal `.Exist` result as failure;
+- `+`, `Ctrl+T`, startup, and split-pane creation all consume that same default
+  profile instead of hard-coding a process type. With Home as default they add
+  another observer view and spawn no PTY; with Local shell as default they
+  create a new owned Session. The profile dropdown always exposes both choices
+  explicitly and marks the current default;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
