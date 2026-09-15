@@ -11,7 +11,7 @@ import TTF "vendor:sdl3/ttf"
 UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
-SESSION_POLL_MS :: u64(50)
+SESSION_RETRY_MS :: 50
 
 Palette :: struct {
     window_bg: SDL.Color,
@@ -131,6 +131,7 @@ observe_session :: proc(data: rawptr) {
     worker := (^Session_Worker)(data)
     app := worker.app
     observer := worker.observer
+    after_revision: u64
     for {
         sync.mutex_lock(&app.session_mutex)
         stop := app.session_worker_stop
@@ -142,19 +143,27 @@ observe_session :: proc(data: rawptr) {
         output_len: c.size_t
         result := snapshot(
             observer,
-            0,
+            after_revision,
             0,
             raw_data(worker.scratch),
             c.size_t(len(worker.scratch)),
             &output_len,
         )
         if result != 0 {
+            sync.mutex_lock(&app.session_mutex)
+            stopped := app.session_worker_stop
+            sync.mutex_unlock(&app.session_mutex)
+            if stopped {
+                break
+            }
             publish_bridge_error(app, observer)
-            time.sleep(time.Duration(SESSION_POLL_MS) * time.Millisecond)
+            after_revision = 0
+            time.sleep(SESSION_RETRY_MS * time.Millisecond)
             continue
         }
 
         snapshot_revision := revision(observer)
+        after_revision = snapshot_revision
         snapshot_terminal_revision := terminal_revision(observer)
         snapshot_rows := rows(observer)
         snapshot_columns := columns(observer)
@@ -182,8 +191,6 @@ observe_session :: proc(data: rawptr) {
         app.session_text_truncated = snapshot_text_truncated
         app.session_error_len = 0
         sync.mutex_unlock(&app.session_mutex)
-
-        time.sleep(time.Duration(SESSION_POLL_MS) * time.Millisecond)
     }
 }
 
@@ -628,6 +635,10 @@ main :: proc() {
         c.size_t(len(observer_diagnostic)),
         &observer_diagnostic_len,
     )
+    observer_cancellation := rawptr(nil)
+    if observer != nil {
+        observer_cancellation = cancellation_create(observer)
+    }
 
     app := App{
         window = window,
@@ -646,6 +657,8 @@ main :: proc() {
         publish_initial_error(&app, string(control_diagnostic[:int(control_diagnostic_len)]))
     } else if observer == nil {
         publish_initial_error(&app, string(observer_diagnostic[:int(observer_diagnostic_len)]))
+    } else if observer_cancellation == nil {
+        publish_initial_error(&app, "observer_cancellation_failed")
     }
 
     worker_context := Session_Worker{
@@ -654,7 +667,7 @@ main :: proc() {
         scratch = observer_scratch,
     }
     observer_thread: ^thread.Thread = nil
-    if session != nil && observer != nil {
+    if session != nil && observer != nil && observer_cancellation != nil {
         observer_thread = thread.create_and_start_with_data(
             rawptr(&worker_context),
             observe_session,
@@ -675,7 +688,11 @@ main :: proc() {
 
     if observer_thread != nil {
         stop_session_worker(&app)
+        _ = cancellation_cancel(observer_cancellation)
         thread.destroy(observer_thread)
+    }
+    if observer_cancellation != nil {
+        cancellation_destroy(observer_cancellation)
     }
     if observer != nil {
         destroy(observer)

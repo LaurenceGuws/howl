@@ -9,6 +9,7 @@ const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
 
 const Handle = opaque {};
+const CancellationHandle = opaque {};
 
 const Bridge = struct {
     allocator: std.mem.Allocator,
@@ -87,6 +88,37 @@ pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
     const allocator = bridge.allocator;
     bridge.connection.deinit();
     allocator.destroy(bridge);
+}
+
+/// Creates one independent wake handle for a potentially blocking observation.
+///
+/// The duplicate never sends Howl protocol bytes. It only shuts down the
+/// observer socket so another thread can leave a blocked receive during client
+/// teardown.
+pub export fn howl_odin_bridge_cancellation_create(raw: ?*Handle) ?*CancellationHandle {
+    const value = raw orelse return null;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    const cancellation = bridge.allocator.create(client.Cancellation) catch return null;
+    cancellation.* = bridge.connection.cancellation() catch {
+        bridge.allocator.destroy(cancellation);
+        return null;
+    };
+    return @ptrCast(cancellation);
+}
+
+pub export fn howl_odin_bridge_cancellation_cancel(raw: ?*CancellationHandle) i32 {
+    const value = raw orelse return 1;
+    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
+    cancellation.cancel() catch return 2;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_cancellation_destroy(raw: ?*CancellationHandle) void {
+    const value = raw orelse return;
+    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
+    const allocator = std.heap.c_allocator;
+    cancellation.deinit();
+    allocator.destroy(cancellation);
 }
 
 /// Requests one complete current viewport and projects it to bounded UTF-8.

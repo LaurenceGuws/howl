@@ -9,6 +9,9 @@ foreign howl_bridge {
     version            :: proc() -> u32 ---
     create             :: proc(endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     destroy            :: proc(handle: rawptr) ---
+    cancellation_create  :: proc(handle: rawptr) -> rawptr ---
+    cancellation_cancel  :: proc(handle: rawptr) -> i32 ---
+    cancellation_destroy :: proc(handle: rawptr) ---
     snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_named_key     :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---

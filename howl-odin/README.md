@@ -20,6 +20,10 @@ Current canary:
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
+- observation and control use independent client connections: a named worker
+  blocks on revision-relative observation while the SDL event/render thread
+  owns only control delivery; teardown wakes the blocked observer through
+  `howl-client`'s duplicate-socket cancellation primitive;
 - additional tabs remain UI-only placeholders while profile/session ownership is
   designed rather than guessed.
 
