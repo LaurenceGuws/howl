@@ -190,6 +190,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
       },
       onEditKey: (key, count) {
+        if (Platform.isIOS && key == TerminalEditKey.enter) {
+          _diagnostics.record('Input', 'text_enter count=$count');
+        }
         _returnToLiveForInput();
         final modifiers = _takeModifierLatch();
         if (_platformInput.platform == TargetPlatform.iOS &&
@@ -873,6 +876,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       KeyUpEvent() => HowlInput.keyRelease,
       _ => HowlInput.keyPress,
     };
+    if (Platform.isIOS &&
+        (keyName == HowlInput.namedEnter ||
+            keyName == HowlInput.namedArrowDown)) {
+      final source = keyName == HowlInput.namedEnter
+          ? 'physical_enter'
+          : 'physical_down';
+      final kind = switch (event) {
+        KeyDownEvent() => 'press',
+        KeyRepeatEvent() => 'repeat',
+        KeyUpEvent() => 'release',
+        _ => 'other',
+      };
+      _diagnostics.record('Input', '$source action=$kind');
+    }
     if (keyName != null) {
       _sendNamedKey(keyName: keyName, action: action, modifiers: modifiers);
     } else {
