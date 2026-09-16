@@ -14,6 +14,7 @@ import TTF "vendor:sdl3/ttf"
 UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
+SELECTION_TEXT_BYTES :: 1024 * 1024
 SESSION_RETRY_MS :: 50
 MAX_TABS :: 8
 MAX_CANVAS_RESOURCES :: 8
@@ -76,6 +77,16 @@ Session_View :: struct {
     history_anchor_top_row: u64,
     history_anchor_valid: bool,
     alternate_screen: bool,
+    selection_active: bool,
+    selection_dragging: bool,
+    selection_anchor_row: u16,
+    selection_anchor_column: u16,
+    selection_focus_row: u16,
+    selection_focus_column: u16,
+    selection_history_offset: u32,
+    selection_top_row: u64,
+    selection_columns: u16,
+    selection_alternate_screen: bool,
     text_truncated: bool,
     error: [160]u8,
     error_len: int,
@@ -357,6 +368,7 @@ reset_canvas :: proc(view: ^Session_View) {
     if view == nil {
         return
     }
+    clear_selection(view)
     clear_canvas_resources(view)
     if view.canvas != nil {
         render_destroy(view.canvas)
@@ -807,6 +819,9 @@ observe_session :: proc(data: rawptr) {
         snapshot_text_truncated := text_truncated(observer) != 0
 
         sync.mutex_lock(&view.mutex)
+        if view.selection_active && snapshot_terminal_revision != view.terminal_revision {
+            clear_selection_locked(view)
+        }
         copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
         view.text_len = int(output_len)
         view.revision = snapshot_revision
@@ -859,6 +874,28 @@ copy_bridge_error :: proc(view: ^Session_View) {
     if view != nil {
         publish_bridge_error(view, view.control)
     }
+}
+
+clear_selection_locked :: proc(view: ^Session_View) {
+    view.selection_active = false
+    view.selection_dragging = false
+    view.selection_anchor_row = 0
+    view.selection_anchor_column = 0
+    view.selection_focus_row = 0
+    view.selection_focus_column = 0
+    view.selection_history_offset = 0
+    view.selection_top_row = 0
+    view.selection_columns = 0
+    view.selection_alternate_screen = false
+}
+
+clear_selection :: proc(view: ^Session_View) {
+    if view == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    clear_selection_locked(view)
+    sync.mutex_unlock(&view.mutex)
 }
 
 reset_history_locked :: proc(view: ^Session_View) {
@@ -934,6 +971,7 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     if clamped == int(view.history_target_offset) {
         return false
     }
+    clear_selection_locked(view)
     view.history_target_offset = u32(clamped)
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -953,6 +991,7 @@ return_history_live :: proc(view: ^Session_View) -> bool {
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
     changed := view.history_target_offset != 0 || view.history_anchor_valid
+    clear_selection_locked(view)
     reset_history_locked(view)
     return changed
 }
@@ -1252,6 +1291,292 @@ session_view_at :: proc(
         return tab.secondary_session, 1, true
     }
     return nil, 0, false
+}
+
+pane_rect_for_index :: proc(
+    app: ^App,
+    pane_index: int,
+    width, height: f32,
+) -> (pane: SDL.FRect, ok: bool) {
+    if app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return {}, false
+    }
+    inset := terminal_inset(width, height)
+    tab := &app.tabs[app.active_tab]
+    if tab.secondary_session == nil {
+        return inset, pane_index == 0
+    }
+    left, right := split_pane_rects(inset)
+    if pane_index == 0 {
+        return left, true
+    }
+    if pane_index == 1 {
+        return right, true
+    }
+    return {}, false
+}
+
+selection_cell_at :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    clamp_to_surface := false,
+) -> (row, column: u16, ok: bool) {
+    if view == nil || !ensure_canvas(app, view) ||
+       view.canvas_surface_width == 0 || view.canvas_surface_height == 0 {
+        return 0, 0, false
+    }
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 {
+        return 0, 0, false
+    }
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    right := origin_x + f32(view.canvas_surface_width)
+    bottom := origin_y + f32(view.canvas_surface_height)
+    local_x := x
+    local_y := y
+    if clamp_to_surface {
+        local_x = clamp(local_x, origin_x, max(origin_x, right - 1))
+        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1))
+    } else if local_x < origin_x || local_x >= right || local_y < origin_y || local_y >= bottom {
+        return 0, 0, false
+    }
+    selected_column := int((local_x - origin_x) / f32(cell_width))
+    selected_row := int((local_y - origin_y) / f32(cell_height))
+    columns := int(view.canvas_surface_width / cell_width)
+    rows := int(view.canvas_surface_height / cell_height)
+    if selected_column < 0 || selected_column >= columns || selected_row < 0 || selected_row >= rows {
+        return 0, 0, false
+    }
+    return u16(selected_row), u16(selected_column), true
+}
+
+begin_selection :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+) -> bool {
+    row, column, ok := selection_cell_at(app, view, pane, x, y)
+    if !ok {
+        return false
+    }
+    cell_width := render_cell_width(view.canvas)
+    columns := u16(view.canvas_surface_width / cell_width)
+    history_offset := render_history_offset(view.canvas)
+    history_count := render_history_count(view.canvas)
+    history_row_base := render_history_row_base(view.canvas)
+    alternate := render_alternate_screen(view.canvas) != 0
+    if !alternate && history_offset > history_count {
+        return false
+    }
+    top_row := u64(0)
+    if !alternate {
+        top_row = u64(history_row_base) + u64(history_count) - u64(history_offset)
+    }
+    sync.mutex_lock(&view.mutex)
+    view.selection_active = true
+    view.selection_dragging = true
+    view.selection_anchor_row = row
+    view.selection_anchor_column = column
+    view.selection_focus_row = row
+    view.selection_focus_column = column
+    view.selection_history_offset = history_offset
+    view.selection_top_row = top_row
+    view.selection_columns = columns
+    view.selection_alternate_screen = alternate
+    sync.mutex_unlock(&view.mutex)
+    return true
+}
+
+extend_selection :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    dragging := view.selection_dragging
+    sync.mutex_unlock(&view.mutex)
+    if !dragging {
+        return false
+    }
+    row, column, ok := selection_cell_at(app, view, pane, x, y, true)
+    if !ok {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    view.selection_focus_row = row
+    view.selection_focus_column = column
+    sync.mutex_unlock(&view.mutex)
+    return true
+}
+
+finish_selection :: proc(view: ^Session_View) {
+    if view == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    view.selection_dragging = false
+    if view.selection_active &&
+       view.selection_anchor_row == view.selection_focus_row &&
+       view.selection_anchor_column == view.selection_focus_column {
+        clear_selection_locked(view)
+    }
+    sync.mutex_unlock(&view.mutex)
+}
+
+copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
+    if view == nil || view.control == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    if !view.selection_active {
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+    anchor_row := view.selection_anchor_row
+    anchor_column := view.selection_anchor_column
+    focus_row := view.selection_focus_row
+    focus_column := view.selection_focus_column
+    top_row := view.selection_top_row
+    selected_columns := view.selection_columns
+    selected_alternate := view.selection_alternate_screen
+    sync.mutex_unlock(&view.mutex)
+
+    buffer := make([]u8, SELECTION_TEXT_BYTES)
+    defer delete(buffer)
+    output_len: c.size_t
+    result := selection_extract(
+        view.control,
+        top_row,
+        selected_columns,
+        selected_alternate ? u8(1) : u8(0),
+        anchor_row,
+        anchor_column,
+        focus_row,
+        focus_column,
+        raw_data(buffer),
+        c.size_t(len(buffer)),
+        &output_len,
+    )
+    if result != 0 || output_len == 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    terminated := make([]u8, int(output_len) + 1)
+    defer delete(terminated)
+    copy(terminated[:int(output_len)], buffer[:int(output_len)])
+    terminated[int(output_len)] = 0
+    clipboard_ok := SDL.SetClipboardText(cstring(raw_data(terminated)))
+    if !clipboard_ok {
+        return false
+    }
+    clear_selection(view)
+    return true
+}
+
+paste_clipboard :: proc(view: ^Session_View) -> bool {
+    if view == nil || view.control == nil || !SDL.HasClipboardText() {
+        return false
+    }
+    bytes := SDL.GetClipboardText()
+    if bytes == nil {
+        return false
+    }
+    defer SDL.free(rawptr(bytes))
+    text := string(cstring(bytes))
+    if len(text) == 0 {
+        return false
+    }
+    _ = return_history_live(view)
+    if send_paste(view.control, raw_data(text), c.size_t(len(text))) != 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    return true
+}
+
+selection_before_or_equal :: proc(
+    left_row, left_column, right_row, right_column: u16,
+) -> bool {
+    return left_row < right_row ||
+           (left_row == right_row && left_column <= right_column)
+}
+
+draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+    if view == nil || view.canvas == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    if !view.selection_active {
+        sync.mutex_unlock(&view.mutex)
+        return
+    }
+    anchor_row := view.selection_anchor_row
+    anchor_column := view.selection_anchor_column
+    focus_row := view.selection_focus_row
+    focus_column := view.selection_focus_column
+    selected_history_offset := view.selection_history_offset
+    selected_columns := view.selection_columns
+    selected_alternate := view.selection_alternate_screen
+    sync.mutex_unlock(&view.mutex)
+
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 {
+        return
+    }
+    columns := u16(view.canvas_surface_width / cell_width)
+    rows := u16(view.canvas_surface_height / cell_height)
+    if selected_columns != columns ||
+       selected_history_offset != view.canvas_history_offset ||
+       selected_alternate != (render_alternate_screen(view.canvas) != 0) ||
+       anchor_row >= rows || focus_row >= rows {
+        clear_selection(view)
+        return
+    }
+
+    start_row, start_column := anchor_row, anchor_column
+    end_row, end_column := focus_row, focus_column
+    if !selection_before_or_equal(start_row, start_column, end_row, end_column) {
+        start_row, end_row = end_row, start_row
+        start_column, end_column = end_column, start_column
+    }
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
+    _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
+    defer {
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+    }
+    color := SDL.Color{palette.accent[0], palette.accent[1], palette.accent[2], 72}
+    for row := int(start_row); row <= int(end_row); row += 1 {
+        first := 0
+        last := int(columns) - 1
+        if row == int(start_row) {
+            first = int(start_column)
+        }
+        if row == int(end_row) {
+            last = int(end_column)
+        }
+        if last < first {
+            continue
+        }
+        rect := SDL.FRect{
+            origin_x + f32(first * int(cell_width)),
+            origin_y + f32(row * int(cell_height)),
+            f32((last - first + 1) * int(cell_width)),
+            f32(cell_height),
+        }
+        draw_fill(app.renderer, rect, color)
+    }
 }
 
 tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.FRect) {
@@ -1630,6 +1955,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             adjust_terminal_font(app, -1)
         } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
             adjust_terminal_font(app, 1)
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_C {
+            _ = copy_selection_to_clipboard(active_session_view(app))
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
+            _ = paste_clipboard(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
             execute_action(app, .Close_Pane)
         } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
@@ -1654,9 +1983,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             // The active real Session consumed this named physical key.
         } else if event.type == .KEY_DOWN && active_session_view(app) != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
             view := active_session_view(app)
-            _ = return_history_live(view)
             scalar := u32(event.key.key)
             if scalar > 0 && scalar < 0x80 {
+                _ = return_history_live(view)
                 action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
                 result := send_unicode_key(
                     view.control,
@@ -1681,11 +2010,59 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
         }
+    case .MOUSE_MOTION:
+        _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
+        if app.active_tab >= 0 && app.active_tab < app.tab_count {
+            tab := &app.tabs[app.active_tab]
+            view := active_session_view(app)
+            w, h: c.int
+            if view != nil && SDL.GetWindowSize(app.window, &w, &h) {
+                if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                    _ = extend_selection(app, view, pane, event.motion.x, event.motion.y)
+                }
+            }
+        }
     case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
-        if event.type == .MOUSE_BUTTON_UP && SDL.GetWindowSize(app.window, &w, &h) {
-            handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
+        if SDL.GetWindowSize(app.window, &w, &h) {
+            if event.button.button == SDL.BUTTON_LEFT && event.type == .MOUSE_BUTTON_DOWN &&
+               !app.profile_menu_open && !app.palette_open && !app.settings_open {
+                view, pane_index, ok := session_view_at(
+                    app,
+                    event.button.x,
+                    event.button.y,
+                    f32(w), f32(h),
+                )
+                if ok && view != nil {
+                    if app.active_tab >= 0 && app.active_tab < app.tab_count {
+                        app.tabs[app.active_tab].active_pane = pane_index
+                    }
+                    if pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h)); pane_ok &&
+                       begin_selection(app, view, pane, event.button.x, event.button.y) {
+                        return
+                    }
+                }
+            }
+            if event.button.button == SDL.BUTTON_LEFT && event.type == .MOUSE_BUTTON_UP {
+                view := active_session_view(app)
+                if view != nil {
+                    sync.mutex_lock(&view.mutex)
+                    dragging := view.selection_dragging
+                    sync.mutex_unlock(&view.mutex)
+                    if dragging {
+                        tab := &app.tabs[app.active_tab]
+                        if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                            _ = extend_selection(app, view, pane, event.button.x, event.button.y)
+                        }
+                        finish_selection(view)
+                        return
+                    }
+                }
+                handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
+            } else if event.type == .MOUSE_BUTTON_UP {
+                handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
+            }
         }
     case .MOUSE_WHEEL:
         if app.profile_menu_open || app.palette_open || app.settings_open {
@@ -1795,6 +2172,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     origin_y := pane.y + 6
     resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
+        draw_selection(app, view, pane)
         if history_active(view) {
             badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
             draw_fill(app.renderer, badge, palette.title_bg)
@@ -1842,6 +2220,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view.text_truncated {
         draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
     }
+    draw_selection(app, view, pane)
     if history_active(view) {
         badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
         draw_fill(app.renderer, badge, palette.title_bg)
@@ -1967,7 +2346,7 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     case .Interaction:
         draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, 340)
         draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
-        draw_setting_field(app, "Clipboard / selection", "Not wired yet", content_x, content_y + 204, 340)
+        draw_setting_field(app, "Selection / clipboard", "Drag select / Ctrl+Shift+C,V", content_x, content_y + 204, 340)
     case .Appearance:
         draw_setting_field(app, "Theme", "Dark", content_x, content_y + 48, 248)
         draw_setting_field(app, "Terminal font", "JetBrainsMono Nerd Font", content_x, content_y + 126, 340)
@@ -2072,6 +2451,7 @@ main :: proc() {
     }
 
     _ = SDL.SetRenderVSync(renderer, 1)
+    _ = SDL.SetRenderDrawBlendMode(renderer, SDL.BLENDMODE_BLEND)
 
     engine := TTF.CreateRendererTextEngine(renderer)
     if engine == nil {

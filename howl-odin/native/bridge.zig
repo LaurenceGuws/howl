@@ -881,6 +881,180 @@ pub export fn howl_odin_bridge_send_text(
     return 0;
 }
 
+pub export fn howl_odin_bridge_send_paste(
+    raw: ?*Handle,
+    bytes_ptr: [*]const u8,
+    bytes_len: usize,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    client.actions.paste(&bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
+        bridge.setError("paste", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_selection_extract(
+    raw: ?*Handle,
+    selection_top_row: u64,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    start_row: u16,
+    start_column: u16,
+    end_row: u16,
+    end_column: u16,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    if (expected_columns == 0 or expected_alternate_screen > 1) {
+        bridge.setError("selection_context", "invalid_expected_context");
+        return 3;
+    }
+    const expected_alternate = expected_alternate_screen != 0;
+
+    var live = client.rich.request(
+        &bridge.connection,
+        bridge.allocator,
+        0,
+        0,
+    ) catch |failure| {
+        bridge.setError("selection_live", @errorName(failure));
+        return 2;
+    };
+    const live_begin = live.begin;
+    if (live_begin.columns != expected_columns or
+        live_begin.alternate_screen != expected_alternate)
+    {
+        live.deinit();
+        bridge.setError("selection_context", "changed");
+        return 3;
+    }
+
+    var requested_offset: u32 = 0;
+    if (expected_alternate) {
+        if (selection_top_row != 0) {
+            live.deinit();
+            bridge.setError("selection_context", "alternate_anchor");
+            return 3;
+        }
+    } else {
+        const first = @as(u64, live_begin.history_row_base);
+        const newest_history_end = first + @as(u64, live_begin.history_count);
+        if (selection_top_row < first or selection_top_row > newest_history_end) {
+            live.deinit();
+            bridge.setError("selection_context", "evicted");
+            return 3;
+        }
+        const offset = newest_history_end - selection_top_row;
+        if (offset > live_begin.history_count) {
+            live.deinit();
+            bridge.setError("selection_context", "evicted");
+            return 3;
+        }
+        requested_offset = @intCast(offset);
+    }
+
+    if (requested_offset == 0) {
+        defer live.deinit();
+        return extractSelectionFromSnapshot(
+            bridge,
+            &live,
+            expected_columns,
+            expected_alternate,
+            start_row,
+            start_column,
+            end_row,
+            end_column,
+            output_ptr,
+            output_capacity,
+            output_len,
+        );
+    }
+    live.deinit();
+
+    var history = client.rich.request(
+        &bridge.connection,
+        bridge.allocator,
+        0,
+        requested_offset,
+    ) catch |failure| {
+        bridge.setError("selection_history", @errorName(failure));
+        return 2;
+    };
+    defer history.deinit();
+    return extractSelectionFromSnapshot(
+        bridge,
+        &history,
+        expected_columns,
+        expected_alternate,
+        start_row,
+        start_column,
+        end_row,
+        end_column,
+        output_ptr,
+        output_capacity,
+        output_len,
+    );
+}
+
+fn extractSelectionFromSnapshot(
+    bridge: *Bridge,
+    rich: *client.rich.Snapshot,
+    expected_columns: u16,
+    expected_alternate: bool,
+    start_row: u16,
+    start_column: u16,
+    end_row: u16,
+    end_column: u16,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    if (rich.begin.columns != expected_columns or
+        rich.begin.alternate_screen != expected_alternate)
+    {
+        bridge.setError("selection_context", "changed");
+        return 3;
+    }
+    const snapshot = client.view.project(bridge.allocator, rich) catch |failure| {
+        bridge.setError("selection_project", @errorName(failure));
+        return 2;
+    };
+    defer client.view.deinit(snapshot);
+
+    var range = client.selection.Range.start(snapshot, start_row, start_column) catch |failure| {
+        bridge.setError("selection_start", @errorName(failure));
+        return 3;
+    };
+    range.extend(snapshot, end_row, end_column) catch |failure| {
+        bridge.setError("selection_extend", @errorName(failure));
+        return 3;
+    };
+    const text = client.selection.extract(
+        &bridge.connection,
+        bridge.allocator,
+        range,
+    ) catch |failure| {
+        bridge.setError("selection_extract", @errorName(failure));
+        return 4;
+    };
+    defer bridge.allocator.free(text);
+    if (text.len > output_capacity) {
+        bridge.setError("selection_extract", "output_too_small");
+        return 5;
+    }
+    @memcpy(output_ptr[0..text.len], text);
+    output_len.* = text.len;
+    return 0;
+}
+
 pub export fn howl_odin_bridge_send_named_key(
     raw: ?*Handle,
     key_value: u8,
