@@ -162,16 +162,14 @@ These labels are descriptive, not priority scores.
 - Semantic paste preserves VT-owned bracketed-paste behavior.
 - Neovim and btop alt-screen open/input/exit canaries.
 - F1–F12, lock keys, and numeric-keypad physical identities use Howl named-key semantics; F5, F12, and Shift+F5 were pressure-tested through VT-owned encoding. Standalone modifier-key transitions remain deliberately withheld until shortcut arbitration can prevent half-chord leakage.
-
-**ACTIVE**
-
-- SDL `TEXT_EDITING` preedit is implemented as bounded client-local state for both terminal and Find owners; the platform candidate area follows the active terminal cursor or Find insertion point, and only committed `TEXT_INPUT` crosses into Howl. Unit/owner-transition coverage is green, but neither the private KWin lab nor Home currently runs an IME/dead-key layout, so a real preedit producer canary remains pending.
-- Repeat/key-up behavior dogfood under applications that request it.
+- Kitty all-event keyboard mode has an end-to-end repeat/release canary: holding F5 for 700 ms produced `ESC[15~`, four `ESC[15;1:2~` repeats, then `ESC[15;1:3~` release through VT-owned encoding.
+- Real desktop dead-key composition was pressure-tested in the private KWin/XWayland lab with `us(intl)`: dead-acute alone stayed uncommitted, then `e` produced exactly one composed `é` through SDL `TEXT_INPUT`.
+- SDL `TEXT_EDITING` preedit is implemented as bounded client-local state for both terminal and Find owners; the platform candidate area follows the active terminal cursor or Find insertion point, UTF-8 character caret offsets are converted to pixel placement, and only committed `TEXT_INPUT` crosses into Howl. Unit/owner-transition coverage is green.
 
 **WANTED**
 
-- Real platform dead-key/IME preedit canary when the active desktop actually has a composition producer.
-- Keyboard-layout and dead-key coverage.
+- A real runtime `TEXT_EDITING`/candidate preedit producer canary on a desktop with fcitx/ibus/maliit or another native IME. The X11 dead-key canary committed composition but did not emit a visible preedit event.
+- Broader keyboard-layout/dead-key coverage when it reflects real user environments.
 - Explicit handling of application shortcuts versus terminal shortcuts, with no
   modifier-only keypress side effects.
 
@@ -200,11 +198,7 @@ These labels are descriptive, not priority scores.
   With mouse tracking off, alternate screen + DEC alternate-scroll + application
   cursor mode made wheel-up/down arrive as ESC OA / ESC OB from VT; Shift+wheel
   remained client-local and emitted no child bytes.
-
-**ACTIVE**
-
-- Neovim, btop, tmux-or-zellij, and less mouse/focus pressure canaries.
-- Desktop IME/composition and broader physical-key pressure.
+- Neovim, btop, tmux, and less mouse/focus pressure canaries are green: Neovim click/wheel plus Shift-selection override, btop menu/wheel, tmux mouse pane focus with nested input, and less tracking-off wheel-ignore plus PageDown navigation.
 
 **WANTED**
 

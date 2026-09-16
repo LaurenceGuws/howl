@@ -80,16 +80,22 @@ Current canary:
   VT-owned `ESC OA` / `ESC OB`. Shift+wheel remained the explicit local override and
   produced no child bytes. The same canary, with focus reporting off, also proved
   semantic focus transitions are suppressed by VT when the child did not request them;
-- desktop text composition now owns SDL `TEXT_EDITING` as bounded client-local
-  preedit state. Candidate placement follows the active terminal cursor or Find field,
-  transient composition is cleared when focus/input ownership changes, and only final
-  `TEXT_INPUT` crosses into Howl. The state/lifecycle path is unit-proven, while an
-  actual dead-key/IME preedit producer canary remains pending because neither the
-  current Home session nor the managed KWin lab has an IME/dead-key layout configured;
+- desktop text composition owns SDL `TEXT_EDITING` as bounded client-local preedit
+  state. Candidate placement follows the active terminal cursor or Find field, UTF-8
+  preedit caret indices are measured into pixel offsets, transient composition is cleared
+  when input ownership changes, and only final `TEXT_INPUT` crosses into Howl. A private
+  XWayland `us(intl)` dead-key canary composed dead-acute + `e` into exactly one `é`;
+  that backend did not emit a visible preedit event, so a true runtime `TEXT_EDITING`
+  producer remains a future platform canary rather than a claimed proof;
 - named physical-key coverage includes F1-F12, lock keys, and the numeric keypad.
   F5, F12, and Shift+F5 were pressure-tested through VT-owned encoding; standalone
   modifier-key transitions remain deliberately withheld until shortcut arbitration can
   guarantee app-owned shortcuts never leak half a modifier chord to the child;
+- Kitty all-event key semantics are pressure-tested end-to-end: a 700 ms F5 hold
+  produced one press (`ESC[15~`), four repeat events (`ESC[15;1:2~`), and one release
+  (`ESC[15;1:3~`). SDL produced the physical lifecycle, Odin sent semantic actions, and
+  VT alone chose the terminal encoding;
+- managed-KWin interaction dogfood now includes real Neovim, btop, tmux, and less paths: Neovim accepted click/wheel while Shift+drag stayed local, btop's actual menu and process-list wheel worked, a mouse-enabled two-pane tmux session changed pane focus from a click and accepted input only in that pane, and less correctly ignored wheel with tracking/alternate-scroll off while PageDown navigated normally;
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
