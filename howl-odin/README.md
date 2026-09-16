@@ -47,10 +47,12 @@ Current canary:
   active leaf while promoting the sibling subtree;
 - Canvas commands are pane-clipped even during the brief resize transition, so
   an old wider frame can never paint across the split into its sibling;
-- dropdown and command-palette commands share one application action model;
-  Up/Down/Tab move selection, Enter executes the selected action, and commands
-  such as new tab, attach Home Session, Settings, and close tab are no longer
-  display-only rows;
+- one bounded action registry now owns stable action ids, labels, default shortcut
+  strings, category, context-enabled state, and execution. Command Palette,
+  Settings → Actions, and profile-menu action hints consume that same registry;
+  impossible actions such as zoom on a single pane render disabled rather than
+  failing silently. Up/Down/Tab move palette selection and Enter executes the
+  selected enabled action;
 - Settings is a real navigable application surface rather than one static mock:
   Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages expose the client's current truthful configuration and

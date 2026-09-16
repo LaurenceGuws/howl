@@ -226,11 +226,106 @@ Session_View :: struct {
 App_Action :: enum {
     New_Tab,
     New_Window,
-    Split_Pane,
+    Duplicate_Tab,
+    Split_Vertical,
+    Split_Horizontal,
+    Toggle_Pane_Zoom,
     Open_Local,
     Attach_Home,
+    Recover_Session,
     Open_Settings,
+    Open_Command_Palette,
+    Open_Profile_Menu,
     Close_Pane,
+}
+
+Action_Category :: enum u8 {
+    Window,
+    Tab,
+    Pane,
+    Profile,
+    Application,
+}
+
+Action_Definition :: struct {
+    action: App_Action,
+    label: string,
+    default_shortcut: string,
+    category: Action_Category,
+}
+
+ACTION_DEFINITIONS :: [13]Action_Definition{
+    {.New_Tab, "New tab", "Ctrl+T", .Tab},
+    {.New_Window, "New window", "Ctrl+Shift+N", .Window},
+    {.Duplicate_Tab, "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
+    {.Split_Vertical, "Split pane right", "Alt+Shift+D", .Pane},
+    {.Split_Horizontal, "Split pane down", "Alt+Shift+-", .Pane},
+    {.Toggle_Pane_Zoom, "Toggle pane zoom", "Ctrl+Shift+Z", .Pane},
+    {.Open_Local, "Open Local shell", "", .Profile},
+    {.Attach_Home, "Attach Home Session", "", .Profile},
+    {.Recover_Session, "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
+    {.Open_Settings, "Open settings", "Ctrl+,", .Application},
+    {.Open_Command_Palette, "Command Palette", "Ctrl+Shift+P", .Application},
+    {.Open_Profile_Menu, "Profile menu", "Ctrl+Shift+Space", .Application},
+    {.Close_Pane, "Close pane / tab", "Ctrl+Shift+W", .Pane},
+}
+
+PALETTE_ACTIONS :: [11]App_Action{
+    .New_Tab,
+    .New_Window,
+    .Duplicate_Tab,
+    .Split_Vertical,
+    .Split_Horizontal,
+    .Toggle_Pane_Zoom,
+    .Open_Local,
+    .Attach_Home,
+    .Recover_Session,
+    .Open_Settings,
+    .Close_Pane,
+}
+
+
+action_definition :: proc(action: App_Action) -> (Action_Definition, bool) {
+    for definition in ACTION_DEFINITIONS {
+        if definition.action == action {
+            return definition, true
+        }
+    }
+    return {}, false
+}
+
+action_enabled :: proc(app: ^App, action: App_Action) -> bool {
+    switch action {
+    case .New_Tab, .Duplicate_Tab, .Open_Local, .Attach_Home:
+        return app != nil && app.tab_count < MAX_TABS
+    case .Split_Vertical, .Split_Horizontal:
+        return app != nil && app.active_tab >= 0 && app.active_tab < app.tab_count &&
+               app.tabs[app.active_tab].pane_count < MAX_PANES_PER_TAB
+    case .Toggle_Pane_Zoom:
+        return app != nil && app.active_tab >= 0 && app.active_tab < app.tab_count &&
+               app.tabs[app.active_tab].pane_count > 1
+    case .Recover_Session:
+        return app != nil && session_recoverable(active_session_view(app))
+    case .Close_Pane:
+        return app != nil && app.tab_count > 0
+    case .New_Window, .Open_Settings, .Open_Command_Palette, .Open_Profile_Menu:
+        return app != nil
+    }
+    return false
+}
+
+action_label :: proc(action: App_Action) -> string {
+    if definition, ok := action_definition(action); ok {
+        return definition.label
+    }
+    return "Unknown action"
+}
+
+action_default_shortcut :: proc(action: App_Action) -> string {
+    if definition, ok := action_definition(action); ok {
+        return definition.default_shortcut
+    }
+    return ""
 }
 
 Settings_Page :: enum {
@@ -3793,36 +3888,61 @@ launch_new_window :: proc() -> bool {
 }
 
 execute_action :: proc(app: ^App, action: App_Action) {
+    if app == nil || !action_enabled(app, action) {
+        return
+    }
     switch action {
     case .New_Tab:
         new_tab(app)
     case .New_Window:
         _ = launch_new_window()
-    case .Split_Pane:
-        split_active_pane(app)
+    case .Duplicate_Tab:
+        _ = duplicate_active_tab(app)
+    case .Split_Vertical:
+        split_active_pane(app, .Vertical)
+    case .Split_Horizontal:
+        split_active_pane(app, .Horizontal)
+    case .Toggle_Pane_Zoom:
+        if app.active_tab >= 0 && app.active_tab < app.tab_count {
+            clear_ime_preedit(app)
+            _ = toggle_pane_zoom(&app.tabs[app.active_tab])
+        }
     case .Open_Local:
         open_local_tab(app)
     case .Attach_Home:
         attach_home_tab(app)
+    case .Recover_Session:
+        _ = recover_active_session(app)
     case .Open_Settings:
         app.profile_menu_open = false
         app.palette_open = false
         app.settings_open = true
+    case .Open_Command_Palette:
+        app.palette_open = true
+        app.palette_selection = 0
+        app.profile_menu_open = false
+        app.settings_open = false
+    case .Open_Profile_Menu:
+        app.profile_menu_open = true
+        app.profile_menu_selection = 0
+        app.palette_open = false
+        app.settings_open = false
     case .Close_Pane:
         close_active_pane(app)
         app.palette_open = false
     }
 }
 
-palette_action :: proc(index: int) -> App_Action {
-    switch index {
-    case 0: return .New_Tab
-    case 1: return .New_Window
-    case 2: return .Split_Pane
-    case 3: return .Attach_Home
-    case 4: return .Open_Settings
-    case:   return .Close_Pane
+palette_action :: proc(index: int) -> (App_Action, bool) {
+    if index < 0 {
+        return .New_Tab, false
     }
+    for action, action_index in PALETTE_ACTIONS {
+        if action_index == index {
+            return action, true
+        }
+    }
+    return .New_Tab, false
 }
 
 handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
@@ -3834,11 +3954,13 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         case SDL.K_ESCAPE:
             app.palette_open = false
         case SDL.K_UP:
-            app.palette_selection = (app.palette_selection + 5) % 6
+            app.palette_selection = (app.palette_selection + len(PALETTE_ACTIONS) - 1) % len(PALETTE_ACTIONS)
         case SDL.K_DOWN, SDL.K_TAB:
-            app.palette_selection = (app.palette_selection + 1) % 6
+            app.palette_selection = (app.palette_selection + 1) % len(PALETTE_ACTIONS)
         case SDL.K_RETURN:
-            execute_action(app, palette_action(app.palette_selection))
+            if action, ok := palette_action(app.palette_selection); ok {
+                execute_action(app, action)
+            }
         case:
             return false
         }
@@ -3949,11 +4071,14 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 
     if app.palette_open {
         box_w := f32(520)
-        box := SDL.FRect{(width - box_w) / 2, 92, box_w, 288}
-        for i in 0..<6 {
+        box_h := f32(88 + len(PALETTE_ACTIONS) * 36)
+        box := SDL.FRect{(width - box_w) / 2, 92, box_w, box_h}
+        for i in 0..<len(PALETTE_ACTIONS) {
             row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
             if inside(x, y, row) {
-                execute_action(app, palette_action(i))
+                if action, ok := palette_action(i); ok {
+                    execute_action(app, action)
+                }
                 return
             }
         }
@@ -4618,23 +4743,23 @@ draw_profile_menu :: proc(app: ^App) {
     }
     draw_fill(app.renderer, rows[app.profile_menu_selection], palette.tab_active)
 
-    draw_text(app, app.ui_font, "Local shell", panel.x + 18, panel.y + 14, palette.text)
+    draw_text(app, app.ui_font, action_label(.Open_Local), panel.x + 18, panel.y + 14, palette.text)
     draw_text(app, app.ui_font, "Create owned Session", panel.x + 18, panel.y + 34, palette.text_muted)
     if app.startup_profile == 1 {
         draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 14, palette.accent)
     }
 
-    draw_text(app, app.ui_font, "Home Session", panel.x + 18, panel.y + 66, palette.text)
+    draw_text(app, app.ui_font, action_label(.Attach_Home), panel.x + 18, panel.y + 66, palette.text)
     draw_text(app, app.ui_font, HOME_ENDPOINT, panel.x + 18, panel.y + 86, palette.text_muted)
     if app.startup_profile == 0 {
         draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 66, palette.accent)
     }
 
     draw_fill(app.renderer, {panel.x + 10, panel.y + 116, panel.w - 20, 1}, palette.border)
-    draw_text(app, app.ui_font, "Command Palette", panel.x + 18, panel.y + 136, palette.text)
-    draw_text(app, app.ui_font, "Ctrl+Shift+P", panel.x + 190, panel.y + 136, palette.text_muted)
-    draw_text(app, app.ui_font, "Settings", panel.x + 18, panel.y + 182, palette.text)
-    draw_text(app, app.ui_font, "Ctrl+,", panel.x + 248, panel.y + 182, palette.text_muted)
+    draw_text(app, app.ui_font, action_label(.Open_Command_Palette), panel.x + 18, panel.y + 136, palette.text)
+    draw_text(app, app.ui_font, action_default_shortcut(.Open_Command_Palette), panel.x + 190, panel.y + 136, palette.text_muted)
+    draw_text(app, app.ui_font, action_label(.Open_Settings), panel.x + 18, panel.y + 182, palette.text)
+    draw_text(app, app.ui_font, action_default_shortcut(.Open_Settings), panel.x + 248, panel.y + 182, palette.text_muted)
 }
 
 history_scrollbar_geometry :: proc(
@@ -5278,7 +5403,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
 
 draw_palette :: proc(app: ^App, width, height: f32) {
     box_w := f32(520)
-    box_h := f32(288)
+    box_h := f32(88 + len(PALETTE_ACTIONS) * 36)
     box := SDL.FRect{(width - box_w) / 2, 92, box_w, box_h}
     draw_fill(app.renderer, box, palette.title_bg)
     draw_outline(app.renderer, box, palette.border)
@@ -5288,19 +5413,17 @@ draw_palette :: proc(app: ^App, width, height: f32) {
     draw_outline(app.renderer, search, palette.accent)
     draw_text(app, app.ui_font, "> Command Palette", search.x + 12, search.y + 10, palette.text)
 
-    labels := [6]string{"New tab", "New window", "Split pane", "Attach Home Session", "Open settings", "Close pane / tab"}
-    shortcuts := [6]string{"Ctrl+T", "Ctrl+Shift+N", "Alt+Shift+D", "", "Ctrl+,", "Ctrl+Shift+W"}
-    for label, i in labels {
+    for action, i in PALETTE_ACTIONS {
         row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
         if app.palette_selection == i {
             draw_fill(app.renderer, row, palette.tab_active)
         }
-        has_split := app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].pane_count > 1
-        enabled := i != 5 || has_split || app.tab_count > 1
+        enabled := action_enabled(app, action)
         color := enabled ? palette.text : palette.text_muted
-        draw_text(app, app.ui_font, label, row.x + 10, row.y + 8, color)
-        if len(shortcuts[i]) != 0 {
-            draw_text(app, app.ui_font, shortcuts[i], row.x + row.w - 132, row.y + 8, palette.text_muted)
+        draw_text(app, app.ui_font, action_label(action), row.x + 10, row.y + 8, color)
+        shortcut := action_default_shortcut(action)
+        if len(shortcut) != 0 {
+            draw_text(app, app.ui_font, shortcut, row.x + row.w - 148, row.y + 8, palette.text_muted)
         }
     }
 }
@@ -5375,12 +5498,13 @@ draw_settings :: proc(app: ^App, width, height: f32) {
             draw_outline(app.renderer, swatch, palette.border)
         }
     case .Actions:
-        action_names := [7]string{"New tab", "Split pane", "Close pane / tab", "Focus left pane", "Focus right pane", "Command Palette", "Profile menu"}
-        action_keys := [7]string{"Ctrl+T", "Alt+Shift+D", "Ctrl+Shift+W", "Alt+Left", "Alt+Right", "Ctrl+Shift+P", "Ctrl+Shift+Space"}
-        for name, index in action_names {
-            y := content_y + 54 + f32(index) * 42
-            draw_text(app, app.ui_font, name, content_x, y, palette.text)
-            draw_text(app, app.ui_font, action_keys[index], content_x + 230, y, palette.text_muted)
+        for definition, index in ACTION_DEFINITIONS {
+            y := content_y + 54 + f32(index) * 32
+            color := action_enabled(app, definition.action) ? palette.text : palette.text_muted
+            draw_text(app, app.ui_font, definition.label, content_x, y, color)
+            if len(definition.default_shortcut) != 0 {
+                draw_text(app, app.ui_font, definition.default_shortcut, content_x + 248, y, palette.text_muted)
+            }
         }
     case .Profile_Defaults:
         draw_setting_field(app, "Profile kind", "Created local shell", content_x, content_y + 48, 300)

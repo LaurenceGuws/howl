@@ -471,14 +471,20 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
-- One application action registry feeds command palette and shell actions.
+- One bounded action registry owns stable action ids, labels, default shortcut
+  strings, categories, context-enabled state, and execution. Command Palette,
+  Settings → Actions, and profile-menu action labels/shortcut hints consume the
+  same metadata rather than maintaining parallel lists.
+- Context state is visible rather than silently ignored: for example pane zoom is
+  muted with one pane while restart/reconnect is enabled only for a recoverable
+  Session lifecycle state.
 - Keyboard navigation and Enter execution.
 
 **WANTED**
 
 - Fuzzy/filterable command palette.
-- All user-facing operations represented as actions rather than duplicated UI
-  callbacks.
+- Finish routing remaining direct shell shortcuts through the registry where they
+  represent concrete actions rather than parameterized key families.
 - Custom keybindings with conflict detection and reset.
 - Context-aware disabled actions with a reason when useful.
 - Discoverable shortcut display in menus/settings.
