@@ -54,11 +54,12 @@ Current canary:
   failing silently. Up/Down/Tab move palette selection and Enter executes the
   selected enabled action;
 - Settings is a real navigable application surface rather than one static mock:
-  Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
-  and Home Session pages expose the client's current truthful configuration and
-  ownership state. Actions can be rebound from the keyboard, unbound, or reset;
-  conflicts are rejected without mutating either action and the conflicting action
-  is named in the UI;
+  Startup, Interaction, Appearance, Color schemes, Actions, Profiles, and Profile
+  pages expose the client's current truthful configuration and ownership state.
+  Actions can be rebound from the keyboard, unbound, or reset; conflicts are rejected
+  without mutating either action and the conflicting action is named in the UI.
+  Profiles can be created, duplicated, edited, and deleted with built-in vs user-owned
+  boundaries kept explicit; active profile text editing owns SDL composition input;
 - Appearance owns the first live presentation setting: terminal font size has
   12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
   and changing it never mutates canonical Session geometry; the accepted
@@ -81,7 +82,10 @@ Current canary:
   `howl-sessiond` argv now carries optional command/cwd flags, while the Odin bridge
   applies bounded environment replacements over the inherited desktop environment.
   A Lab Recipe canary proved command execution, `/tmp` cwd, env override, and a 12 px
-  42×160 grid against built-in Local's 15 px 34×124 grid in the same pane;
+  42×160 grid against built-in Local's 15 px 34×124 grid in the same pane. The
+  Settings editor then changed that same recipe to `/var/tmp`, added
+  `EDITOR_VAR=works`, and moved it to 15 px; a fresh Session consumed all three
+  edits, while live font-only changes resized the existing Session without restart;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;

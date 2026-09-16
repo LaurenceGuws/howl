@@ -182,10 +182,30 @@ These labels are descriptive, not priority scores.
 - Schema-3 saves preserve user recipes atomically and name the default by stable
   profile id; schema 1/2 remain readable and migrate on later save.
 
+**PROVEN — profile editor**
+
+- Settings → Profiles is a real bounded catalogue with keyboard/pointer selection.
+  Built-ins are visibly read-only; `D` duplicates either built-in or user recipe
+  into a stable-id user-owned copy, while `N` creates a fresh launch recipe.
+- The Profile page edits name, attach-vs-launch mode, shell, command, cwd, endpoint,
+  inherited/global font override, and typed environment name/value entries. Text
+  editing owns SDL `TEXT_INPUT`/preedit while active, with the candidate area anchored
+  to the exact value row rather than leaking keystrokes into the terminal.
+- Delete refuses built-ins and any recipe referenced by a live tab/pane. An unused
+  user recipe deletes atomically and later profile indices/default references remap.
+- Launch/attach mode changes clear incompatible fields in one save. A duplicated Lab
+  canary switched Launch → Attach and atomically dropped shell/command/cwd/env while
+  seeding the attach endpoint.
+- Launch-policy edits apply to future/restarted Sessions; presentation font is the
+  explicit live exception. A running Lab Session changed **34×124 at 15 px → 28×102
+  at 18 px → 34×124 at 15 px** with PID/socket identity unchanged.
+- A full Settings edit canary changed Lab cwd `/tmp → /var/tmp`, added
+  `EDITOR_VAR=works`, changed 12→15 px, relaunched, and proved all edits through the
+  shared Session/PTY owner. In-use delete was refused; `N` create + rename + delete
+  returned the config to only the real Lab recipe.
+
 **WANTED**
 
-- Full Settings create/edit/delete/duplicate flows for user-owned profiles; built-ins
-  remain immutable and should be duplicated to customize.
 - Profile icon and optional color accent.
 - Profile defaults plus per-profile overrides.
 - Duplicate/edit/delete flows with explicit built-in vs user-owned distinction.
@@ -474,6 +494,10 @@ These labels are descriptive, not priority scores.
   chooses an action, Enter records a physical chord, Delete unbinds, and R restores
   the registry default. Recording owns the whole chord so modifier-only transitions
   never leak to the terminal or trigger another app action.
+- Settings → Profiles/Profile is also keyboard-complete: Tab crosses sidebar/content
+  ownership, Up/Down navigates catalogue/fields, Enter opens or edits, built-ins
+  require Duplicate before mutation, and typed environment overrides have explicit
+  add/remove/name/value controls rather than a `NAME=value` mini-language.
 - Keybinding conflicts are rejected transactionally with the conflicting action
   named in UI. Hand-edited malformed keybinding sets report the precise bad entry
   while unrelated valid font/startup fields retain their accepted values.

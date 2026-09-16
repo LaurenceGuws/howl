@@ -434,6 +434,14 @@ App :: struct {
     settings_content_focus: bool,
     settings_action_selection: int,
     settings_binding_recording: bool,
+    settings_profile_selection: int,
+    settings_profile_field: int,
+    settings_profile_env_selection: int,
+    settings_profile_editing: bool,
+    settings_profile_edit_field: Profile_Edit_Field,
+    settings_profile_edit_env_index: int,
+    settings_profile_edit_buffer: [PROFILE_EDIT_BYTES]u8,
+    settings_profile_edit_len: int,
     settings_notice: [192]u8,
     settings_notice_len: int,
 }
@@ -4061,6 +4069,7 @@ execute_action :: proc(app: ^App, action: App_Action) {
         _ = recover_active_session(app)
     case .Open_Settings:
         next := !app.settings_open
+        cancel_profile_edit(app)
         app.profile_menu_open = false
         app.palette_open = false
         app.settings_open = next
@@ -4208,6 +4217,12 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     }
     if app.settings_open {
         page := int(app.settings_page)
+        if app.settings_content_focus && app.settings_page == .Profile_Defaults {
+            return handle_profile_list_key(app, event)
+        }
+        if app.settings_content_focus && app.settings_page == .Profile_Home {
+            return handle_profile_editor_key(app, event)
+        }
         if app.settings_content_focus && app.settings_page == .Actions {
             switch event.key.key {
             case SDL.K_TAB:
@@ -4238,8 +4253,11 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         }
         switch event.key.key {
         case SDL.K_TAB:
-            if app.settings_page == .Actions {
+            if app.settings_page == .Actions || app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
                 app.settings_content_focus = true
+                if app.settings_page == .Profile_Defaults {
+                    app.settings_profile_selection = clamp(app.settings_profile_selection, 0, max(0, app.profile_count - 1))
+                }
                 return true
             }
             return false
@@ -4264,15 +4282,23 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             }
             return false
         case SDL.K_UP:
+            cancel_profile_edit(app)
+            app.settings_binding_recording = false
             app.settings_page = Settings_Page((page + 6) % 7)
             app.settings_content_focus = false
         case SDL.K_DOWN:
+            cancel_profile_edit(app)
+            app.settings_binding_recording = false
             app.settings_page = Settings_Page((page + 1) % 7)
             app.settings_content_focus = false
         case SDL.K_HOME:
+            cancel_profile_edit(app)
+            app.settings_binding_recording = false
             app.settings_page = .Startup
             app.settings_content_focus = false
         case SDL.K_END:
+            cancel_profile_edit(app)
+            app.settings_binding_recording = false
             app.settings_page = .Profile_Home
             app.settings_content_focus = false
         case:
@@ -4319,10 +4345,34 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if app.settings_open {
+        panel := settings_panel_rect(width, height)
+        content_x := panel.x + 178 + 28
+        content_y := panel.y + 22
+        if app.settings_page == .Profile_Defaults {
+            for profile_index in 0..<app.profile_count {
+                row := profile_list_row_rect(content_x, content_y, panel.x + panel.w - content_x - 12, profile_index)
+                if inside(x, y, row) {
+                    cancel_profile_edit(app)
+                    app.settings_profile_selection = profile_index
+                    app.settings_content_focus = true
+                    app.settings_notice_len = 0
+                    return
+                }
+            }
+        }
+        if app.settings_page == .Profile_Home {
+            for field_index in 0..<PROFILE_EDIT_FIELD_COUNT {
+                row := profile_field_row_rect(content_x, content_y, panel.x + panel.w - content_x - 12, field_index)
+                if inside(x, y, row) {
+                    cancel_profile_edit(app)
+                    app.settings_profile_field = field_index
+                    app.settings_content_focus = true
+                    app.settings_notice_len = 0
+                    return
+                }
+            }
+        }
         if app.settings_page == .Actions {
-            panel := settings_panel_rect(width, height)
-            content_x := panel.x + 178 + 28
-            content_y := panel.y + 22
             for _, index in ACTION_DEFINITIONS {
                 row := SDL.FRect{content_x - 8, content_y + 46 + f32(index) * 32, panel.x + panel.w - content_x - 12, 30}
                 if inside(x, y, row) {
@@ -4334,9 +4384,11 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
             }
         }
         if page, ok := settings_page_at(x, y, width, height); ok {
+            cancel_profile_edit(app)
             app.settings_page = page
             app.settings_content_focus = false
             app.settings_binding_recording = false
+            app.settings_notice_len = 0
             return
         }
     }
@@ -4452,6 +4504,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
             return
+        } else if app.settings_open && app.settings_profile_editing {
+            _ = handle_profile_edit_key(app, event)
+            return
         } else if app.settings_open && app.settings_binding_recording {
             _ = handle_settings_binding_recording(app, event)
             return
@@ -4518,9 +4573,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 _ = scroll_history_rows(view, -history_page_rows(view))
             }
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
+            cancel_profile_edit(app)
             app.profile_menu_open = false
             app.palette_open = false
             app.settings_open = false
+            app.settings_content_focus = false
+            app.settings_binding_recording = false
         } else if handle_overlay_key(app, event) {
             // Overlay-owned navigation never reaches the terminal.
         } else if send_bridge_key(app, event) {
@@ -4558,6 +4616,15 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         }
     case .TEXT_INPUT:
         clear_ime_preedit(app)
+        if app.settings_open && app.settings_profile_editing {
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 {
+                    _ = append_profile_edit_text(app, text)
+                }
+            }
+            return
+        }
         if app.search_open {
             if event.text.text != nil {
                 text := string(event.text.text)
@@ -5473,6 +5540,24 @@ active_terminal_cursor_rect :: proc(
 }
 
 update_text_input_area :: proc(app: ^App, width, height: f32) {
+    if app.settings_open && app.settings_profile_editing {
+        if field, ok := profile_editor_input_rect(app, width, height); ok {
+            text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
+            input_x := min(field.x + 7 + text_width(app.ui_font, text), field.x + field.w - 10)
+            caret := ime_preedit_caret_pixels(app, app.ui_font)
+            available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
+            area_width := max(c.int(2), caret + 2)
+            if app.ime_preedit_len != 0 {
+                preedit := string(app.ime_preedit[:app.ime_preedit_len])
+                area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+            }
+            area_width = min(area_width, available)
+            caret = min(caret, max(c.int(0), area_width - 1))
+            area := SDL.Rect{c.int(input_x), c.int(field.y + 5), area_width, c.int(field.h - 10)}
+            _ = SDL.SetTextInputArea(app.window, &area, caret)
+            return
+        }
+    }
     if app.search_open {
         field := search_input_field(width)
         query := string(app.search_query[:app.search_query_len])
@@ -5514,6 +5599,19 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
         return
     }
     preedit := string(app.ime_preedit[:app.ime_preedit_len])
+    if app.settings_open && app.settings_profile_editing {
+        if field, ok := profile_editor_input_rect(app, width, height); ok {
+            text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
+            x := min(field.x + 7 + text_width(app.ui_font, text), field.x + field.w - 12)
+            clip := SDL.Rect{c.int(field.x + 5), c.int(field.y), c.int(max(f32(1), field.w - 10)), c.int(field.h)}
+            _ = SDL.SetRenderClipRect(app.renderer, &clip)
+            draw_text(app, app.ui_font, preedit, x, field.y + 8, palette.accent)
+            underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 7 - x))
+            draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
+            _ = SDL.SetRenderClipRect(app.renderer, nil)
+            return
+        }
+    }
     if app.search_open {
         field := search_input_field(width)
         query := string(app.search_query[:app.search_query_len])
@@ -5672,8 +5770,8 @@ settings_page_title :: proc(page: Settings_Page) -> string {
     case .Appearance:       return "Appearance"
     case .Color_Schemes:    return "Color schemes"
     case .Actions:          return "Actions"
-    case .Profile_Defaults: return "Profile defaults"
-    case .Profile_Home:     return "Home Session"
+    case .Profile_Defaults: return "Profiles"
+    case .Profile_Home:     return "Profile"
     }
     return ""
 }
@@ -5695,7 +5793,7 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     draw_fill(app.renderer, sidebar, palette.tab_idle)
     draw_text(app, app.ui_font, "Settings", sidebar.x + 18, sidebar.y + 18, palette.text)
 
-    labels := [7]string{"Startup", "Interaction", "Appearance", "Color schemes", "Actions", "  Defaults", "  Home Session"}
+    labels := [7]string{"Startup", "Interaction", "Appearance", "Color schemes", "Actions", "  Profiles", "  Profile"}
     tops := [7]f32{52, 86, 120, 154, 188, 272, 306}
     for label, index in labels {
         row := SDL.FRect{sidebar.x + 8, sidebar.y + tops[index], sidebar.w - 16, 30}
@@ -5774,14 +5872,9 @@ draw_settings :: proc(app: ^App, width, height: f32) {
             draw_text(app, app.ui_font, string(app.config_notice[:app.config_notice_len]), content_x, notice_y, palette.accent)
         }
     case .Profile_Defaults:
-        draw_setting_field(app, "Profile kind", "Created local shell", content_x, content_y + 48, 300)
-        draw_setting_field(app, "Geometry leadership", "Pane-owned", content_x, content_y + 126, 300)
-        draw_setting_field(app, "Session lifetime", "Tab / pane-owned child Session", content_x, content_y + 204, 340)
+        draw_profiles_settings(app, panel, content_x, content_y)
     case .Profile_Home:
-        draw_setting_field(app, "Name", "Home Session", content_x, content_y + 48, 300)
-        draw_setting_field(app, "Endpoint", HOME_ENDPOINT, content_x, content_y + 126, 360)
-        draw_setting_field(app, "Transport", "TCP / howl-client", content_x, content_y + 204, 300)
-        draw_setting_field(app, "Geometry", "Attach without resize leadership", content_x, content_y + 282, 360)
+        draw_profile_editor_settings(app, panel, content_x, content_y)
     }
 }
 
