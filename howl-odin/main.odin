@@ -238,6 +238,8 @@ Session_View :: struct {
     canvas_error_len: int,
     requested_rows: u16,
     requested_columns: u16,
+    requested_cell_width: u16,
+    requested_cell_height: u16,
 }
 
 App_Action :: enum {
@@ -872,6 +874,8 @@ reset_canvas :: proc(view: ^Session_View) {
     view.canvas_error_len = 0
     view.requested_rows = 0
     view.requested_columns = 0
+    view.requested_cell_width = 0
+    view.requested_cell_height = 0
 }
 
 resize_owned_session_to_pane :: proc(
@@ -903,7 +907,8 @@ resize_owned_session_to_pane :: proc(
         1,
         int(render_maximum_rows()),
     ))
-    if view.requested_rows == desired_rows && view.requested_columns == desired_columns {
+    if view.requested_rows == desired_rows && view.requested_columns == desired_columns &&
+       view.requested_cell_width == cell_width && view.requested_cell_height == cell_height {
         return
     }
     sync.mutex_lock(&view.mutex)
@@ -912,12 +917,14 @@ resize_owned_session_to_pane :: proc(
     if history_columns_changed(current_columns, desired_columns) {
         _ = return_history_live(view)
     }
-    if send_resize(view.control, desired_rows, desired_columns) != 0 {
+    if send_resize(view.control, desired_rows, desired_columns, cell_width, cell_height) != 0 {
         copy_bridge_error(view)
         return
     }
     view.requested_rows = desired_rows
     view.requested_columns = desired_columns
+    view.requested_cell_width = cell_width
+    view.requested_cell_height = cell_height
 }
 
 find_canvas_resource :: proc(view: ^Session_View, source, resource, generation: u64) -> ^Canvas_Texture {

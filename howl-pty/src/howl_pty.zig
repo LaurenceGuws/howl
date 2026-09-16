@@ -394,7 +394,7 @@ fn childLaunchError(value: u8) StartError {
     };
 }
 
-fn openTransport(cols: u16, rows: u16) StartError!Open {
+fn openTransport(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) StartError!Open {
     const master_raw = linux.open(
         "/dev/ptmx",
         .{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true },
@@ -425,8 +425,8 @@ fn openTransport(cols: u16, rows: u16) StartError!Open {
     var winsize = posix.winsize{
         .row = rows,
         .col = cols,
-        .xpixel = 0,
-        .ypixel = 0,
+        .xpixel = pixel_width,
+        .ypixel = pixel_height,
     };
     if (!ioctlSucceeded(linux.ioctl(slave_fd, linux.T.IOCSWINSZ, @intFromPtr(&winsize))))
         return error.OpenPtyFailed;
@@ -554,11 +554,18 @@ pub const Owned = struct {
 
     /// Starts one child at the supplied nonzero terminal dimensions.
     pub fn start(self: *Self, cols: u16, rows: u16) StartError!void {
+        return self.startWithPixels(cols, rows, 0, 0);
+    }
+
+    /// Starts with caller-supplied PTY pixel extents; the zero pair means unknown.
+    /// Pixel metrics are native I/O facts, not a font or renderer dependency.
+    pub fn startWithPixels(self: *Self, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) StartError!void {
+        if ((pixel_width == 0) != (pixel_height == 0)) return error.InvalidDimensions;
         if (self.started) return error.AlreadyStarted;
         if (cols == 0 or rows == 0) return error.InvalidDimensions;
 
         try requireExecutable(self.shell_path);
-        const transport = try openTransport(cols, rows);
+        const transport = try openTransport(cols, rows, pixel_width, pixel_height);
         var transport_owned = true;
         errdefer if (transport_owned) closeTransport(transport);
 
@@ -774,14 +781,20 @@ pub const Owned = struct {
 
     /// Applies nonzero terminal dimensions to the active PTY.
     pub fn resize(self: *Self, cols: u16, rows: u16) ResizeError!void {
+        return self.resizeWithPixels(cols, rows, 0, 0);
+    }
+
+    /// Atomically applies rows, columns and pixel extents in one TIOCSWINSZ.
+    pub fn resizeWithPixels(self: *Self, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) ResizeError!void {
+        if ((pixel_width == 0) != (pixel_height == 0)) return error.InvalidDimensions;
         if (self.master_fd == null) return error.NotStarted;
         if (cols == 0 or rows == 0) return error.InvalidDimensions;
 
         var winsize = posix.winsize{
             .row = rows,
             .col = cols,
-            .xpixel = 0,
-            .ypixel = 0,
+            .xpixel = pixel_width,
+            .ypixel = pixel_height,
         };
         const result = linux.ioctl(@intCast(self.master_fd.?), linux.T.IOCSWINSZ, @intFromPtr(&winsize));
         if (!ioctlSucceeded(result)) {
@@ -1694,4 +1707,26 @@ test "child observation distinguishes running normal exit and signal exit while 
         }
     }
     try std.testing.expectEqual(ChildObservation{ .exited = .{ .signal = 15 } }, signaled_exit.?);
+}
+
+test "PTY pixel extents start and resize atomically without a renderer dependency" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var owned = try Owned.initInherited(std.testing.allocator, "/bin/sh", "sleep 30", null, test_environment, &.{"PATH=/bin:/usr/bin"});
+    defer owned.deinit();
+    try owned.startWithPixels(80, 24, 880, 576);
+    var size: posix.winsize = undefined;
+    const fd = try owned.masterFd();
+    try std.testing.expect(ioctlSucceeded(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    try std.testing.expectEqual(@as(u16, 880), size.xpixel);
+    try std.testing.expectEqual(@as(u16, 576), size.ypixel);
+    try owned.resizeWithPixels(90, 30, 1080, 780);
+    try std.testing.expect(ioctlSucceeded(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    const accepted = size;
+    try std.testing.expectEqual(@as(u16, 90), size.col);
+    try std.testing.expectEqual(@as(u16, 30), size.row);
+    try std.testing.expectEqual(@as(u16, 1080), size.xpixel);
+    try std.testing.expectEqual(@as(u16, 780), size.ypixel);
+    try std.testing.expectError(error.InvalidDimensions, owned.resizeWithPixels(80, 24, 880, 0));
+    try std.testing.expect(ioctlSucceeded(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    try std.testing.expectEqualDeep(accepted, size);
 }

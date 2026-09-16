@@ -33,7 +33,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 7;
+pub const framing_version: u8 = 8;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -688,7 +688,7 @@ pub const graphics_v2 = struct {
     /// Bounds image identities in one canonical terminal graphics plane.
     pub const maximum_images: usize = 256;
     /// Bounds placements in one canonical terminal graphics plane.
-    pub const maximum_placements: usize = 1024;
+    pub const maximum_placements: usize = 16 * 1024;
     /// Bounds either decoded image dimension.
     pub const maximum_dimension: u32 = 4096;
     /// Bounds one exact decoded RGBA8 resource body.
@@ -799,6 +799,10 @@ pub const SnapshotEnd = struct {
 pub const Resize = struct {
     rows: u16,
     columns: u16,
+    /// Zero pair preserves the accepted lattice; nonzero pair supplies exact
+    /// pixels per cell. Mixed zero/nonzero is malformed.
+    cell_pixel_width: u16 = 0,
+    cell_pixel_height: u16 = 0,
 };
 
 /// Stable projected terminal cell used by bounded selected-text extraction.
@@ -835,7 +839,7 @@ pub const payload_bytes = struct {
     /// `AssignLeader` payload bytes.
     pub const assign_leader: usize = 8;
     /// `Resize` payload bytes.
-    pub const resize: usize = 4;
+    pub const resize: usize = 8;
     /// `Signal` payload bytes.
     pub const signal: usize = 1;
     /// `Result` payload bytes.
@@ -1464,12 +1468,17 @@ pub fn decodeAssignLeader(input: []const u8) PayloadError!AssignLeader {
 pub fn encodeResize(output: *[payload_bytes.resize]u8, value: Resize) void {
     writeU16(output[0..2], value.rows);
     writeU16(output[2..4], value.columns);
+    writeU16(output[4..6], value.cell_pixel_width);
+    writeU16(output[6..8], value.cell_pixel_height);
 }
 
 /// Decodes one explicit canonical geometry.
 pub fn decodeResize(input: []const u8) PayloadError!Resize {
     if (input.len != payload_bytes.resize) return error.InvalidPayload;
-    return .{ .rows = readU16(input[0..2]), .columns = readU16(input[2..4]) };
+    const width = readU16(input[4..6]);
+    const height = readU16(input[6..8]);
+    if ((width == 0) != (height == 0)) return error.InvalidPayload;
+    return .{ .rows = readU16(input[0..2]), .columns = readU16(input[2..4]), .cell_pixel_width = width, .cell_pixel_height = height };
 }
 
 /// Encodes one fixed process-group signal.
@@ -2460,4 +2469,19 @@ test "resize leadership is explicit and disappears with its client" {
     try std.testing.expect(authority.disconnected(7));
     try std.testing.expect(authority.leader() == null);
     try std.testing.expect(!authority.mayResize(7));
+}
+
+test "v8 resize has exact pixel pair and rejects old or partial geometry" {
+    const geometry = Resize{ .rows = 38, .columns = 81, .cell_pixel_width = 11, .cell_pixel_height = 24 };
+    var bytes: [payload_bytes.resize]u8 = undefined;
+    encodeResize(&bytes, geometry);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 38, 0, 81, 0, 11, 0, 24 }, &bytes);
+    try std.testing.expectEqualDeep(geometry, try decodeResize(&bytes));
+    try std.testing.expectError(error.InvalidPayload, decodeResize(bytes[0..4]));
+    bytes[7] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeResize(&bytes));
+    bytes[5] = 0;
+    try std.testing.expectEqualDeep(Resize{ .rows = 38, .columns = 81 }, try decodeResize(&bytes));
+    try std.testing.expect(graphics_v2.maximum_manifest_bytes < maximum_payload_bytes);
+    try std.testing.expectEqual(@as(usize, 16384), graphics_v2.maximum_placements);
 }

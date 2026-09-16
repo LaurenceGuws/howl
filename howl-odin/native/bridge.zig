@@ -1975,11 +1975,18 @@ pub export fn howl_odin_bridge_send_resize(
     raw: ?*Handle,
     rows: u16,
     columns: u16,
+    cell_width: u16,
+    cell_height: u16,
 ) i32 {
     const value = raw orelse return 1;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.actions.resize(&bridge.connection, rows, columns) catch |failure| {
+    client.actions.resizeGeometry(&bridge.connection, .{
+        .rows = rows,
+        .columns = columns,
+        .cell_pixel_width = cell_width,
+        .cell_pixel_height = cell_height,
+    }) catch |failure| {
         bridge.setError("resize", @errorName(failure));
         return 2;
     };

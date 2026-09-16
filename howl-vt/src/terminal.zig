@@ -5677,10 +5677,24 @@ pub const Terminal = struct {
         rows: u16,
         cols: u16,
     ) ResizeError!PreparedResize {
+        return self.prepareResizeGeometry(rows, cols, self.cellPixelSize());
+    }
+
+    /// Prepares both screens, replies and cell pixels as one transaction. A
+    /// pixel-only transition is observable even when cell counts are unchanged.
+    pub fn prepareResizeGeometry(
+        self: *Terminal,
+        rows: u16,
+        cols: u16,
+        cell_pixels: ?CellPixelSize,
+    ) ResizeError!PreparedResize {
         self.requireNoPreparedResize();
         try validateDimensions(rows, cols);
+        if (cell_pixels) |cell| {
+            if (cell.width == 0 or cell.height == 0) return error.InvalidDimensions;
+        }
         var report_bytes: [98]u8 = undefined;
-        const report_len = self.prepareResizeReport(rows, cols, &report_bytes);
+        const report_len = self.prepareResizeReport(rows, cols, cell_pixels, &report_bytes);
         var prepared_replies = replies.Buffer.init(self.allocator);
         errdefer prepared_replies.deinit();
         prepared_replies.copyFramingFrom(&self.reply_buffer);
@@ -5690,6 +5704,10 @@ pub const Terminal = struct {
         errdefer primary.deinit(self.allocator);
         var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
         errdefer alternate.deinit(self.allocator);
+        if (cell_pixels) |cell| {
+            primary.setCellPixelSize(cell.width, cell.height);
+            alternate.setCellPixelSize(cell.width, cell.height);
+        }
         const primary_savepoint_trailing_blank_columns = if (self.primary_savepoint.followsCursor(
             &self.screen_state.primary,
         ))
@@ -5717,10 +5735,11 @@ pub const Terminal = struct {
         self: *const Terminal,
         rows: u16,
         cols: u16,
+        cell_pixels: ?CellPixelSize,
         output: *[98]u8,
     ) u8 {
         if (!self.modes.inband_resize_notifications) return 0;
-        const cell = self.cellPixelSize() orelse return 0;
+        const cell = cell_pixels orelse return 0;
         const pixel_height = @as(u64, cell.height) * @as(u64, rows);
         const pixel_width = @as(u64, cell.width) * @as(u64, cols);
         const prefix = if (self.reply_buffer.eight_bit_controls) "\x9b" else "\x1b[";
@@ -8983,4 +9002,35 @@ test "alternate-screen reset keeps default cursor shape for synchronized visibil
     try std.testing.expect(view.cursor_visible);
     try std.testing.expectEqual(Screen.CursorShape.block, view.cursor_shape);
     try std.testing.expect(view.cursor_blink);
+}
+
+test "pixel geometry prepare preserves state through every allocation failure and discard" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, pixelGeometryTransaction, .{});
+}
+
+fn pixelGeometryTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const configured = try terminal.feed("\x1b[?2048h");
+    try std.testing.expect(configured.stateChanged());
+    const before = terminal.semanticSequence();
+    const cell_before = terminal.cellPixelSize();
+    var prepared = terminal.prepareResizeGeometry(3, 5, .{ .width = 11, .height = 24 }) catch |failure| {
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expectEqualDeep(cell_before, terminal.cellPixelSize());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        return failure;
+    };
+    prepared.deinit();
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expectEqualDeep(cell_before, terminal.cellPixelSize());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    var committed = try terminal.prepareResizeGeometry(3, 5, .{ .width = 11, .height = 24 });
+    defer committed.deinit();
+    committed.commit();
+    try std.testing.expectEqual(before + 1, terminal.semanticSequence());
+    try std.testing.expectEqualStrings("\x1b[48;3;5;72;55t", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u32, 11), terminal.cellPixelSize().?.width);
+    try std.testing.expectEqual(@as(u32, 24), terminal.screen_state.alternate.cellPixelSize().?.height);
 }

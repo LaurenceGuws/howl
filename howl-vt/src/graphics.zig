@@ -18,8 +18,11 @@ pub const max_storage_bytes: usize = 64 * 1024 * 1024;
 pub const max_image_bytes: usize = 16 * 1024 * 1024;
 /// Bounds retained image identities.
 pub const max_images: usize = 256;
-/// Bounds retained image placements.
-pub const max_placements: usize = 1024;
+// Cell-tiled previews at the supported image limit can need thousands of
+// distinct placement identities. 16K remains bounded and fits the v8 1 MiB
+// graphics manifest (28 + 256*20 + 16384*52 bytes) and Canvas headroom.
+/// Bounds distinct retained image placements without merging client identities.
+pub const max_placements: usize = 16 * 1024;
 /// Bounds retained animation frames across one terminal.
 const max_frames: usize = 256;
 /// Bounds either image dimension before byte-count validation.

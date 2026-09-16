@@ -1207,7 +1207,7 @@ const Server = struct {
     fn handleResize(self: *Server, client: *Client, payload: []const u8) !void {
         if (!self.authority.mayResize(client.id)) return self.queueResult(client, .resize, .not_leader);
         const request = protocol.decodeResize(payload) catch return self.queueResult(client, .resize, .malformed);
-        howl.resize(self.session, request.rows, request.columns) catch
+        howl.resizeGeometry(self.session, request.rows, request.columns, request.cell_pixel_width, request.cell_pixel_height) catch
             return self.queueResult(client, .resize, .rejected);
         self.refreshObservation();
         try self.queueResult(client, .resize, .ok);
@@ -4469,10 +4469,19 @@ test "Unix clients share one session and explicit geometry authority" {
     stage = "resize authority";
     try sendAssignLeader(&first, &server, first_welcome.client_id);
     try expectResult(&first, &server, .assign_leader, .ok);
-    try sendResize(&second, &server, 10, 50);
+    var resize_pixels: [protocol.payload_bytes.resize]u8 = undefined;
+    protocol.encodeResize(&resize_pixels, .{ .rows = 10, .columns = 50, .cell_pixel_width = 11, .cell_pixel_height = 24 });
+    try second.sendFrame(&server, .resize, &resize_pixels);
     try expectResult(&second, &server, .resize, .not_leader);
-    try sendResize(&first, &server, 10, 50);
+    try std.testing.expectEqual(@as(u32, 10), howl.images(server.session, 0).cell_pixel_width);
+    try first.sendFrame(&server, .resize, &resize_pixels);
     try expectResult(&first, &server, .resize, .ok);
+    try std.testing.expectEqual(@as(u32, 11), howl.images(server.session, 0).cell_pixel_width);
+    try std.testing.expectEqual(@as(u32, 24), howl.images(server.session, 0).cell_pixel_height);
+    protocol.encodeResize(&resize_pixels, .{ .rows = 10, .columns = 50, .cell_pixel_width = 65535, .cell_pixel_height = 24 });
+    try first.sendFrame(&server, .resize, &resize_pixels);
+    try expectResult(&first, &server, .resize, .rejected);
+    try std.testing.expectEqual(@as(u32, 11), howl.images(server.session, 0).cell_pixel_width);
 
     stage = "resized observation";
     try sendObserve(&second, &server, shared.begin.revision);
@@ -4906,9 +4915,9 @@ test "many physical image placements preserve exact manifest and visible resourc
         .shell = "/bin/sh",
         .command = "printf '\\033_Gq=2,a=t,i=9,f=24,s=1,v=1;/wAA\\033\\\\" ++
             "\\033_Gq=2,a=t,i=10,f=24,s=1,v=1;AP8A\\033\\\\'; " ++
-            "i=0; while [ $i -lt 128 ]; do " ++
+            "i=0; while [ $i -lt 1600 ]; do " ++
             "printf '\\033[%d;%dH\\033_Gq=2,a=p,i=9,p=%d,c=1,r=1,C=1,z=-1\\033\\\\' " ++
-            "$((i / 8 + 1)) $((i % 8 + 1)) $((i + 1)); i=$((i + 1)); done; " ++
+            "$((i / 80 + 1)) $((i % 80 + 1)) $((i + 1)); i=$((i + 1)); done; " ++
             "printf '\\033[32;1HPLACEMENTS_READY'; sleep 30",
     });
     defer server.deinit();
@@ -4923,7 +4932,7 @@ test "many physical image placements preserve exact manifest and visible resourc
     try std.testing.expectEqual(@as(usize, 2), images.imageCount());
     const counts = try countSnapshotGraphics(&images);
     try std.testing.expectEqual(@as(u16, 1), counts.images);
-    try std.testing.expectEqual(@as(u16, 128), counts.placements);
+    try std.testing.expectEqual(@as(u16, 1600), counts.placements);
     const encoded = try std.testing.allocator.alloc(u8, counts.payload_bytes);
     defer std.testing.allocator.free(encoded);
     try encodeSnapshotGraphics(&images, counts, encoded);
@@ -4931,12 +4940,12 @@ test "many physical image placements preserve exact manifest and visible resourc
     try std.testing.expectEqual(counts.placements, header.placement_count);
     const image = try protocol.decodeSnapshotImage(encoded[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes]);
     var offset: usize = protocol.graphics_v2.manifest_header_bytes + protocol.graphics_v2.image_bytes;
-    for (0..128) |index| {
+    for (0..1600) |index| {
         const placement = try protocol.decodeSnapshotImagePlacement(encoded[offset..][0..protocol.graphics_v2.placement_bytes]);
         offset += protocol.graphics_v2.placement_bytes;
         try std.testing.expectEqual(image.image_id, placement.image_id);
-        try std.testing.expectEqual(@as(u16, @intCast(index / 8)), placement.row);
-        try std.testing.expectEqual(@as(u16, @intCast(index % 8)), placement.column);
+        try std.testing.expectEqual(@as(u16, @intCast(index / 80)), placement.row);
+        try std.testing.expectEqual(@as(u16, @intCast(index % 80)), placement.column);
         try std.testing.expectEqual(@as(u32, 1), placement.source_width);
         try std.testing.expectEqual(@as(u32, 1), placement.source_height);
     }

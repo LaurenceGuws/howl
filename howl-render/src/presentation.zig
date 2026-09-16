@@ -15,9 +15,9 @@ pub const maximum_cells: usize = @as(usize, maximum_rows) * @as(usize, maximum_c
 /// Complete Canvas command envelope shared by maintained native and Web hosts.
 ///
 /// One ordinary dense glyph per cell consumes `maximum_cells`. The remaining
-/// 16K commands cover backgrounds, decorations, cursor work, and image
-/// placements without making a supported desktop lattice depend on sparsity.
-pub const maximum_canvas_commands: usize = maximum_cells + 16 * 1024;
+/// 16K commands cover image placements and ordinary non-cell work, with one
+/// additional cursor/background slot at the full dense-image boundary.
+pub const maximum_canvas_commands: usize = maximum_cells + 16 * 1024 + 1;
 
 comptime {
     if (maximum_rows == 0 or maximum_columns == 0)
@@ -32,5 +32,5 @@ test "maintained presentation envelope covers 4K-scaled compact desktop" {
     try std.testing.expect(maximum_rows >= 102);
     try std.testing.expect(maximum_columns >= 376);
     try std.testing.expectEqual(@as(usize, 98_304), maximum_cells);
-    try std.testing.expectEqual(@as(usize, 114_688), maximum_canvas_commands);
+    try std.testing.expectEqual(@as(usize, 114_689), maximum_canvas_commands);
 }

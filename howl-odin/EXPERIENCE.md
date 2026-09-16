@@ -799,6 +799,23 @@ These labels are descriptive, not priority scores.
   10.6 s without observation errors. At about 16 image updates/s it still needs
   performance work; image display correctness is not smooth-Doom acceptance.
 
+**PROVEN: local pixel geometry and full tiled-preview coverage**
+
+- Owned Odin panes send the actual Canvas cell-pixel metrics with canonical cell
+  counts. Session commits VT queries, in-band resize and PTY pixel dimensions
+  transactionally. This removes the previous 10x20 reported versus 11x24 drawn
+  mismatch; observers still cannot resize or silently claim an attached Session.
+- The explicit v8 bundle boundary carries the pixel pair and raises independent
+  placement capacity to 16K within the same 1 MiB manifest bound. Retained image
+  bytes remain 64 MiB bounded. A 1,600-placement identity test crosses the old
+  ceiling; a live tall preview covers every source pixel across 1,271 placements.
+- A controlled 320x240 RGBA fixture survived source -> Session resource byte for
+  byte, and all 76,800 displayed RGB pixels matched at 1:1. This is not a promise
+  that arbitrary user images resized by their producer remain pixel-identical.
+- Terminal Doom now requests a 1452x912 destination for its 640x400 source in the
+  full-sized test pane. Geometry is fixed; the measured Session still approaches
+  one CPU core and sustained gameplay performance remains open.
+
 **ACTIVE — graphics performance qualification**
 
 - Local Yazi has the scoped before/after baseline above; sustained Doom and

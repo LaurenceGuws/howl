@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 6. All multi-byte
+This document is the client contract for framing version 8. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v7-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v8-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `5` |
+| 4 | 1 | framing version, currently `8` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -401,7 +401,7 @@ The manifest header is:
 | 16 | 4 | canonical terminal cell pixel width |
 | 20 | 4 | canonical terminal cell pixel height |
 | 24 | 2 | referenced image descriptor count, `0..256` |
-| 26 | 2 | visible placement count, `0..1024` |
+| 26 | 2 | visible placement count, `0..16384` |
 
 The cell-pixel dimensions belong to the canonical session graphics lattice,
 not to any one attached client's font or display. Image placement pixel fields
@@ -597,6 +597,17 @@ A successful request returns one `text_extract_data` frame containing bounded UT
 most the ordinary 1 MiB response-frame ceiling. Extraction is read-only and does not change
 the terminal or observation revision.
 
+## Framing v8 compatibility and placement bounds
+
+V8 is a complete bundle boundary, not a silent extension to v7. Endpoints and
+clients must be rebuilt together; mismatched headers are rejected explicitly.
+The image byte format remains exact RGBA8. The placement ceiling is 16,384
+independent identities to accommodate cell-tiled previews. The largest graphics
+manifest is 857,116 bytes, within the unchanged 1 MiB frame ceiling. Renderer
+command, client projection and native/Web packet bounds are tested together.
+The decoded-image quota remains 64 MiB per VT; a larger placement catalogue does
+not increase image-pixel storage or merge replacement/deletion identities.
+
 ## Resize leadership
 
 Geometry has one optional explicit leader. Attach does not resize and does not
@@ -606,8 +617,15 @@ elect a leader. There is no fallback election and no largest-viewport rule.
 clears leadership. A nonzero id must name an attached client or the endpoint
 returns `no_such_client`.
 
-`resize` is exactly four bytes: rows `u16`, then columns `u16`. Only the current
-leader may change canonical PTY geometry.
+Framing v8 `resize` is exactly eight big-endian bytes: rows `u16`, columns `u16`,
+cell-pixel width `u16`, and cell-pixel height `u16`. A zero pixel pair preserves
+accepted metrics; a mixed zero/nonzero pair is malformed. Nonzero metrics update
+VT geometry/replies and PTY `TIOCSWINSZ` pixel extents together. Pixel products
+must fit the native unsigned 16-bit PTY extents; overflow is rejected without
+changing either owner. Pixel-only changes publish a new canonical revision and
+in-band resize reports use the newly committed metrics.
+
+Only the current leader may change canonical PTY geometry.
 A nonleader receives `not_leader`. If the leader disconnects, leadership becomes
 empty and the last canonical geometry remains unchanged.
 
@@ -663,7 +681,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v7-vectors.json
+python3 tools/validate_vectors.py protocol/v8-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

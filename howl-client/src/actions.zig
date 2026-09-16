@@ -94,20 +94,34 @@ pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!v
 }
 
 pub fn resize(connection: *client.Connection, rows: u16, columns: u16) Error!void {
-    if (rows == 0 or columns == 0) return error.InvalidResize;
+    return resizeGeometry(connection, .{ .rows = rows, .columns = columns });
+}
+
+/// Explicitly acquires geometry authority, then applies cell/pixel dimensions.
+pub fn resizeGeometry(connection: *client.Connection, geometry: protocol.Resize) Error!void {
+    if (geometry.rows == 0 or geometry.columns == 0 or
+        (geometry.cell_pixel_width == 0) != (geometry.cell_pixel_height == 0))
+        return error.InvalidResize;
     var leader_payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
     protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.client_id });
     try connection.send(.assign_leader, &leader_payload);
     try expectOk(connection, .assign_leader);
-    try resizeOwned(connection, rows, columns);
+    try resizeGeometryOwned(connection, geometry);
 }
 
 /// Resizes only while this exact connection already owns geometry authority.
 /// Unlike `resize`, this never assigns or steals leadership first.
 pub fn resizeOwned(connection: *client.Connection, rows: u16, columns: u16) Error!void {
-    if (rows == 0 or columns == 0) return error.InvalidResize;
+    return resizeGeometryOwned(connection, .{ .rows = rows, .columns = columns });
+}
+
+/// Applies v8 cell/pixel geometry without acquiring or stealing leadership.
+pub fn resizeGeometryOwned(connection: *client.Connection, geometry: protocol.Resize) Error!void {
+    if (geometry.rows == 0 or geometry.columns == 0 or
+        (geometry.cell_pixel_width == 0) != (geometry.cell_pixel_height == 0))
+        return error.InvalidResize;
     var resize_payload: [protocol.payload_bytes.resize]u8 = undefined;
-    protocol.encodeResize(&resize_payload, .{ .rows = rows, .columns = columns });
+    protocol.encodeResize(&resize_payload, geometry);
     try connection.send(.resize, &resize_payload);
     try expectOk(connection, .resize);
 }

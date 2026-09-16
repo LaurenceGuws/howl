@@ -351,6 +351,20 @@ pub fn resize(session: *Session, rows: u16, columns: u16) ResizeError!void {
     return stateMut(session).resize(rows, columns);
 }
 
+/// Applies explicit cell-pixel metrics with canonical rows/columns and PTY size.
+/// A zero pair preserves the previously accepted pixel lattice.
+pub fn resizeGeometry(session: *Session, rows: u16, columns: u16, cell_width: u16, cell_height: u16) ResizeError!void {
+    const state = stateMut(session);
+    if ((cell_width == 0) != (cell_height == 0)) return error.InvalidDimensions;
+    const cell = if (cell_width == 0) state.terminal.cellPixelSize().? else vt.Terminal.CellPixelSize{ .width = cell_width, .height = cell_height };
+    return state.resizeGeometry(rows, columns, cell);
+}
+
+fn ptyPixelExtent(cells: u16, pixels: u32) error{InvalidDimensions}!u16 {
+    if (cells == 0 or pixels == 0) return error.InvalidDimensions;
+    return std.math.cast(u16, @as(u64, cells) * pixels) orelse error.InvalidDimensions;
+}
+
 /// Delivers one fixed signal to the canonical child process group.
 pub fn signal(session: *Session, requested: Signal) SignalResult {
     return stateMut(session).transport.signal(requested);
@@ -431,7 +445,9 @@ const State = struct {
             .{ .term = launch.term, .colorterm = launch.colorterm },
         );
         errdefer transport.deinit();
-        try transport.start(launch.columns, launch.rows);
+        const pixel_width = try ptyPixelExtent(launch.columns, launch.cell_pixel_width);
+        const pixel_height = try ptyPixelExtent(launch.rows, launch.cell_pixel_height);
+        try transport.startWithPixels(launch.columns, launch.rows, pixel_width, pixel_height);
         var terminal = try vt.Terminal.initWithHistory(
             allocator,
             launch.rows,
@@ -468,9 +484,15 @@ const State = struct {
     }
 
     fn resize(self: *State, rows: u16, columns: u16) ResizeError!void {
-        var prepared = try self.terminal.prepareResize(rows, columns);
+        return self.resizeGeometry(rows, columns, self.terminal.cellPixelSize().?);
+    }
+
+    fn resizeGeometry(self: *State, rows: u16, columns: u16, cell: vt.Terminal.CellPixelSize) ResizeError!void {
+        const width = try ptyPixelExtent(columns, cell.width);
+        const height = try ptyPixelExtent(rows, cell.height);
+        var prepared = try self.terminal.prepareResizeGeometry(rows, columns, cell);
         defer prepared.deinit();
-        try self.transport.resize(columns, rows);
+        try self.transport.resizeWithPixels(columns, rows, width, height);
         prepared.commit();
     }
 
@@ -851,4 +873,45 @@ test "headless service drains consequence bursts at VT service boundaries" {
 
     try serviceUntilContains(session, "BOUNDARY-DONE");
     try std.testing.expectEqual(@as(u16, 0), consequenceCount(session));
+}
+
+test "Session pixel geometry agrees with PTY reports and rejects overflow transactionally" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 3,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+    const fd = try descriptor(session);
+    var size: std.posix.winsize = undefined;
+    const linux = std.os.linux;
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    try std.testing.expectEqual(@as(u16, 80), size.xpixel);
+    try std.testing.expectEqual(@as(u16, 60), size.ypixel);
+    const before = revision(session);
+    try resizeGeometry(session, 3, 8, 11, 24);
+    try std.testing.expect(revision(session) > before);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    try std.testing.expectEqual(@as(u16, 88), size.xpixel);
+    try std.testing.expectEqual(@as(u16, 72), size.ypixel);
+    const queried = try state.terminal.feed("\x1b[14t\x1b[16t");
+    try std.testing.expect(queried.stateChanged());
+    try std.testing.expectEqualStrings("\x1b[4;72;88t\x1b[6;24;11t", state.terminal.replyBytes());
+    try resize(session, 4, 9);
+    try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
+    const accepted = status(session, 0);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    const accepted_pty = size;
+    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 11, 0));
+    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 65535, 24));
+    try std.testing.expectEqualDeep(accepted, status(session, 0));
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
+    try std.testing.expectEqualDeep(accepted_pty, size);
+    state.transport.stop();
+    try std.testing.expectError(error.NotStarted, resizeGeometry(session, 5, 10, 12, 26));
+    try std.testing.expectEqualDeep(accepted, status(session, 0));
+    try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
 }

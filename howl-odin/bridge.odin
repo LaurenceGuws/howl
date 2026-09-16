@@ -40,7 +40,7 @@ foreign howl_bridge {
     send_unicode_key   :: proc(handle: rawptr, scalar: u32, action, modifiers: u8) -> i32 ---
     send_mouse         :: proc(handle: rawptr, kind, button, modifiers, buttons_down: u8, row: i32, column: u16, pixels_present: u8, pixel_x, pixel_y: u32) -> i32 ---
     send_focus         :: proc(handle: rawptr, focus: u8) -> i32 ---
-    send_resize        :: proc(handle: rawptr, rows, columns: u16) -> i32 ---
+    send_resize        :: proc(handle: rawptr, rows, columns, cell_width, cell_height: u16) -> i32 ---
     copy_error         :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     revision           :: proc(handle: rawptr) -> u64 ---
     terminal_revision  :: proc(handle: rawptr) -> u64 ---

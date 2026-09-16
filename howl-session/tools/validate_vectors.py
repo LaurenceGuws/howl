@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v7 wire-vector decoder and validator.
+"""Independent Howl session v8 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 7
+FRAMING_VERSION = 8
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -99,7 +99,7 @@ GRAPHICS_HEADER_BYTES = 28
 GRAPHICS_IMAGE_BYTES = 20
 GRAPHICS_PLACEMENT_BYTES = 52
 GRAPHICS_MAXIMUM_IMAGES = 256
-GRAPHICS_MAXIMUM_PLACEMENTS = 1024
+GRAPHICS_MAXIMUM_PLACEMENTS = 16384
 GRAPHICS_MAXIMUM_DIMENSION = 4096
 GRAPHICS_MAXIMUM_IMAGE_BYTES = 16 * 1024 * 1024
 GRAPHICS_DATA_CHUNK_BYTES = 256 * 1024
@@ -225,8 +225,11 @@ def decode_assign_leader(payload: bytes) -> dict:
 
 
 def decode_resize(payload: bytes) -> dict:
-    require(len(payload) == 4, "resize_size")
-    return {"rows": u16(payload[0:2]), "columns": u16(payload[2:4])}
+    require(len(payload) == 8, "resize_size")
+    width, height = u16(payload[4:6]), u16(payload[6:8])
+    require((width == 0) == (height == 0), "resize_pixels")
+    return {"rows": u16(payload[0:2]), "columns": u16(payload[2:4]),
+            "cell_pixel_width": width, "cell_pixel_height": height}
 
 
 def decode_signal(payload: bytes) -> dict:
@@ -947,7 +950,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v7/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v8/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -960,7 +963,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v7-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v8-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:
