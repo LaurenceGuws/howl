@@ -5171,6 +5171,10 @@ pub const Terminal = struct {
         }
 
         fn virtualRunCount(self: *const Images) usize {
+            // Cell placeholders cannot project without a prototype in this
+            // bank. Ordinary images must not make each retained image's
+            // visibility test scan the entire terminal cell lattice.
+            if (!self.plane.hasVirtualPlacement(self.bank)) return 0;
             var count: usize = 0;
             var row: u16 = 0;
             while (row < self.view.rows) : (row += 1) {
@@ -5184,6 +5188,7 @@ pub const Terminal = struct {
         }
 
         fn virtualRun(self: *const Images, requested_index: usize) ?ImagePlacement {
+            if (!self.plane.hasVirtualPlacement(self.bank)) return null;
             var current: usize = 0;
             var row: u16 = 0;
             while (row < self.view.rows) : (row += 1) {
@@ -9033,4 +9038,70 @@ fn pixelGeometryTransaction(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("\x1b[48;3;5;72;55t", terminal.replyBytes());
     try std.testing.expectEqual(@as(u32, 11), terminal.cellPixelSize().?.width);
     try std.testing.expectEqual(@as(u32, 24), terminal.screen_state.alternate.cellPixelSize().?.height);
+}
+
+test "image projection requires a virtual prototype in the viewed bank" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const placeholder = "\x1b[1;1H\x1b[38;5;56m" ++
+        "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m";
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++ placeholder,
+    )).stateChanged());
+    var primary = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 0), primary.placementCount());
+    try std.testing.expect(primary.placement(0) == null);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=p,i=56,p=1,c=1,r=1,C=1,q=2\x1b\\",
+    )).stateChanged());
+    primary = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), primary.placementCount());
+    try std.testing.expect(primary.placement(0) != null);
+    try std.testing.expect(primary.placement(1) == null);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[?1049h\x1b_Ga=p,i=56,p=2,c=1,r=1,U=1,q=2\x1b\\" ++ placeholder,
+    )).stateChanged());
+    var alternate = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 3), alternate.placementCount());
+    try std.testing.expect(alternate.placement(0) == null);
+    try std.testing.expect(alternate.placement(1) == null);
+    try std.testing.expect(alternate.placement(2) != null);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
+    primary = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), primary.placementCount());
+    try std.testing.expect(primary.placement(0) != null);
+    try std.testing.expect(primary.placement(1) == null);
+    try std.testing.expect(primary.placement(2) == null);
+}
+
+test "virtual projection resumes after prototype admission and stops after deletion" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++
+            "\x1b[1;1H\x1b[38;5;56m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m",
+    )).stateChanged());
+    var images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 0), images.placementCount());
+    const before = terminal.semanticSequence();
+    try std.testing.expect(images.placement(99) == null);
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=p,i=56,p=7,c=1,r=1,U=1,q=2\x1b\\",
+    )).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+    try std.testing.expect(images.placement(1) != null);
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=d,d=i,i=56,p=7,q=2\x1b\\",
+    )).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 0), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
 }

@@ -816,6 +816,18 @@ These labels are descriptive, not priority scores.
   full-sized test pane. Geometry is fixed; the measured Session still approaches
   one CPU core and sustained gameplay performance remains open.
 
+**PROVEN: full-sized Doom avoids impossible placeholder scans**
+
+- Visibility projection now skips the cell lattice when the canonical bank has
+  no virtual image-placement prototype. Ordinary image visibility no longer
+  repeats a full viewport scan for each retained image. No new cache or timing
+  heuristic was added; bank/admission/deletion and real placeholder tests pass.
+- Identical GUI/bridge A/B at 1920x1036, source 640x400 and destination 1452x912:
+  ~15.9 -> 69.9 full RGBA uploads/s; Session CPU per uploaded frame ~62.0 -> 8.65 ms.
+  The half-window repeat also reached ~70 uploads/s. Both retained exact image
+  semantics and zero observation errors. These are scoped upload cadence/CPU
+  measurements, not optical frame-rate or universal graphics acceptance.
+
 **ACTIVE — graphics performance qualification**
 
 - Local Yazi has the scoped before/after baseline above; sustained Doom and
