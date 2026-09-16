@@ -62,6 +62,18 @@ Current canary:
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
+- desktop pointer routing now consults Howl's coherent interaction state instead of
+  assuming every mouse belongs to the client. Ordinary shell tracking-off behavior
+  remains local selection/history; a child enabling canonical mouse tracking gets
+  semantic press/release/move/wheel facts through `howl-client.actions.mouse`, and
+  VT alone chooses the child escape encoding. Shift+drag and Shift+wheel are explicit
+  local overrides even while tracking is enabled. A controlled SGR button-event
+  canary produced exact child mouse reports for click, drag, and wheel, while the
+  same Shift overrides produced no additional child RX bytes;
+- real desktop focus gain/loss is forwarded as semantic Howl focus input. VT suppresses
+  it unless the child requested focus reporting; with DEC focus reporting enabled,
+  the managed-KWin canary received canonical focus-out `ESC[O` and focus-in `ESC[I`.
+  Focus loss also terminates any terminal-owned mouse capture with semantic releases;
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through

@@ -18,6 +18,7 @@ SELECTION_TEXT_BYTES :: 1024 * 1024
 SEARCH_QUERY_BYTES :: 512
 SESSION_RETRY_MS :: 50
 SELECTION_EDGE_SCROLL_MS :: 100
+INTERACTION_CACHE_MS :: 120
 MAX_TABS :: 8
 MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
@@ -42,6 +43,20 @@ Search_State :: enum u8 {
     Not_Found,
     Stale,
     Error,
+}
+
+Desktop_Primary_Pointer_Route :: enum u8 {
+    Local_Selection,
+    Terminal_Mouse,
+    Interaction_State,
+}
+
+Desktop_Wheel_Route :: enum u8 {
+    History,
+    Terminal_Mouse,
+    Alternate_Scroll,
+    Ignore,
+    Interaction_State,
 }
 
 Tab :: struct {
@@ -98,6 +113,15 @@ Session_View :: struct {
     search_result: Search_Match_Info,
     search_error: [160]u8,
     search_error_len: int,
+    interaction_state: Interaction_State_Info,
+    interaction_state_valid: bool,
+    interaction_state_cached_at: time.Tick,
+    terminal_mouse_buttons: u8,
+    terminal_mouse_captured: bool,
+    terminal_mouse_last_row: i32,
+    terminal_mouse_last_column: u16,
+    terminal_mouse_last_pixel_x: u32,
+    terminal_mouse_last_pixel_y: u32,
     endpoint: [160]u8,
     endpoint_len: int,
     text: []u8,
@@ -1452,6 +1476,19 @@ return_history_live_navigation :: proc(view: ^Session_View) -> bool {
     return return_history_live_with_selection_policy(view, false)
 }
 
+displayed_alternate_screen :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    if view.canvas != nil {
+        return render_alternate_screen(view.canvas) != 0
+    }
+    sync.mutex_lock(&view.mutex)
+    value := view.alternate_screen
+    sync.mutex_unlock(&view.mutex)
+    return value
+}
+
 history_active :: proc(view: ^Session_View) -> bool {
     if view == nil {
         return false
@@ -1751,6 +1788,326 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         owned_session_destroy(owned)
     }
     return view
+}
+
+interaction_mouse_tracking_enabled :: proc(state: Interaction_State_Info) -> bool {
+    return state.mouse_tracking != 0
+}
+
+interaction_alternate_scroll :: proc(state: Interaction_State_Info) -> bool {
+    return state.flags & INTERACTION_ALT_SCROLL != 0
+}
+
+interaction_focus_reporting :: proc(state: Interaction_State_Info) -> bool {
+    return state.flags & INTERACTION_FOCUS_REPORTING != 0
+}
+
+route_desktop_primary_pointer :: proc(
+    history_is_active, force_selection, state_known, mouse_tracking_enabled: bool,
+) -> Desktop_Primary_Pointer_Route {
+    if history_is_active || force_selection {
+        return .Local_Selection
+    }
+    if !state_known {
+        return .Interaction_State
+    }
+    return mouse_tracking_enabled ? .Terminal_Mouse : .Local_Selection
+}
+
+route_desktop_wheel :: proc(
+    history_is_active, force_history, state_known, mouse_tracking_enabled,
+    alternate_screen, alternate_scroll: bool,
+) -> Desktop_Wheel_Route {
+    if history_is_active || force_history {
+        return .History
+    }
+    if !state_known {
+        return .Interaction_State
+    }
+    if mouse_tracking_enabled {
+        return .Terminal_Mouse
+    }
+    if !alternate_screen {
+        return .History
+    }
+    return alternate_scroll ? .Alternate_Scroll : .Ignore
+}
+
+current_interaction_state :: proc(
+    view: ^Session_View,
+    force := false,
+) -> (state: Interaction_State_Info, ok: bool) {
+    if view == nil || view.control == nil {
+        return {}, false
+    }
+    now := time.tick_now()
+    sync.mutex_lock(&view.mutex)
+    valid := view.interaction_state_valid
+    cached := view.interaction_state
+    cached_at := view.interaction_state_cached_at
+    sync.mutex_unlock(&view.mutex)
+    if !force && valid && time.tick_diff(cached_at, now) <= INTERACTION_CACHE_MS * time.Millisecond {
+        return cached, true
+    }
+
+    fresh: Interaction_State_Info
+    if interaction_state(view.control, &fresh) != 0 {
+        copy_bridge_error(view)
+        return {}, false
+    }
+    sync.mutex_lock(&view.mutex)
+    view.interaction_state = fresh
+    view.interaction_state_valid = true
+    view.interaction_state_cached_at = now
+    sync.mutex_unlock(&view.mutex)
+    return fresh, true
+}
+
+terminal_pointer_location :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    clamp_to_surface := false,
+) -> (row: i32, column: u16, pixel_x, pixel_y: u32, ok: bool) {
+    if view == nil || view.canvas == nil {
+        return 0, 0, 0, 0, false
+    }
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 || view.canvas_surface_width == 0 || view.canvas_surface_height == 0 {
+        return 0, 0, 0, 0, false
+    }
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    right := origin_x + f32(view.canvas_surface_width)
+    bottom := origin_y + f32(view.canvas_surface_height)
+    local_x := x
+    local_y := y
+    if clamp_to_surface {
+        local_x = clamp(local_x, origin_x, max(origin_x, right - 1))
+        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1))
+    } else if local_x < origin_x || local_x >= right || local_y < origin_y || local_y >= bottom {
+        return 0, 0, 0, 0, false
+    }
+    px := int(local_x - origin_x)
+    py := int(local_y - origin_y)
+    columns := int(view.canvas_surface_width / cell_width)
+    rows := int(view.canvas_surface_height / cell_height)
+    col := px / int(cell_width)
+    r := py / int(cell_height)
+    if col < 0 || col >= columns || r < 0 || r >= rows {
+        return 0, 0, 0, 0, false
+    }
+    return i32(r), u16(col), u32(px), u32(py), true
+}
+
+bridge_mouse_button :: proc(button: u8) -> (mapped: Bridge_Mouse_Button, bit: u8, ok: bool) {
+    switch button {
+    case SDL.BUTTON_LEFT:   return .Left, 1, true
+    case SDL.BUTTON_MIDDLE: return .Middle, 2, true
+    case SDL.BUTTON_RIGHT:  return .Right, 4, true
+    case:                   return .None, 0, false
+    }
+}
+
+sdl_mouse_buttons_down :: proc(state: SDL.MouseButtonFlags) -> u8 {
+    result: u8
+    if .LEFT in state do result |= 1
+    if .MIDDLE in state do result |= 2
+    if .RIGHT in state do result |= 4
+    return result
+}
+
+send_terminal_mouse :: proc(
+    view: ^Session_View,
+    kind: Bridge_Mouse_Kind,
+    button: Bridge_Mouse_Button,
+    modifiers, buttons_down: u8,
+    row: i32,
+    column: u16,
+    pixel_x, pixel_y: u32,
+) -> bool {
+    if view == nil || view.control == nil {
+        return false
+    }
+    if send_mouse(
+        view.control,
+        u8(kind),
+        u8(button),
+        modifiers,
+        buttons_down,
+        row,
+        column,
+        1,
+        pixel_x,
+        pixel_y,
+    ) != 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    return true
+}
+
+terminal_mouse_press :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    button: u8,
+    modifiers: u8,
+) -> bool {
+    mapped, bit, button_ok := bridge_mouse_button(button)
+    if !button_ok {
+        return false
+    }
+    row, column, pixel_x, pixel_y, located := terminal_pointer_location(view, pane, x, y)
+    if !located {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    buttons := view.terminal_mouse_buttons | bit
+    sync.mutex_unlock(&view.mutex)
+    if !send_terminal_mouse(view, .Press, mapped, modifiers, buttons, row, column, pixel_x, pixel_y) {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    view.terminal_mouse_buttons = buttons
+    view.terminal_mouse_captured = true
+    view.terminal_mouse_last_row = row
+    view.terminal_mouse_last_column = column
+    view.terminal_mouse_last_pixel_x = pixel_x
+    view.terminal_mouse_last_pixel_y = pixel_y
+    sync.mutex_unlock(&view.mutex)
+    _ = SDL.CaptureMouse(true)
+    return true
+}
+
+terminal_mouse_release :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    button: u8,
+    modifiers: u8,
+) -> bool {
+    mapped, bit, button_ok := bridge_mouse_button(button)
+    if !button_ok || view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    before := view.terminal_mouse_buttons
+    last_row := view.terminal_mouse_last_row
+    last_column := view.terminal_mouse_last_column
+    last_pixel_x := view.terminal_mouse_last_pixel_x
+    last_pixel_y := view.terminal_mouse_last_pixel_y
+    sync.mutex_unlock(&view.mutex)
+    if before & bit == 0 {
+        return false
+    }
+    row, column, pixel_x, pixel_y, located := terminal_pointer_location(view, pane, x, y, true)
+    if !located {
+        row, column, pixel_x, pixel_y = last_row, last_column, last_pixel_x, last_pixel_y
+    }
+    after := before & ~bit
+    _ = send_terminal_mouse(view, .Release, mapped, modifiers, after, row, column, pixel_x, pixel_y)
+    sync.mutex_lock(&view.mutex)
+    view.terminal_mouse_buttons = after
+    view.terminal_mouse_captured = after != 0
+    view.terminal_mouse_last_row = row
+    view.terminal_mouse_last_column = column
+    view.terminal_mouse_last_pixel_x = pixel_x
+    view.terminal_mouse_last_pixel_y = pixel_y
+    sync.mutex_unlock(&view.mutex)
+    if after == 0 {
+        _ = SDL.CaptureMouse(false)
+    }
+    return true
+}
+
+terminal_mouse_move :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    modifiers: u8,
+    captured: bool,
+) -> bool {
+    if view == nil {
+        return false
+    }
+    row, column, pixel_x, pixel_y, located := terminal_pointer_location(view, pane, x, y, captured)
+    if !located {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    buttons := view.terminal_mouse_buttons
+    sync.mutex_unlock(&view.mutex)
+    if !send_terminal_mouse(view, .Move, .None, modifiers, buttons, row, column, pixel_x, pixel_y) {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    view.terminal_mouse_last_row = row
+    view.terminal_mouse_last_column = column
+    view.terminal_mouse_last_pixel_x = pixel_x
+    view.terminal_mouse_last_pixel_y = pixel_y
+    sync.mutex_unlock(&view.mutex)
+    return true
+}
+
+finish_terminal_mouse_capture :: proc(view: ^Session_View, modifiers: u8 = 0) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    buttons := view.terminal_mouse_buttons
+    row := view.terminal_mouse_last_row
+    column := view.terminal_mouse_last_column
+    pixel_x := view.terminal_mouse_last_pixel_x
+    pixel_y := view.terminal_mouse_last_pixel_y
+    view.terminal_mouse_buttons = 0
+    view.terminal_mouse_captured = false
+    sync.mutex_unlock(&view.mutex)
+    if buttons == 0 {
+        return false
+    }
+    held := buttons
+    if held & 1 != 0 {
+        held &= ~u8(1)
+        _ = send_terminal_mouse(view, .Release, .Left, modifiers, held, row, column, pixel_x, pixel_y)
+    }
+    if held & 2 != 0 {
+        held &= ~u8(2)
+        _ = send_terminal_mouse(view, .Release, .Middle, modifiers, held, row, column, pixel_x, pixel_y)
+    }
+    if held & 4 != 0 {
+        held &= ~u8(4)
+        _ = send_terminal_mouse(view, .Release, .Right, modifiers, held, row, column, pixel_x, pixel_y)
+    }
+    _ = SDL.CaptureMouse(false)
+    return true
+}
+
+send_semantic_focus :: proc(view: ^Session_View, focused: bool) -> bool {
+    if view == nil || view.control == nil {
+        return false
+    }
+    if send_focus(view.control, u8(focused ? Bridge_Focus.In : Bridge_Focus.Out)) != 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    return true
+}
+
+send_named_key_cycle :: proc(view: ^Session_View, key: Bridge_Key) -> bool {
+    if view == nil || view.control == nil {
+        return false
+    }
+    if send_named_key(view.control, u8(key), u8(Bridge_Key_Action.Press), 0) != 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    if send_named_key(view.control, u8(key), u8(Bridge_Key_Action.Release), 0) != 0 {
+        copy_bridge_error(view)
+        return false
+    }
+    return true
 }
 
 bridge_modifiers :: proc(mods: SDL.Keymod) -> u8 {
@@ -2840,12 +3197,18 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
+        _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
+        _ = send_semantic_focus(active_session_view(app), false)
         app.running = false
     case .WINDOW_FOCUS_LOST:
+        _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
+        _ = send_semantic_focus(active_session_view(app), false)
+    case .WINDOW_FOCUS_GAINED:
+        _ = send_semantic_focus(active_session_view(app), true)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
@@ -2972,6 +3335,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .MOUSE_MOTION:
+        if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
+            break
+        }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         if app.active_tab >= 0 && app.active_tab < app.tab_count {
             tab := &app.tabs[app.active_tab]
@@ -2983,81 +3349,182 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         _ = update_history_scrollbar_drag(view, pane, event.motion.y)
                         return
                     }
-                    if extend_selection(app, view, pane, event.motion.x, event.motion.y) {
-                        _ = update_selection_edge_scroll_intent(
+                    sync.mutex_lock(&view.mutex)
+                    selection_dragging := view.selection_dragging
+                    terminal_captured := view.terminal_mouse_captured
+                    sync.mutex_unlock(&view.mutex)
+                    if selection_dragging {
+                        if extend_selection(app, view, pane, event.motion.x, event.motion.y) {
+                            _ = update_selection_edge_scroll_intent(
+                                view,
+                                pane,
+                                event.motion.x,
+                                event.motion.y,
+                            )
+                        }
+                        return
+                    }
+                    modifiers := bridge_modifiers(SDL.GetModState())
+                    if terminal_captured {
+                        _ = terminal_mouse_move(
                             view,
                             pane,
                             event.motion.x,
                             event.motion.y,
+                            modifiers,
+                            true,
                         )
+                        return
+                    }
+                    if !history_active(view) {
+                        if state, state_ok := current_interaction_state(view); state_ok &&
+                           interaction_mouse_tracking_enabled(state) {
+                            _ = terminal_mouse_move(
+                                view,
+                                pane,
+                                event.motion.x,
+                                event.motion.y,
+                                modifiers,
+                                false,
+                            )
+                        }
                     }
                 }
             }
         }
     case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
+        if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
+            break
+        }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
-            if event.button.button == SDL.BUTTON_LEFT && event.type == .MOUSE_BUTTON_DOWN &&
-               !app.profile_menu_open && !app.palette_open && !app.settings_open {
-                view, pane_index, ok := session_view_at(
-                    app,
-                    event.button.x,
-                    event.button.y,
-                    f32(w), f32(h),
-                )
-                if ok && view != nil {
-                    if app.active_tab >= 0 && app.active_tab < app.tab_count {
-                        app.tabs[app.active_tab].active_pane = pane_index
-                    }
-                    if pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h)); pane_ok {
-                        if begin_history_scrollbar_drag(view, pane, event.button.x, event.button.y) {
-                            return
-                        }
-                        if event.button.clicks >= 3 {
-                            _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 2)
-                            return
-                        }
-                        if event.button.clicks == 2 {
-                            _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 1)
-                            return
-                        }
-                        if begin_selection(app, view, pane, event.button.x, event.button.y) {
-                            return
-                        }
-                    }
-                }
-            }
-            if event.button.button == SDL.BUTTON_LEFT && event.type == .MOUSE_BUTTON_UP {
+            if event.type == .MOUSE_BUTTON_UP {
                 view := active_session_view(app)
-                if view != nil {
-                    if history_scrollbar_drag_active(view) {
-                        tab := &app.tabs[app.active_tab]
-                        if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
-                            _ = update_history_scrollbar_drag(view, pane, event.button.y)
+                if view != nil && app.active_tab >= 0 && app.active_tab < app.tab_count {
+                    tab := &app.tabs[app.active_tab]
+                    if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                        if terminal_mouse_release(
+                            view,
+                            pane,
+                            event.button.x,
+                            event.button.y,
+                            event.button.button,
+                            bridge_modifiers(SDL.GetModState()),
+                        ) {
+                            return
                         }
-                        _ = finish_history_scrollbar_drag(view)
-                        return
                     }
-                    sync.mutex_lock(&view.mutex)
-                    dragging := view.selection_dragging
-                    sync.mutex_unlock(&view.mutex)
-                    if dragging {
-                        tab := &app.tabs[app.active_tab]
-                        if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
-                            _ = extend_selection(app, view, pane, event.button.x, event.button.y)
+                    if event.button.button == SDL.BUTTON_LEFT {
+                        if history_scrollbar_drag_active(view) {
+                            if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                                _ = update_history_scrollbar_drag(view, pane, event.button.y)
+                            }
+                            _ = finish_history_scrollbar_drag(view)
+                            return
                         }
-                        finish_selection(view)
-                        return
+                        sync.mutex_lock(&view.mutex)
+                        dragging := view.selection_dragging
+                        sync.mutex_unlock(&view.mutex)
+                        if dragging {
+                            if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                                _ = extend_selection(app, view, pane, event.button.x, event.button.y)
+                            }
+                            finish_selection(view)
+                            return
+                        }
                     }
                 }
                 handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
-            } else if event.type == .MOUSE_BUTTON_UP {
-                handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
+                return
+            }
+
+            view, pane_index, ok := session_view_at(
+                app,
+                event.button.x,
+                event.button.y,
+                f32(w), f32(h),
+            )
+            if !ok || view == nil {
+                return
+            }
+            if app.active_tab >= 0 && app.active_tab < app.tab_count {
+                app.tabs[app.active_tab].active_pane = pane_index
+            }
+            pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h))
+            if !pane_ok {
+                return
+            }
+            if event.button.button == SDL.BUTTON_LEFT &&
+               begin_history_scrollbar_drag(view, pane, event.button.x, event.button.y) {
+                return
+            }
+
+            modifiers_state := SDL.GetModState()
+            modifiers := bridge_modifiers(modifiers_state)
+            shift := .LSHIFT in modifiers_state || .RSHIFT in modifiers_state
+            history_is_active := history_active(view)
+
+            if event.button.button == SDL.BUTTON_LEFT {
+                route := route_desktop_primary_pointer(
+                    history_is_active,
+                    shift,
+                    false,
+                    false,
+                )
+                if route == .Interaction_State {
+                    if state, state_ok := current_interaction_state(view, true); state_ok {
+                        route = route_desktop_primary_pointer(
+                            history_is_active,
+                            shift,
+                            true,
+                            interaction_mouse_tracking_enabled(state),
+                        )
+                    } else {
+                        return
+                    }
+                }
+                if route == .Terminal_Mouse {
+                    clear_selection(view)
+                    _ = terminal_mouse_press(
+                        view,
+                        pane,
+                        event.button.x,
+                        event.button.y,
+                        event.button.button,
+                        modifiers,
+                    )
+                    return
+                }
+                if event.button.clicks >= 3 {
+                    _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 2)
+                    return
+                }
+                if event.button.clicks == 2 {
+                    _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 1)
+                    return
+                }
+                _ = begin_selection(app, view, pane, event.button.x, event.button.y)
+                return
+            }
+
+            if !history_is_active {
+                if state, state_ok := current_interaction_state(view, true); state_ok &&
+                   interaction_mouse_tracking_enabled(state) {
+                    _ = terminal_mouse_press(
+                        view,
+                        pane,
+                        event.button.x,
+                        event.button.y,
+                        event.button.button,
+                        modifiers,
+                    )
+                    return
+                }
             }
         }
     case .MOUSE_WHEEL:
-        if app.profile_menu_open || app.palette_open || app.settings_open {
+        if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
             break
         }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
@@ -3074,12 +3541,96 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 if app.active_tab >= 0 && app.active_tab < app.tab_count {
                     app.tabs[app.active_tab].active_pane = pane_index
                 }
-                wheel_rows := event.wheel.y
-                if wheel_rows == 0 && event.wheel.integer_y != 0 {
-                    wheel_rows = f32(event.wheel.integer_y)
+                pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h))
+                if !pane_ok {
+                    return
                 }
-                if wheel_rows != 0 {
-                    _ = scroll_history_wheel(view, wheel_rows)
+                mods := SDL.GetModState()
+                force_history := .LSHIFT in mods || .RSHIFT in mods
+                history_is_active := history_active(view)
+                state, state_ok := current_interaction_state(view)
+                route := route_desktop_wheel(
+                    history_is_active,
+                    force_history,
+                    state_ok,
+                    state_ok && interaction_mouse_tracking_enabled(state),
+                    displayed_alternate_screen(view),
+                    state_ok && interaction_alternate_scroll(state),
+                )
+                if route == .Interaction_State {
+                    if state, state_ok = current_interaction_state(view, true); state_ok {
+                        route = route_desktop_wheel(
+                            history_is_active,
+                            force_history,
+                            true,
+                            interaction_mouse_tracking_enabled(state),
+                            displayed_alternate_screen(view),
+                            interaction_alternate_scroll(state),
+                        )
+                    } else {
+                        return
+                    }
+                }
+                switch route {
+                case .History:
+                    wheel_rows := event.wheel.y
+                    if wheel_rows == 0 && event.wheel.integer_y != 0 {
+                        wheel_rows = f32(event.wheel.integer_y)
+                    }
+                    if wheel_rows != 0 {
+                        _ = scroll_history_wheel(view, wheel_rows)
+                    }
+                case .Terminal_Mouse:
+                    ticks := int(event.wheel.integer_y)
+                    if ticks == 0 {
+                        if event.wheel.y >= 1 {
+                            ticks = 1
+                        } else if event.wheel.y <= -1 {
+                            ticks = -1
+                        }
+                    }
+                    if ticks != 0 {
+                        row, column, pixel_x, pixel_y, located := terminal_pointer_location(
+                            view,
+                            pane,
+                            event.wheel.mouse_x,
+                            event.wheel.mouse_y,
+                        )
+                        if located {
+                            count := min(abs(ticks), 16)
+                            button := ticks > 0 ? Bridge_Mouse_Button.Wheel_Up : Bridge_Mouse_Button.Wheel_Down
+                            for _ in 0..<count {
+                                _ = send_terminal_mouse(
+                                    view,
+                                    .Wheel,
+                                    button,
+                                    bridge_modifiers(mods),
+                                    0,
+                                    row,
+                                    column,
+                                    pixel_x,
+                                    pixel_y,
+                                )
+                            }
+                        }
+                    }
+                case .Alternate_Scroll:
+                    ticks := int(event.wheel.integer_y)
+                    if ticks == 0 {
+                        if event.wheel.y >= 1 {
+                            ticks = 1
+                        } else if event.wheel.y <= -1 {
+                            ticks = -1
+                        }
+                    }
+                    if ticks != 0 {
+                        count := min(abs(ticks), 16)
+                        key := ticks > 0 ? Bridge_Key.Up : Bridge_Key.Down
+                        for _ in 0..<count {
+                            _ = send_named_key_cycle(view, key)
+                        }
+                    }
+                case .Ignore, .Interaction_State:
                 }
             }
         }
@@ -3244,6 +3795,19 @@ finish_all_selections :: proc(app: ^App) -> bool {
             changed = true
         }
         if finish_selection_if_dragging(app.tabs[index].secondary_session) {
+            changed = true
+        }
+    }
+    return changed
+}
+
+finish_all_terminal_mouse_captures :: proc(app: ^App, modifiers: u8 = 0) -> bool {
+    changed := false
+    for index in 0..<app.tab_count {
+        if finish_terminal_mouse_capture(app.tabs[index].session, modifiers) {
+            changed = true
+        }
+        if finish_terminal_mouse_capture(app.tabs[index].secondary_session, modifiers) {
             changed = true
         }
     }
@@ -3677,6 +4241,7 @@ main :: proc() {
     assert(size_of(Canvas_Command_Info) == int(render_command_info_size()))
     assert(size_of(Search_Match_Info) == int(search_match_info_size()))
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
+    assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return

@@ -20,11 +20,15 @@ foreign howl_bridge {
     search_match_info_size :: proc() -> u32 ---
     selection_expand   :: proc(handle: rawptr, kind: u8, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: ^Selection_Range_Info) -> i32 ---
     selection_range_info_size :: proc() -> u32 ---
+    interaction_state :: proc(handle: rawptr, output: ^Interaction_State_Info) -> i32 ---
+    interaction_state_info_size :: proc() -> u32 ---
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_paste         :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     selection_extract  :: proc(handle: rawptr, start_row: i32, start_column: u16, end_row: i32, end_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     send_named_key     :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---
     send_unicode_key   :: proc(handle: rawptr, scalar: u32, action, modifiers: u8) -> i32 ---
+    send_mouse         :: proc(handle: rawptr, kind, button, modifiers, buttons_down: u8, row: i32, column: u16, pixels_present: u8, pixel_x, pixel_y: u32) -> i32 ---
+    send_focus         :: proc(handle: rawptr, focus: u8) -> i32 ---
     send_resize        :: proc(handle: rawptr, rows, columns: u16) -> i32 ---
     copy_error         :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     revision           :: proc(handle: rawptr) -> u64 ---
@@ -90,6 +94,39 @@ Selection_Range_Info :: struct {
     found: u8,
     alternate_screen: u8,
     _reserved: [2]u8,
+}
+
+Interaction_State_Info :: struct {
+    terminal_revision: u64,
+    flags: u32,
+    mouse_tracking: u8,
+    mouse_protocol: u8,
+    pointer_mode: u8,
+    _reserved: u8,
+}
+
+INTERACTION_ALT_SCROLL :: u32(1 << 0)
+INTERACTION_FOCUS_REPORTING :: u32(1 << 1)
+
+Bridge_Mouse_Kind :: enum u8 {
+    Press = 1,
+    Release = 2,
+    Move = 3,
+    Wheel = 4,
+}
+
+Bridge_Mouse_Button :: enum u8 {
+    None = 0,
+    Left = 1,
+    Middle = 2,
+    Right = 3,
+    Wheel_Up = 4,
+    Wheel_Down = 5,
+}
+
+Bridge_Focus :: enum u8 {
+    In = 1,
+    Out = 2,
 }
 
 Bridge_Key :: enum u8 {

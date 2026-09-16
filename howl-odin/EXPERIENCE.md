@@ -165,7 +165,6 @@ These labels are descriptive, not priority scores.
 **WANTED**
 
 - Full desktop IME/composition path, not only committed text.
-- Focus in/out reporting through canonical interaction state.
 - Repeat/key-up behavior dogfood under applications that request it.
 - Keyboard-layout and dead-key coverage.
 - Explicit handling of application shortcuts versus terminal shortcuts, with no
@@ -173,23 +172,35 @@ These labels are descriptive, not priority scores.
 
 ### 6. Mouse and pointer arbitration
 
+**PROVEN**
+
+- Canonical interaction state decides pointer ownership. With terminal mouse
+  tracking absent, primary drag remains local selection and wheel remains local
+  scrollback; the scrollbar still owns only its narrow client-chrome hit lane.
+- When the child enables terminal mouse tracking, Odin sends semantic press,
+  release, button-drag motion, hover where requested, and wheel facts through
+  `howl-client.actions.mouse`; VT alone chooses the child escape encoding.
+- A controlled SGR button-event canary received exact mouse reports for click,
+  drag, and wheel. A terminal-routed button-down owns the physical gesture until
+  release, and focus loss synthesizes semantic releases from the last known
+  terminal coordinate.
+- Shift+drag and Shift+wheel are explicit client-local overrides while mouse
+  tracking is enabled. In the controlled canary both overrides produced no new
+  child mouse bytes; Shift+drag painted canonical selection and Shift+wheel
+  entered local HISTORY.
+- Real managed-KWin focus loss/gain is sent as semantic focus input. With DEC
+  focus reporting enabled the child received ESC[O / ESC[I through VT-owned
+  encoding; with focus reporting disabled the same semantic events are harmless.
+
 **ACTIVE**
 
-- With terminal mouse tracking absent, primary drag belongs to local selection
-  and the wheel belongs to local scrollback.
-- Scrollbar owns only its narrow hit lane; terminal text selection owns the rest.
+- DEC alternate-scroll behavior through semantic keys, not client escape bytes.
+- Neovim, btop, tmux-or-zellij, and less mouse/focus pressure canaries.
+- Desktop IME/composition and broader physical-key pressure.
 
 **WANTED**
 
-- Observe canonical interaction state and route click/move/drag/wheel to
-  applications when mouse tracking is enabled.
-- Preserve local selection as an explicit Shift+drag override.
-- Preserve local scrollback as an explicit Shift+wheel override where terminal
-  mouse/alternate-scroll modes would otherwise consume the wheel.
-- DEC alternate-scroll behavior through semantic keys, not client escape bytes.
 - Pointer shape/visibility policy from canonical pointer mode where supported.
-- Focus reporting on actual desktop focus changes.
-- Neovim, btop, tmux, less, and mouse-aware TUI pressure canaries.
 
 ### 7. Scrollback and history
 

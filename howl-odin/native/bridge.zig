@@ -86,6 +86,20 @@ pub const SelectionRangeInfo = extern struct {
     _reserved: [2]u8 = @splat(0),
 };
 
+pub const InteractionStateInfo = extern struct {
+    terminal_revision: u64 = 0,
+    flags: u32 = 0,
+    mouse_tracking: u8 = 0,
+    mouse_protocol: u8 = 0,
+    pointer_mode: u8 = 0,
+    _reserved: u8 = 0,
+};
+
+const interaction_info_flags = struct {
+    const alternate_scroll: u32 = 1 << 0;
+    const focus_reporting: u32 = 1 << 1;
+};
+
 const maximum_search_query_bytes: usize = 4096;
 const maximum_search_retries: usize = 8;
 
@@ -651,6 +665,10 @@ pub export fn howl_odin_bridge_selection_range_info_size() u32 {
     return @sizeOf(SelectionRangeInfo);
 }
 
+pub export fn howl_odin_bridge_interaction_state_info_size() u32 {
+    return @sizeOf(InteractionStateInfo);
+}
+
 const Handle = opaque {};
 const CancellationHandle = opaque {};
 const OwnedSessionHandle = opaque {};
@@ -697,7 +715,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 4;
+    return 5;
 }
 
 /// Launches one client-owned canonical Session using the existing native
@@ -1404,6 +1422,82 @@ pub export fn howl_odin_bridge_send_unicode_key(
     return 0;
 }
 
+pub export fn howl_odin_bridge_interaction_state(
+    raw: ?*Handle,
+    output: *InteractionStateInfo,
+) i32 {
+    output.* = .{};
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    const state = client.state.get(&bridge.connection) catch |failure| {
+        bridge.setError("interaction_state", @errorName(failure));
+        return 2;
+    };
+    var flags: u32 = 0;
+    if (state.alternate_scroll) flags |= interaction_info_flags.alternate_scroll;
+    if (state.focus_reporting) flags |= interaction_info_flags.focus_reporting;
+    output.* = .{
+        .terminal_revision = state.terminal_revision,
+        .flags = flags,
+        .mouse_tracking = @intFromEnum(state.mouse_tracking),
+        .mouse_protocol = @intFromEnum(state.mouse_protocol),
+        .pointer_mode = state.pointer_mode,
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_send_mouse(
+    raw: ?*Handle,
+    kind_value: u8,
+    button_value: u8,
+    modifiers: u8,
+    buttons_down: u8,
+    row: i32,
+    column: u16,
+    pixels_present: u8,
+    pixel_x: u32,
+    pixel_y: u32,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    if (modifiers & ~protocol.typed_input.modifiers.known != 0 or
+        pixels_present > 1)
+        return 3;
+    const kind = std.enums.fromInt(protocol.InputMouseKind, kind_value) orelse return 3;
+    const button = std.enums.fromInt(protocol.InputMouseButton, button_value) orelse return 3;
+    client.actions.mouse(&bridge.connection, .{
+        .kind = kind,
+        .button = button,
+        .modifiers = modifiers,
+        .buttons_down = buttons_down,
+        .row = row,
+        .column = column,
+        .pixel_x = if (pixels_present != 0) pixel_x else null,
+        .pixel_y = if (pixels_present != 0) pixel_y else null,
+    }) catch |failure| {
+        bridge.setError("mouse", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_send_focus(
+    raw: ?*Handle,
+    focus_value: u8,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    const focus = std.enums.fromInt(protocol.InputFocus, focus_value) orelse return 3;
+    client.actions.focus(&bridge.connection, focus) catch |failure| {
+        bridge.setError("focus", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
 pub export fn howl_odin_bridge_send_resize(
     raw: ?*Handle,
     rows: u16,
@@ -1527,6 +1621,12 @@ test "bridge named key action values stay protocol-aligned" {
     try std.testing.expectEqual(@as(u8, 3), @backingInt(protocol.InputKeyAction.release));
     try std.testing.expectEqual(@as(u8, 1), protocol.typed_input.modifiers.shift);
     try std.testing.expectEqual(@as(u8, 4), protocol.typed_input.modifiers.control);
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputMouseKind.press));
+    try std.testing.expectEqual(@as(u8, 4), @intFromEnum(protocol.InputMouseKind.wheel));
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputMouseButton.left));
+    try std.testing.expectEqual(@as(u8, 5), @intFromEnum(protocol.InputMouseButton.wheel_down));
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputFocus.in));
+    try std.testing.expectEqual(@as(u8, 2), @intFromEnum(protocol.InputFocus.out));
 }
 
 test "Odin Canvas C records stay fixed and format tags follow Canvas" {
@@ -1537,7 +1637,8 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
     try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
 }
 
-test "Odin search and selection C records stay fixed" {
+test "Odin search selection and interaction C records stay fixed" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(SearchMatchInfo));
     try std.testing.expectEqual(@as(usize, 20), @sizeOf(SelectionRangeInfo));
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(InteractionStateInfo));
 }
