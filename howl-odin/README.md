@@ -21,6 +21,14 @@ being hardened.
 
 Current canary:
 
+- Settings, the profile menu, and Command Palette accept pointer input without
+  passing those clicks to the terminal behind them. Profile management has visible
+  New/Duplicate/Delete, View/Edit, Set default, Save/Cancel, and environment controls;
+  default-profile, size, mode, and theme values have clickable selectors. Read-only
+  information and built-in templates are visibly distinct. Long settings forms
+  scroll while toolbar/footer controls stay reachable, with keyboard selection
+  automatically revealed. Font-family selection is still not an in-app setting;
+
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
 - the `+` action and `Ctrl+T` launch a new canonical local Session through the

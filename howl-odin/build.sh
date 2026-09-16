@@ -47,10 +47,14 @@ LD_LIBRARY_PATH="$bridge_root/zig-out/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" 
   -collection:bridge="$bridge_root/zig-out/lib" \
   -define:ODIN_TEST_FANCY=false
 odin check "$module_root" -collection:bridge="$bridge_root/zig-out/lib"
+# Keep the running desktop's executable inode intact while publishing a new build.
+candidate="$output_root/.howl-odin.build.$$"
+trap 'rm -f -- "$candidate"' EXIT
 odin build "$module_root" \
   -collection:bridge="$bridge_root/zig-out/lib" \
-  -out:"$output_root/howl-odin" \
+  -out:"$candidate" \
   -debug
+install_atomically "$candidate" "$output_root/howl-odin"
 install_atomically "$bridge_lib" "$output_root/libhowl_odin_bridge.so"
 install_atomically "$sessiond" "$output_root/howl-sessiond"
 install_atomically "$module_root/packaging/howl-window-icon.bmp" "$output_root/howl-window-icon.bmp"

@@ -447,6 +447,11 @@ App :: struct {
     config_notice: [192]u8,
     config_notice_len: int,
     settings_content_focus: bool,
+    settings_scroll_y: f32,
+    settings_scroll_page: Settings_Page,
+    settings_delete_pending: bool,
+    settings_delete_profile: int,
+    settings_profile_select_all: bool,
     settings_action_selection: int,
     settings_binding_recording: bool,
     settings_profile_selection: int,
@@ -4493,7 +4498,8 @@ profile_menu_rect :: proc(app: ^App) -> SDL.FRect {
 }
 
 settings_panel_rect :: proc(width, height: f32) -> SDL.FRect {
-    return {width - 620, 58, 602, height - 76}
+    w := min(f32(760), max(f32(0), width - 24))
+    return {width - w - 12, 58, w, max(f32(0), height - 76)}
 }
 
 settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool) {
@@ -4502,9 +4508,8 @@ settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool)
     if !inside(x, y, sidebar) {
         return .Startup, false
     }
-    tops := [7]f32{52, 86, 120, 154, 188, 272, 306}
-    for top, index in tops {
-        row := SDL.FRect{sidebar.x + 8, sidebar.y + top, sidebar.w - 16, 30}
+    for index in 0..<7 {
+        row := settings_sidebar_row(panel, index)
         if inside(x, y, row) {
             return Settings_Page(index), true
         }
@@ -4531,44 +4536,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
             }
             close_settings_search(app)
         }
-        panel := settings_panel_rect(width, height)
-        content_x := panel.x + 178 + 28
-        content_y := panel.y + 22
-        if app.settings_page == .Profile_Defaults {
-            for profile_index in 0..<app.profile_count {
-                row := profile_list_row_rect(content_x, content_y, panel.x + panel.w - content_x - 12, profile_index)
-                if inside(x, y, row) {
-                    cancel_profile_edit(app)
-                    app.settings_profile_selection = profile_index
-                    app.settings_content_focus = true
-                    app.settings_notice_len = 0
-                    return
-                }
-            }
-        }
-        if app.settings_page == .Profile_Home {
-            for field_index in 0..<PROFILE_EDIT_FIELD_COUNT {
-                row := profile_field_row_rect(content_x, content_y, panel.x + panel.w - content_x - 12, field_index)
-                if inside(x, y, row) {
-                    cancel_profile_edit(app)
-                    app.settings_profile_field = field_index
-                    app.settings_content_focus = true
-                    app.settings_notice_len = 0
-                    return
-                }
-            }
-        }
-        if app.settings_page == .Actions {
-            for _, index in ACTION_DEFINITIONS {
-                row := SDL.FRect{content_x - 8, content_y + 46 + f32(index) * 32, panel.x + panel.w - content_x - 12, 30}
-                if inside(x, y, row) {
-                    app.settings_action_selection = index
-                    app.settings_content_focus = true
-                    app.settings_binding_recording = false
-                    return
-                }
-            }
-        }
+        if settings_control_click(app, x, y, width, height) do return
         if page, ok := settings_page_at(x, y, width, height); ok {
             cancel_profile_edit(app)
             app.settings_page = page
@@ -4648,6 +4616,9 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 }
 
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
+    defer {
+        if event != nil && event.type == .KEY_DOWN do settings_reveal_selection(app)
+    }
     if consume_owned_action_key(app, event) {
         return
     }
@@ -4940,12 +4911,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
-        if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
-            break
-        }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
+            if handle_overlay_pointer(app, event, f32(w), f32(h)) {
+                return
+            }
             if event.type == .MOUSE_BUTTON_UP && event.button.button == SDL.BUTTON_LEFT && app.tab_dragging {
                 _ = finish_tab_drag(app)
                 return
@@ -5119,6 +5090,18 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .MOUSE_WHEEL:
+        if app.settings_open && !app.settings_search_open {
+            _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
+            w, h: c.int
+            if SDL.GetWindowSize(app.window, &w, &h) {
+                body := settings_layout(f32(w), f32(h)).body
+                limit := settings_sync_scroll(app, body)
+                if !app.settings_profile_editing && inside(event.wheel.mouse_x, event.wheel.mouse_y, body) {
+                    app.settings_scroll_y = clamp(app.settings_scroll_y - event.wheel.y * 48, 0, limit)
+                }
+            }
+            return
+        }
         if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
             break
         }
@@ -6043,112 +6026,138 @@ settings_page_title :: proc(page: Settings_Page) -> string {
     case .Color_Schemes:    return "Color schemes"
     case .Actions:          return "Actions"
     case .Profile_Defaults: return "Profiles"
-    case .Profile_Home:     return "Profile"
+    case .Profile_Home:     return "Edit profile"
     }
     return ""
 }
 
 draw_setting_field :: proc(app: ^App, label, value: string, x, y, width: f32) {
-    draw_text(app, app.ui_font, label, x, y, palette.text_muted)
-    box := SDL.FRect{x, y + 24, width, 38}
-    draw_fill(app.renderer, box, palette.terminal_bg)
-    draw_outline(app.renderer, box, palette.border)
-    draw_text(app, app.ui_font, value, box.x + 12, box.y + 9, palette.text)
+    // Informational values deliberately do not impersonate editable controls.
+    settings_clipped_text(app, {x, y, width, 22}, label, palette.text_muted)
+    settings_clipped_text(app, {x + 8, y + 30, max(f32(0), width - 16), 24}, value, palette.text)
 }
 
 draw_settings :: proc(app: ^App, width, height: f32) {
-    panel := settings_panel_rect(width, height)
+    layout := settings_layout(width, height)
+    panel, body := layout.panel, layout.body
+    panel_clip := SDL.Rect{c.int(panel.x), c.int(panel.y), c.int(panel.w), c.int(panel.h)}
+    _ = SDL.SetRenderClipRect(app.renderer, &panel_clip)
+    defer { _ = SDL.SetRenderClipRect(app.renderer, nil) }
+    limit := settings_sync_scroll(app, body)
     draw_fill(app.renderer, panel, palette.title_bg)
     draw_outline(app.renderer, panel, palette.border)
-
     sidebar := SDL.FRect{panel.x, panel.y, 178, panel.h}
     draw_fill(app.renderer, sidebar, palette.tab_idle)
     draw_text(app, app.ui_font, "Settings", sidebar.x + 18, sidebar.y + 18, palette.text)
-
-    labels := [7]string{"Startup", "Interaction", "Appearance", "Color schemes", "Actions", "  Profiles", "  Profile"}
-    tops := [7]f32{52, 86, 120, 154, 188, 272, 306}
-    for label, index in labels {
-        row := SDL.FRect{sidebar.x + 8, sidebar.y + tops[index], sidebar.w - 16, 30}
-        selected := int(app.settings_page) == index
-        if selected {
-            draw_fill(app.renderer, row, palette.tab_active)
-        }
-        draw_text(app, app.ui_font, label, row.x + 10, row.y + 6, selected ? palette.accent : palette.text_muted)
+    for index in 0..<7 {
+        page := Settings_Page(index)
+        row := settings_sidebar_row(panel, index)
+        selected := app.settings_page == page
+        if selected do draw_fill(app.renderer, row, palette.tab_active)
+        if selected && !app.settings_content_focus do draw_outline(app.renderer, row, palette.accent)
+        settings_clipped_text(app, {row.x + 10, row.y + 6, row.w - 20, row.h - 6}, settings_page_title(page),
+                              selected ? palette.accent : palette.text_muted)
     }
-    draw_text(app, app.ui_font, "Profiles", sidebar.x + 18, sidebar.y + 250, palette.text)
+    settings_clipped_text(app, {body.x, panel.y + 18, max(f32(0), body.w - 78), 24},
+                          settings_page_title(app.settings_page), palette.text)
+    settings_draw_button(app, {panel.x + panel.w - 76, panel.y + 10, 64, 30}, "Close", !app.settings_profile_editing)
+    if app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
+        settings_draw_profile_toolbar(app, layout)
+    } else {
+        settings_clipped_text(app, layout.toolbar, app.settings_page == .Interaction ? "Information only" : "Changes save automatically", palette.text_muted)
+    }
 
-    content_x := sidebar.x + sidebar.w + 28
-    content_y := panel.y + 22
-    draw_text(app, app.ui_font, settings_page_title(app.settings_page), content_x, content_y, palette.text)
-
+    content_x := body.x + 8
+    content_y := body.y - 48 - app.settings_scroll_y
+    available := max(f32(0), body.w - 16)
+    clip := SDL.Rect{c.int(body.x), c.int(body.y), c.int(body.w), c.int(body.h)}
+    if !SDL.GetRectIntersection(clip, panel_clip, &clip) do clip = {}
+    _ = SDL.SetRenderClipRect(app.renderer, &clip)
     switch app.settings_page {
     case .Startup:
-        draw_setting_field(app, "Default profile   Left/Right", startup_profile_label(app, app.startup_profile), content_x, content_y + 48, 300)
-        draw_setting_field(app, "Startup action", startup_action_label(app, app.startup_profile), content_x, content_y + 126, 300)
+        draw_text(app, app.ui_font, "Default profile", content_x, content_y + 48, palette.text_muted)
+        settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0),
+                              startup_profile_label(app, app.startup_profile), app.startup_profile > 0, app.startup_profile + 1 < app.profile_count)
+        draw_setting_field(app, "Session ownership", startup_action_label(app, app.startup_profile), content_x, content_y + 126, available)
         startup := profile_at(app, app.startup_profile)
         if startup != nil && startup.mode == .Launch {
-            launch_detail := profile_command(startup)
-            if len(launch_detail) == 0 do launch_detail = "Sibling howl-sessiond"
-            draw_setting_field(app, "Launch", launch_detail, content_x, content_y + 204, 360)
+            detail := profile_command(startup)
+            if len(detail) == 0 do detail = "Your interactive shell"
+            draw_setting_field(app, "Launch", detail, content_x, content_y + 204, available)
         } else {
-            draw_setting_field(app, "Endpoint", profile_endpoint(startup), content_x, content_y + 204, 360)
+            draw_setting_field(app, "Existing Session endpoint", profile_endpoint(startup), content_x, content_y + 204, available)
         }
     case .Interaction:
-        draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, 340)
-        draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
-        draw_setting_field(app, "Selection / clipboard", "Drag select / Ctrl+Shift+C,V", content_x, content_y + 204, 340)
+        draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, available)
+        draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, available)
+        draw_setting_field(app, "Selection / clipboard", "Drag select / Ctrl+Shift+C,V", content_x, content_y + 204, available)
     case .Appearance:
-        draw_setting_field(app, "Application theme", app_theme_label(app.app_theme), content_x, content_y + 48, 248)
-        draw_setting_field(app, "Terminal font", "JetBrainsMono Nerd Font", content_x, content_y + 126, 340)
-        draw_setting_field(app, "Font size   Left/Right or -/+", font_size_label(app.terminal_font_preset), content_x, content_y + 204, 248)
-        draw_setting_field(app, "Coordinate space", "Window-logical / HiDPI scaled", content_x, content_y + 282, 340)
+        draw_text(app, app.ui_font, "Default terminal size", content_x, content_y + 48, palette.text_muted)
+        settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0), font_size_label(app.terminal_font_preset),
+                              app.terminal_font_preset > FONT_PRESET_MIN, app.terminal_font_preset < FONT_PRESET_MAX, true)
+        draw_setting_field(app, "Font family (fixed for now)", "JetBrainsMono Nerd Font", content_x, content_y + 126, available)
+        settings_draw_note(app, {content_x, content_y + 192, available, 40}, "Font family selection is not available yet.")
+        draw_setting_field(app, "Application theme (see Color schemes)", app_theme_label(app.app_theme), content_x, content_y + 246, available)
     case .Color_Schemes:
-        draw_setting_field(app, "Application colors   Left/Right", app_theme_label(app.app_theme), content_x, content_y + 48, 340)
+        draw_text(app, app.ui_font, "Application colors", content_x, content_y + 48, palette.text_muted)
+        settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0), app_theme_label(app.app_theme), true, true)
         draw_text(app, app.ui_font, "Chrome palette", content_x, content_y + 134, palette.text_muted)
         colors := [6]SDL.Color{palette.terminal_bg, palette.tab_idle, palette.border, palette.text_muted, palette.text, palette.accent}
+        swatch_w := min(f32(40), max(f32(0), (available - 5 * 12) / 6))
         for color, index in colors {
-            swatch := SDL.FRect{content_x + f32(index) * 52, content_y + 164, 40, 40}
+            swatch := SDL.FRect{content_x + f32(index) * (swatch_w + 12), content_y + 164, swatch_w, 40}
             draw_fill(app.renderer, swatch, color)
             draw_outline(app.renderer, swatch, palette.border)
         }
-        draw_text(app, app.ui_font, "Terminal colors remain canonical Howl output", content_x, content_y + 226, palette.text_muted)
     case .Actions:
         for definition, index in ACTION_DEFINITIONS {
             y := content_y + 54 + f32(index) * 32
             selected := app.settings_content_focus && app.settings_action_selection == index
-            if selected {
-                draw_fill(app.renderer, {content_x - 8, y - 5, panel.x + panel.w - content_x - 12, 28}, palette.tab_active)
-            }
-            color := action_enabled(app, definition.action) ? palette.text : palette.text_muted
-            draw_text(app, app.ui_font, definition.label, content_x, y, selected ? palette.accent : color)
-            binding := binding_for_action(app, definition.action)
+            row := SDL.FRect{body.x, y - 5, body.w - 8, 28}
+            if selected do draw_fill(app.renderer, row, palette.tab_active)
+            draw_outline(app.renderer, row, selected ? palette.accent : palette.border)
+            split := max(f32(0), (available - 16) * 0.56)
+            settings_clipped_text(app, {content_x, y, split, 22}, definition.label, selected ? palette.accent : palette.text)
             shortcut := action_binding_text(app, definition.action)
-            shortcut_color := binding != nil && binding.customized ? palette.accent : palette.text_muted
-            if len(shortcut) == 0 {
-                shortcut = "Unbound"
-            }
-            draw_text(app, app.ui_font, shortcut, content_x + 248, y, shortcut_color)
-        }
-        hint_y := content_y + 54 + f32(len(ACTION_DEFINITIONS)) * 32 + 10
-        if app.settings_binding_recording {
-            draw_text(app, app.ui_font, "Press key chord · Esc cancels", content_x, hint_y, palette.accent)
-        } else if app.settings_content_focus {
-            draw_text(app, app.ui_font, "Enter record · Del unbind · R reset", content_x, hint_y, palette.text_muted)
-            draw_text(app, app.ui_font, "Tab returns to sidebar", content_x, hint_y + 22, palette.text_muted)
-        } else {
-            draw_text(app, app.ui_font, "Tab to edit action shortcuts", content_x, hint_y, palette.text_muted)
-        }
-        notice_y := hint_y + (app.settings_content_focus && !app.settings_binding_recording ? f32(48) : f32(28))
-        if app.settings_notice_len != 0 {
-            draw_text(app, app.ui_font, string(app.settings_notice[:app.settings_notice_len]), content_x, notice_y, palette.accent)
-        } else if app.config_notice_len != 0 {
-            draw_text(app, app.ui_font, string(app.config_notice[:app.config_notice_len]), content_x, notice_y, palette.accent)
+            if len(shortcut) == 0 do shortcut = "Unbound"
+            settings_clipped_text(app, {content_x + split + 8, y, available - split - 8, 22}, shortcut, palette.text_muted)
         }
     case .Profile_Defaults:
-        draw_profiles_settings(app, panel, content_x, content_y)
+        draw_profiles_settings(app, body)
     case .Profile_Home:
-        draw_profile_editor_settings(app, panel, content_x, content_y)
+        draw_profile_editor_settings(app, body)
     }
+    _ = SDL.SetRenderClipRect(app.renderer, &panel_clip)
+    if limit > 0 && body.h > 0 {
+        track := SDL.FRect{body.x + body.w - 3, body.y, 3, body.h}
+        draw_fill(app.renderer, track, palette.tab_idle)
+        thumb_h := min(body.h, max(f32(20), body.h * body.h / settings_content_height(app)))
+        draw_fill(app.renderer, {track.x, track.y + app.settings_scroll_y / limit * (body.h - thumb_h), 3, thumb_h}, palette.accent)
+    }
+    note_y := layout.footer.y
+    if app.settings_page == .Profile_Defaults {
+        profile := selected_settings_profile(app)
+        is_default := profile != nil && app.startup_profile == app.settings_profile_selection
+        settings_draw_button(app, {layout.footer.x, note_y, 136, 30}, is_default ? "Default" : "Set default",
+                              profile_ui_action_enabled(app, .Default), is_default)
+        if profile != nil {
+            settings_clipped_text(app, {layout.footer.x + 148, note_y + 7, max(f32(0), layout.footer.w - 148), 24},
+                                  profile_name(profile), palette.text)
+        }
+        note_y += 38
+    } else if app.settings_page == .Profile_Home && !app.settings_profile_editing {
+        profile := selected_settings_profile(app)
+        if profile != nil && !profile.built_in && profile.mode == .Launch {
+            labels := [4]string{"Add variable", "Remove", "<", ">"}
+            enabled := [4]bool{profile.env_count < MAX_PROFILE_ENV, profile.env_count > 0,
+                               app.settings_profile_env_selection > 0, app.settings_profile_env_selection + 1 < profile.env_count}
+            for label, index in labels {
+                settings_draw_button(app, settings_button_rect({layout.footer.x, note_y, layout.footer.w, 30}, index, 4), label, enabled[index])
+            }
+            note_y += 38
+        }
+    }
+    settings_draw_note(app, {layout.footer.x, note_y, layout.footer.w, layout.footer.y + layout.footer.h - note_y}, settings_footer_note(app))
 }
 
 draw :: proc(app: ^App) {

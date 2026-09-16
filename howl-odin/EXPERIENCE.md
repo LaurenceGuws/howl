@@ -536,6 +536,34 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
+- Settings, profile menu, and Command Palette now route mouse-button releases
+  into application controls instead of discarding all pointer events while an
+  overlay is open. Buttons do not fall through into the terminal underneath.
+- Profile discovery is pointer-first: visible New profile, Duplicate, Delete,
+  per-row View/Edit, Set default, Save/Cancel, and environment controls invoke
+  the same bounded profile operations as keyboard shortcuts. Built-ins are
+  labeled templates and remain read-only. Deletion requires confirmation and
+  keyboard repeat cannot supply that confirmation; in-use recipes remain protected.
+- Clickable default-profile, terminal-size, profile-size, mode, and chrome-theme
+  selectors share their draw/hit geometry. Informational fields do not look like
+  text boxes; Appearance explicitly says that the font family is fixed in this
+  UI and that the family picker is not yet available.
+- An edited field initially selects its existing value for replacement; Ctrl+A
+  selects all, End/Right allows appending, and Backspace respects UTF-8 boundaries.
+  Save validation keeps rejected/unsaved input visible; other pointer navigation
+  cannot silently discard it. This remains a small end-edit field, not a claim of
+  full native text-widget editing parity.
+- A shared Settings body viewport clips painting and hit tests, scrolls long
+  forms/action lists, and reveals keyboard selection. Toolbar and footer controls
+  stay outside that scroll region. A physical KDE 820x580 canary kept the final
+  environment field, toolbar and footer usable; off-panel controls are not clickable.
+- Real KDE mouse canaries covered startup/theme/global and profile font changes,
+  New/Duplicate/Edit/Save/Cancel, environment fields, confirmed deletion, Set default,
+  profile-dropdown Session creation and palette-to-Settings navigation. They used
+  isolated config and left the original GUI, its three Sessions and the real
+  profile-config bytes unchanged. Quiet Settings used zero CPU ticks over three seconds.
+
+
 - Real navigable Settings surface.
 - Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages.

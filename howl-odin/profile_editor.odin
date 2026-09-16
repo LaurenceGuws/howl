@@ -161,6 +161,7 @@ cancel_profile_edit :: proc(app: ^App) {
 		return
 	}
 	app.settings_profile_editing = false
+	app.settings_profile_select_all = false
 	app.settings_profile_edit_len = 0
 	clear_ime_preedit(app)
 }
@@ -186,6 +187,7 @@ begin_profile_edit :: proc(app: ^App, field: Profile_Edit_Field) -> bool {
 	app.settings_profile_edit_field = field
 	app.settings_profile_edit_env_index = app.settings_profile_env_selection
 	app.settings_profile_editing = true
+	app.settings_profile_select_all = len(source) > 0
 	app.settings_notice_len = 0
 	clear_ime_preedit(app)
 	return true
@@ -196,11 +198,13 @@ append_profile_edit_text :: proc(app: ^App, text: string) -> bool {
 		return false
 	}
 	capacity := profile_edit_field_capacity(app.settings_profile_edit_field)
-	if app.settings_profile_edit_len + len(text) > capacity ||
-	   app.settings_profile_edit_len + len(text) >= len(app.settings_profile_edit_buffer) {
+	used := app.settings_profile_select_all ? 0 : app.settings_profile_edit_len
+	if used + len(text) > capacity || used + len(text) >= len(app.settings_profile_edit_buffer) {
 		set_settings_notice(app, "Profile field limit reached")
 		return false
 	}
+	app.settings_profile_edit_len = used
+	app.settings_profile_select_all = false
 	copy(
 		app.settings_profile_edit_buffer[app.settings_profile_edit_len:app.settings_profile_edit_len + len(text)],
 		transmute([]u8)text,
@@ -212,6 +216,11 @@ append_profile_edit_text :: proc(app: ^App, text: string) -> bool {
 backspace_profile_edit :: proc(app: ^App) -> bool {
 	if app == nil || !app.settings_profile_editing || app.settings_profile_edit_len == 0 {
 		return false
+	}
+	if app.settings_profile_select_all {
+		app.settings_profile_edit_len = 0
+		app.settings_profile_select_all = false
+		return true
 	}
 	next := app.settings_profile_edit_len - 1
 	for next > 0 && app.settings_profile_edit_buffer[next] & 0xc0 == 0x80 {
@@ -408,6 +417,10 @@ handle_profile_edit_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 	if event.type != .KEY_DOWN {
 		return true
 	}
+	if event.key.key == SDL.K_A && (.LCTRL in event.key.mod || .RCTRL in event.key.mod) {
+		app.settings_profile_select_all = true
+		return true
+	}
 	switch event.key.key {
 	case SDL.K_ESCAPE:
 		cancel_profile_edit(app)
@@ -416,6 +429,10 @@ handle_profile_edit_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 		_ = commit_profile_edit(app)
 	case SDL.K_BACKSPACE:
 		_ = backspace_profile_edit(app)
+	case SDL.K_END, SDL.K_RIGHT:
+		app.settings_profile_select_all = false
+	case SDL.K_DELETE:
+		if app.settings_profile_select_all do _ = backspace_profile_edit(app)
 	case:
 		// TEXT_INPUT owns printable committed text while the editor is active.
 	}
@@ -440,51 +457,21 @@ open_profile_editor :: proc(app: ^App, profile_index: int, focus_name := false) 
 }
 
 handle_profile_list_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
-	if app == nil || event.type != .KEY_DOWN || app.profile_count == 0 {
-		return false
-	}
+	if app == nil || event.type != .KEY_DOWN || app.profile_count == 0 do return false
+	if event.key.key != SDL.K_DELETE && event.key.key != SDL.K_BACKSPACE do app.settings_delete_pending = false
 	switch event.key.key {
-	case SDL.K_TAB:
-		app.settings_content_focus = false
-	case SDL.K_UP:
-		app.settings_profile_selection = (app.settings_profile_selection + app.profile_count - 1) % app.profile_count
-	case SDL.K_DOWN:
-		app.settings_profile_selection = (app.settings_profile_selection + 1) % app.profile_count
-	case SDL.K_RETURN:
-		_ = open_profile_editor(app, app.settings_profile_selection)
-	case SDL.K_N:
-		index := create_user_profile(app)
-		if index >= 0 {
-			save_user_config(app)
-			_ = open_profile_editor(app, index, true)
-		} else {
-			set_settings_notice(app, "Profile limit reached")
-		}
-	case SDL.K_D:
-		index := duplicate_user_profile(app, app.settings_profile_selection)
-		if index >= 0 {
-			save_user_config(app)
-			_ = open_profile_editor(app, index, true)
-		} else {
-			set_settings_notice(app, "Profile could not be duplicated")
-		}
+	case SDL.K_TAB: app.settings_content_focus = false
+	case SDL.K_UP: app.settings_profile_selection = (app.settings_profile_selection + app.profile_count - 1) % app.profile_count
+	case SDL.K_DOWN: app.settings_profile_selection = (app.settings_profile_selection + 1) % app.profile_count
+	case SDL.K_RETURN: _ = profile_ui_action(app, .Edit)
+	case SDL.K_N: _ = profile_ui_action(app, .New)
+	case SDL.K_D: _ = profile_ui_action(app, .Duplicate)
 	case SDL.K_DELETE, SDL.K_BACKSPACE:
-		selected := app.settings_profile_selection
-		profile := profile_at(app, selected)
-		if profile == nil {
-			return true
+		if event.key.repeat do return true
+		if !profile_ui_action(app, .Delete) {
+			set_settings_notice(app, "Built-in or in-use profiles cannot be deleted")
 		}
-		if profile.built_in {
-			set_settings_notice(app, "Built-in profile · duplicate to customize")
-		} else if profile_in_use(app, selected) {
-			set_settings_notice(app, "Profile is in use · close its tabs/panes first")
-		} else if delete_user_profile(app, selected) {
-			app.settings_profile_selection = clamp(selected, 0, app.profile_count - 1)
-			save_user_config(app)
-			set_settings_notice(app, "Profile deleted")
-		}
-	case:
-		return false
+	case: return false
 	}
 	return true
 }
@@ -545,11 +532,7 @@ handle_profile_editor_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 		return false
 	case SDL.K_D:
 		if profile.built_in {
-			index := duplicate_user_profile(app, app.settings_profile_selection)
-			if index >= 0 {
-				save_user_config(app)
-				_ = open_profile_editor(app, index, true)
-			}
+			_ = profile_ui_action(app, .Duplicate)
 			return true
 		}
 		return false
@@ -559,32 +542,16 @@ handle_profile_editor_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 	return true
 }
 
-profile_list_row_rect :: proc(x, y, width: f32, index: int) -> SDL.FRect {
-	return {x - 8, y + 44 + f32(index) * 44, width, 40}
-}
-
-profile_field_row_rect :: proc(x, y, width: f32, index: int) -> SDL.FRect {
-	return {x - 8, y + 44 + f32(index) * 48, width, 44}
-}
-
-profile_field_value_rect :: proc(content_x, content_y, width: f32, field_index: int) -> SDL.FRect {
-	row := profile_field_row_rect(content_x, content_y, width, field_index)
-	value_x := row.x + 174
-	return {value_x, row.y + 5, max(f32(80), row.x + row.w - value_x - 8), row.h - 10}
-}
-
 profile_editor_input_rect :: proc(app: ^App, width, height: f32) -> (SDL.FRect, bool) {
 	if app == nil || !app.settings_open || app.settings_page != .Profile_Home || !app.settings_profile_editing {
 		return {}, false
 	}
-	panel := settings_panel_rect(width, height)
-	content_x := panel.x + 178 + 28
-	content_y := panel.y + 22
+	body := settings_layout(width, height).body
 	field_index := int(app.settings_profile_edit_field)
-	if field_index < 0 || field_index >= PROFILE_EDIT_FIELD_COUNT {
-		return {}, false
-	}
-	return profile_field_value_rect(content_x, content_y, panel.x + panel.w - content_x - 12, field_index), true
+	if field_index < 0 || field_index >= PROFILE_EDIT_FIELD_COUNT do return {}, false
+	rect := settings_profile_value(settings_profile_row(body, app.settings_scroll_y, field_index, true))
+	return rect, rect.y >= body.y && rect.y + rect.h <= body.y + body.h
+
 }
 
 profile_field_relevant :: proc(profile: ^Profile, field: Profile_Edit_Field) -> bool {
@@ -602,97 +569,51 @@ profile_field_relevant :: proc(profile: ^Profile, field: Profile_Edit_Field) -> 
 	return false
 }
 
-draw_profiles_settings :: proc(app: ^App, panel: SDL.FRect, content_x, content_y: f32) {
-	available := panel.x + panel.w - content_x - 12
-	draw_text(app, app.ui_font, "Profile catalogue", content_x, content_y + 18, palette.text_muted)
+draw_profiles_settings :: proc(app: ^App, body: SDL.FRect) {
 	for index in 0..<app.profile_count {
 		profile := app.profiles[index]
-		row := profile_list_row_rect(content_x, content_y, available, index)
-		selected := app.settings_content_focus && app.settings_profile_selection == index
-		if selected do draw_fill(app.renderer, row, palette.tab_active)
-		name_color := selected ? palette.accent : palette.text
-		draw_text(app, app.ui_font, profile_name(profile), row.x + 10, row.y + 4, name_color)
-		kind := profile.built_in ? "Built-in" : "User"
-		mode := profile.mode == .Launch ? "Launch" : "Attach"
+		row := settings_profile_row(body, app.settings_scroll_y, index, false)
+		selected := app.settings_profile_selection == index
+		draw_fill(app.renderer, row, selected ? palette.tab_active : palette.title_bg)
+		draw_outline(app.renderer, row, selected ? palette.accent : palette.border)
+		settings_clipped_text(app, {row.x + 10, row.y + 3, max(f32(0), row.w - 94), 20}, profile_name(profile), palette.text)
+		kind := profile.built_in ? "Template" : "Custom"
+		mode := profile.mode == .Launch ? "Owned session" : "Attach only"
 		detail_storage: [96]u8
-		detail := fmt.bprintf(detail_storage[:], "%s · %s", kind, mode)
-		draw_text(app, app.ui_font, detail, row.x + 10, row.y + 22, palette.text_muted)
-		if app.startup_profile == index {
-			draw_text(app, app.ui_font, "default", row.x + row.w - 70, row.y + 13, palette.accent)
-		}
-	}
-	hint_y := content_y + 52 + f32(app.profile_count) * 44
-	if app.settings_content_focus {
-		draw_text(app, app.ui_font, "Enter edit · N new · D copy · Del delete", content_x, hint_y, palette.text_muted)
-		draw_text(app, app.ui_font, "Tab returns to sidebar", content_x, hint_y + 22, palette.text_muted)
-	} else {
-		draw_text(app, app.ui_font, "Tab to manage profiles", content_x, hint_y, palette.text_muted)
-	}
-	if app.settings_notice_len != 0 {
-		draw_text(app, app.ui_font, string(app.settings_notice[:app.settings_notice_len]), content_x, hint_y + 48, palette.accent)
-	} else if app.config_notice_len != 0 {
-		draw_text(app, app.ui_font, string(app.config_notice[:app.config_notice_len]), content_x, hint_y + 48, palette.accent)
+		detail := fmt.bprintf(detail_storage[:], "%s · %s%s", kind, mode, app.startup_profile == index ? " · Default" : "")
+		settings_clipped_text(app, {row.x + 10, row.y + 22, max(f32(0), row.w - 94), 18}, detail, palette.text_muted)
+		settings_draw_button(app, {row.x + row.w - 74, row.y + 4, 66, 32}, profile.built_in ? "View" : "Edit")
 	}
 }
 
-draw_profile_editor_settings :: proc(app: ^App, panel: SDL.FRect, content_x, content_y: f32) {
+draw_profile_editor_settings :: proc(app: ^App, body: SDL.FRect) {
 	profile := selected_settings_profile(app)
-	if profile == nil {
-		draw_text(app, app.ui_font, "No profile selected", content_x, content_y + 52, palette.text_muted)
-		return
-	}
-	available := panel.x + panel.w - content_x - 12
-	meta_storage: [160]u8
-	meta := fmt.bprintf(
-		meta_storage[:],
-		"%s · id %s · %s",
-		profile.built_in ? "Built-in" : "User-owned",
-		profile_id(profile),
-		profile.mode == .Launch ? "launch" : "attach",
-	)
-	draw_text(app, app.ui_font, meta, content_x, content_y + 18, profile.built_in ? palette.text_muted : palette.accent)
-
+	if profile == nil do return
 	for field_index in 0..<PROFILE_EDIT_FIELD_COUNT {
 		field, _ := profile_edit_field_at(field_index)
-		row := profile_field_row_rect(content_x, content_y, available, field_index)
+		row := settings_profile_row(body, app.settings_scroll_y, field_index, true)
 		selected := app.settings_content_focus && app.settings_profile_field == field_index
 		if selected do draw_fill(app.renderer, row, palette.tab_active)
 		label_storage: [96]u8
 		label := profile_field_label(field, app.settings_profile_env_selection, profile.env_count, label_storage[:])
 		relevant := profile_field_relevant(profile, field)
-		label_color := selected ? palette.accent : (relevant ? palette.text_muted : palette.border)
-		draw_text(app, app.ui_font, label, row.x + 10, row.y + 13, label_color)
-
-		value_rect := profile_field_value_rect(content_x, content_y, available, field_index)
+		rect := settings_profile_value(row)
+		settings_clipped_text(app, {row.x + 10, row.y + 13, max(f32(0), rect.x - row.x - 18), 22}, label, relevant ? palette.text_muted : palette.border)
 		value := profile_field_value(profile, field, app.settings_profile_env_selection)
-		editing := app.settings_profile_editing && int(app.settings_profile_edit_field) == field_index
-		if editing {
-			value = string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
-			draw_outline(app.renderer, value_rect, palette.accent)
+		if !profile.built_in && (field == .Font || field == .Mode) {
+			previous := field == .Mode || profile.font_pixels > 0
+			next := field == .Mode || profile.font_pixels < 18
+			settings_draw_stepper(app, rect, value, previous, next, field == .Font)
+			continue
 		}
-		clip := SDL.Rect{c.int(value_rect.x + 5), c.int(value_rect.y), c.int(max(f32(1), value_rect.w - 10)), c.int(value_rect.h)}
-		_ = SDL.SetRenderClipRect(app.renderer, &clip)
-		value_color := editing || (selected && relevant && !profile.built_in) ? palette.text : palette.text_muted
-		if !relevant do value_color = palette.border
-		draw_text(app, app.ui_font, value, value_rect.x + 7, value_rect.y + 8, value_color)
-		_ = SDL.SetRenderClipRect(app.renderer, nil)
-	}
-
-	hint_y := content_y + 54 + f32(PROFILE_EDIT_FIELD_COUNT) * 48
-	if profile.built_in {
-		draw_text(app, app.ui_font, "Built-in · D duplicate to customize", content_x, hint_y, palette.text_muted)
-	} else if app.settings_profile_editing {
-		draw_text(app, app.ui_font, "Enter save · Esc cancel · Backspace edit", content_x, hint_y, palette.accent)
-	} else if app.settings_content_focus {
-		draw_text(app, app.ui_font, "Enter edit/toggle · Left/Right adjust", content_x, hint_y, palette.text_muted)
-		draw_text(app, app.ui_font, "Env: N add · Del remove · Tab sidebar", content_x, hint_y + 22, palette.text_muted)
-	} else {
-		draw_text(app, app.ui_font, "Tab to edit this profile", content_x, hint_y, palette.text_muted)
-	}
-	notice_y := hint_y + (app.settings_content_focus && !profile.built_in && !app.settings_profile_editing ? f32(48) : f32(28))
-	if app.settings_notice_len != 0 {
-		draw_text(app, app.ui_font, string(app.settings_notice[:app.settings_notice_len]), content_x, notice_y, palette.accent)
-	} else if app.config_notice_len != 0 {
-		draw_text(app, app.ui_font, string(app.config_notice[:app.config_notice_len]), content_x, notice_y, palette.accent)
+		editable := profile_text_field_editable(profile, field)
+		editing := app.settings_profile_editing && app.settings_profile_edit_field == field
+		if editable {
+			draw_fill(app.renderer, rect, editing && app.settings_profile_select_all ? palette.tab_active : palette.terminal_bg)
+			draw_outline(app.renderer, rect, editing ? palette.accent : palette.border)
+		}
+		if editing do value = string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
+		settings_clipped_text(app, {rect.x + 7, rect.y + 8, max(f32(0), rect.w - 14), rect.h - 8}, value,
+							  editable ? palette.text : palette.text_muted)
 	}
 }
