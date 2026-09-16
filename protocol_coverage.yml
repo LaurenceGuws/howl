@@ -2398,8 +2398,8 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}}
           iterm2.mode.resize_notifications: {raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
-            conditions: resize reports require host-provided cell pixel dimensions, relevance: extension,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+            conditions: immediate enable and repeated-enable reports use zero pixels when host metrics are unknown, relevance: extension,
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.formatResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
       XTERMCC_WINDOWSIZE:
@@ -2932,8 +2932,8 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           kitty.mode.inband_resize: {raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
-            conditions: resize reports require host-provided cell pixel dimensions, relevance: extension,
-            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+            conditions: immediate enable and repeated-enable reports use zero pixels when host metrics are unknown, relevance: extension,
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.formatResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
           kitty.mode.paste_events:

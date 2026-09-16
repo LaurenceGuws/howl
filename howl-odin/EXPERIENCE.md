@@ -828,6 +828,20 @@ These labels are descriptive, not priority scores.
   semantics and zero observation errors. These are scoped upload cadence/CPU
   measurements, not optical frame-rate or universal graphics acceptance.
 
+**PROVEN: in-band resize discovery and normal TUI teardown**
+
+- DECSET 2048 now emits its required immediate size report, including repeated
+  enable and restored enabled state. Unknown pixel dimensions report zero rather
+  than suppressing the response. Reply capacity is reserved before changing a
+  grouped command, preserving mode/reply state on allocation or bound failure.
+- Real qualified terminal Doom, without resizing while active: before this fix
+  its library failed to recognize the enabled protocol and left mode 2048 set
+  on exit; the next resize leaked CSI 48 into Bash input. After the initial
+  response it detects support, disables the mode during its normal teardown,
+  and the matched post-exit resize leaves the shell prompt clean.
+- This fixes the proven resize-mode leak, not every possible late ACK/DSR race
+  in applications that stop reading before their final replies are drained.
+
 **ACTIVE — graphics performance qualification**
 
 - Local Yazi has the scoped before/after baseline above; sustained Doom and

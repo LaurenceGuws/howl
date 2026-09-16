@@ -5744,9 +5744,20 @@ pub const Terminal = struct {
         output: *[98]u8,
     ) u8 {
         if (!self.modes.inband_resize_notifications) return 0;
-        const cell = cell_pixels orelse return 0;
-        const pixel_height = @as(u64, cell.height) * @as(u64, rows);
-        const pixel_width = @as(u64, cell.width) * @as(u64, cols);
+        return self.formatResizeReport(rows, cols, cell_pixels, output);
+    }
+
+    // Mode 2048 reports character dimensions even when pixels are unavailable.
+    // The same encoder serves first enable, repeated enable and committed resize.
+    fn formatResizeReport(
+        self: *const Terminal,
+        rows: u16,
+        cols: u16,
+        cell_pixels: ?CellPixelSize,
+        output: *[98]u8,
+    ) u8 {
+        const pixel_height = if (cell_pixels) |cell| @as(u64, cell.height) * rows else 0;
+        const pixel_width = if (cell_pixels) |cell| @as(u64, cell.width) * cols else 0;
         const prefix = if (self.reply_buffer.eight_bit_controls) "\x9b" else "\x1b[";
         @memcpy(output[0..prefix.len], prefix);
         const payload = std.fmt.bufPrint(
@@ -6081,11 +6092,38 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Apply one canonical semantic mode event.
-    fn applyModeEvent(self: *Terminal, event: SemanticEvent) bool {
+    /// Apply one canonical semantic mode event. Reserve mandatory initial
+    /// resize reports before mutating any member of a grouped mode command.
+    fn applyModeEvent(self: *Terminal, event: SemanticEvent) replies.AppendError!bool {
+        const reports = self.initialResizeReportCount(event);
+        var report_bytes: [98]u8 = undefined;
+        const active = self.screen_state.activeConst();
+        const report_len = if (reports != 0)
+            self.formatResizeReport(active.rows, active.cols, self.cellPixelSize(), &report_bytes)
+        else
+            0;
+        const capacity = std.math.mul(u32, reports, report_len) catch return error.ReplyLimit;
+        if (capacity != 0) try self.reply_buffer.ensureUnusedCapacity(capacity);
         const changed = self.applyModeEventInner(event);
+        // Mode commands cannot change the cell/pixel dimensions or reply framing
+        // of an enable/restore group; all fallible reply work was admitted above.
+        for (0..reports) |_| self.reply_buffer.append(report_bytes[0..report_len]) catch unreachable;
+        return changed or reports != 0;
+    }
 
-        return changed;
+    fn initialResizeReportCount(self: *const Terminal, event: SemanticEvent) u32 {
+        const mode: u16 = 2048;
+        return switch (event) {
+            .inband_resize_notifications => |enabled| @intFromBool(enabled),
+            .dec_mode_set => |modes| @intCast(std.mem.count(u16, modes.params[0..modes.param_count], &.{mode})),
+            .dec_mode_restore => |modes| if (modes.param_count == 0)
+                @intFromBool(self.saved_all_modes.inband_resize_notifications)
+            else if (self.modes.saved_dec_modes[modes_mod.savedDecModeIndex(mode).?] == 1)
+                @intCast(std.mem.count(u16, modes.params[0..modes.param_count], &.{mode}))
+            else
+                0,
+            else => 0,
+        };
     }
 
     fn applyModeEventInner(self: *Terminal, event: SemanticEvent) bool {
@@ -7205,6 +7243,7 @@ fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
     try terminal.setCellPixelSize(9, 17);
     const enabled = try terminal.feed("\x1b[?2048h");
     try std.testing.expect(enabled.stateChanged());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     terminal.resize(3, 5) catch |failure| {
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
@@ -7223,6 +7262,7 @@ test "prepared resize commits exact eight-bit report once" {
     try terminal.setCellPixelSize(9, 17);
     const configured = try terminal.feed("\x1b[?2048h\x1b G");
     try std.testing.expect(configured.stateChanged());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     const semantic_sequence = terminal.semanticSequence();
 
     var prepared = try terminal.prepareResize(3, 5);
@@ -9019,6 +9059,7 @@ fn pixelGeometryTransaction(allocator: std.mem.Allocator) !void {
     try terminal.setCellPixelSize(10, 20);
     const configured = try terminal.feed("\x1b[?2048h");
     try std.testing.expect(configured.stateChanged());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     const before = terminal.semanticSequence();
     const cell_before = terminal.cellPixelSize();
     var prepared = terminal.prepareResizeGeometry(3, 5, .{ .width = 11, .height = 24 }) catch |failure| {
@@ -9104,4 +9145,71 @@ test "virtual projection resumes after prototype admission and stops after delet
     try std.testing.expectEqual(@as(usize, 1), images.imageCount());
     try std.testing.expectEqual(@as(usize, 0), images.placementCount());
     try std.testing.expect(images.placement(0) == null);
+}
+
+test "mode2048 repeated enable reports unknown pixels without any resize" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 7);
+    defer terminal.deinit();
+    const first = try terminal.feedAtServiceBoundary("\x1b[?2048hTAIL", 1);
+    try std.testing.expectEqual(@as(usize, 8), first.consumed);
+    try std.testing.expectEqualStrings("\x1b[48;3;7;0;0t", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expect((try terminal.feed("\x1b[?2048h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[48;3;7;0;0t", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try terminal.resize(4, 8);
+    try std.testing.expectEqualStrings("\x1b[48;4;8;0;0t", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expect((try terminal.feed("\x1b[?2048l")).stateChanged());
+    try terminal.resize(5, 9);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "mode2048 grouped repeated enables preserve reply framing and all occurrences" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(11, 24);
+    try std.testing.expect((try terminal.feed("\x1b G\x1b[?2048;2048h")).stateChanged());
+    try std.testing.expectEqualStrings("\x9b48;2;4;48;44t\x9b48;2;4;48;44t", terminal.replyBytes());
+}
+
+test "mode2048 grouped enable failure leaves all modes and pending replies untouched" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[?25l")).stateChanged());
+    const padding = try std.testing.allocator.alloc(u8, replies.max_bytes - 1);
+    defer std.testing.allocator.free(padding);
+    @memset(padding, 'p');
+    try terminal.reply_buffer.append(padding);
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[?25;2048h"));
+    try std.testing.expect(!terminal.semanticView(0).cursor_visible);
+    try std.testing.expect(!terminal.interactionState().inband_resize_notifications);
+    try std.testing.expectEqualSlices(u8, padding, terminal.replyBytes());
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expect((try terminal.feed("\x1b[?25;2048h")).stateChanged());
+    try std.testing.expect(terminal.semanticView(0).cursor_visible);
+    try std.testing.expect(terminal.interactionState().inband_resize_notifications);
+}
+
+test "mode2048 enable allocation failure is transactional and reusable" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, initialResizeReportTransaction, .{});
+}
+
+fn initialResizeReportTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(11, 24);
+    const before = terminal.interactionState();
+    const sequence = terminal.semanticSequence();
+    const enabled = terminal.feed("\x1b[?2048h") catch |failure| {
+        try std.testing.expectEqualDeep(before, terminal.interactionState());
+        try std.testing.expectEqual(sequence, terminal.semanticSequence());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        return failure;
+    };
+    try std.testing.expect(enabled.stateChanged());
+    try std.testing.expect(terminal.interactionState().inband_resize_notifications);
+    try std.testing.expectEqualStrings("\x1b[48;2;4;48;44t", terminal.replyBytes());
 }

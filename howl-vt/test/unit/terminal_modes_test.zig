@@ -567,7 +567,10 @@ test "Kitty parameterless mode save restores the exact curated mode set" {
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
-    try std.testing.expect(!(try terminal.feed("\x1b[?r")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?r")).stateChanged());
+    // Restoring an enabled mode2048 repeats its mandatory current-size report.
+    try std.testing.expect(std.mem.startsWith(u8, pendingOutput(&terminal), "\x1b[48;"));
+    try consumeReplies(&terminal);
 
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     try std.testing.expect((try terminal.feed("\x1b[?r")).stateChanged());
@@ -1451,7 +1454,11 @@ test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
 
     try std.testing.expect((try terminal.feed("\x1b[?20")).stateChanged() == false);
     try std.testing.expect((try terminal.feed("48h")).stateChanged());
-    try std.testing.expect(!(try terminal.feed("\x1b[?2048h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[48;3;5;0;0t", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?2048h")).stateChanged());
+    try std.testing.expectEqualStrings("\x1b[48;3;5;0;0t", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?2048$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?2048;1$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
@@ -1468,6 +1475,8 @@ test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?2048s\x1b[?2048l")).stateChanged());
     try std.testing.expect((try terminal.feed("\x1b[?2048r")).stateChanged());
+    try std.testing.expectEqualStrings("\x9b48;2;3;34;27t", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
     try terminal.resize(3, 4);
     try std.testing.expectEqualStrings("\x9b48;3;4;51;36t", pendingOutput(&terminal));
 
@@ -1486,6 +1495,7 @@ test "in-band resize report saturation preserves dimensions and pending output" 
     defer terminal.deinit();
     try terminal.setCellPixelSize(std.math.maxInt(u32), std.math.maxInt(u32));
     try std.testing.expect((try terminal.feed("\x1b[?2048h")).stateChanged());
+    try consumeReplies(&terminal);
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
