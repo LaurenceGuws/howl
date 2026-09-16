@@ -109,15 +109,19 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
-- One real two-pane split with independent Session/view ownership.
+- A bounded recursive pane tree owns layout topology while stable pane slots own
+  Session views. Repeated active-leaf splits can nest without moving Session
+  identities; the first hostile canary created three independently owned panes
+  and three child `howl-sessiond` processes.
 - Pane-local focus, close/promote behavior, clipping, history, selection, and
-  geometry leadership.
-- Surviving pane reacquires full-tab geometry without restarting its Session.
+  geometry leadership remain independent of tree topology.
+- Closing a nested leaf tears down only its Session, promotes the sibling subtree,
+  and lets survivors reacquire the larger geometry without restart. The three-pane
+  canary collapsed 3 → 2 → 1 while child count followed 3 → 2 → 1 exactly.
 
 **WANTED**
 
-- Horizontal and vertical split actions.
-- Recursive pane tree rather than the current fixed primary/secondary pair.
+- Explicit horizontal and vertical split actions.
 - Keyboard and pointer pane-resize handles.
 - Focus movement in four directions.
 - Zoom/maximize active pane without destroying layout.

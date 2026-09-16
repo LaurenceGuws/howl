@@ -21,6 +21,7 @@ SELECTION_EDGE_SCROLL_MS :: 100
 INTERACTION_CACHE_MS :: 120
 IME_PREEDIT_BYTES :: 1024
 MAX_TABS :: 8
+MAX_PANES_PER_TAB :: 8
 MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
@@ -72,12 +73,34 @@ Session_Lifecycle_State :: enum u8 {
     Unavailable,
 }
 
+Pane_Node_Kind :: enum u8 {
+    Leaf,
+    Split,
+}
+
+Pane_Split_Orientation :: enum u8 {
+    Vertical,
+    Horizontal,
+}
+
+Pane_Node :: struct {
+    kind: Pane_Node_Kind,
+    pane_index: int,
+    orientation: Pane_Split_Orientation,
+    ratio: f32,
+    parent: ^Pane_Node,
+    first: ^Pane_Node,
+    second: ^Pane_Node,
+}
+
 Tab :: struct {
     kind: Tab_Kind,
     title: string,
-    session: ^Session_View,
-    secondary_session: ^Session_View,
+    panes: [MAX_PANES_PER_TAB]^Session_View,
+    pane_count: int,
+    root: ^Pane_Node,
     active_pane: int,
+    zoomed: bool,
 }
 
 Canvas_Texture :: struct {
@@ -404,8 +427,9 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
     if TTF.SetFontSize(app.terminal_font, font_size_for_preset(next)) {
         app.terminal_font_preset = next
         for index in 0..<app.tab_count {
-            reset_canvas(app.tabs[index].session)
-            reset_canvas(app.tabs[index].secondary_session)
+            for view in app.tabs[index].panes {
+                if view != nil do reset_canvas(view)
+            }
         }
         save_user_config(app)
     }
@@ -1727,21 +1751,26 @@ destroy_session_view :: proc(view: ^Session_View) {
     free(view)
 }
 
+tab_pane_view :: proc(tab: ^Tab, pane_index: int) -> ^Session_View {
+    if tab == nil || pane_index < 0 || pane_index >= len(tab.panes) {
+        return nil
+    }
+    return tab.panes[pane_index]
+}
+
 active_session_view :: proc(app: ^App) -> ^Session_View {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return nil
     }
     tab := &app.tabs[app.active_tab]
-    if tab.active_pane == 1 && tab.secondary_session != nil {
-        return tab.secondary_session
-    }
-    return tab.session
+    return tab_pane_view(tab, tab.active_pane)
 }
 
 clear_all_search_results :: proc(app: ^App) {
     for index in 0..<app.tab_count {
-        clear_search_result(app.tabs[index].session)
-        clear_search_result(app.tabs[index].secondary_session)
+        for view in app.tabs[index].panes {
+            if view != nil do clear_search_result(view)
+        }
     }
 }
 
@@ -2291,12 +2320,211 @@ terminal_inset :: proc(width, height: f32) -> SDL.FRect {
     return {18, 52, width - 36, height - 64}
 }
 
-split_pane_rects :: proc(inset: SDL.FRect) -> (left, right: SDL.FRect) {
-    gap := f32(4)
-    left_width := (inset.w - gap) / 2
-    left = {inset.x, inset.y, left_width, inset.h}
-    right = {inset.x + left_width + gap, inset.y, inset.w - left_width - gap, inset.h}
-    return
+PANE_GAP :: f32(4)
+
+Pane_Layout_Entry :: struct {
+    pane_index: int,
+    rect: SDL.FRect,
+}
+
+Pane_Layout_Divider :: struct {
+    node: ^Pane_Node,
+    rect: SDL.FRect,
+}
+
+Pane_Layout :: struct {
+    entries: [MAX_PANES_PER_TAB]Pane_Layout_Entry,
+    entry_count: int,
+    dividers: [MAX_PANES_PER_TAB - 1]Pane_Layout_Divider,
+    divider_count: int,
+}
+
+new_pane_leaf :: proc(pane_index: int, parent: ^Pane_Node = nil) -> ^Pane_Node {
+    node := new(Pane_Node)
+    if node == nil {
+        return nil
+    }
+    node^ = Pane_Node{kind = .Leaf, pane_index = pane_index, ratio = 0.5, parent = parent}
+    return node
+}
+
+destroy_pane_nodes :: proc(node: ^Pane_Node) {
+    if node == nil {
+        return
+    }
+    if node.kind == .Split {
+        destroy_pane_nodes(node.first)
+        destroy_pane_nodes(node.second)
+    }
+    free(node)
+}
+
+pane_leaf_for_index :: proc(node: ^Pane_Node, pane_index: int) -> ^Pane_Node {
+    if node == nil {
+        return nil
+    }
+    if node.kind == .Leaf {
+        return node.pane_index == pane_index ? node : nil
+    }
+    if found := pane_leaf_for_index(node.first, pane_index); found != nil {
+        return found
+    }
+    return pane_leaf_for_index(node.second, pane_index)
+}
+
+first_pane_leaf :: proc(node: ^Pane_Node) -> ^Pane_Node {
+    current := node
+    for current != nil && current.kind == .Split {
+        current = current.first
+    }
+    return current
+}
+
+free_pane_slot :: proc(tab: ^Tab) -> int {
+    if tab == nil {
+        return -1
+    }
+    for view, index in tab.panes {
+        if view == nil {
+            return index
+        }
+    }
+    return -1
+}
+
+layout_pane_node :: proc(node: ^Pane_Node, rect: SDL.FRect, layout: ^Pane_Layout) {
+    if node == nil || layout == nil || rect.w <= 0 || rect.h <= 0 {
+        return
+    }
+    if node.kind == .Leaf {
+        if layout.entry_count < len(layout.entries) {
+            layout.entries[layout.entry_count] = Pane_Layout_Entry{pane_index = node.pane_index, rect = rect}
+            layout.entry_count += 1
+        }
+        return
+    }
+
+    ratio := clamp(node.ratio, f32(0.1), f32(0.9))
+    if node.orientation == .Vertical {
+        first_width := max(f32(0), (rect.w - PANE_GAP) * ratio)
+        first := SDL.FRect{rect.x, rect.y, first_width, rect.h}
+        second := SDL.FRect{rect.x + first_width + PANE_GAP, rect.y, max(f32(0), rect.w - first_width - PANE_GAP), rect.h}
+        if layout.divider_count < len(layout.dividers) {
+            layout.dividers[layout.divider_count] = Pane_Layout_Divider{
+                node = node,
+                rect = SDL.FRect{first.x + first.w, rect.y, PANE_GAP, rect.h},
+            }
+            layout.divider_count += 1
+        }
+        layout_pane_node(node.first, first, layout)
+        layout_pane_node(node.second, second, layout)
+        return
+    }
+
+    first_height := max(f32(0), (rect.h - PANE_GAP) * ratio)
+    first := SDL.FRect{rect.x, rect.y, rect.w, first_height}
+    second := SDL.FRect{rect.x, rect.y + first_height + PANE_GAP, rect.w, max(f32(0), rect.h - first_height - PANE_GAP)}
+    if layout.divider_count < len(layout.dividers) {
+        layout.dividers[layout.divider_count] = Pane_Layout_Divider{
+            node = node,
+            rect = SDL.FRect{rect.x, first.y + first.h, rect.w, PANE_GAP},
+        }
+        layout.divider_count += 1
+    }
+    layout_pane_node(node.first, first, layout)
+    layout_pane_node(node.second, second, layout)
+}
+
+pane_layout :: proc(tab: ^Tab, inset: SDL.FRect) -> Pane_Layout {
+    layout: Pane_Layout
+    if tab != nil {
+        layout_pane_node(tab.root, inset, &layout)
+    }
+    return layout
+}
+
+pane_rect_from_layout :: proc(layout: ^Pane_Layout, pane_index: int) -> (SDL.FRect, bool) {
+    if layout == nil {
+        return {}, false
+    }
+    for index in 0..<layout.entry_count {
+        if layout.entries[index].pane_index == pane_index {
+            return layout.entries[index].rect, true
+        }
+    }
+    return {}, false
+}
+
+split_pane_slot :: proc(
+    tab: ^Tab,
+    pane_index: int,
+    view: ^Session_View,
+    orientation: Pane_Split_Orientation,
+) -> (new_index: int, ok: bool) {
+    if tab == nil || view == nil || tab.pane_count >= MAX_PANES_PER_TAB {
+        return -1, false
+    }
+    leaf := pane_leaf_for_index(tab.root, pane_index)
+    slot := free_pane_slot(tab)
+    if leaf == nil || slot < 0 {
+        return -1, false
+    }
+    first := new_pane_leaf(pane_index, leaf)
+    if first == nil {
+        return -1, false
+    }
+    second := new_pane_leaf(slot, leaf)
+    if second == nil {
+        free(first)
+        return -1, false
+    }
+    old_parent := leaf.parent
+    leaf^ = Pane_Node{
+        kind = .Split,
+        pane_index = -1,
+        orientation = orientation,
+        ratio = 0.5,
+        parent = old_parent,
+        first = first,
+        second = second,
+    }
+    first.parent = leaf
+    second.parent = leaf
+    tab.panes[slot] = view
+    tab.pane_count += 1
+    tab.active_pane = slot
+    return slot, true
+}
+
+remove_pane_slot :: proc(tab: ^Tab, pane_index: int) -> (removed: ^Session_View, ok: bool) {
+    if tab == nil || tab.pane_count <= 1 || pane_index < 0 || pane_index >= len(tab.panes) {
+        return nil, false
+    }
+    leaf := pane_leaf_for_index(tab.root, pane_index)
+    if leaf == nil || leaf.parent == nil {
+        return nil, false
+    }
+    parent := leaf.parent
+    sibling := parent.first == leaf ? parent.second : parent.first
+    if sibling == nil {
+        return nil, false
+    }
+    grandparent := parent.parent
+    promoted := sibling^
+    parent^ = promoted
+    parent.parent = grandparent
+    if parent.first != nil do parent.first.parent = parent
+    if parent.second != nil do parent.second.parent = parent
+
+    removed = tab.panes[pane_index]
+    tab.panes[pane_index] = nil
+    tab.pane_count -= 1
+    free(leaf)
+    free(sibling)
+
+    survivor := first_pane_leaf(parent)
+    tab.active_pane = survivor != nil ? survivor.pane_index : 0
+    return removed, true
 }
 
 session_view_at :: proc(
@@ -2311,15 +2539,13 @@ session_view_at :: proc(
         return nil, 0, false
     }
     tab := &app.tabs[app.active_tab]
-    if tab.secondary_session == nil {
-        return tab.session, 0, true
-    }
-    left, right := split_pane_rects(inset)
-    if inside(x, y, left) {
-        return tab.session, 0, true
-    }
-    if inside(x, y, right) {
-        return tab.secondary_session, 1, true
+    layout := pane_layout(tab, inset)
+    for index in 0..<layout.entry_count {
+        entry := layout.entries[index]
+        if inside(x, y, entry.rect) {
+            view = tab_pane_view(tab, entry.pane_index)
+            return view, entry.pane_index, view != nil
+        }
     }
     return nil, 0, false
 }
@@ -2332,19 +2558,8 @@ pane_rect_for_index :: proc(
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return {}, false
     }
-    inset := terminal_inset(width, height)
-    tab := &app.tabs[app.active_tab]
-    if tab.secondary_session == nil {
-        return inset, pane_index == 0
-    }
-    left, right := split_pane_rects(inset)
-    if pane_index == 0 {
-        return left, true
-    }
-    if pane_index == 1 {
-        return right, true
-    }
-    return {}, false
+    layout := pane_layout(&app.tabs[app.active_tab], terminal_inset(width, height))
+    return pane_rect_from_layout(&layout, pane_index)
 }
 
 selection_cell_at :: proc(
@@ -2961,6 +3176,22 @@ tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.F
     return
 }
 
+destroy_tab_contents :: proc(tab: ^Tab) {
+    if tab == nil {
+        return
+    }
+    for view, index in tab.panes {
+        if view != nil {
+            destroy_session_view(view)
+            tab.panes[index] = nil
+        }
+    }
+    destroy_pane_nodes(tab.root)
+    tab.root = nil
+    tab.pane_count = 0
+    tab.active_pane = 0
+}
+
 add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
     if app.tab_count >= MAX_TABS {
         if view != nil do destroy_session_view(view)
@@ -2969,7 +3200,14 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
     if view == nil {
         return false
     }
-    app.tabs[app.tab_count] = Tab{kind = .Session, title = title, session = view}
+    root := new_pane_leaf(0)
+    if root == nil {
+        destroy_session_view(view)
+        return false
+    }
+    tab := &app.tabs[app.tab_count]
+    tab^ = Tab{kind = .Session, title = title, pane_count = 1, root = root, active_pane = 0}
+    tab.panes[0] = view
     app.tab_count += 1
     clear_ime_preedit(app)
     app.active_tab = app.tab_count - 1
@@ -3012,15 +3250,11 @@ replace_active_session_view :: proc(app: ^App, replacement: ^Session_View) -> bo
         close_search(app)
     }
     tab := &app.tabs[app.active_tab]
-    old: ^Session_View
-    if tab.active_pane == 1 && tab.secondary_session != nil {
-        old = tab.secondary_session
-        tab.secondary_session = replacement
-    } else {
-        old = tab.session
-        tab.session = replacement
-        tab.active_pane = 0
+    old := tab_pane_view(tab, tab.active_pane)
+    if old == nil {
+        return false
     }
+    tab.panes[tab.active_pane] = replacement
     if old != nil {
         _ = finish_terminal_mouse_capture(old, 0)
         destroy_session_view(old)
@@ -3054,8 +3288,7 @@ close_tab :: proc(app: ^App, index: int) {
         return
     }
     clear_ime_preedit(app)
-    retiring := app.tabs[index].session
-    retiring_secondary := app.tabs[index].secondary_session
+    retiring := app.tabs[index]
     for i in index..<app.tab_count - 1 {
         app.tabs[i] = app.tabs[i + 1]
     }
@@ -3066,26 +3299,29 @@ close_tab :: proc(app: ^App, index: int) {
     } else if app.active_tab >= app.tab_count {
         app.active_tab = app.tab_count - 1
     }
-    destroy_session_view(retiring)
-    destroy_session_view(retiring_secondary)
+    destroy_tab_contents(&retiring)
 }
 
-split_active_pane :: proc(app: ^App) {
+split_active_pane :: proc(
+    app: ^App,
+    orientation: Pane_Split_Orientation = .Vertical,
+) {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return
     }
     clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
-    if tab.secondary_session != nil {
-        tab.active_pane = 1
+    if tab.pane_count >= MAX_PANES_PER_TAB {
         return
     }
     view, _ := profile_view(app, app.startup_profile)
     if view == nil {
         return
     }
-    tab.secondary_session = view
-    tab.active_pane = 1
+    if _, ok := split_pane_slot(tab, tab.active_pane, view, orientation); !ok {
+        destroy_session_view(view)
+        return
+    }
     app.profile_menu_open = false
     app.palette_open = false
     app.settings_open = false
@@ -3097,19 +3333,31 @@ close_active_pane :: proc(app: ^App) {
     }
     clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
-    if tab.secondary_session == nil {
+    if tab.pane_count <= 1 {
         close_tab(app, app.active_tab)
         return
     }
-    if tab.active_pane == 1 {
-        destroy_session_view(tab.secondary_session)
-        tab.secondary_session = nil
-    } else {
-        destroy_session_view(tab.session)
-        tab.session = tab.secondary_session
-        tab.secondary_session = nil
+    removed, ok := remove_pane_slot(tab, tab.active_pane)
+    if !ok {
+        return
     }
-    tab.active_pane = 0
+    destroy_session_view(removed)
+}
+
+cycle_active_pane :: proc(tab: ^Tab, delta: int) -> bool {
+    if tab == nil || tab.pane_count <= 1 || delta == 0 {
+        return false
+    }
+    step := delta > 0 ? 1 : -1
+    candidate := tab.active_pane
+    for _ in 0..<MAX_PANES_PER_TAB {
+        candidate = (candidate + step + MAX_PANES_PER_TAB) % MAX_PANES_PER_TAB
+        if tab.panes[candidate] != nil {
+            tab.active_pane = candidate
+            return true
+        }
+    }
+    return false
 }
 
 active_tab_is_session :: proc(app: ^App) -> bool {
@@ -3412,9 +3660,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_D {
             execute_action(app, .Split_Pane)
         } else if event.type == .KEY_DOWN && alt && (event.key.key == SDL.K_LEFT || event.key.key == SDL.K_RIGHT) {
-            if app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].secondary_session != nil {
+            if app.active_tab >= 0 && app.active_tab < app.tab_count {
                 clear_ime_preedit(app)
-                app.tabs[app.active_tab].active_pane = event.key.key == SDL.K_RIGHT ? 1 : 0
+                _ = cycle_active_pane(&app.tabs[app.active_tab], event.key.key == SDL.K_RIGHT ? 1 : -1)
             }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
             adjust_terminal_font(app, -1)
@@ -3844,7 +4092,7 @@ draw_tabs :: proc(app: ^App, width: f32) {
         }
 
         draw_text(app, app.ui_font, app.tabs[i].title, tab_x + 14, 14, active ? palette.text : palette.text_muted)
-        if app.tabs[i].kind == .Session && session_attached(app.tabs[i].session) {
+        if app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
             indicator_x := tab_x + tab_w - (app.tab_count > 1 ? 38 : 16)
             draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
         }
@@ -3983,11 +4231,10 @@ finish_selection_if_dragging :: proc(view: ^Session_View) -> bool {
 finish_all_selections :: proc(app: ^App) -> bool {
     changed := false
     for index in 0..<app.tab_count {
-        if finish_selection_if_dragging(app.tabs[index].session) {
-            changed = true
-        }
-        if finish_selection_if_dragging(app.tabs[index].secondary_session) {
-            changed = true
+        for view in app.tabs[index].panes {
+            if view != nil && finish_selection_if_dragging(view) {
+                changed = true
+            }
         }
     }
     return changed
@@ -3996,11 +4243,10 @@ finish_all_selections :: proc(app: ^App) -> bool {
 finish_all_terminal_mouse_captures :: proc(app: ^App, modifiers: u8 = 0) -> bool {
     changed := false
     for index in 0..<app.tab_count {
-        if finish_terminal_mouse_capture(app.tabs[index].session, modifiers) {
-            changed = true
-        }
-        if finish_terminal_mouse_capture(app.tabs[index].secondary_session, modifiers) {
-            changed = true
+        for view in app.tabs[index].panes {
+            if view != nil && finish_terminal_mouse_capture(view, modifiers) {
+                changed = true
+            }
         }
     }
     return changed
@@ -4009,11 +4255,10 @@ finish_all_terminal_mouse_captures :: proc(app: ^App, modifiers: u8 = 0) -> bool
 finish_all_history_scrollbar_drags :: proc(app: ^App) -> bool {
     changed := false
     for index in 0..<app.tab_count {
-        if finish_history_scrollbar_drag(app.tabs[index].session) {
-            changed = true
-        }
-        if finish_history_scrollbar_drag(app.tabs[index].secondary_session) {
-            changed = true
+        for view in app.tabs[index].panes {
+            if view != nil && finish_history_scrollbar_drag(view) {
+                changed = true
+            }
         }
     }
     return changed
@@ -4519,21 +4764,22 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
         return
     }
     tab := &app.tabs[app.active_tab]
-    if tab.secondary_session == nil {
-        draw_real_session(app, tab.session, inset)
-        return
+    layout := pane_layout(tab, inset)
+    for index in 0..<layout.divider_count {
+        draw_fill(app.renderer, layout.dividers[index].rect, palette.border)
     }
-
-    gap := f32(4)
-    left, right := split_pane_rects(inset)
-    draw_fill(app.renderer, left, palette.terminal_panel)
-    draw_fill(app.renderer, right, palette.terminal_panel)
-    divider := SDL.FRect{left.x + left.w, inset.y, gap, inset.h}
-    draw_fill(app.renderer, divider, palette.border)
-
-    draw_real_session(app, tab.session, left)
-    draw_real_session(app, tab.secondary_session, right)
-    draw_outline(app.renderer, tab.active_pane == 0 ? left : right, palette.accent)
+    for index in 0..<layout.entry_count {
+        entry := layout.entries[index]
+        view := tab_pane_view(tab, entry.pane_index)
+        if view == nil {
+            continue
+        }
+        draw_fill(app.renderer, entry.rect, palette.terminal_panel)
+        draw_real_session(app, view, entry.rect)
+        if tab.pane_count > 1 && entry.pane_index == tab.active_pane {
+            draw_outline(app.renderer, entry.rect, palette.accent)
+        }
+    }
 }
 
 draw_palette :: proc(app: ^App, width, height: f32) {
@@ -4555,7 +4801,7 @@ draw_palette :: proc(app: ^App, width, height: f32) {
         if app.palette_selection == i {
             draw_fill(app.renderer, row, palette.tab_active)
         }
-        has_split := app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].secondary_session != nil
+        has_split := app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].pane_count > 1
         enabled := i != 4 || has_split || app.tab_count > 1
         color := enabled ? palette.text : palette.text_muted
         draw_text(app, app.ui_font, label, row.x + 10, row.y + 8, color)
@@ -4803,8 +5049,7 @@ main :: proc() {
 
     for app.tab_count > 0 {
         app.tab_count -= 1
-        destroy_session_view(app.tabs[app.tab_count].session)
-        destroy_session_view(app.tabs[app.tab_count].secondary_session)
+        destroy_tab_contents(&app.tabs[app.tab_count])
         app.tabs[app.tab_count] = {}
     }
 }
