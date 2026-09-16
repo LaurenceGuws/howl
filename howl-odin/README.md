@@ -2,6 +2,10 @@
 
 Experimental polished desktop client in the Howl module family.
 
+See [`EXPERIENCE.md`](EXPERIENCE.md) for the living user-facing experience
+charter. This README remains the narrower ledger of behavior the current client
+can actually prove.
+
 The client owns desktop application policy only: windows, tabs, pane layout,
 profiles, settings, command palette, keybindings, and OS integration. It must
 not duplicate VT, PTY, Session, text shaping, or terminal raster semantics.
