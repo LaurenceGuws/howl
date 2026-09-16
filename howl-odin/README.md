@@ -113,8 +113,12 @@ Current canary:
   uses semantic paste so bracketed-paste behavior remains VT-owned. Input
   deliberately clears selection while returning to LIVE; row eviction,
   screen-bank change, or column reflow invalidates the range instead of
-  retargeting it. VT itself normalizes wide-cell continuation endpoints during
-  canonical text extraction;
+  retargeting it. Double-click expands through `howl-client.selection.word` to
+  the contiguous non-space canonical word and may cross a soft-wrap boundary;
+  triple-click deliberately selects only the current projected visual row's
+  text-shaped extent, trimming untouched trailing blank cells rather than
+  pretending a wrapped logical line has one stable desktop identity. VT itself
+  normalizes wide-cell continuation endpoints during canonical text extraction;
 - terminal content is now projected by the real `howl-render` terminal Content
   and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,

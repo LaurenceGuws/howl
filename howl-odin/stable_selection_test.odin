@@ -162,3 +162,31 @@ clearing_selection_disarms_edge_scroll :: proc(t: ^testing.T) {
     testing.expect_value(t, view.selection_pointer_x, f32(0))
     testing.expect_value(t, view.selection_pointer_y, f32(0))
 }
+
+@(test)
+selection_expansion_range_applies_stable_endpoints :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    info := Selection_Range_Info{
+        start_row = 123,
+        end_row = 124,
+        start_column = 7,
+        end_column = 11,
+        columns = 80,
+        found = 1,
+        alternate_screen = 0,
+    }
+    testing.expect(t, apply_selection_range(&view, info))
+    testing.expect(t, view.selection_active)
+    testing.expect(t, !view.selection_dragging)
+    testing.expect_value(t, view.selection_anchor_row, i32(123))
+    testing.expect_value(t, view.selection_focus_row, i32(124))
+    testing.expect_value(t, view.selection_anchor_column, u16(7))
+    testing.expect_value(t, view.selection_focus_column, u16(11))
+}
+
+@(test)
+selection_expansion_no_match_clears_existing_range :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    testing.expect(t, !apply_selection_range(&view, Selection_Range_Info{}))
+    testing.expect(t, !view.selection_active)
+}

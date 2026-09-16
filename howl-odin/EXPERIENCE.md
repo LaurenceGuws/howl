@@ -280,17 +280,26 @@ These labels are descriptive, not priority scores.
   canonical range through the newly visible cells, and stops at oldest/LIVE.
   The SDL main loop uses a timeout only while that gesture is armed; after release
   the client returns to indefinite event sleep (measured 0.00% of one core idle).
-- Eight executable stable-selection/edge-policy tests run in the Odin owner build.
+- Eleven executable stable-selection/edge-policy tests run in the Odin owner build.
+
+- Double-click expands the clicked cell through canonical word selection: one
+  contiguous non-space word, including across a canonical soft-wrap boundary. A
+  lab canary double-clicked the second projected row of a 140-cell wrapped word
+  and copied all 140 cells as one word.
+- Triple-click deliberately selects the current projected visual row, trimmed to
+  its real text extent. It is not labelled a hard/logical-line gesture: clicking
+  the second row of a wrapped line copied only that projected row, not the prefix
+  or previous wrapped row.
 
 **ACTIVE**
 
 - Continue selection pressure across split panes, ring eviction, and app-owned mouse
-  modes before adding richer gestures.
+  modes before adding platform-specific selection conveniences.
 
 **WANTED**
 
-- Double-click canonical word selection.
-- Triple-click/hard-line selection if it remains unsurprising with soft wraps.
+- A separate hard/logical-line selection gesture only if Howl gains an identity
+  that can name the same logical line honestly across viewport/reflow boundaries.
 - Copy action in context menu/command palette and useful disabled-state feedback.
 - Linux middle-click/primary-selection behavior only if it remains distinct from
   the normal clipboard and can be implemented without platform confusion.

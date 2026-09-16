@@ -1985,6 +1985,69 @@ selection_stable_point_at :: proc(
     return stable_row, viewport_column, columns, alternate, true
 }
 
+apply_selection_range :: proc(view: ^Session_View, info: Selection_Range_Info) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    clear_selection_locked(view)
+    if info.found == 0 || info.columns == 0 || info.start_column >= info.columns ||
+       info.end_column >= info.columns || info.alternate_screen > 1 {
+        return false
+    }
+    view.selection_active = true
+    view.selection_dragging = false
+    view.selection_anchor_row = info.start_row
+    view.selection_anchor_column = info.start_column
+    view.selection_focus_row = info.end_row
+    view.selection_focus_column = info.end_column
+    view.selection_columns = info.columns
+    view.selection_alternate_screen = info.alternate_screen != 0
+    return true
+}
+
+expand_selection_at :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    kind: u8,
+) -> bool {
+    if view == nil || view.control == nil || view.canvas == nil {
+        return false
+    }
+    stable_row, column, columns, alternate, hit := selection_stable_point_at(
+        app,
+        view,
+        pane,
+        x,
+        y,
+    )
+    if !hit {
+        clear_selection(view)
+        return true
+    }
+    info: Selection_Range_Info
+    result := selection_expand(
+        view.control,
+        kind,
+        render_history_offset(view.canvas),
+        stable_row,
+        column,
+        columns,
+        alternate ? u8(1) : u8(0),
+        &info,
+    )
+    if result != 0 {
+        clear_selection(view)
+        copy_bridge_error(view)
+        return true
+    }
+    _ = apply_selection_range(view, info)
+    return true
+}
+
 begin_selection :: proc(
     app: ^App,
     view: ^Session_View,
@@ -2951,6 +3014,14 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         if begin_history_scrollbar_drag(view, pane, event.button.x, event.button.y) {
                             return
                         }
+                        if event.button.clicks >= 3 {
+                            _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 2)
+                            return
+                        }
+                        if event.button.clicks == 2 {
+                            _ = expand_selection_at(app, view, pane, event.button.x, event.button.y, 1)
+                            return
+                        }
                         if begin_selection(app, view, pane, event.button.x, event.button.y) {
                             return
                         }
@@ -3605,6 +3676,7 @@ main :: proc() {
     assert(size_of(Canvas_Removal_Info) == int(render_removal_info_size()))
     assert(size_of(Canvas_Command_Info) == int(render_command_info_size()))
     assert(size_of(Search_Match_Info) == int(search_match_info_size()))
+    assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return

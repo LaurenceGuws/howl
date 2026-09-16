@@ -137,6 +137,37 @@ pub fn word(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Erro
     };
 }
 
+/// Selects the text-shaped content of one projected visual row.
+///
+/// This is deliberately not a logical hard-line abstraction: a soft-wrapped
+/// terminal line may span several projected rows, and a viewport boundary may
+/// expose only one part of it. Returns null for a visually blank row.
+pub fn visualRow(snapshot: *const view.Snapshot, viewport_row: u16) Error!?Range {
+    const begin = view.begin(snapshot);
+    if (viewport_row >= begin.rows or begin.columns == 0) return error.InvalidPoint;
+    const shape = rowShape(snapshot, viewport_row) orelse return error.InvalidPoint;
+    if (shape.content_end_exclusive == 0) return null;
+
+    const row = view.rows(snapshot)[viewport_row];
+    const row_cells = view.cells(snapshot)[row.cell_offset .. row.cell_offset + row.cell_count];
+    var start_column: ?u16 = null;
+    for (row_cells, 0..) |cell, index| {
+        if (cell.x == 0 and cell.y == 0) {
+            start_column = @intCast(index);
+            break;
+        }
+    }
+    const first = start_column orelse return null;
+    const last: u16 = shape.content_end_exclusive - 1;
+    const range = Range{
+        .anchor = try point(snapshot, viewport_row, first),
+        .focus = try point(snapshot, viewport_row, last),
+        .columns = begin.columns,
+        .alternate_screen = begin.alternate_screen,
+    };
+    return range;
+}
+
 /// Returns the painted column span for one displayed row, expanding a selected
 /// final lead cell across its complete horizontal terminal-cell width.
 pub fn visualSpan(snapshot: *const view.Snapshot, range: Range, viewport_row: u16) ?Span {
@@ -409,6 +440,16 @@ test "row shape trims blank tail and preserves wide text plus wrap identity" {
         rowShape(snapshot, 1),
     );
     try std.testing.expect(rowShape(snapshot, 2) == null);
+
+    const visual = (try visualRow(snapshot, 0)).?;
+    const ordered = visual.ordered();
+    try std.testing.expectEqual(Point{ .row = 0, .column = 0 }, ordered.start);
+    try std.testing.expectEqual(Point{ .row = 0, .column = 2 }, ordered.end);
+    try std.testing.expectEqual(
+        @as(?Span, .{ .start_column = 0, .end_column = 3 }),
+        visualSpan(snapshot, visual, 0),
+    );
+    try std.testing.expect((try visualRow(snapshot, 1)) == null);
 }
 
 fn testCell(scalars: []const u32, width: u8) rich.Cell {

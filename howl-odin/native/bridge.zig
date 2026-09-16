@@ -75,6 +75,17 @@ pub const SearchMatchInfo = extern struct {
     scanned_snapshots: u32 = 0,
 };
 
+pub const SelectionRangeInfo = extern struct {
+    start_row: i32 = 0,
+    end_row: i32 = 0,
+    start_column: u16 = 0,
+    end_column: u16 = 0,
+    columns: u16 = 0,
+    found: u8 = 0,
+    alternate_screen: u8 = 0,
+    _reserved: [2]u8 = @splat(0),
+};
+
 const maximum_search_query_bytes: usize = 4096;
 const maximum_search_retries: usize = 8;
 
@@ -636,6 +647,10 @@ pub export fn howl_odin_bridge_search_match_info_size() u32 {
     return @sizeOf(SearchMatchInfo);
 }
 
+pub export fn howl_odin_bridge_selection_range_info_size() u32 {
+    return @sizeOf(SelectionRangeInfo);
+}
+
 const Handle = opaque {};
 const CancellationHandle = opaque {};
 const OwnedSessionHandle = opaque {};
@@ -682,7 +697,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 3;
+    return 4;
 }
 
 /// Launches one client-owned canonical Session using the existing native
@@ -1210,6 +1225,104 @@ pub export fn howl_odin_bridge_send_paste(
     return 0;
 }
 
+fn selectionViewportRow(begin: *const protocol.SnapshotBegin, stable_row: i32) ?u16 {
+    if (begin.rows == 0) return null;
+    if (begin.alternate_screen) {
+        if (stable_row < 0 or stable_row >= begin.rows) return null;
+        return @intCast(stable_row);
+    }
+    if (begin.history_offset > begin.history_count) return null;
+    const top: i64 = @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
+    const relative = @as(i64, stable_row) - top;
+    if (relative < 0 or relative >= begin.rows) return null;
+    return @intCast(relative);
+}
+
+/// Expands one currently displayed canonical cell into either its contiguous
+/// non-space word (kind=1) or its current projected visual row (kind=2).
+/// The stable target row must still be visible in the requested history window;
+/// a moving-output race is rejected rather than retargeted.
+pub export fn howl_odin_bridge_selection_expand(
+    raw: ?*Handle,
+    kind: u8,
+    history_offset: u32,
+    target_row: i32,
+    target_column: u16,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    output: *SelectionRangeInfo,
+) i32 {
+    output.* = .{};
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    if ((kind != 1 and kind != 2) or expected_columns == 0 or expected_alternate_screen > 1) {
+        bridge.setError("selection_expand", "invalid_arguments");
+        return 2;
+    }
+
+    var rich = client.rich.request(
+        &bridge.connection,
+        bridge.allocator,
+        0,
+        history_offset,
+    ) catch |failure| {
+        bridge.setError("selection_expand_observe", @errorName(failure));
+        return 3;
+    };
+    defer rich.deinit();
+    const snapshot = client.view.project(bridge.allocator, &rich) catch |failure| {
+        bridge.setError("selection_expand_project", @errorName(failure));
+        return 3;
+    };
+    defer client.view.deinit(snapshot);
+
+    const begin = client.view.begin(snapshot);
+    const expected_alternate = expected_alternate_screen != 0;
+    if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
+        bridge.setError("selection_expand", "context_changed");
+        return 4;
+    }
+    const viewport_row = selectionViewportRow(begin, target_row) orelse {
+        bridge.setError("selection_expand", "target_moved");
+        return 4;
+    };
+    if (target_column >= begin.columns) {
+        bridge.setError("selection_expand", "target_column");
+        return 4;
+    }
+
+    const maybe_range = if (kind == 1)
+        client.selection.word(snapshot, viewport_row, target_column)
+    else
+        client.selection.visualRow(snapshot, viewport_row);
+    const range = maybe_range catch |failure| {
+        bridge.setError("selection_expand", @errorName(failure));
+        return 4;
+    } orelse return 0;
+    const ordered = range.ordered();
+
+    var end_column = ordered.end.column;
+    const end_viewport_row = selectionViewportRow(begin, ordered.end.row) orelse {
+        bridge.setError("selection_expand", "expanded_end_not_visible");
+        return 4;
+    };
+    if (client.selection.visualSpan(snapshot, range, end_viewport_row)) |span| {
+        end_column = span.end_column;
+    }
+
+    output.* = .{
+        .start_row = ordered.start.row,
+        .end_row = ordered.end.row,
+        .start_column = ordered.start.column,
+        .end_column = end_column,
+        .columns = range.columns,
+        .found = 1,
+        .alternate_screen = @intFromBool(range.alternate_screen),
+    };
+    return 0;
+}
+
 pub export fn howl_odin_bridge_selection_extract(
     raw: ?*Handle,
     start_row: i32,
@@ -1424,6 +1537,7 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
     try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
 }
 
-test "Odin search result record stays fixed" {
+test "Odin search and selection C records stay fixed" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(SearchMatchInfo));
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(SelectionRangeInfo));
 }
