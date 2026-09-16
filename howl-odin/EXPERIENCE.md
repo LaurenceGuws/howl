@@ -616,19 +616,42 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
-- Native Wayland window on KDE through SDL3.
+- Native Wayland window on KDE through SDL3 with SDL application metadata set to
+  `Howl` / `io.github.laurenceguws.howl`; KWin reports that exact app id and the
+  production window title is simply `Howl`, not a canary label.
+- Native desktop identity is packaged deliberately: a validated reverse-DNS
+  `.desktop` entry, hicolor PNG launcher icon, and an app-private BMP fed to
+  `SDL_SetWindowIcon`. A managed-KWin canary proved the wolf icon in the live
+  decorated window after removing diagnostic icon-size fallbacks.
+- User-local `--check` / `--promote` / `--uninstall` packaging keeps the Odin
+  executable, matching bridge library, `howl-sessiond`, and live-window icon in
+  one private libexec bundle. The executable retains `RUNPATH=$ORIGIN`, the
+  launcher is tiny, XDG desktop data honors `XDG_DATA_HOME`, and a hash manifest
+  prevents overwriting or removing unknown/modified files. A clean fake-HOME
+  install/resolve/uninstall round trip and an in-place managed-lab manifest
+  upgrade both passed.
 - System clipboard via SDL3.
 - XDG configuration location.
+- File and text drag/drop enter only an active interactive terminal and use the
+  canonical paste path. Text is preserved byte-for-byte; a file path becomes
+  one POSIX single-quoted shell argument plus a trailing separator. The policy
+  rejects empty/NUL/invalid-UTF-8/oversized paths instead of executing or
+  interpreting them. A real Dolphin → Howl KWin drag proved spaces plus an
+  embedded single quote as `'/tmp/howl-drop-fixture/Captain'\''s notes.txt' `.
+- Ctrl+click opens only canonical Session OSC 8 HTTP(S) hyperlinks; terminal
+  text is never regexed into a link and `file://` is refused deliberately.
+- Canonical BEL / RequestAttention / StealFocus consequences request brief
+  desktop attention without stealing focus. Ordinary notification messages are
+  consumed silently, so terminal output cannot manufacture a flashing desktop
+  dashboard. Multi-window consequence authority hands off when an owner closes.
 
 **WANTED**
 
-- Native app icon, desktop file, install/uninstall packaging, and MIME/URL policy
-  where relevant.
-- Drag-and-drop file paths/text into the active terminal with quoting policy kept
-  explicit.
-- Open canonical hyperlinks in the platform browser.
-- Audible/visual bell policy and desktop notification integration.
-- Window title updates and taskbar/dock attention without noisy animation.
+- MIME/file-association policy only after Howl owns a concrete open-file/open-URL
+  semantic; the desktop entry intentionally advertises no invented `MimeType`.
+- Audible bell and user-visible desktop notification delivery only if they add
+  value beyond the proven non-focus-stealing attention policy.
+- Canonical dynamic terminal title updates where Session exposes the fact.
 - Sensible multi-monitor placement and restore.
 
 **EXPLORE**

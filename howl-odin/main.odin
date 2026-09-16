@@ -13,6 +13,10 @@ import TTF "vendor:sdl3/ttf"
 
 UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
+APP_NAME :: "Howl"
+APP_VERSION :: "0.1.6-dev"
+APP_IDENTIFIER :: "io.github.laurenceguws.howl"
+APP_WINDOW_ICON :: "howl-window-icon.bmp"
 SESSION_TEXT_BYTES :: 512 * 1024
 SELECTION_TEXT_BYTES :: 1024 * 1024
 SEARCH_QUERY_BYTES :: 512
@@ -4530,6 +4534,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     case .WINDOW_FOCUS_GAINED:
         _ = send_semantic_focus(active_session_view(app), true)
         wake_consequence_owners(app)
+    case .DROP_FILE:
+        _ = drop_into_active_terminal(app, event.drop.data, true)
+    case .DROP_TEXT:
+        _ = drop_into_active_terminal(app, event.drop.data, false)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
@@ -6037,6 +6045,10 @@ main :: proc() {
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
     assert(size_of(Profile_Env_Info) == int(profile_env_info_size()))
     assert(size_of(Consequence_Info) == int(consequence_info_size()))
+    if !SDL.SetAppMetadata(APP_NAME, APP_VERSION, APP_IDENTIFIER) {
+        sdl_error("SDL_SetAppMetadata failed")
+        return
+    }
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return
@@ -6055,12 +6067,22 @@ main :: proc() {
     }
 
     flags := SDL.WindowFlags{.RESIZABLE, .HIGH_PIXEL_DENSITY}
-    window := SDL.CreateWindow("Howl Desktop - Odin canary", 1180, 760, flags)
+    window := SDL.CreateWindow(APP_NAME, 1180, 760, flags)
     if window == nil {
         sdl_error("SDL_CreateWindow failed")
         return
     }
     defer SDL.DestroyWindow(window)
+
+    if base_path := SDL.GetBasePath(); base_path != nil {
+        icon_path_buffer: [4096]u8
+        icon_path := fmt.bprintf(icon_path_buffer[:len(icon_path_buffer)-1], "%s%s", string(base_path), APP_WINDOW_ICON)
+        icon_path_buffer[len(icon_path)] = 0
+        if icon := SDL.LoadBMP(cstring(raw_data(icon_path_buffer[:]))); icon != nil {
+            _ = SDL.SetWindowIcon(window, icon)
+            SDL.DestroySurface(icon)
+        }
+    }
 
     renderer_name: cstring = nil
     if os.get_env("HOWL_ODIN_SDL_RENDERER", context.temp_allocator) == "software" {

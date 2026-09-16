@@ -53,5 +53,6 @@ odin build "$module_root" \
   -debug
 install_atomically "$bridge_lib" "$output_root/libhowl_odin_bridge.so"
 install_atomically "$sessiond" "$output_root/howl-sessiond"
+install_atomically "$module_root/packaging/howl-window-icon.bmp" "$output_root/howl-window-icon.bmp"
 
 printf 'howl-odin: built %s\n' "$output_root/howl-odin"
