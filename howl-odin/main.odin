@@ -27,7 +27,7 @@ OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
 FONT_PRESET_MAX :: 2
-CONFIG_SCHEMA :: 2
+CONFIG_SCHEMA :: 3
 
 User_Keybinding_Config :: struct {
     action: string `json:"action"`,
@@ -38,6 +38,8 @@ User_Config :: struct {
     schema: int `json:"schema"`,
     terminal_font_pixels: int `json:"terminal_font_pixels"`,
     startup_profile: int `json:"startup_profile"`,
+    default_profile: string `json:"default_profile"`,
+    profiles: []User_Profile_Config `json:"profiles"`,
     keybindings: []User_Keybinding_Config `json:"keybindings"`,
 }
 
@@ -139,6 +141,8 @@ History_Scrollbar_Geometry :: struct {
 Session_View :: struct {
     ownership: Session_Ownership,
     owned_process: rawptr,
+    profile_index: int,
+    profile_font_pixels: u16,
     control: rawptr,
     observer: rawptr,
     cancellation: rawptr,
@@ -417,6 +421,8 @@ App :: struct {
     ime_preedit_start: i32,
     ime_preedit_length: i32,
     next_session_identity: u32,
+    profiles: [MAX_PROFILES]^Profile,
+    profile_count: int,
     startup_profile: int,
     tab_dragging: bool,
     tab_drag_index: int,
@@ -483,7 +489,7 @@ load_user_config :: proc() -> User_Config {
     }
     candidate: User_Config
     if json.unmarshal(data, &candidate, allocator=context.temp_allocator) != nil ||
-       (candidate.schema != 1 && candidate.schema != CONFIG_SCHEMA) {
+       (candidate.schema != 1 && candidate.schema != 2 && candidate.schema != CONFIG_SCHEMA) {
         return result
     }
     if candidate.terminal_font_pixels == 12 || candidate.terminal_font_pixels == 15 || candidate.terminal_font_pixels == 18 {
@@ -494,6 +500,10 @@ load_user_config :: proc() -> User_Config {
     }
     if candidate.schema >= 2 {
         result.keybindings = candidate.keybindings
+    }
+    if candidate.schema >= 3 {
+        result.default_profile = candidate.default_profile
+        result.profiles = candidate.profiles
     }
     return result
 }
@@ -522,10 +532,46 @@ save_user_config :: proc(app: ^App) {
         }
         override_count += 1
     }
+
+    profile_configs: [MAX_PROFILES]User_Profile_Config
+    profile_env_configs: [MAX_PROFILES][MAX_PROFILE_ENV]User_Profile_Env_Config
+    profile_config_count := 0
+    for index in 0..<app.profile_count {
+        profile := app.profiles[index]
+        if profile == nil || profile.built_in {
+            continue
+        }
+        env_count := 0
+        for env_index in 0..<profile.env_count {
+            entry := &profile.env[env_index]
+            profile_env_configs[profile_config_count][env_count] = User_Profile_Env_Config{
+                name = profile_env_name(entry),
+                value = profile_env_value(entry),
+            }
+            env_count += 1
+        }
+        profile_configs[profile_config_count] = User_Profile_Config{
+            id = profile_id(profile),
+            name = profile_name(profile),
+            mode = profile_mode_text(profile.mode),
+            shell = profile_shell(profile),
+            command = profile_command(profile),
+            cwd = profile_cwd(profile),
+            endpoint = profile_endpoint(profile),
+            environment = profile_env_configs[profile_config_count][:env_count],
+            font_pixels = int(profile.font_pixels),
+        }
+        profile_config_count += 1
+    }
+
+    default_profile := profile_at(app, app.startup_profile)
+    default_id := profile_id(default_profile)
     value := User_Config{
         schema = CONFIG_SCHEMA,
         terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
-        startup_profile = app.startup_profile,
+        startup_profile = default_id == "local" ? 1 : 0,
+        default_profile = default_id,
+        profiles = profile_configs[:profile_config_count],
         keybindings = overrides[:override_count],
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
@@ -540,16 +586,23 @@ save_user_config :: proc(app: ^App) {
     }
 }
 
-startup_profile_label :: proc(value: int) -> string {
-    return value == 1 ? "Local shell" : "Home Session"
+startup_profile_label :: proc(app: ^App, value: int) -> string {
+    return profile_name(profile_at(app, value))
 }
 
-startup_action_label :: proc(value: int) -> string {
-    return value == 1 ? "Create owned Session" : "Attach existing Session"
+startup_action_label :: proc(app: ^App, value: int) -> string {
+    profile := profile_at(app, value)
+    if profile == nil {
+        return "Unavailable"
+    }
+    return profile.mode == .Launch ? "Create owned Session" : "Attach existing Session"
 }
 
 adjust_startup_profile :: proc(app: ^App, delta: int) {
-    next := clamp(app.startup_profile + delta, 0, 1)
+    if app == nil || app.profile_count == 0 {
+        return
+    }
+    next := clamp(app.startup_profile + delta, 0, app.profile_count - 1)
     if next == app.startup_profile {
         return
     }
@@ -839,7 +892,10 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     if view == nil {
         return false
     }
-    pixels := font_pixels_for_preset(app.terminal_font_preset)
+    pixels := view.profile_font_pixels
+    if pixels == 0 {
+        pixels = font_pixels_for_preset(app.terminal_font_preset)
+    }
     if view.canvas != nil && view.canvas_font_pixels == pixels {
         return true
     }
@@ -1993,14 +2049,36 @@ session_endpoint :: proc(view: ^Session_View) -> string {
     return string(view.endpoint[:view.endpoint_len])
 }
 
-create_owned_session_view :: proc(app: ^App) -> ^Session_View {
+create_owned_profile_session_view :: proc(app: ^App, profile: ^Profile, profile_index: int) -> ^Session_View {
+    if app == nil || profile == nil || profile.mode != .Launch {
+        return create_error_session_view("Invalid launch profile", .Owned)
+    }
     runtime_dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
     if len(runtime_dir) == 0 {
-        return create_error_session_view("Missing XDG_RUNTIME_DIR", .Owned)
+        view := create_error_session_view("Missing XDG_RUNTIME_DIR", .Owned)
+        if view != nil do view.profile_index = profile_index
+        return view
     }
-    shell := os.get_env("SHELL", context.temp_allocator)
+    shell := profile_shell(profile)
+    if len(shell) == 0 {
+        shell = os.get_env("SHELL", context.temp_allocator)
+    }
     if len(shell) == 0 {
         shell = "/bin/sh"
+    }
+    command := profile_command(profile)
+    cwd := profile_cwd(profile)
+    env_entries: [MAX_PROFILE_ENV]Profile_Env_Info
+    for index in 0..<profile.env_count {
+        source := &profile.env[index]
+        name := profile_env_name(source)
+        value := profile_env_value(source)
+        env_entries[index] = Profile_Env_Info{
+            name = raw_data(name),
+            name_len = c.size_t(len(name)),
+            value = raw_data(value),
+            value_len = c.size_t(len(value)),
+        }
     }
     identity := app.next_session_identity
     app.next_session_identity += 1
@@ -2011,6 +2089,12 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         c.size_t(len(runtime_dir)),
         raw_data(shell),
         c.size_t(len(shell)),
+        raw_data(command),
+        c.size_t(len(command)),
+        raw_data(cwd),
+        c.size_t(len(cwd)),
+        raw_data(env_entries[:]),
+        c.size_t(profile.env_count),
         OWNED_SESSION_ROWS,
         OWNED_SESSION_COLUMNS,
         identity,
@@ -2019,7 +2103,12 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         &diagnostic_len,
     )
     if owned == nil {
-        return create_error_session_view(string(diagnostic[:int(diagnostic_len)]), .Owned)
+        view := create_error_session_view(string(diagnostic[:int(diagnostic_len)]), .Owned)
+        if view != nil {
+            view.profile_index = profile_index
+            view.profile_font_pixels = profile.font_pixels
+        }
+        return view
     }
     endpoint_storage: [160]u8
     endpoint_len: c.size_t
@@ -2030,14 +2119,23 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         &endpoint_len,
     ) != 0 {
         owned_session_destroy(owned)
-        return create_error_session_view("owned_session_endpoint_failed", .Owned)
+        view := create_error_session_view("owned_session_endpoint_failed", .Owned)
+        if view != nil do view.profile_index = profile_index
+        return view
     }
     endpoint := string(endpoint_storage[:int(endpoint_len)])
     view := create_session_view(endpoint, owned, .Owned)
     if view == nil {
         owned_session_destroy(owned)
+        return nil
     }
+    view.profile_index = profile_index
+    view.profile_font_pixels = profile.font_pixels
     return view
+}
+
+create_owned_session_view :: proc(app: ^App) -> ^Session_View {
+    return create_owned_profile_session_view(app, profile_at(app, 1), 1)
 }
 
 interaction_mouse_tracking_enabled :: proc(state: Interaction_State_Info) -> bool {
@@ -3714,11 +3812,22 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string, profile: 
     return true
 }
 
-profile_view :: proc(app: ^App, profile: int) -> (view: ^Session_View, title: string) {
-    if profile == 1 {
-        return create_owned_session_view(app), "Local shell"
+profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Session_View, title: string) {
+    profile := profile_at(app, profile_index)
+    if profile == nil {
+        return create_error_session_view("Unknown profile", .Attached), "Unknown profile"
     }
-    return create_session_view(HOME_ENDPOINT, rawptr(nil), .Attached), "Home Session"
+    title = profile_name(profile)
+    if profile.mode == .Launch {
+        return create_owned_profile_session_view(app, profile, profile_index), title
+    }
+    endpoint := profile_endpoint(profile)
+    view = create_session_view(endpoint, rawptr(nil), .Attached)
+    if view != nil {
+        view.profile_index = profile_index
+        view.profile_font_pixels = profile.font_pixels
+    }
+    return view, title
 }
 
 open_profile_tab :: proc(app: ^App, profile: int) {
@@ -3765,16 +3874,7 @@ recover_active_session :: proc(app: ^App) -> bool {
     if view == nil || !session_recoverable(view) {
         return false
     }
-    replacement: ^Session_View
-    if session_is_owned(view) {
-        replacement = create_owned_session_view(app)
-    } else {
-        endpoint := session_endpoint(view)
-        if len(endpoint) == 0 {
-            return false
-        }
-        replacement = create_session_view(endpoint, nil, .Attached)
-    }
+    replacement, _ := profile_view(app, view.profile_index)
     if replacement == nil {
         return false
     }
@@ -4085,19 +4185,18 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         return true
     }
     if app.profile_menu_open {
+        item_count := app.profile_count + 2
         switch event.key.key {
         case SDL.K_ESCAPE:
             app.profile_menu_open = false
         case SDL.K_UP:
-            app.profile_menu_selection = (app.profile_menu_selection + 3) % 4
+            app.profile_menu_selection = (app.profile_menu_selection + item_count - 1) % item_count
         case SDL.K_DOWN, SDL.K_TAB:
-            app.profile_menu_selection = (app.profile_menu_selection + 1) % 4
+            app.profile_menu_selection = (app.profile_menu_selection + 1) % item_count
         case SDL.K_RETURN:
-            if app.profile_menu_selection == 0 {
-                execute_action(app, .Open_Local)
-            } else if app.profile_menu_selection == 1 {
-                execute_action(app, .Attach_Home)
-            } else if app.profile_menu_selection == 2 {
+            if app.profile_menu_selection < app.profile_count {
+                open_profile_tab(app, app.profile_menu_selection)
+            } else if app.profile_menu_selection == app.profile_count {
                 execute_action(app, .Open_Command_Palette)
             } else {
                 execute_action(app, .Open_Settings)
@@ -4184,9 +4283,12 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     return false
 }
 
-profile_menu_rect :: proc(tab_count: int) -> SDL.FRect {
+profile_menu_rect :: proc(app: ^App) -> SDL.FRect {
+    tab_count := app != nil ? app.tab_count : 0
+    profile_count := app != nil ? app.profile_count : 0
     _, menu, _ := tab_controls(tab_count, 0)
-    return {menu.x - 8, 44, 330, 224}
+    height := f32(20 + profile_count * 48 + 92)
+    return {menu.x - 8, 44, 350, height}
 }
 
 settings_panel_rect :: proc(width, height: f32) -> SDL.FRect {
@@ -4258,20 +4360,20 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if app.profile_menu_open {
-        panel := profile_menu_rect(app.tab_count)
-        if inside(x, y, {panel.x + 8, panel.y + 8, panel.w - 16, 48}) {
-            execute_action(app, .Open_Local)
-            return
+        panel := profile_menu_rect(app)
+        for profile_index in 0..<app.profile_count {
+            row := SDL.FRect{panel.x + 8, panel.y + 8 + f32(profile_index) * 48, panel.w - 16, 42}
+            if inside(x, y, row) {
+                open_profile_tab(app, profile_index)
+                return
+            }
         }
-        if inside(x, y, {panel.x + 8, panel.y + 60, panel.w - 16, 48}) {
-            execute_action(app, .Attach_Home)
-            return
-        }
-        if inside(x, y, {panel.x + 8, panel.y + 126, panel.w - 16, 36}) {
+        actions_y := panel.y + 14 + f32(app.profile_count) * 48
+        if inside(x, y, {panel.x + 8, actions_y, panel.w - 16, 36}) {
             execute_action(app, .Open_Command_Palette)
             return
         }
-        if inside(x, y, {panel.x + 8, panel.y + 172, panel.w - 16, 36}) {
+        if inside(x, y, {panel.x + 8, actions_y + 42, panel.w - 16, 36}) {
             execute_action(app, .Open_Settings)
             return
         }
@@ -4865,35 +4967,31 @@ draw_tabs :: proc(app: ^App, width: f32) {
 }
 
 draw_profile_menu :: proc(app: ^App) {
-    panel := profile_menu_rect(app.tab_count)
+    panel := profile_menu_rect(app)
     draw_fill(app.renderer, panel, palette.title_bg)
     draw_outline(app.renderer, panel, palette.border)
-
-    rows := [4]SDL.FRect{
-        {panel.x + 8, panel.y + 8, panel.w - 16, 48},
-        {panel.x + 8, panel.y + 60, panel.w - 16, 48},
-        {panel.x + 8, panel.y + 126, panel.w - 16, 36},
-        {panel.x + 8, panel.y + 172, panel.w - 16, 36},
+    for profile_index in 0..<app.profile_count {
+        profile := app.profiles[profile_index]
+        row := SDL.FRect{panel.x + 8, panel.y + 8 + f32(profile_index) * 48, panel.w - 16, 42}
+        if app.profile_menu_selection == profile_index {
+            draw_fill(app.renderer, row, palette.tab_active)
+        }
+        draw_text(app, app.ui_font, profile_name(profile), row.x + 10, row.y + 5, palette.text)
+        detail := profile.mode == .Launch ? "Create Session" : "Attach Session"
+        draw_text(app, app.ui_font, detail, row.x + 10, row.y + 23, palette.text_muted)
+        if app.startup_profile == profile_index {
+            draw_text(app, app.ui_font, "default", row.x + row.w - 72, row.y + 13, palette.accent)
+        }
     }
-    draw_fill(app.renderer, rows[app.profile_menu_selection], palette.tab_active)
-
-    draw_text(app, app.ui_font, action_label(.Open_Local), panel.x + 18, panel.y + 14, palette.text)
-    draw_text(app, app.ui_font, "Create owned Session", panel.x + 18, panel.y + 34, palette.text_muted)
-    if app.startup_profile == 1 {
-        draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 14, palette.accent)
-    }
-
-    draw_text(app, app.ui_font, action_label(.Attach_Home), panel.x + 18, panel.y + 66, palette.text)
-    draw_text(app, app.ui_font, HOME_ENDPOINT, panel.x + 18, panel.y + 86, palette.text_muted)
-    if app.startup_profile == 0 {
-        draw_text(app, app.ui_font, "default", panel.x + 254, panel.y + 66, palette.accent)
-    }
-
-    draw_fill(app.renderer, {panel.x + 10, panel.y + 116, panel.w - 20, 1}, palette.border)
-    draw_text(app, app.ui_font, action_label(.Open_Command_Palette), panel.x + 18, panel.y + 136, palette.text)
-    draw_text(app, app.ui_font, action_binding_text(app, .Open_Command_Palette), panel.x + 190, panel.y + 136, palette.text_muted)
-    draw_text(app, app.ui_font, action_label(.Open_Settings), panel.x + 18, panel.y + 182, palette.text)
-    draw_text(app, app.ui_font, action_binding_text(app, .Open_Settings), panel.x + 248, panel.y + 182, palette.text_muted)
+    actions_y := panel.y + 14 + f32(app.profile_count) * 48
+    palette_row := SDL.FRect{panel.x + 8, actions_y, panel.w - 16, 36}
+    settings_row := SDL.FRect{panel.x + 8, actions_y + 42, panel.w - 16, 36}
+    if app.profile_menu_selection == app.profile_count do draw_fill(app.renderer, palette_row, palette.tab_active)
+    if app.profile_menu_selection == app.profile_count + 1 do draw_fill(app.renderer, settings_row, palette.tab_active)
+    draw_text(app, app.ui_font, action_label(.Open_Command_Palette), palette_row.x + 10, palette_row.y + 8, palette.text)
+    draw_text(app, app.ui_font, action_binding_text(app, .Open_Command_Palette), palette_row.x + 190, palette_row.y + 8, palette.text_muted)
+    draw_text(app, app.ui_font, action_label(.Open_Settings), settings_row.x + 10, settings_row.y + 8, palette.text)
+    draw_text(app, app.ui_font, action_binding_text(app, .Open_Settings), settings_row.x + 252, settings_row.y + 8, palette.text_muted)
 }
 
 history_scrollbar_geometry :: proc(
@@ -5615,9 +5713,16 @@ draw_settings :: proc(app: ^App, width, height: f32) {
 
     switch app.settings_page {
     case .Startup:
-        draw_setting_field(app, "Default profile   Left/Right", startup_profile_label(app.startup_profile), content_x, content_y + 48, 300)
-        draw_setting_field(app, "Startup action", startup_action_label(app.startup_profile), content_x, content_y + 126, 300)
-        draw_setting_field(app, app.startup_profile == 1 ? "Session owner" : "Endpoint", app.startup_profile == 1 ? "Sibling howl-sessiond" : HOME_ENDPOINT, content_x, content_y + 204, 360)
+        draw_setting_field(app, "Default profile   Left/Right", startup_profile_label(app, app.startup_profile), content_x, content_y + 48, 300)
+        draw_setting_field(app, "Startup action", startup_action_label(app, app.startup_profile), content_x, content_y + 126, 300)
+        startup := profile_at(app, app.startup_profile)
+        if startup != nil && startup.mode == .Launch {
+            launch_detail := profile_command(startup)
+            if len(launch_detail) == 0 do launch_detail = "Sibling howl-sessiond"
+            draw_setting_field(app, "Launch", launch_detail, content_x, content_y + 204, 360)
+        } else {
+            draw_setting_field(app, "Endpoint", profile_endpoint(startup), content_x, content_y + 204, 360)
+        }
     case .Interaction:
         draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, 340)
         draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
@@ -5723,6 +5828,7 @@ main :: proc() {
     assert(size_of(Search_Match_Info) == int(search_match_info_size()))
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
+    assert(size_of(Profile_Env_Info) == int(profile_env_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return
@@ -5803,8 +5909,15 @@ main :: proc() {
         tab_drag_index = -1,
         pane_resize_tab = -1,
         next_session_identity = 1,
-        startup_profile = user_config.startup_profile,
+        startup_profile = 0,
     }
+    if !initialize_builtin_profiles(&app) {
+        sdl_error("Built-in profile initialization failed")
+        return
+    }
+    defer destroy_profiles(&app)
+    load_user_profiles(&app, user_config.profiles)
+    app.startup_profile = default_profile_index_from_config(&app, user_config)
     if !initialize_action_bindings(&app) {
         sdl_error("Default action bindings invalid")
         return

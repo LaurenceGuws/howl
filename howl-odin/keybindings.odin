@@ -457,7 +457,6 @@ apply_user_keybindings :: proc(app: ^App, overrides: []User_Keybinding_Config) -
 		}
 	}
 	app.action_bindings = candidate
-	app.config_notice_len = 0
 	return true
 }
 

@@ -95,6 +95,13 @@ pub const InteractionStateInfo = extern struct {
     _reserved: u8 = 0,
 };
 
+const ProfileEnvInfo = extern struct {
+    name_ptr: [*]const u8,
+    name_len: usize,
+    value_ptr: [*]const u8,
+    value_len: usize,
+};
+
 const interaction_info_flags = struct {
     const alternate_scroll: u32 = 1 << 0;
     const focus_reporting: u32 = 1 << 1;
@@ -669,6 +676,10 @@ pub export fn howl_odin_bridge_interaction_state_info_size() u32 {
     return @sizeOf(InteractionStateInfo);
 }
 
+pub export fn howl_odin_bridge_profile_env_info_size() u32 {
+    return @sizeOf(ProfileEnvInfo);
+}
+
 const Handle = opaque {};
 const CancellationHandle = opaque {};
 const OwnedSessionHandle = opaque {};
@@ -727,6 +738,12 @@ pub export fn howl_odin_bridge_owned_session_create(
     runtime_dir_len: usize,
     shell_ptr: [*]const u8,
     shell_len: usize,
+    command_ptr: [*]const u8,
+    command_len: usize,
+    cwd_ptr: [*]const u8,
+    cwd_len: usize,
+    env_ptr: [*]const ProfileEnvInfo,
+    env_count: usize,
     rows: u16,
     columns: u16,
     identity: u32,
@@ -735,11 +752,60 @@ pub export fn howl_odin_bridge_owned_session_create(
     diagnostic_len: *usize,
 ) ?*OwnedSessionHandle {
     diagnostic_len.* = 0;
-    if (runtime_dir_len == 0 or shell_len == 0 or rows == 0 or columns == 0 or identity == 0) {
+    if (runtime_dir_len == 0 or shell_len == 0 or rows == 0 or columns == 0 or identity == 0 or
+        env_count > 32 or command_len > 16384 or cwd_len > 4096)
+    {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_launch");
         return null;
     }
+    const shell = shell_ptr[0..shell_len];
+    const command: ?[]const u8 = if (command_len == 0) null else command_ptr[0..command_len];
+    const cwd: ?[]const u8 = if (cwd_len == 0) null else cwd_ptr[0..cwd_len];
+    if (std.mem.indexOfScalar(u8, shell, 0) != null or
+        (command != null and std.mem.indexOfScalar(u8, command.?, 0) != null) or
+        (cwd != null and std.mem.indexOfScalar(u8, cwd.?, 0) != null))
+    {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_launch_text");
+        return null;
+    }
+
     const allocator = std.heap.c_allocator;
+    var environment_map = std.process.Environ.Map.init(allocator);
+    var use_environment_map = false;
+    defer if (use_environment_map) environment_map.deinit();
+    if (env_count != 0) {
+        use_environment_map = true;
+        environment_map.putPosixBlock(currentProcessEnviron().block.view()) catch {
+            writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_copy_failed");
+            return null;
+        };
+        var total_bytes: usize = 0;
+        for (env_ptr[0..env_count]) |entry| {
+            if (entry.name_len == 0 or entry.name_len > 255 or entry.value_len > 4096) {
+                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_environment_entry");
+                return null;
+            }
+            const name = entry.name_ptr[0..entry.name_len];
+            const value = entry.value_ptr[0..entry.value_len];
+            if (!std.process.Environ.Map.validateKeyForPut(name) or std.mem.indexOfScalar(u8, value, 0) != null) {
+                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_environment_entry");
+                return null;
+            }
+            total_bytes = std.math.add(usize, total_bytes, name.len + value.len) catch {
+                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_limit");
+                return null;
+            };
+            if (total_bytes > 64 * 1024) {
+                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_limit");
+                return null;
+            }
+            environment_map.put(name, value) catch {
+                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_copy_failed");
+                return null;
+            };
+        }
+    }
+
     const owned = allocator.create(OwnedSession) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
@@ -758,8 +824,10 @@ pub export fn howl_odin_bridge_owned_session_create(
         allocator,
         owned.threaded.io(),
         runtime_dir_ptr[0..runtime_dir_len],
-        shell_ptr[0..shell_len],
-        null,
+        shell,
+        command,
+        cwd,
+        if (use_environment_map) &environment_map else null,
         rows,
         columns,
         identity,
@@ -1440,8 +1508,8 @@ pub export fn howl_odin_bridge_interaction_state(
     output.* = .{
         .terminal_revision = state.terminal_revision,
         .flags = flags,
-        .mouse_tracking = @intFromEnum(state.mouse_tracking),
-        .mouse_protocol = @intFromEnum(state.mouse_protocol),
+        .mouse_tracking = @backingInt(state.mouse_tracking),
+        .mouse_protocol = @backingInt(state.mouse_protocol),
         .pointer_mode = state.pointer_mode,
     };
     return 0;
@@ -1629,12 +1697,12 @@ test "bridge named key action values stay protocol-aligned" {
     try std.testing.expectEqual(@as(u8, 3), @backingInt(protocol.InputKeyAction.release));
     try std.testing.expectEqual(@as(u8, 1), protocol.typed_input.modifiers.shift);
     try std.testing.expectEqual(@as(u8, 4), protocol.typed_input.modifiers.control);
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputMouseKind.press));
-    try std.testing.expectEqual(@as(u8, 4), @intFromEnum(protocol.InputMouseKind.wheel));
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputMouseButton.left));
-    try std.testing.expectEqual(@as(u8, 5), @intFromEnum(protocol.InputMouseButton.wheel_down));
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputFocus.in));
-    try std.testing.expectEqual(@as(u8, 2), @intFromEnum(protocol.InputFocus.out));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputMouseKind.press));
+    try std.testing.expectEqual(@as(u8, 4), @backingInt(protocol.InputMouseKind.wheel));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputMouseButton.left));
+    try std.testing.expectEqual(@as(u8, 5), @backingInt(protocol.InputMouseButton.wheel_down));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputFocus.in));
+    try std.testing.expectEqual(@as(u8, 2), @backingInt(protocol.InputFocus.out));
 }
 
 test "Odin Canvas C records stay fixed and format tags follow Canvas" {

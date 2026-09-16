@@ -72,10 +72,16 @@ Current canary:
   and later saves update the existing config directory instead of treating its
   normal `.Exist` result as failure;
 - `+`, `Ctrl+T`, startup, and split-pane creation all consume that same default
-  profile instead of hard-coding a process type. With Home as default they add
-  another observer view and spawn no PTY; with Local shell as default they
-  create a new owned Session. The profile dropdown always exposes both choices
-  explicitly and marks the current default;
+  profile instead of hard-coding a process type. The runtime catalogue now includes
+  bounded schema-3 user recipes beside Home/Local; each recipe names attach-vs-launch
+  ownership, shell/command/cwd, inherited-environment overrides, endpoint, and an
+  optional font-size presentation default. The profile dropdown enumerates the real
+  catalogue and marks the stable-id default;
+- owned profile launches stay inside the shared `SessionProcess` owner. Its sibling
+  `howl-sessiond` argv now carries optional command/cwd flags, while the Odin bridge
+  applies bounded environment replacements over the inherited desktop environment.
+  A Lab Recipe canary proved command execution, `/tmp` cwd, env override, and a 12 px
+  42×160 grid against built-in Local's 15 px 34×124 grid in the same pane;
 - Home tab observes the existing canonical Howl Session at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;

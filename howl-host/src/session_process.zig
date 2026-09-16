@@ -23,6 +23,8 @@ pub const SessionProcess = struct {
         io: std.Io,
         runtime_dir: []const u8,
         shell: []const u8,
+        command: ?[]const u8,
+        cwd: ?[]const u8,
         environ_map: ?*const std.process.Environ.Map,
         rows: u16,
         cols: u16,
@@ -40,6 +42,8 @@ pub const SessionProcess = struct {
             sessiond_path,
             runtime_dir,
             shell,
+            command,
+            cwd,
             environ_map,
             rows,
             cols,
@@ -53,6 +57,8 @@ pub const SessionProcess = struct {
         sessiond_path: []const u8,
         runtime_dir: []const u8,
         shell: []const u8,
+        command: ?[]const u8,
+        cwd: ?[]const u8,
         environ_map: ?*const std.process.Environ.Map,
         rows: u16,
         cols: u16,
@@ -78,15 +84,25 @@ pub const SessionProcess = struct {
         defer allocator.free(rows_text);
         const cols_text = try std.fmt.allocPrint(allocator, "{d}", .{cols});
         defer allocator.free(cols_text);
-        const argv = [_][]const u8{
-            sessiond_path,
-            socket_path,
-            shell,
-            rows_text,
-            cols_text,
-        };
+        var argv_storage: [9][]const u8 = undefined;
+        var argv_count: usize = 5;
+        argv_storage[0] = sessiond_path;
+        argv_storage[1] = socket_path;
+        argv_storage[2] = shell;
+        argv_storage[3] = rows_text;
+        argv_storage[4] = cols_text;
+        if (command) |value| {
+            argv_storage[argv_count] = "--command";
+            argv_storage[argv_count + 1] = value;
+            argv_count += 2;
+        }
+        if (cwd) |value| {
+            argv_storage[argv_count] = "--cwd";
+            argv_storage[argv_count + 1] = value;
+            argv_count += 2;
+        }
         var child = try std.process.spawn(io, .{
-            .argv = &argv,
+            .argv = argv_storage[0..argv_count],
             .environ_map = environ_map,
             .stdin = .ignore,
             .stdout = .ignore,

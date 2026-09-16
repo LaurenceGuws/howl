@@ -169,11 +169,24 @@ These labels are descriptive, not priority scores.
 - Home Session means “attach another non-owning client view”.
 - One persisted default profile drives startup, `+`, `Ctrl+T`, and split creation.
 - Owned Local shells inherit the real desktop process environment.
+- Schema-3 user profiles are bounded typed recipes with stable id/name,
+  attach-vs-launch ownership, shell, optional command/cwd, inherited-environment
+  overrides, endpoint, and optional 12/15/18 px presentation default. Built-ins
+  and user profiles share one runtime catalogue and dropdown.
+- The host/session launch seam carries optional command and cwd through the existing
+  `SessionProcess` owner into `howl-sessiond`/`howl-pty`; Odin applies bounded env
+  replacements on top of inherited desktop environment instead of shell `export`
+  text. A Lab Recipe canary proved `/tmp` cwd, `HOWL_PROFILE_CANARY=green`, startup
+  command execution, and a 12 px **42×160** grid versus built-in Local 15 px
+  **34×124** in the same pane.
+- Schema-3 saves preserve user recipes atomically and name the default by stable
+  profile id; schema 1/2 remain readable and migrate on later save.
 
 **WANTED**
 
-- Named user profiles with command/shell, working directory, environment edits,
-  icon, optional color accent, and attach-vs-create policy.
+- Full Settings create/edit/delete/duplicate flows for user-owned profiles; built-ins
+  remain immutable and should be duplicated to customize.
+- Profile icon and optional color accent.
 - Profile defaults plus per-profile overrides.
 - Duplicate/edit/delete flows with explicit built-in vs user-owned distinction.
 - Launch profile from command palette and profile menu.

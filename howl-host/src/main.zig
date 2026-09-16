@@ -38,6 +38,8 @@ pub fn main(init: std.process.Init) !void {
             init.io,
             owned_runtime_dir,
             shell,
+            null,
+            null,
             init.environ_map,
             24,
             80,

@@ -1478,6 +1478,8 @@ fn createSecondSession(
         boundary.runtimeIo(),
         runtime_dir,
         shell,
+        null,
+        null,
         environ_map,
         workspace_rows,
         workspace_cols,

@@ -1990,9 +1990,64 @@ fn announceTcpEndpoint(port: u16) !void {
     }
 }
 
+const SessiondLaunchArgs = struct {
+    listener_spec: ListenerSpec,
+    shell: []const u8,
+    rows: u16,
+    columns: u16,
+    command: ?[]const u8 = null,
+    cwd: ?[]const u8 = null,
+};
+
+fn parseSessiondLaunchArgs(argv: []const []const u8) error{
+    InvalidArguments,
+    InvalidRows,
+    InvalidColumns,
+}!SessiondLaunchArgs {
+    if (argv.len < 5 or argv.len > 9) return error.InvalidArguments;
+    const listener_spec = parseListenerSpec(argv[1]) catch return error.InvalidArguments;
+    const rows = std.fmt.parseInt(u16, argv[3], 10) catch return error.InvalidRows;
+    const columns = std.fmt.parseInt(u16, argv[4], 10) catch return error.InvalidColumns;
+    if (argv[2].len == 0 or rows == 0 or columns == 0) return error.InvalidArguments;
+
+    var command: ?[]const u8 = null;
+    var cwd: ?[]const u8 = null;
+    if (argv.len == 6 and !std.mem.startsWith(u8, argv[5], "--")) {
+        command = if (argv[5].len == 0) null else argv[5];
+    } else {
+        var index: usize = 5;
+        while (index < argv.len) {
+            if (index + 1 >= argv.len) return error.InvalidArguments;
+            const name = argv[index];
+            const value = argv[index + 1];
+            if (std.mem.eql(u8, name, "--command")) {
+                if (command != null) return error.InvalidArguments;
+                command = if (value.len == 0) null else value;
+            } else if (std.mem.eql(u8, name, "--cwd")) {
+                if (cwd != null or value.len == 0) return error.InvalidArguments;
+                cwd = value;
+            } else {
+                return error.InvalidArguments;
+            }
+            index += 2;
+        }
+    }
+    return .{
+        .listener_spec = listener_spec,
+        .shell = argv[2],
+        .rows = rows,
+        .columns = columns,
+        .command = command,
+        .cwd = cwd,
+    };
+}
+
 /// Starts one shared session process. Usage:
-/// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [COMMAND]`.
+/// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [COMMAND]` or
+/// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [--command COMMAND] [--cwd CWD]`.
 ///
+/// The one positional COMMAND spelling remains backward compatible. New launch
+/// policy uses explicit flags so cwd can exist independently of command.
 /// A bare first argument retains the Unix-path transport. `tcp:PORT` binds
 /// IPv4 loopback only; `tcp:0` asks the kernel for a free port and reports it.
 pub fn main(init: std.process.Init) error{
@@ -2001,20 +2056,53 @@ pub fn main(init: std.process.Init) error{
     InvalidColumns,
     SessionServerFailed,
 }!void {
-    const argv = init.minimal.args.vector;
-    if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
-    const listener_spec = parseListenerSpec(std.mem.span(argv[1])) catch return error.InvalidArguments;
-    const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
-    const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
-    var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, listener_spec, .{
-        .shell = std.mem.span(argv[2]),
-        .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
-        .rows = rows,
-        .columns = columns,
+    const argv_raw = init.minimal.args.vector;
+    if (argv_raw.len > 9) return error.InvalidArguments;
+    var argv_storage: [9][]const u8 = undefined;
+    for (argv_raw, 0..) |value, index| argv_storage[index] = std.mem.span(value);
+    const parsed = try parseSessiondLaunchArgs(argv_storage[0..argv_raw.len]);
+    var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, parsed.listener_spec, .{
+        .shell = parsed.shell,
+        .command = parsed.command,
+        .cwd = parsed.cwd,
+        .rows = parsed.rows,
+        .columns = parsed.columns,
     }) catch return error.SessionServerFailed;
     defer server.deinit();
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
     while (true) server.turn(-1) catch return error.SessionServerFailed;
+}
+
+test "sessiond launch args preserve legacy command and explicit cwd" {
+    const base = [_][]const u8{ "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37", "80" };
+    const plain = try parseSessiondLaunchArgs(&base);
+    try std.testing.expectEqualStrings("/bin/bash", plain.shell);
+    try std.testing.expectEqual(@as(?[]const u8, null), plain.command);
+    try std.testing.expectEqual(@as(?[]const u8, null), plain.cwd);
+
+    const legacy = [_][]const u8{ "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37", "80", "printf legacy" };
+    const legacy_parsed = try parseSessiondLaunchArgs(&legacy);
+    try std.testing.expectEqualStrings("printf legacy", legacy_parsed.command.?);
+
+    const explicit = [_][]const u8{
+        "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37",              "80",
+        "--cwd",         "/tmp",           "--command", "printf explicit",
+    };
+    const explicit_parsed = try parseSessiondLaunchArgs(&explicit);
+    try std.testing.expectEqualStrings("/tmp", explicit_parsed.cwd.?);
+    try std.testing.expectEqualStrings("printf explicit", explicit_parsed.command.?);
+}
+
+test "sessiond launch args reject malformed optional fields" {
+    const missing_value = [_][]const u8{ "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37", "80", "--cwd" };
+    try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&missing_value));
+    const duplicate = [_][]const u8{
+        "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37",    "80",
+        "--cwd",         "/tmp",           "--cwd",     "/home",
+    };
+    try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&duplicate));
+    const unknown = [_][]const u8{ "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37", "80", "--nope", "value" };
+    try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&unknown));
 }
 
 // =============================================================================
