@@ -85,8 +85,8 @@ These labels are descriptive, not priority scores.
 **WANTED**
 
 - Remember useful window geometry without restoring a broken/off-screen layout.
-- Proper maximize, fullscreen, minimize, heterogeneous multi-monitor moves, and
-  display-hotplug dogfood coverage. Live display-scale change handling is wired,
+- Heterogeneous multi-monitor moves and display-hotplug dogfood coverage.
+  Live display-scale change handling is wired,
   but moving one window across differently scaled real outputs is not yet proven.
 - Explicit startup choices: default profile, attach a named Session, or restore
   an accepted previous application layout.
@@ -651,6 +651,21 @@ These labels are descriptive, not priority scores.
   upgrade both passed.
 - System clipboard via SDL3.
 - XDG configuration location.
+- Fullscreen is a rebindable `F11` action in the shared registry and Command
+  Palette. It requests borderless desktop fullscreen without changing display
+  modes or inventing a second compositor-state boolean. Three managed-KWin
+  roundtrips restored the exact original frame rectangle; the owned PTY followed
+  124x34 -> 137x36 -> 124x34 each time. A held 700 ms F11 generated no child
+  keyboard bytes, including repeat/release in Kitty all-event mode.
+- Registered application actions own their physical scancode through release.
+  Changed modifiers and auto-repeat cannot leak the rest of an application-owned
+  key cycle to the terminal. Fresh presses recover from a focus-hidden release.
+- Maximize/restore and minimize/restore are proven through native decorations.
+  Hidden/minimized windows skip drawing and presentation but keep observation
+  and Session progress alive. A minimized owned child produced 500 lines without
+  any PTY resize; restore presented the newest output. The app spent one 10 ms
+  CPU tick processing that burst and zero ticks during the following three
+  seconds of idle. Unfocused but visible windows still paint normally.
 - File and text drag/drop enter only an active interactive terminal and use the
   canonical paste path. Text is preserved byte-for-byte; a file path becomes
   one POSIX single-quoted shell argument plus a trailing separator. The policy

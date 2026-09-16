@@ -254,6 +254,7 @@ App_Action :: enum {
     Open_Command_Palette,
     Open_Profile_Menu,
     Close_Pane,
+    Toggle_Fullscreen,
 }
 
 Action_Category :: enum u8 {
@@ -272,7 +273,7 @@ Action_Definition :: struct {
     category: Action_Category,
 }
 
-ACTION_DEFINITIONS :: [13]Action_Definition{
+ACTION_DEFINITIONS :: [14]Action_Definition{
     {.New_Tab, "new_tab", "New tab", "Ctrl+T", .Tab},
     {.New_Window, "new_window", "New window", "Ctrl+Shift+N", .Window},
     {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
@@ -286,9 +287,10 @@ ACTION_DEFINITIONS :: [13]Action_Definition{
     {.Open_Command_Palette, "command_palette", "Command Palette", "Ctrl+Shift+P", .Application},
     {.Open_Profile_Menu, "profile_menu", "Profile menu", "Ctrl+Shift+Space", .Application},
     {.Close_Pane, "close_pane", "Close pane / tab", "Ctrl+Shift+W", .Pane},
+    {.Toggle_Fullscreen, "toggle_fullscreen", "Toggle fullscreen", "F11", .Window},
 }
 
-PALETTE_ACTIONS :: [11]App_Action{
+PALETTE_ACTIONS :: [12]App_Action{
     .New_Tab,
     .New_Window,
     .Duplicate_Tab,
@@ -300,6 +302,7 @@ PALETTE_ACTIONS :: [11]App_Action{
     .Recover_Session,
     .Open_Settings,
     .Close_Pane,
+    .Toggle_Fullscreen,
 }
 
 
@@ -336,6 +339,8 @@ action_enabled :: proc(app: ^App, action: App_Action) -> bool {
         return app != nil && session_recoverable(active_session_view(app))
     case .Close_Pane:
         return app != nil && app.tab_count > 0
+    case .Toggle_Fullscreen:
+        return app != nil && app.window != nil
     case .New_Window, .Open_Settings, .Open_Command_Palette, .Open_Profile_Menu:
         return app != nil
     }
@@ -437,7 +442,8 @@ App :: struct {
     tab_drag_index: int,
     pane_resize_node: ^Pane_Node,
     pane_resize_tab: int,
-    action_bindings: [13]Action_Binding,
+    action_bindings: [len(ACTION_DEFINITIONS)]Action_Binding,
+    action_keys_owned: [512]bool,
     config_notice: [192]u8,
     config_notice_len: int,
     settings_content_focus: bool,
@@ -544,7 +550,7 @@ save_user_config :: proc(app: ^App) {
     if err := os.make_directory_all(directory); err != nil && err != .Exist {
         return
     }
-    overrides: [13]User_Keybinding_Config
+    overrides: [len(ACTION_DEFINITIONS)]User_Keybinding_Config
     override_count := 0
     for binding in app.action_bindings {
         if !binding.customized {
@@ -4206,6 +4212,9 @@ execute_action :: proc(app: ^App, action: App_Action) {
         new_tab(app)
     case .New_Window:
         _ = launch_new_window()
+    case .Toggle_Fullscreen:
+        app.palette_open = false
+        _ = toggle_window_fullscreen(app)
     case .Duplicate_Tab:
         _ = duplicate_active_tab(app)
     case .Split_Vertical:
@@ -4639,6 +4648,9 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 }
 
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
+    if consume_owned_action_key(app, event) {
+        return
+    }
     if event != nil && u32(event.type) == session_update_event_type {
         reconcile_consequence_owners(app)
         wake_consequence_owners(app)
@@ -6140,6 +6152,9 @@ draw_settings :: proc(app: ^App, width, height: f32) {
 }
 
 draw :: proc(app: ^App) {
+    if app == nil || app.window == nil || !window_presentation_allowed(SDL.GetWindowFlags(app.window)) {
+        return
+    }
     w, h: c.int
     if !SDL.GetWindowSize(app.window, &w, &h) {
         return

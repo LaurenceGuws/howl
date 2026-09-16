@@ -353,6 +353,13 @@ handle_registered_action_shortcut :: proc(app: ^App, event: ^SDL.Event) -> bool 
 	if !ok {
 		return false
 	}
+	// The action owns the physical key until release, including auto-repeat.
+	// A fullscreen toggle or an overlay must never leak the rest of its key
+	// cycle to a child using Kitty all-event keyboard mode.
+	scancode := int(event.key.scancode)
+	if scancode > 0 && scancode < len(app.action_keys_owned) {
+		app.action_keys_owned[scancode] = true
+	}
 	if action_enabled(app, action) {
 		execute_action(app, action)
 	}
@@ -369,7 +376,7 @@ set_config_notice :: proc(app: ^App, message: string) {
 	}
 }
 
-binding_index_for_action :: proc(bindings: ^[13]Action_Binding, action: App_Action) -> int {
+binding_index_for_action :: proc(bindings: ^[len(ACTION_DEFINITIONS)]Action_Binding, action: App_Action) -> int {
 	if bindings == nil {
 		return -1
 	}
@@ -390,11 +397,11 @@ apply_user_keybindings :: proc(app: ^App, overrides: []User_Keybinding_Config) -
 		return false
 	}
 	candidate := app.action_bindings
-	mentioned: [13]bool
-	actions: [13]App_Action
-	shortcuts: [13]Shortcut
-	texts: [13][SHORTCUT_TEXT_BYTES]u8
-	text_lengths: [13]int
+	mentioned: [len(ACTION_DEFINITIONS)]bool
+	actions: [len(ACTION_DEFINITIONS)]App_Action
+	shortcuts: [len(ACTION_DEFINITIONS)]Shortcut
+	texts: [len(ACTION_DEFINITIONS)][SHORTCUT_TEXT_BYTES]u8
+	text_lengths: [len(ACTION_DEFINITIONS)]int
 
 	for override, index in overrides {
 		action, known := action_from_id(override.action)
