@@ -16,6 +16,8 @@ foreign howl_bridge {
     cancellation_cancel  :: proc(handle: rawptr) -> i32 ---
     cancellation_destroy :: proc(handle: rawptr) ---
     snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    search_find        :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
+    search_match_info_size :: proc() -> u32 ---
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_paste         :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     selection_extract  :: proc(handle: rawptr, selection_top_row: u64, expected_columns: u16, expected_alternate_screen: u8, start_row, start_column, end_row, end_column: u16, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
@@ -62,6 +64,19 @@ foreign howl_bridge {
     render_resource_info_size :: proc() -> u32 ---
     render_removal_info_size  :: proc() -> u32 ---
     render_command_info_size  :: proc() -> u32 ---
+}
+
+Search_Match_Info :: struct {
+    cut_revision: u64,
+    row: i32,
+    start_column: u16,
+    end_column: u16,
+    columns: u16,
+    found: u8,
+    complete: u8,
+    alternate_screen: u8,
+    _reserved: u8,
+    scanned_snapshots: u32,
 }
 
 Bridge_Key :: enum u8 {

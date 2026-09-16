@@ -62,6 +62,22 @@ pub const RenderCommandInfo = extern struct {
     _reserved: u8 = 0,
 };
 
+pub const SearchMatchInfo = extern struct {
+    cut_revision: u64 = 0,
+    row: i32 = 0,
+    start_column: u16 = 0,
+    end_column: u16 = 0,
+    columns: u16 = 0,
+    found: u8 = 0,
+    complete: u8 = 1,
+    alternate_screen: u8 = 0,
+    _reserved: u8 = 0,
+    scanned_snapshots: u32 = 0,
+};
+
+const maximum_search_query_bytes: usize = 4096;
+const maximum_search_retries: usize = 8;
+
 const Render = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
@@ -616,6 +632,9 @@ pub export fn howl_odin_bridge_render_command_info_size() u32 {
     return @sizeOf(RenderCommandInfo);
 }
 
+pub export fn howl_odin_bridge_search_match_info_size() u32 {
+    return @sizeOf(SearchMatchInfo);
+}
 
 const Handle = opaque {};
 const CancellationHandle = opaque {};
@@ -863,6 +882,301 @@ pub export fn howl_odin_bridge_snapshot(
     bridge.last_begin = client.view.begin(projected).*;
     bridge.text_truncated = text.truncated;
     output_len.* = text.bytes_written;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_search_find(
+    raw: ?*Handle,
+    query_ptr: [*]const u8,
+    query_len: usize,
+    reverse_value: u8,
+    origin_present: u8,
+    origin_row: i32,
+    origin_column: u16,
+    output: *SearchMatchInfo,
+) i32 {
+    output.* = .{};
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    if (query_len == 0 or query_len > maximum_search_query_bytes or
+        reverse_value > 1 or origin_present > 1)
+    {
+        bridge.setError("search", "invalid_arguments");
+        return 2;
+    }
+    const query = query_ptr[0..query_len];
+    if (!std.unicode.utf8ValidateSlice(query)) {
+        bridge.setError("search", "invalid_utf8");
+        return 2;
+    }
+    const reverse = reverse_value != 0;
+
+    var initial_rich = client.rich.request(
+        &bridge.connection,
+        bridge.allocator,
+        0,
+        0,
+    ) catch |failure| {
+        bridge.setError("search_observe", @errorName(failure));
+        return 3;
+    };
+    defer initial_rich.deinit();
+    const initial = client.view.project(bridge.allocator, &initial_rich) catch |failure| {
+        bridge.setError("search_project", @errorName(failure));
+        return 3;
+    };
+    defer client.view.deinit(initial);
+    const initial_begin = client.view.begin(initial).*;
+    output.cut_revision = initial_begin.revision;
+    output.columns = initial_begin.columns;
+    output.alternate_screen = @intFromBool(initial_begin.alternate_screen);
+    output.complete = 1;
+    output.scanned_snapshots = 1;
+    if (initial_begin.rows == 0 or initial_begin.columns == 0) return 0;
+    if (origin_present != 0 and origin_column >= initial_begin.columns) {
+        bridge.setError("search", "origin_context_changed");
+        return 4;
+    }
+
+    const cut_first: i64 = if (initial_begin.alternate_screen)
+        0
+    else
+        initial_begin.history_row_base;
+    const cut_last_u64: u64 = if (initial_begin.alternate_screen)
+        initial_begin.rows - 1
+    else
+        @as(u64, initial_begin.history_row_base) + initial_begin.history_count + initial_begin.rows - 1;
+    if (cut_last_u64 > std.math.maxInt(i32)) {
+        bridge.setError("search", "row_identity_overflow");
+        return 4;
+    }
+    const cut_last: i64 = @intCast(cut_last_u64);
+
+    var start_row: i64 = if (origin_present != 0) origin_row else if (reverse) cut_last else cut_first;
+    var start_column: u16 = if (origin_present != 0) origin_column else if (reverse) initial_begin.columns - 1 else 0;
+    if (origin_present != 0) {
+        if (reverse) {
+            if (start_column == 0) {
+                start_row -= 1;
+                start_column = initial_begin.columns - 1;
+            } else {
+                start_column -= 1;
+            }
+        } else if (start_column + 1 >= initial_begin.columns) {
+            start_row += 1;
+            start_column = 0;
+        } else {
+            start_column += 1;
+        }
+    }
+    if (start_row < cut_first) {
+        if (reverse) return 0;
+        start_row = cut_first;
+        start_column = 0;
+    }
+    if (start_row > cut_last) {
+        if (!reverse) return 0;
+        start_row = cut_last;
+        start_column = initial_begin.columns - 1;
+    }
+
+    if (initial_begin.alternate_screen) {
+        return searchProjectedCut(
+            bridge,
+            initial,
+            query,
+            reverse,
+            start_row,
+            start_column,
+            cut_first,
+            cut_last,
+            output,
+        );
+    }
+
+    var current_row = start_row;
+    var current_column = start_column;
+    var metadata = initial_begin;
+    var pages: usize = 0;
+    const maximum_pages = @as(usize, initial_begin.history_count) / initial_begin.rows + 4;
+    while (pages < maximum_pages and current_row >= cut_first and current_row <= cut_last) : (pages += 1) {
+        if (metadata.columns != initial_begin.columns or metadata.alternate_screen) {
+            bridge.setError("search", "context_changed");
+            return 4;
+        }
+        const current_first: i64 = metadata.history_row_base;
+        if (reverse and current_row < current_first) return 0;
+        if (!reverse and current_row < current_first) {
+            output.complete = 0;
+            current_row = @min(cut_last, current_first + searchGuardRows(metadata.rows));
+            current_column = 0;
+            if (current_row > cut_last) return 0;
+        }
+
+        var retry: usize = 0;
+        while (retry < maximum_search_retries) : (retry += 1) {
+            const retry_first: i64 = metadata.history_row_base;
+            const retry_live_top: i64 = retry_first + metadata.history_count;
+            if (reverse and current_row < retry_first) return 0;
+            if (!reverse and current_row < retry_first) {
+                output.complete = 0;
+                current_row = @min(cut_last, retry_first + searchGuardRows(metadata.rows));
+                current_column = 0;
+                if (current_row > cut_last) return 0;
+            }
+            const guard = searchGuardRows(metadata.rows);
+            const desired_top = if (reverse)
+                @max(retry_first, current_row - (@as(i64, metadata.rows) - 1 - guard))
+            else
+                @max(retry_first, current_row - guard);
+            const requested_offset: u32 = if (desired_top >= retry_live_top)
+                0
+            else
+                @intCast(@min(@as(i64, metadata.history_count), retry_live_top - desired_top));
+            var page_rich = client.rich.request(
+                &bridge.connection,
+                bridge.allocator,
+                0,
+                requested_offset,
+            ) catch |failure| {
+                bridge.setError("search_observe", @errorName(failure));
+                return 3;
+            };
+            defer page_rich.deinit();
+            const page = client.view.project(bridge.allocator, &page_rich) catch |failure| {
+                bridge.setError("search_project", @errorName(failure));
+                return 3;
+            };
+            defer client.view.deinit(page);
+            output.scanned_snapshots += 1;
+            const begin = client.view.begin(page).*;
+            metadata = begin;
+            if (begin.columns != initial_begin.columns or begin.alternate_screen) {
+                bridge.setError("search", "context_changed");
+                return 4;
+            }
+            const actual_top: i64 = @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
+            const actual_last = actual_top + begin.rows - 1;
+            if (current_row < begin.history_row_base) {
+                if (reverse) return 0;
+                output.complete = 0;
+                current_row = @min(cut_last, @as(i64, begin.history_row_base) + searchGuardRows(begin.rows));
+                current_column = 0;
+                metadata = begin;
+                continue;
+            }
+            if (current_row < actual_top or current_row > actual_last) {
+                if (retry + 1 == maximum_search_retries) {
+                    output.complete = 0;
+                    return 0;
+                }
+                continue;
+            }
+
+            const search_code = searchProjectedCut(
+                bridge,
+                page,
+                query,
+                reverse,
+                current_row,
+                current_column,
+                @max(cut_first, actual_top),
+                @min(cut_last, actual_last),
+                output,
+            );
+            if (search_code != 0) return search_code;
+            if (output.found != 0) return 0;
+
+            if (reverse) {
+                current_row = @max(cut_first, actual_top) - 1;
+                current_column = initial_begin.columns - 1;
+            } else {
+                current_row = @min(cut_last, actual_last) + 1;
+                current_column = 0;
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+fn searchGuardRows(rows: u16) i64 {
+    if (rows <= 4) return 1;
+    return @max(@as(i64, 2), @divTrunc(@as(i64, rows), 4));
+}
+
+fn searchProjectedCut(
+    bridge: *Bridge,
+    snapshot: *const client.view.Snapshot,
+    query: []const u8,
+    reverse: bool,
+    start_row: i64,
+    start_column: u16,
+    first_row: i64,
+    last_row: i64,
+    output: *SearchMatchInfo,
+) i32 {
+    const begin = client.view.begin(snapshot);
+    const top: i64 = if (begin.alternate_screen)
+        0
+    else
+        @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
+    if (first_row > last_row or start_row < first_row or start_row > last_row) return 0;
+
+    if (reverse) {
+        var canonical_row = start_row;
+        while (canonical_row >= first_row) : (canonical_row -= 1) {
+            const viewport_row: u16 = @intCast(canonical_row - top);
+            const bound = if (canonical_row == start_row) start_column else begin.columns - 1;
+            const found = client.search.rowFrom(
+                snapshot,
+                bridge.allocator,
+                query,
+                viewport_row,
+                bound,
+                true,
+            ) catch |failure| {
+                bridge.setError("search_match", @errorName(failure));
+                return 4;
+            };
+            if (found) |match| {
+                return fillSearchMatch(match, output);
+            }
+        }
+        return 0;
+    }
+
+    var canonical_row = start_row;
+    while (canonical_row <= last_row) : (canonical_row += 1) {
+        const viewport_row: u16 = @intCast(canonical_row - top);
+        const bound = if (canonical_row == start_row) start_column else 0;
+        const found = client.search.rowFrom(
+            snapshot,
+            bridge.allocator,
+            query,
+            viewport_row,
+            bound,
+            false,
+        ) catch |failure| {
+            bridge.setError("search_match", @errorName(failure));
+            return 4;
+        };
+        if (found) |match| {
+            return fillSearchMatch(match, output);
+        }
+    }
+    return 0;
+}
+
+fn fillSearchMatch(match: client.search.Match, output: *SearchMatchInfo) i32 {
+    const ordered = match.range.ordered();
+    output.found = 1;
+    output.row = ordered.start.row;
+    output.start_column = ordered.start.column;
+    output.end_column = ordered.end.column;
+    output.columns = match.range.columns;
+    output.alternate_screen = @intFromBool(match.range.alternate_screen);
     return 0;
 }
 
@@ -1209,10 +1523,10 @@ fn writeConnectDiagnostic(
 }
 
 test "bridge named key action values stay protocol-aligned" {
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputKeyName.enter));
-    try std.testing.expectEqual(@as(u8, 3), @intFromEnum(protocol.InputKeyName.backspace));
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(protocol.InputKeyAction.press));
-    try std.testing.expectEqual(@as(u8, 3), @intFromEnum(protocol.InputKeyAction.release));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputKeyName.enter));
+    try std.testing.expectEqual(@as(u8, 3), @backingInt(protocol.InputKeyName.backspace));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputKeyAction.press));
+    try std.testing.expectEqual(@as(u8, 3), @backingInt(protocol.InputKeyAction.release));
     try std.testing.expectEqual(@as(u8, 1), protocol.typed_input.modifiers.shift);
     try std.testing.expectEqual(@as(u8, 4), protocol.typed_input.modifiers.control);
 }
@@ -1221,6 +1535,10 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(RenderResourceInfo));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(RenderRemovalInfo));
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(RenderCommandInfo));
-    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(canvas.ResourceFormat.alpha8));
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(canvas.ResourceFormat.rgba8));
+    try std.testing.expectEqual(@as(u8, 0), @backingInt(canvas.ResourceFormat.alpha8));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
+}
+
+test "Odin search result record stays fixed" {
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(SearchMatchInfo));
 }

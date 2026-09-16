@@ -2777,6 +2777,7 @@ main :: proc() {
     assert(size_of(Canvas_Resource_Info) == int(render_resource_info_size()))
     assert(size_of(Canvas_Removal_Info) == int(render_removal_info_size()))
     assert(size_of(Canvas_Command_Info) == int(render_command_info_size()))
+    assert(size_of(Search_Match_Info) == int(search_match_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return
