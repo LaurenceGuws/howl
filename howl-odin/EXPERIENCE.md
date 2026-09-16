@@ -207,6 +207,9 @@ These labels are descriptive, not priority scores.
 - Thin per-pane scrollbar indicates retained position.
 - Scrollbar supports direct seek and thumb drag with a forgiving invisible hit
   lane while preserving quiet visual chrome.
+- Scrollbar drag owns SDL pointer capture, including outside-window motion; a
+  release, focus loss, or window close ends the gesture so later pointer motion
+  cannot strand the pane in drag state.
 - Vertical-only resize preserves the top retained row.
 - Horizontal reflow/column change deliberately returns an owned scrolled pane to
   LIVE because projected row identity is not stable across reflow.
@@ -214,8 +217,6 @@ These labels are descriptive, not priority scores.
 
 **ACTIVE**
 
-- Finish pointer capture/cancel behavior for a scrollbar drag that leaves the
-  window before release.
 - Continue resize, font-zoom, split/collapse, live-output, oldest-ring, and
   multi-pane pressure without weakening the reflow safety rule.
 

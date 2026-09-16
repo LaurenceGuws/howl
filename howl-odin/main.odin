@@ -2036,7 +2036,10 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
+        _ = finish_all_history_scrollbar_drags(app)
         app.running = false
+    case .WINDOW_FOCUS_LOST:
+        _ = finish_all_history_scrollbar_drags(app)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
@@ -2375,6 +2378,19 @@ history_scrollbar_drag_active :: proc(view: ^Session_View) -> bool {
     return view.history_scrollbar_dragging
 }
 
+finish_all_history_scrollbar_drags :: proc(app: ^App) -> bool {
+    changed := false
+    for index in 0..<app.tab_count {
+        if finish_history_scrollbar_drag(app.tabs[index].session) {
+            changed = true
+        }
+        if finish_history_scrollbar_drag(app.tabs[index].secondary_session) {
+            changed = true
+        }
+    }
+    return changed
+}
+
 update_history_scrollbar_drag :: proc(
     view: ^Session_View,
     pane: SDL.FRect,
@@ -2429,8 +2445,12 @@ begin_history_scrollbar_drag :: proc(
     view.history_scrollbar_dragging = true
     view.history_scrollbar_grab_y = grab_y
     sync.mutex_unlock(&view.mutex)
-    _ = SDL.CaptureMouse(true)
     _ = update_history_scrollbar_drag(view, pane, y)
+    if !SDL.CaptureMouse(true) {
+        // Keep the initial click/seek, but never leave a drag active when SDL
+        // cannot guarantee delivery after the pointer leaves the window.
+        _ = finish_history_scrollbar_drag(view)
+    }
     return true
 }
 
