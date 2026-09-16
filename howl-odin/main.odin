@@ -153,6 +153,17 @@ palette := Palette{
     accent = {96, 165, 250, 255},
 }
 
+session_update_event_type: u32
+
+notify_session_update :: proc() {
+    if session_update_event_type == 0 {
+        return
+    }
+    event := SDL.Event{}
+    event.type = SDL.EventType(session_update_event_type)
+    _ = SDL.PushEvent(&event)
+}
+
 App :: struct {
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
@@ -799,6 +810,7 @@ observe_session :: proc(data: rawptr) {
                 break
             }
             publish_bridge_error(view, observer)
+            notify_session_update()
             after_revision = 0
             time.sleep(SESSION_RETRY_MS * time.Millisecond)
             continue
@@ -844,6 +856,7 @@ observe_session :: proc(data: rawptr) {
         view.text_truncated = snapshot_text_truncated
         view.error_len = 0
         sync.mutex_unlock(&view.mutex)
+        notify_session_update()
     }
 }
 
@@ -2421,6 +2434,12 @@ main :: proc() {
     }
     defer SDL.Quit()
 
+    session_update_event_type = SDL.RegisterEvents(1)
+    if session_update_event_type == 0 {
+        sdl_error("SDL_RegisterEvents failed")
+        return
+    }
+
     if !TTF.Init() {
         sdl_error("TTF_Init failed")
         return
@@ -2491,12 +2510,19 @@ main :: proc() {
     }
     new_tab(&app)
 
+    draw(&app)
     for app.running {
         event: SDL.Event
+        if !SDL.WaitEvent(&event) {
+            continue
+        }
+        handle_event(&app, &event)
         for SDL.PollEvent(&event) {
             handle_event(&app, &event)
         }
-        draw(&app)
+        if app.running {
+            draw(&app)
+        }
     }
 
     for app.tab_count > 0 {

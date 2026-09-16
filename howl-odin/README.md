@@ -62,6 +62,10 @@ Current canary:
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
   `howl-client`'s duplicate-socket cancellation primitive;
+- Session publication wakes the SDL main thread through one registered user
+  event. The desktop loop blocks in `SDL_WaitEvent` between invalidations and
+  paints once per drained event burst instead of repainting the complete app at
+  compositor cadence when nothing changed;
 - scrollback is pane-local and uses Howl's canonical retained-history window:
   physical mouse-wheel input and Shift+PageUp/PageDown request exact history
   offsets, an absolute retained-row anchor keeps a scrolled viewport stationary
