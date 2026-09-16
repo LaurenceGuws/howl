@@ -1173,8 +1173,8 @@ fn fillSearchMatch(match: client.search.Match, output: *SearchMatchInfo) i32 {
     const ordered = match.range.ordered();
     output.found = 1;
     output.row = ordered.start.row;
-    output.start_column = ordered.start.column;
-    output.end_column = ordered.end.column;
+    output.start_column = match.start_column;
+    output.end_column = match.end_column;
     output.columns = match.range.columns;
     output.alternate_screen = @intFromBool(match.range.alternate_screen);
     return 0;

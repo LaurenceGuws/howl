@@ -133,11 +133,12 @@ fn matchAt(
 ) Error!Match {
     var range = try selection.Range.start(snapshot, viewport_row, start_column);
     try range.extend(snapshot, viewport_row, end_column);
+    const visual = selection.visualSpan(snapshot, range, viewport_row) orelse return error.InvalidPoint;
     return .{
         .range = range,
         .viewport_row = viewport_row,
-        .start_column = start_column,
-        .end_column = end_column,
+        .start_column = visual.start_column,
+        .end_column = visual.end_column,
     };
 }
 
@@ -284,6 +285,9 @@ test "search handles unicode wide cells and concealed text" {
     const wide = (try row(snapshot, std.testing.allocator, "界B", 0, false)).?;
     try std.testing.expectEqual(@as(u16, 1), wide.start_column);
     try std.testing.expectEqual(@as(u16, 3), wide.end_column);
+    const wide_only = (try row(snapshot, std.testing.allocator, "界", 0, false)).?;
+    try std.testing.expectEqual(@as(u16, 1), wide_only.start_column);
+    try std.testing.expectEqual(@as(u16, 2), wide_only.end_column);
     try std.testing.expect((try row(snapshot, std.testing.allocator, "xx", 0, false)) == null);
 }
 
