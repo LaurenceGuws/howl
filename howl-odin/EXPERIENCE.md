@@ -261,32 +261,57 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
-- Pane-local primary drag paints selection chrome.
+- Pane-local primary drag stores stable canonical row/column endpoints and paints
+  only the visible intersection of the retained range.
 - Ctrl+Shift+C asks `howl-client.selection` and Session `text_extract` for
-  canonical UTF-8; it does not scrape rendered glyphs.
-- Selection copy works from LIVE and anchored scrollback.
-- Ctrl+Shift+V uses semantic paste.
-- Geometry, scrolling, and terminal mutation reject stale selection rather than
-  silently retargeting it.
+  canonical UTF-8; it does not scrape rendered glyphs. VT normalizes continuation
+  cells to their lead grapheme during extraction.
+- Selection survives manual wheel/PageUp/scrollbar movement and live output while
+  both endpoints remain retained. It may move completely offscreen and still copy
+  the original canonical range; returning the viewport over it paints the same
+  stable endpoints again.
+- Ctrl+Shift+V uses semantic paste, and ordinary terminal input clears selection
+  while returning to LIVE.
+- Eviction, screen-bank change, and column reflow invalidate stale ranges instead
+  of silently retargeting them. Focus loss/window close ends an active drag while
+  retaining any noncollapsed range accumulated so far.
+- Six executable stable-selection tests run in the Odin owner build.
+
+**ACTIVE**
+
+- Selection edge-autoscroll while dragging beyond the visible top/bottom, built on
+  the stable endpoint model rather than viewport-row translation.
 
 **WANTED**
 
 - Double-click canonical word selection.
 - Triple-click/hard-line selection if it remains unsurprising with soft wraps.
-- Selection edge-autoscroll.
-- Drag endpoints across scrollback while keeping canonical stable coordinates.
 - Copy action in context menu/command palette and useful disabled-state feedback.
 - Linux middle-click/primary-selection behavior only if it remains distinct from
   the normal clipboard and can be implemented without platform confusion.
 
 ### 9. Search and navigation
 
+**PROVEN**
+
+- Ctrl+Shift+F exact case-sensitive retained-history Find, with Enter/Shift+Enter
+  older/newer navigation and stable canonical row/column highlights.
+- Find scans on a lazy read-only worker connection rather than blocking SDL, and
+  stable matches remain anchored while new output arrives.
+- Reflow/eviction expires stale matches explicitly; a moving full ring reports an
+  incomplete search instead of claiming an authoritative no-match.
+
+**ACTIVE**
+
+- Continue multi-pane/tab, hot-ring, resize, and ordinary desktop pressure on Find
+  without introducing a persistent search index before it is earned.
+
 **WANTED**
 
-- `Ctrl+Shift+F` search surface over retained canonical text.
-- Plain-text search first; case sensitivity and regex only when their behavior is
-  clear and bounded.
-- Search results survive normal new output when their retained rows survive.
+- Search result counts only if they remain cheap and honest.
+- Case-insensitive and regex modes only when their Unicode/bounded semantics are
+  explicit; exact UTF-8 remains the simple baseline.
+- Cross-soft-wrap logical-line matching only with a stable logical-line identity.
 - Command-palette actions for oldest/LIVE, next/previous result, pane focus,
   profile launch, and layout operations.
 - Clickable URL/hyperlink navigation using canonical hyperlink facts rather than

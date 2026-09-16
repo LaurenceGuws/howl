@@ -121,12 +121,10 @@ Session_View :: struct {
     alternate_screen: bool,
     selection_active: bool,
     selection_dragging: bool,
-    selection_anchor_row: u16,
+    selection_anchor_row: i32,
     selection_anchor_column: u16,
-    selection_focus_row: u16,
+    selection_focus_row: i32,
     selection_focus_column: u16,
-    selection_history_offset: u32,
-    selection_top_row: u64,
     selection_columns: u16,
     selection_alternate_screen: bool,
     text_truncated: bool,
@@ -882,9 +880,14 @@ observe_session :: proc(data: rawptr) {
         snapshot_text_truncated := text_truncated(observer) != 0
 
         sync.mutex_lock(&view.mutex)
-        if view.selection_active && snapshot_terminal_revision != view.terminal_revision {
-            clear_selection_locked(view)
-        }
+        validate_selection_context_locked(
+            view,
+            snapshot_columns,
+            snapshot_rows,
+            snapshot_history_count,
+            snapshot_history_row_base,
+            snapshot_alternate_screen,
+        )
         apply_history_geometry_locked(view, snapshot_columns)
         copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
         view.text_len = int(output_len)
@@ -1180,8 +1183,6 @@ clear_selection_locked :: proc(view: ^Session_View) {
     view.selection_anchor_column = 0
     view.selection_focus_row = 0
     view.selection_focus_column = 0
-    view.selection_history_offset = 0
-    view.selection_top_row = 0
     view.selection_columns = 0
     view.selection_alternate_screen = false
 }
@@ -1193,6 +1194,57 @@ clear_selection :: proc(view: ^Session_View) {
     sync.mutex_lock(&view.mutex)
     clear_selection_locked(view)
     sync.mutex_unlock(&view.mutex)
+}
+
+selection_point_retained :: proc(
+    row: i32,
+    column, columns, rows: u16,
+    history_count, history_row_base: u32,
+    alternate_screen: bool,
+) -> bool {
+    if columns == 0 || rows == 0 || column >= columns {
+        return false
+    }
+    if alternate_screen {
+        return row >= 0 && row < i32(rows)
+    }
+    first := i64(history_row_base)
+    last := first + i64(history_count) + i64(rows) - 1
+    value := i64(row)
+    return value >= first && value <= last
+}
+
+validate_selection_context_locked :: proc(
+    view: ^Session_View,
+    columns, rows: u16,
+    history_count, history_row_base: u32,
+    alternate_screen: bool,
+) {
+    if !view.selection_active {
+        return
+    }
+    if view.selection_columns != columns ||
+       view.selection_alternate_screen != alternate_screen ||
+       !selection_point_retained(
+           view.selection_anchor_row,
+           view.selection_anchor_column,
+           columns,
+           rows,
+           history_count,
+           history_row_base,
+           alternate_screen,
+       ) ||
+       !selection_point_retained(
+           view.selection_focus_row,
+           view.selection_focus_column,
+           columns,
+           rows,
+           history_count,
+           history_row_base,
+           alternate_screen,
+       ) {
+        clear_selection_locked(view)
+    }
 }
 
 reset_history_locked :: proc(view: ^Session_View) {
@@ -1280,7 +1332,6 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     if clamped == int(view.history_target_offset) {
         return false
     }
-    clear_selection_locked(view)
     view.history_target_offset = u32(clamped)
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -1307,7 +1358,6 @@ set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
     if clamped == view.history_target_offset {
         return false
     }
-    clear_selection_locked(view)
     view.history_target_offset = clamped
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -1348,7 +1398,6 @@ scroll_history_wheel :: proc(view: ^Session_View, wheel_rows: f32) -> bool {
         return false
     }
 
-    clear_selection_locked(view)
     view.history_target_offset = u32(clamped)
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -1374,16 +1423,26 @@ scroll_history_oldest :: proc(view: ^Session_View) -> bool {
     return scroll_history_rows(view, int(count))
 }
 
-return_history_live :: proc(view: ^Session_View) -> bool {
+return_history_live_with_selection_policy :: proc(view: ^Session_View, clear_selection_state: bool) -> bool {
     if view == nil {
         return false
     }
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
     changed := view.history_target_offset != 0 || view.history_anchor_valid
-    clear_selection_locked(view)
+    if clear_selection_state {
+        clear_selection_locked(view)
+    }
     reset_history_locked(view)
     return changed
+}
+
+return_history_live :: proc(view: ^Session_View) -> bool {
+    return return_history_live_with_selection_policy(view, true)
+}
+
+return_history_live_navigation :: proc(view: ^Session_View) -> bool {
+    return return_history_live_with_selection_policy(view, false)
 }
 
 history_active :: proc(view: ^Session_View) -> bool {
@@ -1860,28 +1919,80 @@ selection_cell_at :: proc(
     return u16(selected_row), u16(selected_column), true
 }
 
+selection_stable_row :: proc(
+    viewport_row: u16,
+    history_offset, history_count_value, history_row_base_value: u32,
+    alternate: bool,
+) -> (row: i32, ok: bool) {
+    if alternate {
+        return i32(viewport_row), true
+    }
+    if history_offset > history_count_value {
+        return 0, false
+    }
+    stable := i64(history_row_base_value) + i64(history_count_value) -
+              i64(history_offset) + i64(viewport_row)
+    if stable < 0 || stable > 0x7fffffff {
+        return 0, false
+    }
+    return i32(stable), true
+}
+
+selection_stable_point_at :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+    clamp_to_surface := false,
+) -> (row: i32, column, columns: u16, alternate: bool, ok: bool) {
+    viewport_row, viewport_column, hit := selection_cell_at(
+        app,
+        view,
+        pane,
+        x,
+        y,
+        clamp_to_surface,
+    )
+    if !hit || view.canvas == nil {
+        return 0, 0, 0, false, false
+    }
+    cell_width := render_cell_width(view.canvas)
+    if cell_width == 0 {
+        return 0, 0, 0, false, false
+    }
+    columns = u16(view.canvas_surface_width / cell_width)
+    if columns == 0 || viewport_column >= columns {
+        return 0, 0, 0, false, false
+    }
+    alternate = render_alternate_screen(view.canvas) != 0
+    stable_row, stable_ok := selection_stable_row(
+        viewport_row,
+        render_history_offset(view.canvas),
+        render_history_count(view.canvas),
+        render_history_row_base(view.canvas),
+        alternate,
+    )
+    if !stable_ok {
+        return 0, 0, 0, false, false
+    }
+    return stable_row, viewport_column, columns, alternate, true
+}
+
 begin_selection :: proc(
     app: ^App,
     view: ^Session_View,
     pane: SDL.FRect,
     x, y: f32,
 ) -> bool {
-    row, column, ok := selection_cell_at(app, view, pane, x, y)
+    row, column, columns, alternate, ok := selection_stable_point_at(
+        app,
+        view,
+        pane,
+        x,
+        y,
+    )
     if !ok {
         return false
-    }
-    cell_width := render_cell_width(view.canvas)
-    columns := u16(view.canvas_surface_width / cell_width)
-    history_offset := render_history_offset(view.canvas)
-    history_count := render_history_count(view.canvas)
-    history_row_base := render_history_row_base(view.canvas)
-    alternate := render_alternate_screen(view.canvas) != 0
-    if !alternate && history_offset > history_count {
-        return false
-    }
-    top_row := u64(0)
-    if !alternate {
-        top_row = u64(history_row_base) + u64(history_count) - u64(history_offset)
     }
     sync.mutex_lock(&view.mutex)
     view.selection_active = true
@@ -1890,11 +2001,10 @@ begin_selection :: proc(
     view.selection_anchor_column = column
     view.selection_focus_row = row
     view.selection_focus_column = column
-    view.selection_history_offset = history_offset
-    view.selection_top_row = top_row
     view.selection_columns = columns
     view.selection_alternate_screen = alternate
     sync.mutex_unlock(&view.mutex)
+    _ = SDL.CaptureMouse(true)
     return true
 }
 
@@ -1909,19 +2019,33 @@ extend_selection :: proc(
     }
     sync.mutex_lock(&view.mutex)
     dragging := view.selection_dragging
+    selected_columns := view.selection_columns
+    selected_alternate := view.selection_alternate_screen
     sync.mutex_unlock(&view.mutex)
     if !dragging {
         return false
     }
-    row, column, ok := selection_cell_at(app, view, pane, x, y, true)
-    if !ok {
+    row, column, columns, alternate, ok := selection_stable_point_at(
+        app,
+        view,
+        pane,
+        x,
+        y,
+        true,
+    )
+    if !ok || columns != selected_columns || alternate != selected_alternate {
         return false
     }
     sync.mutex_lock(&view.mutex)
-    view.selection_focus_row = row
-    view.selection_focus_column = column
+    if view.selection_dragging && view.selection_columns == columns &&
+       view.selection_alternate_screen == alternate {
+        view.selection_focus_row = row
+        view.selection_focus_column = column
+        sync.mutex_unlock(&view.mutex)
+        return true
+    }
     sync.mutex_unlock(&view.mutex)
-    return true
+    return false
 }
 
 finish_selection :: proc(view: ^Session_View) {
@@ -1929,6 +2053,7 @@ finish_selection :: proc(view: ^Session_View) {
         return
     }
     sync.mutex_lock(&view.mutex)
+    was_dragging := view.selection_dragging
     view.selection_dragging = false
     if view.selection_active &&
        view.selection_anchor_row == view.selection_focus_row &&
@@ -1936,6 +2061,9 @@ finish_selection :: proc(view: ^Session_View) {
         clear_selection_locked(view)
     }
     sync.mutex_unlock(&view.mutex)
+    if was_dragging {
+        _ = SDL.CaptureMouse(false)
+    }
 }
 
 copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
@@ -1951,7 +2079,6 @@ copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
     anchor_column := view.selection_anchor_column
     focus_row := view.selection_focus_row
     focus_column := view.selection_focus_column
-    top_row := view.selection_top_row
     selected_columns := view.selection_columns
     selected_alternate := view.selection_alternate_screen
     sync.mutex_unlock(&view.mutex)
@@ -1961,13 +2088,12 @@ copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
     output_len: c.size_t
     result := selection_extract(
         view.control,
-        top_row,
-        selected_columns,
-        selected_alternate ? u8(1) : u8(0),
         anchor_row,
         anchor_column,
         focus_row,
         focus_column,
+        selected_columns,
+        selected_alternate ? u8(1) : u8(0),
         raw_data(buffer),
         c.size_t(len(buffer)),
         &output_len,
@@ -1980,8 +2106,7 @@ copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
     defer delete(terminated)
     copy(terminated[:int(output_len)], buffer[:int(output_len)])
     terminated[int(output_len)] = 0
-    clipboard_ok := SDL.SetClipboardText(cstring(raw_data(terminated)))
-    if !clipboard_ok {
+    if !SDL.SetClipboardText(cstring(raw_data(terminated))) {
         return false
     }
     clear_selection(view)
@@ -2010,10 +2135,52 @@ paste_clipboard :: proc(view: ^Session_View) -> bool {
 }
 
 selection_before_or_equal :: proc(
-    left_row, left_column, right_row, right_column: u16,
+    left_row: i32,
+    left_column: u16,
+    right_row: i32,
+    right_column: u16,
 ) -> bool {
     return left_row < right_row ||
            (left_row == right_row && left_column <= right_column)
+}
+
+Selection_Visible_Span :: struct {
+    start_column: u16,
+    end_column: u16,
+}
+
+selection_visible_span :: proc(
+    anchor_row: i32,
+    anchor_column: u16,
+    focus_row: i32,
+    focus_column: u16,
+    stable_row: i32,
+    columns: u16,
+) -> (span: Selection_Visible_Span, ok: bool) {
+    if columns == 0 {
+        return {}, false
+    }
+    start_row, start_column := anchor_row, anchor_column
+    end_row, end_column := focus_row, focus_column
+    if !selection_before_or_equal(start_row, start_column, end_row, end_column) {
+        start_row, end_row = end_row, start_row
+        start_column, end_column = end_column, start_column
+    }
+    if stable_row < start_row || stable_row > end_row {
+        return {}, false
+    }
+    first := u16(0)
+    last := columns - 1
+    if stable_row == start_row {
+        first = min(start_column, columns - 1)
+    }
+    if stable_row == end_row {
+        last = min(end_column, columns - 1)
+    }
+    if last < first {
+        return {}, false
+    }
+    return Selection_Visible_Span{ start_column = first, end_column = last }, true
 }
 
 draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
@@ -2029,7 +2196,6 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     anchor_column := view.selection_anchor_column
     focus_row := view.selection_focus_row
     focus_column := view.selection_focus_column
-    selected_history_offset := view.selection_history_offset
     selected_columns := view.selection_columns
     selected_alternate := view.selection_alternate_screen
     sync.mutex_unlock(&view.mutex)
@@ -2041,20 +2207,22 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
     columns := u16(view.canvas_surface_width / cell_width)
     rows := u16(view.canvas_surface_height / cell_height)
-    if selected_columns != columns ||
-       selected_history_offset != view.canvas_history_offset ||
-       selected_alternate != (render_alternate_screen(view.canvas) != 0) ||
-       anchor_row >= rows || focus_row >= rows {
-        clear_selection(view)
+    alternate := render_alternate_screen(view.canvas) != 0
+    if selected_columns != columns || selected_alternate != alternate || rows == 0 {
         return
     }
 
-    start_row, start_column := anchor_row, anchor_column
-    end_row, end_column := focus_row, focus_column
-    if !selection_before_or_equal(start_row, start_column, end_row, end_column) {
-        start_row, end_row = end_row, start_row
-        start_column, end_column = end_column, start_column
+    top_row: i64 = 0
+    if !alternate {
+        history_offset := render_history_offset(view.canvas)
+        history_count_value := render_history_count(view.canvas)
+        if history_offset > history_count_value {
+            return
+        }
+        top_row = i64(render_history_row_base(view.canvas)) +
+                  i64(history_count_value) - i64(history_offset)
     }
+
     origin_x := pane.x + 10
     origin_y := pane.y + 6
     pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
@@ -2063,21 +2231,27 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         _ = SDL.SetRenderClipRect(app.renderer, nil)
     }
     color := SDL.Color{palette.accent[0], palette.accent[1], palette.accent[2], 72}
-    for row := int(start_row); row <= int(end_row); row += 1 {
-        first := 0
-        last := int(columns) - 1
-        if row == int(start_row) {
-            first = int(start_column)
-        }
-        if row == int(end_row) {
-            last = int(end_column)
-        }
-        if last < first {
+    for viewport_row in 0..<int(rows) {
+        stable_row_i64 := top_row + i64(viewport_row)
+        if stable_row_i64 < -0x80000000 || stable_row_i64 > 0x7fffffff {
             continue
         }
+        span, visible := selection_visible_span(
+            anchor_row,
+            anchor_column,
+            focus_row,
+            focus_column,
+            i32(stable_row_i64),
+            columns,
+        )
+        if !visible {
+            continue
+        }
+        first := int(span.start_column)
+        last := int(span.end_column)
         rect := SDL.FRect{
             origin_x + f32(first * int(cell_width)),
-            origin_y + f32(row * int(cell_height)),
+            origin_y + f32(viewport_row * int(cell_height)),
             f32((last - first + 1) * int(cell_width)),
             f32(cell_height),
         }
@@ -2484,9 +2658,11 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
         _ = finish_all_history_scrollbar_drags(app)
+        _ = finish_all_selections(app)
         app.running = false
     case .WINDOW_FOCUS_LOST:
         _ = finish_all_history_scrollbar_drags(app)
+        _ = finish_all_selections(app)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
@@ -2553,7 +2729,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             _ = scroll_history_oldest(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_END &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            _ = return_history_live(active_session_view(app))
+            _ = return_history_live_navigation(active_session_view(app))
         } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
             view := active_session_view(app)
@@ -2849,6 +3025,33 @@ history_scrollbar_drag_active :: proc(view: ^Session_View) -> bool {
     return view.history_scrollbar_dragging
 }
 
+finish_selection_if_dragging :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    dragging := view.selection_dragging
+    sync.mutex_unlock(&view.mutex)
+    if !dragging {
+        return false
+    }
+    finish_selection(view)
+    return true
+}
+
+finish_all_selections :: proc(app: ^App) -> bool {
+    changed := false
+    for index in 0..<app.tab_count {
+        if finish_selection_if_dragging(app.tabs[index].session) {
+            changed = true
+        }
+        if finish_selection_if_dragging(app.tabs[index].secondary_session) {
+            changed = true
+        }
+    }
+    return changed
+}
+
 finish_all_history_scrollbar_drags :: proc(app: ^App) -> bool {
     changed := false
     for index in 0..<app.tab_count {
@@ -2907,7 +3110,6 @@ begin_history_scrollbar_drag :: proc(
     if !ok || !inside(x, y, geometry.hit) {
         return false
     }
-    clear_selection(view)
     grab_y := geometry.thumb.h / 2
     if inside(x, y, geometry.thumb) {
         grab_y = y - geometry.thumb.y

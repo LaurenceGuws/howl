@@ -101,13 +101,16 @@ Current canary:
   result instead of a false authoritative no-match. Search is currently exact,
   case-sensitive UTF-8 within one projected row; cross-wrap logical-line search,
   regex/case modes, and richer search options are deliberately not faked yet;
-- desktop selection is pane-local: left-drag paints a client-owned cell range,
-  `Ctrl+Shift+C` resolves that displayed range through `howl-client.selection`
-  and the Session's canonical `text_extract`, and `Ctrl+Shift+V` uses the
-  semantic paste action so bracketed-paste behavior remains VT-owned. Selection
-  also copies correctly from anchored history views; terminal mutation,
-  scrolling, or geometry changes discard a stale range rather than retargeting
-  it silently;
+- desktop selection is pane-local and stores stable canonical row/column
+  endpoints rather than viewport-relative rows. Left-drag paints only the
+  visible intersection of that stable range; wheel/PageUp/scrollbar navigation
+  and live output may move the viewport without destroying the selection, and
+  an offscreen range can still be copied exactly through `howl-client.selection`
+  plus Session `text_extract`. `Ctrl+Shift+V` uses semantic paste so
+  bracketed-paste behavior remains VT-owned. Input deliberately clears selection
+  while returning to LIVE; row eviction, screen-bank change, or column reflow
+  invalidates the range instead of retargeting it. VT itself normalizes wide-cell
+  continuation endpoints during canonical text extraction;
 - terminal content is now projected by the real `howl-render` terminal Content
   and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,

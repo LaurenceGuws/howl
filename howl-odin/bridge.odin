@@ -20,7 +20,7 @@ foreign howl_bridge {
     search_match_info_size :: proc() -> u32 ---
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_paste         :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
-    selection_extract  :: proc(handle: rawptr, selection_top_row: u64, expected_columns: u16, expected_alternate_screen: u8, start_row, start_column, end_row, end_column: u16, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    selection_extract  :: proc(handle: rawptr, start_row: i32, start_column: u16, end_row: i32, end_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     send_named_key     :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---
     send_unicode_key   :: proc(handle: rawptr, scalar: u32, action, modifiers: u8) -> i32 ---
     send_resize        :: proc(handle: rawptr, rows, columns: u16) -> i32 ---

@@ -1,0 +1,120 @@
+package main
+
+import "core:testing"
+
+stable_test_selection :: proc() -> Session_View {
+    return {
+        rows = 20,
+        columns = 80,
+        history_count = 100,
+        history_row_base = 50,
+        selection_active = true,
+        selection_anchor_row = 70,
+        selection_anchor_column = 3,
+        selection_focus_row = 95,
+        selection_focus_column = 7,
+        selection_columns = 80,
+        selection_alternate_screen = false,
+    }
+}
+
+@(test)
+selection_stable_row_maps_live_history_and_alternate :: proc(t: ^testing.T) {
+    row, ok := selection_stable_row(4, 20, 100, 50, false)
+    testing.expect(t, ok)
+    testing.expect_value(t, row, i32(134))
+
+    alt_row, alt_ok := selection_stable_row(4, 0, 0, 0, true)
+    testing.expect(t, alt_ok)
+    testing.expect_value(t, alt_row, i32(4))
+
+    _, invalid := selection_stable_row(0, 101, 100, 50, false)
+    testing.expect(t, !invalid)
+}
+
+@(test)
+selection_context_survives_live_output_while_endpoints_are_retained :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    validate_selection_context_locked(&view, 80, 20, 120, 50, false)
+    testing.expect(t, view.selection_active)
+    testing.expect_value(t, view.selection_anchor_row, i32(70))
+    testing.expect_value(t, view.selection_focus_row, i32(95))
+}
+
+@(test)
+selection_context_survives_vertical_geometry_change :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    validate_selection_context_locked(&view, 80, 32, 100, 50, false)
+    testing.expect(t, view.selection_active)
+}
+
+@(test)
+selection_context_expires_on_eviction_reflow_or_bank_change :: proc(t: ^testing.T) {
+    evicted := stable_test_selection()
+    validate_selection_context_locked(&evicted, 80, 20, 80, 71, false)
+    testing.expect(t, !evicted.selection_active)
+
+    reflowed := stable_test_selection()
+    validate_selection_context_locked(&reflowed, 79, 20, 100, 50, false)
+    testing.expect(t, !reflowed.selection_active)
+
+    alternate := stable_test_selection()
+    validate_selection_context_locked(&alternate, 80, 20, 0, 0, true)
+    testing.expect(t, !alternate.selection_active)
+}
+
+@(test)
+manual_history_navigation_preserves_stable_selection :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    view.history_target_offset = 20
+    view.history_anchor_top_row = 130
+    view.history_anchor_valid = true
+
+    testing.expect(t, scroll_history_rows(&view, 10))
+    testing.expect(t, view.selection_active)
+    testing.expect(t, set_history_offset(&view, 5))
+    testing.expect(t, view.selection_active)
+}
+
+@(test)
+return_live_navigation_preserves_selection_but_input_policy_clears_it :: proc(t: ^testing.T) {
+    navigation := stable_test_selection()
+    navigation.history_target_offset = 20
+    navigation.history_anchor_top_row = 130
+    navigation.history_anchor_valid = true
+    testing.expect(t, return_history_live_navigation(&navigation))
+    testing.expect(t, navigation.selection_active)
+
+    input := stable_test_selection()
+    input.history_target_offset = 20
+    input.history_anchor_top_row = 130
+    input.history_anchor_valid = true
+    testing.expect(t, return_history_live(&input))
+    testing.expect(t, !input.selection_active)
+}
+
+@(test)
+selection_visible_span_projects_only_intersecting_rows :: proc(t: ^testing.T) {
+    span0, ok0 := selection_visible_span(70, 3, 72, 7, 70, 80)
+    testing.expect(t, ok0)
+    testing.expect_value(t, span0.start_column, u16(3))
+    testing.expect_value(t, span0.end_column, u16(79))
+
+    span1, ok1 := selection_visible_span(70, 3, 72, 7, 71, 80)
+    testing.expect(t, ok1)
+    testing.expect_value(t, span1.start_column, u16(0))
+    testing.expect_value(t, span1.end_column, u16(79))
+
+    span2, ok2 := selection_visible_span(70, 3, 72, 7, 72, 80)
+    testing.expect(t, ok2)
+    testing.expect_value(t, span2.start_column, u16(0))
+    testing.expect_value(t, span2.end_column, u16(7))
+
+    _, outside := selection_visible_span(70, 3, 72, 7, 73, 80)
+    testing.expect(t, !outside)
+
+    reverse, reverse_ok := selection_visible_span(72, 7, 70, 3, 71, 80)
+    testing.expect(t, reverse_ok)
+    testing.expect_value(t, reverse.start_column, u16(0))
+    testing.expect_value(t, reverse.end_column, u16(79))
+}
