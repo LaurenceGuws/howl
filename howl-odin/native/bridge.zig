@@ -590,6 +590,16 @@ const OwnedSession = struct {
     process: ?session_process.SessionProcess = null,
 };
 
+fn currentProcessEnviron() std.process.Environ {
+    const c_environ = std.c.environ;
+    var count: usize = 0;
+    while (c_environ[count] != null) : (count += 1) {}
+    const block: std.process.Environ.Block = .{
+        .slice = c_environ[0..count :null],
+    };
+    return .{ .block = block };
+}
+
 const Bridge = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
@@ -647,7 +657,9 @@ pub export fn howl_odin_bridge_owned_session_create(
     };
     owned.* = .{
         .allocator = allocator,
-        .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{}),
+        .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{
+            .environ = currentProcessEnviron(),
+        }),
     };
     errdefer {
         owned.threaded.deinit();
