@@ -1,6 +1,7 @@
 package main
 
 import "core:testing"
+import SDL "vendor:sdl3"
 
 @(test)
 primary_pointer_routing_gives_history_and_shift_local_precedence :: proc(t: ^testing.T) {
@@ -29,4 +30,22 @@ interaction_info_flags_are_small_routing_facts :: proc(t: ^testing.T) {
     testing.expect(t, interaction_alternate_scroll(state))
     testing.expect(t, interaction_focus_reporting(state))
     testing.expect(t, !interaction_mouse_tracking_enabled(Interaction_State_Info{}))
+}
+
+@(test)
+named_physical_key_map_covers_function_lock_and_keypad_keys :: proc(t: ^testing.T) {
+    key, ok := named_bridge_key(SDL.K_F5)
+    testing.expect(t, ok)
+    testing.expect_value(t, key, Bridge_Key.F5)
+
+    key, ok = named_bridge_key(SDL.K_CAPSLOCK)
+    testing.expect(t, ok)
+    testing.expect_value(t, key, Bridge_Key.Caps_Lock)
+
+    key, ok = named_bridge_key(SDL.K_KP_ENTER)
+    testing.expect(t, ok)
+    testing.expect_value(t, key, Bridge_Key.Keypad_Enter)
+
+    _, modifier_mapped := named_bridge_key(SDL.K_LCTRL)
+    testing.expect(t, !modifier_mapped)
 }

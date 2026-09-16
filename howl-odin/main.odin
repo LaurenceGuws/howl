@@ -19,6 +19,7 @@ SEARCH_QUERY_BYTES :: 512
 SESSION_RETRY_MS :: 50
 SELECTION_EDGE_SCROLL_MS :: 100
 INTERACTION_CACHE_MS :: 120
+IME_PREEDIT_BYTES :: 1024
 MAX_TABS :: 8
 MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
@@ -252,6 +253,10 @@ App :: struct {
     search_open: bool,
     search_query: [SEARCH_QUERY_BYTES]u8,
     search_query_len: int,
+    ime_preedit: [IME_PREEDIT_BYTES]u8,
+    ime_preedit_len: int,
+    ime_preedit_start: i32,
+    ime_preedit_length: i32,
     next_session_identity: u32,
     startup_profile: int,
 }
@@ -1681,6 +1686,7 @@ clear_all_search_results :: proc(app: ^App) {
 }
 
 open_search :: proc(app: ^App) {
+    clear_ime_preedit(app)
     app.profile_menu_open = false
     app.palette_open = false
     app.settings_open = false
@@ -1694,6 +1700,7 @@ close_search :: proc(app: ^App) {
     if !app.search_open {
         return
     }
+    clear_ime_preedit(app)
     app.search_open = false
     app.search_query_len = 0
     clear_all_search_results(app)
@@ -2135,9 +2142,41 @@ named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
     case SDL.K_DELETE:    return .Delete, true
     case SDL.K_HOME:      return .Home, true
     case SDL.K_END:       return .End, true
-    case SDL.K_PAGEUP:    return .Page_Up, true
-    case SDL.K_PAGEDOWN:  return .Page_Down, true
-    case:                  return .Enter, false
+    case SDL.K_PAGEUP:       return .Page_Up, true
+    case SDL.K_PAGEDOWN:     return .Page_Down, true
+    case SDL.K_CAPSLOCK:     return .Caps_Lock, true
+    case SDL.K_NUMLOCKCLEAR: return .Num_Lock, true
+    case SDL.K_F1:           return .F1, true
+    case SDL.K_F2:           return .F2, true
+    case SDL.K_F3:           return .F3, true
+    case SDL.K_F4:           return .F4, true
+    case SDL.K_F5:           return .F5, true
+    case SDL.K_F6:           return .F6, true
+    case SDL.K_F7:           return .F7, true
+    case SDL.K_F8:           return .F8, true
+    case SDL.K_F9:           return .F9, true
+    case SDL.K_F10:          return .F10, true
+    case SDL.K_F11:          return .F11, true
+    case SDL.K_F12:          return .F12, true
+    case SDL.K_KP_0:         return .Keypad_0, true
+    case SDL.K_KP_1:         return .Keypad_1, true
+    case SDL.K_KP_2:         return .Keypad_2, true
+    case SDL.K_KP_3:         return .Keypad_3, true
+    case SDL.K_KP_4:         return .Keypad_4, true
+    case SDL.K_KP_5:         return .Keypad_5, true
+    case SDL.K_KP_6:         return .Keypad_6, true
+    case SDL.K_KP_7:         return .Keypad_7, true
+    case SDL.K_KP_8:         return .Keypad_8, true
+    case SDL.K_KP_9:         return .Keypad_9, true
+    case SDL.K_KP_DECIMAL:   return .Keypad_Decimal, true
+    case SDL.K_KP_PLUS:      return .Keypad_Add, true
+    case SDL.K_KP_MINUS:     return .Keypad_Subtract, true
+    case SDL.K_KP_MULTIPLY:  return .Keypad_Multiply, true
+    case SDL.K_KP_DIVIDE:    return .Keypad_Divide, true
+    case SDL.K_KP_COMMA:     return .Keypad_Separator, true
+    case SDL.K_KP_EQUALS:    return .Keypad_Equal, true
+    case SDL.K_KP_ENTER:     return .Keypad_Enter, true
+    case:                     return .Enter, false
     }
 }
 
@@ -2869,6 +2908,7 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
     }
     app.tabs[app.tab_count] = Tab{kind = .Session, title = title, session = view}
     app.tab_count += 1
+    clear_ime_preedit(app)
     app.active_tab = app.tab_count - 1
     app.profile_menu_open = false
     app.palette_open = false
@@ -2904,6 +2944,7 @@ close_tab :: proc(app: ^App, index: int) {
     if app.tab_count <= 1 || index < 0 || index >= app.tab_count {
         return
     }
+    clear_ime_preedit(app)
     retiring := app.tabs[index].session
     retiring_secondary := app.tabs[index].secondary_session
     for i in index..<app.tab_count - 1 {
@@ -2924,6 +2965,7 @@ split_active_pane :: proc(app: ^App) {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return
     }
+    clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
     if tab.secondary_session != nil {
         tab.active_pane = 1
@@ -2944,6 +2986,7 @@ close_active_pane :: proc(app: ^App) {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return
     }
+    clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
     if tab.secondary_session == nil {
         close_tab(app, app.active_tab)
@@ -3187,6 +3230,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
                 close_tab(app, i)
                 return
             }
+            clear_ime_preedit(app)
             app.active_tab = i
             return
         }
@@ -3203,6 +3247,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = send_semantic_focus(active_session_view(app), false)
         app.running = false
     case .WINDOW_FOCUS_LOST:
+        clear_ime_preedit(app)
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
@@ -3249,6 +3294,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_TAB && app.tab_count > 1 {
+            clear_ime_preedit(app)
             if shift {
                 app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
             } else {
@@ -3258,6 +3304,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             execute_action(app, .Split_Pane)
         } else if event.type == .KEY_DOWN && alt && (event.key.key == SDL.K_LEFT || event.key.key == SDL.K_RIGHT) {
             if app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].secondary_session != nil {
+                clear_ime_preedit(app)
                 app.tabs[app.active_tab].active_pane = event.key.key == SDL.K_RIGHT ? 1 : 0
             }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
@@ -3313,7 +3360,19 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
         }
+    case .TEXT_EDITING:
+        if event.edit.text != nil {
+            _ = set_ime_preedit(
+                app,
+                string(event.edit.text),
+                i32(event.edit.start),
+                i32(event.edit.length),
+            )
+        } else {
+            clear_ime_preedit(app)
+        }
     case .TEXT_INPUT:
+        clear_ime_preedit(app)
         if app.search_open {
             if event.text.text != nil {
                 text := string(event.text.text)
@@ -3449,6 +3508,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
             if app.active_tab >= 0 && app.active_tab < app.tab_count {
+                if app.tabs[app.active_tab].active_pane != pane_index {
+                    clear_ime_preedit(app)
+                }
                 app.tabs[app.active_tab].active_pane = pane_index
             }
             pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h))
@@ -3986,6 +4048,176 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
 }
 
+clear_ime_preedit :: proc(app: ^App) {
+    app.ime_preedit_len = 0
+    app.ime_preedit_start = 0
+    app.ime_preedit_length = 0
+}
+
+set_ime_preedit :: proc(app: ^App, text: string, start, length: i32) -> bool {
+    clear_ime_preedit(app)
+    if len(text) == 0 {
+        return true
+    }
+    if len(text) > len(app.ime_preedit) {
+        return false
+    }
+    copy(app.ime_preedit[:len(text)], transmute([]u8)text)
+    app.ime_preedit_len = len(text)
+    app.ime_preedit_start = start
+    app.ime_preedit_length = length
+    return true
+}
+
+search_input_field :: proc(width: f32) -> SDL.FRect {
+    box := search_bar_rect(width)
+    return {box.x + 58, box.y + 6, max(f32(160), box.w - 340), 34}
+}
+
+text_width :: proc(font: ^TTF.Font, text: string) -> f32 {
+    if font == nil || len(text) == 0 {
+        return 0
+    }
+    width, height: c.int
+    if !TTF.GetStringSize(font, cstring(raw_data(text)), c.size_t(len(text)), &width, &height) {
+        return 0
+    }
+    return f32(width)
+}
+
+ime_preedit_cursor_byte_offset :: proc(text: string, character_index: i32) -> int {
+    if character_index <= 0 || len(text) == 0 {
+        return 0
+    }
+    characters: i32
+    for byte, index in transmute([]u8)text {
+        if byte & 0xc0 == 0x80 {
+            continue
+        }
+        if characters == character_index {
+            return index
+        }
+        characters += 1
+    }
+    return len(text)
+}
+
+ime_preedit_caret_pixels :: proc(app: ^App, font: ^TTF.Font) -> c.int {
+    if app == nil || app.ime_preedit_len == 0 || app.ime_preedit_start < 0 {
+        return 0
+    }
+    preedit := string(app.ime_preedit[:app.ime_preedit_len])
+    offset := ime_preedit_cursor_byte_offset(preedit, app.ime_preedit_start)
+    return c.int(text_width(font, preedit[:offset]))
+}
+
+active_terminal_cursor_rect :: proc(
+    app: ^App,
+    width, height: f32,
+) -> (pane: SDL.FRect, cursor: SDL.Rect, ok: bool) {
+    view := active_session_view(app)
+    if view == nil || view.canvas == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return {}, {}, false
+    }
+    tab := &app.tabs[app.active_tab]
+    pane_value, pane_ok := pane_rect_for_index(app, tab.active_pane, width, height)
+    if !pane_ok {
+        return {}, {}, false
+    }
+    pane = pane_value
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 {
+        return {}, {}, false
+    }
+    rows := u16(view.canvas_surface_height / cell_height)
+    columns := u16(view.canvas_surface_width / cell_width)
+    if rows == 0 || columns == 0 {
+        return {}, {}, false
+    }
+    sync.mutex_lock(&view.mutex)
+    row := min(view.cursor_row, rows - 1)
+    column := min(view.cursor_column, columns - 1)
+    sync.mutex_unlock(&view.mutex)
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    cursor = {
+        c.int(origin_x + f32(u32(column) * u32(cell_width))),
+        c.int(origin_y + f32(u32(row) * u32(cell_height))),
+        c.int(cell_width),
+        c.int(cell_height),
+    }
+    return pane, cursor, true
+}
+
+update_text_input_area :: proc(app: ^App, width, height: f32) {
+    if app.search_open {
+        field := search_input_field(width)
+        query := string(app.search_query[:app.search_query_len])
+        input_x := field.x + 9 + text_width(app.ui_font, query)
+        input_x = min(input_x, field.x + field.w - 10)
+        caret := ime_preedit_caret_pixels(app, app.ui_font)
+        available := max(c.int(2), c.int(field.x + field.w - 9 - input_x))
+        area_width := max(c.int(2), caret + 2)
+        if app.ime_preedit_len != 0 {
+            preedit := string(app.ime_preedit[:app.ime_preedit_len])
+            area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+        }
+        area_width = min(area_width, available)
+        caret = min(caret, max(c.int(0), area_width - 1))
+        area := SDL.Rect{c.int(input_x), c.int(field.y + 7), area_width, c.int(field.h - 14)}
+        _ = SDL.SetTextInputArea(app.window, &area, caret)
+        return
+    }
+    pane, cursor, ok := active_terminal_cursor_rect(app, width, height)
+    if !ok {
+        _ = SDL.SetTextInputArea(app.window, nil, 0)
+        return
+    }
+    caret := ime_preedit_caret_pixels(app, app.terminal_font)
+    available := max(c.int(2), c.int(pane.x + pane.w - 2) - cursor.x)
+    area_width := max(cursor.w, caret + 2)
+    if app.ime_preedit_len != 0 {
+        preedit := string(app.ime_preedit[:app.ime_preedit_len])
+        area_width = max(area_width, c.int(text_width(app.terminal_font, preedit)))
+    }
+    area_width = min(area_width, available)
+    caret = min(caret, max(c.int(0), area_width - 1))
+    area := SDL.Rect{cursor.x, cursor.y, area_width, cursor.h}
+    _ = SDL.SetTextInputArea(app.window, &area, caret)
+}
+
+draw_ime_preedit :: proc(app: ^App, width, height: f32) {
+    if app.ime_preedit_len == 0 {
+        return
+    }
+    preedit := string(app.ime_preedit[:app.ime_preedit_len])
+    if app.search_open {
+        field := search_input_field(width)
+        query := string(app.search_query[:app.search_query_len])
+        x := min(field.x + 9 + text_width(app.ui_font, query), field.x + field.w - 12)
+        clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(field.w - 16), c.int(field.h)}
+        _ = SDL.SetRenderClipRect(app.renderer, &clip)
+        draw_text(app, app.ui_font, preedit, x, field.y + 8, palette.accent)
+        underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 9 - x))
+        draw_fill(app.renderer, {x, field.y + field.h - 6, underline_width, 1}, palette.accent)
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+        return
+    }
+    pane, cursor, ok := active_terminal_cursor_rect(app, width, height)
+    if !ok {
+        return
+    }
+    preedit_width := max(f32(cursor.w), text_width(app.terminal_font, preedit))
+    x := f32(cursor.x)
+    y := f32(cursor.y)
+    preedit_width = min(preedit_width, max(f32(cursor.w), pane.x + pane.w - 2 - x))
+    background := SDL.FRect{x, y, preedit_width, f32(cursor.h)}
+    draw_fill(app.renderer, background, palette.terminal_bg)
+    draw_text(app, app.terminal_font, preedit, x, y, palette.text)
+    draw_fill(app.renderer, {x, y + f32(cursor.h) - 2, preedit_width, 1}, palette.accent)
+}
+
 search_bar_rect :: proc(width: f32) -> SDL.FRect {
     box_width := min(f32(640), max(f32(360), width - 72))
     return {width - box_width - 22, 54, box_width, 46}
@@ -3997,7 +4229,7 @@ draw_search_bar :: proc(app: ^App, width: f32) {
     draw_outline(app.renderer, box, palette.border)
     draw_text(app, app.ui_font, "Find", box.x + 12, box.y + 12, palette.text_muted)
 
-    field := SDL.FRect{box.x + 58, box.y + 6, max(f32(160), box.w - 340), 34}
+    field := search_input_field(width)
     draw_fill(app.renderer, field, palette.terminal_bg)
     draw_outline(app.renderer, field, palette.accent)
     query := string(app.search_query[:app.search_query_len])
@@ -4221,6 +4453,8 @@ draw :: proc(app: ^App) {
     if app.search_open {
         draw_search_bar(app, width)
     }
+    update_text_input_area(app, width, height)
+    draw_ime_preedit(app, width, height)
 
     if app.profile_menu_open {
         draw_profile_menu(app)

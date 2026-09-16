@@ -161,11 +161,16 @@ These labels are descriptive, not priority scores.
   input through `howl-client.actions`.
 - Semantic paste preserves VT-owned bracketed-paste behavior.
 - Neovim and btop alt-screen open/input/exit canaries.
+- F1–F12, lock keys, and numeric-keypad physical identities use Howl named-key semantics; F5, F12, and Shift+F5 were pressure-tested through VT-owned encoding. Standalone modifier-key transitions remain deliberately withheld until shortcut arbitration can prevent half-chord leakage.
+
+**ACTIVE**
+
+- SDL `TEXT_EDITING` preedit is implemented as bounded client-local state for both terminal and Find owners; the platform candidate area follows the active terminal cursor or Find insertion point, and only committed `TEXT_INPUT` crosses into Howl. Unit/owner-transition coverage is green, but neither the private KWin lab nor Home currently runs an IME/dead-key layout, so a real preedit producer canary remains pending.
+- Repeat/key-up behavior dogfood under applications that request it.
 
 **WANTED**
 
-- Full desktop IME/composition path, not only committed text.
-- Repeat/key-up behavior dogfood under applications that request it.
+- Real platform dead-key/IME preedit canary when the active desktop actually has a composition producer.
 - Keyboard-layout and dead-key coverage.
 - Explicit handling of application shortcuts versus terminal shortcuts, with no
   modifier-only keypress side effects.

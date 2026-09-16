@@ -80,6 +80,16 @@ Current canary:
   VT-owned `ESC OA` / `ESC OB`. Shift+wheel remained the explicit local override and
   produced no child bytes. The same canary, with focus reporting off, also proved
   semantic focus transitions are suppressed by VT when the child did not request them;
+- desktop text composition now owns SDL `TEXT_EDITING` as bounded client-local
+  preedit state. Candidate placement follows the active terminal cursor or Find field,
+  transient composition is cleared when focus/input ownership changes, and only final
+  `TEXT_INPUT` crosses into Howl. The state/lifecycle path is unit-proven, while an
+  actual dead-key/IME preedit producer canary remains pending because neither the
+  current Home session nor the managed KWin lab has an IME/dead-key layout configured;
+- named physical-key coverage includes F1-F12, lock keys, and the numeric keypad.
+  F5, F12, and Shift+F5 were pressure-tested through VT-owned encoding; standalone
+  modifier-key transitions remain deliberately withheld until shortcut arbitration can
+  guarantee app-owned shortcuts never leak half a modifier chord to the child;
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
