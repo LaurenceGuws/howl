@@ -85,8 +85,9 @@ These labels are descriptive, not priority scores.
 **WANTED**
 
 - Remember useful window geometry without restoring a broken/off-screen layout.
-- Proper maximize, fullscreen, minimize, multi-monitor, DPI-change, and
-  display-hotplug dogfood coverage.
+- Proper maximize, fullscreen, minimize, heterogeneous multi-monitor moves, and
+  display-hotplug dogfood coverage. Live display-scale change handling is wired,
+  but moving one window across differently scaled real outputs is not yet proven.
 - Explicit startup choices: default profile, attach a named Session, or restore
   an accepted previous application layout.
 - Native app identity/icon/package metadata instead of permanent “canary” chrome.
@@ -439,6 +440,24 @@ These labels are descriptive, not priority scores.
 - Canvas residency avoids redundant atlas upload on unchanged generations.
 - Nerd/Powerline glyphs, ANSI colors, cursor, background, shaping, and HiDPI
   logical geometry are live in the Odin client.
+- Display scaling keeps one logical desktop geometry while rasterizing terminal
+  and application text at the monitor scale. Managed KWin canaries proved 1×,
+  1.5×, and 2×: SDL's display scale remained the semantic scale while backing
+  pixel density was allowed its expected fractional rounding (1.5× exposed
+  ~1.50047 density from 1601 backing pixels over 1067 logical pixels).
+- The canonical terminal Canvas scales its font/cell raster into backing pixels,
+  then Odin projects Canvas destinations, clips, selection/search overlays,
+  cursor geometry, scroll-edge bands, and pointer coordinates back through the
+  same scale. At 2× a logical 15 px font became 30 px / 18×40 cells; at 1.5× it
+  became 23 px / 14×31 cells, while an attached fixed Session stayed exactly
+  80×37. A client-owned shell at 1.5× resized its real PTY to 108×27 from the
+  physical cell lattice instead of retaining the 80×37 startup geometry.
+- SDL_ttf chrome uses logical point sizes with monitor-scaled DPI, rasterizes to
+  a high-resolution surface, then presents that texture at its original logical
+  rectangle. GDB proved UI/fallback fonts stayed 15 logical points at 108 DPI
+  on 1.5× and 144 DPI on 2×; the 1×/1.5×/2× visual canaries retained identical
+  tab/layout geometry. The fractional-scale owned-Session canary returned to
+  0.0% idle CPU after resize.
 - Terminal images now use the canonical Howl external-resource lane end-to-end:
   Session manifests identify exact image generations, `howl-client.images` fetches
   RGBA8 bytes on demand, `howl-render` owns placement/crop/z-order, Canvas names

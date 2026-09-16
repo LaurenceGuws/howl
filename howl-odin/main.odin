@@ -3,6 +3,7 @@ package main
 import "core:c"
 import json "core:encoding/json"
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:sync"
@@ -224,6 +225,7 @@ Session_View :: struct {
     worker_stop: bool,
     canvas: rawptr,
     canvas_font_pixels: u16,
+    canvas_scale: f32,
     canvas_session_revision: u64,
     canvas_history_offset: u32,
     canvas_frame_revision: u64,
@@ -404,11 +406,11 @@ notify_session_update :: proc() {
 App :: struct {
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
-    text_engine: ^TTF.TextEngine,
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_fonts: Desktop_Fonts,
     terminal_font_preset: int,
+    text_scale: f32,
     app_theme: App_Theme,
     running: bool,
     tabs: [MAX_TABS]Tab,
@@ -658,7 +660,11 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
     if next == app.terminal_font_preset {
         return
     }
-    if TTF.SetFontSize(app.terminal_font, font_size_for_preset(next)) {
+    scale := app.text_scale
+    if !valid_canvas_scale(scale) {
+        scale = 1
+    }
+    if set_font_display_scale(app.terminal_font, font_size_for_preset(next), scale) {
         app.terminal_font_preset = next
         for index in 0..<app.tab_count {
             for view in app.tabs[index].panes {
@@ -676,6 +682,92 @@ font_pixels_for_preset :: proc(preset: int) -> u16 {
     case 1: return 15
     case:   return 18
     }
+}
+
+CANVAS_SCALE_MAX :: f32(8)
+
+valid_canvas_scale :: proc(scale: f32) -> bool {
+    return scale == scale && scale > 0 && scale <= CANVAS_SCALE_MAX
+}
+
+scaled_canvas_font_pixels :: proc(logical_pixels: u16, scale: f32) -> (u16, bool) {
+    if logical_pixels == 0 || !valid_canvas_scale(scale) {
+        return 0, false
+    }
+    scaled := f32(logical_pixels) * scale
+    if scaled <= 0 || scaled > f32(0xffff) - 0.5 {
+        return 0, false
+    }
+    pixels := int(math.floor(scaled + 0.5))
+    if pixels <= 0 || pixels > 0xffff {
+        return 0, false
+    }
+    return u16(pixels), true
+}
+
+TEXT_DPI_BASE :: f32(72)
+
+scaled_text_dpi :: proc(scale: f32) -> (c.int, bool) {
+    if !valid_canvas_scale(scale) {
+        return 0, false
+    }
+    scaled := TEXT_DPI_BASE * scale
+    if scaled <= 0 || scaled > f32(0x7fffffff) - 0.5 {
+        return 0, false
+    }
+    dpi := int(math.floor(scaled + 0.5))
+    if dpi <= 0 || dpi > 0x7fffffff {
+        return 0, false
+    }
+    return c.int(dpi), true
+}
+
+set_font_display_scale :: proc(font: ^TTF.Font, logical_points, scale: f32) -> bool {
+    if font == nil || logical_points <= 0 {
+        return false
+    }
+    dpi, ok := scaled_text_dpi(scale)
+    if !ok {
+        return false
+    }
+    return TTF.SetFontSizeDPI(font, logical_points, dpi, dpi)
+}
+
+update_text_display_scale :: proc(app: ^App) -> bool {
+    if app == nil || app.window == nil || app.ui_font == nil || app.terminal_font == nil {
+        return false
+    }
+    scale := SDL.GetWindowDisplayScale(app.window)
+    if !valid_canvas_scale(scale) {
+        return false
+    }
+    if app.text_scale == scale {
+        return true
+    }
+    previous := app.text_scale
+    if !valid_canvas_scale(previous) {
+        previous = 1
+    }
+    if !set_font_display_scale(app.ui_font, 15, scale) {
+        return false
+    }
+    if !set_font_display_scale(app.terminal_font, font_size_for_preset(app.terminal_font_preset), scale) {
+        _ = set_font_display_scale(app.ui_font, 15, previous)
+        return false
+    }
+    app.text_scale = scale
+    return true
+}
+
+canvas_scale_value :: proc(view: ^Session_View) -> f32 {
+    if view != nil && valid_canvas_scale(view.canvas_scale) {
+        return view.canvas_scale
+    }
+    return 1
+}
+
+canvas_logical_extent :: proc(view: ^Session_View, physical: u16) -> f32 {
+    return f32(physical) / canvas_scale_value(view)
 }
 
 set_canvas_error :: proc(view: ^Session_View, message: string) {
@@ -739,6 +831,7 @@ reset_canvas :: proc(view: ^Session_View) {
         view.canvas_commands = nil
     }
     view.canvas_font_pixels = 0
+    view.canvas_scale = 0
     view.canvas_session_revision = 0
     view.canvas_history_offset = 0
     view.canvas_frame_revision = 0
@@ -765,8 +858,9 @@ resize_owned_session_to_pane :: proc(
     if cell_width == 0 || cell_height == 0 {
         return
     }
-    width_cells := max(1, int(available_width))
-    height_cells := max(1, int(available_height))
+    scale := canvas_scale_value(view)
+    width_cells := max(1, int(math.floor(available_width * scale)))
+    height_cells := max(1, int(math.floor(available_height * scale)))
     desired_columns := u16(clamp(
         width_cells / int(cell_width),
         1,
@@ -916,14 +1010,21 @@ create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> boo
 }
 
 ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
-    if view == nil {
+    if app == nil || app.window == nil || view == nil {
         return false
     }
-    pixels := view.profile_font_pixels
-    if pixels == 0 {
-        pixels = font_pixels_for_preset(app.terminal_font_preset)
+    logical_pixels := view.profile_font_pixels
+    if logical_pixels == 0 {
+        logical_pixels = font_pixels_for_preset(app.terminal_font_preset)
+    }
+    scale := SDL.GetWindowDisplayScale(app.window)
+    pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
+    if !scaled {
+        set_canvas_error(view, "invalid display scale")
+        return false
     }
     if view.canvas != nil && view.canvas_font_pixels == pixels {
+        view.canvas_scale = scale
         return true
     }
     reset_canvas(view)
@@ -956,6 +1057,7 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
         return false
     }
     view.canvas_font_pixels = pixels
+    view.canvas_scale = scale
     return true
 }
 
@@ -1034,13 +1136,21 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
     if !update_canvas(app, view) {
         return false
     }
-    pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
+    scale := canvas_scale_value(view)
+    pane_left := c.int(math.floor(pane.x))
+    pane_top := c.int(math.floor(pane.y))
+    pane_right := c.int(math.ceil(pane.x + pane.w))
+    pane_bottom := c.int(math.ceil(pane.y + pane.h))
+    pane_clip := SDL.Rect{pane_left, pane_top, pane_right - pane_left, pane_bottom - pane_top}
+    defer {
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+    }
     for command in view.canvas_commands {
         destination := SDL.FRect{
-            origin_x + f32(command.destination_x),
-            origin_y + f32(command.destination_y),
-            f32(command.destination_width),
-            f32(command.destination_height),
+            origin_x + f32(command.destination_x) / scale,
+            origin_y + f32(command.destination_y) / scale,
+            f32(command.destination_width) / scale,
+            f32(command.destination_height) / scale,
         }
         if command.tag == 0 {
             _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
@@ -1059,12 +1169,15 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
             set_canvas_error(view, "Canvas command references missing texture")
             return false
         }
-        command_clip := SDL.Rect{
-            c.int(origin_x) + c.int(command.clip_x),
-            c.int(origin_y) + c.int(command.clip_y),
-            c.int(command.clip_width),
-            c.int(command.clip_height),
-        }
+        clip_left_f := origin_x + f32(command.clip_x) / scale
+        clip_top_f := origin_y + f32(command.clip_y) / scale
+        clip_right_f := origin_x + f32(command.clip_x + i32(command.clip_width)) / scale
+        clip_bottom_f := origin_y + f32(command.clip_y + i32(command.clip_height)) / scale
+        clip_left := c.int(math.floor(clip_left_f))
+        clip_top := c.int(math.floor(clip_top_f))
+        clip_right := c.int(math.ceil(clip_right_f))
+        clip_bottom := c.int(math.ceil(clip_bottom_f))
+        command_clip := SDL.Rect{clip_left, clip_top, clip_right - clip_left, clip_bottom - clip_top}
         clip: SDL.Rect
         if !SDL.GetRectIntersection(command_clip, pane_clip, &clip) {
             continue
@@ -1090,7 +1203,6 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
         }
         _ = SDL.RenderTexture(app.renderer, resource.texture, &source, &destination)
     }
-    _ = SDL.SetRenderClipRect(app.renderer, nil)
     return true
 }
 
@@ -1115,16 +1227,30 @@ draw_outline :: proc(renderer: ^SDL.Renderer, rect: SDL.FRect, color: SDL.Color)
 }
 
 draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SDL.Color) {
-    if len(text) == 0 {
+    if app == nil || app.renderer == nil || font == nil || len(text) == 0 {
         return
     }
-    label := TTF.CreateText(app.text_engine, font, cstring(raw_data(text)), c.size_t(len(text)))
-    if label == nil {
+    surface := TTF.RenderText_Blended(font, cstring(raw_data(text)), c.size_t(len(text)), color)
+    if surface == nil {
         return
     }
-    defer TTF.DestroyText(label)
-    _ = TTF.SetTextColor(label, color[0], color[1], color[2], color[3])
-    _ = TTF.DrawRendererText(label, x, y)
+    defer SDL.DestroySurface(surface)
+    texture := SDL.CreateTextureFromSurface(app.renderer, surface)
+    if texture == nil {
+        return
+    }
+    defer SDL.DestroyTexture(texture)
+    scale := app.text_scale
+    if !valid_canvas_scale(scale) {
+        scale = 1
+    }
+    destination := SDL.FRect{
+        x,
+        y,
+        f32(surface.w) / scale,
+        f32(surface.h) / scale,
+    }
+    _ = SDL.RenderTexture(app.renderer, texture, nil, &destination)
 }
 
 publish_bridge_error :: proc(view: ^Session_View, handle: rawptr) {
@@ -2258,20 +2384,21 @@ terminal_pointer_location :: proc(
     if cell_width == 0 || cell_height == 0 || view.canvas_surface_width == 0 || view.canvas_surface_height == 0 {
         return 0, 0, 0, 0, false
     }
+    scale := canvas_scale_value(view)
     origin_x := pane.x + 10
     origin_y := pane.y + 6
-    right := origin_x + f32(view.canvas_surface_width)
-    bottom := origin_y + f32(view.canvas_surface_height)
+    right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
+    bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
     local_y := y
     if clamp_to_surface {
-        local_x = clamp(local_x, origin_x, max(origin_x, right - 1))
-        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1))
+        local_x = clamp(local_x, origin_x, max(origin_x, right - 1 / scale))
+        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1 / scale))
     } else if local_x < origin_x || local_x >= right || local_y < origin_y || local_y >= bottom {
         return 0, 0, 0, 0, false
     }
-    px := int(local_x - origin_x)
-    py := int(local_y - origin_y)
+    px := int(math.floor((local_x - origin_x) * scale))
+    py := int(math.floor((local_y - origin_y) * scale))
     columns := int(view.canvas_surface_width / cell_width)
     rows := int(view.canvas_surface_height / cell_height)
     col := px / int(cell_width)
@@ -3069,20 +3196,21 @@ selection_cell_at :: proc(
     if cell_width == 0 || cell_height == 0 {
         return 0, 0, false
     }
+    scale := canvas_scale_value(view)
     origin_x := pane.x + 10
     origin_y := pane.y + 6
-    right := origin_x + f32(view.canvas_surface_width)
-    bottom := origin_y + f32(view.canvas_surface_height)
+    right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
+    bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
     local_y := y
     if clamp_to_surface {
-        local_x = clamp(local_x, origin_x, max(origin_x, right - 1))
-        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1))
+        local_x = clamp(local_x, origin_x, max(origin_x, right - 1 / scale))
+        local_y = clamp(local_y, origin_y, max(origin_y, bottom - 1 / scale))
     } else if local_x < origin_x || local_x >= right || local_y < origin_y || local_y >= bottom {
         return 0, 0, false
     }
-    selected_column := int((local_x - origin_x) / f32(cell_width))
-    selected_row := int((local_y - origin_y) / f32(cell_height))
+    selected_column := int(math.floor((local_x - origin_x) * scale)) / int(cell_width)
+    selected_row := int(math.floor((local_y - origin_y) * scale)) / int(cell_height)
     columns := int(view.canvas_surface_width / cell_width)
     rows := int(view.canvas_surface_height / cell_height)
     if selected_column < 0 || selected_column >= columns || selected_row < 0 || selected_row >= rows {
@@ -3315,8 +3443,9 @@ update_selection_edge_scroll_intent :: proc(
     if cell_height == 0 {
         return false
     }
+    scale := canvas_scale_value(view)
     surface_top := pane.y + 6
-    surface_bottom := surface_top + f32(view.canvas_surface_height)
+    surface_bottom := surface_top + canvas_logical_extent(view, view.canvas_surface_height)
     alternate := render_alternate_screen(view.canvas) != 0
 
     sync.mutex_lock(&view.mutex)
@@ -3333,7 +3462,7 @@ update_selection_edge_scroll_intent :: proc(
         pointer_y,
         surface_top,
         surface_bottom,
-        f32(cell_height),
+        f32(cell_height) / scale,
         !alternate && target_offset < count,
         !alternate && target_offset > 0,
     )
@@ -3573,6 +3702,7 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
 
     origin_x := pane.x + 10
     origin_y := pane.y + 6
+    scale := canvas_scale_value(view)
     pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
     _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
     defer {
@@ -3598,10 +3728,10 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         first := int(span.start_column)
         last := int(span.end_column)
         rect := SDL.FRect{
-            origin_x + f32(first * int(cell_width)),
-            origin_y + f32(viewport_row * int(cell_height)),
-            f32((last - first + 1) * int(cell_width)),
-            f32(cell_height),
+            origin_x + f32(first * int(cell_width)) / scale,
+            origin_y + f32(viewport_row * int(cell_height)) / scale,
+            f32((last - first + 1) * int(cell_width)) / scale,
+            f32(cell_height) / scale,
         }
         draw_fill(app.renderer, rect, color)
     }
@@ -3644,11 +3774,12 @@ draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
 
     origin_x := pane.x + 10
     origin_y := pane.y + 6
+    scale := canvas_scale_value(view)
     rect := SDL.FRect{
-        origin_x + f32(result.start_column * cell_width),
-        origin_y + f32(viewport_row * i64(cell_height)),
-        f32((result.end_column - result.start_column + 1) * cell_width),
-        f32(cell_height),
+        origin_x + f32(result.start_column * cell_width) / scale,
+        origin_y + f32(viewport_row * i64(cell_height)) / scale,
+        f32((result.end_column - result.start_column + 1) * cell_width) / scale,
+        f32(cell_height) / scale,
     }
     fill := palette.accent
     fill[3] = 62
@@ -4534,6 +4665,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     case .WINDOW_FOCUS_GAINED:
         _ = send_semantic_focus(active_session_view(app), true)
         wake_consequence_owners(app)
+    case .WINDOW_DISPLAY_SCALE_CHANGED:
+        if !update_text_display_scale(app) {
+            sdl_error("TTF display scale update failed")
+        }
     case .DROP_FILE:
         _ = drop_into_active_terminal(app, event.drop.data, true)
     case .DROP_TEXT:
@@ -5554,7 +5689,7 @@ search_input_field :: proc(width: f32) -> SDL.FRect {
     return {box.x + 58, box.y + 6, max(f32(160), box.w - 340), 34}
 }
 
-text_width :: proc(font: ^TTF.Font, text: string) -> f32 {
+text_width :: proc(app: ^App, font: ^TTF.Font, text: string) -> f32 {
     if font == nil || len(text) == 0 {
         return 0
     }
@@ -5562,7 +5697,11 @@ text_width :: proc(font: ^TTF.Font, text: string) -> f32 {
     if !TTF.GetStringSize(font, cstring(raw_data(text)), c.size_t(len(text)), &width, &height) {
         return 0
     }
-    return f32(width)
+    scale := f32(1)
+    if app != nil && valid_canvas_scale(app.text_scale) {
+        scale = app.text_scale
+    }
+    return f32(width) / scale
 }
 
 ime_preedit_cursor_byte_offset :: proc(text: string, character_index: i32) -> int {
@@ -5588,7 +5727,7 @@ ime_preedit_caret_pixels :: proc(app: ^App, font: ^TTF.Font) -> c.int {
     }
     preedit := string(app.ime_preedit[:app.ime_preedit_len])
     offset := ime_preedit_cursor_byte_offset(preedit, app.ime_preedit_start)
-    return c.int(text_width(font, preedit[:offset]))
+    return c.int(math.ceil(text_width(app, font, preedit[:offset])))
 }
 
 active_terminal_cursor_rect :: proc(
@@ -5621,11 +5760,12 @@ active_terminal_cursor_rect :: proc(
     sync.mutex_unlock(&view.mutex)
     origin_x := pane.x + 10
     origin_y := pane.y + 6
+    scale := canvas_scale_value(view)
     cursor = {
-        c.int(origin_x + f32(u32(column) * u32(cell_width))),
-        c.int(origin_y + f32(u32(row) * u32(cell_height))),
-        c.int(cell_width),
-        c.int(cell_height),
+        c.int(math.floor(origin_x + f32(u32(column) * u32(cell_width)) / scale)),
+        c.int(math.floor(origin_y + f32(u32(row) * u32(cell_height)) / scale)),
+        max(c.int(1), c.int(math.ceil(f32(cell_width) / scale))),
+        max(c.int(1), c.int(math.ceil(f32(cell_height) / scale))),
     }
     return pane, cursor, true
 }
@@ -5634,13 +5774,13 @@ update_text_input_area :: proc(app: ^App, width, height: f32) {
     if app.settings_open && app.settings_search_open {
         field := settings_search_input_rect(width, height)
         query := settings_search_query(app)
-        input_x := min(field.x + 10 + text_width(app.ui_font, query), field.x + field.w - 10)
+        input_x := min(field.x + 10 + text_width(app, app.ui_font, query), field.x + field.w - 10)
         caret := ime_preedit_caret_pixels(app, app.ui_font)
         available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
         area_width := max(c.int(2), caret + 2)
         if app.ime_preedit_len != 0 {
             preedit := string(app.ime_preedit[:app.ime_preedit_len])
-            area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+            area_width = max(area_width, c.int(text_width(app, app.ui_font, preedit)))
         }
         area_width = min(area_width, available)
         caret = min(caret, max(c.int(0), area_width - 1))
@@ -5651,13 +5791,13 @@ update_text_input_area :: proc(app: ^App, width, height: f32) {
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
             text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
-            input_x := min(field.x + 7 + text_width(app.ui_font, text), field.x + field.w - 10)
+            input_x := min(field.x + 7 + text_width(app, app.ui_font, text), field.x + field.w - 10)
             caret := ime_preedit_caret_pixels(app, app.ui_font)
             available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
             area_width := max(c.int(2), caret + 2)
             if app.ime_preedit_len != 0 {
                 preedit := string(app.ime_preedit[:app.ime_preedit_len])
-                area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+                area_width = max(area_width, c.int(text_width(app, app.ui_font, preedit)))
             }
             area_width = min(area_width, available)
             caret = min(caret, max(c.int(0), area_width - 1))
@@ -5669,14 +5809,14 @@ update_text_input_area :: proc(app: ^App, width, height: f32) {
     if app.search_open {
         field := search_input_field(width)
         query := string(app.search_query[:app.search_query_len])
-        input_x := field.x + 9 + text_width(app.ui_font, query)
+        input_x := field.x + 9 + text_width(app, app.ui_font, query)
         input_x = min(input_x, field.x + field.w - 10)
         caret := ime_preedit_caret_pixels(app, app.ui_font)
         available := max(c.int(2), c.int(field.x + field.w - 9 - input_x))
         area_width := max(c.int(2), caret + 2)
         if app.ime_preedit_len != 0 {
             preedit := string(app.ime_preedit[:app.ime_preedit_len])
-            area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+            area_width = max(area_width, c.int(text_width(app, app.ui_font, preedit)))
         }
         area_width = min(area_width, available)
         caret = min(caret, max(c.int(0), area_width - 1))
@@ -5694,7 +5834,7 @@ update_text_input_area :: proc(app: ^App, width, height: f32) {
     area_width := max(cursor.w, caret + 2)
     if app.ime_preedit_len != 0 {
         preedit := string(app.ime_preedit[:app.ime_preedit_len])
-        area_width = max(area_width, c.int(text_width(app.terminal_font, preedit)))
+        area_width = max(area_width, c.int(text_width(app, app.terminal_font, preedit)))
     }
     area_width = min(area_width, available)
     caret = min(caret, max(c.int(0), area_width - 1))
@@ -5710,11 +5850,11 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
     if app.settings_open && app.settings_search_open {
         field := settings_search_input_rect(width, height)
         query := settings_search_query(app)
-        x := min(field.x + 10 + text_width(app.ui_font, query), field.x + field.w - 12)
+        x := min(field.x + 10 + text_width(app, app.ui_font, query), field.x + field.w - 12)
         clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(max(f32(1), field.w - 16)), c.int(field.h)}
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
         draw_text(app, app.ui_font, preedit, x, field.y + 10, palette.accent)
-        underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 10 - x))
+        underline_width := max(f32(4), min(text_width(app, app.ui_font, preedit), field.x + field.w - 10 - x))
         draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
         _ = SDL.SetRenderClipRect(app.renderer, nil)
         return
@@ -5722,11 +5862,11 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
             text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
-            x := min(field.x + 7 + text_width(app.ui_font, text), field.x + field.w - 12)
+            x := min(field.x + 7 + text_width(app, app.ui_font, text), field.x + field.w - 12)
             clip := SDL.Rect{c.int(field.x + 5), c.int(field.y), c.int(max(f32(1), field.w - 10)), c.int(field.h)}
             _ = SDL.SetRenderClipRect(app.renderer, &clip)
             draw_text(app, app.ui_font, preedit, x, field.y + 8, palette.accent)
-            underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 7 - x))
+            underline_width := max(f32(4), min(text_width(app, app.ui_font, preedit), field.x + field.w - 7 - x))
             draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
             _ = SDL.SetRenderClipRect(app.renderer, nil)
             return
@@ -5735,11 +5875,11 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
     if app.search_open {
         field := search_input_field(width)
         query := string(app.search_query[:app.search_query_len])
-        x := min(field.x + 9 + text_width(app.ui_font, query), field.x + field.w - 12)
+        x := min(field.x + 9 + text_width(app, app.ui_font, query), field.x + field.w - 12)
         clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(field.w - 16), c.int(field.h)}
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
         draw_text(app, app.ui_font, preedit, x, field.y + 8, palette.accent)
-        underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 9 - x))
+        underline_width := max(f32(4), min(text_width(app, app.ui_font, preedit), field.x + field.w - 9 - x))
         draw_fill(app.renderer, {x, field.y + field.h - 6, underline_width, 1}, palette.accent)
         _ = SDL.SetRenderClipRect(app.renderer, nil)
         return
@@ -5748,7 +5888,7 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
     if !ok {
         return
     }
-    preedit_width := max(f32(cursor.w), text_width(app.terminal_font, preedit))
+    preedit_width := max(f32(cursor.w), text_width(app, app.terminal_font, preedit))
     x := f32(cursor.x)
     y := f32(cursor.y)
     preedit_width = min(preedit_width, max(f32(cursor.w), pane.x + pane.w - 2 - x))
@@ -6103,13 +6243,6 @@ main :: proc() {
     _ = SDL.SetRenderVSync(renderer, 1)
     _ = SDL.SetRenderDrawBlendMode(renderer, SDL.BLENDMODE_BLEND)
 
-    engine := TTF.CreateRendererTextEngine(renderer)
-    if engine == nil {
-        sdl_error("TTF_CreateRendererTextEngine failed")
-        return
-    }
-    defer TTF.DestroyRendererTextEngine(engine)
-
     ui_font := TTF.OpenFont(UI_FONT_PATH, 15)
     if ui_font == nil {
         sdl_error("TTF_OpenFont UI failed")
@@ -6139,11 +6272,11 @@ main :: proc() {
     app := App{
         window = window,
         renderer = renderer,
-        text_engine = engine,
         ui_font = ui_font,
         terminal_font = terminal_font,
         terminal_fonts = terminal_fonts,
         terminal_font_preset = terminal_font_preset,
+        text_scale = 1,
         app_theme = app_theme,
         running = true,
         tab_count = 0,
@@ -6152,6 +6285,10 @@ main :: proc() {
         pane_resize_tab = -1,
         next_session_identity = 1,
         startup_profile = 0,
+    }
+    if !update_text_display_scale(&app) {
+        sdl_error("TTF display scale initialization failed")
+        return
     }
     if !initialize_builtin_profiles(&app) {
         sdl_error("Built-in profile initialization failed")
