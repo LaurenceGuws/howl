@@ -11,7 +11,11 @@ const linux = std.os.linux;
 const howl = @import("howl_session");
 const protocol = howl.protocol;
 
-const maximum_clients: usize = 8;
+// One polished desktop view currently owns bounded control, observer, render,
+// and consequence-policy connections. Keep enough explicit slots for the
+// product's eight-view ceiling without embedding one 64 KiB request buffer in
+// every empty slot; Client.input is allocated only for accepted connections.
+const maximum_clients: usize = 32;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
 // A delta mirror never admits more cells than could fit even as fixed text_v1
@@ -22,7 +26,7 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
 const client_output_retain_bytes: usize = 512 * 1024;
-const listen_backlog: u32 = 16;
+const listen_backlog: u32 = maximum_clients;
 const lifecycle_poll_ms: i32 = 100;
 // Match Foot's bounded application synchronized-update hold. Canonical VT
 // progress continues during the hold; only observer publication waits. A stuck
@@ -246,7 +250,7 @@ const Client = struct {
     fd: posix.fd_t,
     id: protocol.ClientId,
     phase: enum { hello, ready } = .hello,
-    input: [input_buffer_bytes]u8 = undefined,
+    input: []u8 = &.{},
     input_len: usize = 0,
     output: std.ArrayList(u8) = .empty,
     output_offset: usize = 0,
@@ -270,6 +274,7 @@ const Client = struct {
 
     fn deinit(self: *Client, allocator: std.mem.Allocator) void {
         closeFd(self.fd);
+        if (self.input.len != 0) allocator.free(self.input);
         self.output.deinit(allocator);
         self.snapshot_images.deinit(allocator);
         self.* = undefined;
@@ -539,8 +544,12 @@ const Server = struct {
                 closeFd(fd);
                 continue;
             };
+            const input = self.allocator.alloc(u8, input_buffer_bytes) catch {
+                closeFd(fd);
+                continue;
+            };
             const id = self.nextClientId();
-            self.clients[slot] = .{ .fd = fd, .id = id };
+            self.clients[slot] = .{ .fd = fd, .id = id, .input = input };
         }
     }
 
@@ -2846,10 +2855,15 @@ test "delta observation falls back raw then reuses rows from exact requested bas
     try std.testing.expect(!baseline.delta);
     try std.testing.expectEqual(@as(usize, 0), try zeroPayloadRowCount(baseline.body));
     const baseline_revision = baseline.begin.revision;
+    const baseline_terminal_revision = baseline.begin.terminal_revision;
 
     try sendInput(&peer, &server, "x");
     try expectResult(&peer, &server, .input, .ok);
     var attempts: usize = 0;
+    while (howl.revision(server.session) <= baseline_terminal_revision and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(howl.revision(server.session) > baseline_terminal_revision);
+    attempts = 0;
     while (server.observation_revision <= baseline_revision and attempts < 1000) : (attempts += 1)
         try server.turn(1);
     try std.testing.expect(server.observation_revision > baseline_revision);
@@ -4830,4 +4844,49 @@ test "consequence wire mapper satisfies frozen metadata grammar for every family
         try std.testing.expectEqual(wire.reply_required, decoded.reply_required);
         try std.testing.expectEqual(@as(u32, @intCast(wire.payload.len)), decoded.payload_len);
     }
+}
+
+test "endpoint admits the bounded thirty two clients with per-connection request storage" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-client-capacity.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+        },
+    );
+    defer server.deinit();
+
+    var peers: [maximum_clients]TestPeer = undefined;
+    var peer_count: usize = 0;
+    defer while (peer_count != 0) {
+        peer_count -= 1;
+        peers[peer_count].deinit();
+    };
+    for (&peers) |*peer| {
+        peer.* = try TestPeer.connect(std.testing.allocator, path);
+        peer_count += 1;
+        const welcome = try handshake(peer, &server);
+        try std.testing.expect(welcome.client_id != protocol.no_client);
+    }
+    var active: usize = 0;
+    for (server.clients) |client| {
+        if (client) |value| {
+            active += 1;
+            try std.testing.expectEqual(@as(usize, input_buffer_bytes), value.input.len);
+        }
+    }
+    try std.testing.expectEqual(maximum_clients, active);
 }
