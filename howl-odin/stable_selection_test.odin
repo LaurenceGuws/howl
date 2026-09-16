@@ -118,3 +118,47 @@ selection_visible_span_projects_only_intersecting_rows :: proc(t: ^testing.T) {
     testing.expect_value(t, reverse.start_column, u16(0))
     testing.expect_value(t, reverse.end_column, u16(79))
 }
+
+@(test)
+selection_edge_scroll_direction_respects_bands_and_bounds :: proc(t: ^testing.T) {
+    testing.expect_value(
+        t,
+        selection_edge_scroll_direction(110, 100, 500, 20, true, false),
+        i8(1),
+    )
+    testing.expect_value(
+        t,
+        selection_edge_scroll_direction(490, 100, 500, 20, false, true),
+        i8(-1),
+    )
+    testing.expect_value(
+        t,
+        selection_edge_scroll_direction(300, 100, 500, 20, true, true),
+        i8(0),
+    )
+    testing.expect_value(
+        t,
+        selection_edge_scroll_direction(110, 100, 500, 20, false, true),
+        i8(0),
+    )
+    testing.expect_value(
+        t,
+        selection_edge_scroll_direction(490, 100, 500, 20, true, false),
+        i8(0),
+    )
+}
+
+@(test)
+clearing_selection_disarms_edge_scroll :: proc(t: ^testing.T) {
+    view := stable_test_selection()
+    view.selection_dragging = true
+    view.selection_edge_scroll_rows = 1
+    view.selection_pointer_x = 44
+    view.selection_pointer_y = 12
+    clear_selection_locked(&view)
+    testing.expect(t, !view.selection_active)
+    testing.expect(t, !view.selection_dragging)
+    testing.expect_value(t, view.selection_edge_scroll_rows, i8(0))
+    testing.expect_value(t, view.selection_pointer_x, f32(0))
+    testing.expect_value(t, view.selection_pointer_y, f32(0))
+}

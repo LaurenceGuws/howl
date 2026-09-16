@@ -106,11 +106,15 @@ Current canary:
   visible intersection of that stable range; wheel/PageUp/scrollbar navigation
   and live output may move the viewport without destroying the selection, and
   an offscreen range can still be copied exactly through `howl-client.selection`
-  plus Session `text_extract`. `Ctrl+Shift+V` uses semantic paste so
-  bracketed-paste behavior remains VT-owned. Input deliberately clears selection
-  while returning to LIVE; row eviction, screen-bank change, or column reflow
-  invalidates the range instead of retargeting it. VT itself normalizes wide-cell
-  continuation endpoints during canonical text extraction;
+  plus Session `text_extract`. Holding a selection drag in the top/bottom two-row
+  edge band autoscrolls one retained row every 100 ms and updates the same stable
+  focus endpoint; the SDL loop gains that timeout only while the edge gesture is
+  armed and returns to indefinite sleep on release or at oldest/LIVE. `Ctrl+Shift+V`
+  uses semantic paste so bracketed-paste behavior remains VT-owned. Input
+  deliberately clears selection while returning to LIVE; row eviction,
+  screen-bank change, or column reflow invalidates the range instead of
+  retargeting it. VT itself normalizes wide-cell continuation endpoints during
+  canonical text extraction;
 - terminal content is now projected by the real `howl-render` terminal Content
   and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,

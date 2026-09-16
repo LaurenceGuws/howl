@@ -17,6 +17,7 @@ SESSION_TEXT_BYTES :: 512 * 1024
 SELECTION_TEXT_BYTES :: 1024 * 1024
 SEARCH_QUERY_BYTES :: 512
 SESSION_RETRY_MS :: 50
+SELECTION_EDGE_SCROLL_MS :: 100
 MAX_TABS :: 8
 MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
@@ -125,6 +126,9 @@ Session_View :: struct {
     selection_anchor_column: u16,
     selection_focus_row: i32,
     selection_focus_column: u16,
+    selection_edge_scroll_rows: i8,
+    selection_pointer_x: f32,
+    selection_pointer_y: f32,
     selection_columns: u16,
     selection_alternate_screen: bool,
     text_truncated: bool,
@@ -1183,6 +1187,9 @@ clear_selection_locked :: proc(view: ^Session_View) {
     view.selection_anchor_column = 0
     view.selection_focus_row = 0
     view.selection_focus_column = 0
+    view.selection_edge_scroll_rows = 0
+    view.selection_pointer_x = 0
+    view.selection_pointer_y = 0
     view.selection_columns = 0
     view.selection_alternate_screen = false
 }
@@ -2001,6 +2008,9 @@ begin_selection :: proc(
     view.selection_anchor_column = column
     view.selection_focus_row = row
     view.selection_focus_column = column
+    view.selection_edge_scroll_rows = 0
+    view.selection_pointer_x = x
+    view.selection_pointer_y = y
     view.selection_columns = columns
     view.selection_alternate_screen = alternate
     sync.mutex_unlock(&view.mutex)
@@ -2048,6 +2058,113 @@ extend_selection :: proc(
     return false
 }
 
+selection_edge_scroll_direction :: proc(
+    pointer_y, surface_top, surface_bottom, row_height: f32,
+    can_scroll_older, can_scroll_newer: bool,
+) -> i8 {
+    if row_height <= 0 || surface_bottom <= surface_top {
+        return 0
+    }
+    band := min(row_height * 2, (surface_bottom - surface_top) / 2)
+    if pointer_y < surface_top + band && can_scroll_older {
+        return 1
+    }
+    if pointer_y >= surface_bottom - band && can_scroll_newer {
+        return -1
+    }
+    return 0
+}
+
+update_selection_edge_scroll_intent :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    pointer_x, pointer_y: f32,
+) -> bool {
+    if view == nil || view.canvas == nil {
+        return false
+    }
+    cell_height := render_cell_height(view.canvas)
+    if cell_height == 0 {
+        return false
+    }
+    surface_top := pane.y + 6
+    surface_bottom := surface_top + f32(view.canvas_surface_height)
+    alternate := render_alternate_screen(view.canvas) != 0
+
+    sync.mutex_lock(&view.mutex)
+    dragging := view.selection_dragging
+    target_offset := view.history_target_offset
+    count := view.history_count
+    old_direction := view.selection_edge_scroll_rows
+    if !dragging {
+        view.selection_edge_scroll_rows = 0
+        sync.mutex_unlock(&view.mutex)
+        return old_direction != 0
+    }
+    direction := selection_edge_scroll_direction(
+        pointer_y,
+        surface_top,
+        surface_bottom,
+        f32(cell_height),
+        !alternate && target_offset < count,
+        !alternate && target_offset > 0,
+    )
+    view.selection_edge_scroll_rows = direction
+    view.selection_pointer_x = pointer_x
+    view.selection_pointer_y = pointer_y
+    sync.mutex_unlock(&view.mutex)
+    return direction != old_direction
+}
+
+selection_edge_scroll_active :: proc(app: ^App) -> bool {
+    view := active_session_view(app)
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    active := view.selection_dragging && view.selection_edge_scroll_rows != 0
+    sync.mutex_unlock(&view.mutex)
+    return active
+}
+
+selection_edge_scroll_tick :: proc(app: ^App) -> bool {
+    view := active_session_view(app)
+    if view == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    dragging := view.selection_dragging
+    direction := view.selection_edge_scroll_rows
+    pointer_x := view.selection_pointer_x
+    pointer_y := view.selection_pointer_y
+    sync.mutex_unlock(&view.mutex)
+    if !dragging || direction == 0 {
+        return false
+    }
+
+    if !scroll_history_rows(view, int(direction)) {
+        sync.mutex_lock(&view.mutex)
+        view.selection_edge_scroll_rows = 0
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+
+    w, h: c.int
+    if !SDL.GetWindowSize(app.window, &w, &h) {
+        return true
+    }
+    tab := &app.tabs[app.active_tab]
+    pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h))
+    if !ok {
+        return true
+    }
+    if update_canvas(app, view) {
+        _ = extend_selection(app, view, pane, pointer_x, pointer_y)
+        _ = update_selection_edge_scroll_intent(view, pane, pointer_x, pointer_y)
+    }
+    return true
+}
+
 finish_selection :: proc(view: ^Session_View) {
     if view == nil {
         return
@@ -2055,6 +2172,9 @@ finish_selection :: proc(view: ^Session_View) {
     sync.mutex_lock(&view.mutex)
     was_dragging := view.selection_dragging
     view.selection_dragging = false
+    view.selection_edge_scroll_rows = 0
+    view.selection_pointer_x = 0
+    view.selection_pointer_y = 0
     if view.selection_active &&
        view.selection_anchor_row == view.selection_focus_row &&
        view.selection_anchor_column == view.selection_focus_column {
@@ -2800,7 +2920,14 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         _ = update_history_scrollbar_drag(view, pane, event.motion.y)
                         return
                     }
-                    _ = extend_selection(app, view, pane, event.motion.x, event.motion.y)
+                    if extend_selection(app, view, pane, event.motion.x, event.motion.y) {
+                        _ = update_selection_edge_scroll_intent(
+                            view,
+                            pane,
+                            event.motion.x,
+                            event.motion.y,
+                        )
+                    }
                 }
             }
         }
@@ -3563,7 +3690,14 @@ main :: proc() {
     draw(&app)
     for app.running {
         event: SDL.Event
-        if !SDL.WaitEvent(&event) {
+        if selection_edge_scroll_active(&app) {
+            if !SDL.WaitEventTimeout(&event, SELECTION_EDGE_SCROLL_MS) {
+                if selection_edge_scroll_tick(&app) && app.running {
+                    draw(&app)
+                }
+                continue
+            }
+        } else if !SDL.WaitEvent(&event) {
             continue
         }
         handle_event(&app, &event)

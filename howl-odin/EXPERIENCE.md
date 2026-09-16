@@ -275,12 +275,17 @@ These labels are descriptive, not priority scores.
 - Eviction, screen-bank change, and column reflow invalidate stale ranges instead
   of silently retargeting them. Focus loss/window close ends an active drag while
   retaining any noncollapsed range accumulated so far.
-- Six executable stable-selection tests run in the Odin owner build.
+- Selection drag edge-autoscroll is built on the same stable endpoint model:
+  the top/bottom two-row band moves one retained row every 100 ms, expands the
+  canonical range through the newly visible cells, and stops at oldest/LIVE.
+  The SDL main loop uses a timeout only while that gesture is armed; after release
+  the client returns to indefinite event sleep (measured 0.00% of one core idle).
+- Eight executable stable-selection/edge-policy tests run in the Odin owner build.
 
 **ACTIVE**
 
-- Selection edge-autoscroll while dragging beyond the visible top/bottom, built on
-  the stable endpoint model rather than viewport-row translation.
+- Continue selection pressure across split panes, ring eviction, and app-owned mouse
+  modes before adding richer gestures.
 
 **WANTED**
 
