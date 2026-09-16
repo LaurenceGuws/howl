@@ -4881,9 +4881,22 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             modifiers_state := SDL.GetModState()
             modifiers := bridge_modifiers(modifiers_state)
             shift := .LSHIFT in modifiers_state || .RSHIFT in modifiers_state
+            ctrl := .LCTRL in modifiers_state || .RCTRL in modifiers_state
             history_is_active := history_active(view)
 
             if event.button.button == SDL.BUTTON_LEFT {
+                if ctrl {
+                    if handled, _ := open_hyperlink_at(
+                        app,
+                        view,
+                        pane,
+                        event.button.x,
+                        event.button.y,
+                    ); handled {
+                        clear_selection(view)
+                        return
+                    }
+                }
                 route := session_interactive(view) ? route_desktop_primary_pointer(
                     history_is_active,
                     shift,

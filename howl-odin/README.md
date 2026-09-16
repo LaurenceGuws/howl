@@ -108,6 +108,11 @@ Current canary:
   it unless the child requested focus reporting; with DEC focus reporting enabled,
   the managed-KWin canary received canonical focus-out `ESC[O` and focus-in `ESC[I`.
   Focus loss also terminates any terminal-owned mouse capture with semantic releases;
+- Ctrl+left-click is the deliberate desktop hyperlink override. The app resolves the
+  exact displayed stable cell through `howl-client.view` OSC 8 metadata, accepts only
+  valid UTF-8 `http://` / `https://` targets, and delegates opening to SDL. Ordinary
+  unlinked Ctrl-clicks fall through to the existing mouse/selection router; unsupported
+  canonical schemes such as `file://` are never handed to the platform;
 - DEC alternate-scroll is routed through canonical named-key cycles, never client
   escape strings. In a controlled alternate-screen canary with mouse tracking off,
   DEC alternate-scroll on, and application-cursor mode on, wheel-up/down arrived as

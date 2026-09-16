@@ -19,6 +19,7 @@ foreign howl_bridge {
     search_find        :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
     search_match_info_size :: proc() -> u32 ---
     selection_expand   :: proc(handle: rawptr, kind: u8, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: ^Selection_Range_Info) -> i32 ---
+    hyperlink_copy     :: proc(handle: rawptr, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     selection_range_info_size :: proc() -> u32 ---
     interaction_state :: proc(handle: rawptr, output: ^Interaction_State_Info) -> i32 ---
     interaction_state_info_size :: proc() -> u32 ---

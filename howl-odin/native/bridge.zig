@@ -1559,6 +1559,93 @@ fn selectionViewportRow(begin: *const protocol.SnapshotBegin, stable_row: i32) ?
     return @intCast(relative);
 }
 
+fn hyperlinkUriAt(
+    snapshot: *const client.view.Snapshot,
+    viewport_row: u16,
+    column: u16,
+) ?[]const u8 {
+    const rows = client.view.rows(snapshot);
+    if (viewport_row >= rows.len) return null;
+    const row = rows[viewport_row];
+    if (column >= row.cell_count) return null;
+    const cells = client.view.cells(snapshot);
+    const cell_index = std.math.add(usize, row.cell_offset, column) catch return null;
+    if (cell_index >= cells.len) return null;
+    const link_id = cells[cell_index].link_id;
+    if (link_id == 0) return null;
+    const links = client.view.hyperlinks(snapshot);
+    const uris = client.view.uris(snapshot);
+    for (links) |link| {
+        if (link.link_id != link_id) continue;
+        const end = std.math.add(usize, link.uri_offset, link.uri_len) catch return null;
+        if (end > uris.len) return null;
+        return uris[link.uri_offset..end];
+    }
+    return null;
+}
+
+/// Copies the exact OSC 8 URI attached to one currently displayed canonical
+/// cell. The stable target row must still name the requested history window;
+/// output length zero means the cell has no canonical hyperlink.
+pub export fn howl_odin_bridge_hyperlink_copy(
+    raw: ?*Handle,
+    history_offset: u32,
+    target_row: i32,
+    target_column: u16,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const value = raw orelse return 1;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    if (expected_columns == 0 or expected_alternate_screen > 1) {
+        bridge.setError("hyperlink", "invalid_arguments");
+        return 2;
+    }
+    var rich = client.rich.request(
+        &bridge.connection,
+        bridge.allocator,
+        0,
+        history_offset,
+    ) catch |failure| {
+        bridge.setError("hyperlink_observe", @errorName(failure));
+        return 3;
+    };
+    defer rich.deinit();
+    const snapshot = client.view.project(bridge.allocator, &rich) catch |failure| {
+        bridge.setError("hyperlink_project", @errorName(failure));
+        return 3;
+    };
+    defer client.view.deinit(snapshot);
+
+    const begin = client.view.begin(snapshot);
+    const expected_alternate = expected_alternate_screen != 0;
+    if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
+        bridge.setError("hyperlink", "context_changed");
+        return 4;
+    }
+    const viewport_row = selectionViewportRow(begin, target_row) orelse {
+        bridge.setError("hyperlink", "target_moved");
+        return 4;
+    };
+    if (target_column >= begin.columns) {
+        bridge.setError("hyperlink", "target_column");
+        return 4;
+    }
+    const uri = hyperlinkUriAt(snapshot, viewport_row, target_column) orelse return 0;
+    if (uri.len > output_capacity) {
+        bridge.setError("hyperlink", "short_buffer");
+        return 5;
+    }
+    @memcpy(output_ptr[0..uri.len], uri);
+    output_len.* = uri.len;
+    return 0;
+}
+
 /// Expands one currently displayed canonical cell into either its contiguous
 /// non-space word (kind=1) or its current projected visual row (kind=2).
 /// The stable target row must still be visible in the requested history window;
