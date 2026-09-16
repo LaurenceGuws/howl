@@ -118,14 +118,24 @@ These labels are descriptive, not priority scores.
 - Closing a nested leaf tears down only its Session, promotes the sibling subtree,
   and lets survivors reacquire the larger geometry without restart. The three-pane
   canary collapsed 3 → 2 → 1 while child count followed 3 → 2 → 1 exactly.
+- Side-by-side and top/bottom splits are explicit (`Alt+Shift+D` / `Alt+Shift++`
+  and `Alt+Shift+-`) and may be nested arbitrarily within the eight-pane bound.
+- `Alt+Arrow` uses actual rectangle separation for four-direction spatial focus;
+  it does not guess from pane slot order or merely compare rectangle centers.
+- `Alt+Shift+Arrow` moves the nearest divider in that axis, clamped to a sane
+  15–85% ratio. Pointer divider drag uses the same ratio owner plus a forgiving
+  invisible hit lane. One canary moved the divider from x=588–591 to x=740–743
+  and the two canonical PTYs converged to 34×78 and 34×44 without changing child
+  PIDs. Release outside the window and focus theft both terminated the drag; later
+  buttonless pointer motion left the divider stationary.
+- `Ctrl+Shift+Z` zooms only the active pane as a layout projection and restores
+  the untouched tree on unzoom. `Ctrl+Alt+Arrow` swaps Session-view ownership
+  between geometric neighbors without restarting either Session. A mixed topology
+  canary (full-width top plus two bottom panes) preserved all three child PIDs
+  through focus, keyboard resize, zoom/unzoom, and swap.
 
 **WANTED**
 
-- Explicit horizontal and vertical split actions.
-- Keyboard and pointer pane-resize handles.
-- Focus movement in four directions.
-- Zoom/maximize active pane without destroying layout.
-- Swap/move panes and preserve their Session identities.
 - Split with a chosen profile instead of only the current default.
 - Layout persistence only after lifecycle semantics are boring and exact.
 

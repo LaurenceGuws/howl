@@ -30,11 +30,13 @@ Current canary:
   existing `tcp://127.0.0.1:39601` Session;
 - tabs have real selection/close semantics plus Ctrl+Tab cycling, and closing a
   created tab retires only that tab's owned child Session;
-- tabs now use a bounded recursive pane tree rather than a fixed primary/secondary
-  pair. `Alt+Shift+D` splits the active leaf, repeated splits may nest up to eight
-  pane slots, `Alt+Left/Right` still cycles focus during this migration checkpoint,
-  and `Ctrl+Shift+W` collapses only the active leaf; sibling subtrees are promoted
-  without moving or restarting surviving Session identities;
+- tabs use a bounded recursive pane tree rather than a fixed primary/secondary
+  pair. Side-by-side and top/bottom actions may nest up to eight pane slots;
+  `Alt+Arrow` performs spatial four-way focus, `Alt+Shift+Arrow` resizes the nearest
+  matching divider, pointer drag owns a forgiving divider hit lane, `Ctrl+Shift+Z`
+  zooms/unzooms the active pane without destroying topology, `Ctrl+Alt+Arrow` swaps
+  neighboring Session views without restart, and `Ctrl+Shift+W` collapses only the
+  active leaf while promoting the sibling subtree;
 - Canvas commands are pane-clipped even during the brief resize transition, so
   an old wider frame can never paint across the split into its sibling;
 - dropdown and command-palette commands share one application action model;

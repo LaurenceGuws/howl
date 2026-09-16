@@ -83,6 +83,13 @@ Pane_Split_Orientation :: enum u8 {
     Horizontal,
 }
 
+Pane_Direction :: enum u8 {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 Pane_Node :: struct {
     kind: Pane_Node_Kind,
     pane_index: int,
@@ -297,6 +304,8 @@ App :: struct {
     ime_preedit_length: i32,
     next_session_identity: u32,
     startup_profile: int,
+    pane_resize_node: ^Pane_Node,
+    pane_resize_tab: int,
 }
 
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
@@ -2330,6 +2339,7 @@ Pane_Layout_Entry :: struct {
 Pane_Layout_Divider :: struct {
     node: ^Pane_Node,
     rect: SDL.FRect,
+    container: SDL.FRect,
 }
 
 Pane_Layout :: struct {
@@ -2413,6 +2423,7 @@ layout_pane_node :: proc(node: ^Pane_Node, rect: SDL.FRect, layout: ^Pane_Layout
             layout.dividers[layout.divider_count] = Pane_Layout_Divider{
                 node = node,
                 rect = SDL.FRect{first.x + first.w, rect.y, PANE_GAP, rect.h},
+                container = rect,
             }
             layout.divider_count += 1
         }
@@ -2428,6 +2439,7 @@ layout_pane_node :: proc(node: ^Pane_Node, rect: SDL.FRect, layout: ^Pane_Layout
         layout.dividers[layout.divider_count] = Pane_Layout_Divider{
             node = node,
             rect = SDL.FRect{rect.x, first.y + first.h, rect.w, PANE_GAP},
+            container = rect,
         }
         layout.divider_count += 1
     }
@@ -2437,9 +2449,17 @@ layout_pane_node :: proc(node: ^Pane_Node, rect: SDL.FRect, layout: ^Pane_Layout
 
 pane_layout :: proc(tab: ^Tab, inset: SDL.FRect) -> Pane_Layout {
     layout: Pane_Layout
-    if tab != nil {
-        layout_pane_node(tab.root, inset, &layout)
+    if tab == nil {
+        return layout
     }
+    if tab.zoomed {
+        if tab_pane_view(tab, tab.active_pane) != nil {
+            layout.entries[0] = Pane_Layout_Entry{pane_index = tab.active_pane, rect = inset}
+            layout.entry_count = 1
+        }
+        return layout
+    }
+    layout_pane_node(tab.root, inset, &layout)
     return layout
 }
 
@@ -2453,6 +2473,201 @@ pane_rect_from_layout :: proc(layout: ^Pane_Layout, pane_index: int) -> (SDL.FRe
         }
     }
     return {}, false
+}
+
+rect_center :: proc(rect: SDL.FRect) -> (x, y: f32) {
+    return rect.x + rect.w / 2, rect.y + rect.h / 2
+}
+
+pane_neighbor_index :: proc(
+    layout: ^Pane_Layout,
+    pane_index: int,
+    direction: Pane_Direction,
+) -> (neighbor: int, ok: bool) {
+    current, current_ok := pane_rect_from_layout(layout, pane_index)
+    if !current_ok {
+        return 0, false
+    }
+    current_x, current_y := rect_center(current)
+    best_score := f32(1.0e30)
+    best := -1
+    for index in 0..<layout.entry_count {
+        candidate := layout.entries[index]
+        if candidate.pane_index == pane_index {
+            continue
+        }
+        x, y := rect_center(candidate.rect)
+        primary, secondary: f32
+        eligible := false
+        switch direction {
+        case .Left:
+            eligible = candidate.rect.x + candidate.rect.w <= current.x + 0.01
+            primary = current.x - (candidate.rect.x + candidate.rect.w)
+            secondary = abs(current_y - y)
+        case .Right:
+            eligible = candidate.rect.x >= current.x + current.w - 0.01
+            primary = candidate.rect.x - (current.x + current.w)
+            secondary = abs(current_y - y)
+        case .Up:
+            eligible = candidate.rect.y + candidate.rect.h <= current.y + 0.01
+            primary = current.y - (candidate.rect.y + candidate.rect.h)
+            secondary = abs(current_x - x)
+        case .Down:
+            eligible = candidate.rect.y >= current.y + current.h - 0.01
+            primary = candidate.rect.y - (current.y + current.h)
+            secondary = abs(current_x - x)
+        }
+        if !eligible {
+            continue
+        }
+        score := primary * 10000 + secondary
+        if score < best_score {
+            best_score = score
+            best = candidate.pane_index
+        }
+    }
+    return best, best >= 0
+}
+
+focus_pane_direction :: proc(tab: ^Tab, inset: SDL.FRect, direction: Pane_Direction) -> bool {
+    if tab == nil || tab.zoomed {
+        return false
+    }
+    layout := pane_layout(tab, inset)
+    neighbor, ok := pane_neighbor_index(&layout, tab.active_pane, direction)
+    if !ok || tab_pane_view(tab, neighbor) == nil {
+        return false
+    }
+    tab.active_pane = neighbor
+    return true
+}
+
+resize_active_divider :: proc(tab: ^Tab, direction: Pane_Direction, step: f32 = 0.05) -> bool {
+    if tab == nil || tab.zoomed || step <= 0 {
+        return false
+    }
+    leaf := pane_leaf_for_index(tab.root, tab.active_pane)
+    if leaf == nil {
+        return false
+    }
+    wanted := (direction == .Left || direction == .Right) ? Pane_Split_Orientation.Vertical : Pane_Split_Orientation.Horizontal
+    node := leaf.parent
+    for node != nil && (node.kind != .Split || node.orientation != wanted) {
+        node = node.parent
+    }
+    if node == nil {
+        return false
+    }
+    delta := (direction == .Left || direction == .Up) ? -step : step
+    next := clamp(node.ratio + delta, f32(0.15), f32(0.85))
+    if abs(next - node.ratio) < 0.0001 {
+        return false
+    }
+    node.ratio = next
+    return true
+}
+
+swap_active_pane_direction :: proc(tab: ^Tab, inset: SDL.FRect, direction: Pane_Direction) -> bool {
+    if tab == nil || tab.zoomed {
+        return false
+    }
+    layout := pane_layout(tab, inset)
+    neighbor, ok := pane_neighbor_index(&layout, tab.active_pane, direction)
+    if !ok || tab_pane_view(tab, neighbor) == nil {
+        return false
+    }
+    active := tab.active_pane
+    tab.panes[active], tab.panes[neighbor] = tab.panes[neighbor], tab.panes[active]
+    tab.active_pane = neighbor
+    return true
+}
+
+toggle_pane_zoom :: proc(tab: ^Tab) -> bool {
+    if tab == nil || tab.pane_count <= 1 {
+        if tab != nil do tab.zoomed = false
+        return false
+    }
+    tab.zoomed = !tab.zoomed
+    return true
+}
+
+pane_divider_hit_rect :: proc(divider: Pane_Layout_Divider) -> SDL.FRect {
+    if divider.node != nil && divider.node.orientation == .Horizontal {
+        return {divider.rect.x, divider.rect.y - 5, divider.rect.w, divider.rect.h + 10}
+    }
+    return {divider.rect.x - 5, divider.rect.y, divider.rect.w + 10, divider.rect.h}
+}
+
+pane_divider_ratio_for_pointer :: proc(
+    orientation: Pane_Split_Orientation,
+    container: SDL.FRect,
+    x, y: f32,
+) -> f32 {
+    if orientation == .Vertical {
+        denominator := max(f32(1), container.w - PANE_GAP)
+        return clamp((x - container.x) / denominator, f32(0.15), f32(0.85))
+    }
+    denominator := max(f32(1), container.h - PANE_GAP)
+    return clamp((y - container.y) / denominator, f32(0.15), f32(0.85))
+}
+
+finish_pane_resize_drag :: proc(app: ^App) -> bool {
+    if app == nil || app.pane_resize_node == nil {
+        return false
+    }
+    app.pane_resize_node = nil
+    app.pane_resize_tab = -1
+    _ = SDL.CaptureMouse(false)
+    return true
+}
+
+update_pane_resize_drag :: proc(app: ^App, x, y, width, height: f32) -> bool {
+    if app == nil || app.pane_resize_node == nil || app.pane_resize_tab != app.active_tab ||
+       app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return false
+    }
+    tab := &app.tabs[app.active_tab]
+    layout := pane_layout(tab, terminal_inset(width, height))
+    for index in 0..<layout.divider_count {
+        divider := layout.dividers[index]
+        if divider.node != app.pane_resize_node {
+            continue
+        }
+        next := pane_divider_ratio_for_pointer(divider.node.orientation, divider.container, x, y)
+        if abs(next - divider.node.ratio) < 0.0001 {
+            return false
+        }
+        divider.node.ratio = next
+        return true
+    }
+    _ = finish_pane_resize_drag(app)
+    return false
+}
+
+begin_pane_resize_drag :: proc(app: ^App, x, y, width, height: f32) -> bool {
+    if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return false
+    }
+    tab := &app.tabs[app.active_tab]
+    if tab.zoomed || tab.pane_count <= 1 {
+        return false
+    }
+    layout := pane_layout(tab, terminal_inset(width, height))
+    for index in 0..<layout.divider_count {
+        divider := layout.dividers[index]
+        if !inside(x, y, pane_divider_hit_rect(divider)) {
+            continue
+        }
+        app.pane_resize_node = divider.node
+        app.pane_resize_tab = app.active_tab
+        // SDL/Wayland already auto-captures active button drags. Explicit capture
+        // is a best-effort extension for outside-window delivery, not admission
+        // to the gesture itself; focus loss/window close still terminate state.
+        _ = SDL.CaptureMouse(true)
+        _ = update_pane_resize_drag(app, x, y, width, height)
+        return true
+    }
+    return false
 }
 
 split_pane_slot :: proc(
@@ -3193,6 +3408,7 @@ destroy_tab_contents :: proc(tab: ^Tab) {
 }
 
 add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
+    _ = finish_pane_resize_drag(app)
     if app.tab_count >= MAX_TABS {
         if view != nil do destroy_session_view(view)
         return false
@@ -3242,6 +3458,7 @@ attach_home_tab :: proc(app: ^App) {
 }
 
 replace_active_session_view :: proc(app: ^App, replacement: ^Session_View) -> bool {
+    _ = finish_pane_resize_drag(app)
     if app == nil || replacement == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return false
     }
@@ -3284,6 +3501,7 @@ recover_active_session :: proc(app: ^App) -> bool {
 }
 
 close_tab :: proc(app: ^App, index: int) {
+    _ = finish_pane_resize_drag(app)
     if app.tab_count <= 1 || index < 0 || index >= app.tab_count {
         return
     }
@@ -3306,11 +3524,13 @@ split_active_pane :: proc(
     app: ^App,
     orientation: Pane_Split_Orientation = .Vertical,
 ) {
+    _ = finish_pane_resize_drag(app)
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return
     }
     clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
+    tab.zoomed = false
     if tab.pane_count >= MAX_PANES_PER_TAB {
         return
     }
@@ -3328,6 +3548,7 @@ split_active_pane :: proc(
 }
 
 close_active_pane :: proc(app: ^App) {
+    _ = finish_pane_resize_drag(app)
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return
     }
@@ -3341,23 +3562,57 @@ close_active_pane :: proc(app: ^App) {
     if !ok {
         return
     }
+    if tab.pane_count <= 1 {
+        tab.zoomed = false
+    }
     destroy_session_view(removed)
 }
 
-cycle_active_pane :: proc(tab: ^Tab, delta: int) -> bool {
-    if tab == nil || tab.pane_count <= 1 || delta == 0 {
+pane_direction_for_key :: proc(key: SDL.Keycode) -> (Pane_Direction, bool) {
+    switch key {
+    case SDL.K_LEFT:  return .Left, true
+    case SDL.K_RIGHT: return .Right, true
+    case SDL.K_UP:    return .Up, true
+    case SDL.K_DOWN:  return .Down, true
+    case:             return .Left, false
+    }
+}
+
+active_tab_inset :: proc(app: ^App) -> (SDL.FRect, bool) {
+    if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return {}, false
+    }
+    w, h: c.int
+    if !SDL.GetWindowSize(app.window, &w, &h) {
+        return {}, false
+    }
+    return terminal_inset(f32(w), f32(h)), true
+}
+
+focus_active_pane_direction :: proc(app: ^App, direction: Pane_Direction) -> bool {
+    inset, ok := active_tab_inset(app)
+    if !ok {
         return false
     }
-    step := delta > 0 ? 1 : -1
-    candidate := tab.active_pane
-    for _ in 0..<MAX_PANES_PER_TAB {
-        candidate = (candidate + step + MAX_PANES_PER_TAB) % MAX_PANES_PER_TAB
-        if tab.panes[candidate] != nil {
-            tab.active_pane = candidate
-            return true
-        }
+    clear_ime_preedit(app)
+    return focus_pane_direction(&app.tabs[app.active_tab], inset, direction)
+}
+
+resize_active_pane_direction :: proc(app: ^App, direction: Pane_Direction) -> bool {
+    if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return false
     }
-    return false
+    clear_ime_preedit(app)
+    return resize_active_divider(&app.tabs[app.active_tab], direction)
+}
+
+swap_active_pane_direction_app :: proc(app: ^App, direction: Pane_Direction) -> bool {
+    inset, ok := active_tab_inset(app)
+    if !ok {
+        return false
+    }
+    clear_ime_preedit(app)
+    return swap_active_pane_direction(&app.tabs[app.active_tab], inset, direction)
 }
 
 active_tab_is_session :: proc(app: ^App) -> bool {
@@ -3587,6 +3842,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
                 close_tab(app, i)
                 return
             }
+            _ = finish_pane_resize_drag(app)
             clear_ime_preedit(app)
             app.active_tab = i
             return
@@ -3598,6 +3854,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
+        _ = finish_pane_resize_drag(app)
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
@@ -3605,6 +3862,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         app.running = false
     case .WINDOW_FOCUS_LOST:
         clear_ime_preedit(app)
+        _ = finish_pane_resize_drag(app)
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
@@ -3651,6 +3909,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_TAB && app.tab_count > 1 {
+            _ = finish_pane_resize_drag(app)
             clear_ime_preedit(app)
             if shift {
                 app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
@@ -3658,11 +3917,27 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 app.active_tab = (app.active_tab + 1) % app.tab_count
             }
         } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_D {
-            execute_action(app, .Split_Pane)
-        } else if event.type == .KEY_DOWN && alt && (event.key.key == SDL.K_LEFT || event.key.key == SDL.K_RIGHT) {
+            split_active_pane(app, .Vertical)
+        } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_MINUS {
+            split_active_pane(app, .Horizontal)
+        } else if event.type == .KEY_DOWN && alt && shift && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
+            split_active_pane(app, .Vertical)
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_Z {
             if app.active_tab >= 0 && app.active_tab < app.tab_count {
                 clear_ime_preedit(app)
-                _ = cycle_active_pane(&app.tabs[app.active_tab], event.key.key == SDL.K_RIGHT ? 1 : -1)
+                _ = toggle_pane_zoom(&app.tabs[app.active_tab])
+            }
+        } else if event.type == .KEY_DOWN && ctrl && alt {
+            if direction, ok := pane_direction_for_key(event.key.key); ok {
+                _ = swap_active_pane_direction_app(app, direction)
+            }
+        } else if event.type == .KEY_DOWN && alt && shift {
+            if direction, ok := pane_direction_for_key(event.key.key); ok {
+                _ = resize_active_pane_direction(app, direction)
+            }
+        } else if event.type == .KEY_DOWN && alt {
+            if direction, ok := pane_direction_for_key(event.key.key); ok {
+                _ = focus_active_pane_direction(app, direction)
             }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
             adjust_terminal_font(app, -1)
@@ -3760,6 +4035,13 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             break
         }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
+        if app.pane_resize_node != nil {
+            w, h: c.int
+            if SDL.GetWindowSize(app.window, &w, &h) {
+                _ = update_pane_resize_drag(app, event.motion.x, event.motion.y, f32(w), f32(h))
+            }
+            return
+        }
         if app.active_tab >= 0 && app.active_tab < app.tab_count {
             tab := &app.tabs[app.active_tab]
             view := active_session_view(app)
@@ -3820,6 +4102,11 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
+            if event.type == .MOUSE_BUTTON_UP && app.pane_resize_node != nil {
+                _ = update_pane_resize_drag(app, event.button.x, event.button.y, f32(w), f32(h))
+                _ = finish_pane_resize_drag(app)
+                return
+            }
             if event.type == .MOUSE_BUTTON_UP {
                 view := active_session_view(app)
                 if view != nil && app.active_tab >= 0 && app.active_tab < app.tab_count {
@@ -3867,6 +4154,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
 
+            if event.button.button == SDL.BUTTON_LEFT &&
+               begin_pane_resize_drag(app, event.button.x, event.button.y, f32(w), f32(h)) {
+                return
+            }
             view, pane_index, ok := session_view_at(
                 app,
                 event.button.x,

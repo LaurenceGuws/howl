@@ -90,3 +90,68 @@ pane_tree_close_promotes_sibling_subtree_and_keeps_survivor_identity :: proc(t: 
     testing.expect_value(t, tab.root.pane_index, 0)
     testing.expect_value(t, tab.active_pane, 0)
 }
+
+@(test)
+pane_tree_directional_focus_resize_zoom_and_swap_are_geometry_owned :: proc(t: ^testing.T) {
+    tab: Tab
+    views: [3]^Session_View
+    for index in 0..<3 {
+        views[index] = new(Session_View)
+        testing.expect(t, views[index] != nil)
+        if views[index] == nil do return
+        defer free(views[index])
+    }
+    tab.root = new_pane_leaf(0)
+    testing.expect(t, tab.root != nil)
+    if tab.root == nil do return
+    defer destroy_pane_nodes(tab.root)
+    tab.panes[0] = views[0]
+    tab.pane_count = 1
+    second, ok := split_pane_slot(&tab, 0, views[1], .Vertical)
+    testing.expect(t, ok)
+    third: int
+    third, ok = split_pane_slot(&tab, second, views[2], .Horizontal)
+    testing.expect(t, ok)
+    inset := SDL.FRect{0, 0, 1000, 600}
+
+    testing.expect_value(t, tab.active_pane, third)
+    testing.expect(t, focus_pane_direction(&tab, inset, .Up))
+    testing.expect_value(t, tab.active_pane, second)
+    testing.expect(t, focus_pane_direction(&tab, inset, .Left))
+    testing.expect_value(t, tab.active_pane, 0)
+    testing.expect(t, focus_pane_direction(&tab, inset, .Right))
+    testing.expect_value(t, tab.active_pane, second)
+
+    leaf := pane_leaf_for_index(tab.root, second)
+    testing.expect(t, leaf != nil && leaf.parent != nil)
+    if leaf != nil && leaf.parent != nil {
+        old_ratio := leaf.parent.ratio
+        testing.expect(t, resize_active_divider(&tab, .Down))
+        testing.expect(t, leaf.parent.ratio > old_ratio)
+    }
+
+    active_before := tab.panes[tab.active_pane]
+    testing.expect(t, swap_active_pane_direction(&tab, inset, .Left))
+    testing.expect(t, tab.panes[tab.active_pane] == active_before)
+    testing.expect_value(t, tab.active_pane, 0)
+
+    testing.expect(t, toggle_pane_zoom(&tab))
+    zoomed := pane_layout(&tab, inset)
+    testing.expect_value(t, zoomed.entry_count, 1)
+    testing.expect_value(t, zoomed.entries[0].pane_index, tab.active_pane)
+    testing.expect(t, abs(zoomed.entries[0].rect.w - inset.w) < 0.01)
+    testing.expect(t, toggle_pane_zoom(&tab))
+    normal := pane_layout(&tab, inset)
+    testing.expect_value(t, normal.entry_count, 3)
+}
+
+@(test)
+pane_divider_pointer_ratio_is_orientation_aware_and_clamped :: proc(t: ^testing.T) {
+    container := SDL.FRect{100, 50, 800, 600}
+    testing.expect(t, abs(pane_divider_ratio_for_pointer(.Vertical, container, 500, 0) - f32(0.5025)) < 0.01)
+    testing.expect_value(t, pane_divider_ratio_for_pointer(.Vertical, container, -1000, 0), f32(0.15))
+    testing.expect_value(t, pane_divider_ratio_for_pointer(.Vertical, container, 5000, 0), f32(0.85))
+    testing.expect(t, abs(pane_divider_ratio_for_pointer(.Horizontal, container, 0, 350) - f32(0.5033)) < 0.01)
+    testing.expect_value(t, pane_divider_ratio_for_pointer(.Horizontal, container, 0, -1000), f32(0.15))
+    testing.expect_value(t, pane_divider_ratio_for_pointer(.Horizontal, container, 0, 5000), f32(0.85))
+}
