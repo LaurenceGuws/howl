@@ -502,10 +502,22 @@ These labels are descriptive, not priority scores.
   named in UI. Hand-edited malformed keybinding sets report the precise bad entry
   while unrelated valid font/startup fields retain their accepted values.
 
+**PROVEN — Settings search**
+
+- `Ctrl+F` while Settings is open owns a bounded Settings search surface over page
+  metadata, the shared action registry, and the live profile catalogue. Results are
+  typed destinations (page/action/profile), so Enter can focus the exact Actions row
+  or open the exact Profile editor instead of merely changing page text.
+- Search is synchronous and allocation-free over the tiny bounded surface; no worker,
+  timer, or polling path was added. SDL composition follows the search field.
+- Managed-KWin canaries proved `window → New window action`, `lab → Lab profile`, and
+  `color → Color schemes`. Outside Settings, `Ctrl+F` remains terminal input; a Bash
+  readline canary produced `abX`, proving the chord moved the shell cursor rather than
+  opening application search.
+
 **WANTED**
 
-- Settings search.
-- Real controls for profiles, color schemes, and richer appearance choices.
+- Real controls for color schemes and richer appearance choices.
 - Import/export user configuration.
 
 ### 14. Command palette, actions, and keybindings

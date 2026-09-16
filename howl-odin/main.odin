@@ -444,6 +444,12 @@ App :: struct {
     settings_profile_edit_len: int,
     settings_notice: [192]u8,
     settings_notice_len: int,
+    settings_search_open: bool,
+    settings_search_query: [SETTINGS_SEARCH_BYTES]u8,
+    settings_search_query_len: int,
+    settings_search_results: [MAX_SETTINGS_SEARCH_RESULTS]Settings_Search_Result,
+    settings_search_result_count: int,
+    settings_search_selection: int,
 }
 
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
@@ -4069,6 +4075,8 @@ execute_action :: proc(app: ^App, action: App_Action) {
         _ = recover_active_session(app)
     case .Open_Settings:
         next := !app.settings_open
+        if app.search_open do close_search(app)
+        close_settings_search(app)
         cancel_profile_edit(app)
         app.profile_menu_open = false
         app.palette_open = false
@@ -4345,6 +4353,17 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if app.settings_open {
+        if app.settings_search_open {
+            if result, ok := settings_search_result_at(app, x, y, width, height); ok {
+                _ = apply_settings_search_result(app, result)
+                return
+            }
+            search_content := settings_search_content_rect(width, height)
+            if inside(x, y, search_content) {
+                return
+            }
+            close_settings_search(app)
+        }
         panel := settings_panel_rect(width, height)
         content_x := panel.x + 178 + 28
         content_y := panel.y + 22
@@ -4504,6 +4523,17 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
             return
+        } else if event.type == .KEY_DOWN && app.settings_open && ctrl && !shift && !alt && event.key.key == SDL.K_F &&
+                  !app.settings_profile_editing && !app.settings_binding_recording {
+            if app.settings_search_open {
+                close_settings_search(app)
+            } else {
+                open_settings_search(app)
+            }
+            return
+        } else if app.settings_open && app.settings_search_open {
+            _ = handle_settings_search_key(app, event)
+            return
         } else if app.settings_open && app.settings_profile_editing {
             _ = handle_profile_edit_key(app, event)
             return
@@ -4573,6 +4603,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 _ = scroll_history_rows(view, -history_page_rows(view))
             }
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
+            close_settings_search(app)
             cancel_profile_edit(app)
             app.profile_menu_open = false
             app.palette_open = false
@@ -4616,6 +4647,15 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         }
     case .TEXT_INPUT:
         clear_ime_preedit(app)
+        if app.settings_open && app.settings_search_open {
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 {
+                    _ = append_settings_search_query(app, text)
+                }
+            }
+            return
+        }
         if app.settings_open && app.settings_profile_editing {
             if event.text.text != nil {
                 text := string(event.text.text)
@@ -5540,6 +5580,23 @@ active_terminal_cursor_rect :: proc(
 }
 
 update_text_input_area :: proc(app: ^App, width, height: f32) {
+    if app.settings_open && app.settings_search_open {
+        field := settings_search_input_rect(width, height)
+        query := settings_search_query(app)
+        input_x := min(field.x + 10 + text_width(app.ui_font, query), field.x + field.w - 10)
+        caret := ime_preedit_caret_pixels(app, app.ui_font)
+        available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
+        area_width := max(c.int(2), caret + 2)
+        if app.ime_preedit_len != 0 {
+            preedit := string(app.ime_preedit[:app.ime_preedit_len])
+            area_width = max(area_width, c.int(text_width(app.ui_font, preedit)))
+        }
+        area_width = min(area_width, available)
+        caret = min(caret, max(c.int(0), area_width - 1))
+        area := SDL.Rect{c.int(input_x), c.int(field.y + 5), area_width, c.int(field.h - 10)}
+        _ = SDL.SetTextInputArea(app.window, &area, caret)
+        return
+    }
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
             text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
@@ -5599,6 +5656,18 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
         return
     }
     preedit := string(app.ime_preedit[:app.ime_preedit_len])
+    if app.settings_open && app.settings_search_open {
+        field := settings_search_input_rect(width, height)
+        query := settings_search_query(app)
+        x := min(field.x + 10 + text_width(app.ui_font, query), field.x + field.w - 12)
+        clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(max(f32(1), field.w - 16)), c.int(field.h)}
+        _ = SDL.SetRenderClipRect(app.renderer, &clip)
+        draw_text(app, app.ui_font, preedit, x, field.y + 10, palette.accent)
+        underline_width := max(f32(4), min(text_width(app.ui_font, preedit), field.x + field.w - 10 - x))
+        draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+        return
+    }
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
             text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
@@ -5898,19 +5967,20 @@ draw :: proc(app: ^App) {
     if app.search_open {
         draw_search_bar(app, width)
     }
-    update_text_input_area(app, width, height)
-    draw_ime_preedit(app, width, height)
-
     if app.profile_menu_open {
         draw_profile_menu(app)
     }
-
     if app.palette_open {
         draw_palette(app, width, height)
     }
     if app.settings_open {
         draw_settings(app, width, height)
+        if app.settings_search_open {
+            draw_settings_search(app, width, height)
+        }
     }
+    update_text_input_area(app, width, height)
+    draw_ime_preedit(app, width, height)
     _ = SDL.RenderPresent(app.renderer)
 }
 

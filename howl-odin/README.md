@@ -59,7 +59,9 @@ Current canary:
   Actions can be rebound from the keyboard, unbound, or reset; conflicts are rejected
   without mutating either action and the conflicting action is named in the UI.
   Profiles can be created, duplicated, edited, and deleted with built-in vs user-owned
-  boundaries kept explicit; active profile text editing owns SDL composition input;
+  boundaries kept explicit; active profile text editing owns SDL composition input.
+  `Ctrl+F` inside Settings searches pages, registry actions, and live profiles and
+  navigates to typed destinations; outside Settings the same chord remains terminal input;
 - Appearance owns the first live presentation setting: terminal font size has
   12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
   and changing it never mutates canonical Session geometry; the accepted
