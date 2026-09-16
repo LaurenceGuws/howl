@@ -362,6 +362,10 @@ pub fn rowShift(snapshot: *const Snapshot) ?u16 {
 pub const TextProjection = struct {
     bytes_written: usize,
     truncated: bool,
+    /// Unicode scalar count, not UTF-8 bytes or terminal columns.
+    character_count: usize = 0,
+    /// Live cursor's scalar offset when requested and represented in the buffer.
+    caret_offset: ?usize = null,
 };
 
 /// Writes one bounded UTF-8 projection of the currently projected viewport.
@@ -371,18 +375,50 @@ pub const TextProjection = struct {
 /// text and concealed cells project as blanks. The caller owns the output
 /// buffer; exhaustion truncates rather than allocating or failing the snapshot.
 pub fn writeVisibleText(snapshot: *const Snapshot, output: []u8) TextProjection {
+    return writeText(snapshot, output, false);
+}
+
+/// Projects the same canonical visible text for accessibility, retaining blanks
+/// through the live cursor so its scalar offset is exact. History has no live
+/// caret. Concealed cells remain blanks and multicell fragments never repeat.
+/// No host, accessibility protocol, or renderer state is retained here.
+pub fn writeAccessibleText(snapshot: *const Snapshot, output: []u8) TextProjection {
+    return writeText(snapshot, output, true);
+}
+
+fn writeText(snapshot: *const Snapshot, output: []u8, include_cursor: bool) TextProjection {
     var writer = TextWriter{ .bytes = output };
     const snapshot_rows = rows(snapshot);
     const snapshot_cells = cells(snapshot);
     const snapshot_scalars = scalars(snapshot);
-    const last_row = lastTextRow(snapshot_rows, snapshot_cells) orelse
-        return .{ .bytes_written = 0, .truncated = false };
-
-    for (snapshot_rows[0 .. last_row + 1], 0..) |row, row_index| {
+    const facts = begin(snapshot);
+    var cursor_row: usize = facts.cursor_row;
+    var cursor_column: usize = facts.cursor_column;
+    var has_cursor = include_cursor and facts.history_offset == 0 and
+        facts.cursor_visible and cursor_row < snapshot_rows.len and
+        cursor_column < snapshot_rows[cursor_row].cell_count;
+    if (has_cursor) {
+        const cell = snapshot_cells[snapshot_rows[cursor_row].cell_offset + cursor_column];
+        has_cursor = cell.y <= cursor_row and cell.x <= cursor_column;
+        if (has_cursor) {
+            cursor_row -= cell.y;
+            cursor_column -= cell.x;
+        }
+    }
+    var last_row = lastTextRow(snapshot_rows, snapshot_cells);
+    if (has_cursor) last_row = @max(last_row orelse 0, cursor_row);
+    const end_row = last_row orelse return .{ .bytes_written = 0, .truncated = false };
+    var caret_offset: ?usize = null;
+    for (snapshot_rows[0 .. end_row + 1], 0..) |row, row_index| {
         if (row_index != 0 and !writer.writeByte('\n')) break;
         const row_cells = snapshot_cells[row.cell_offset .. row.cell_offset + row.cell_count];
-        const last_cell = lastTextCell(row_cells) orelse continue;
-        for (row_cells[0 .. last_cell + 1]) |cell| {
+        var last_cell = lastTextCell(row_cells);
+        if (has_cursor and row_index == cursor_row)
+            last_cell = @max(last_cell orelse 0, cursor_column);
+        const end_cell = last_cell orelse continue;
+        for (row_cells[0 .. end_cell + 1], 0..) |cell, column| {
+            if (has_cursor and row_index == cursor_row and column == cursor_column)
+                caret_offset = writer.character_count;
             if (cell.x != 0 or cell.y != 0) continue;
             if (!textCellVisible(cell) or cell.scalar_count == 0) {
                 if (!writer.writeByte(' ')) break;
@@ -397,12 +433,18 @@ pub fn writeVisibleText(snapshot: *const Snapshot, output: []u8) TextProjection 
         }
         if (writer.truncated) break;
     }
-    return .{ .bytes_written = writer.offset, .truncated = writer.truncated };
+    return .{
+        .bytes_written = writer.offset,
+        .truncated = writer.truncated,
+        .character_count = writer.character_count,
+        .caret_offset = caret_offset,
+    };
 }
 
 const TextWriter = struct {
     bytes: []u8,
     offset: usize = 0,
+    character_count: usize = 0,
     truncated: bool = false,
 
     fn writeByte(self: *TextWriter, value: u8) bool {
@@ -412,6 +454,7 @@ const TextWriter = struct {
         }
         self.bytes[self.offset] = value;
         self.offset += 1;
+        self.character_count += 1;
         return true;
     }
 
@@ -424,6 +467,7 @@ const TextWriter = struct {
         }
         @memcpy(self.bytes[self.offset .. self.offset + len], encoded[0..len]);
         self.offset += len;
+        self.character_count += 1;
         return true;
     }
 };
@@ -1004,4 +1048,85 @@ test "coarse view rejects malformed rich geometry before allocation" {
     try std.testing.expectError(error.InvalidRichSnapshot, project(allocator.allocator(), &source));
     try std.testing.expectEqual(@as(usize, 0), allocator.allocations);
     try std.testing.expectEqual(@as(usize, 0), allocator.allocated_bytes);
+}
+
+test "accessible text keeps canonical Unicode caret and conceals hidden text" {
+    var cells_source = [_]rich.Cell{
+        testCell(&.{ 'e', 0x0301 }), testCell(&.{0x754c}), testCell(&.{}),
+        testCell(&.{'X'}),           testCell(&.{}),       testCell(&.{}),
+    };
+    cells_source[1].width = 2;
+    cells_source[2].width = 2;
+    cells_source[2].x = 1;
+    cells_source[3].style_bits = protocol.text_v1.style.invisible;
+    var rows_source = [_]rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells_source }};
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    var source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBegin(1, 6),
+        .presentation = testPresentation(palette),
+        .rows = &rows_source,
+        .hyperlinks = &.{},
+    };
+    source.begin.cursor_visible = true;
+    source.begin.cursor_column = 5;
+    const snapshot = try project(std.testing.allocator, &source);
+    defer deinit(snapshot);
+    var output: [64]u8 = undefined;
+    const result = writeAccessibleText(snapshot, &output);
+    try std.testing.expectEqualStrings("é界   ", output[0..result.bytes_written]);
+    try std.testing.expectEqual(@as(usize, 6), result.character_count);
+    try std.testing.expectEqual(@as(?usize, 5), result.caret_offset);
+    try std.testing.expect(!result.truncated);
+
+    var small: [4]u8 = undefined;
+    const short = writeAccessibleText(snapshot, &small);
+    try std.testing.expectEqualStrings("é", small[0..short.bytes_written]);
+    try std.testing.expect(short.truncated);
+    try std.testing.expectEqual(@as(?usize, null), short.caret_offset);
+
+    source.begin.cursor_column = 2;
+    const wide = try project(std.testing.allocator, &source);
+    defer deinit(wide);
+    const wide_result = writeAccessibleText(wide, &output);
+    try std.testing.expectEqual(@as(?usize, 2), wide_result.caret_offset);
+
+    source.begin.history_count = 1;
+    source.begin.history_offset = 1;
+    const history = try project(std.testing.allocator, &source);
+    defer deinit(history);
+    const history_result = writeAccessibleText(history, &output);
+    try std.testing.expectEqual(@as(?usize, null), history_result.caret_offset);
+    try std.testing.expectEqualStrings("é界", output[0..history_result.bytes_written]);
+}
+
+test "accessible text retains empty rows through cursor without allocating" {
+    var row_cells = [_]rich.Cell{ testCell(&.{}), testCell(&.{}), testCell(&.{}) };
+    var rows_source = [_]rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_cells },
+    };
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    var source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBegin(2, 3),
+        .presentation = testPresentation(palette),
+        .rows = &rows_source,
+        .hyperlinks = &.{},
+    };
+    source.begin.cursor_visible = true;
+    source.begin.cursor_row = 1;
+    source.begin.cursor_column = 2;
+    const snapshot = try project(std.testing.allocator, &source);
+    defer deinit(snapshot);
+    var output: [16]u8 = undefined;
+    const result = writeAccessibleText(snapshot, &output);
+    try std.testing.expectEqualStrings("\n   ", output[0..result.bytes_written]);
+    try std.testing.expectEqual(@as(?usize, 3), result.caret_offset);
+    try std.testing.expectEqual(@as(usize, 4), result.character_count);
+    const empty = writeAccessibleText(snapshot, &.{});
+    try std.testing.expect(empty.truncated);
+    try std.testing.expectEqual(@as(?usize, null), empty.caret_offset);
+    const visible = writeVisibleText(snapshot, &output);
+    try std.testing.expectEqual(@as(usize, 0), visible.bytes_written);
 }
