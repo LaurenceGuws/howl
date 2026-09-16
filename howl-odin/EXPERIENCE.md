@@ -346,6 +346,14 @@ These labels are descriptive, not priority scores.
 
 - Pane-local primary drag stores stable canonical row/column endpoints and paints
   only the visible intersection of the retained range.
+- Selection highlight follows the canonical text extent instead of filling empty
+  row tails. The native bridge retains bounded row shapes from the same accepted
+  Canvas frame and uses `howl-client.selection.Range.textSpan`, matching Web and
+  Flutter's policy. Crossed hard line breaks get one newline marker, empty lines
+  remain visible as one selected cell, and final/soft-wrapped rows gain no marker.
+  A real KDE pointer canary covered unequal log lines, an empty line, leading
+  spaces, CJK and combining text; canonical extraction stayed byte-identical to
+  the old bridge. Wrong geometry/bank/row facts produce no phantom span.
 - Ctrl+Shift+C asks `howl-client.selection` and Session `text_extract` for
   canonical UTF-8; it does not scrape rendered glyphs. VT normalizes continuation
   cells to their lead grapheme during extraction.
@@ -623,6 +631,10 @@ These labels are descriptive, not priority scores.
 **WANTED**
 
 - Fuzzy/filterable command palette.
+- Evaluate an opt-in Kitty shortcut preset after the real KDE dogfood exposed
+  muscle-memory conflicts. Preserve the Windows-familiar defaults and explicit
+  user overrides; route direct tab/history/zoom chords through the action owner
+  before adding aliases that could collide with pane or tab navigation.
 - Finish routing remaining direct shell shortcuts through the registry where they
   represent concrete actions rather than parameterized key families.
 - Context-aware disabled actions with a reason when useful.

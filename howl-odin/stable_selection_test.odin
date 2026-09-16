@@ -94,29 +94,12 @@ return_live_navigation_preserves_selection_but_input_policy_clears_it :: proc(t:
 }
 
 @(test)
-selection_visible_span_projects_only_intersecting_rows :: proc(t: ^testing.T) {
-    span0, ok0 := selection_visible_span(70, 3, 72, 7, 70, 80)
-    testing.expect(t, ok0)
-    testing.expect_value(t, span0.start_column, u16(3))
-    testing.expect_value(t, span0.end_column, u16(79))
-
-    span1, ok1 := selection_visible_span(70, 3, 72, 7, 71, 80)
-    testing.expect(t, ok1)
-    testing.expect_value(t, span1.start_column, u16(0))
-    testing.expect_value(t, span1.end_column, u16(79))
-
-    span2, ok2 := selection_visible_span(70, 3, 72, 7, 72, 80)
-    testing.expect(t, ok2)
-    testing.expect_value(t, span2.start_column, u16(0))
-    testing.expect_value(t, span2.end_column, u16(7))
-
-    _, outside := selection_visible_span(70, 3, 72, 7, 73, 80)
-    testing.expect(t, !outside)
-
-    reverse, reverse_ok := selection_visible_span(72, 7, 70, 3, 71, 80)
-    testing.expect(t, reverse_ok)
-    testing.expect_value(t, reverse.start_column, u16(0))
-    testing.expect_value(t, reverse.end_column, u16(79))
+selection_presentation_without_a_frame_has_no_phantom_span :: proc(t: ^testing.T) {
+    first, last := u16(12), u16(40)
+    visible := render_selection_span(nil, 70, 3, 72, 7, 80, 0, 0, &first, &last)
+    testing.expect_value(t, visible, u8(0))
+    testing.expect_value(t, first, u16(0))
+    testing.expect_value(t, last, u16(0))
 }
 
 @(test)

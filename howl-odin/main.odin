@@ -3622,55 +3622,6 @@ paste_clipboard :: proc(view: ^Session_View) -> bool {
     return true
 }
 
-selection_before_or_equal :: proc(
-    left_row: i32,
-    left_column: u16,
-    right_row: i32,
-    right_column: u16,
-) -> bool {
-    return left_row < right_row ||
-           (left_row == right_row && left_column <= right_column)
-}
-
-Selection_Visible_Span :: struct {
-    start_column: u16,
-    end_column: u16,
-}
-
-selection_visible_span :: proc(
-    anchor_row: i32,
-    anchor_column: u16,
-    focus_row: i32,
-    focus_column: u16,
-    stable_row: i32,
-    columns: u16,
-) -> (span: Selection_Visible_Span, ok: bool) {
-    if columns == 0 {
-        return {}, false
-    }
-    start_row, start_column := anchor_row, anchor_column
-    end_row, end_column := focus_row, focus_column
-    if !selection_before_or_equal(start_row, start_column, end_row, end_column) {
-        start_row, end_row = end_row, start_row
-        start_column, end_column = end_column, start_column
-    }
-    if stable_row < start_row || stable_row > end_row {
-        return {}, false
-    }
-    first := u16(0)
-    last := columns - 1
-    if stable_row == start_row {
-        first = min(start_column, columns - 1)
-    }
-    if stable_row == end_row {
-        last = min(end_column, columns - 1)
-    }
-    if last < first {
-        return {}, false
-    }
-    return Selection_Visible_Span{ start_column = first, end_column = last }, true
-}
-
 draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view == nil || view.canvas == nil {
         return
@@ -3700,17 +3651,6 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         return
     }
 
-    top_row: i64 = 0
-    if !alternate {
-        history_offset := render_history_offset(view.canvas)
-        history_count_value := render_history_count(view.canvas)
-        if history_offset > history_count_value {
-            return
-        }
-        top_row = i64(render_history_row_base(view.canvas)) +
-                  i64(history_count_value) - i64(history_offset)
-    }
-
     origin_x := pane.x + 10
     origin_y := pane.y + 6
     scale := canvas_scale_value(view)
@@ -3721,27 +3661,17 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
     color := SDL.Color{palette.accent[0], palette.accent[1], palette.accent[2], 72}
     for viewport_row in 0..<int(rows) {
-        stable_row_i64 := top_row + i64(viewport_row)
-        if stable_row_i64 < -0x80000000 || stable_row_i64 > 0x7fffffff {
+        first, last: u16
+        if render_selection_span(
+            view.canvas, anchor_row, anchor_column, focus_row, focus_column,
+            selected_columns, selected_alternate ? 1 : 0, u16(viewport_row), &first, &last,
+        ) == 0 {
             continue
         }
-        span, visible := selection_visible_span(
-            anchor_row,
-            anchor_column,
-            focus_row,
-            focus_column,
-            i32(stable_row_i64),
-            columns,
-        )
-        if !visible {
-            continue
-        }
-        first := int(span.start_column)
-        last := int(span.end_column)
         rect := SDL.FRect{
-            origin_x + f32(first * int(cell_width)) / scale,
+            origin_x + f32(u32(first) * u32(cell_width)) / scale,
             origin_y + f32(viewport_row * int(cell_height)) / scale,
-            f32((last - first + 1) * int(cell_width)) / scale,
+            f32(u32(last - first + 1) * u32(cell_width)) / scale,
             f32(cell_height) / scale,
         }
         draw_fill(app.renderer, rect, color)

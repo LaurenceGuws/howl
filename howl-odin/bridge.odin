@@ -72,6 +72,7 @@ foreign howl_bridge {
     render_history_count :: proc(handle: rawptr) -> u32 ---
     render_history_row_base :: proc(handle: rawptr) -> u32 ---
     render_alternate_screen :: proc(handle: rawptr) -> u8 ---
+    render_selection_span :: proc(handle: rawptr, anchor_row: i32, anchor_column: u16, focus_row: i32, focus_column: u16, columns: u16, alternate_screen: u8, viewport_row: u16, first, last: ^u16) -> u8 ---
     render_upload_count  :: proc(handle: rawptr) -> u32 ---
     render_removal_count :: proc(handle: rawptr) -> u32 ---
     render_command_count :: proc(handle: rawptr) -> u32 ---

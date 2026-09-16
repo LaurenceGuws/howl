@@ -146,6 +146,9 @@ const Render = struct {
     history_count: u32 = 0,
     history_row_base: u32 = 0,
     alternate_screen: bool = false,
+    // Small row facts from the accepted Canvas revision, not a second text cache.
+    selection_begin: ?protocol.SnapshotBegin = null,
+    selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
@@ -498,6 +501,10 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     };
     defer client.view.deinit(view);
     const begin = client.view.begin(view).*;
+    if (begin.rows > renderer.selection_rows.len) {
+        renderer.setError("selection_rows", "row_limit");
+        return 3;
+    }
     const surface = renderSurface(begin.rows, begin.columns, renderer.cell_size) catch |failure| {
         renderer.setError("surface", @errorName(failure));
         return 3;
@@ -574,6 +581,10 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     renderer.history_count = begin.history_count;
     renderer.history_row_base = begin.history_row_base;
     renderer.alternate_screen = begin.alternate_screen;
+    for (0..begin.rows) |row| {
+        renderer.selection_rows[row] = client.selection.rowShape(view, @intCast(row)).?;
+    }
+    renderer.selection_begin = begin;
     renderer.surface = surface;
     updateRenderResidency(renderer, frame.uploads, frame.removals);
     for (renderer.external_uploads[0..renderer.external_upload_count]) |external| {
@@ -694,6 +705,39 @@ pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
     return @intFromBool(renderer.alternate_screen);
+}
+
+/// Projects selection against this renderer's accepted frame only. No Session
+/// request, allocation, text parsing, or endpoint mutation occurs while dragging.
+pub export fn howl_odin_bridge_render_selection_span(
+    raw: ?*RenderHandle,
+    anchor_row: i32,
+    anchor_column: u16,
+    focus_row: i32,
+    focus_column: u16,
+    columns: u16,
+    alternate_screen: u8,
+    viewport_row: u16,
+    first: *u16,
+    last: *u16,
+) u8 {
+    first.* = 0;
+    last.* = 0;
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    const begin = renderer.selection_begin orelse return 0;
+    if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.selection_rows.len)
+        return 0;
+    const range = client.selection.Range{
+        .anchor = .{ .row = anchor_row, .column = anchor_column },
+        .focus = .{ .row = focus_row, .column = focus_column },
+        .columns = columns,
+        .alternate_screen = alternate_screen != 0,
+    };
+    const span = range.textSpan(&begin, viewport_row, renderer.selection_rows[viewport_row]) orelse return 0;
+    first.* = span.start_column;
+    last.* = span.end_column;
+    return 1;
 }
 
 pub export fn howl_odin_bridge_render_upload_count(raw: ?*RenderHandle) u32 {

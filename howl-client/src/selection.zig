@@ -84,6 +84,27 @@ pub const Range = struct {
         };
     }
 
+    /// Paints a stable range using row facts from the same presented snapshot.
+    /// This matches Web/Flutter's text-shaped selection: hard line breaks get
+    /// one visible newline cell; final and soft-wrapped rows get no blank tail.
+    /// Only presentation changes. `request` still names the original endpoints.
+    pub fn textSpan(self: Range, begin: *const protocol.SnapshotBegin, viewport_row: u16, shape: RowShape) ?Span {
+        const span = self.viewportSpan(begin, viewport_row) orelse return null;
+        const row = viewportRow(begin, viewport_row) catch return null;
+        const content_end = @min(shape.content_end_exclusive, self.columns);
+        if (row == self.ordered().end.row or shape.wrapped) {
+            if (content_end == 0) return null;
+            const last = @min(span.end_column, content_end - 1);
+            if (last < span.start_column) return null;
+            return .{ .start_column = span.start_column, .end_column = last };
+        }
+        const newline_column = @min(content_end, self.columns - 1);
+        return .{
+            .start_column = if (span.start_column < content_end) span.start_column else newline_column,
+            .end_column = newline_column,
+        };
+    }
+
     pub fn request(self: Range) protocol.TextExtract {
         return .{
             .start = self.anchor,
@@ -521,4 +542,80 @@ fn testBegin() protocol.SnapshotBegin {
         .leader_present = false,
         .you_are_leader = false,
     };
+}
+
+test "text-shaped selection trims tails and keeps hard newline markers" {
+    const begin = testBeginForRows(4, 8);
+    const shapes = [_]RowShape{
+        .{ .content_end_exclusive = 4, .wrapped = false },
+        .{ .content_end_exclusive = 0, .wrapped = false },
+        .{ .content_end_exclusive = 8, .wrapped = true },
+        .{ .content_end_exclusive = 3, .wrapped = false },
+    };
+    const expected = [_]Span{
+        .{ .start_column = 2, .end_column = 4 },
+        .{ .start_column = 0, .end_column = 0 },
+        .{ .start_column = 0, .end_column = 7 },
+        .{ .start_column = 0, .end_column = 2 },
+    };
+    const forward = Range{
+        .anchor = .{ .row = 0, .column = 2 },
+        .focus = .{ .row = 3, .column = 6 },
+        .columns = 8,
+        .alternate_screen = false,
+    };
+    var reverse = forward;
+    reverse.anchor = forward.focus;
+    reverse.focus = forward.anchor;
+    for (shapes, expected, 0..) |shape, want, row| {
+        try std.testing.expectEqual(@as(?Span, want), forward.textSpan(&begin, @intCast(row), shape));
+        try std.testing.expectEqual(@as(?Span, want), reverse.textSpan(&begin, @intCast(row), shape));
+    }
+    var tail = forward;
+    tail.anchor.column = 7;
+    tail.focus = .{ .row = 1, .column = 3 };
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 4, .end_column = 4 }), tail.textSpan(&begin, 0, shapes[0]));
+    try std.testing.expect(tail.textSpan(&begin, 1, shapes[1]) == null);
+    try std.testing.expect(tail.textSpan(&begin, 2, shapes[2]) == null);
+    const before = tail.request();
+    try std.testing.expect(tail.textSpan(&begin, 0, shapes[0]) != null);
+    try std.testing.expectEqualDeep(before, tail.request());
+}
+
+test "text-shaped selection stays bounded across history and context changes" {
+    var begin = testBegin();
+    const shape = RowShape{ .content_end_exclusive = 4, .wrapped = false };
+    const range = Range{
+        .anchor = .{ .row = 101, .column = 3 },
+        .focus = .{ .row = 105, .column = 5 },
+        .columns = 8,
+        .alternate_screen = false,
+    };
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 3 }), range.textSpan(&begin, 2, shape));
+    begin.history_offset = 3;
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 3, .end_column = 4 }), range.textSpan(&begin, 1, shape));
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 3, .end_column = 7 }), range.textSpan(&begin, 1, .{ .content_end_exclusive = 65535, .wrapped = false }));
+    try std.testing.expect(range.textSpan(&begin, begin.rows, shape) == null);
+    begin.columns += 1;
+    try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
+    begin.columns -= 1;
+    begin.alternate_screen = true;
+    try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
+    begin.alternate_screen = false;
+    begin.history_row_base = 102;
+    try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
+}
+
+test "text-shaped blank and soft-wrap final rows have no invented newline" {
+    const begin = testBeginForRows(2, 8);
+    const range = Range{
+        .anchor = .{ .row = 0, .column = 5 },
+        .focus = .{ .row = 1, .column = 7 },
+        .columns = 8,
+        .alternate_screen = false,
+    };
+    try std.testing.expect(range.textSpan(&begin, 0, .{ .content_end_exclusive = 4, .wrapped = true }) == null);
+    try std.testing.expect(range.textSpan(&begin, 0, .{ .content_end_exclusive = 0, .wrapped = true }) == null);
+    try std.testing.expect(range.textSpan(&begin, 1, .{ .content_end_exclusive = 0, .wrapped = false }) == null);
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 3 }), range.textSpan(&begin, 1, .{ .content_end_exclusive = 4, .wrapped = true }));
 }

@@ -18,6 +18,11 @@ handles UTF-8/wide cells, and excludes concealed text. It deliberately does not
 invent a cross-soft-wrap search contract; retained-history paging and search UI
 remain presentation-client policy.
 
+`selection.Range.textSpan` projects stable endpoints using canonical `RowShape`
+facts from the same presented revision. It trims empty row tails and retains one
+hard-newline marker without changing the canonical extraction request. It needs
+no socket access or allocation during a selection gesture.
+
 Unix sockets remain local endpoint mechanisms. TCP accepts explicit numeric IPv4
 peers supplied by the caller; there is no DNS, discovery, authentication, route
 selection, or listener policy here. Session lifecycle, PTY/VT semantics, stale
