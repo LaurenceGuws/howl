@@ -613,6 +613,14 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
+- Next/previous tab, close-entire-tab, and move-tab-left/right are first-class
+  rebindable actions. Ctrl+Tab / Ctrl+Shift+Tab and Ctrl+Shift+PageUp/PageDown
+  retain their defaults without an unbindable direct-handler fallback. Close
+  entire tab is initially unbound and closes every split; Close pane / tab keeps
+  its existing Ctrl+Shift+W leaf-first behavior. The bounded palette reveals all
+  registry entries through keyboard navigation even in short windows.
+
+
 - One bounded action registry owns stable action ids, labels, default shortcut
   strings, categories, context-enabled state, and execution. Command Palette,
   Settings → Actions, and profile-menu action labels/shortcut hints consume the

@@ -255,6 +255,11 @@ App_Action :: enum {
     Open_Profile_Menu,
     Close_Pane,
     Toggle_Fullscreen,
+    Next_Tab,
+    Previous_Tab,
+    Close_Tab,
+    Move_Tab_Left,
+    Move_Tab_Right,
 }
 
 Action_Category :: enum u8 {
@@ -273,7 +278,7 @@ Action_Definition :: struct {
     category: Action_Category,
 }
 
-ACTION_DEFINITIONS :: [14]Action_Definition{
+ACTION_DEFINITIONS :: [19]Action_Definition{
     {.New_Tab, "new_tab", "New tab", "Ctrl+T", .Tab},
     {.New_Window, "new_window", "New window", "Ctrl+Shift+N", .Window},
     {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
@@ -288,9 +293,14 @@ ACTION_DEFINITIONS :: [14]Action_Definition{
     {.Open_Profile_Menu, "profile_menu", "Profile menu", "Ctrl+Shift+Space", .Application},
     {.Close_Pane, "close_pane", "Close pane / tab", "Ctrl+Shift+W", .Pane},
     {.Toggle_Fullscreen, "toggle_fullscreen", "Toggle fullscreen", "F11", .Window},
+    {.Next_Tab, "next_tab", "Next tab", "Ctrl+Tab", .Tab},
+    {.Previous_Tab, "previous_tab", "Previous tab", "Ctrl+Shift+Tab", .Tab},
+    {.Close_Tab, "close_tab", "Close entire tab", "", .Tab},
+    {.Move_Tab_Left, "move_tab_left", "Move tab left", "Ctrl+Shift+PageUp", .Tab},
+    {.Move_Tab_Right, "move_tab_right", "Move tab right", "Ctrl+Shift+PageDown", .Tab},
 }
 
-PALETTE_ACTIONS :: [12]App_Action{
+PALETTE_ACTIONS :: [17]App_Action{
     .New_Tab,
     .New_Window,
     .Duplicate_Tab,
@@ -303,6 +313,11 @@ PALETTE_ACTIONS :: [12]App_Action{
     .Open_Settings,
     .Close_Pane,
     .Toggle_Fullscreen,
+    .Next_Tab,
+    .Previous_Tab,
+    .Close_Tab,
+    .Move_Tab_Left,
+    .Move_Tab_Right,
 }
 
 
@@ -337,8 +352,14 @@ action_enabled :: proc(app: ^App, action: App_Action) -> bool {
                app.tabs[app.active_tab].pane_count > 1
     case .Recover_Session:
         return app != nil && session_recoverable(active_session_view(app))
-    case .Close_Pane:
-        return app != nil && app.tab_count > 0
+    case .Close_Pane, .Close_Tab:
+        return app != nil && app.tab_count > 0 && app.active_tab >= 0 && app.active_tab < app.tab_count
+    case .Next_Tab, .Previous_Tab:
+        return app != nil && app.tab_count > 1 && app.active_tab >= 0 && app.active_tab < app.tab_count
+    case .Move_Tab_Left:
+        return app != nil && app.active_tab > 0 && app.active_tab < app.tab_count
+    case .Move_Tab_Right:
+        return app != nil && app.active_tab >= 0 && app.active_tab + 1 < app.tab_count
     case .Toggle_Fullscreen:
         return app != nil && app.window != nil
     case .New_Window, .Open_Settings, .Open_Command_Palette, .Open_Profile_Menu:
@@ -4143,6 +4164,26 @@ execute_action :: proc(app: ^App, action: App_Action) {
         return
     }
     switch action {
+    case .Next_Tab, .Previous_Tab:
+        app.palette_open = false
+        _ = finish_tab_drag(app)
+        step := action == .Next_Tab ? 1 : app.tab_count - 1
+        _ = select_tab_index(app, (app.active_tab + step) % app.tab_count)
+    case .Move_Tab_Left, .Move_Tab_Right:
+        app.palette_open = false
+        _ = finish_tab_drag(app)
+        _ = finish_pane_resize_drag(app)
+        _ = move_tab(app, app.active_tab, app.active_tab + (action == .Move_Tab_Left ? -1 : 1))
+    case .Close_Tab:
+        app.palette_open = false
+        if app.tab_count == 1 {
+            // Normal application teardown retires every owned pane, not just
+            // the active split. Externally attached Sessions remain untouched.
+            app.running = false
+        } else {
+            if app.search_open do close_search(app)
+            close_tab(app, app.active_tab)
+        }
     case .New_Tab:
         new_tab(app)
     case .New_Window:
@@ -4478,21 +4519,15 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if app.palette_open {
-        box_w := f32(520)
-        box_h := f32(88 + len(PALETTE_ACTIONS) * 36)
-        box := SDL.FRect{(width - box_w) / 2, 92, box_w, box_h}
-        for i in 0..<len(PALETTE_ACTIONS) {
-            row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
-            if inside(x, y, row) {
-                if action, ok := palette_action(i); ok {
-                    execute_action(app, action)
-                }
+        layout := palette_layout(width, height, app.palette_selection)
+        for visible_index in 0..<layout.count {
+            if inside(x, y, palette_row_rect(layout, visible_index)) {
+                if action, ok := palette_action(layout.first + visible_index); ok { execute_action(app, action) }
                 return
             }
         }
-        if !inside(x, y, box) {
-            app.palette_open = false
-        }
+        if !inside(x, y, layout.box) do app.palette_open = false
+        return
     }
 
     if app.profile_menu_open {
@@ -4628,27 +4663,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             return
         } else if handle_registered_action_shortcut(app, event) {
             // Concrete desktop actions are consumed by the effective binding table.
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_PAGEUP && app.tab_count > 1 {
-            target := max(0, app.active_tab - 1)
-            _ = move_tab(app, app.active_tab, target)
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_PAGEDOWN && app.tab_count > 1 {
-            target := min(app.tab_count - 1, app.active_tab + 1)
-            _ = move_tab(app, app.active_tab, target)
-        } else if event.type == .KEY_DOWN && ctrl && !alt &&
-                  (event.key.key == SDL.K_TAB || event.key.key >= SDL.K_1 && event.key.key <= SDL.K_8) {
+        } else if event.type == .KEY_DOWN && ctrl && !shift && !alt &&
+                  event.key.key >= SDL.K_1 && event.key.key <= SDL.K_8 {
             if index, numeric := tab_index_for_number_key(event.key.key); numeric && index < app.tab_count {
                 _ = select_tab_index(app, index)
-            } else if event.key.key == SDL.K_TAB && app.tab_count > 1 {
-                _ = finish_tab_drag(app)
-                _ = finish_pane_resize_drag(app)
-                clear_ime_preedit(app)
-                if shift {
-                    app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
-                } else {
-                    app.active_tab = (app.active_tab + 1) % app.tab_count
-                }
-            } else {
-                // Other Ctrl chords continue through the ordinary terminal path.
             }
         } else if event.type == .KEY_DOWN && ctrl && alt {
             if direction, ok := pane_direction_for_key(event.key.key); ok {
@@ -5922,29 +5940,30 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
 }
 
 draw_palette :: proc(app: ^App, width, height: f32) {
-    box_w := f32(520)
-    box_h := f32(88 + len(PALETTE_ACTIONS) * 36)
-    box := SDL.FRect{(width - box_w) / 2, 92, box_w, box_h}
+    layout := palette_layout(width, height, app.palette_selection)
+    box := layout.box
     draw_fill(app.renderer, box, palette.title_bg)
     draw_outline(app.renderer, box, palette.border)
-
-    search := SDL.FRect{box.x + 18, box.y + 18, box.w - 36, 40}
-    draw_fill(app.renderer, search, palette.terminal_bg)
-    draw_outline(app.renderer, search, palette.accent)
-    draw_text(app, app.ui_font, "> Command Palette", search.x + 12, search.y + 10, palette.text)
-
-    for action, i in PALETTE_ACTIONS {
-        row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
-        if app.palette_selection == i {
-            draw_fill(app.renderer, row, palette.tab_active)
-        }
-        enabled := action_enabled(app, action)
-        color := enabled ? palette.text : palette.text_muted
-        draw_text(app, app.ui_font, action_label(action), row.x + 10, row.y + 8, color)
+    settings_clipped_text(app, {box.x + 18, box.y + 18, max(f32(0), box.w - 36), 22},
+                          "> Command Palette", palette.text)
+    for visible_index in 0..<layout.count {
+        index := layout.first + visible_index
+        action, ok := palette_action(index)
+        if !ok do continue
+        row := palette_row_rect(layout, visible_index)
+        if app.palette_selection == index do draw_fill(app.renderer, row, palette.tab_active)
+        color := action_enabled(app, action) ? palette.text : palette.text_muted
         shortcut := action_binding_text(app, action)
-        if len(shortcut) != 0 {
-            draw_text(app, app.ui_font, shortcut, row.x + row.w - 148, row.y + 8, palette.text_muted)
+        label_width := max(f32(0), row.w - 20 - (len(shortcut) > 0 ? f32(195) : f32(0)))
+        settings_clipped_text(app, {row.x + 10, row.y + 8, label_width, 22}, action_label(action), color)
+        if len(shortcut) > 0 {
+            settings_clipped_text(app, {row.x + row.w - 195, row.y + 8, 185, 22}, shortcut, palette.text_muted)
         }
+    }
+    if layout.count < len(PALETTE_ACTIONS) {
+        buffer: [96]u8
+        label := fmt.bprintf(buffer[:], "%d-%d of %d  |  Up/Down to navigate", layout.first + 1, layout.first + layout.count, len(PALETTE_ACTIONS))
+        settings_clipped_text(app, {box.x + 18, box.y + box.h - 28, max(f32(0), box.w - 36), 20}, label, palette.text_muted)
     }
 }
 
