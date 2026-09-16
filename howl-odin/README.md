@@ -74,6 +74,12 @@ Current canary:
   it unless the child requested focus reporting; with DEC focus reporting enabled,
   the managed-KWin canary received canonical focus-out `ESC[O` and focus-in `ESC[I`.
   Focus loss also terminates any terminal-owned mouse capture with semantic releases;
+- DEC alternate-scroll is routed through canonical named-key cycles, never client
+  escape strings. In a controlled alternate-screen canary with mouse tracking off,
+  DEC alternate-scroll on, and application-cursor mode on, wheel-up/down arrived as
+  VT-owned `ESC OA` / `ESC OB`. Shift+wheel remained the explicit local override and
+  produced no child bytes. The same canary, with focus reporting off, also proved
+  semantic focus transitions are suppressed by VT when the child did not request them;
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through

@@ -190,11 +190,14 @@ These labels are descriptive, not priority scores.
   entered local HISTORY.
 - Real managed-KWin focus loss/gain is sent as semantic focus input. With DEC
   focus reporting enabled the child received ESC[O / ESC[I through VT-owned
-  encoding; with focus reporting disabled the same semantic events are harmless.
+  encoding; with focus reporting disabled a second canary received no bytes.
+- DEC alternate-scroll is canonical-key routing rather than client escape generation.
+  With mouse tracking off, alternate screen + DEC alternate-scroll + application
+  cursor mode made wheel-up/down arrive as ESC OA / ESC OB from VT; Shift+wheel
+  remained client-local and emitted no child bytes.
 
 **ACTIVE**
 
-- DEC alternate-scroll behavior through semantic keys, not client escape bytes.
 - Neovim, btop, tmux-or-zellij, and less mouse/focus pressure canaries.
 - Desktop IME/composition and broader physical-key pressure.
 
