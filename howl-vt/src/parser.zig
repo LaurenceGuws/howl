@@ -341,6 +341,19 @@ pub const Parser = struct {
     // Byte advancement and ordered phase execution
     // -------------------------------------------------------------------------
 
+    /// Counts a leading printable-ASCII APC payload run whose scalar parser
+    /// actions would all be `apc_put`, with no parser-state transition. The
+    /// caller captures those bytes once; controls, escaping and non-ASCII stay
+    /// on `next` so cancellation and terminators retain their exact semantics.
+    pub fn plainApcPayloadPrefix(self: *const Parser, bytes: []const u8) usize {
+        if (self.state != .sos_pm_apc_string or !self.apc.active() or self.apc.escaping())
+            return 0;
+        var count: usize = 0;
+        while (count < bytes.len and bytes[count] >= 0x20 and bytes[count] < 0x7f)
+            count += 1;
+        return count;
+    }
+
     /// Advance the parser by one byte and return ordered phase actions.
     pub fn next(self: *Parser, byte: u8) PhaseActions {
         std.debug.assert(self.activeControlCount() <= 1);
@@ -2358,4 +2371,47 @@ fn appendOwnedAction(
 fn dupeArenaSlice(arena: std.mem.Allocator, comptime T: type, data: []const T) error{OutOfMemory}![]const T {
     if (data.len == 0) return &.{};
     return try arena.dupe(T, data);
+}
+
+test "APC payload runs match scalar actions at every byte boundary" {
+    for (0..256) |value| {
+        var fast = try Parser.init(std.testing.allocator);
+        defer fast.deinit();
+        var scalar = try Parser.init(std.testing.allocator);
+        defer scalar.deinit();
+        for ("\x1b_G") |byte| {
+            try std.testing.expectEqualDeep(scalar.next(byte), fast.next(byte));
+        }
+        const bytes = [_]u8{ 'a', @intCast(value), 'z' };
+        const count = fast.plainApcPayloadPrefix(&bytes);
+        const expected: usize = if (value >= 0x20 and value < 0x7f) 3 else 1;
+        try std.testing.expectEqual(expected, count);
+        for (bytes[0..count]) |byte| {
+            const phases = scalar.next(byte);
+            try std.testing.expectEqual(@as(?Action, null), phases[0]);
+            try std.testing.expectEqualDeep(@as(?Action, .{ .apc_put = byte }), phases[1]);
+            try std.testing.expectEqual(@as(?Action, null), phases[2]);
+        }
+        for (bytes[count..]) |byte| {
+            try std.testing.expectEqualDeep(scalar.next(byte), fast.next(byte));
+        }
+        for ("\x1b\\") |byte| {
+            try std.testing.expectEqualDeep(scalar.next(byte), fast.next(byte));
+        }
+        try std.testing.expectEqual(scalar.state, fast.state);
+        try std.testing.expectEqual(scalar.activeControlCount(), fast.activeControlCount());
+    }
+}
+
+test "APC payload runs reject non-APC and pending escape states" {
+    const prefixes = [_][]const u8{ "", "\x1b]2;", "\x1bPq", "\x1b^", "\x1bX", "\x1b_G\x1b" };
+    for (prefixes) |prefix| {
+        var parser = try Parser.init(std.testing.allocator);
+        defer parser.deinit();
+        for (prefix) |byte| {
+            const phases = parser.next(byte);
+            try std.testing.expect(phases.len == 3);
+        }
+        try std.testing.expectEqual(@as(usize, 0), parser.plainApcPayloadPrefix("abc"));
+    }
 }

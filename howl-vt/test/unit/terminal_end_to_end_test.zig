@@ -2037,3 +2037,49 @@ test "terminal: every byte split preserves mixed control framing" {
         try std.testing.expectEqualStrings(expected.replyBytes(), actual.replyBytes());
     }
 }
+
+test "terminal: bulk APC preserves every Yazi fragment and exact service boundary" {
+    const packet = "\x1b_Gq=2,a=T,z=-1,C=1,f=24,s=2,v=1,m=1;/wAA\x1b\\" ++
+        "\x1b_Gm=0;AP8A\x1b\\";
+    const bytes = packet ++ "\x07\x1b[6nTAIL";
+    for (0..packet.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        const prefix = try terminal.feedAt(bytes[0..split], 1);
+        try std.testing.expect(!prefix.historyLost());
+        const until_bell = try terminal.feedAtServiceBoundary(bytes[split..], 2);
+        try std.testing.expectEqual(packet.len + 1 - split, until_bell.consumed);
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+        const bell = terminal.consequenceHead().?;
+        try std.testing.expect(bell == .bell);
+        try terminal.consumeConsequence(bell.id());
+        const images = terminal.images(0);
+        try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+        try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 255, 0, 255 }, images.image(0).?.pixels);
+        try std.testing.expectEqual(@as(i32, -1), images.placement(0).?.z);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        const query_offset = split + until_bell.consumed;
+        const until_reply = try terminal.feedAtServiceBoundary(bytes[query_offset..], 3);
+        try std.testing.expectEqual(@as(usize, 4), until_reply.consumed);
+        try std.testing.expectEqualStrings("\x1b[1;1R", terminal.replyBytes());
+        try consumeReplies(&terminal);
+        const tail = try terminal.feedAtServiceBoundary(bytes[query_offset + until_reply.consumed ..], 4);
+        try std.testing.expectEqual(@as(usize, 4), tail.consumed);
+        try std.testing.expectEqual(@as(u21, 'T'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'L'), terminal.semanticView(0).cellAt(0, 3));
+    }
+}
+
+test "terminal: failed bulk APC allocation resets capture and accepts ordinary text" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.feed("\x1b_Gq=2,a=T,f=24,s=1,v=1;/wAA\x1b\\"));
+    failing.fail_index = std.math.maxInt(usize);
+    try feed(&terminal, "R");
+    try std.testing.expectEqual(@as(u21, 'R'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}

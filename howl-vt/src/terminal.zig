@@ -3883,6 +3883,20 @@ const TerminalStream = struct {
         };
     }
 
+    // Bulk capture only parser-proven payload: no terminal mutation, reply, or
+    // consequence can occur before the ordinary parser reaches its terminator.
+    fn putApcPayloadPrefix(self: *TerminalStream, bytes: []const u8) TerminalFeedError!usize {
+        const state = &self.terminal.stream_state;
+        const count = state.parser.plainApcPayloadPrefix(bytes);
+        errdefer {
+            state.parser.reset();
+            state.dcs.reset();
+            state.string.reset();
+        }
+        if (count != 0) try state.string.putSlice(bytes[0..count]);
+        return count;
+    }
+
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
@@ -3890,9 +3904,16 @@ const TerminalStream = struct {
         const before = MutationObservation.capture(self.terminal);
         defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
-        for (bytes) |byte| {
-            const byte_summary = try self.nextSummary(byte);
+        var consumed: usize = 0;
+        while (consumed < bytes.len) {
+            const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
+            if (payload_bytes != 0) {
+                consumed += payload_bytes;
+                continue;
+            }
+            const byte_summary = try self.nextSummary(bytes[consumed]);
             summary.mutations.merge(byte_summary.mutations);
+            consumed += 1;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
@@ -3914,8 +3935,13 @@ const TerminalStream = struct {
         const before = MutationObservation.capture(self.terminal);
         defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
-        for (bytes) |byte| {
-            const byte_summary = try self.nextSummary(byte);
+        while (consumed < bytes.len) {
+            const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
+            if (payload_bytes != 0) {
+                consumed += payload_bytes;
+                continue;
+            }
+            const byte_summary = try self.nextSummary(bytes[consumed]);
             summary.mutations.merge(byte_summary.mutations);
             consumed += 1;
             if (self.terminal.reply_buffer.len() != replies_before or

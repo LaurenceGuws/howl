@@ -781,12 +781,30 @@ These labels are descriptive, not priority scores.
   view and roughly 1.9 ms on the larger Local shell during the first renderer
   canary.
 
+**PROVEN: local Yazi image-path latency, 2026-09-16**
+
+- The local Pictures/40-item walk exposed shared VT and Session costs rather
+  than SDL presentation. Inert printable-ASCII APC runs now use the parser's
+  no-transition prefix; control bytes, bounds and failure recovery stay exact.
+  Session counts immutable image-placement slots once per manifest/visibility
+  loop rather than repeatedly scanning the viewport for placeholders.
+- A warmed old/new Session comparison retained the same GUI/bridge: observation
+  p95 628.9 -> 7.3 ms, SDL input-event age p95 798.8 -> 1.3 ms; no image-quality
+  reduction, new debounce or skipped payload policy was added. These are scoped
+  dequeue/observation measurements, not an input-to-photon guarantee.
+- The current Yazi 26.9.1 emits many cell-sized placements, unlike the earlier
+  single-placement Yazi canary. Seven new parser/capture/fragmentation/manifest
+  proofs cover this narrower optimization, including OOM and service boundaries.
+- A short terminal Doom gameplay smoke delivered 170 full image uploads in
+  10.6 s without observation errors. At about 16 image updates/s it still needs
+  performance work; image display correctness is not smooth-Doom acceptance.
+
 **ACTIVE — graphics performance qualification**
 
-- Real desktop dogfood reports slow graphics despite working image display. The
-  exact workload and bottleneck still need a reproducible baseline. The scoped
-  image-correctness canaries and quiet-text/btop measurements above do not prove
-  image throughput, animation cadence, or input responsiveness under image load.
+- Local Yazi has the scoped before/after baseline above; sustained Doom and
+  other image-heavy workloads remain open. Quiet-text/btop and image-correctness
+  canaries do not prove general image throughput, animation cadence, or input
+  responsiveness under every graphics workload.
 - Separate transfer/decode, Session transport, client resource fetch, Canvas work,
   texture upload and presentation costs before choosing an optimization. Record
   workload, build mode, display scale and local-versus-remote producer context.

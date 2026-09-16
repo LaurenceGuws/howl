@@ -1853,8 +1853,11 @@ fn countSnapshotGraphics(images: *const howl.Images) !SnapshotGraphicsCounts {
         if (imageVisible(images, image.id)) image_count += 1;
     }
     var placement_count: usize = 0;
+    // Images borrows one immutable cut. Count can scan Unicode-placeholder
+    // cells, so never repeat that scan for each ordinary image placement.
+    const placement_slots = images.placementCount();
     var placement_index: usize = 0;
-    while (placement_index < images.placementCount()) : (placement_index += 1) {
+    while (placement_index < placement_slots) : (placement_index += 1) {
         if (images.placement(placement_index) != null) placement_count += 1;
     }
     if (image_count > protocol.graphics_v2.maximum_images or
@@ -1913,8 +1916,11 @@ fn encodeSnapshotGraphics(
         offset += encoded.len;
     }
 
+    // Images borrows one immutable cut. Count can scan Unicode-placeholder
+    // cells, so never repeat that scan for each ordinary image placement.
+    const placement_slots = images.placementCount();
     var placement_index: usize = 0;
-    while (placement_index < images.placementCount()) : (placement_index += 1) {
+    while (placement_index < placement_slots) : (placement_index += 1) {
         const placement = images.placement(placement_index) orelse continue;
         if (!imagePresent(images, placement.image_id)) return error.InvalidSnapshot;
         var encoded: [protocol.graphics_v2.placement_bytes]u8 = undefined;
@@ -1940,8 +1946,9 @@ fn encodeSnapshotGraphics(
 }
 
 fn imageVisible(images: *const howl.Images, image_id: u32) bool {
+    const placement_slots = images.placementCount();
     var index: usize = 0;
-    while (index < images.placementCount()) : (index += 1) {
+    while (index < placement_slots) : (index += 1) {
         const placement = images.placement(index) orelse continue;
         if (placement.image_id == image_id) return true;
     }
@@ -4889,4 +4896,54 @@ test "endpoint admits the bounded thirty two clients with per-connection request
         }
     }
     try std.testing.expectEqual(maximum_clients, active);
+}
+
+test "many physical image placements preserve exact manifest and visible resource pinning" {
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, .{
+        .rows = 32,
+        .columns = 80,
+        .history_rows = 8,
+        .shell = "/bin/sh",
+        .command = "printf '\\033_Gq=2,a=t,i=9,f=24,s=1,v=1;/wAA\\033\\\\" ++
+            "\\033_Gq=2,a=t,i=10,f=24,s=1,v=1;AP8A\\033\\\\'; " ++
+            "i=0; while [ $i -lt 128 ]; do " ++
+            "printf '\\033[%d;%dH\\033_Gq=2,a=p,i=9,p=%d,c=1,r=1,C=1,z=-1\\033\\\\' " ++
+            "$((i / 8 + 1)) $((i % 8 + 1)) $((i + 1)); i=$((i + 1)); done; " ++
+            "printf '\\033[32;1HPLACEMENTS_READY'; sleep 30",
+    });
+    defer server.deinit();
+    var peer = try TestPeer.connectTcp(std.testing.allocator, server.listener.tcp_port.?);
+    defer peer.deinit();
+    const welcome = try handshake(&peer, &server);
+    try std.testing.expect(welcome.client_id != protocol.no_client);
+    var ready = try observeUntilContains(&peer, &server, 0, "PLACEMENTS_READY");
+    ready.deinit();
+    var images = howl.images(server.session, 0);
+    const before = howl.revision(server.session);
+    try std.testing.expectEqual(@as(usize, 2), images.imageCount());
+    const counts = try countSnapshotGraphics(&images);
+    try std.testing.expectEqual(@as(u16, 1), counts.images);
+    try std.testing.expectEqual(@as(u16, 128), counts.placements);
+    const encoded = try std.testing.allocator.alloc(u8, counts.payload_bytes);
+    defer std.testing.allocator.free(encoded);
+    try encodeSnapshotGraphics(&images, counts, encoded);
+    const header = try protocol.decodeSnapshotGraphicsHeader(encoded[0..protocol.graphics_v2.manifest_header_bytes]);
+    try std.testing.expectEqual(counts.placements, header.placement_count);
+    const image = try protocol.decodeSnapshotImage(encoded[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes]);
+    var offset: usize = protocol.graphics_v2.manifest_header_bytes + protocol.graphics_v2.image_bytes;
+    for (0..128) |index| {
+        const placement = try protocol.decodeSnapshotImagePlacement(encoded[offset..][0..protocol.graphics_v2.placement_bytes]);
+        offset += protocol.graphics_v2.placement_bytes;
+        try std.testing.expectEqual(image.image_id, placement.image_id);
+        try std.testing.expectEqual(@as(u16, @intCast(index / 8)), placement.row);
+        try std.testing.expectEqual(@as(u16, @intCast(index % 8)), placement.column);
+        try std.testing.expectEqual(@as(u32, 1), placement.source_width);
+        try std.testing.expectEqual(@as(u32, 1), placement.source_height);
+    }
+    try std.testing.expectEqual(encoded.len, offset);
+    var retained = try ImageResourceCache.captureVisible(std.testing.allocator, &images);
+    defer retained.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), retained.entries.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, retained.find(image.image_id, image.generation).?.pixels);
+    try std.testing.expectEqual(before, howl.revision(server.session));
 }

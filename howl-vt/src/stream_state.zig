@@ -171,6 +171,28 @@ pub const StringCapture = struct {
         try self.bytes.append(self.allocator, byte);
     }
 
+    /// Appends a parser-qualified payload run under the same byte/prefix bound
+    /// as `put`. The first byte still decides anonymous APC versus Kitty data.
+    pub fn putSlice(self: *StringCapture, bytes: []const u8) error{OutOfMemory}!void {
+        std.debug.assert(self.kind != null);
+        if (self.overflowed or bytes.len == 0) return;
+        var remaining = bytes;
+        if (self.bytes.items.len == 0) {
+            try self.put(bytes[0]);
+            remaining = bytes[1..];
+        }
+        const limit: usize = if (self.isKittyGraphics())
+            graphics.max_command_bytes + 1
+        else
+            generic_string_max_bytes;
+        if (remaining.len > limit - self.bytes.items.len) {
+            self.overflowed = true;
+            self.bytes.clearRetainingCapacity();
+            return;
+        }
+        try self.bytes.appendSlice(self.allocator, remaining);
+    }
+
     /// Returns the capture to an inactive reusable state while retaining capacity.
     pub fn reset(self: *StringCapture) void {
         self.bytes.clearRetainingCapacity();
@@ -308,4 +330,56 @@ test "string capture distinguishes Kitty graphics by exact APC prefix" {
     capture.start(.pm);
     try capture.put('G');
     try std.testing.expect(!capture.isKittyGraphics());
+}
+
+test "string run capture shares generic and Kitty bounds across fragments" {
+    const cases = [_]struct { kind: consequences.StringPayloadKind, prefix: u8, limit: usize }{
+        .{ .kind = .apc, .prefix = 'G', .limit = graphics.max_command_bytes + 1 },
+        .{ .kind = .apc, .prefix = 'x', .limit = generic_string_max_bytes },
+        .{ .kind = .pm, .prefix = 'G', .limit = generic_string_max_bytes },
+    };
+    var bytes: [graphics.max_command_bytes + 2]u8 = @splat('x');
+    for (cases) |case| {
+        var fast = StringCapture.init(std.testing.allocator);
+        defer fast.deinit();
+        var scalar = StringCapture.init(std.testing.allocator);
+        defer scalar.deinit();
+        fast.start(case.kind);
+        scalar.start(case.kind);
+        bytes[0] = case.prefix;
+        try fast.putSlice(bytes[0..1]);
+        try fast.putSlice(bytes[1..case.limit]);
+        for (bytes[0..case.limit]) |byte| try scalar.put(byte);
+        try std.testing.expectEqualSlices(u8, scalar.payload(), fast.payload());
+        try std.testing.expect(!fast.didOverflow());
+        try fast.putSlice("tail");
+        for ("tail") |byte| try scalar.put(byte);
+        try std.testing.expectEqual(scalar.didOverflow(), fast.didOverflow());
+        try std.testing.expectEqualSlices(u8, scalar.payload(), fast.payload());
+        fast.reset();
+        fast.start(.apc);
+        try fast.putSlice("Gnext");
+        try std.testing.expectEqualStrings("Gnext", fast.payload());
+    }
+}
+
+test "string run allocation failure remains bounded and reusable" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var capture = StringCapture.init(failing.allocator());
+    defer capture.deinit();
+    capture.start(.apc);
+    try std.testing.expectError(error.OutOfMemory, capture.putSlice("Gdata"));
+    try std.testing.expectEqual(@as(usize, 0), capture.payload().len);
+    failing.fail_index = std.math.maxInt(usize);
+    try capture.putSlice("Gdata");
+    const before = capture.payload().len;
+    failing.fail_index = failing.alloc_index;
+    const bytes: [4096]u8 = @splat('x');
+    try std.testing.expectError(error.OutOfMemory, capture.putSlice(&bytes));
+    try std.testing.expectEqual(before, capture.payload().len);
+    capture.reset();
+    capture.start(.apc);
+    failing.fail_index = std.math.maxInt(usize);
+    try capture.putSlice("Gok");
+    try std.testing.expectEqualStrings("Gok", capture.payload());
 }
