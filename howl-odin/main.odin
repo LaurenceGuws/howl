@@ -60,6 +60,18 @@ Desktop_Wheel_Route :: enum u8 {
     Interaction_State,
 }
 
+Session_Ownership :: enum u8 {
+    Attached,
+    Owned,
+}
+
+Session_Lifecycle_State :: enum u8 {
+    Connecting,
+    Active,
+    Closed,
+    Unavailable,
+}
+
 Tab :: struct {
     kind: Tab_Kind,
     title: string,
@@ -88,6 +100,7 @@ History_Scrollbar_Geometry :: struct {
 }
 
 Session_View :: struct {
+    ownership: Session_Ownership,
     owned_process: rawptr,
     control: rawptr,
     observer: rawptr,
@@ -145,6 +158,8 @@ Session_View :: struct {
     history_scrollbar_dragging: bool,
     history_scrollbar_grab_y: f32,
     alternate_screen: bool,
+    stream_closed: bool,
+    child_exited: bool,
     selection_active: bool,
     selection_dragging: bool,
     selection_anchor_row: i32,
@@ -481,7 +496,7 @@ resize_owned_session_to_pane :: proc(
     view: ^Session_View,
     available_width, available_height: f32,
 ) {
-    if view == nil || view.owned_process == nil || view.control == nil {
+    if view == nil || view.owned_process == nil || view.control == nil || !session_interactive(view) {
         return
     }
     if !ensure_canvas(app, view) {
@@ -910,6 +925,8 @@ observe_session :: proc(data: rawptr) {
         snapshot_history_count := history_count(observer)
         snapshot_history_row_base := history_row_base(observer)
         snapshot_alternate_screen := alternate_screen(observer) != 0
+        snapshot_stream_closed := stream_closed(observer) != 0
+        snapshot_child_exited := child_exited(observer) != 0
         snapshot_text_truncated := text_truncated(observer) != 0
 
         sync.mutex_lock(&view.mutex)
@@ -941,6 +958,8 @@ observe_session :: proc(data: rawptr) {
         view.history_count = snapshot_history_count
         view.history_row_base = snapshot_history_row_base
         view.alternate_screen = snapshot_alternate_screen
+        view.stream_closed = snapshot_stream_closed
+        view.child_exited = snapshot_child_exited
         view.text_truncated = snapshot_text_truncated
         view.error_len = 0
         validate_search_result_locked(view)
@@ -1193,14 +1212,54 @@ publish_initial_error :: proc(view: ^Session_View, message: string) {
     sync.mutex_unlock(&view.mutex)
 }
 
-session_attached :: proc(view: ^Session_View) -> bool {
+session_lifecycle_state_values :: proc(
+    revision: u64,
+    error_len: int,
+    control_present, stream_is_closed, child_has_exited: bool,
+) -> Session_Lifecycle_State {
+    if stream_is_closed || child_has_exited {
+        return .Closed
+    }
+    if error_len != 0 || !control_present {
+        return .Unavailable
+    }
+    if revision == 0 {
+        return .Connecting
+    }
+    return .Active
+}
+
+session_lifecycle_state :: proc(view: ^Session_View) -> Session_Lifecycle_State {
     if view == nil {
-        return false
+        return .Unavailable
     }
     sync.mutex_lock(&view.mutex)
-    attached := view.control != nil && view.revision != 0 && view.error_len == 0
+    state := session_lifecycle_state_values(
+        view.revision,
+        view.error_len,
+        view.control != nil,
+        view.stream_closed,
+        view.child_exited,
+    )
     sync.mutex_unlock(&view.mutex)
-    return attached
+    return state
+}
+
+session_is_owned :: proc(view: ^Session_View) -> bool {
+    return view != nil && view.ownership == .Owned
+}
+
+session_interactive :: proc(view: ^Session_View) -> bool {
+    return session_lifecycle_state(view) == .Active
+}
+
+session_recoverable :: proc(view: ^Session_View) -> bool {
+    state := session_lifecycle_state(view)
+    return state == .Closed || state == .Unavailable
+}
+
+session_attached :: proc(view: ^Session_View) -> bool {
+    return session_interactive(view)
 }
 
 copy_bridge_error :: proc(view: ^Session_View) {
@@ -1540,11 +1599,12 @@ history_offset_for_scrollbar_thumb :: proc(
     return u32(clamp(requested, 0, int(history_count_value)))
 }
 
-allocate_session_view :: proc(owned_process: rawptr) -> ^Session_View {
+allocate_session_view :: proc(owned_process: rawptr, ownership: Session_Ownership) -> ^Session_View {
     view := new(Session_View)
     if view == nil {
         return nil
     }
+    view.ownership = ownership
     view.owned_process = owned_process
     view.text = make([]u8, SESSION_TEXT_BYTES)
     view.scratch = make([]u8, SESSION_TEXT_BYTES)
@@ -1557,8 +1617,8 @@ allocate_session_view :: proc(owned_process: rawptr) -> ^Session_View {
     return view
 }
 
-create_session_view :: proc(endpoint: string, owned_process: rawptr) -> ^Session_View {
-    view := allocate_session_view(owned_process)
+create_session_view :: proc(endpoint: string, owned_process: rawptr, ownership: Session_Ownership) -> ^Session_View {
+    view := allocate_session_view(owned_process, ownership)
     if view == nil {
         return nil
     }
@@ -1612,8 +1672,8 @@ create_session_view :: proc(endpoint: string, owned_process: rawptr) -> ^Session
     return view
 }
 
-create_error_session_view :: proc(message: string) -> ^Session_View {
-    view := allocate_session_view(rawptr(nil))
+create_error_session_view :: proc(message: string, ownership: Session_Ownership = .Attached) -> ^Session_View {
+    view := allocate_session_view(rawptr(nil), ownership)
     if view != nil {
         publish_initial_error(view, message)
     }
@@ -1753,7 +1813,7 @@ session_endpoint :: proc(view: ^Session_View) -> string {
 create_owned_session_view :: proc(app: ^App) -> ^Session_View {
     runtime_dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
     if len(runtime_dir) == 0 {
-        return create_error_session_view("Missing XDG_RUNTIME_DIR")
+        return create_error_session_view("Missing XDG_RUNTIME_DIR", .Owned)
     }
     shell := os.get_env("SHELL", context.temp_allocator)
     if len(shell) == 0 {
@@ -1776,7 +1836,7 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         &diagnostic_len,
     )
     if owned == nil {
-        return create_error_session_view(string(diagnostic[:int(diagnostic_len)]))
+        return create_error_session_view(string(diagnostic[:int(diagnostic_len)]), .Owned)
     }
     endpoint_storage: [160]u8
     endpoint_len: c.size_t
@@ -1787,10 +1847,10 @@ create_owned_session_view :: proc(app: ^App) -> ^Session_View {
         &endpoint_len,
     ) != 0 {
         owned_session_destroy(owned)
-        return create_error_session_view("owned_session_endpoint_failed")
+        return create_error_session_view("owned_session_endpoint_failed", .Owned)
     }
     endpoint := string(endpoint_storage[:int(endpoint_len)])
-    view := create_session_view(endpoint, owned)
+    view := create_session_view(endpoint, owned, .Owned)
     if view == nil {
         owned_session_destroy(owned)
     }
@@ -2182,12 +2242,15 @@ named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
 
 send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     view := active_session_view(app)
-    if view == nil || view.control == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
+    if view == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
         return false
     }
     key, ok := named_bridge_key(event.key.key)
     if !ok {
         return false
+    }
+    if view.control == nil || !session_interactive(view) {
+        return true
     }
     if event.type == .KEY_DOWN {
         _ = return_history_live(view)
@@ -2693,7 +2756,7 @@ copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
 }
 
 paste_clipboard :: proc(view: ^Session_View) -> bool {
-    if view == nil || view.control == nil || !SDL.HasClipboardText() {
+    if view == nil || view.control == nil || !session_interactive(view) || !SDL.HasClipboardText() {
         return false
     }
     bytes := SDL.GetClipboardText()
@@ -2920,7 +2983,7 @@ profile_view :: proc(app: ^App, profile: int) -> (view: ^Session_View, title: st
     if profile == 1 {
         return create_owned_session_view(app), "Local shell"
     }
-    return create_session_view(HOME_ENDPOINT, rawptr(nil)), "Home Session"
+    return create_session_view(HOME_ENDPOINT, rawptr(nil), .Attached), "Home Session"
 }
 
 open_profile_tab :: proc(app: ^App, profile: int) {
@@ -2938,6 +3001,52 @@ open_local_tab :: proc(app: ^App) {
 
 attach_home_tab :: proc(app: ^App) {
     open_profile_tab(app, 0)
+}
+
+replace_active_session_view :: proc(app: ^App, replacement: ^Session_View) -> bool {
+    if app == nil || replacement == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return false
+    }
+    clear_ime_preedit(app)
+    if app.search_open {
+        close_search(app)
+    }
+    tab := &app.tabs[app.active_tab]
+    old: ^Session_View
+    if tab.active_pane == 1 && tab.secondary_session != nil {
+        old = tab.secondary_session
+        tab.secondary_session = replacement
+    } else {
+        old = tab.session
+        tab.session = replacement
+        tab.active_pane = 0
+    }
+    if old != nil {
+        _ = finish_terminal_mouse_capture(old, 0)
+        destroy_session_view(old)
+    }
+    return true
+}
+
+recover_active_session :: proc(app: ^App) -> bool {
+    view := active_session_view(app)
+    if view == nil || !session_recoverable(view) {
+        return false
+    }
+    replacement: ^Session_View
+    if session_is_owned(view) {
+        replacement = create_owned_session_view(app)
+    } else {
+        endpoint := session_endpoint(view)
+        if len(endpoint) == 0 {
+            return false
+        }
+        replacement = create_session_view(endpoint, nil, .Attached)
+    }
+    if replacement == nil {
+        return false
+    }
+    return replace_active_session_view(app, replacement)
 }
 
 close_tab :: proc(app: ^App, index: int) {
@@ -3315,6 +3424,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             _ = copy_selection_to_clipboard(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
             _ = paste_clipboard(active_session_view(app))
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_R {
+            _ = recover_active_session(app)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
             execute_action(app, .Close_Pane)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
@@ -3345,6 +3456,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             // The active real Session consumed this named physical key.
         } else if event.type == .KEY_DOWN && active_session_view(app) != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
             view := active_session_view(app)
+            if !session_interactive(view) {
+                return
+            }
             scalar := u32(event.key.key)
             if scalar > 0 && scalar < 0x80 {
                 _ = return_history_live(view)
@@ -3383,7 +3497,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             return
         }
         view := active_session_view(app)
-        if view != nil && view.control != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
+        if view != nil && view.control != nil && session_interactive(view) && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
             if len(text) != 0 {
                 _ = return_history_live(view)
@@ -3435,7 +3549,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         )
                         return
                     }
-                    if !history_active(view) {
+                    if session_interactive(view) && !history_active(view) {
                         if state, state_ok := current_interaction_state(view); state_ok &&
                            interaction_mouse_tracking_enabled(state) {
                             _ = terminal_mouse_move(
@@ -3475,6 +3589,13 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         }
                     }
                     if event.button.button == SDL.BUTTON_LEFT {
+                        if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok &&
+                           session_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
+                            if session_lifecycle_recovery_hit(view, pane, event.button.x, event.button.y) {
+                                _ = recover_active_session(app)
+                            }
+                            return
+                        }
                         if history_scrollbar_drag_active(view) {
                             if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
                                 _ = update_history_scrollbar_drag(view, pane, event.button.y)
@@ -3518,6 +3639,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
             if event.button.button == SDL.BUTTON_LEFT &&
+               session_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
+                return
+            }
+            if event.button.button == SDL.BUTTON_LEFT &&
                begin_history_scrollbar_drag(view, pane, event.button.x, event.button.y) {
                 return
             }
@@ -3528,12 +3653,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             history_is_active := history_active(view)
 
             if event.button.button == SDL.BUTTON_LEFT {
-                route := route_desktop_primary_pointer(
+                route := session_interactive(view) ? route_desktop_primary_pointer(
                     history_is_active,
                     shift,
                     false,
                     false,
-                )
+                ) : Desktop_Primary_Pointer_Route.Local_Selection
                 if route == .Interaction_State {
                     if state, state_ok := current_interaction_state(view, true); state_ok {
                         route = route_desktop_primary_pointer(
@@ -3570,7 +3695,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
 
-            if !history_is_active {
+            if session_interactive(view) && !history_is_active {
                 if state, state_ok := current_interaction_state(view, true); state_ok &&
                    interaction_mouse_tracking_enabled(state) {
                     _ = terminal_mouse_press(
@@ -3608,9 +3733,14 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     return
                 }
                 mods := SDL.GetModState()
-                force_history := .LSHIFT in mods || .RSHIFT in mods
+                interactive := session_interactive(view)
+                force_history := .LSHIFT in mods || .RSHIFT in mods || !interactive
                 history_is_active := history_active(view)
-                state, state_ok := current_interaction_state(view)
+                state: Interaction_State_Info
+                state_ok := false
+                if interactive && !force_history {
+                    state, state_ok = current_interaction_state(view)
+                }
                 route := route_desktop_wheel(
                     history_is_active,
                     force_history,
@@ -3980,10 +4110,98 @@ draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) 
     draw_fill(app.renderer, geometry.thumb, thumb_color)
 }
 
+Session_Lifecycle_Presentation :: struct {
+    message: string,
+    action: string,
+    visible: bool,
+    recoverable: bool,
+}
+
+session_lifecycle_presentation :: proc(
+    state: Session_Lifecycle_State,
+    ownership: Session_Ownership,
+) -> Session_Lifecycle_Presentation {
+    switch state {
+    case .Active:
+        return {}
+    case .Connecting:
+        return {message = ownership == .Owned ? "Starting Local Session..." : "Connecting to Session...", visible = true}
+    case .Closed:
+        if ownership == .Owned {
+            return {message = "Process exited", action = "Restart", visible = true, recoverable = true}
+        }
+        return {message = "Attached Session closed", action = "Reconnect", visible = true, recoverable = true}
+    case .Unavailable:
+        if ownership == .Owned {
+            return {message = "Local Session unavailable", action = "Restart", visible = true, recoverable = true}
+        }
+        return {message = "Attached Session unavailable", action = "Reconnect", visible = true, recoverable = true}
+    }
+    return {}
+}
+
+session_lifecycle_bar_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
+    return {pane.x + 8, pane.y + pane.h - 42, max(f32(0), pane.w - 24), 34}
+}
+
+session_lifecycle_action_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
+    bar := session_lifecycle_bar_rect(pane)
+    width := min(f32(224), max(f32(140), bar.w * 0.44))
+    return {bar.x + bar.w - width - 5, bar.y + 4, width, bar.h - 8}
+}
+
+session_lifecycle_chrome_hit :: proc(view: ^Session_View, pane: SDL.FRect, x, y: f32) -> bool {
+    if view == nil {
+        return false
+    }
+    presentation := session_lifecycle_presentation(session_lifecycle_state(view), view.ownership)
+    return presentation.visible && inside(x, y, session_lifecycle_bar_rect(pane))
+}
+
+session_lifecycle_recovery_hit :: proc(view: ^Session_View, pane: SDL.FRect, x, y: f32) -> bool {
+    if view == nil {
+        return false
+    }
+    presentation := session_lifecycle_presentation(session_lifecycle_state(view), view.ownership)
+    return presentation.recoverable && inside(x, y, session_lifecycle_action_rect(pane))
+}
+
+draw_session_lifecycle :: proc(
+    app: ^App,
+    view: ^Session_View,
+    pane: SDL.FRect,
+    state: Session_Lifecycle_State,
+) {
+    if view == nil {
+        return
+    }
+    presentation := session_lifecycle_presentation(state, view.ownership)
+    if !presentation.visible {
+        return
+    }
+    bar := session_lifecycle_bar_rect(pane)
+    if bar.w <= 0 || bar.h <= 0 {
+        return
+    }
+    background := palette.title_bg
+    background[3] = 238
+    draw_fill(app.renderer, bar, background)
+    draw_outline(app.renderer, bar, palette.border)
+    draw_text(app, app.ui_font, presentation.message, bar.x + 10, bar.y + 8, palette.text)
+    if presentation.recoverable {
+        action := session_lifecycle_action_rect(pane)
+        draw_fill(app.renderer, action, palette.tab_active)
+        draw_outline(app.renderer, action, palette.accent)
+        label := presentation.action == "Restart" ? "Restart  Ctrl+Shift+R" : "Reconnect  Ctrl+Shift+R"
+        draw_text(app, app.ui_font, label, action.x + 9, action.y + 5, palette.accent)
+    }
+}
+
 draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view == nil {
         return
     }
+    lifecycle_state := session_lifecycle_state(view)
     origin_x := pane.x + 10
     origin_y := pane.y + 6
     resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
@@ -3997,6 +4215,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
             draw_outline(app.renderer, badge, palette.accent)
             draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
         }
+        draw_session_lifecycle(app, view, pane, lifecycle_state)
         return
     }
 
@@ -4011,6 +4230,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
 
     if view.error_len != 0 {
         draw_text(app, app.ui_font, string(view.error[:view.error_len]), origin_x, origin_y, palette.accent)
+        draw_session_lifecycle(app, view, pane, lifecycle_state)
         return
     }
     if view.text_len != 0 {
@@ -4046,6 +4266,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         draw_outline(app.renderer, badge, palette.accent)
         draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
     }
+    draw_session_lifecycle(app, view, pane, lifecycle_state)
 }
 
 clear_ime_preedit :: proc(app: ^App) {

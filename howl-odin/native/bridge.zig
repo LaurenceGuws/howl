@@ -1563,6 +1563,14 @@ pub export fn howl_odin_bridge_alternate_screen(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| @intFromBool(begin.alternate_screen) else 0;
 }
 
+pub export fn howl_odin_bridge_stream_closed(raw: ?*Handle) u8 {
+    return if (lastBegin(raw)) |begin| @intFromBool(begin.stream_closed) else 0;
+}
+
+pub export fn howl_odin_bridge_child_exited(raw: ?*Handle) u8 {
+    return if (lastBegin(raw)) |begin| @intFromBool(begin.child_exited) else 0;
+}
+
 pub export fn howl_odin_bridge_history_count(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_count else 0;
 }

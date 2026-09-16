@@ -40,6 +40,8 @@ foreign howl_bridge {
     cursor_visible     :: proc(handle: rawptr) -> u8 ---
     cursor_shape       :: proc(handle: rawptr) -> u8 ---
     alternate_screen   :: proc(handle: rawptr) -> u8 ---
+    stream_closed      :: proc(handle: rawptr) -> u8 ---
+    child_exited       :: proc(handle: rawptr) -> u8 ---
     history_offset     :: proc(handle: rawptr) -> u32 ---
     history_count      :: proc(handle: rawptr) -> u32 ---
     history_row_base   :: proc(handle: rawptr) -> u32 ---

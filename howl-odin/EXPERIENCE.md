@@ -456,12 +456,23 @@ These labels are descriptive, not priority scores.
 - Attached Home views never kill the underlying Session.
 - Independent observer/control connections and explicit blocked-observer
   cancellation.
+- Canonical `stream_closed` / `child_exited` snapshot facts drive pane-local
+  lifecycle state. A client-owned shell preserves its final Canvas frame as
+  `Process exited`, stops accepting terminal input, remains locally selectable/
+  scrollable, and offers Restart. Restart reaps the old `howl-sessiond` and
+  creates a new process/socket identity in the same pane.
+- Attached failure/closure is visibly different: `Attached Session unavailable`
+  offers Reconnect against the exact stored endpoint. A private-lab reconnect
+  canary retained zero owned child Sessions before and after retry, proving that
+  recovery does not silently manufacture a Local shell.
+- Ownership is explicit `Attached` / `Owned` client state rather than inferred
+  from whether process creation happened to succeed, so even a failed Local
+  launch retains Restart semantics.
 
 **WANTED**
 
-- Exited-process UI: preserve final terminal frame, show exit status when known,
-  and offer Restart/Close without pretending the shell is still interactive.
-- Reconnect UI for temporarily unavailable attached Sessions.
+- Exit status once Session exposes it canonically; until then the UI says only
+  `Process exited` rather than inventing a status.
 - Recent/pinned attach targets where discovery has an explicit owner.
 - “Close tab” versus “terminate process/session” remains an explicit distinction.
 - Application shutdown explains what will remain alive and what is client-owned.

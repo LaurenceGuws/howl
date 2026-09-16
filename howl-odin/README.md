@@ -165,6 +165,13 @@ Current canary:
   rows/columns from the actual Howl Canvas cell metrics and current pane extent,
   while attached Home Session views remain observer-only and never resize the
   canonical Session merely because their desktop window is larger;
+- pane lifecycle is explicit and ownership-aware. Canonical Session `stream_closed` /
+  `child_exited` facts preserve the final frame behind a small recovery bar; an owned
+  Local shell becomes `Process exited` with Restart, while an unavailable/closed attached
+  view offers Reconnect to the same endpoint. Restart replaces only that pane with a new
+  owned Session identity; Reconnect never launches a shell. `Ctrl+Shift+R` invokes the
+  appropriate recovery, and dead panes remain locally scrollable/selectable but stop
+  forwarding terminal input;
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;
