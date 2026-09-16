@@ -464,12 +464,19 @@ These labels are descriptive, not priority scores.
 - JetBrains Mono Nerd Font canary.
 - Persistent 12/15/18 px font-size setting.
 - Font zoom never mutates an attached non-owning Session.
+- Persistent application chrome themes with live preview: Howl Dark, Slate, and
+  High Contrast. Theme switching changes tabs, Settings, borders, labels, and
+  accents only; terminal Canvas colors remain byte-identical Howl output. A
+  restart canary restored High Contrast from config, and the theme path retained
+  the event-driven 0.00% quiet-CPU baseline.
 
 **WANTED**
 
 - Font family picker with truthful availability/error state.
 - Arbitrary sensible font size or a richer bounded preset model.
-- Color schemes with live preview and per-profile override.
+- Canonical terminal color schemes and per-profile override only through the
+  appropriate Howl VT/render ownership seam; application chrome must not become
+  a hidden terminal-palette override.
 - Terminal padding.
 - Window opacity/acrylic only if the platform backend can do it without visual or
   performance debt.
@@ -488,8 +495,9 @@ These labels are descriptive, not priority scores.
 - Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages.
 - Atomic schema-versioned XDG config writes. Schema 2 adds stable action-id
-  keybinding overrides while schema-1 files remain readable and upgrade only on save.
-- Persistent default profile and font size.
+  keybinding overrides while schema-1 files remain readable and upgrade only on save;
+  schema 3 adds stable profile recipes and persisted application-theme identity.
+- Persistent default profile, font size, and application theme.
 - Settings → Actions is keyboard-editable: Tab enters the action list, Up/Down
   chooses an action, Enter records a physical chord, Delete unbinds, and R restores
   the registry default. Recording owns the whole chord so modifier-only transitions
@@ -517,7 +525,7 @@ These labels are descriptive, not priority scores.
 
 **WANTED**
 
-- Real controls for color schemes and richer appearance choices.
+- Richer appearance choices only where they have a clear platform/terminal owner.
 - Import/export user configuration.
 
 ### 14. Command palette, actions, and keybindings

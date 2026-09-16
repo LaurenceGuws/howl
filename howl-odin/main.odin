@@ -41,6 +41,7 @@ User_Config :: struct {
     default_profile: string `json:"default_profile"`,
     profiles: []User_Profile_Config `json:"profiles"`,
     keybindings: []User_Keybinding_Config `json:"keybindings"`,
+    app_theme: string `json:"app_theme"`,
 }
 
 Tab_Kind :: enum {
@@ -403,6 +404,7 @@ App :: struct {
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_font_preset: int,
+    app_theme: App_Theme,
     running: bool,
     tabs: [MAX_TABS]Tab,
     tab_count: int,
@@ -492,7 +494,7 @@ font_preset_from_pixels :: proc(pixels: int) -> int {
 }
 
 load_user_config :: proc() -> User_Config {
-    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15, startup_profile = 0}
+    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15, startup_profile = 0, app_theme = "howl_dark"}
     _, path, _, ok := config_paths()
     if !ok {
         return result
@@ -518,6 +520,9 @@ load_user_config :: proc() -> User_Config {
     if candidate.schema >= 3 {
         result.default_profile = candidate.default_profile
         result.profiles = candidate.profiles
+        if _, theme_ok := parse_app_theme(candidate.app_theme); theme_ok {
+            result.app_theme = candidate.app_theme
+        }
     }
     return result
 }
@@ -587,6 +592,7 @@ save_user_config :: proc(app: ^App) {
         default_profile = default_id,
         profiles = profile_configs[:profile_config_count],
         keybindings = overrides[:override_count],
+        app_theme = app_theme_id(app.app_theme),
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
     if err != nil {
@@ -4278,6 +4284,10 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
                 adjust_terminal_font(app, -1)
                 return true
             }
+            if app.settings_page == .Color_Schemes {
+                _ = adjust_app_theme(app, -1)
+                return true
+            }
             return false
         case SDL.K_RIGHT, SDL.K_EQUALS, SDL.K_PLUS:
             if app.settings_page == .Startup {
@@ -4286,6 +4296,10 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             }
             if app.settings_page == .Appearance {
                 adjust_terminal_font(app, 1)
+                return true
+            }
+            if app.settings_page == .Color_Schemes {
+                _ = adjust_app_theme(app, 1)
                 return true
             }
             return false
@@ -5895,19 +5909,20 @@ draw_settings :: proc(app: ^App, width, height: f32) {
         draw_setting_field(app, "Observation", "Blocking revision worker", content_x, content_y + 126, 340)
         draw_setting_field(app, "Selection / clipboard", "Drag select / Ctrl+Shift+C,V", content_x, content_y + 204, 340)
     case .Appearance:
-        draw_setting_field(app, "Theme", "Dark", content_x, content_y + 48, 248)
+        draw_setting_field(app, "Application theme", app_theme_label(app.app_theme), content_x, content_y + 48, 248)
         draw_setting_field(app, "Terminal font", "JetBrainsMono Nerd Font", content_x, content_y + 126, 340)
         draw_setting_field(app, "Font size   Left/Right or -/+", font_size_label(app.terminal_font_preset), content_x, content_y + 204, 248)
         draw_setting_field(app, "Coordinate space", "Window-logical / HiDPI scaled", content_x, content_y + 282, 340)
     case .Color_Schemes:
-        draw_setting_field(app, "Current scheme", "Howl Dark", content_x, content_y + 48, 300)
-        draw_text(app, app.ui_font, "Palette", content_x, content_y + 134, palette.text_muted)
+        draw_setting_field(app, "Application colors   Left/Right", app_theme_label(app.app_theme), content_x, content_y + 48, 340)
+        draw_text(app, app.ui_font, "Chrome palette", content_x, content_y + 134, palette.text_muted)
         colors := [6]SDL.Color{palette.terminal_bg, palette.tab_idle, palette.border, palette.text_muted, palette.text, palette.accent}
         for color, index in colors {
             swatch := SDL.FRect{content_x + f32(index) * 52, content_y + 164, 40, 40}
             draw_fill(app.renderer, swatch, color)
             draw_outline(app.renderer, swatch, palette.border)
         }
+        draw_text(app, app.ui_font, "Terminal colors remain canonical Howl output", content_x, content_y + 226, palette.text_muted)
     case .Actions:
         for definition, index in ACTION_DEFINITIONS {
             y := content_y + 54 + f32(index) * 32
@@ -6051,6 +6066,11 @@ main :: proc() {
     defer TTF.CloseFont(ui_font)
 
     user_config := load_user_config()
+    app_theme, theme_ok := parse_app_theme(user_config.app_theme)
+    if !theme_ok {
+        app_theme = .Howl_Dark
+    }
+    palette = palette_for_theme(app_theme)
     terminal_font_preset := font_preset_from_pixels(user_config.terminal_font_pixels)
     terminal_font := TTF.OpenFont(UI_FONT_PATH, font_size_for_preset(terminal_font_preset))
     if terminal_font == nil {
@@ -6066,6 +6086,7 @@ main :: proc() {
         ui_font = ui_font,
         terminal_font = terminal_font,
         terminal_font_preset = terminal_font_preset,
+        app_theme = app_theme,
         running = true,
         tab_count = 0,
         active_tab = -1,

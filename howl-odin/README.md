@@ -68,6 +68,11 @@ Current canary:
   preset persists across app restarts in a small schema-versioned
   `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file + rename rather
   than in-place truncation;
+- Color schemes now owns the first live application-chrome themes: Howl Dark,
+  Slate, and High Contrast cycle with Left/Right and persist by stable id. The
+  theme changes desktop shell chrome only; terminal Canvas colors remain canonical
+  Howl output. A managed-KWin A/B kept sampled terminal pixels identical across all
+  three themes, and High Contrast survived a full process restart;
 - Startup owns the second persisted setting: the default profile can be Home
   Session (attach) or Local shell (create owned Session). Schema 2 also persists
   custom shortcuts by stable action id; schema-1 files remain readable and upgrade
