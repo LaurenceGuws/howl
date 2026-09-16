@@ -69,6 +69,19 @@ These labels are descriptive, not priority scores.
 - Maximizing/resizing drives owned PTY geometry without resizing attached
   observer-only Sessions.
 
+**PROVEN — multi-window policy**
+
+- One Odin process owns one OS window. `Ctrl+Shift+N` and the command palette
+  launch another independent Odin process with the same inherited environment
+  and config; no tab or Session state is transferred implicitly.
+- The spawning window retains only one process handle, owned by a self-cleaning
+  reaper thread. A KWin canary created a second PID/window, then closing only the
+  child removed that PID and the reaper thread while the original window stayed
+  alive.
+- Live tab tear-out / cross-window tab movement is deliberately unsupported in
+  this cut because no first-class UI-state transfer owner exists yet. We do not
+  fake tear-out by killing/relaunching Sessions.
+
 **WANTED**
 
 - Remember useful window geometry without restoring a broken/off-screen layout.
@@ -76,7 +89,6 @@ These labels are descriptive, not priority scores.
   display-hotplug dogfood coverage.
 - Explicit startup choices: default profile, attach a named Session, or restore
   an accepted previous application layout.
-- Graceful second-instance behavior and a deliberate multi-window policy.
 - Native app identity/icon/package metadata instead of permanent “canary” chrome.
 
 **EXPLORE**
@@ -88,19 +100,29 @@ These labels are descriptive, not priority scores.
 
 **PROVEN**
 
-- Create, select, close, and cycle tabs.
-- `+` and `Ctrl+T` use the configured default profile.
-- Explicit profile menu can always choose Local shell or Home Session.
+- Create, select, close, and cycle tabs. `Ctrl+Shift+W` closes the active pane,
+  then tab, and finally the window when only one single-pane tab remains.
+- `+` and `Ctrl+T` use the configured default profile. The explicit profile menu
+  can always choose Local shell or Home Session.
 - Closing a client-owned tab retires its owned Session; closing an attached view
   only disconnects that view.
+- `Ctrl+1…8` selects tab slots directly. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle,
+  while `Ctrl+Shift+PageUp/PageDown` reorders the active tab.
+- Pointer tab drag uses the same `move_tab` owner as keyboard reorder. A mixed
+  Home/Local canary visibly changed `Home, Local A, Home, Local B` into
+  `Home, Local B, Local A, Home` while both Local child PIDs remained unchanged.
+- `Ctrl+Shift+D` duplicates the active tab's **profile recipe**, not live PTY
+  state. Duplicating a Local tab increased owned children 2 → 3 and opened a
+  fresh shell prompt.
+- Titles are stable profile-derived labels in this cut and are clipped to their
+  tab bounds. Howl owns OSC title semantics, but Session does not yet expose a
+  canonical title fact, so Odin does not reach into VT internals for dynamic titles.
 
 **WANTED**
 
-- Reorder tabs with mouse and keyboard.
-- Direct numeric tab shortcuts and MRU switching behavior.
-- Titles derived from profile/session/application title with sane truncation.
+- Optional MRU switching behavior if it proves better than deterministic cycling.
+- Canonical dynamic application/session title once Session exposes the fact.
 - Activity/bell/attention indication that does not become a flashing dashboard.
-- Duplicate tab/profile recipe.
 - Reopen recently closed client-owned tab when its Session still exists or the
   launch recipe is safely repeatable.
 - Tab context menu with the same action registry as the command palette.

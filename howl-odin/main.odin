@@ -103,6 +103,7 @@ Pane_Node :: struct {
 Tab :: struct {
     kind: Tab_Kind,
     title: string,
+    profile: int,
     panes: [MAX_PANES_PER_TAB]^Session_View,
     pane_count: int,
     root: ^Pane_Node,
@@ -224,6 +225,7 @@ Session_View :: struct {
 
 App_Action :: enum {
     New_Tab,
+    New_Window,
     Split_Pane,
     Open_Local,
     Attach_Home,
@@ -304,6 +306,8 @@ App :: struct {
     ime_preedit_length: i32,
     next_session_identity: u32,
     startup_profile: int,
+    tab_dragging: bool,
+    tab_drag_index: int,
     pane_resize_node: ^Pane_Node,
     pane_resize_tab: int,
 }
@@ -3383,12 +3387,147 @@ draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
 }
 
 tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.FRect) {
-    tab_w := f32(162)
-    controls_x := f32(8) + f32(tab_count) * (tab_w + 4)
+    controls_x := TAB_X + f32(tab_count) * TAB_STEP
     plus = {controls_x, 7, 34, 32}
     menu = {controls_x + 38, 7, 34, 32}
     settings = {width - 114, 7, 104, 32}
     return
+}
+
+TAB_X :: f32(8)
+TAB_WIDTH :: f32(162)
+TAB_GAP :: f32(4)
+TAB_STEP :: f32(TAB_WIDTH + TAB_GAP)
+
+move_tab :: proc(app: ^App, from, to: int) -> bool {
+    if app == nil || from < 0 || to < 0 || from >= app.tab_count || to >= app.tab_count || from == to {
+        return false
+    }
+    moving := app.tabs[from]
+    if from < to {
+        for index in from..<to {
+            app.tabs[index] = app.tabs[index + 1]
+        }
+    } else {
+        index := from
+        for index > to {
+            app.tabs[index] = app.tabs[index - 1]
+            index -= 1
+        }
+    }
+    app.tabs[to] = moving
+
+    active := app.active_tab
+    if active == from {
+        app.active_tab = to
+    } else if from < active && active <= to {
+        app.active_tab -= 1
+    } else if to <= active && active < from {
+        app.active_tab += 1
+    }
+    return true
+}
+
+select_tab_index :: proc(app: ^App, index: int) -> bool {
+    if app == nil || index < 0 || index >= app.tab_count || index == app.active_tab {
+        return false
+    }
+    _ = finish_pane_resize_drag(app)
+    clear_ime_preedit(app)
+    if app.search_open do close_search(app)
+    app.active_tab = index
+    return true
+}
+
+tab_rect_for_index :: proc(index: int) -> SDL.FRect {
+    return {TAB_X + f32(index) * TAB_STEP, 7, TAB_WIDTH, 32}
+}
+
+tab_close_rect_for_index :: proc(index: int) -> SDL.FRect {
+    rect := tab_rect_for_index(index)
+    return {rect.x + rect.w - 30, rect.y, 30, rect.h}
+}
+
+tab_index_at :: proc(x, y: f32, count: int) -> (int, bool) {
+    if count <= 0 || y < 7 || y >= 39 {
+        return 0, false
+    }
+    for index in 0..<count {
+        if inside(x, y, tab_rect_for_index(index)) {
+            return index, true
+        }
+    }
+    return 0, false
+}
+
+tab_reorder_target :: proc(x: f32, count: int) -> int {
+    if count <= 1 {
+        return 0
+    }
+    value := int((x - TAB_X + TAB_STEP / 2) / TAB_STEP)
+    return clamp(value, 0, count - 1)
+}
+
+finish_tab_drag :: proc(app: ^App) -> bool {
+    if app == nil || !app.tab_dragging {
+        return false
+    }
+    app.tab_dragging = false
+    app.tab_drag_index = -1
+    _ = SDL.CaptureMouse(false)
+    return true
+}
+
+begin_tab_drag :: proc(app: ^App, index: int) -> bool {
+    if app == nil || index < 0 || index >= app.tab_count {
+        return false
+    }
+    _ = finish_pane_resize_drag(app)
+    clear_ime_preedit(app)
+    if app.search_open do close_search(app)
+    app.active_tab = index
+    app.tab_dragging = true
+    app.tab_drag_index = index
+    _ = SDL.CaptureMouse(true)
+    return true
+}
+
+update_tab_drag :: proc(app: ^App, x: f32) -> bool {
+    if app == nil || !app.tab_dragging || app.tab_count <= 1 {
+        return false
+    }
+    target := tab_reorder_target(x, app.tab_count)
+    if target == app.tab_drag_index {
+        return false
+    }
+    if !move_tab(app, app.tab_drag_index, target) {
+        return false
+    }
+    app.tab_drag_index = target
+    return true
+}
+
+tab_index_for_number_key :: proc(key: SDL.Keycode) -> (int, bool) {
+    switch key {
+    case SDL.K_1: return 0, true
+    case SDL.K_2: return 1, true
+    case SDL.K_3: return 2, true
+    case SDL.K_4: return 3, true
+    case SDL.K_5: return 4, true
+    case SDL.K_6: return 5, true
+    case SDL.K_7: return 6, true
+    case SDL.K_8: return 7, true
+    case: return 0, false
+    }
+}
+
+duplicate_active_tab :: proc(app: ^App) -> bool {
+    if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count || app.tab_count >= MAX_TABS {
+        return false
+    }
+    profile := app.tabs[app.active_tab].profile
+    open_profile_tab(app, profile)
+    return true
 }
 
 destroy_tab_contents :: proc(tab: ^Tab) {
@@ -3407,7 +3546,8 @@ destroy_tab_contents :: proc(tab: ^Tab) {
     tab.active_pane = 0
 }
 
-add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
+add_session_tab :: proc(app: ^App, view: ^Session_View, title: string, profile: int) -> bool {
+    _ = finish_tab_drag(app)
     _ = finish_pane_resize_drag(app)
     if app.tab_count >= MAX_TABS {
         if view != nil do destroy_session_view(view)
@@ -3422,7 +3562,7 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string) -> bool {
         return false
     }
     tab := &app.tabs[app.tab_count]
-    tab^ = Tab{kind = .Session, title = title, pane_count = 1, root = root, active_pane = 0}
+    tab^ = Tab{kind = .Session, title = title, profile = profile, pane_count = 1, root = root, active_pane = 0}
     tab.panes[0] = view
     app.tab_count += 1
     clear_ime_preedit(app)
@@ -3442,7 +3582,7 @@ profile_view :: proc(app: ^App, profile: int) -> (view: ^Session_View, title: st
 
 open_profile_tab :: proc(app: ^App, profile: int) {
     view, title := profile_view(app, profile)
-    _ = add_session_tab(app, view, title)
+    _ = add_session_tab(app, view, title, profile)
 }
 
 new_tab :: proc(app: ^App) {
@@ -3501,6 +3641,7 @@ recover_active_session :: proc(app: ^App) -> bool {
 }
 
 close_tab :: proc(app: ^App, index: int) {
+    _ = finish_tab_drag(app)
     _ = finish_pane_resize_drag(app)
     if app.tab_count <= 1 || index < 0 || index >= app.tab_count {
         return
@@ -3555,7 +3696,11 @@ close_active_pane :: proc(app: ^App) {
     clear_ime_preedit(app)
     tab := &app.tabs[app.active_tab]
     if tab.pane_count <= 1 {
-        close_tab(app, app.active_tab)
+        if app.tab_count <= 1 {
+            app.running = false
+        } else {
+            close_tab(app, app.active_tab)
+        }
         return
     }
     removed, ok := remove_pane_slot(tab, tab.active_pane)
@@ -3619,10 +3764,40 @@ active_tab_is_session :: proc(app: ^App) -> bool {
     return app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].kind == .Session
 }
 
+reap_child_window :: proc(process: os.Process) {
+    _, _ = os.process_wait(process)
+}
+
+launch_new_window :: proc() -> bool {
+    executable, err := os.get_executable_path(context.temp_allocator)
+    if err != nil || len(executable) == 0 {
+        return false
+    }
+    command := []string{executable}
+    process, start_err := os.process_start(os.Process_Desc{command = command})
+    if start_err != nil {
+        return false
+    }
+    reaper := thread.create_and_start_with_poly_data(
+        process,
+        reap_child_window,
+        self_cleanup = true,
+        name = "howl-odin-window",
+    )
+    if reaper == nil {
+        _ = os.process_kill(process)
+        _, _ = os.process_wait(process)
+        return false
+    }
+    return true
+}
+
 execute_action :: proc(app: ^App, action: App_Action) {
     switch action {
     case .New_Tab:
         new_tab(app)
+    case .New_Window:
+        _ = launch_new_window()
     case .Split_Pane:
         split_active_pane(app)
     case .Open_Local:
@@ -3642,9 +3817,10 @@ execute_action :: proc(app: ^App, action: App_Action) {
 palette_action :: proc(index: int) -> App_Action {
     switch index {
     case 0: return .New_Tab
-    case 1: return .Split_Pane
-    case 2: return .Attach_Home
-    case 3: return .Open_Settings
+    case 1: return .New_Window
+    case 2: return .Split_Pane
+    case 3: return .Attach_Home
+    case 4: return .Open_Settings
     case:   return .Close_Pane
     }
 }
@@ -3658,9 +3834,9 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         case SDL.K_ESCAPE:
             app.palette_open = false
         case SDL.K_UP:
-            app.palette_selection = (app.palette_selection + 4) % 5
+            app.palette_selection = (app.palette_selection + 5) % 6
         case SDL.K_DOWN, SDL.K_TAB:
-            app.palette_selection = (app.palette_selection + 1) % 5
+            app.palette_selection = (app.palette_selection + 1) % 6
         case SDL.K_RETURN:
             execute_action(app, palette_action(app.palette_selection))
         case:
@@ -3774,7 +3950,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     if app.palette_open {
         box_w := f32(520)
         box := SDL.FRect{(width - box_w) / 2, 92, box_w, 288}
-        for i in 0..<5 {
+        for i in 0..<6 {
             row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
             if inside(x, y, row) {
                 execute_action(app, palette_action(i))
@@ -3831,29 +4007,21 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         return
     }
 
-    tab_x := f32(8)
-    tab_w := f32(162)
-    for i in 0..<app.tab_count {
-        rect := SDL.FRect{tab_x, 7, tab_w, 32}
-        if inside(x, y, rect) {
-            close_search(app)
-            close_rect := SDL.FRect{rect.x + rect.w - 30, rect.y, 30, rect.h}
-            if app.tab_count > 1 && inside(x, y, close_rect) {
-                close_tab(app, i)
-                return
-            }
-            _ = finish_pane_resize_drag(app)
-            clear_ime_preedit(app)
-            app.active_tab = i
+    if i, ok := tab_index_at(x, y, app.tab_count); ok {
+        close_search(app)
+        if app.tab_count > 1 && inside(x, y, tab_close_rect_for_index(i)) {
+            close_tab(app, i)
             return
         }
-        tab_x += tab_w + 4
+        _ = select_tab_index(app, i)
+        return
     }
 }
 
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
+        _ = finish_tab_drag(app)
         _ = finish_pane_resize_drag(app)
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
@@ -3862,6 +4030,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         app.running = false
     case .WINDOW_FOCUS_LOST:
         clear_ime_preedit(app)
+        _ = finish_tab_drag(app)
         _ = finish_pane_resize_drag(app)
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
@@ -3906,15 +4075,33 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             app.settings_open = !app.settings_open
             app.profile_menu_open = false
             app.palette_open = false
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_N {
+            _ = launch_new_window()
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_D {
+            _ = duplicate_active_tab(app)
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
             new_tab(app)
-        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_TAB && app.tab_count > 1 {
-            _ = finish_pane_resize_drag(app)
-            clear_ime_preedit(app)
-            if shift {
-                app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_PAGEUP && app.tab_count > 1 {
+            target := max(0, app.active_tab - 1)
+            _ = move_tab(app, app.active_tab, target)
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_PAGEDOWN && app.tab_count > 1 {
+            target := min(app.tab_count - 1, app.active_tab + 1)
+            _ = move_tab(app, app.active_tab, target)
+        } else if event.type == .KEY_DOWN && ctrl && !alt &&
+                  (event.key.key == SDL.K_TAB || event.key.key >= SDL.K_1 && event.key.key <= SDL.K_8) {
+            if index, numeric := tab_index_for_number_key(event.key.key); numeric && index < app.tab_count {
+                _ = select_tab_index(app, index)
+            } else if event.key.key == SDL.K_TAB && app.tab_count > 1 {
+                _ = finish_tab_drag(app)
+                _ = finish_pane_resize_drag(app)
+                clear_ime_preedit(app)
+                if shift {
+                    app.active_tab = (app.active_tab + app.tab_count - 1) % app.tab_count
+                } else {
+                    app.active_tab = (app.active_tab + 1) % app.tab_count
+                }
             } else {
-                app.active_tab = (app.active_tab + 1) % app.tab_count
+                // Other Ctrl chords continue through the ordinary terminal path.
             }
         } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_D {
             split_active_pane(app, .Vertical)
@@ -4035,6 +4222,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             break
         }
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
+        if app.tab_dragging {
+            _ = update_tab_drag(app, event.motion.x)
+            return
+        }
         if app.pane_resize_node != nil {
             w, h: c.int
             if SDL.GetWindowSize(app.window, &w, &h) {
@@ -4102,6 +4293,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
+            if event.type == .MOUSE_BUTTON_UP && event.button.button == SDL.BUTTON_LEFT && app.tab_dragging {
+                _ = finish_tab_drag(app)
+                return
+            }
             if event.type == .MOUSE_BUTTON_UP && app.pane_resize_node != nil {
                 _ = update_pane_resize_drag(app, event.button.x, event.button.y, f32(w), f32(h))
                 _ = finish_pane_resize_drag(app)
@@ -4154,6 +4349,14 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
 
+            if event.button.button == SDL.BUTTON_LEFT {
+                if tab_index, tab_ok := tab_index_at(event.button.x, event.button.y, app.tab_count); tab_ok {
+                    if !(app.tab_count > 1 && inside(event.button.x, event.button.y, tab_close_rect_for_index(tab_index))) {
+                        _ = begin_tab_drag(app, tab_index)
+                        return
+                    }
+                }
+            }
             if event.button.button == SDL.BUTTON_LEFT &&
                begin_pane_resize_drag(app, event.button.x, event.button.y, f32(w), f32(h)) {
                 return
@@ -4370,27 +4573,27 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
 }
 
 draw_tabs :: proc(app: ^App, width: f32) {
-    tab_x := f32(8)
-    tab_w := f32(162)
-
     for i in 0..<app.tab_count {
         active := i == app.active_tab
-        rect := SDL.FRect{tab_x, 7, tab_w, 32}
+        rect := tab_rect_for_index(i)
         draw_fill(app.renderer, rect, active ? palette.tab_active : palette.tab_idle)
         if active {
-            underline := SDL.FRect{tab_x + 10, 37, tab_w - 20, 2}
+            underline := SDL.FRect{rect.x + 10, 37, rect.w - 20, 2}
             draw_fill(app.renderer, underline, palette.accent)
         }
 
-        draw_text(app, app.ui_font, app.tabs[i].title, tab_x + 14, 14, active ? palette.text : palette.text_muted)
+        title_right_pad := app.tab_count > 1 ? f32(52) : f32(28)
+        title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(rect.w - 16 - title_right_pad), c.int(rect.h)}
+        _ = SDL.SetRenderClipRect(app.renderer, &title_clip)
+        draw_text(app, app.ui_font, app.tabs[i].title, rect.x + 14, 14, active ? palette.text : palette.text_muted)
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
         if app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
-            indicator_x := tab_x + tab_w - (app.tab_count > 1 ? 38 : 16)
+            indicator_x := rect.x + rect.w - (app.tab_count > 1 ? 38 : 16)
             draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
         }
         if app.tab_count > 1 {
-            draw_text(app, app.ui_font, "x", tab_x + tab_w - 21, 14, palette.text_muted)
+            draw_text(app, app.ui_font, "x", rect.x + rect.w - 21, 14, palette.text_muted)
         }
-        tab_x += tab_w + 4
     }
 
     plus, menu, settings := tab_controls(app.tab_count, width)
@@ -5085,15 +5288,15 @@ draw_palette :: proc(app: ^App, width, height: f32) {
     draw_outline(app.renderer, search, palette.accent)
     draw_text(app, app.ui_font, "> Command Palette", search.x + 12, search.y + 10, palette.text)
 
-    labels := [5]string{"New tab", "Split pane", "Attach Home Session", "Open settings", "Close pane / tab"}
-    shortcuts := [5]string{"Ctrl+T", "Alt+Shift+D", "", "Ctrl+,", "Ctrl+Shift+W"}
+    labels := [6]string{"New tab", "New window", "Split pane", "Attach Home Session", "Open settings", "Close pane / tab"}
+    shortcuts := [6]string{"Ctrl+T", "Ctrl+Shift+N", "Alt+Shift+D", "", "Ctrl+,", "Ctrl+Shift+W"}
     for label, i in labels {
         row := SDL.FRect{box.x + 18, box.y + 70 + f32(i) * 36, box.w - 36, 34}
         if app.palette_selection == i {
             draw_fill(app.renderer, row, palette.tab_active)
         }
         has_split := app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].pane_count > 1
-        enabled := i != 4 || has_split || app.tab_count > 1
+        enabled := i != 5 || has_split || app.tab_count > 1
         color := enabled ? palette.text : palette.text_muted
         draw_text(app, app.ui_font, label, row.x + 10, row.y + 8, color)
         if len(shortcuts[i]) != 0 {
@@ -5311,6 +5514,8 @@ main :: proc() {
         running = true,
         tab_count = 0,
         active_tab = -1,
+        tab_drag_index = -1,
+        pane_resize_tab = -1,
         next_session_identity = 1,
         startup_profile = user_config.startup_profile,
     }

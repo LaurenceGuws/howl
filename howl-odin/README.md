@@ -28,8 +28,16 @@ Current canary:
   owns its own `howl-sessiond`, PTY, observer/control clients, cancellation, and
   teardown while **Attach Home Session** remains a non-owning view of the
   existing `tcp://127.0.0.1:39601` Session;
-- tabs have real selection/close semantics plus Ctrl+Tab cycling, and closing a
-  created tab retires only that tab's owned child Session;
+- tabs have stable profile-derived labels, Ctrl+Tab/reverse cycling, direct
+  Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
+  drag reorder through one shared ordering owner. `Ctrl+Shift+D` duplicates the
+  active profile recipe into a fresh Session/view; closing a created tab retires
+  only that tab's owned child Session, and closing the final single-pane tab closes
+  the window;
+- `Ctrl+Shift+N` / Command Palette opens a new independent Odin OS window through
+  the same executable and inherited config. The parent uses a self-cleaning process
+  reaper only; live tab tear-out/cross-window Session transfer is deliberately not
+  implemented until UI state has an explicit transfer owner;
 - tabs use a bounded recursive pane tree rather than a fixed primary/secondary
   pair. Side-by-side and top/bottom actions may nest up to eight pane slots;
   `Alt+Arrow` performs spatial four-way focus, `Alt+Shift+Arrow` resizes the nearest
