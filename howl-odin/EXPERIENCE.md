@@ -454,18 +454,22 @@ These labels are descriptive, not priority scores.
 - Real navigable Settings surface.
 - Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages.
-- Atomic schema-versioned XDG config writes.
+- Atomic schema-versioned XDG config writes. Schema 2 adds stable action-id
+  keybinding overrides while schema-1 files remain readable and upgrade only on save.
 - Persistent default profile and font size.
+- Settings → Actions is keyboard-editable: Tab enters the action list, Up/Down
+  chooses an action, Enter records a physical chord, Delete unbinds, and R restores
+  the registry default. Recording owns the whole chord so modifier-only transitions
+  never leak to the terminal or trigger another app action.
+- Keybinding conflicts are rejected transactionally with the conflicting action
+  named in UI. Hand-edited malformed keybinding sets report the precise bad entry
+  while unrelated valid font/startup fields retain their accepted values.
 
 **WANTED**
 
 - Settings search.
-- Real controls for profiles, keybindings, color schemes, and appearance.
-- Reset-to-default with visible scope.
+- Real controls for profiles, color schemes, and richer appearance choices.
 - Import/export user configuration.
-- Validation messages that identify the bad field without discarding unrelated
-  valid configuration.
-- Settings remain usable entirely by keyboard.
 
 ### 14. Command palette, actions, and keybindings
 
@@ -479,13 +483,18 @@ These labels are descriptive, not priority scores.
   muted with one pane while restart/reconnect is enabled only for a recoverable
   Session lifecycle state.
 - Keyboard navigation and Enter execution.
+- Effective shortcut bindings are normalized from one bounded chord grammar and
+  drive runtime dispatch plus every visible shortcut hint. Overrides persist by
+  stable action id, may be unbound/reset, and permit transactional chord swaps.
+  A managed-KWin canary changed New window from `Ctrl+Shift+N` to `Super+N`, proved
+  the old chord stopped opening windows, survived a full process restart, rejected
+  conflicting `Ctrl+T`, then reset to default with an empty override set.
 
 **WANTED**
 
 - Fuzzy/filterable command palette.
 - Finish routing remaining direct shell shortcuts through the registry where they
   represent concrete actions rather than parameterized key families.
-- Custom keybindings with conflict detection and reset.
 - Context-aware disabled actions with a reason when useful.
 - Discoverable shortcut display in menus/settings.
 - Per-profile actions only when the action genuinely belongs to a profile.

@@ -56,7 +56,9 @@ Current canary:
 - Settings is a real navigable application surface rather than one static mock:
   Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
   and Home Session pages expose the client's current truthful configuration and
-  ownership state;
+  ownership state. Actions can be rebound from the keyboard, unbound, or reset;
+  conflicts are rejected without mutating either action and the conflicting action
+  is named in the UI;
 - Appearance owns the first live presentation setting: terminal font size has
   12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
   and changing it never mutates canonical Session geometry; the accepted
@@ -64,9 +66,11 @@ Current canary:
   `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file + rename rather
   than in-place truncation;
 - Startup owns the second persisted setting: the default profile can be Home
-  Session (attach) or Local shell (create owned Session). Missing fields in the
-  earlier schema-1 file retain defaults, and later saves update the existing
-  config directory instead of treating its normal `.Exist` result as failure;
+  Session (attach) or Local shell (create owned Session). Schema 2 also persists
+  custom shortcuts by stable action id; schema-1 files remain readable and upgrade
+  only on save. Missing/invalid independent fields retain their accepted defaults,
+  and later saves update the existing config directory instead of treating its
+  normal `.Exist` result as failure;
 - `+`, `Ctrl+T`, startup, and split-pane creation all consume that same default
   profile instead of hard-coding a process type. With Home as default they add
   another observer view and spawn no PTY; with Local shell as default they

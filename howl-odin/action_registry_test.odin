@@ -6,6 +6,7 @@ import "core:testing"
 action_registry_has_unique_complete_metadata :: proc(t: ^testing.T) {
     testing.expect_value(t, len(ACTION_DEFINITIONS), 13)
     for definition, index in ACTION_DEFINITIONS {
+        testing.expect(t, len(definition.id) != 0)
         testing.expect(t, len(definition.label) != 0)
         found, ok := action_definition(definition.action)
         testing.expect(t, ok)
@@ -13,6 +14,7 @@ action_registry_has_unique_complete_metadata :: proc(t: ^testing.T) {
         for other, other_index in ACTION_DEFINITIONS {
             if other_index > index {
                 testing.expect(t, other.action != definition.action)
+                testing.expect(t, other.id != definition.id)
             }
         }
     }
@@ -62,4 +64,16 @@ registry_owns_visible_default_shortcuts :: proc(t: ^testing.T) {
     testing.expect_value(t, action_default_shortcut(.Split_Horizontal), "Alt+Shift+-")
     testing.expect_value(t, action_default_shortcut(.Open_Command_Palette), "Ctrl+Shift+P")
     testing.expect_value(t, action_default_shortcut(.Close_Pane), "Ctrl+Shift+W")
+}
+
+
+@(test)
+action_ids_roundtrip_without_enum_position :: proc(t: ^testing.T) {
+    for definition in ACTION_DEFINITIONS {
+        action, ok := action_from_id(definition.id)
+        testing.expect(t, ok)
+        testing.expect_value(t, action, definition.action)
+    }
+    _, ok := action_from_id("not_an_action")
+    testing.expect(t, !ok)
 }

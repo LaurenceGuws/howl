@@ -27,12 +27,18 @@ OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
 FONT_PRESET_MAX :: 2
-CONFIG_SCHEMA :: 1
+CONFIG_SCHEMA :: 2
+
+User_Keybinding_Config :: struct {
+    action: string `json:"action"`,
+    shortcut: string `json:"shortcut"`,
+}
 
 User_Config :: struct {
     schema: int `json:"schema"`,
     terminal_font_pixels: int `json:"terminal_font_pixels"`,
     startup_profile: int `json:"startup_profile"`,
+    keybindings: []User_Keybinding_Config `json:"keybindings"`,
 }
 
 Tab_Kind :: enum {
@@ -249,25 +255,26 @@ Action_Category :: enum u8 {
 
 Action_Definition :: struct {
     action: App_Action,
+    id: string,
     label: string,
     default_shortcut: string,
     category: Action_Category,
 }
 
 ACTION_DEFINITIONS :: [13]Action_Definition{
-    {.New_Tab, "New tab", "Ctrl+T", .Tab},
-    {.New_Window, "New window", "Ctrl+Shift+N", .Window},
-    {.Duplicate_Tab, "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
-    {.Split_Vertical, "Split pane right", "Alt+Shift+D", .Pane},
-    {.Split_Horizontal, "Split pane down", "Alt+Shift+-", .Pane},
-    {.Toggle_Pane_Zoom, "Toggle pane zoom", "Ctrl+Shift+Z", .Pane},
-    {.Open_Local, "Open Local shell", "", .Profile},
-    {.Attach_Home, "Attach Home Session", "", .Profile},
-    {.Recover_Session, "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
-    {.Open_Settings, "Open settings", "Ctrl+,", .Application},
-    {.Open_Command_Palette, "Command Palette", "Ctrl+Shift+P", .Application},
-    {.Open_Profile_Menu, "Profile menu", "Ctrl+Shift+Space", .Application},
-    {.Close_Pane, "Close pane / tab", "Ctrl+Shift+W", .Pane},
+    {.New_Tab, "new_tab", "New tab", "Ctrl+T", .Tab},
+    {.New_Window, "new_window", "New window", "Ctrl+Shift+N", .Window},
+    {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
+    {.Split_Vertical, "split_right", "Split pane right", "Alt+Shift+D", .Pane},
+    {.Split_Horizontal, "split_down", "Split pane down", "Alt+Shift+-", .Pane},
+    {.Toggle_Pane_Zoom, "toggle_pane_zoom", "Toggle pane zoom", "Ctrl+Shift+Z", .Pane},
+    {.Open_Local, "open_local", "Open Local shell", "", .Profile},
+    {.Attach_Home, "attach_home", "Attach Home Session", "", .Profile},
+    {.Recover_Session, "recover_session", "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
+    {.Open_Settings, "open_settings", "Open settings", "Ctrl+,", .Application},
+    {.Open_Command_Palette, "command_palette", "Command Palette", "Ctrl+Shift+P", .Application},
+    {.Open_Profile_Menu, "profile_menu", "Profile menu", "Ctrl+Shift+Space", .Application},
+    {.Close_Pane, "close_pane", "Close pane / tab", "Ctrl+Shift+W", .Pane},
 }
 
 PALETTE_ACTIONS :: [11]App_Action{
@@ -284,6 +291,16 @@ PALETTE_ACTIONS :: [11]App_Action{
     .Close_Pane,
 }
 
+
+
+action_from_id :: proc(id: string) -> (App_Action, bool) {
+    for definition in ACTION_DEFINITIONS {
+        if definition.id == id {
+            return definition.action, true
+        }
+    }
+    return .New_Tab, false
+}
 
 action_definition :: proc(action: App_Action) -> (Action_Definition, bool) {
     for definition in ACTION_DEFINITIONS {
@@ -405,6 +422,14 @@ App :: struct {
     tab_drag_index: int,
     pane_resize_node: ^Pane_Node,
     pane_resize_tab: int,
+    action_bindings: [13]Action_Binding,
+    config_notice: [192]u8,
+    config_notice_len: int,
+    settings_content_focus: bool,
+    settings_action_selection: int,
+    settings_binding_recording: bool,
+    settings_notice: [192]u8,
+    settings_notice_len: int,
 }
 
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
@@ -456,17 +481,21 @@ load_user_config :: proc() -> User_Config {
     if err != nil {
         return result
     }
-    candidate := result
-    if json.unmarshal(data, &candidate) != nil || candidate.schema != CONFIG_SCHEMA {
+    candidate: User_Config
+    if json.unmarshal(data, &candidate, allocator=context.temp_allocator) != nil ||
+       (candidate.schema != 1 && candidate.schema != CONFIG_SCHEMA) {
         return result
     }
-    if candidate.terminal_font_pixels != 12 && candidate.terminal_font_pixels != 15 && candidate.terminal_font_pixels != 18 {
-        return result
+    if candidate.terminal_font_pixels == 12 || candidate.terminal_font_pixels == 15 || candidate.terminal_font_pixels == 18 {
+        result.terminal_font_pixels = candidate.terminal_font_pixels
     }
-    if candidate.startup_profile < 0 || candidate.startup_profile > 1 {
-        return result
+    if candidate.startup_profile >= 0 && candidate.startup_profile <= 1 {
+        result.startup_profile = candidate.startup_profile
     }
-    return candidate
+    if candidate.schema >= 2 {
+        result.keybindings = candidate.keybindings
+    }
+    return result
 }
 
 save_user_config :: proc(app: ^App) {
@@ -477,10 +506,27 @@ save_user_config :: proc(app: ^App) {
     if err := os.make_directory_all(directory); err != nil && err != .Exist {
         return
     }
+    overrides: [13]User_Keybinding_Config
+    override_count := 0
+    for binding in app.action_bindings {
+        if !binding.customized {
+            continue
+        }
+        definition, defined := action_definition(binding.action)
+        if !defined || override_count >= len(overrides) {
+            continue
+        }
+        overrides[override_count] = User_Keybinding_Config{
+            action = definition.id,
+            shortcut = action_binding_text(app, binding.action),
+        }
+        override_count += 1
+    }
     value := User_Config{
         schema = CONFIG_SCHEMA,
         terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
         startup_profile = app.startup_profile,
+        keybindings = overrides[:override_count],
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
     if err != nil {
@@ -3914,16 +3960,22 @@ execute_action :: proc(app: ^App, action: App_Action) {
     case .Recover_Session:
         _ = recover_active_session(app)
     case .Open_Settings:
+        next := !app.settings_open
         app.profile_menu_open = false
         app.palette_open = false
-        app.settings_open = true
+        app.settings_open = next
+        app.settings_content_focus = false
+        app.settings_binding_recording = false
+        app.settings_notice_len = 0
     case .Open_Command_Palette:
-        app.palette_open = true
+        next := !app.palette_open
+        app.palette_open = next
         app.palette_selection = 0
         app.profile_menu_open = false
         app.settings_open = false
     case .Open_Profile_Menu:
-        app.profile_menu_open = true
+        next := !app.profile_menu_open
+        app.profile_menu_open = next
         app.profile_menu_selection = 0
         app.palette_open = false
         app.settings_open = false
@@ -3943,6 +3995,72 @@ palette_action :: proc(index: int) -> (App_Action, bool) {
         }
     }
     return .New_Tab, false
+}
+
+set_settings_notice :: proc(app: ^App, message: string) {
+    if app == nil {
+        return
+    }
+    app.settings_notice_len = min(len(message), len(app.settings_notice))
+    if app.settings_notice_len != 0 {
+        copy(app.settings_notice[:app.settings_notice_len], transmute([]u8)message[:app.settings_notice_len])
+    }
+}
+
+action_definition_at :: proc(index: int) -> (Action_Definition, bool) {
+    if index < 0 {
+        return {}, false
+    }
+    for definition, definition_index in ACTION_DEFINITIONS {
+        if definition_index == index {
+            return definition, true
+        }
+    }
+    return {}, false
+}
+
+handle_settings_binding_recording :: proc(app: ^App, event: ^SDL.Event) -> bool {
+    if app == nil || !app.settings_open || !app.settings_binding_recording {
+        return false
+    }
+    if event.type != .KEY_DOWN {
+        return true
+    }
+    if event.key.key == SDL.K_ESCAPE {
+        app.settings_binding_recording = false
+        set_settings_notice(app, "Shortcut recording canceled")
+        return true
+    }
+    if shortcut_modifier_key(event.key.key) {
+        return true
+    }
+    definition, selected := action_definition_at(app.settings_action_selection)
+    if !selected {
+        app.settings_binding_recording = false
+        set_settings_notice(app, "Selected action is unavailable")
+        return true
+    }
+    shortcut, captured := shortcut_from_key_event(event)
+    if !captured {
+        set_settings_notice(app, "Unsupported shortcut key")
+        return true
+    }
+    if conflict_action, conflict := binding_conflict(app, definition.action, shortcut); conflict {
+        buffer: [192]u8
+        set_settings_notice(app, fmt.bprintf(buffer[:], "Shortcut already used by %s", action_label(conflict_action)))
+        return true
+    }
+    storage: [SHORTCUT_TEXT_BYTES]u8
+    text, formatted := format_shortcut(shortcut, storage[:])
+    if !formatted || set_action_binding(app, definition.action, text) != .Applied {
+        set_settings_notice(app, "Shortcut could not be assigned")
+        return true
+    }
+    app.settings_binding_recording = false
+    save_user_config(app)
+    buffer: [192]u8
+    set_settings_notice(app, fmt.bprintf(buffer[:], "Saved %s", text))
+    return true
 }
 
 handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
@@ -3980,9 +4098,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             } else if app.profile_menu_selection == 1 {
                 execute_action(app, .Attach_Home)
             } else if app.profile_menu_selection == 2 {
-                app.profile_menu_open = false
-                app.palette_open = true
-                app.palette_selection = 0
+                execute_action(app, .Open_Command_Palette)
             } else {
                 execute_action(app, .Open_Settings)
             }
@@ -3993,7 +4109,41 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     }
     if app.settings_open {
         page := int(app.settings_page)
+        if app.settings_content_focus && app.settings_page == .Actions {
+            switch event.key.key {
+            case SDL.K_TAB:
+                app.settings_content_focus = false
+            case SDL.K_UP:
+                app.settings_action_selection = (app.settings_action_selection + len(ACTION_DEFINITIONS) - 1) % len(ACTION_DEFINITIONS)
+            case SDL.K_DOWN:
+                app.settings_action_selection = (app.settings_action_selection + 1) % len(ACTION_DEFINITIONS)
+            case SDL.K_RETURN:
+                app.settings_binding_recording = true
+                set_settings_notice(app, "Press a new shortcut · Esc cancels")
+            case SDL.K_DELETE, SDL.K_BACKSPACE:
+                if definition, ok := action_definition_at(app.settings_action_selection); ok {
+                    if set_action_binding(app, definition.action, "") == .Applied {
+                        save_user_config(app)
+                        set_settings_notice(app, "Action unbound")
+                    }
+                }
+            case SDL.K_R:
+                if definition, ok := action_definition_at(app.settings_action_selection); ok && reset_action_binding(app, definition.action) {
+                    save_user_config(app)
+                    set_settings_notice(app, "Restored default shortcut")
+                }
+            case:
+                return false
+            }
+            return true
+        }
         switch event.key.key {
+        case SDL.K_TAB:
+            if app.settings_page == .Actions {
+                app.settings_content_focus = true
+                return true
+            }
+            return false
         case SDL.K_LEFT, SDL.K_MINUS:
             if app.settings_page == .Startup {
                 adjust_startup_profile(app, -1)
@@ -4016,12 +4166,16 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             return false
         case SDL.K_UP:
             app.settings_page = Settings_Page((page + 6) % 7)
-        case SDL.K_DOWN, SDL.K_TAB:
+            app.settings_content_focus = false
+        case SDL.K_DOWN:
             app.settings_page = Settings_Page((page + 1) % 7)
+            app.settings_content_focus = false
         case SDL.K_HOME:
             app.settings_page = .Startup
+            app.settings_content_focus = false
         case SDL.K_END:
             app.settings_page = .Profile_Home
+            app.settings_content_focus = false
         case:
             return false
         }
@@ -4063,8 +4217,24 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if app.settings_open {
+        if app.settings_page == .Actions {
+            panel := settings_panel_rect(width, height)
+            content_x := panel.x + 178 + 28
+            content_y := panel.y + 22
+            for _, index in ACTION_DEFINITIONS {
+                row := SDL.FRect{content_x - 8, content_y + 46 + f32(index) * 32, panel.x + panel.w - content_x - 12, 30}
+                if inside(x, y, row) {
+                    app.settings_action_selection = index
+                    app.settings_content_focus = true
+                    app.settings_binding_recording = false
+                    return
+                }
+            }
+        }
         if page, ok := settings_page_at(x, y, width, height); ok {
             app.settings_page = page
+            app.settings_content_focus = false
+            app.settings_binding_recording = false
             return
         }
     }
@@ -4098,9 +4268,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
             return
         }
         if inside(x, y, {panel.x + 8, panel.y + 126, panel.w - 16, 36}) {
-            app.profile_menu_open = false
-            app.palette_open = true
-            app.palette_selection = 0
+            execute_action(app, .Open_Command_Palette)
             return
         }
         if inside(x, y, {panel.x + 8, panel.y + 172, panel.w - 16, 36}) {
@@ -4114,21 +4282,17 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 
     if inside(x, y, plus) {
         close_search(app)
-        new_tab(app)
+        execute_action(app, .New_Tab)
         return
     }
     if inside(x, y, menu) {
         close_search(app)
-        app.profile_menu_open = !app.profile_menu_open
-        app.profile_menu_selection = 0
-        app.palette_open = false
-        app.settings_open = false
+        execute_action(app, .Open_Profile_Menu)
         return
     }
     if inside(x, y, settings) {
         close_search(app)
-        app.settings_open = !app.settings_open
-        app.palette_open = false
+        execute_action(app, .Open_Settings)
         return
     }
 
@@ -4186,26 +4350,11 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 }
             }
             return
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_P {
-            app.palette_open = !app.palette_open
-            app.palette_selection = 0
-            app.profile_menu_open = false
-            app.settings_open = false
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_SPACE {
-            app.profile_menu_open = !app.profile_menu_open
-            app.profile_menu_selection = 0
-            app.palette_open = false
-            app.settings_open = false
-        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_COMMA {
-            app.settings_open = !app.settings_open
-            app.profile_menu_open = false
-            app.palette_open = false
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_N {
-            _ = launch_new_window()
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_D {
-            _ = duplicate_active_tab(app)
-        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_T {
-            new_tab(app)
+        } else if app.settings_open && app.settings_binding_recording {
+            _ = handle_settings_binding_recording(app, event)
+            return
+        } else if handle_registered_action_shortcut(app, event) {
+            // Concrete desktop actions are consumed by the effective binding table.
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_PAGEUP && app.tab_count > 1 {
             target := max(0, app.active_tab - 1)
             _ = move_tab(app, app.active_tab, target)
@@ -4228,17 +4377,6 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             } else {
                 // Other Ctrl chords continue through the ordinary terminal path.
             }
-        } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_D {
-            split_active_pane(app, .Vertical)
-        } else if event.type == .KEY_DOWN && alt && shift && event.key.key == SDL.K_MINUS {
-            split_active_pane(app, .Horizontal)
-        } else if event.type == .KEY_DOWN && alt && shift && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
-            split_active_pane(app, .Vertical)
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_Z {
-            if app.active_tab >= 0 && app.active_tab < app.tab_count {
-                clear_ime_preedit(app)
-                _ = toggle_pane_zoom(&app.tabs[app.active_tab])
-            }
         } else if event.type == .KEY_DOWN && ctrl && alt {
             if direction, ok := pane_direction_for_key(event.key.key); ok {
                 _ = swap_active_pane_direction_app(app, direction)
@@ -4259,10 +4397,6 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             _ = copy_selection_to_clipboard(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
             _ = paste_clipboard(active_session_view(app))
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_R {
-            _ = recover_active_session(app)
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
-            execute_action(app, .Close_Pane)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
             _ = scroll_history_oldest(active_session_view(app))
@@ -4757,9 +4891,9 @@ draw_profile_menu :: proc(app: ^App) {
 
     draw_fill(app.renderer, {panel.x + 10, panel.y + 116, panel.w - 20, 1}, palette.border)
     draw_text(app, app.ui_font, action_label(.Open_Command_Palette), panel.x + 18, panel.y + 136, palette.text)
-    draw_text(app, app.ui_font, action_default_shortcut(.Open_Command_Palette), panel.x + 190, panel.y + 136, palette.text_muted)
+    draw_text(app, app.ui_font, action_binding_text(app, .Open_Command_Palette), panel.x + 190, panel.y + 136, palette.text_muted)
     draw_text(app, app.ui_font, action_label(.Open_Settings), panel.x + 18, panel.y + 182, palette.text)
-    draw_text(app, app.ui_font, action_default_shortcut(.Open_Settings), panel.x + 248, panel.y + 182, palette.text_muted)
+    draw_text(app, app.ui_font, action_binding_text(app, .Open_Settings), panel.x + 248, panel.y + 182, palette.text_muted)
 }
 
 history_scrollbar_geometry :: proc(
@@ -5056,7 +5190,12 @@ draw_session_lifecycle :: proc(
         action := session_lifecycle_action_rect(pane)
         draw_fill(app.renderer, action, palette.tab_active)
         draw_outline(app.renderer, action, palette.accent)
-        label := presentation.action == "Restart" ? "Restart  Ctrl+Shift+R" : "Reconnect  Ctrl+Shift+R"
+        shortcut := action_binding_text(app, .Recover_Session)
+        label_storage: [128]u8
+        label := presentation.action
+        if len(shortcut) != 0 {
+            label = fmt.bprintf(label_storage[:], "%s  %s", presentation.action, shortcut)
+        }
         draw_text(app, app.ui_font, label, action.x + 9, action.y + 5, palette.accent)
     }
 }
@@ -5421,7 +5560,7 @@ draw_palette :: proc(app: ^App, width, height: f32) {
         enabled := action_enabled(app, action)
         color := enabled ? palette.text : palette.text_muted
         draw_text(app, app.ui_font, action_label(action), row.x + 10, row.y + 8, color)
-        shortcut := action_default_shortcut(action)
+        shortcut := action_binding_text(app, action)
         if len(shortcut) != 0 {
             draw_text(app, app.ui_font, shortcut, row.x + row.w - 148, row.y + 8, palette.text_muted)
         }
@@ -5500,11 +5639,34 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     case .Actions:
         for definition, index in ACTION_DEFINITIONS {
             y := content_y + 54 + f32(index) * 32
-            color := action_enabled(app, definition.action) ? palette.text : palette.text_muted
-            draw_text(app, app.ui_font, definition.label, content_x, y, color)
-            if len(definition.default_shortcut) != 0 {
-                draw_text(app, app.ui_font, definition.default_shortcut, content_x + 248, y, palette.text_muted)
+            selected := app.settings_content_focus && app.settings_action_selection == index
+            if selected {
+                draw_fill(app.renderer, {content_x - 8, y - 5, panel.x + panel.w - content_x - 12, 28}, palette.tab_active)
             }
+            color := action_enabled(app, definition.action) ? palette.text : palette.text_muted
+            draw_text(app, app.ui_font, definition.label, content_x, y, selected ? palette.accent : color)
+            binding := binding_for_action(app, definition.action)
+            shortcut := action_binding_text(app, definition.action)
+            shortcut_color := binding != nil && binding.customized ? palette.accent : palette.text_muted
+            if len(shortcut) == 0 {
+                shortcut = "Unbound"
+            }
+            draw_text(app, app.ui_font, shortcut, content_x + 248, y, shortcut_color)
+        }
+        hint_y := content_y + 54 + f32(len(ACTION_DEFINITIONS)) * 32 + 10
+        if app.settings_binding_recording {
+            draw_text(app, app.ui_font, "Press key chord · Esc cancels", content_x, hint_y, palette.accent)
+        } else if app.settings_content_focus {
+            draw_text(app, app.ui_font, "Enter record · Del unbind · R reset", content_x, hint_y, palette.text_muted)
+            draw_text(app, app.ui_font, "Tab returns to sidebar", content_x, hint_y + 22, palette.text_muted)
+        } else {
+            draw_text(app, app.ui_font, "Tab to edit action shortcuts", content_x, hint_y, palette.text_muted)
+        }
+        notice_y := hint_y + (app.settings_content_focus && !app.settings_binding_recording ? f32(48) : f32(28))
+        if app.settings_notice_len != 0 {
+            draw_text(app, app.ui_font, string(app.settings_notice[:app.settings_notice_len]), content_x, notice_y, palette.accent)
+        } else if app.config_notice_len != 0 {
+            draw_text(app, app.ui_font, string(app.config_notice[:app.config_notice_len]), content_x, notice_y, palette.accent)
         }
     case .Profile_Defaults:
         draw_setting_field(app, "Profile kind", "Created local shell", content_x, content_y + 48, 300)
@@ -5643,6 +5805,11 @@ main :: proc() {
         next_session_identity = 1,
         startup_profile = user_config.startup_profile,
     }
+    if !initialize_action_bindings(&app) {
+        sdl_error("Default action bindings invalid")
+        return
+    }
+    _ = apply_user_keybindings(&app, user_config.keybindings)
     new_tab(&app)
 
     draw(&app)
