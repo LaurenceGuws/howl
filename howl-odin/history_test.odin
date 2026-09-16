@@ -163,3 +163,47 @@ history_column_change_detection_ignores_unknown_and_same_geometry :: proc(t: ^te
     testing.expect(t, !history_columns_changed(80, 80))
     testing.expect(t, history_columns_changed(80, 120))
 }
+
+@(test)
+history_fractional_wheel_accumulates_whole_rows :: proc(t: ^testing.T) {
+    view := Session_View{
+        history_count = 100,
+        history_row_base = 50,
+    }
+
+    testing.expect(t, !scroll_history_wheel(&view, 0.1))
+    testing.expect(t, !scroll_history_wheel(&view, 0.1))
+    testing.expect(t, !scroll_history_wheel(&view, 0.1))
+    testing.expect_value(t, view.history_target_offset, u32(0))
+    testing.expect(t, scroll_history_wheel(&view, 0.1))
+    testing.expect_value(t, view.history_target_offset, u32(1))
+    testing.expect(t, view.history_wheel_rows > 0 && view.history_wheel_rows < 1)
+
+    testing.expect(t, scroll_history_wheel(&view, 1.0))
+    testing.expect_value(t, view.history_target_offset, u32(4))
+}
+
+@(test)
+history_wheel_clamp_and_discrete_navigation_clear_fraction :: proc(t: ^testing.T) {
+    view := Session_View{
+        history_count = 4,
+        history_row_base = 10,
+        history_target_offset = 3,
+        history_anchor_top_row = 11,
+        history_anchor_valid = true,
+        history_wheel_rows = 0.75,
+    }
+
+    testing.expect(t, scroll_history_wheel(&view, 1.0))
+    testing.expect_value(t, view.history_target_offset, u32(4))
+    testing.expect_value(t, view.history_wheel_rows, f32(0))
+
+    view.history_wheel_rows = 0.75
+    testing.expect(t, scroll_history_rows(&view, -1))
+    testing.expect_value(t, view.history_target_offset, u32(3))
+    testing.expect_value(t, view.history_wheel_rows, f32(0))
+
+    view.history_wheel_rows = -0.5
+    testing.expect(t, set_history_offset(&view, 0))
+    testing.expect_value(t, view.history_wheel_rows, f32(0))
+}

@@ -85,6 +85,7 @@ Session_View :: struct {
     history_target_offset: u32,
     history_anchor_top_row: u64,
     history_anchor_valid: bool,
+    history_wheel_rows: f32,
     history_scrollbar_dragging: bool,
     history_scrollbar_grab_y: f32,
     alternate_screen: bool,
@@ -933,6 +934,7 @@ reset_history_locked :: proc(view: ^Session_View) {
     view.history_target_offset = 0
     view.history_anchor_top_row = 0
     view.history_anchor_valid = false
+    view.history_wheel_rows = 0
 }
 
 follow_history_locked :: proc(
@@ -1007,6 +1009,7 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     if view.alternate_screen || view.history_count == 0 {
         return false
     }
+    view.history_wheel_rows = 0
     requested := int(view.history_target_offset) + rows_delta
     clamped := clamp(requested, 0, int(view.history_count))
     if clamped == int(view.history_target_offset) {
@@ -1034,12 +1037,54 @@ set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
     if view.alternate_screen || view.history_count == 0 {
         return false
     }
+    view.history_wheel_rows = 0
     clamped := min(requested_offset, view.history_count)
     if clamped == view.history_target_offset {
         return false
     }
     clear_selection_locked(view)
     view.history_target_offset = clamped
+    if clamped == 0 {
+        view.history_anchor_top_row = 0
+        view.history_anchor_valid = false
+    } else {
+        view.history_anchor_top_row =
+            u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
+        view.history_anchor_valid = true
+    }
+    return true
+}
+
+scroll_history_wheel :: proc(view: ^Session_View, wheel_rows: f32) -> bool {
+    if view == nil || wheel_rows == 0 {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    if view.alternate_screen || view.history_count == 0 {
+        view.history_wheel_rows = 0
+        return false
+    }
+
+    view.history_wheel_rows += wheel_rows * 3
+    rows_delta := int(view.history_wheel_rows)
+    if rows_delta == 0 {
+        return false
+    }
+    view.history_wheel_rows -= f32(rows_delta)
+
+    requested := int(view.history_target_offset) + rows_delta
+    clamped := clamp(requested, 0, int(view.history_count))
+    if clamped != requested {
+        view.history_wheel_rows = 0
+    }
+    if clamped == int(view.history_target_offset) {
+        view.history_wheel_rows = 0
+        return false
+    }
+
+    clear_selection_locked(view)
+    view.history_target_offset = u32(clamped)
     if clamped == 0 {
         view.history_anchor_top_row = 0
         view.history_anchor_valid = false
@@ -2225,16 +2270,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 if app.active_tab >= 0 && app.active_tab < app.tab_count {
                     app.tabs[app.active_tab].active_pane = pane_index
                 }
-                ticks := int(event.wheel.integer_y)
-                if ticks == 0 {
-                    if event.wheel.y > 0 {
-                        ticks = 1
-                    } else if event.wheel.y < 0 {
-                        ticks = -1
-                    }
+                wheel_rows := event.wheel.y
+                if wheel_rows == 0 && event.wheel.integer_y != 0 {
+                    wheel_rows = f32(event.wheel.integer_y)
                 }
-                if ticks != 0 {
-                    _ = scroll_history_rows(view, ticks * 3)
+                if wheel_rows != 0 {
+                    _ = scroll_history_wheel(view, wheel_rows)
                 }
             }
         }

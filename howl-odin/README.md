@@ -72,7 +72,9 @@ Current canary:
   compositor cadence when nothing changed;
 - scrollback is pane-local and uses Howl's canonical retained-history window:
   physical mouse-wheel input and Shift+PageUp/PageDown request exact history
-  offsets, an absolute retained-row anchor keeps a scrolled viewport stationary
+  offsets. High-resolution fractional wheel input accumulates canonical row
+  intent instead of turning every tiny delta into a whole wheel notch. An
+  absolute retained-row anchor keeps a scrolled viewport stationary
   while newer PTY output arrives, alternate-screen observations reset the pane
   to LIVE, and committed terminal input returns only the active pane to LIVE
   before delivery;

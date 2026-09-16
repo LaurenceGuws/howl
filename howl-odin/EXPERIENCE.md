@@ -196,7 +196,8 @@ These labels are descriptive, not priority scores.
 **PROVEN**
 
 - Pane-local canonical retained-history observation.
-- Physical wheel scrolling.
+- Physical wheel scrolling, including fractional high-resolution wheel deltas
+  accumulated into whole canonical rows rather than amplified into fake ticks.
 - Shift+PageUp/PageDown page navigation.
 - Ctrl+Shift+Home to oldest retained row and Ctrl+Shift+End to LIVE.
 - Absolute retained-row anchor keeps an old viewport stationary while new PTY
