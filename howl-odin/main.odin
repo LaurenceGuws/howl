@@ -997,6 +997,19 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     return true
 }
 
+scroll_history_oldest :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    count := view.history_count
+    sync.mutex_unlock(&view.mutex)
+    if count == 0 {
+        return false
+    }
+    return scroll_history_rows(view, int(count))
+}
+
 return_history_live :: proc(view: ^Session_View) -> bool {
     if view == nil {
         return false
@@ -1974,6 +1987,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             _ = paste_clipboard(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
             execute_action(app, .Close_Pane)
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
+                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
+            _ = scroll_history_oldest(active_session_view(app))
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_END &&
+                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
+            _ = return_history_live(active_session_view(app))
         } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
             view := active_session_view(app)
@@ -2177,6 +2196,60 @@ draw_profile_menu :: proc(app: ^App) {
     draw_text(app, app.ui_font, "Ctrl+,", panel.x + 248, panel.y + 182, palette.text_muted)
 }
 
+draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+    if view == nil {
+        return
+    }
+
+    history_offset: u32
+    history_count_value: u32
+    visible_rows: u32
+    alternate := false
+    if view.canvas != nil {
+        history_offset = render_history_offset(view.canvas)
+        history_count_value = render_history_count(view.canvas)
+        alternate = render_alternate_screen(view.canvas) != 0
+        cell_height := render_cell_height(view.canvas)
+        if cell_height != 0 {
+            visible_rows = u32(view.canvas_surface_height / cell_height)
+        }
+    } else {
+        sync.mutex_lock(&view.mutex)
+        history_offset = view.history_target_offset
+        history_count_value = view.history_count
+        visible_rows = u32(view.rows)
+        alternate = view.alternate_screen
+        sync.mutex_unlock(&view.mutex)
+    }
+    if alternate || history_count_value == 0 || visible_rows == 0 {
+        return
+    }
+
+    track := SDL.FRect{pane.x + pane.w - 5, pane.y + 6, 3, pane.h - 12}
+    if track.h <= 0 {
+        return
+    }
+    track_color := palette.border
+    track_color[3] = 80
+    draw_fill(app.renderer, track, track_color)
+
+    total_rows := f32(history_count_value + visible_rows)
+    thumb_height := max(f32(22), track.h * f32(visible_rows) / total_rows)
+    thumb_height = min(thumb_height, track.h)
+    travel := max(f32(0), track.h - thumb_height)
+    live_progress := f32(history_count_value - min(history_offset, history_count_value)) /
+                     f32(history_count_value)
+    thumb := SDL.FRect{
+        track.x - 1,
+        track.y + travel * live_progress,
+        5,
+        thumb_height,
+    }
+    thumb_color := history_offset == 0 ? palette.text_muted : palette.accent
+    thumb_color[3] = history_offset == 0 ? 110 : 190
+    draw_fill(app.renderer, thumb, thumb_color)
+}
+
 draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view == nil {
         return
@@ -2186,6 +2259,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
         draw_selection(app, view, pane)
+        draw_history_scrollbar(app, view, pane)
         if history_active(view) {
             badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
             draw_fill(app.renderer, badge, palette.title_bg)
@@ -2234,6 +2308,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
     }
     draw_selection(app, view, pane)
+    draw_history_scrollbar(app, view, pane)
     if history_active(view) {
         badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
         draw_fill(app.renderer, badge, palette.title_bg)

@@ -72,6 +72,11 @@ Current canary:
   while newer PTY output arrives, alternate-screen observations reset the pane
   to LIVE, and committed terminal input returns only the active pane to LIVE
   before delivery;
+- retained history also exposes a thin per-pane position scrollbar: the thumb
+  stays quiet at LIVE, becomes accent-colored while scrolled, and tracks the
+  accepted canonical history offset. `Ctrl+Shift+Home/End` jump directly to the
+  oldest retained window or back to LIVE without stealing ordinary terminal
+  Home/End;
 - desktop selection is pane-local: left-drag paints a client-owned cell range,
   `Ctrl+Shift+C` resolves that displayed range through `howl-client.selection`
   and the Session's canonical `text_extract`, and `Ctrl+Shift+V` uses the
