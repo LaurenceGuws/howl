@@ -781,6 +781,21 @@ These labels are descriptive, not priority scores.
   view and roughly 1.9 ms on the larger Local shell during the first renderer
   canary.
 
+**ACTIVE — graphics performance qualification**
+
+- Real desktop dogfood reports slow graphics despite working image display. The
+  exact workload and bottleneck still need a reproducible baseline. The scoped
+  image-correctness canaries and quiet-text/btop measurements above do not prove
+  image throughput, animation cadence, or input responsiveness under image load.
+- Separate transfer/decode, Session transport, client resource fetch, Canvas work,
+  texture upload and presentation costs before choosing an optimization. Record
+  workload, build mode, display scale and local-versus-remote producer context.
+- Compare the same case before/after; pressure image replacement/removal, retained
+  history, scroll/resize, selection, splits, hidden/minimized windows and return
+  to idle. A stationary image must not create a busy render or resource-fetch loop.
+- Performance work can proceed before accessibility is complete. A proven narrow
+  bottleneck fix should not wait behind unrelated feature completion.
+
 **WANTED**
 
 - Preserve near-zero idle CPU as a regression bar.
@@ -810,11 +825,14 @@ The ongoing canary matrix should include:
   application;
 - maximize/fullscreen/DPI/display transitions;
 - shell/process exit, app close/reopen, Session disconnect/reconnect;
+- image transfer, repeated replacement/animation, and interaction under image load;
 - sustained high-output CPU/memory/frame-time measurement.
 
-Canaries should use the physical desktop when platform behavior matters and the
-visible managed KWin lab for autonomous iteration that should not disturb normal
-work.
+For co-operative desktop dogfood, put each tested iteration into Captain's live
+GUI rather than preserving an old golden window beside it. Check active child
+work before replacement, retain saved profiles/bindings, and keep owned versus
+attached Session teardown explicit. Use an isolated compositor only when it is a
+deliberate part of the current testing agreement, not stale handoff recovery.
 
 ## Dependency posture
 
@@ -853,19 +871,24 @@ Howl's; SDL is the narrow platform/rendering substrate.
 
 ## Current near-term pressure lanes
 
-These are intentionally broad and may be worked in whichever order real use
-makes interesting:
+Refreshed from 2026-09-16 desktop dogfood. The existing Cairn renderer/desktop/
+accessibility and performance/reliability/packaging lanes remain open. The active
+workstream keeps the ordered checkpoints; this is the product-level priority map.
 
-1. Finish interaction arbitration: canonical mouse/focus modes, Shift overrides,
-   scrollbar capture/cancel, and mouse-aware TUI dogfood.
-2. Keep hardening history/selection/search as one coherent navigation surface.
-3. Grow the fixed two-pane layout into a small, comprehensible pane tree with
-   resize handles and active-pane zoom.
-4. Give process exit/restart/disconnect a first-class desktop lifecycle.
-5. Turn profiles, Settings, actions, and keybindings from truthful prototypes
-   into a pleasant configurable application.
-6. Close renderer completeness gaps, especially terminal images, before chasing
-   another rendering backend.
-7. Keep measuring idle/burst/frame costs and protect the event-driven CPU win.
-8. Periodically stop building and simply use the terminal until the next rough
-   edge becomes obvious.
+1. Capture the slow graphics workload and baseline it by owner. Image display
+   correctness and good text-idle figures are not graphics performance acceptance.
+2. Carry existing title/icon/cwd/remote-host/shell metadata through a bounded,
+   coherent Session/client contract. Tab titles should consume canonical facts,
+   including metadata-only updates, late attach, clear/reset and profile fallback.
+3. Give terminal progress typed retained VT state, then transport it and expose a
+   restrained tab indicator. Keep ordinary notifications separate; do not parse
+   escape sequences or infer progress from rendered text in Odin.
+4. Fix measured graphics costs with same-workload before/after evidence, preserving
+   image generations, observer independence, input responsiveness and idle sleep.
+   Move a narrow proven fix earlier when real dogfood warrants it.
+5. Finish explicit property-consumption coverage, keyboard focus/accessibility,
+   font-family selection, diagnostics and mixed-monitor/platform qualification.
+   Recheck the full Cairn acceptance before calling either broad lane complete.
+6. Keep delivering green iterations into the shared GUI and stop to use them with
+   Captain. Preserve the WT-style shell and expose real rebindable actions rather
+   than treating the current default chords as mandatory or adding hidden aliases.
