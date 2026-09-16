@@ -73,10 +73,14 @@ Current canary:
   to LIVE, and committed terminal input returns only the active pane to LIVE
   before delivery;
 - retained history also exposes a thin per-pane position scrollbar: the thumb
-  stays quiet at LIVE, becomes accent-colored while scrolled, and tracks the
-  accepted canonical history offset. `Ctrl+Shift+Home/End` jump directly to the
-  oldest retained window or back to LIVE without stealing ordinary terminal
-  Home/End;
+  stays quiet at LIVE, becomes accent-colored while scrolled, tracks the
+  accepted canonical history offset, and owns a forgiving pointer lane for
+  direct seek/drag without colliding with terminal text selection.
+  `Ctrl+Shift+Home/End` jump directly to the oldest retained window or back to
+  LIVE without stealing ordinary terminal Home/End. Vertical-only geometry
+  changes preserve the absolute retained-row anchor; an owned horizontal reflow
+  deliberately returns to LIVE because the same numeric row can name different
+  text after reflow;
 - desktop selection is pane-local: left-drag paints a client-owned cell range,
   `Ctrl+Shift+C` resolves that displayed range through `howl-client.selection`
   and the Session's canonical `text_extract`, and `Ctrl+Shift+V` uses the
@@ -116,8 +120,9 @@ This experiment deliberately pins both compilers used by its build:
 ./howl-odin/build.sh
 ```
 
-The script runs the native bridge tests, builds the bridge ReleaseSafe, builds
-the exact matching `howl-sessiond`, checks and builds the Odin client, then
+The script runs the native bridge tests plus Odin's retained-history unit tests,
+builds the bridge ReleaseSafe, builds the exact matching `howl-sessiond`, checks
+and builds the Odin client, then
 atomically places the bridge and Session daemon beside the executable so live
 created Sessions do not make rebuilds fail with `ETXTBSY`.
 The result is:

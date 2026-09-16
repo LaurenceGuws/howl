@@ -52,6 +52,15 @@ Canvas_Texture :: struct {
     height: u16,
 }
 
+History_Scrollbar_Geometry :: struct {
+    track: SDL.FRect,
+    thumb: SDL.FRect,
+    hit: SDL.FRect,
+    history_offset: u32,
+    history_count: u32,
+    visible_rows: u32,
+}
+
 Session_View :: struct {
     owned_process: rawptr,
     control: rawptr,
@@ -76,6 +85,8 @@ Session_View :: struct {
     history_target_offset: u32,
     history_anchor_top_row: u64,
     history_anchor_valid: bool,
+    history_scrollbar_dragging: bool,
+    history_scrollbar_grab_y: f32,
     alternate_screen: bool,
     selection_active: bool,
     selection_dragging: bool,
@@ -430,6 +441,12 @@ resize_owned_session_to_pane :: proc(
     ))
     if view.requested_rows == desired_rows && view.requested_columns == desired_columns {
         return
+    }
+    sync.mutex_lock(&view.mutex)
+    current_columns := view.columns
+    sync.mutex_unlock(&view.mutex)
+    if history_columns_changed(current_columns, desired_columns) {
+        _ = return_history_live(view)
     }
     if send_resize(view.control, desired_rows, desired_columns) != 0 {
         copy_bridge_error(view)
@@ -834,6 +851,7 @@ observe_session :: proc(data: rawptr) {
         if view.selection_active && snapshot_terminal_revision != view.terminal_revision {
             clear_selection_locked(view)
         }
+        apply_history_geometry_locked(view, snapshot_columns)
         copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
         view.text_len = int(output_len)
         view.revision = snapshot_revision
@@ -947,6 +965,16 @@ follow_history_locked :: proc(
     }
 }
 
+apply_history_geometry_locked :: proc(view: ^Session_View, columns: u16) {
+    if history_columns_changed(view.columns, columns) {
+        reset_history_locked(view)
+    }
+}
+
+history_columns_changed :: proc(current_columns, next_columns: u16) -> bool {
+    return current_columns != 0 && next_columns != current_columns
+}
+
 accept_history_snapshot :: proc(
     view: ^Session_View,
     history_offset: u32,
@@ -997,6 +1025,32 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     return true
 }
 
+set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    if view.alternate_screen || view.history_count == 0 {
+        return false
+    }
+    clamped := min(requested_offset, view.history_count)
+    if clamped == view.history_target_offset {
+        return false
+    }
+    clear_selection_locked(view)
+    view.history_target_offset = clamped
+    if clamped == 0 {
+        view.history_anchor_top_row = 0
+        view.history_anchor_valid = false
+    } else {
+        view.history_anchor_top_row =
+            u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
+        view.history_anchor_valid = true
+    }
+    return true
+}
+
 scroll_history_oldest :: proc(view: ^Session_View) -> bool {
     if view == nil {
         return false
@@ -1029,6 +1083,43 @@ history_active :: proc(view: ^Session_View) -> bool {
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
     return view.history_target_offset != 0
+}
+
+history_scrollbar_thumb :: proc(
+    history_offset, history_count_value, visible_rows: u32,
+    track_height: f32,
+) -> (top, height: f32, ok: bool) {
+    if history_count_value == 0 || visible_rows == 0 || track_height <= 0 {
+        return 0, 0, false
+    }
+    total_rows := f32(history_count_value + visible_rows)
+    height = max(f32(22), track_height * f32(visible_rows) / total_rows)
+    height = min(height, track_height)
+    travel := max(f32(0), track_height - height)
+    if travel == 0 {
+        return 0, height, true
+    }
+    accepted_offset := min(history_offset, history_count_value)
+    live_progress := f32(history_count_value - accepted_offset) /
+                     f32(history_count_value)
+    top = travel * live_progress
+    return top, height, true
+}
+
+history_offset_for_scrollbar_thumb :: proc(
+    thumb_top, track_height, thumb_height: f32,
+    history_count_value: u32,
+) -> u32 {
+    if history_count_value == 0 || track_height <= 0 {
+        return 0
+    }
+    travel := max(f32(0), track_height - thumb_height)
+    if travel == 0 {
+        return 0
+    }
+    progress := clamp(thumb_top / travel, f32(0), f32(1))
+    requested := int(f32(history_count_value) * (1 - progress) + 0.5)
+    return u32(clamp(requested, 0, int(history_count_value)))
 }
 
 allocate_session_view :: proc(owned_process: rawptr) -> ^Session_View {
@@ -1114,6 +1205,7 @@ destroy_session_view :: proc(view: ^Session_View) {
     if view == nil {
         return
     }
+    _ = finish_history_scrollbar_drag(view)
     reset_canvas(view)
     if view.observer_thread != nil {
         sync.mutex_lock(&view.mutex)
@@ -2050,6 +2142,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             w, h: c.int
             if view != nil && SDL.GetWindowSize(app.window, &w, &h) {
                 if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                    if history_scrollbar_drag_active(view) {
+                        _ = update_history_scrollbar_drag(view, pane, event.motion.y)
+                        return
+                    }
                     _ = extend_selection(app, view, pane, event.motion.x, event.motion.y)
                 }
             }
@@ -2070,15 +2166,27 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     if app.active_tab >= 0 && app.active_tab < app.tab_count {
                         app.tabs[app.active_tab].active_pane = pane_index
                     }
-                    if pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h)); pane_ok &&
-                       begin_selection(app, view, pane, event.button.x, event.button.y) {
-                        return
+                    if pane, pane_ok := pane_rect_for_index(app, pane_index, f32(w), f32(h)); pane_ok {
+                        if begin_history_scrollbar_drag(view, pane, event.button.x, event.button.y) {
+                            return
+                        }
+                        if begin_selection(app, view, pane, event.button.x, event.button.y) {
+                            return
+                        }
                     }
                 }
             }
             if event.button.button == SDL.BUTTON_LEFT && event.type == .MOUSE_BUTTON_UP {
                 view := active_session_view(app)
                 if view != nil {
+                    if history_scrollbar_drag_active(view) {
+                        tab := &app.tabs[app.active_tab]
+                        if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
+                            _ = update_history_scrollbar_drag(view, pane, event.button.y)
+                        }
+                        _ = finish_history_scrollbar_drag(view)
+                        return
+                    }
                     sync.mutex_lock(&view.mutex)
                     dragging := view.selection_dragging
                     sync.mutex_unlock(&view.mutex)
@@ -2196,9 +2304,12 @@ draw_profile_menu :: proc(app: ^App) {
     draw_text(app, app.ui_font, "Ctrl+,", panel.x + 248, panel.y + 182, palette.text_muted)
 }
 
-draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+history_scrollbar_geometry :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+) -> (geometry: History_Scrollbar_Geometry, ok: bool) {
     if view == nil {
-        return
+        return {}, false
     }
 
     history_offset: u32
@@ -2222,32 +2333,134 @@ draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) 
         sync.mutex_unlock(&view.mutex)
     }
     if alternate || history_count_value == 0 || visible_rows == 0 {
-        return
+        return {}, false
     }
 
     track := SDL.FRect{pane.x + pane.w - 5, pane.y + 6, 3, pane.h - 12}
     if track.h <= 0 {
+        return {}, false
+    }
+    thumb_top, thumb_height, thumb_ok := history_scrollbar_thumb(
+        history_offset,
+        history_count_value,
+        visible_rows,
+        track.h,
+    )
+    if !thumb_ok {
+        return {}, false
+    }
+    thumb := SDL.FRect{
+        track.x - 1,
+        track.y + thumb_top,
+        5,
+        thumb_height,
+    }
+    hit := SDL.FRect{pane.x + pane.w - 14, track.y, 14, track.h}
+    return History_Scrollbar_Geometry{
+        track = track,
+        thumb = thumb,
+        hit = hit,
+        history_offset = history_offset,
+        history_count = history_count_value,
+        visible_rows = visible_rows,
+    }, true
+}
+
+history_scrollbar_drag_active :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    return view.history_scrollbar_dragging
+}
+
+update_history_scrollbar_drag :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    pointer_y: f32,
+) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    dragging := view.history_scrollbar_dragging
+    grab_y := view.history_scrollbar_grab_y
+    sync.mutex_unlock(&view.mutex)
+    if !dragging {
+        return false
+    }
+
+    geometry, ok := history_scrollbar_geometry(view, pane)
+    if !ok {
+        _ = finish_history_scrollbar_drag(view)
+        return false
+    }
+    relative_top := clamp(
+        pointer_y - geometry.track.y - grab_y,
+        f32(0),
+        max(f32(0), geometry.track.h - geometry.thumb.h),
+    )
+    requested := history_offset_for_scrollbar_thumb(
+        relative_top,
+        geometry.track.h,
+        geometry.thumb.h,
+        geometry.history_count,
+    )
+    _ = set_history_offset(view, requested)
+    return true
+}
+
+begin_history_scrollbar_drag :: proc(
+    view: ^Session_View,
+    pane: SDL.FRect,
+    x, y: f32,
+) -> bool {
+    geometry, ok := history_scrollbar_geometry(view, pane)
+    if !ok || !inside(x, y, geometry.hit) {
+        return false
+    }
+    clear_selection(view)
+    grab_y := geometry.thumb.h / 2
+    if inside(x, y, geometry.thumb) {
+        grab_y = y - geometry.thumb.y
+    }
+    sync.mutex_lock(&view.mutex)
+    view.history_scrollbar_dragging = true
+    view.history_scrollbar_grab_y = grab_y
+    sync.mutex_unlock(&view.mutex)
+    _ = SDL.CaptureMouse(true)
+    _ = update_history_scrollbar_drag(view, pane, y)
+    return true
+}
+
+finish_history_scrollbar_drag :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    was_dragging := view.history_scrollbar_dragging
+    view.history_scrollbar_dragging = false
+    view.history_scrollbar_grab_y = 0
+    sync.mutex_unlock(&view.mutex)
+    if was_dragging {
+        _ = SDL.CaptureMouse(false)
+    }
+    return was_dragging
+}
+
+draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+    geometry, ok := history_scrollbar_geometry(view, pane)
+    if !ok {
         return
     }
     track_color := palette.border
     track_color[3] = 80
-    draw_fill(app.renderer, track, track_color)
+    draw_fill(app.renderer, geometry.track, track_color)
 
-    total_rows := f32(history_count_value + visible_rows)
-    thumb_height := max(f32(22), track.h * f32(visible_rows) / total_rows)
-    thumb_height = min(thumb_height, track.h)
-    travel := max(f32(0), track.h - thumb_height)
-    live_progress := f32(history_count_value - min(history_offset, history_count_value)) /
-                     f32(history_count_value)
-    thumb := SDL.FRect{
-        track.x - 1,
-        track.y + travel * live_progress,
-        5,
-        thumb_height,
-    }
-    thumb_color := history_offset == 0 ? palette.text_muted : palette.accent
-    thumb_color[3] = history_offset == 0 ? 110 : 190
-    draw_fill(app.renderer, thumb, thumb_color)
+    thumb_color := geometry.history_offset == 0 ? palette.text_muted : palette.accent
+    thumb_color[3] = geometry.history_offset == 0 ? 110 : 190
+    draw_fill(app.renderer, geometry.thumb, thumb_color)
 }
 
 draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {

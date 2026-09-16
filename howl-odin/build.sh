@@ -42,6 +42,10 @@ actual_odin=$(odin version | awk '{print $3}')
 )
 
 mkdir -p "$output_root"
+LD_LIBRARY_PATH="$bridge_root/zig-out/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  odin test "$module_root" \
+  -collection:bridge="$bridge_root/zig-out/lib" \
+  -define:ODIN_TEST_FANCY=false
 odin check "$module_root" -collection:bridge="$bridge_root/zig-out/lib"
 odin build "$module_root" \
   -collection:bridge="$bridge_root/zig-out/lib" \
