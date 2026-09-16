@@ -191,10 +191,13 @@ Current canary:
   and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,
   alpha-mask, and RGBA commands without parsing terminal cells itself;
-- Canvas residency survives unchanged revisions, so the first frame uploads the
-  glyph atlas and later frames reuse it instead of re-uploading presentation
-  resources; terminal-image resources remain an explicit not-yet-admitted
-  boundary in this first backend canary;
+- Canvas residency survives unchanged revisions, so the first frame uploads only
+  missing presentation resources. Terminal images now use Canvas external-resource
+  residency too: exact Session image generations are demand-fetched through
+  `howl-client.images`, exposed to SDL through the same RGBA upload API, and then
+  reused without further transfer. Kitty replacement preserves logical Canvas
+  resource identity while advancing generation; crop/z-order and exact removal are
+  renderer-owned, and a Sixel canary proved the path is protocol-independent;
 - created Local-shell tabs own Session geometry leadership: the client derives
   rows/columns from the actual Howl Canvas cell metrics and current pane extent,
   while attached Home Session views remain observer-only and never resize the

@@ -18,6 +18,12 @@ const render_resource_limit: usize = terminal_render.maximum_external_images + 1
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
 const render_command_capacity: usize = render.presentation.maximum_canvas_commands;
+const RenderImageBinding = terminal_render.ExternalImageBinding;
+
+const ExternalUpload = struct {
+    external: canvas.FrameExternalResource,
+    fetched: client.images.Resource,
+};
 
 pub const RenderResourceInfo = extern struct {
     source: u64 = 0,
@@ -124,6 +130,12 @@ const Render = struct {
     frame_pixels: []u8,
     residencies: [render_resource_limit]canvas.Residency = undefined,
     residency_count: usize = 0,
+    image_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined,
+    image_binding_count: usize = 0,
+    missing_external: [terminal_render.maximum_external_images]canvas.FrameExternalResource = undefined,
+    external_uploads: [terminal_render.maximum_external_images]ExternalUpload = undefined,
+    external_upload_count: usize = 0,
+    frame_upload_count: usize = 0,
     upload_count: usize = 0,
     removal_count: usize = 0,
     command_count: usize = 0,
@@ -283,6 +295,7 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     const value = raw orelse return;
     const renderer: *Render = @ptrCast(@alignCast(value));
     const allocator = renderer.allocator;
+    clearExternalUploads(renderer);
     allocator.free(renderer.frame_pixels);
     allocator.free(renderer.frame_commands);
     renderer.composer.deinit();
@@ -292,10 +305,168 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     allocator.destroy(renderer);
 }
 
+fn clearExternalUploads(renderer: *Render) void {
+    var index: usize = 0;
+    while (index < renderer.external_upload_count) : (index += 1) {
+        renderer.external_uploads[index].fetched.deinit();
+    }
+    renderer.external_upload_count = 0;
+}
+
+fn findRenderImageBindingById(
+    bindings: []const RenderImageBinding,
+    image_id: u32,
+) ?RenderImageBinding {
+    for (bindings) |binding| {
+        if (binding.image_id == image_id) return binding;
+    }
+    return null;
+}
+
+fn findRenderImageBindingByResource(
+    bindings: []const RenderImageBinding,
+    resource: canvas.FrameResourceRef,
+) ?RenderImageBinding {
+    for (bindings) |binding| {
+        if (binding.resource.resource == resource.resource and
+            binding.resource.generation == resource.generation)
+            return binding;
+    }
+    return null;
+}
+
+fn planRenderImageBindings(
+    renderer: *const Render,
+    images: []const client.view.Image,
+    output: *[terminal_render.maximum_external_images]RenderImageBinding,
+) ![]const RenderImageBinding {
+    return planImageBindings(
+        renderer.image_bindings[0..renderer.image_binding_count],
+        terminal_render.contentUsage(renderer.content),
+        images,
+        output,
+    );
+}
+
+fn planImageBindings(
+    current: []const RenderImageBinding,
+    usage: terminal_render.ContentUsage,
+    images: []const client.view.Image,
+    output: *[terminal_render.maximum_external_images]RenderImageBinding,
+) ![]const RenderImageBinding {
+    if (images.len > output.len) return error.ImageLimit;
+    var allocation_cursor = usage.resource_high_water;
+    var first_new = true;
+    for (images, 0..) |image, index| {
+        if (image.image_id == 0 or image.generation == 0)
+            return error.InvalidImageBinding;
+        if (findRenderImageBindingById(
+            current,
+            image.image_id,
+        )) |prior| {
+            if (image.generation < prior.generation) return error.InvalidImageBinding;
+            var binding = prior;
+            if (image.generation > prior.generation) {
+                binding.generation = image.generation;
+                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
+            }
+            output[index] = binding;
+            continue;
+        }
+
+        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
+        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
+            return error.ResourceIdentityOverflow;
+        first_new = false;
+        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
+            return error.ResourceIdentityOverflow;
+        output[index] = .{
+            .image_id = image.image_id,
+            .generation = image.generation,
+            .resource = .{
+                .resource = canvas.ResourceId.local(allocation_cursor) catch
+                    return error.ResourceIdentityOverflow,
+                .generation = @fromBackingInt(@intCast(image.generation)),
+            },
+        };
+    }
+    return output[0..images.len];
+}
+
+fn upsertResidency(
+    storage: *[render_resource_limit]canvas.Residency,
+    count: *usize,
+    value: canvas.Residency,
+) error{ResidencyLimit}!void {
+    var index: usize = 0;
+    while (index < count.*) : (index += 1) {
+        const existing = storage[index];
+        if (@backingInt(existing.resource.source) == @backingInt(value.resource.source) and
+            @backingInt(existing.resource.resource) == @backingInt(value.resource.resource))
+        {
+            storage[index] = value;
+            return;
+        }
+    }
+    if (count.* == storage.len) return error.ResidencyLimit;
+    storage[count.*] = value;
+    count.* += 1;
+}
+
+fn prepareExternalUploads(
+    renderer: *Render,
+    bindings: []const RenderImageBinding,
+    residency: *[render_resource_limit]canvas.Residency,
+    residency_count: *usize,
+) !void {
+    const missing = try renderer.composer.missingExternalResources(
+        renderer.residencies[0..renderer.residency_count],
+        &renderer.missing_external,
+    );
+    if (missing.len > renderer.external_uploads.len) return error.ImageLimit;
+    errdefer clearExternalUploads(renderer);
+
+    for (missing) |external| {
+        if (@backingInt(external.resource.source) != @backingInt(renderer.source) or
+            external.format != .rgba8)
+            return error.InvalidExternalResource;
+        const binding = findRenderImageBindingByResource(bindings, external.resource) orelse
+            return error.InvalidImageBinding;
+        var fetched = try client.images.request(
+            &renderer.connection,
+            renderer.allocator,
+            binding.image_id,
+            binding.generation,
+        );
+        var fetched_owned = true;
+        errdefer if (fetched_owned) fetched.deinit();
+        const stride = std.math.mul(usize, @as(usize, external.size.width), 4) catch
+            return error.InvalidExternalResource;
+        const pixel_count = std.math.mul(usize, stride, external.size.height) catch
+            return error.InvalidExternalResource;
+        if (fetched.width != external.size.width or fetched.height != external.size.height or
+            fetched.pixels.len != pixel_count or external.stride != stride)
+            return error.InvalidExternalResource;
+
+        renderer.external_uploads[renderer.external_upload_count] = .{
+            .external = external,
+            .fetched = fetched,
+        };
+        renderer.external_upload_count += 1;
+        fetched_owned = false;
+        try upsertResidency(residency, residency_count, .{
+            .resource = external.resource,
+            .format = external.format,
+            .size = external.size,
+        });
+    }
+}
+
 pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offset: u32) i32 {
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.clearError();
+    clearExternalUploads(renderer);
     var rich = client.rich.request(
         &renderer.connection,
         renderer.allocator,
@@ -306,10 +477,6 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
         return 2;
     };
     defer rich.deinit();
-    if (rich.graphics.images.len != 0) {
-        renderer.setError("render", "terminal_images_not_yet_supported");
-        return 3;
-    }
     const view = client.view.project(renderer.allocator, &rich) catch |failure| {
         renderer.setError("project", @errorName(failure));
         return 3;
@@ -332,21 +499,44 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
         renderer.setError("composition", @errorName(failure));
         return 3;
     };
-    const update = terminal_render.takeContentUpdate(renderer.content, view, .{
+    const graphics = client.view.graphics(view);
+    var candidate_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined;
+    const bindings = planRenderImageBindings(renderer, graphics.images, &candidate_bindings) catch |failure| {
+        renderer.setError("image_bindings", @errorName(failure));
+        return 3;
+    };
+    const update = terminal_render.takeContentUpdateWithImageBindings(renderer.content, view, .{
         .pane = 1,
         .source = renderer.source,
         .visible_set_revision = 1,
         .lifecycle_revision = 1,
-    }) catch |failure| {
+    }, bindings) catch |failure| {
         renderer.setError("content", @errorName(failure));
         return 3;
     };
+    @memcpy(renderer.image_bindings[0..bindings.len], bindings);
+    renderer.image_binding_count = bindings.len;
     renderer.composer.apply(renderer.source, update) catch |failure| {
         renderer.setError("apply", @errorName(failure));
         return 3;
     };
-    const frame = renderer.composer.frame(
+    var prospective_residencies: [render_resource_limit]canvas.Residency = undefined;
+    @memcpy(
+        prospective_residencies[0..renderer.residency_count],
         renderer.residencies[0..renderer.residency_count],
+    );
+    var prospective_residency_count = renderer.residency_count;
+    prepareExternalUploads(
+        renderer,
+        bindings,
+        &prospective_residencies,
+        &prospective_residency_count,
+    ) catch |failure| {
+        renderer.setError("image_refill", @errorName(failure));
+        return 3;
+    };
+    const frame = renderer.composer.frame(
+        prospective_residencies[0..prospective_residency_count],
         .{
             .uploads = &renderer.frame_uploads,
             .removals = &renderer.frame_removals,
@@ -355,9 +545,11 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
         },
     ) catch |failure| {
         renderer.setError("frame", @errorName(failure));
+        clearExternalUploads(renderer);
         return 3;
     };
-    renderer.upload_count = frame.uploads.len;
+    renderer.frame_upload_count = frame.uploads.len;
+    renderer.upload_count = frame.uploads.len + renderer.external_upload_count;
     renderer.removal_count = frame.removals.len;
     renderer.command_count = frame.commands.len;
     renderer.pixel_count = frame.pixels.len;
@@ -369,6 +561,13 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     renderer.alternate_screen = begin.alternate_screen;
     renderer.surface = surface;
     updateRenderResidency(renderer, frame.uploads, frame.removals);
+    for (renderer.external_uploads[0..renderer.external_upload_count]) |external| {
+        upsertResidency(&renderer.residencies, &renderer.residency_count, .{
+            .resource = external.external.resource,
+            .format = external.external.format,
+            .size = external.external.size,
+        }) catch unreachable;
+    }
     return 0;
 }
 
@@ -521,13 +720,25 @@ pub export fn howl_odin_bridge_render_upload_info(
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
-    const upload = renderer.frame_uploads[index];
-    fillRenderResourceRef(upload.resource, output);
-    output.pixel_count = upload.pixel_count;
-    output.stride = upload.stride;
-    output.width = upload.size.width;
-    output.height = upload.size.height;
-    output.format = @backingInt(upload.format);
+    if (index < renderer.frame_upload_count) {
+        const upload = renderer.frame_uploads[index];
+        fillRenderResourceRef(upload.resource, output);
+        output.pixel_count = upload.pixel_count;
+        output.stride = upload.stride;
+        output.width = upload.size.width;
+        output.height = upload.size.height;
+        output.format = @backingInt(upload.format);
+        return 0;
+    }
+    const external_index = index - renderer.frame_upload_count;
+    if (external_index >= renderer.external_upload_count) return 2;
+    const upload = renderer.external_uploads[external_index];
+    fillRenderResourceRef(upload.external.resource, output);
+    output.pixel_count = upload.fetched.pixels.len;
+    output.stride = upload.external.stride;
+    output.width = upload.external.size.width;
+    output.height = upload.external.size.height;
+    output.format = @backingInt(upload.external.format);
     return 0;
 }
 
@@ -542,14 +753,23 @@ pub export fn howl_odin_bridge_render_upload_copy(
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
-    const upload = renderer.frame_uploads[index];
-    if (upload.pixel_offset + upload.pixel_count > renderer.pixel_count) return 3;
-    if (output_capacity < upload.pixel_count) return 4;
-    @memcpy(
-        output_ptr[0..upload.pixel_count],
-        renderer.frame_pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
-    );
-    output_len.* = upload.pixel_count;
+    if (index < renderer.frame_upload_count) {
+        const upload = renderer.frame_uploads[index];
+        if (upload.pixel_offset + upload.pixel_count > renderer.pixel_count) return 3;
+        if (output_capacity < upload.pixel_count) return 4;
+        @memcpy(
+            output_ptr[0..upload.pixel_count],
+            renderer.frame_pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
+        );
+        output_len.* = upload.pixel_count;
+        return 0;
+    }
+    const external_index = index - renderer.frame_upload_count;
+    if (external_index >= renderer.external_upload_count) return 2;
+    const pixels = renderer.external_uploads[external_index].fetched.pixels;
+    if (output_capacity < pixels.len) return 4;
+    @memcpy(output_ptr[0..pixels.len], pixels);
+    output_len.* = pixels.len;
     return 0;
 }
 
@@ -1711,6 +1931,74 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(RenderCommandInfo));
     try std.testing.expectEqual(@as(u8, 0), @backingInt(canvas.ResourceFormat.alpha8));
     try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
+}
+
+test "Odin image bindings retain logical resources across image generations" {
+    const maximum = terminal_render.maximum_external_images;
+    var images: [maximum]client.view.Image = undefined;
+    for (&images, 0..) |*image, index| image.* = .{
+        .image_id = @intCast(index + 1),
+        .generation = 1,
+        .width = 1,
+        .height = 1,
+    };
+    var output: [maximum]RenderImageBinding = undefined;
+    const empty_usage = terminal_render.ContentUsage{
+        .shape = .{ .entries = 0, .scalars = 0, .glyphs = 0 },
+        .atlas_entries = 0,
+        .producer_revision = 0,
+        .resource_generation = 0,
+        .resource_high_water = 0,
+    };
+    const first = try planImageBindings(&.{}, empty_usage, &images, &output);
+    try std.testing.expectEqual(maximum, first.len);
+    for (first, 0..) |binding, index| {
+        try std.testing.expectEqual(@as(u64, @intCast(index + 2)), try binding.resource.resource.identity());
+        try std.testing.expectEqual(@as(u64, 1), @backingInt(binding.resource.generation));
+    }
+
+    var retained: [maximum]RenderImageBinding = undefined;
+    @memcpy(&retained, first);
+    images[0].generation = 2;
+    var replacement: [maximum]RenderImageBinding = undefined;
+    var later_usage = empty_usage;
+    later_usage.resource_high_water = maximum + 1;
+    const second = try planImageBindings(&retained, later_usage, &images, &replacement);
+    try std.testing.expectEqual(@as(u64, 2), second[0].generation);
+    try std.testing.expectEqual(@as(u64, 2), try second[0].resource.resource.identity());
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(second[0].resource.generation));
+
+    images[0].generation = 1;
+    try std.testing.expectError(
+        error.InvalidImageBinding,
+        planImageBindings(second, later_usage, &images, &output),
+    );
+}
+
+test "Odin residency upsert replaces generations without growing the table" {
+    const source: canvas.SourceId = @fromBackingInt(3);
+    const local = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.local(9),
+        .generation = @fromBackingInt(1),
+    };
+    var storage: [render_resource_limit]canvas.Residency = undefined;
+    var count: usize = 0;
+    try upsertResidency(&storage, &count, .{
+        .resource = try canvas.FrameResourceRef.local(source, local),
+        .format = .rgba8,
+        .size = .{ .width = 2, .height = 2 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), count);
+    var replacement = local;
+    replacement.generation = @fromBackingInt(2);
+    try upsertResidency(&storage, &count, .{
+        .resource = try canvas.FrameResourceRef.local(source, replacement),
+        .format = .rgba8,
+        .size = .{ .width = 4, .height = 3 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(storage[0].resource.generation));
+    try std.testing.expectEqual(canvas.Size{ .width = 4, .height = 3 }, storage[0].size);
 }
 
 test "Odin search selection and interaction C records stay fixed" {

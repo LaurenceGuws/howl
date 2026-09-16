@@ -439,12 +439,25 @@ These labels are descriptive, not priority scores.
 - Canvas residency avoids redundant atlas upload on unchanged generations.
 - Nerd/Powerline glyphs, ANSI colors, cursor, background, shaping, and HiDPI
   logical geometry are live in the Odin client.
+- Terminal images now use the canonical Howl external-resource lane end-to-end:
+  Session manifests identify exact image generations, `howl-client.images` fetches
+  RGBA8 bytes on demand, `howl-render` owns placement/crop/z-order, Canvas names
+  missing external resources and residency, and SDL sees only ordinary RGBA uploads
+  and commands. A fresh image frame uploaded atlas + image once, then two unchanged
+  frames produced zero uploads; replacing Kitty image id 78 kept Canvas resource 2
+  while generation advanced 3 -> 5 and again settled to zero uploads.
+- Kitty crop/z/lifetime are pressure-tested through the same seam: a 32x32 image
+  placed only source x=16,y=0,w=16,h=32 into a 36x80 destination, negative-z image
+  content painted below foreground `OVER` text, and deleting the exact placement
+  emitted the matching resource-2 generation-7 Canvas removal and retired the SDL
+  texture. A separate Sixel 60x30 red/green image rendered through the identical
+  residency/refill path, proving Odin consumes canonical graphics state rather than
+  a Kitty-specific protocol path.
 
 **WANTED**
 
-- Exact terminal-image resource refill/residency path.
-- Kitty/image placement pressure and clipping in panes/history where canonical
-  semantics permit it.
+- Image pressure across split panes/history/resize and the seven-image external
+  resource bound where canonical semantics permit it.
 - Font family selection and fallback policy through Howl text owners.
 - Underline/undercurl/style/color pressure corpus.
 - Emoji, combining marks, wide glyphs, ligatures/shaping, bidi policy where Howl
