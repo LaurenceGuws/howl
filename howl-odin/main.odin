@@ -15,6 +15,7 @@ UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 SESSION_TEXT_BYTES :: 512 * 1024
 SELECTION_TEXT_BYTES :: 1024 * 1024
+SEARCH_QUERY_BYTES :: 512
 SESSION_RETRY_MS :: 50
 MAX_TABS :: 8
 MAX_CANVAS_RESOURCES :: 8
@@ -32,6 +33,14 @@ User_Config :: struct {
 
 Tab_Kind :: enum {
     Session,
+}
+
+Search_State :: enum u8 {
+    Idle,
+    Found,
+    Not_Found,
+    Stale,
+    Error,
 }
 
 Tab :: struct {
@@ -67,6 +76,27 @@ Session_View :: struct {
     observer: rawptr,
     cancellation: rawptr,
     observer_thread: ^thread.Thread,
+    search: rawptr,
+    search_cancellation: rawptr,
+    search_thread: ^thread.Thread,
+    search_cond: sync.Cond,
+    search_pending: bool,
+    search_generation: u64,
+    search_query: [SEARCH_QUERY_BYTES]u8,
+    search_query_len: int,
+    search_reverse: bool,
+    search_origin_present: bool,
+    search_origin_row: i32,
+    search_origin_column: u16,
+    search_running: bool,
+    search_running_generation: u64,
+    search_state: Search_State,
+    search_last_reverse: bool,
+    search_last_complete: bool,
+    search_result_active: bool,
+    search_result: Search_Match_Info,
+    search_error: [160]u8,
+    search_error_len: int,
     endpoint: [160]u8,
     endpoint_len: int,
     text: []u8,
@@ -193,6 +223,9 @@ App :: struct {
     palette_selection: int,
     settings_open: bool,
     settings_page: Settings_Page,
+    search_open: bool,
+    search_query: [SEARCH_QUERY_BYTES]u8,
+    search_query_len: int,
     next_session_identity: u32,
     startup_profile: int,
 }
@@ -874,9 +907,241 @@ observe_session :: proc(data: rawptr) {
         view.alternate_screen = snapshot_alternate_screen
         view.text_truncated = snapshot_text_truncated
         view.error_len = 0
+        validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
         notify_session_update()
     }
+}
+
+search_result_retained_locked :: proc(view: ^Session_View, result: Search_Match_Info) -> bool {
+    if result.found == 0 || result.columns != view.columns ||
+       (result.alternate_screen != 0) != view.alternate_screen {
+        return false
+    }
+    row := i64(result.row)
+    if view.alternate_screen {
+        return row >= 0 && row < i64(view.rows)
+    }
+    first := i64(view.history_row_base)
+    last := first + i64(view.history_count) + i64(view.rows) - 1
+    return row >= first && row <= last
+}
+
+validate_search_result_locked :: proc(view: ^Session_View) {
+    if view.search_result_active && !search_result_retained_locked(view, view.search_result) {
+        view.search_result_active = false
+        view.search_state = .Stale
+    }
+}
+
+apply_search_result_locked :: proc(view: ^Session_View, result: Search_Match_Info) -> bool {
+    if !search_result_retained_locked(view, result) {
+        return false
+    }
+    clear_selection_locked(view)
+    view.history_wheel_rows = 0
+    if view.alternate_screen {
+        reset_history_locked(view)
+    } else {
+        first := i64(view.history_row_base)
+        live_top := first + i64(view.history_count)
+        row := i64(result.row)
+        half_rows := i64(view.rows) / 2
+        target_top := clamp(row - half_rows, first, live_top)
+        offset := live_top - target_top
+        view.history_target_offset = u32(offset)
+        if offset == 0 {
+            view.history_anchor_top_row = 0
+            view.history_anchor_valid = false
+        } else {
+            view.history_anchor_top_row = u64(target_top)
+            view.history_anchor_valid = true
+        }
+    }
+    view.search_result = result
+    view.search_result_active = true
+    return true
+}
+
+copy_search_error :: proc(view: ^Session_View, handle: rawptr, destination: ^[160]u8, destination_len: ^int) {
+    count: c.size_t
+    copy_error(handle, raw_data(destination[:]), c.size_t(len(destination)), &count)
+    destination_len^ = int(count)
+}
+
+search_session :: proc(data: rawptr) {
+    view := (^Session_View)(data)
+    local_query: [SEARCH_QUERY_BYTES]u8
+    for {
+        sync.mutex_lock(&view.mutex)
+        for !view.worker_stop && !view.search_pending {
+            sync.cond_wait(&view.search_cond, &view.mutex)
+        }
+        if view.worker_stop {
+            sync.mutex_unlock(&view.mutex)
+            break
+        }
+        generation := view.search_generation
+        query_len := view.search_query_len
+        copy(local_query[:query_len], view.search_query[:query_len])
+        reverse := view.search_reverse
+        origin_present := view.search_origin_present
+        origin_row := view.search_origin_row
+        origin_column := view.search_origin_column
+        view.search_pending = false
+        view.search_running = true
+        view.search_running_generation = generation
+        sync.mutex_unlock(&view.mutex)
+
+        result: Search_Match_Info
+        rc := search_find(
+            view.search,
+            raw_data(local_query[:]),
+            c.size_t(query_len),
+            reverse ? u8(1) : u8(0),
+            origin_present ? u8(1) : u8(0),
+            origin_row,
+            origin_column,
+            &result,
+        )
+        error_message: [160]u8
+        error_len := 0
+        if rc != 0 {
+            copy_search_error(view, view.search, &error_message, &error_len)
+        }
+
+        sync.mutex_lock(&view.mutex)
+        view.search_running = false
+        if !view.worker_stop && generation == view.search_generation {
+            view.search_last_reverse = reverse
+            view.search_last_complete = rc == 0 && result.complete != 0
+            view.search_error_len = 0
+            if rc != 0 {
+                count := min(error_len, len(view.search_error))
+                copy(view.search_error[:count], error_message[:count])
+                view.search_error_len = count
+                view.search_state = .Error
+            } else if result.found == 0 {
+                view.search_state = .Not_Found
+            } else if apply_search_result_locked(view, result) {
+                view.search_state = .Found
+            } else {
+                message := "search_result_stale"
+                copy(view.search_error[:], transmute([]u8)message)
+                view.search_error_len = len(message)
+                view.search_state = .Error
+                view.search_result_active = false
+            }
+        }
+        sync.mutex_unlock(&view.mutex)
+        notify_session_update()
+    }
+}
+
+clear_search_result :: proc(view: ^Session_View) {
+    if view == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    view.search_generation += 1
+    view.search_pending = false
+    view.search_result_active = false
+    view.search_state = .Idle
+    view.search_last_complete = true
+    view.search_error_len = 0
+    sync.mutex_unlock(&view.mutex)
+}
+
+ensure_search_worker :: proc(view: ^Session_View) -> bool {
+    if view == nil || view.control == nil {
+        return false
+    }
+    if view.search != nil && view.search_thread != nil {
+        return true
+    }
+
+    endpoint := session_endpoint(view)
+    if len(endpoint) == 0 {
+        return false
+    }
+    diagnostic: [160]u8
+    diagnostic_len: c.size_t
+    handle := create(
+        raw_data(endpoint),
+        c.size_t(len(endpoint)),
+        raw_data(diagnostic[:]),
+        c.size_t(len(diagnostic)),
+        &diagnostic_len,
+    )
+    if handle == nil {
+        sync.mutex_lock(&view.mutex)
+        count := min(int(diagnostic_len), len(view.search_error))
+        copy(view.search_error[:count], diagnostic[:count])
+        view.search_error_len = count
+        view.search_state = .Error
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+
+    cancellation := cancellation_create(handle)
+    if cancellation == nil {
+        destroy(handle)
+        sync.mutex_lock(&view.mutex)
+        message := "search_cancellation_failed"
+        copy(view.search_error[:len(message)], transmute([]u8)message)
+        view.search_error_len = len(message)
+        view.search_state = .Error
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+
+    view.search = handle
+    view.search_cancellation = cancellation
+    view.search_thread = thread.create_and_start_with_data(
+        rawptr(view),
+        search_session,
+        name = "howl-odin-search",
+    )
+    if view.search_thread == nil {
+        cancellation_destroy(cancellation)
+        destroy(handle)
+        view.search = nil
+        view.search_cancellation = nil
+        sync.mutex_lock(&view.mutex)
+        message := "search_thread_failed"
+        copy(view.search_error[:len(message)], transmute([]u8)message)
+        view.search_error_len = len(message)
+        view.search_state = .Error
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+    return true
+}
+
+queue_search :: proc(view: ^Session_View, query: []u8, reverse: bool) -> bool {
+    if view == nil || len(query) == 0 || len(query) > SEARCH_QUERY_BYTES ||
+       !ensure_search_worker(view) {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    view.search_generation += 1
+    view.search_query_len = len(query)
+    copy(view.search_query[:len(query)], query)
+    view.search_reverse = reverse
+    view.search_origin_present = view.search_result_active
+    if view.search_result_active {
+        view.search_origin_row = view.search_result.row
+        view.search_origin_column = reverse ? view.search_result.start_column : view.search_result.end_column
+    } else {
+        view.search_origin_row = 0
+        view.search_origin_column = 0
+    }
+    view.search_pending = true
+    view.search_state = .Idle
+    view.search_error_len = 0
+    sync.mutex_unlock(&view.mutex)
+    sync.cond_signal(&view.search_cond)
+    return true
 }
 
 publish_initial_error :: proc(view: ^Session_View, message: string) {
@@ -1235,6 +1500,7 @@ create_session_view :: proc(endpoint: string, owned_process: rawptr) -> ^Session
     if view.observer_thread == nil {
         publish_initial_error(view, "observer_thread_failed")
     }
+
     return view
 }
 
@@ -1252,21 +1518,35 @@ destroy_session_view :: proc(view: ^Session_View) {
     }
     _ = finish_history_scrollbar_drag(view)
     reset_canvas(view)
+    sync.mutex_lock(&view.mutex)
+    view.worker_stop = true
+    sync.mutex_unlock(&view.mutex)
+    sync.cond_signal(&view.search_cond)
+    if view.cancellation != nil {
+        _ = cancellation_cancel(view.cancellation)
+    }
+    if view.search_cancellation != nil {
+        _ = cancellation_cancel(view.search_cancellation)
+    }
     if view.observer_thread != nil {
-        sync.mutex_lock(&view.mutex)
-        view.worker_stop = true
-        sync.mutex_unlock(&view.mutex)
-        if view.cancellation != nil {
-            _ = cancellation_cancel(view.cancellation)
-        }
         thread.destroy(view.observer_thread)
         view.observer_thread = nil
+    }
+    if view.search_thread != nil {
+        thread.destroy(view.search_thread)
+        view.search_thread = nil
     }
     if view.cancellation != nil {
         cancellation_destroy(view.cancellation)
     }
+    if view.search_cancellation != nil {
+        cancellation_destroy(view.search_cancellation)
+    }
     if view.observer != nil {
         destroy(view.observer)
+    }
+    if view.search != nil {
+        destroy(view.search)
     }
     if view.control != nil {
         destroy(view.control)
@@ -1288,6 +1568,69 @@ active_session_view :: proc(app: ^App) -> ^Session_View {
         return tab.secondary_session
     }
     return tab.session
+}
+
+clear_all_search_results :: proc(app: ^App) {
+    for index in 0..<app.tab_count {
+        clear_search_result(app.tabs[index].session)
+        clear_search_result(app.tabs[index].secondary_session)
+    }
+}
+
+open_search :: proc(app: ^App) {
+    app.profile_menu_open = false
+    app.palette_open = false
+    app.settings_open = false
+    app.search_open = true
+    app.search_query_len = 0
+    clear_all_search_results(app)
+    clear_selection(active_session_view(app))
+}
+
+close_search :: proc(app: ^App) {
+    if !app.search_open {
+        return
+    }
+    app.search_open = false
+    app.search_query_len = 0
+    clear_all_search_results(app)
+}
+
+append_search_query :: proc(app: ^App, text: string) -> bool {
+    if len(text) == 0 || app.search_query_len + len(text) > len(app.search_query) {
+        return false
+    }
+    copy(
+        app.search_query[app.search_query_len:app.search_query_len + len(text)],
+        transmute([]u8)text,
+    )
+    app.search_query_len += len(text)
+    clear_search_result(active_session_view(app))
+    return true
+}
+
+backspace_search_query :: proc(app: ^App) -> bool {
+    if app.search_query_len == 0 {
+        return false
+    }
+    next := app.search_query_len - 1
+    for next > 0 && app.search_query[next] & 0xc0 == 0x80 {
+        next -= 1
+    }
+    app.search_query_len = next
+    clear_search_result(active_session_view(app))
+    return true
+}
+
+request_search :: proc(app: ^App, reverse: bool) -> bool {
+    if !app.search_open || app.search_query_len == 0 {
+        return false
+    }
+    view := active_session_view(app)
+    if view == nil {
+        return false
+    }
+    return queue_search(view, app.search_query[:app.search_query_len], reverse)
 }
 
 session_endpoint :: proc(view: ^Session_View) -> string {
@@ -1742,6 +2085,57 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
 }
 
+draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+    if view == nil || view.canvas == nil {
+        return
+    }
+    sync.mutex_lock(&view.mutex)
+    active := view.search_result_active
+    result := view.search_result
+    sync.mutex_unlock(&view.mutex)
+    if !active {
+        return
+    }
+
+    cell_width := render_cell_width(view.canvas)
+    cell_height := render_cell_height(view.canvas)
+    if cell_width == 0 || cell_height == 0 {
+        return
+    }
+    columns := u16(view.canvas_surface_width / cell_width)
+    rows := u16(view.canvas_surface_height / cell_height)
+    alternate := render_alternate_screen(view.canvas) != 0
+    if result.columns != columns || (result.alternate_screen != 0) != alternate {
+        return
+    }
+    top_row: i64 = 0
+    if !alternate {
+        top_row = i64(render_history_row_base(view.canvas)) +
+                  i64(render_history_count(view.canvas)) -
+                  i64(render_history_offset(view.canvas))
+    }
+    viewport_row := i64(result.row) - top_row
+    if viewport_row < 0 || viewport_row >= i64(rows) ||
+       result.start_column >= columns || result.end_column >= columns {
+        return
+    }
+
+    origin_x := pane.x + 10
+    origin_y := pane.y + 6
+    rect := SDL.FRect{
+        origin_x + f32(result.start_column * cell_width),
+        origin_y + f32(viewport_row * i64(cell_height)),
+        f32((result.end_column - result.start_column + 1) * cell_width),
+        f32(cell_height),
+    }
+    fill := palette.accent
+    fill[3] = 62
+    draw_fill(app.renderer, rect, fill)
+    edge := palette.accent
+    edge[3] = 180
+    draw_outline(app.renderer, rect, edge)
+}
+
 tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.FRect) {
     tab_w := f32(162)
     controls_x := f32(8) + f32(tab_count) * (tab_w + 4)
@@ -1997,6 +2391,10 @@ settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool)
 handle_click :: proc(app: ^App, x, y, width, height: f32) {
     plus, menu, settings := tab_controls(app.tab_count, width)
 
+    if app.search_open && inside(x, y, search_bar_rect(width)) {
+        return
+    }
+
     if app.settings_open {
         if page, ok := settings_page_at(x, y, width, height); ok {
             app.settings_page = page
@@ -2045,10 +2443,12 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 
     if inside(x, y, plus) {
+        close_search(app)
         new_tab(app)
         return
     }
     if inside(x, y, menu) {
+        close_search(app)
         app.profile_menu_open = !app.profile_menu_open
         app.profile_menu_selection = 0
         app.palette_open = false
@@ -2056,6 +2456,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         return
     }
     if inside(x, y, settings) {
+        close_search(app)
         app.settings_open = !app.settings_open
         app.palette_open = false
         return
@@ -2066,6 +2467,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     for i in 0..<app.tab_count {
         rect := SDL.FRect{tab_x, 7, tab_w, 32}
         if inside(x, y, rect) {
+            close_search(app)
             close_rect := SDL.FRect{rect.x + rect.w - 30, rect.y, 30, rect.h}
             if app.tab_count > 1 && inside(x, y, close_rect) {
                 close_tab(app, i)
@@ -2089,7 +2491,26 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
         alt := .LALT in event.key.mod || .RALT in event.key.mod
-        if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_P {
+        if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_F {
+            if app.search_open {
+                close_search(app)
+            } else {
+                open_search(app)
+            }
+        } else if app.search_open {
+            if event.type == .KEY_DOWN {
+                switch event.key.key {
+                case SDL.K_ESCAPE:
+                    close_search(app)
+                case SDL.K_BACKSPACE:
+                    _ = backspace_search_query(app)
+                case SDL.K_RETURN:
+                    _ = request_search(app, !shift)
+                case:
+                }
+            }
+            return
+        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_P {
             app.palette_open = !app.palette_open
             app.palette_selection = 0
             app.profile_menu_open = false
@@ -2171,6 +2592,15 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .TEXT_INPUT:
+        if app.search_open {
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 {
+                    _ = append_search_query(app, text)
+                }
+            }
+            return
+        }
         view := active_session_view(app)
         if view != nil && view.control != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
@@ -2532,6 +2962,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     origin_y := pane.y + 6
     resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
+        draw_search_highlight(app, view, pane)
         draw_selection(app, view, pane)
         draw_history_scrollbar(app, view, pane)
         if history_active(view) {
@@ -2589,6 +3020,69 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         draw_outline(app.renderer, badge, palette.accent)
         draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
     }
+}
+
+search_bar_rect :: proc(width: f32) -> SDL.FRect {
+    box_width := min(f32(640), max(f32(360), width - 72))
+    return {width - box_width - 22, 54, box_width, 46}
+}
+
+draw_search_bar :: proc(app: ^App, width: f32) {
+    box := search_bar_rect(width)
+    draw_fill(app.renderer, box, palette.title_bg)
+    draw_outline(app.renderer, box, palette.border)
+    draw_text(app, app.ui_font, "Find", box.x + 12, box.y + 12, palette.text_muted)
+
+    field := SDL.FRect{box.x + 58, box.y + 6, max(f32(160), box.w - 340), 34}
+    draw_fill(app.renderer, field, palette.terminal_bg)
+    draw_outline(app.renderer, field, palette.accent)
+    query := string(app.search_query[:app.search_query_len])
+    query_color := palette.text
+    if app.search_query_len == 0 {
+        query = "type to search"
+        query_color = palette.text_muted
+    }
+    clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(field.w - 16), c.int(field.h)}
+    _ = SDL.SetRenderClipRect(app.renderer, &clip)
+    draw_text(app, app.ui_font, query, field.x + 9, field.y + 8, query_color)
+    _ = SDL.SetRenderClipRect(app.renderer, nil)
+
+    status := "Enter older  Shift+Enter newer"
+    status_color := palette.text_muted
+    view := active_session_view(app)
+    if view != nil {
+        sync.mutex_lock(&view.mutex)
+        running := view.search_pending ||
+                   (view.search_running && view.search_running_generation == view.search_generation)
+        state := view.search_state
+        last_complete := view.search_last_complete
+        search_available := view.control != nil
+        sync.mutex_unlock(&view.mutex)
+        if !search_available {
+            status = "search unavailable"
+            status_color = palette.accent
+        } else if running {
+            status = "searching..."
+            status_color = palette.accent
+        } else {
+            switch state {
+            case .Found:
+                status = last_complete ? "match" : "match · history moved"
+                status_color = palette.accent
+            case .Not_Found:
+                status = last_complete ? "no match" : "history moved · retry"
+                status_color = palette.accent
+            case .Stale:
+                status = "match expired"
+                status_color = palette.accent
+            case .Error:
+                status = "search failed"
+                status_color = palette.accent
+            case .Idle:
+            }
+        }
+    }
+    draw_text(app, app.ui_font, status, field.x + field.w + 14, box.y + 13, status_color)
 }
 
 draw_placeholder_session :: proc(app: ^App) {
@@ -2759,6 +3253,10 @@ draw :: proc(app: ^App) {
     draw_fill(app.renderer, tab_bar, palette.title_bg)
     draw_tabs(app, width)
     draw_terminal(app, width, height)
+
+    if app.search_open {
+        draw_search_bar(app, width)
+    }
 
     if app.profile_menu_open {
         draw_profile_menu(app)

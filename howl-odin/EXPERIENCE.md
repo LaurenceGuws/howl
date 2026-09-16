@@ -214,18 +214,44 @@ These labels are descriptive, not priority scores.
 - Vertical-only resize preserves the top retained row.
 - Horizontal reflow/column change deliberately returns an owned scrolled pane to
   LIVE because projected row identity is not stable across reflow.
-- Ten executable Odin history/scrollbar tests run in the owner build.
+- Twelve executable Odin history/scrollbar tests run in the owner build.
+
+**PROVEN — Find**
+
+- Ctrl+Shift+F opens a compact pane-local Find bar without mutating Session.
+- Exact case-sensitive UTF-8 matching is owned by reusable `howl-client.search` over
+  immutable projected rows; concealed text is not searchable and wide-cell matches
+  use the same canonical visual-span rules as selection.
+- Enter walks older results and Shift+Enter walks newer results, including multiple
+  matches on one projected row.
+- A dedicated search connection/worker is created lazily on the first actual query;
+  merely opening Find adds no thread or Session connection.
+- Search may page the complete 4,096-row retained ring without blocking SDL. Results
+  name canonical rows/columns and recenter through the same absolute history anchor,
+  so live output can continue underneath a highlighted old match without dragging it.
+- Search freezes one retained-domain cut at request start. If a hot full ring evicts
+  oldest rows faster than the client can inspect them, the result is marked incomplete
+  rather than turning missing evidence into a false no-match.
+- Reflow or eviction invalidates an affected result explicitly as “match expired”.
+  Closing Find removes its chrome/highlight but deliberately leaves the pane at the
+  searched history position.
+- Five executable Odin Find-state tests run with the owner build in addition to the
+  shared `howl-client.search` unit coverage.
 
 **ACTIVE**
 
 - Continue resize, font-zoom, split/collapse, live-output, oldest-ring, and
   multi-pane pressure without weakening the reflow safety rule.
+- Pressure Find across multiple panes/tabs and a full moving ring; refine compact
+  feedback without growing a search-index subsystem prematurely.
 
 **WANTED**
 
-- Search retained history from the desktop UI.
-- Next/previous result navigation and visible result highlighting.
-- Search while output continues without dragging the viewport unexpectedly.
+- Search result counts only if they can be derived cheaply and honestly.
+- Optional case-insensitive/regex modes only after ordinary exact Find is boringly
+  reliable and their Unicode semantics are explicit.
+- Cross-soft-wrap logical-line search only if a stable logical-line identity earns it;
+  do not silently pretend adjacent projected rows are one immutable string.
 - Selection edge-autoscroll while dragging beyond the visible top/bottom.
 - A future cross-reflow anchor only if Session/VT gains a stable logical-line
   identity that can name the same text after column reflow. Do not fake this

@@ -90,6 +90,17 @@ Current canary:
   changes preserve the absolute retained-row anchor; an owned horizontal reflow
   deliberately returns to LIVE because the same numeric row can name different
   text after reflow;
+- retained-history Find is pane-local and keyboard-first: `Ctrl+Shift+F` opens a
+  compact query bar, Enter walks older matches, Shift+Enter walks newer matches,
+  and matches are canonical projected row/column facts rather than scraped glyphs.
+  The full retained ring is scanned on a lazily-created read-only worker connection,
+  so SDL never waits for a 4,096-row search. A found match recenters through the
+  same absolute history anchor used by manual scrollback and remains stationary
+  while newer PTY output arrives. Reflow/eviction expires stale matches explicitly;
+  a hot ring that evicts rows before they can be scanned reports an incomplete
+  result instead of a false authoritative no-match. Search is currently exact,
+  case-sensitive UTF-8 within one projected row; cross-wrap logical-line search,
+  regex/case modes, and richer search options are deliberately not faked yet;
 - desktop selection is pane-local: left-drag paints a client-owned cell range,
   `Ctrl+Shift+C` resolves that displayed range through `howl-client.selection`
   and the Session's canonical `text_extract`, and `Ctrl+Shift+V` uses the
