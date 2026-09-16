@@ -35,6 +35,28 @@ pub fn row(
     viewport_row: u16,
     reverse: bool,
 ) Error!?Match {
+    const begin = view.begin(snapshot);
+    if (viewport_row >= begin.rows or begin.columns == 0) return null;
+    return rowFrom(
+        snapshot,
+        allocator,
+        query,
+        viewport_row,
+        if (reverse) begin.columns - 1 else 0,
+        reverse,
+    );
+}
+
+/// Finds one exact UTF-8 substring in a projected row at/after (forward) or
+/// ending at/before (reverse) the supplied canonical column bound.
+pub fn rowFrom(
+    snapshot: *const view.Snapshot,
+    allocator: std.mem.Allocator,
+    query: []const u8,
+    viewport_row: u16,
+    column_bound: u16,
+    reverse: bool,
+) Error!?Match {
     if (query.len == 0 or !std.unicode.utf8ValidateSlice(query)) return error.InvalidQuery;
     const begin = view.begin(snapshot);
     if (viewport_row >= begin.rows) return null;
@@ -76,13 +98,39 @@ pub fn row(
     }
     if (query.len > offset) return null;
     const haystack = text[0..offset];
-    const match_offset = if (reverse)
-        std.mem.lastIndexOf(u8, haystack, query)
-    else
-        std.mem.indexOf(u8, haystack, query);
-    const found = match_offset orelse return null;
-    const start_column = byte_columns[found];
-    const end_column = byte_columns[found + query.len - 1];
+    if (reverse) {
+        var search_end = haystack.len;
+        while (search_end >= query.len) {
+            const found = std.mem.lastIndexOf(u8, haystack[0..search_end], query) orelse return null;
+            const start_column = byte_columns[found];
+            const end_column = byte_columns[found + query.len - 1];
+            if (end_column <= column_bound)
+                return try matchAt(snapshot, viewport_row, start_column, end_column);
+            if (found == 0) return null;
+            search_end = found;
+        }
+        return null;
+    }
+
+    var search_start: usize = 0;
+    while (search_start + query.len <= haystack.len) {
+        const relative = std.mem.indexOf(u8, haystack[search_start..], query) orelse return null;
+        const found = search_start + relative;
+        const start_column = byte_columns[found];
+        const end_column = byte_columns[found + query.len - 1];
+        if (start_column >= column_bound)
+            return try matchAt(snapshot, viewport_row, start_column, end_column);
+        search_start = found + 1;
+    }
+    return null;
+}
+
+fn matchAt(
+    snapshot: *const view.Snapshot,
+    viewport_row: u16,
+    start_column: u16,
+    end_column: u16,
+) Error!Match {
     var range = try selection.Range.start(snapshot, viewport_row, start_column);
     try range.extend(snapshot, viewport_row, end_column);
     return .{
@@ -257,6 +305,25 @@ test "search first honors row and match direction" {
     const backward = (try first(snapshot, std.testing.allocator, "aa", 1, true)).?;
     try std.testing.expectEqual(@as(u16, 1), backward.viewport_row);
     try std.testing.expectEqual(@as(u16, 0), backward.start_column);
+}
+
+test "search rowFrom continues between multiple matches on one row" {
+    var row0 = [_]rich.Cell{
+        testCell(&.{'a'}, 1), testCell(&.{'a'}, 1), testCell(&.{' '}, 1),
+        testCell(&.{'a'}, 1), testCell(&.{'a'}, 1), testCell(&.{' '}, 1),
+        testCell(&.{'a'}, 1), testCell(&.{'a'}, 1),
+    };
+    var source_rows = [_]rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &row0 }};
+    var source = testSnapshot(&source_rows, 1, 8);
+    const snapshot = try view.project(std.testing.allocator, &source);
+    defer view.deinit(snapshot);
+
+    const second = (try rowFrom(snapshot, std.testing.allocator, "aa", 0, 3, false)).?;
+    try std.testing.expectEqual(@as(u16, 3), second.start_column);
+    const before_last = (try rowFrom(snapshot, std.testing.allocator, "aa", 0, 4, true)).?;
+    try std.testing.expectEqual(@as(u16, 3), before_last.start_column);
+    const first_match = (try rowFrom(snapshot, std.testing.allocator, "aa", 0, 2, true)).?;
+    try std.testing.expectEqual(@as(u16, 0), first_match.start_column);
 }
 
 test "search query is exact utf8 and does not cross projected rows" {
