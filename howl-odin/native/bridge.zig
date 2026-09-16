@@ -82,6 +82,10 @@ const Render = struct {
     pixel_count: usize = 0,
     frame_revision: u64 = 0,
     session_revision: u64 = 0,
+    history_offset: u32 = 0,
+    history_count: u32 = 0,
+    history_row_base: u32 = 0,
+    alternate_screen: bool = false,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
@@ -240,11 +244,16 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     allocator.destroy(renderer);
 }
 
-pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle) i32 {
+pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offset: u32) i32 {
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.clearError();
-    var rich = client.rich.request(&renderer.connection, renderer.allocator, 0, 0) catch |failure| {
+    var rich = client.rich.request(
+        &renderer.connection,
+        renderer.allocator,
+        0,
+        history_offset,
+    ) catch |failure| {
         renderer.setError("observe", @errorName(failure));
         return 2;
     };
@@ -306,6 +315,10 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle) i32 {
     renderer.pixel_count = frame.pixels.len;
     renderer.frame_revision = @backingInt(frame.revision);
     renderer.session_revision = begin.revision;
+    renderer.history_offset = begin.history_offset;
+    renderer.history_count = begin.history_count;
+    renderer.history_row_base = begin.history_row_base;
+    renderer.alternate_screen = begin.alternate_screen;
     renderer.surface = surface;
     updateRenderResidency(renderer, frame.uploads, frame.removals);
     return 0;
@@ -395,6 +408,30 @@ pub export fn howl_odin_bridge_render_session_revision(raw: ?*RenderHandle) u64 
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.session_revision;
+}
+
+pub export fn howl_odin_bridge_render_history_offset(raw: ?*RenderHandle) u32 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return renderer.history_offset;
+}
+
+pub export fn howl_odin_bridge_render_history_count(raw: ?*RenderHandle) u32 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return renderer.history_count;
+}
+
+pub export fn howl_odin_bridge_render_history_row_base(raw: ?*RenderHandle) u32 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return renderer.history_row_base;
+}
+
+pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
+    const value = raw orelse return 0;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    return @intFromBool(renderer.alternate_screen);
 }
 
 pub export fn howl_odin_bridge_render_upload_count(raw: ?*RenderHandle) u32 {
@@ -948,6 +985,14 @@ pub export fn howl_odin_bridge_alternate_screen(raw: ?*Handle) u8 {
 
 pub export fn howl_odin_bridge_history_count(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_count else 0;
+}
+
+pub export fn howl_odin_bridge_history_offset(raw: ?*Handle) u32 {
+    return if (lastBegin(raw)) |begin| begin.history_offset else 0;
+}
+
+pub export fn howl_odin_bridge_history_row_base(raw: ?*Handle) u32 {
+    return if (lastBegin(raw)) |begin| begin.history_row_base else 0;
 }
 
 pub export fn howl_odin_bridge_text_truncated(raw: ?*Handle) u8 {

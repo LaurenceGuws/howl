@@ -30,11 +30,13 @@ foreign howl_bridge {
     cursor_visible     :: proc(handle: rawptr) -> u8 ---
     cursor_shape       :: proc(handle: rawptr) -> u8 ---
     alternate_screen   :: proc(handle: rawptr) -> u8 ---
+    history_offset     :: proc(handle: rawptr) -> u32 ---
     history_count      :: proc(handle: rawptr) -> u32 ---
+    history_row_base   :: proc(handle: rawptr) -> u32 ---
     text_truncated     :: proc(handle: rawptr) -> u8 ---
     render_create      :: proc(endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     render_destroy     :: proc(handle: rawptr) ---
-    render_observe     :: proc(handle: rawptr) -> i32 ---
+    render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---
     render_surface_height :: proc(handle: rawptr) -> u16 ---
     render_cell_width     :: proc(handle: rawptr) -> u16 ---
@@ -43,6 +45,10 @@ foreign howl_bridge {
     render_maximum_columns :: proc() -> u16 ---
     render_frame_revision :: proc(handle: rawptr) -> u64 ---
     render_session_revision :: proc(handle: rawptr) -> u64 ---
+    render_history_offset :: proc(handle: rawptr) -> u32 ---
+    render_history_count :: proc(handle: rawptr) -> u32 ---
+    render_history_row_base :: proc(handle: rawptr) -> u32 ---
+    render_alternate_screen :: proc(handle: rawptr) -> u8 ---
     render_upload_count  :: proc(handle: rawptr) -> u32 ---
     render_removal_count :: proc(handle: rawptr) -> u32 ---
     render_command_count :: proc(handle: rawptr) -> u32 ---

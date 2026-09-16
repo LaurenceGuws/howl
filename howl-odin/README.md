@@ -62,6 +62,12 @@ Current canary:
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
   `howl-client`'s duplicate-socket cancellation primitive;
+- scrollback is pane-local and uses Howl's canonical retained-history window:
+  physical mouse-wheel input and Shift+PageUp/PageDown request exact history
+  offsets, an absolute retained-row anchor keeps a scrolled viewport stationary
+  while newer PTY output arrives, alternate-screen observations reset the pane
+  to LIVE, and committed terminal input returns only the active pane to LIVE
+  before delivery;
 - terminal content is now projected by the real `howl-render` terminal Content
   and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,

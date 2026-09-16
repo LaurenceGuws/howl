@@ -71,6 +71,10 @@ Session_View :: struct {
     cursor_visible: bool,
     cursor_shape: u8,
     history_count: u32,
+    history_row_base: u32,
+    history_target_offset: u32,
+    history_anchor_top_row: u64,
+    history_anchor_valid: bool,
     alternate_screen: bool,
     text_truncated: bool,
     error: [160]u8,
@@ -80,6 +84,7 @@ Session_View :: struct {
     canvas: rawptr,
     canvas_font_pixels: u16,
     canvas_session_revision: u64,
+    canvas_history_offset: u32,
     canvas_frame_revision: u64,
     canvas_surface_width: u16,
     canvas_surface_height: u16,
@@ -363,6 +368,7 @@ reset_canvas :: proc(view: ^Session_View) {
     }
     view.canvas_font_pixels = 0
     view.canvas_session_revision = 0
+    view.canvas_history_offset = 0
     view.canvas_frame_revision = 0
     view.canvas_surface_width = 0
     view.canvas_surface_height = 0
@@ -572,14 +578,17 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     }
     sync.mutex_lock(&view.mutex)
     target_revision := view.revision
+    requested_history_offset := view.history_target_offset
     sync.mutex_unlock(&view.mutex)
     if target_revision == 0 {
         return false
     }
-    if view.canvas_session_revision >= target_revision && len(view.canvas_commands) != 0 {
+    if view.canvas_session_revision >= target_revision &&
+       view.canvas_history_offset == requested_history_offset &&
+       len(view.canvas_commands) != 0 {
         return true
     }
-    if render_observe(view.canvas) != 0 {
+    if render_observe(view.canvas, requested_history_offset) != 0 {
         copy_canvas_bridge_error(view)
         return false
     }
@@ -618,6 +627,14 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     view.canvas_surface_height = render_surface_height(view.canvas)
     view.canvas_frame_revision = render_frame_revision(view.canvas)
     view.canvas_session_revision = render_session_revision(view.canvas)
+    view.canvas_history_offset = render_history_offset(view.canvas)
+    accept_history_snapshot(
+        view,
+        view.canvas_history_offset,
+        render_history_count(view.canvas),
+        render_history_row_base(view.canvas),
+        render_alternate_screen(view.canvas) != 0,
+    )
     view.canvas_error_len = 0
     return true
 }
@@ -785,6 +802,7 @@ observe_session :: proc(data: rawptr) {
         snapshot_cursor_visible := cursor_visible(observer) != 0
         snapshot_cursor_shape := cursor_shape(observer)
         snapshot_history_count := history_count(observer)
+        snapshot_history_row_base := history_row_base(observer)
         snapshot_alternate_screen := alternate_screen(observer) != 0
         snapshot_text_truncated := text_truncated(observer) != 0
 
@@ -799,7 +817,14 @@ observe_session :: proc(data: rawptr) {
         view.cursor_column = snapshot_cursor_column
         view.cursor_visible = snapshot_cursor_visible
         view.cursor_shape = snapshot_cursor_shape
+        follow_history_locked(
+            view,
+            snapshot_history_count,
+            snapshot_history_row_base,
+            snapshot_alternate_screen,
+        )
         view.history_count = snapshot_history_count
+        view.history_row_base = snapshot_history_row_base
         view.alternate_screen = snapshot_alternate_screen
         view.text_truncated = snapshot_text_truncated
         view.error_len = 0
@@ -834,6 +859,111 @@ copy_bridge_error :: proc(view: ^Session_View) {
     if view != nil {
         publish_bridge_error(view, view.control)
     }
+}
+
+reset_history_locked :: proc(view: ^Session_View) {
+    view.history_target_offset = 0
+    view.history_anchor_top_row = 0
+    view.history_anchor_valid = false
+}
+
+follow_history_locked :: proc(
+    view: ^Session_View,
+    history_count: u32,
+    history_row_base: u32,
+    alternate_screen: bool,
+) {
+    if view.history_target_offset == 0 {
+        return
+    }
+    if alternate_screen || history_count == 0 || !view.history_anchor_valid {
+        reset_history_locked(view)
+        return
+    }
+    newest_history_end := u64(history_row_base) + u64(history_count)
+    if newest_history_end <= view.history_anchor_top_row {
+        reset_history_locked(view)
+        return
+    }
+    requested := newest_history_end - view.history_anchor_top_row
+    clamped := min(requested, u64(history_count))
+    if clamped == 0 {
+        reset_history_locked(view)
+        return
+    }
+    view.history_target_offset = u32(clamped)
+    if clamped != requested {
+        view.history_anchor_top_row = newest_history_end - clamped
+    }
+}
+
+accept_history_snapshot :: proc(
+    view: ^Session_View,
+    history_offset: u32,
+    history_count: u32,
+    history_row_base: u32,
+    alternate_screen: bool,
+) {
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    if alternate_screen || history_offset == 0 || history_count == 0 {
+        reset_history_locked(view)
+        return
+    }
+    accepted := min(history_offset, history_count)
+    if accepted == 0 {
+        reset_history_locked(view)
+        return
+    }
+    view.history_target_offset = accepted
+    view.history_anchor_top_row = u64(history_row_base) + u64(history_count) - u64(accepted)
+    view.history_anchor_valid = true
+}
+
+scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
+    if view == nil || rows_delta == 0 {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    if view.alternate_screen || view.history_count == 0 {
+        return false
+    }
+    requested := int(view.history_target_offset) + rows_delta
+    clamped := clamp(requested, 0, int(view.history_count))
+    if clamped == int(view.history_target_offset) {
+        return false
+    }
+    view.history_target_offset = u32(clamped)
+    if clamped == 0 {
+        view.history_anchor_top_row = 0
+        view.history_anchor_valid = false
+    } else {
+        view.history_anchor_top_row =
+            u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
+        view.history_anchor_valid = true
+    }
+    return true
+}
+
+return_history_live :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    changed := view.history_target_offset != 0 || view.history_anchor_valid
+    reset_history_locked(view)
+    return changed
+}
+
+history_active :: proc(view: ^Session_View) -> bool {
+    if view == nil {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    return view.history_target_offset != 0
 }
 
 allocate_session_view :: proc(owned_process: rawptr) -> ^Session_View {
@@ -1052,6 +1182,9 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     if !ok {
         return false
     }
+    if event.type == .KEY_DOWN {
+        _ = return_history_live(view)
+    }
     action := Bridge_Key_Action.Press
     if event.type == .KEY_UP {
         action = .Release
@@ -1070,8 +1203,55 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     return true
 }
 
+history_page_rows :: proc(view: ^Session_View) -> int {
+    if view == nil {
+        return 1
+    }
+    sync.mutex_lock(&view.mutex)
+    value := max(1, int(view.rows) - 2)
+    sync.mutex_unlock(&view.mutex)
+    return value
+}
+
 inside :: proc(x, y: f32, rect: SDL.FRect) -> bool {
     return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h
+}
+
+terminal_inset :: proc(width, height: f32) -> SDL.FRect {
+    return {18, 52, width - 36, height - 64}
+}
+
+split_pane_rects :: proc(inset: SDL.FRect) -> (left, right: SDL.FRect) {
+    gap := f32(4)
+    left_width := (inset.w - gap) / 2
+    left = {inset.x, inset.y, left_width, inset.h}
+    right = {inset.x + left_width + gap, inset.y, inset.w - left_width - gap, inset.h}
+    return
+}
+
+session_view_at :: proc(
+    app: ^App,
+    x, y, width, height: f32,
+) -> (view: ^Session_View, pane_index: int, ok: bool) {
+    if app.active_tab < 0 || app.active_tab >= app.tab_count {
+        return nil, 0, false
+    }
+    inset := terminal_inset(width, height)
+    if !inside(x, y, inset) {
+        return nil, 0, false
+    }
+    tab := &app.tabs[app.active_tab]
+    if tab.secondary_session == nil {
+        return tab.session, 0, true
+    }
+    left, right := split_pane_rects(inset)
+    if inside(x, y, left) {
+        return tab.session, 0, true
+    }
+    if inside(x, y, right) {
+        return tab.secondary_session, 1, true
+    }
+    return nil, 0, false
 }
 
 tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.FRect) {
@@ -1452,6 +1632,18 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             adjust_terminal_font(app, 1)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_W {
             execute_action(app, .Close_Pane)
+        } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
+                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
+            view := active_session_view(app)
+            if view != nil {
+                _ = scroll_history_rows(view, history_page_rows(view))
+            }
+        } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEDOWN &&
+                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
+            view := active_session_view(app)
+            if view != nil {
+                _ = scroll_history_rows(view, -history_page_rows(view))
+            }
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
             app.profile_menu_open = false
             app.palette_open = false
@@ -1462,6 +1654,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             // The active real Session consumed this named physical key.
         } else if event.type == .KEY_DOWN && active_session_view(app) != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
             view := active_session_view(app)
+            _ = return_history_live(view)
             scalar := u32(event.key.key)
             if scalar > 0 && scalar < 0x80 {
                 action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
@@ -1481,6 +1674,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         if view != nil && view.control != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
             if len(text) != 0 {
+                _ = return_history_live(view)
                 result := send_text(view.control, raw_data(text), c.size_t(len(text)))
                 if result != 0 {
                     copy_bridge_error(view)
@@ -1492,6 +1686,37 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         w, h: c.int
         if event.type == .MOUSE_BUTTON_UP && SDL.GetWindowSize(app.window, &w, &h) {
             handle_click(app, event.button.x, event.button.y, f32(w), f32(h))
+        }
+    case .MOUSE_WHEEL:
+        if app.profile_menu_open || app.palette_open || app.settings_open {
+            break
+        }
+        _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
+        w, h: c.int
+        if SDL.GetWindowSize(app.window, &w, &h) {
+            view, pane_index, ok := session_view_at(
+                app,
+                event.wheel.mouse_x,
+                event.wheel.mouse_y,
+                f32(w),
+                f32(h),
+            )
+            if ok && view != nil {
+                if app.active_tab >= 0 && app.active_tab < app.tab_count {
+                    app.tabs[app.active_tab].active_pane = pane_index
+                }
+                ticks := int(event.wheel.integer_y)
+                if ticks == 0 {
+                    if event.wheel.y > 0 {
+                        ticks = 1
+                    } else if event.wheel.y < 0 {
+                        ticks = -1
+                    }
+                }
+                if ticks != 0 {
+                    _ = scroll_history_rows(view, ticks * 3)
+                }
+            }
         }
     case:
     }
@@ -1570,6 +1795,12 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     origin_y := pane.y + 6
     resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
+        if history_active(view) {
+            badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
+            draw_fill(app.renderer, badge, palette.title_bg)
+            draw_outline(app.renderer, badge, palette.accent)
+            draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
+        }
         return
     }
 
@@ -1611,6 +1842,12 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if view.text_truncated {
         draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
     }
+    if history_active(view) {
+        badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
+        draw_fill(app.renderer, badge, palette.title_bg)
+        draw_outline(app.renderer, badge, palette.accent)
+        draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
+    }
 }
 
 draw_placeholder_session :: proc(app: ^App) {
@@ -1622,7 +1859,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
     body := SDL.FRect{0, 46, width, height - 46}
     draw_fill(app.renderer, body, palette.terminal_bg)
 
-    inset := SDL.FRect{18, 52, width - 36, height - 64}
+    inset := terminal_inset(width, height)
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
     if !active_tab_is_session(app) {
@@ -1636,9 +1873,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
     }
 
     gap := f32(4)
-    left_width := (inset.w - gap) / 2
-    left := SDL.FRect{inset.x, inset.y, left_width, inset.h}
-    right := SDL.FRect{inset.x + left_width + gap, inset.y, inset.w - left_width - gap, inset.h}
+    left, right := split_pane_rects(inset)
     draw_fill(app.renderer, left, palette.terminal_panel)
     draw_fill(app.renderer, right, palette.terminal_panel)
     divider := SDL.FRect{left.x + left.w, inset.y, gap, inset.h}
