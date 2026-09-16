@@ -15,6 +15,9 @@
 
 const std = @import("std");
 
+/// Bounded complete terminal-property payload grammar.
+pub const properties = @import("properties.zig");
+
 // File map:
 //   - wire framing, attach, observation, and request identities
 //   - typed input, signals, and coherent interaction state
@@ -33,7 +36,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 8;
+pub const framing_version: u8 = 9;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -87,6 +90,8 @@ pub const Kind = enum(u8) {
     observe_delta = 30,
     /// Carries `text_delta_v2`: explicit row shift plus full or reused rows.
     snapshot_delta_data = 31,
+    /// Complete live terminal properties belonging to the same snapshot cut.
+    snapshot_properties = 32,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -888,6 +893,7 @@ pub const maximum_observation_bytes: usize =
     header_bytes + payload_bytes.snapshot_begin +
     maximum_snapshot_data_frames * header_bytes + maximum_text_snapshot_bytes +
     header_bytes + graphics_v2.maximum_manifest_bytes +
+    header_bytes + properties.maximum_bytes +
     header_bytes + payload_bytes.snapshot_end;
 
 // =============================================================================

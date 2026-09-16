@@ -1023,6 +1023,9 @@ const Bridge = struct {
     connection: client.Connection,
     last_begin: ?protocol.SnapshotBegin = null,
     text_truncated: bool = false,
+    display_title: [protocol.properties.maximum_field_bytes]u8 = undefined,
+    display_title_len: usize = 0,
+    task_progress: protocol.properties.Progress = .{},
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
 
@@ -1300,8 +1303,54 @@ pub export fn howl_odin_bridge_snapshot(
     const text = client.view.writeVisibleText(projected, output_ptr[0..output_capacity]);
     bridge.last_begin = client.view.begin(projected).*;
     bridge.text_truncated = text.truncated;
+    const properties = client.view.properties(projected);
+    bridge.display_title_len = writeDisplayTitle(properties.title orelse "", &bridge.display_title);
+    bridge.task_progress = properties.progress;
     output_len.* = text.bytes_written;
     return 0;
+}
+
+// Property bytes are untrusted labels, not terminal input or process identity.
+// Reject invalid UTF-8 and replace control/bidi formatting with ordinary spaces.
+fn writeDisplayTitle(source: []const u8, output: []u8) usize {
+    if (!std.unicode.utf8ValidateSlice(source)) return 0;
+    var input: usize = 0;
+    var used: usize = 0;
+    while (input < source.len) {
+        const width = std.unicode.utf8ByteSequenceLength(source[input]) catch unreachable;
+        const codepoint = std.unicode.utf8Decode(source[input..][0..width]) catch unreachable;
+        const control = codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f) or
+            (codepoint >= 0x2028 and codepoint <= 0x202e) or
+            (codepoint >= 0x2066 and codepoint <= 0x2069);
+        const needed: usize = if (control) 1 else width;
+        if (needed > output.len - used) break;
+        if (control) output[used] = ' ' else @memcpy(output[used..][0..needed], source[input..][0..width]);
+        used += needed;
+        input += width;
+    }
+    return used;
+}
+
+pub export fn howl_odin_bridge_snapshot_title(raw: ?*Handle, output: [*]u8, capacity: usize) usize {
+    const value = raw orelse return 0;
+    const bridge: *const Bridge = @ptrCast(@alignCast(value));
+    return writeDisplayTitle(bridge.display_title[0..bridge.display_title_len], output[0..capacity]);
+}
+
+pub export fn howl_odin_bridge_snapshot_progress(raw: ?*Handle) u16 {
+    const value = raw orelse return 0;
+    const bridge: *const Bridge = @ptrCast(@alignCast(value));
+    return (@as(u16, @backingInt(bridge.task_progress.kind)) << 8) | bridge.task_progress.value;
+}
+
+test "desktop property labels never leak controls or partial UTF-8 to chrome" {
+    var output: [64]u8 = undefined;
+    const length = writeDisplayTitle("hi\x00\x1b\nλ\u{202e}", &output);
+    try std.testing.expectEqualStrings("hi   λ ", output[0..length]);
+    try std.testing.expectEqual(@as(usize, 0), writeDisplayTitle(&.{0xff}, &output));
+    try std.testing.expectEqual(@as(usize, 0), writeDisplayTitle("λ", output[0..1]));
+    try std.testing.expectEqual(@as(usize, 2), writeDisplayTitle("λx", output[0..2]));
+    try std.testing.expectEqualStrings("λ", output[0..2]);
 }
 
 pub export fn howl_odin_bridge_search_find(

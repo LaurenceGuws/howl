@@ -488,7 +488,7 @@ fn acceptFrame() u32 {
             if ((transcript_len == 0 and header.kind != .snapshot_begin) or
                 (transcript_len != 0 and header.kind != .snapshot_data and
                     header.kind != .snapshot_raw_data and
-                    header.kind != .snapshot_graphics and header.kind != .snapshot_end))
+                    header.kind != .snapshot_graphics and header.kind != .snapshot_properties and header.kind != .snapshot_end))
                 return fail("UnexpectedSnapshotFrame");
             if (needed > transcript.len - transcript_len) return fail("SnapshotTooLarge");
             @memcpy(transcript[transcript_len..][0..needed], packet[0..needed]);

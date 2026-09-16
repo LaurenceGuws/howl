@@ -3410,7 +3410,7 @@ references:
             raw: OSC 9 ; Pt (BEL|ST)
             effect: display notification
             conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
-              decline, or no-op policy without requiring an observer. Client presentation remains outside core.
+              decline, or no-op policy without requiring an observer. Client presentation remains outside core. OSC 9;4 is separately retained task progress, tested by task progress survives fragments without notification or text mutation in howl-vt/src/terminal.zig.
             relevance: host consequence
             howl:
               support: partial

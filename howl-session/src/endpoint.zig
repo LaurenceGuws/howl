@@ -1577,8 +1577,11 @@ const Server = struct {
             encoded_bytes,
             protocol.maximum_payload_bytes,
         ) catch return error.SnapshotTooLarge;
+        var property_payload: [protocol.properties.maximum_bytes]u8 = undefined;
+        const property_bytes = try protocol.properties.encode(&property_payload, howl.properties(self.session));
         const total_bound = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
             data_frames * protocol.header_bytes + encoded_bytes +
+            protocol.header_bytes + property_bytes +
             protocol.header_bytes + graphics_counts.payload_bytes +
             protocol.header_bytes + protocol.payload_bytes.snapshot_end;
         if (total_bound > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
@@ -1627,6 +1630,7 @@ const Server = struct {
         defer self.allocator.free(graphics_payload);
         try encodeSnapshotGraphics(&graphics, graphics_counts, graphics_payload);
         try self.appendFrame(&client.output, .snapshot_graphics, graphics_payload);
+        try self.appendFrame(&client.output, .snapshot_properties, property_payload[0..property_bytes]);
 
         var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
         protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
@@ -2595,12 +2599,14 @@ const TestWireSnapshot = struct {
     begin: protocol.SnapshotBegin,
     body: []u8,
     graphics: []u8,
+    properties: []u8,
     raw: bool = false,
     delta: bool = false,
 
     fn deinit(self: *TestWireSnapshot) void {
         self.allocator.free(self.body);
         self.allocator.free(self.graphics);
+        self.allocator.free(self.properties);
         self.* = undefined;
     }
 };
@@ -3512,6 +3518,8 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     defer encoded.deinit(peer.allocator);
     const Encoding = enum { compressed, raw, delta };
     var encoding: ?Encoding = null;
+    var properties_bytes: ?[]u8 = null;
+    errdefer if (properties_bytes) |value| peer.allocator.free(value);
     var graphics: ?[]u8 = null;
     errdefer if (graphics) |value| peer.allocator.free(value);
     while (true) {
@@ -3536,8 +3544,14 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
                 if (graphics != null) return error.MalformedTestSnapshot;
                 graphics = try peer.allocator.dupe(u8, frame.payload);
             },
+            .snapshot_properties => {
+                if (graphics == null or properties_bytes != null) return error.MalformedTestSnapshot;
+                const value = try protocol.properties.decode(frame.payload);
+                try std.testing.expect(try protocol.properties.encodedSize(value) == frame.payload.len);
+                properties_bytes = try peer.allocator.dupe(u8, frame.payload);
+            },
             .snapshot_end => {
-                if (graphics == null) return error.MalformedTestSnapshot;
+                if (graphics == null or properties_bytes == null) return error.MalformedTestSnapshot;
                 const snapshot_end = protocol.decodeSnapshotEnd(frame.payload) catch
                     return error.MalformedTestSnapshot;
                 if (snapshot_end.revision != begin.revision) return error.MalformedTestSnapshot;
@@ -3576,6 +3590,7 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
         .begin = begin,
         .body = body,
         .graphics = graphics.?,
+        .properties = properties_bytes.?,
         .raw = is_raw,
         .delta = body_encoding == .delta,
     };
@@ -4955,4 +4970,76 @@ test "many physical image placements preserve exact manifest and visible resourc
     try std.testing.expectEqual(@as(usize, 1), retained.entries.items.len);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, retained.find(image.image_id, image.generation).?.pixels);
     try std.testing.expectEqual(before, howl.revision(server.session));
+}
+
+test "coherent properties wake without text and survive late attachment title stack and clear" {
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, .{
+        .rows = 3,
+        .columns = 12,
+        .history_rows = 8,
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]2;alpha\\007\\033]1;icon\\007" ++
+            "\\033]7;file:///home/test\\007\\033]1337;RemoteHost=test@example\\007" ++
+            "\\033]1337;ShellIntegrationVersion=7;shell=bash\\007\\033]133;D;3\\007" ++
+            "\\033]9;4;1;63\\007'; read trigger; " ++
+            "printf '\\033[22;0t\\033]2;beta\\007\\033]9;4;3\\007'; read trigger; " ++
+            "printf '\\033[23;0t\\033]9;4;0\\007'; read trigger; " ++
+            "printf '\\033]2;\\007'; sleep 30",
+    });
+    defer server.deinit();
+    var observer = try TestPeer.connectTcp(std.testing.allocator, server.listener.tcp_port.?);
+    defer observer.deinit();
+    try attach(&observer, &server);
+    var control = try TestPeer.connectTcp(std.testing.allocator, server.listener.tcp_port.?);
+    defer control.deinit();
+    try attach(&control, &server);
+    var tries: usize = 0;
+    while (tries < 1000 and howl.properties(server.session).progress.value != 63) : (tries += 1) try server.turn(1);
+    try std.testing.expect(tries < 1000);
+    try sendRawObserve(&observer, &server, 0);
+    var first = try receiveWireSnapshot(&observer, &server);
+    defer first.deinit();
+    const initial = try protocol.properties.decode(first.properties);
+    try std.testing.expectEqualStrings("alpha", initial.title.?);
+    try std.testing.expectEqualStrings("icon", initial.icon.?);
+    try std.testing.expectEqualStrings("file:///home/test", initial.directory.?.value);
+    try std.testing.expectEqualStrings("test@example", initial.remote_host.?);
+    try std.testing.expectEqualStrings("bash", initial.shell.?.name.?);
+    try std.testing.expectEqual(@as(u32, 7), initial.shell.?.version);
+    try std.testing.expectEqual(@as(?i32, 3), initial.mark.status);
+    try std.testing.expectEqualDeep(protocol.properties.Progress{ .kind = .normal, .value = 63 }, initial.progress);
+    try sendRawObserve(&observer, &server, first.begin.revision);
+    try sendInput(&control, &server, "next\n");
+    try expectResult(&control, &server, .input, .ok);
+    var second = try receiveWireSnapshot(&observer, &server);
+    defer second.deinit();
+    const changed = try protocol.properties.decode(second.properties);
+    try std.testing.expectEqualStrings("beta", changed.title.?);
+    try std.testing.expectEqual(protocol.properties.ProgressKind.indeterminate, changed.progress.kind);
+    try std.testing.expect(second.begin.revision > first.begin.revision);
+    try std.testing.expectEqualSlices(u8, first.body, second.body);
+    try std.testing.expectEqualStrings("alpha", (try protocol.properties.decode(first.properties)).title.?);
+
+    var late = try TestPeer.connectTcp(std.testing.allocator, server.listener.tcp_port.?);
+    defer late.deinit();
+    try attach(&late, &server);
+    try sendObserve(&late, &server, 0);
+    var attached = try receiveWireSnapshot(&late, &server);
+    defer attached.deinit();
+    try std.testing.expectEqualSlices(u8, second.properties, attached.properties);
+    try sendRawObserve(&observer, &server, second.begin.revision);
+    try sendInput(&control, &server, "pop\n");
+    try expectResult(&control, &server, .input, .ok);
+    var popped = try receiveWireSnapshot(&observer, &server);
+    defer popped.deinit();
+    const restored = try protocol.properties.decode(popped.properties);
+    try std.testing.expectEqualStrings("alpha", restored.title.?);
+    try std.testing.expectEqual(protocol.properties.ProgressKind.none, restored.progress.kind);
+    try sendRawObserve(&observer, &server, popped.begin.revision);
+    try sendInput(&control, &server, "clear\n");
+    try expectResult(&control, &server, .input, .ok);
+    var cleared = try receiveWireSnapshot(&observer, &server);
+    defer cleared.deinit();
+    try std.testing.expectEqualStrings("", (try protocol.properties.decode(cleared.properties)).title.?);
+    try std.testing.expectEqual(@as(u16, 0), howl.consequenceCount(server.session));
 }

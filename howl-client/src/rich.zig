@@ -89,6 +89,8 @@ pub const Snapshot = struct {
     rows: []Row,
     hyperlinks: []Hyperlink,
     graphics: Graphics = .{},
+    properties: protocol.properties.View = .{},
+    properties_storage: []u8 = &.{},
 
     pub fn view(self: *const Snapshot) View {
         return .{
@@ -97,6 +99,7 @@ pub const Snapshot = struct {
             .rows = self.rows,
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
+            .properties = self.properties,
             .changed_rows = null,
             .row_shift = null,
         };
@@ -115,6 +118,7 @@ pub const Snapshot = struct {
         for (self.hyperlinks) |link| self.allocator.free(link.uri_bytes);
         self.allocator.free(self.hyperlinks);
         self.graphics.deinit(self.allocator);
+        self.allocator.free(self.properties_storage);
         self.* = undefined;
     }
 };
@@ -130,6 +134,7 @@ pub const View = struct {
     rows: []const Row,
     hyperlinks: []const Hyperlink,
     graphics: Graphics,
+    properties: protocol.properties.View = .{},
     /// Exact changed-row mask when supplied by a reusable raw cache. `null`
     /// means callers must treat every row as potentially changed.
     changed_rows: ?[]const bool = null,
@@ -166,6 +171,7 @@ pub const RawCache = struct {
     columns: u16 = 0,
     hyperlinks: []Hyperlink = &.{},
     graphics: Graphics = .{},
+    properties_storage: []u8 = &.{},
 
     pub fn init(allocator: std.mem.Allocator) RawCache {
         return .{ .allocator = allocator };
@@ -175,6 +181,7 @@ pub const RawCache = struct {
         self.clearRows();
         self.clearHyperlinks();
         self.graphics.deinit(self.allocator);
+        self.allocator.free(self.properties_storage);
         self.text_body.deinit(self.allocator);
         self.* = undefined;
     }
@@ -185,6 +192,10 @@ pub const RawCache = struct {
     /// history window armed through `sendDeltaRequest`; complete raw fallback
     /// remains independently decodable.
     pub fn receive(self: *RawCache, connection: *client.Connection) Error!View {
+        return self.receiveFrom(connection);
+    }
+
+    fn receiveFrom(self: *RawCache, connection: anytype) Error!View {
         self.text_body.clearRetainingCapacity();
         const pending_delta = self.pending_delta;
         errdefer {
@@ -200,6 +211,8 @@ pub const RawCache = struct {
 
         const BodyEncoding = enum { none, raw, delta };
         var body_encoding: BodyEncoding = .none;
+        var next_properties: ?[]u8 = null;
+        errdefer if (next_properties) |value| self.allocator.free(value);
         var next_graphics: ?Graphics = null;
         errdefer if (next_graphics) |*value| value.deinit(self.allocator);
         while (true) {
@@ -225,8 +238,14 @@ pub const RawCache = struct {
                     if (next_graphics != null) return error.InvalidSnapshot;
                     next_graphics = try decodeGraphics(self.allocator, begin, frame.payload);
                 },
+                .snapshot_properties => {
+                    if (next_graphics == null or next_properties != null) return error.InvalidSnapshot;
+                    const value = protocol.properties.decode(frame.payload) catch return error.InvalidSnapshot;
+                    std.debug.assert((protocol.properties.encodedSize(value) catch unreachable) == frame.payload.len);
+                    next_properties = try self.allocator.dupe(u8, frame.payload);
+                },
                 .snapshot_end => {
-                    if (body_encoding == .none or next_graphics == null) return error.InvalidSnapshot;
+                    if (body_encoding == .none or next_graphics == null or next_properties == null) return error.InvalidSnapshot;
                     const end = try protocol.decodeSnapshotEnd(frame.payload);
                     if (end.revision != begin.revision) return error.InvalidSnapshot;
                     const delta = body_encoding == .delta;
@@ -239,13 +258,17 @@ pub const RawCache = struct {
                             self.rows.len != begin.rows or self.columns != begin.columns)
                             return error.InvalidSnapshot;
                     }
-                    const result = try self.decodeRaw(
+                    var result = try self.decodeRaw(
                         begin,
                         self.text_body.items,
                         next_graphics.?,
                         delta,
                     );
                     next_graphics = null;
+                    self.allocator.free(self.properties_storage);
+                    self.properties_storage = next_properties.?;
+                    next_properties = null;
+                    result.properties = protocol.properties.decode(self.properties_storage) catch unreachable;
                     self.baseline = .{
                         .revision = begin.revision,
                         .history_offset = begin.history_offset,
@@ -657,6 +680,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
     defer text_body.deinit(allocator);
     const BodyEncoding = enum { none, compressed, raw };
     var body_encoding: BodyEncoding = .none;
+    var property_bytes: ?[]u8 = null;
+    errdefer if (property_bytes) |value| allocator.free(value);
     var graphics: ?Graphics = null;
     errdefer if (graphics) |*value| value.deinit(allocator);
 
@@ -682,8 +707,14 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                 if (graphics != null) return error.InvalidSnapshot;
                 graphics = try decodeGraphics(allocator, begin, frame.payload);
             },
+            .snapshot_properties => {
+                if (graphics == null or property_bytes != null) return error.InvalidSnapshot;
+                const value = protocol.properties.decode(frame.payload) catch return error.InvalidSnapshot;
+                std.debug.assert((protocol.properties.encodedSize(value) catch unreachable) == frame.payload.len);
+                property_bytes = try allocator.dupe(u8, frame.payload);
+            },
             .snapshot_end => {
-                if (graphics == null) return error.InvalidSnapshot;
+                if (graphics == null or property_bytes == null) return error.InvalidSnapshot;
                 const end = try protocol.decodeSnapshotEnd(frame.payload);
                 if (end.revision != begin.revision) return error.InvalidSnapshot;
                 switch (body_encoding) {
@@ -727,6 +758,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                     .rows = rows,
                     .hyperlinks = try hyperlinks.toOwnedSlice(allocator),
                     .graphics = graphics.?,
+                    .properties_storage = property_bytes.?,
+                    .properties = protocol.properties.decode(property_bytes.?) catch unreachable,
                 };
             },
             else => return error.UnexpectedFrame,
@@ -1554,8 +1587,8 @@ fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
     defer if (!raw) allocator.free(compressed);
     const text_bytes: []const u8 = if (raw) &body else compressed;
     const graphics_bytes = protocol.graphics_v2.manifest_header_bytes;
-    const length = 4 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
-        text_bytes.len + graphics_bytes + protocol.payload_bytes.snapshot_end;
+    const length = 5 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
+        text_bytes.len + graphics_bytes + protocol.properties.header_bytes + protocol.payload_bytes.snapshot_end;
     const frames = try allocator.alloc(u8, length);
     errdefer allocator.free(frames);
     var at: usize = 0;
@@ -1589,6 +1622,12 @@ fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
     });
     @memcpy(frames[at..][0..graphics_header.len], &graphics_header);
     at += graphics_header.len;
+    try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
+        .kind = .snapshot_properties,
+        .payload_len = protocol.properties.header_bytes,
+    });
+    at += protocol.header_bytes;
+    at += try protocol.properties.encode(frames[at..], .{});
     try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
         .kind = .snapshot_end,
         .payload_len = protocol.payload_bytes.snapshot_end,
@@ -1869,4 +1908,105 @@ fn testRawCacheBody(allocator: std.mem.Allocator, first: u32, second: u32) ![]u8
     }
     std.debug.assert(at == body.len);
     return body;
+}
+
+test "rich snapshots require exactly one coherent property packet and own its bytes" {
+    const allocator = std.testing.allocator;
+    const frames = try testFramedSnapshot(allocator, true);
+    defer allocator.free(frames);
+    var offset: usize = 0;
+    var properties_at: usize = 0;
+    while (offset < frames.len) {
+        const header = try protocol.decodeHeader(frames[offset..][0..protocol.header_bytes]);
+        if (header.kind == .snapshot_properties) properties_at = offset;
+        offset += protocol.header_bytes + header.payload_len;
+    }
+    try std.testing.expect(properties_at != 0);
+    const old_size = protocol.header_bytes + protocol.properties.header_bytes;
+    const body_size = try protocol.properties.encodedSize(.{ .title = "safe λ", .progress = .{ .kind = .paused, .value = 51 } });
+    const changed = try allocator.alloc(u8, frames.len + body_size - protocol.properties.header_bytes);
+    defer allocator.free(changed);
+    @memcpy(changed[0..properties_at], frames[0..properties_at]);
+    try protocol.encodeHeader(changed[properties_at..][0..protocol.header_bytes], .{ .kind = .snapshot_properties, .payload_len = @intCast(body_size) });
+    const encoded = try protocol.properties.encode(changed[properties_at + protocol.header_bytes ..], .{ .title = "safe λ", .progress = .{ .kind = .paused, .value = 51 } });
+    @memcpy(changed[properties_at + protocol.header_bytes + encoded ..], frames[properties_at + old_size ..]);
+    var snapshot = try decodeFrames(allocator, changed);
+    defer snapshot.deinit();
+    @memset(changed, 0);
+    try std.testing.expectEqualStrings("safe λ", snapshot.properties.title.?);
+    try std.testing.expectEqualDeep(protocol.properties.Progress{ .kind = .paused, .value = 51 }, snapshot.properties.progress);
+
+    const missing = try std.mem.concat(allocator, u8, &.{ frames[0..properties_at], frames[properties_at + old_size ..] });
+    defer allocator.free(missing);
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(allocator, missing));
+    const duplicate = try std.mem.concat(allocator, u8, &.{ frames[0..properties_at], frames[properties_at .. properties_at + old_size], frames[properties_at..] });
+    defer allocator.free(duplicate);
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(allocator, duplicate));
+    frames[properties_at + protocol.header_bytes + 21] = 101;
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(allocator, frames));
+}
+
+test "raw cached observations own properties and clear them independently of reused rows" {
+    const Packet = struct {
+        fn make(allocator: std.mem.Allocator, revision: u64, value: protocol.properties.View) ![]u8 {
+            const base = try testFramedSnapshot(allocator, true);
+            defer allocator.free(base);
+            const raw = try testRawCacheBody(allocator, 'A', 'Z');
+            defer allocator.free(raw);
+            var bytes: std.ArrayList(u8) = .empty;
+            errdefer bytes.deinit(allocator);
+            var offset: usize = 0;
+            while (offset < base.len) {
+                const header = try protocol.decodeHeader(base[offset..][0..protocol.header_bytes]);
+                var payload: []const u8 = base[offset + protocol.header_bytes ..][0..header.payload_len];
+                var scratch: [protocol.properties.maximum_bytes]u8 = undefined;
+                switch (header.kind) {
+                    .snapshot_begin => {
+                        var begin = try protocol.decodeSnapshotBegin(payload);
+                        begin.revision = revision;
+                        begin.terminal_revision = revision;
+                        begin.rows = 2;
+                        begin.columns = 1;
+                        protocol.encodeSnapshotBegin(scratch[0..protocol.payload_bytes.snapshot_begin], begin);
+                        payload = scratch[0..protocol.payload_bytes.snapshot_begin];
+                    },
+                    .snapshot_raw_data => payload = raw,
+                    .snapshot_properties => {
+                        const length = try protocol.properties.encode(&scratch, value);
+                        payload = scratch[0..length];
+                    },
+                    .snapshot_end => {
+                        protocol.encodeSnapshotEnd(scratch[0..protocol.payload_bytes.snapshot_end], .{ .revision = revision });
+                        payload = scratch[0..protocol.payload_bytes.snapshot_end];
+                    },
+                    else => {},
+                }
+                var framing: [protocol.header_bytes]u8 = undefined;
+                try protocol.encodeHeader(&framing, .{ .kind = header.kind, .payload_len = @intCast(payload.len) });
+                try bytes.appendSlice(allocator, &framing);
+                try bytes.appendSlice(allocator, payload);
+                offset += protocol.header_bytes + header.payload_len;
+            }
+            return bytes.toOwnedSlice(allocator);
+        }
+    };
+    const allocator = std.testing.allocator;
+    const first_bytes = try Packet.make(allocator, 1, .{ .title = "cached title", .progress = .{ .kind = .normal, .value = 25 } });
+    defer allocator.free(first_bytes);
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+    var first_reader = BufferedFrames{ .bytes = first_bytes };
+    const first = try cache.receiveFrom(&first_reader);
+    const row_cells = first.rows[0].cells.ptr;
+    @memset(first_bytes, 0);
+    try std.testing.expectEqualStrings("cached title", first.properties.title.?);
+    try std.testing.expectEqual(@as(u8, 25), first.properties.progress.value);
+    const next_bytes = try Packet.make(allocator, 2, .{});
+    defer allocator.free(next_bytes);
+    var next_reader = BufferedFrames{ .bytes = next_bytes };
+    const next = try cache.receiveFrom(&next_reader);
+    try std.testing.expectEqual(row_cells, next.rows[0].cells.ptr);
+    try std.testing.expectEqualSlices(bool, &.{ false, false }, next.changed_rows.?);
+    try std.testing.expect(next.properties.title == null);
+    try std.testing.expectEqual(protocol.properties.ProgressKind.none, next.properties.progress.kind);
 }

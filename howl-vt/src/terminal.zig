@@ -5,6 +5,7 @@ const std = @import("std");
 // Core parser, state, and protocol owners.
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
+const progress_mod = @import("progress.zig");
 const kitty_placeholders = @import("kitty_placeholders.zig");
 const sixel = @import("sixel.zig");
 const replies = @import("replies.zig");
@@ -321,6 +322,7 @@ const SemanticEvent = union(enum) {
     kitty_keyboard_push: u8,
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
+    task_progress: progress_mod.Update,
     notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
     pointer_shape: []const u8,
     text_size: TextSizeCommand,
@@ -1555,11 +1557,15 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (iterm_control.parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
-        .notification => |v| SemanticEvent{ .notification = .{
-            .kind = .message,
-            .command = v.command,
-            .payload = v.payload,
-        } },
+        .notification => |v| if (v.command == 9 and
+            (std.mem.startsWith(u8, v.payload, "4;") or std.mem.eql(u8, v.payload, "4")))
+            if (progress_mod.parse(v.payload)) |value| .{ .task_progress = value } else null
+        else
+            SemanticEvent{ .notification = .{
+                .kind = .message,
+                .command = v.command,
+                .payload = v.payload,
+            } },
         .pointer_shape => |v| SemanticEvent{ .pointer_shape = v.payload },
         .rxvt_extension => |v| SemanticEvent{ .notification = .{
             .kind = .message,
@@ -2115,6 +2121,7 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .working_directory_report => |directory| return vt.properties.replaceWorkingDirectory(directory.kind, directory.value),
         .remote_host_report => |remote_host| return vt.properties.replaceRemoteHost(remote_host),
         .shell_mark => |mark| try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
+        .task_progress => |value| return vt.properties.replaceProgress(value),
         .notification => |notification| try vt.consequences.retainNotification(
             notification.kind,
             notification.command,
@@ -3177,6 +3184,7 @@ fn semanticMutationSet(
         .dec_mode_save,
         .dec_mode_restore,
         .shell_integration_set,
+        .task_progress,
         .text_size,
         .set_scroll_region,
         => mutations.mode = changed,
@@ -3433,6 +3441,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .working_directory_report,
         .remote_host_report,
         .shell_mark,
+        .task_progress,
         .notification,
         .pointer_shape,
         .container_request,
@@ -6541,6 +6550,13 @@ pub const Terminal = struct {
         return self.modes.synchronized_output;
     }
 
+    /// Retained task progress is terminal state, not a queued notification.
+    pub const Progress = progress_mod.State;
+    /// Copies current retained task progress without a notification side effect.
+    pub fn taskProgress(self: *const Terminal) Progress {
+        return self.properties.task_progress;
+    }
+
     /// Borrows the current OSC title until terminal mutation.
     pub fn title(self: *const Terminal) ?[]const u8 {
         return self.properties.current_title;
@@ -9212,4 +9228,46 @@ fn initialResizeReportTransaction(allocator: std.mem.Allocator) !void {
     try std.testing.expect(enabled.stateChanged());
     try std.testing.expect(terminal.interactionState().inband_resize_notifications);
     try std.testing.expectEqualStrings("\x1b[48;2;4;48;44t", terminal.replyBytes());
+}
+
+test "task progress survives fragments without notification or text mutation" {
+    const sequence = "\x1b]9;4;1;65\x1b\\";
+    for (0..sequence.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+        defer terminal.deinit();
+        const first = try terminal.feed(sequence[0..split]);
+        const second = try terminal.feed(sequence[split..]);
+        try std.testing.expect(first.stateChanged() or second.stateChanged());
+        try std.testing.expect(!first.mutations.text and !second.mutations.text);
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .normal, .value = 65 }, terminal.taskProgress());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        const before = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed(sequence)).stateChanged());
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expect((try terminal.feed("\x1b]9;4;2\x07")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure, .value = 65 }, terminal.taskProgress());
+        try std.testing.expect(!(try terminal.feed("\x1b]9;4;1;101\x07")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .failure, .value = 65 }, terminal.taskProgress());
+        try std.testing.expect((try terminal.feed("\x1b]9;4;3\x07")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .indeterminate }, terminal.taskProgress());
+        try std.testing.expect((try terminal.feed("\x1b]9;4;4;30\x07")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{ .kind = .paused, .value = 30 }, terminal.taskProgress());
+        try std.testing.expect((try terminal.feed("\x1b]9;4;0\x07")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{}, terminal.taskProgress());
+        try std.testing.expect((try terminal.feed(sequence)).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+        try std.testing.expectEqualDeep(Terminal.Progress{}, terminal.taskProgress());
+    }
+}
+
+test "ordinary OSC9 notifications remain distinct from bounded retained progress" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]9;hello\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    try std.testing.expectEqualDeep(Terminal.Progress{}, terminal.taskProgress());
+    try std.testing.expect((try terminal.feed("\x1b]9;4;1;42\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    const head = terminal.consequenceHead().?;
+    try std.testing.expectEqualStrings("hello", head.notification.payload);
 }

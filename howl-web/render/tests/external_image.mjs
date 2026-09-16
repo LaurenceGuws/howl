@@ -29,7 +29,7 @@ const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
 
-const corpus = JSON.parse(await readFile('../../howl-session/protocol/v8-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../howl-session/protocol/v9-vectors.json', 'utf8'));
 const test = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(test?.hex);
 const snapshot = Buffer.from(test.hex, 'hex');
@@ -37,7 +37,7 @@ let offset = 0;
 let graphicsFound = false;
 while (offset < snapshot.length) {
   assert.equal(snapshot.toString('ascii', offset, offset + 4), 'HWLS');
-  assert.equal(snapshot[offset + 4], 8);
+  assert.equal(snapshot[offset + 4], 9);
   const kind = snapshot[offset + 5];
   const length = snapshot.readUInt32BE(offset + 8);
   const end = offset + 12 + length;

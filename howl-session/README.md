@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 8. All multi-byte
+This document is the client contract for framing version 9. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v8-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v9-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `8` |
+| 4 | 1 | framing version, currently `9` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -72,6 +72,7 @@ Frame kinds are:
 | 29 | `snapshot_raw_data` | endpoint → client |
 | 30 | `observe_delta` | client → endpoint |
 | 31 | `snapshot_delta_data` | endpoint → client |
+| 32 | `snapshot_properties` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -608,6 +609,51 @@ command, client projection and native/Web packet bounds are tested together.
 The decoded-image quota remains 64 MiB per VT; a larger placement catalogue does
 not increase image-pixel storage or merge replacement/deletion identities.
 
+## Framing v9 coherent terminal properties
+
+Every compressed, raw or delta snapshot now includes exactly one
+`snapshot_properties` frame after `snapshot_graphics` and before `snapshot_end`.
+It belongs to the same immutable cut and needs no second query or title socket.
+Metadata-only mutation wakes ordinary observers; a new attachment receives the
+current values. Missing, duplicate, malformed or wrongly ordered packets fail
+validation. V8 clients and V9 endpoints must be rebuilt as matching bundles.
+
+The payload is `properties_v1`, at most 6,180 bytes. Multi-byte fields are big-endian.
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 1 | property format version, `1` |
+| 1 | 1 | presence bits: title, icon, directory, remote host, shell, shell name, mark status; top bit reserved |
+| 2 | 1 | directory interpretation: absent `0`, URI `1`, path `2` |
+| 3 | 1 | latest shell mark: absent `0`, or ASCII A/B/C/D |
+| 4 | 4 | shell integration version; zero when absent |
+| 8 | 8 | shell-mark generation; zero when absent |
+| 16 | 4 | signed shell exit status; zero bytes when absent, permitted only for mark D |
+| 20 | 1 | progress state: none `0`, normal `1`, failure `2`, indeterminate `3`, paused `4` |
+| 21 | 1 | progress percentage `0..100`; zero for none/indeterminate |
+| 22 | 2 | reserved, zero |
+| 24 | 12 | six unsigned 16-bit byte lengths |
+| 36 | variable | title, icon, directory, remote host, shell name, shell-mark metadata, concatenated |
+
+Each string is bounded to 1,024 bytes. Presence bits distinguish missing properties
+from explicitly reported empty strings. Bytes are preserved exactly, including
+invalid UTF-8; a desktop must validate/sanitize its label projection instead of
+rewriting canonical state. A directory, title or remote-host report conveys no
+permission to execute a command, open a resource, change cwd, or change ownership.
+The shell mark is not the Session child-process lifecycle.
+
+OSC `9;4` progress is retained state, not a queued notification. Normal progress
+requires a percentage. Failure/paused updates without a percentage retain the
+previous value; clear/indeterminate normalize it to zero. Invalid states, extra
+fields and out-of-range percentages are ignored. Ordinary OSC9 notifications keep
+their existing consequence path. Terminal reset clears progress. Clients may
+choose a presentation but do not invent a second terminal-animation clock.
+
+The image and text resource bounds are unchanged; the observation byte envelope
+includes one additional bounded properties frame. The native client preserves
+properties in owning, cached and coarse immutable snapshots. The rich CLI emits
+readable title/progress plus a lossless `packet_hex` for all properties.
+
 ## Resize leadership
 
 Geometry has one optional explicit leader. Attach does not resize and does not
@@ -681,7 +727,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v8-vectors.json
+python3 tools/validate_vectors.py protocol/v9-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

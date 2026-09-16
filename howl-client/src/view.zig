@@ -70,7 +70,7 @@ pub const Graphics = struct {
 };
 
 const maximum_view_bytes = protocol.maximum_text_snapshot_bytes * 2 +
-    protocol.graphics_v2.maximum_manifest_bytes * 2 + std.math.maxInt(u16);
+    protocol.graphics_v2.maximum_manifest_bytes * 2 + std.math.maxInt(u16) + protocol.properties.maximum_bytes;
 
 const Impl = struct {
     allocator: std.mem.Allocator,
@@ -84,6 +84,8 @@ const Impl = struct {
     images_offset: usize,
     placements_offset: usize,
     changed_rows_offset: usize,
+    properties_offset: usize,
+    properties_bytes: usize,
     row_count: usize,
     cell_count: usize,
     scalar_count: usize,
@@ -116,6 +118,7 @@ comptime {
     const fixed_wire = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
         protocol.header_bytes + protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes +
         protocol.header_bytes + protocol.graphics_v2.manifest_header_bytes +
+        protocol.header_bytes + protocol.properties.header_bytes +
         protocol.header_bytes + protocol.payload_bytes.snapshot_end;
     const fixed_view = @sizeOf(Impl) +
         (@alignOf(Row) - 1) + (@alignOf(Cell) - 1) +
@@ -170,7 +173,9 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     // supplied an explicit row rotation. RawCache may expose same-index change
     // facts on ordinary frames, but those remain an internal decode detail.
     const changed_rows_count = if (source.row_shift != null) source.rows.len else 0;
-    const total_bytes = try sectionEnd(bool, changed_rows_offset, changed_rows_count);
+    const properties_offset = try sectionEnd(bool, changed_rows_offset, changed_rows_count);
+    const properties_bytes = protocol.properties.encodedSize(source.properties) catch return error.InvalidRichSnapshot;
+    const total_bytes = std.math.add(usize, properties_offset, properties_bytes) catch return error.ViewTooLarge;
     if (total_bytes > maximum_view_bytes) return error.ViewTooLarge;
 
     const word_count = std.math.divCeil(usize, total_bytes, @sizeOf(u128)) catch unreachable;
@@ -192,6 +197,8 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         .images_offset = images_offset,
         .placements_offset = placements_offset,
         .changed_rows_offset = changed_rows_offset,
+        .properties_offset = properties_offset,
+        .properties_bytes = properties_bytes,
         .row_count = source.rows.len,
         .cell_count = counts.cells,
         .scalar_count = counts.scalars,
@@ -282,6 +289,9 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     @memcpy(output_images, source.graphics.images);
     @memcpy(output_placements, source.graphics.placements);
     if (source.row_shift != null) @memcpy(output_changed_rows, source.changed_rows.?);
+    const written_properties = protocol.properties.encode(bytes[properties_offset..][0..properties_bytes], source.properties) catch
+        return error.InvalidRichSnapshot;
+    std.debug.assert(written_properties == properties_bytes);
 
     return @ptrCast(impl);
 }
@@ -297,6 +307,12 @@ pub fn deinit(snapshot: *Snapshot) void {
 
 pub fn begin(snapshot: *const Snapshot) *const Begin {
     return &constImpl(snapshot).begin;
+}
+
+/// Borrows coherent terminal properties from the accepted immutable snapshot.
+pub fn properties(snapshot: *const Snapshot) protocol.properties.View {
+    const impl = constImpl(snapshot);
+    return protocol.properties.decode(ownerBytes(impl)[impl.properties_offset..][0..impl.properties_bytes]) catch unreachable;
 }
 
 pub fn presentation(snapshot: *const Snapshot) *const Presentation {
@@ -897,6 +913,7 @@ test "coarse view preserves rich semantics in one allocation" {
         },
         .rows = rows_source[0..],
         .hyperlinks = links_source[0..],
+        .properties = .{ .title = &uri, .progress = .{ .kind = .normal, .value = 61 } },
         .graphics = .{
             .generation = 14,
             .content_generation = 12,
@@ -936,6 +953,9 @@ test "coarse view preserves rich semantics in one allocation" {
     try std.testing.expectEqual(@as(usize, 1), hyperlinks(snapshot).len);
     try std.testing.expectEqual(@as(u32, 7), hyperlinks(snapshot)[0].link_id);
     try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, uris(snapshot));
+    const property_view = properties(snapshot);
+    try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, property_view.title.?);
+    try std.testing.expectEqualDeep(protocol.properties.Progress{ .kind = .normal, .value = 61 }, property_view.progress);
     const image_view = graphics(snapshot);
     try std.testing.expectEqual(@as(u64, 14), image_view.generation);
     try std.testing.expectEqual(@as(u64, 12), image_view.content_generation);

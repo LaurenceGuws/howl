@@ -253,6 +253,37 @@ pub fn hyperlinkUri(session: *const Session, link_id: u32) ?[]const u8 {
     return stateConst(session).terminal.hyperlinkUri(link_id);
 }
 
+/// Borrows complete live terminal properties until the next canonical mutation.
+/// Reported names, paths and host identities never acquire execution authority.
+pub fn properties(session: *const Session) protocol.properties.View {
+    const terminal = &stateConst(session).terminal;
+    const directory = terminal.workingDirectory();
+    const shell = terminal.shellIntegration();
+    const mark = terminal.shellMark();
+    const progress = terminal.taskProgress();
+    return .{
+        .title = terminal.title(),
+        .icon = terminal.icon(),
+        .directory = if (directory) |value| .{
+            .kind = switch (value.kind) {
+                .uri => .uri,
+                .path => .path,
+            },
+            .value = value.value,
+        } else null,
+        .remote_host = terminal.remoteHost(),
+        .shell = if (shell) |value| .{ .version = value.version, .name = value.shell } else null,
+        .mark = .{ .generation = mark.generation, .kind = mark.kind, .status = mark.status, .metadata = mark.metadata },
+        .progress = .{ .kind = switch (progress.kind) {
+            .none => .none,
+            .normal => .normal,
+            .failure => .failure,
+            .indeterminate => .indeterminate,
+            .paused => .paused,
+        }, .value = progress.value },
+    };
+}
+
 /// Borrows coherent image resources and visible placements for one viewport.
 pub fn images(session: *const Session, history_offset: u32) Images {
     return stateConst(session).terminal.images(history_offset);

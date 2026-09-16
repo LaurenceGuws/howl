@@ -188,6 +188,9 @@ Session_View :: struct {
     text: []u8,
     scratch: []u8,
     text_len: int,
+    display_title: [1024]u8,
+    display_title_len: int,
+    task_progress: u16,
     revision: u64,
     terminal_revision: u64,
     rows: u16,
@@ -1393,6 +1396,8 @@ observe_session :: proc(data: rawptr) {
         view.stream_closed = snapshot_stream_closed
         view.child_exited = snapshot_child_exited
         view.text_truncated = snapshot_text_truncated
+        view.display_title_len = int(snapshot_title(observer, raw_data(view.display_title[:]), c.size_t(len(view.display_title))))
+        view.task_progress = snapshot_progress(observer)
         view.error_len = 0
         validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
@@ -5189,7 +5194,9 @@ draw_tabs :: proc(app: ^App, width: f32) {
         title_right_pad := app.tab_count > 1 ? f32(52) : f32(28)
         title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(rect.w - 16 - title_right_pad), c.int(rect.h)}
         _ = SDL.SetRenderClipRect(app.renderer, &title_clip)
-        draw_text(app, app.ui_font, app.tabs[i].title, rect.x + 14, 14, active ? palette.text : palette.text_muted)
+        property_text: [1024]u8
+        title, progress := tab_property_presentation(&app.tabs[i], property_text[:])
+        draw_text(app, app.ui_font, title, rect.x + 14, 14, active ? palette.text : palette.text_muted)
         _ = SDL.SetRenderClipRect(app.renderer, nil)
         if app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
             indicator_x := rect.x + rect.w - (app.tab_count > 1 ? 38 : 16)
@@ -5198,6 +5205,7 @@ draw_tabs :: proc(app: ^App, width: f32) {
         if app.tab_count > 1 {
             draw_text(app, app.ui_font, "x", rect.x + rect.w - 21, 14, palette.text_muted)
         }
+        draw_tab_progress(app, rect, progress)
     }
 
     plus, menu, settings := tab_controls(app.tab_count, width)

@@ -260,3 +260,21 @@ The result is:
 ```text
 howl-odin/zig-out/bin/howl-odin
 ```
+
+
+## Terminal-owned tab properties
+
+Each pane observes its own canonical title and retained OSC9;4 progress. The tab
+uses the active pane's title, falling back to its profile label when absent or
+empty. The saved profile name is never overwritten. Title bytes are untrusted:
+invalid UTF-8 falls back to the profile, and controls/bidi formatting are replaced
+with spaces in desktop labels only. The native window title remains Howl.
+
+A thin tab progress strip displays normal, failure, paused and indeterminate
+states. Indeterminate is a stationary segment rather than a timer-driven pulse;
+all changes use existing Session observer wakeups. Clearing the canonical state
+removes the strip. Directory/remote-host/shell-mark properties also survive the
+shared transport but have no automatic desktop execution behavior or new UI yet.
+
+This uses the matching framing-v9 client/Session bundle. Rebuilding source does
+not update an independently running remote, mobile or browser Session service.

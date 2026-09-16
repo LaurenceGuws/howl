@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Screen = @import("screen.zig").Screen;
+const progress = @import("progress.zig");
 
 /// Three-channel color type shared with Screen.
 pub const Rgb = Screen.Rgb;
@@ -93,6 +94,7 @@ pub const State = struct {
     allocator: std.mem.Allocator,
     colors: ColorState = .{},
     color_stack: ColorStack = .{},
+    task_progress: progress.State = .{},
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
     working_directory: ?WorkingDirectory = null,
@@ -122,6 +124,7 @@ pub const State = struct {
 
     /// Applies terminal reset to property-owned directory and color state.
     pub fn resetTerminal(self: *State) void {
+        self.task_progress = .{};
         if (self.working_directory) |value| self.allocator.free(value.value);
         self.working_directory = null;
         const palette = self.colors.palette;
@@ -136,6 +139,14 @@ pub const State = struct {
 
     fn bounded(bytes: []const u8) PropertyError!void {
         if (bytes.len > max_metadata_bytes) return error.PropertyLimit;
+    }
+
+    /// Retains one exact progress state; repeated values are semantic no-ops.
+    pub fn replaceProgress(self: *State, update: progress.Update) bool {
+        const next = progress.apply(self.task_progress, update);
+        if (std.meta.eql(next, self.task_progress)) return false;
+        self.task_progress = next;
+        return true;
     }
 
     /// Replaces the retained title transactionally.

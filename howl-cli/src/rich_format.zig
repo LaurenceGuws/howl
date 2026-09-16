@@ -206,6 +206,21 @@ pub fn emitNative(allocator: std.mem.Allocator, writer: *std.Io.Writer, snapshot
         .images = snapshot.graphics.images,
         .placements = snapshot.graphics.placements,
     });
+    var property_packet: [protocol.properties.maximum_bytes]u8 = undefined;
+    const property_length = try protocol.properties.encode(&property_packet, snapshot.properties);
+    const property_hex = try hexBytes(allocator, property_packet[0..property_length]);
+    defer allocator.free(property_hex);
+    try emitJson(writer, .{
+        .record = "properties",
+        .format = "properties_v1",
+        .packet_hex = property_hex,
+        .title = if (snapshot.properties.title) |title|
+            if (std.unicode.utf8ValidateSlice(title)) title else null
+        else
+            null,
+        .progress_kind = @tagName(snapshot.properties.progress.kind),
+        .progress_value = snapshot.properties.progress.value,
+    });
     try emitJson(writer, EndRecord{ .revision = begin.revision });
 }
 

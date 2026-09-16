@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v8 wire-vector decoder and validator.
+"""Independent Howl session v9 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 8
+FRAMING_VERSION = 9
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -55,6 +55,7 @@ KINDS = {
     29: "snapshot_raw_data",
     30: "observe_delta",
     31: "snapshot_delta_data",
+    32: "snapshot_properties",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -537,6 +538,7 @@ def new_snapshot(begin: dict, delta_request: dict | None = None, baseline: dict 
         "resolved_links": {},
         "phase": "presentation",
         "graphics": None,
+        "properties": None,
         "delta_request": delta_request,
         "baseline": baseline,
         "row_shift": None,
@@ -645,15 +647,48 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
     require(len(snapshot["text_rows"]) == begin["rows"], "text_row_count")
     require(snapshot["referenced_links"] == set(snapshot["resolved_links"]), "text_unresolved_hyperlink")
     require(snapshot["graphics"] is not None, "snapshot_graphics_missing")
+    require(snapshot["properties"] is not None, "snapshot_properties_missing")
     return {
         "begin": begin,
         "presentation": snapshot["presentation"],
         "rows": snapshot["text_rows"],
         "hyperlinks": snapshot["hyperlinks"],
         "graphics": snapshot["graphics"],
+        "properties": snapshot["properties"],
         "end": end,
         "encoding": encoding,
     }
+
+
+def decode_properties(payload: bytes) -> dict:
+    require(36 <= len(payload) <= 6180, "properties_size")
+    require(payload[0] == 1 and payload[1] & 0x80 == 0 and payload[22:24] == b"\0\0", "properties_header")
+    flags = payload[1]
+    lengths = struct.unpack_from(">6H", payload, 24)
+    require(all(n <= 1024 for n in lengths) and sum(lengths) + 36 == len(payload), "properties_size")
+    values = []
+    offset = 36
+    for index, count in enumerate(lengths):
+        present = index == 5 or bool(flags & (1 << (5 if index == 4 else index)))
+        require(present or count == 0, "properties_presence")
+        values.append(payload[offset:offset + count].hex() if present else None)
+        offset += count
+    directory_kind, mark_kind = payload[2], payload[3]
+    shell_version = u32(payload[4:8])
+    mark_generation, mark_status = u64(payload[8:16]), i32(payload[16:20])
+    require((values[2] is None and directory_kind == 0) or (values[2] is not None and directory_kind in (1, 2)), "properties_directory")
+    require(bool(flags & 16) or (values[4] is None and shell_version == 0), "properties_shell")
+    require(bool(flags & 64) or mark_status == 0, "properties_status")
+    require((mark_kind == 0 and mark_generation == 0 and not flags & 64 and values[5] == "") or
+            (65 <= mark_kind <= 68 and mark_generation != 0 and (not flags & 64 or mark_kind == 68)), "properties_mark")
+    kind, value = payload[20], payload[21]
+    require(kind <= 4 and value <= 100 and (kind not in (0, 3) or value == 0), "properties_progress")
+    return {"title_hex": values[0], "icon_hex": values[1], "directory_kind": directory_kind,
+            "directory_hex": values[2], "remote_host_hex": values[3],
+            "shell_version": shell_version if flags & 16 else None, "shell_name_hex": values[4],
+            "mark_kind": mark_kind, "mark_generation": mark_generation,
+            "mark_status": mark_status if flags & 64 else None, "mark_metadata_hex": values[5],
+            "progress_kind": kind, "progress_value": value}
 
 
 def decode_snapshot_graphics(payload: bytes, begin: dict) -> dict:
@@ -875,6 +910,11 @@ def decode_stream(data: bytes) -> dict:
             require(snapshot["graphics"] is None, "snapshot_graphics_duplicate")
             decoded = decode_snapshot_graphics(payload, snapshot["begin"])
             snapshot["graphics"] = decoded
+        elif kind == 32:
+            require(snapshot is not None and snapshot["graphics"] is not None, "properties_order")
+            require(snapshot["properties"] is None, "properties_duplicate")
+            decoded = decode_properties(payload)
+            snapshot["properties"] = decoded
         elif kind == 6:
             require(snapshot is not None, "snapshot_end_without_begin")
             decoded = decode_snapshot_end(payload)
@@ -950,7 +990,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v8/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v9/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -963,7 +1003,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v8-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v9-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:
