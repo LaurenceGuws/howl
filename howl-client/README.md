@@ -12,6 +12,12 @@ layout is private: it is not a C/FFI ABI. These models retain typed terminal fac
 they do not choose JSON, a renderer, a font, a platform UI, or a shell-command
 vocabulary.
 
+`search` owns exact client-local matching over one immutable projected row. It
+returns stable canonical selection points rather than rendered byte offsets,
+handles UTF-8/wide cells, and excludes concealed text. It deliberately does not
+invent a cross-soft-wrap search contract; retained-history paging and search UI
+remain presentation-client policy.
+
 Unix sockets remain local endpoint mechanisms. TCP accepts explicit numeric IPv4
 peers supplied by the caller; there is no DNS, discovery, authentication, route
 selection, or listener policy here. Session lifecycle, PTY/VT semantics, stale

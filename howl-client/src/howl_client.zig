@@ -20,4 +20,5 @@ pub const snapshot = @import("snapshot.zig");
 pub const rich = @import("rich.zig");
 pub const view = @import("view.zig");
 pub const selection = @import("selection.zig");
+pub const search = @import("search.zig");
 pub const images = @import("images.zig");
