@@ -918,6 +918,45 @@ pub export fn howl_odin_bridge_profile_env_info_size() u32 {
 const Handle = opaque {};
 const CancellationHandle = opaque {};
 const OwnedSessionHandle = opaque {};
+const ConsequenceHandle = opaque {};
+
+pub const ConsequenceInfo = extern struct {
+    terminal_revision: u64 = 0,
+    authority_client_id: u64 = 0,
+    generation: u64 = 0,
+    payload_len: u32 = 0,
+    kind: u8 = 0,
+    reply_required: u8 = 0,
+    _reserved: [2]u8 = @splat(0),
+    metadata: [protocol.consequence_metadata_bytes]u8 = @splat(0),
+};
+comptime {
+    if (@sizeOf(ConsequenceInfo) != protocol.payload_bytes.consequence_begin)
+        @compileError("Odin consequence info must stay one fixed begin-sized record");
+}
+
+const ConsequenceBridge = struct {
+    allocator: std.mem.Allocator,
+    connection: client.Connection,
+    last_error: [160]u8 = undefined,
+    last_error_len: usize = 0,
+
+    fn clearError(self: *ConsequenceBridge) void {
+        self.last_error_len = 0;
+    }
+
+    fn setError(self: *ConsequenceBridge, stage: []const u8, failure_name: []const u8) void {
+        const rendered = std.fmt.bufPrint(
+            &self.last_error,
+            "{s}:{s}",
+            .{ stage, failure_name },
+        ) catch {
+            self.last_error_len = 0;
+            return;
+        };
+        self.last_error_len = rendered.len;
+    }
+};
 
 const OwnedSession = struct {
     allocator: std.mem.Allocator,
@@ -2107,4 +2146,160 @@ test "Odin search selection and interaction C records stay fixed" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(SearchMatchInfo));
     try std.testing.expectEqual(@as(usize, 20), @sizeOf(SelectionRangeInfo));
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(InteractionStateInfo));
+}
+
+/// Opens one consequence-policy connection without claiming Session authority.
+/// Callers can observe the current authority first and acquire only when policy
+/// permits; this keeps independent desktop windows from stealing host policy
+/// merely by attaching later.
+pub export fn howl_odin_bridge_consequence_create(
+    endpoint_ptr: [*]const u8,
+    endpoint_len: usize,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*ConsequenceHandle {
+    diagnostic_len.* = 0;
+    if (endpoint_len == 0) {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
+        return null;
+    }
+    const allocator = std.heap.c_allocator;
+    const bridge = allocator.create(ConsequenceBridge) catch {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
+        return null;
+    };
+    errdefer allocator.destroy(bridge);
+    bridge.* = .{
+        .allocator = allocator,
+        .connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch |failure| {
+            writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+            return null;
+        },
+    };
+    return @ptrCast(bridge);
+}
+
+pub export fn howl_odin_bridge_consequence_client_id(raw: ?*ConsequenceHandle) u64 {
+    const value = raw orelse return 0;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    return bridge.connection.client_id;
+}
+
+pub export fn howl_odin_bridge_consequence_acquire(raw: ?*ConsequenceHandle) i32 {
+    const value = raw orelse return 1;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    client.consequences.acquire(&bridge.connection) catch |failure| {
+        bridge.setError("acquire", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_consequence_destroy(raw: ?*ConsequenceHandle) void {
+    const value = raw orelse return;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    const allocator = bridge.allocator;
+    // Deliberately close rather than sending assign(no_client): endpoint disconnect
+    // clears authority only if this exact connection still owns it.
+    bridge.connection.deinit();
+    allocator.destroy(bridge);
+}
+
+pub export fn howl_odin_bridge_consequence_info_size() u32 {
+    return @sizeOf(ConsequenceInfo);
+}
+
+/// Observes one current consequence. Payload bytes are copied only up to the
+/// caller's bounded scratch; `info.payload_len` always reports the complete size.
+pub export fn howl_odin_bridge_consequence_observe(
+    raw: ?*ConsequenceHandle,
+    info: *ConsequenceInfo,
+    payload_ptr: [*]u8,
+    payload_capacity: usize,
+    copied_len: *usize,
+) i32 {
+    info.* = .{};
+    copied_len.* = 0;
+    const value = raw orelse return 1;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    var snapshot = client.consequences.observe(&bridge.connection, bridge.allocator) catch |failure| {
+        bridge.setError("observe", @errorName(failure));
+        return 2;
+    };
+    defer snapshot.deinit();
+    info.* = .{
+        .terminal_revision = snapshot.begin.terminal_revision,
+        .authority_client_id = snapshot.begin.authority_client_id,
+        .generation = snapshot.begin.generation,
+        .payload_len = snapshot.begin.payload_len,
+        .kind = @backingInt(snapshot.begin.kind),
+        .reply_required = @intFromBool(snapshot.begin.reply_required),
+        .metadata = snapshot.begin.metadata,
+    };
+    const count = @min(payload_capacity, snapshot.payload.len);
+    @memcpy(payload_ptr[0..count], snapshot.payload[0..count]);
+    copied_len.* = count;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_consequence_consume(
+    raw: ?*ConsequenceHandle,
+    generation: u64,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    client.consequences.consume(&bridge.connection, generation) catch |failure| {
+        bridge.setError("consume", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_consequence_reply(
+    raw: ?*ConsequenceHandle,
+    generation: u64,
+    kind_raw: u8,
+    body_ptr: [*]const u8,
+    body_len: usize,
+) i32 {
+    const value = raw orelse return 1;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    bridge.clearError();
+    const kind: client.consequences.ReplyKind = switch (kind_raw) {
+        @backingInt(client.consequences.ReplyKind.clipboard) => .clipboard,
+        @backingInt(client.consequences.ReplyKind.pointer_shape) => .pointer_shape,
+        @backingInt(client.consequences.ReplyKind.color_preference) => .color_preference,
+        @backingInt(client.consequences.ReplyKind.container_state) => .container_state,
+        @backingInt(client.consequences.ReplyKind.container_position) => .container_position,
+        @backingInt(client.consequences.ReplyKind.container_screen_cells) => .container_screen_cells,
+        @backingInt(client.consequences.ReplyKind.container_icon_title) => .container_icon_title,
+        @backingInt(client.consequences.ReplyKind.container_decline) => .container_decline,
+        else => {
+            bridge.setError("reply", "invalid_kind");
+            return 2;
+        },
+    };
+    client.consequences.reply(&bridge.connection, generation, kind, body_ptr[0..body_len]) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_consequence_copy_error(
+    raw: ?*ConsequenceHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) void {
+    output_len.* = 0;
+    const value = raw orelse return;
+    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+    const count = @min(output_capacity, bridge.last_error_len);
+    @memcpy(output_ptr[0..count], bridge.last_error[0..count]);
+    output_len.* = count;
 }

@@ -453,6 +453,8 @@ App :: struct {
     settings_search_results: [MAX_SETTINGS_SEARCH_RESULTS]Settings_Search_Result,
     settings_search_result_count: int,
     settings_search_selection: int,
+    consequence_owners: [MAX_CONSEQUENCE_OWNERS]^Consequence_Owner,
+    consequence_owner_count: int,
 }
 
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
@@ -4502,6 +4504,12 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
 }
 
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
+    if event != nil && u32(event.type) == session_update_event_type {
+        reconcile_consequence_owners(app)
+        wake_consequence_owners(app)
+        _ = apply_desktop_attention(app)
+        return
+    }
     #partial switch event.type {
     case .QUIT, .WINDOW_CLOSE_REQUESTED:
         _ = finish_tab_drag(app)
@@ -4521,6 +4529,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = send_semantic_focus(active_session_view(app), false)
     case .WINDOW_FOCUS_GAINED:
         _ = send_semantic_focus(active_session_view(app), true)
+        wake_consequence_owners(app)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
@@ -6027,6 +6036,7 @@ main :: proc() {
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
     assert(size_of(Profile_Env_Info) == int(profile_env_info_size()))
+    assert(size_of(Consequence_Info) == int(consequence_info_size()))
     if !SDL.Init(SDL.INIT_VIDEO) {
         sdl_error("SDL_Init failed")
         return
@@ -6134,6 +6144,7 @@ main :: proc() {
     }
     _ = apply_user_keybindings(&app, user_config.keybindings)
     new_tab(&app)
+    reconcile_consequence_owners(&app)
 
     draw(&app)
     for app.running {
@@ -6153,10 +6164,13 @@ main :: proc() {
             handle_event(&app, &event)
         }
         if app.running {
+            reconcile_consequence_owners(&app)
+            _ = apply_desktop_attention(&app)
             draw(&app)
         }
     }
 
+    destroy_consequence_owners(&app)
     for app.tab_count > 0 {
         app.tab_count -= 1
         destroy_tab_contents(&app.tabs[app.tab_count])

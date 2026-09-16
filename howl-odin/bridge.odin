@@ -15,6 +15,15 @@ foreign howl_bridge {
     cancellation_create  :: proc(handle: rawptr) -> rawptr ---
     cancellation_cancel  :: proc(handle: rawptr) -> i32 ---
     cancellation_destroy :: proc(handle: rawptr) ---
+    consequence_create :: proc(endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    consequence_destroy :: proc(handle: rawptr) ---
+    consequence_client_id :: proc(handle: rawptr) -> u64 ---
+    consequence_acquire :: proc(handle: rawptr) -> i32 ---
+    consequence_info_size :: proc() -> u32 ---
+    consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info, payload: [^]u8, payload_capacity: c.size_t, copied_len: ^c.size_t) -> i32 ---
+    consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
+    consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
+    consequence_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     search_find        :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
     search_match_info_size :: proc() -> u32 ---
@@ -74,6 +83,44 @@ foreign howl_bridge {
     render_resource_info_size :: proc() -> u32 ---
     render_removal_info_size  :: proc() -> u32 ---
     render_command_info_size  :: proc() -> u32 ---
+}
+
+Consequence_Info :: struct {
+    terminal_revision: u64,
+    authority_client_id: u64,
+    generation: u64,
+    payload_len: u32,
+    kind: u8,
+    reply_required: u8,
+    _reserved: [2]u8,
+    metadata: [32]u8,
+}
+
+Bridge_Consequence_Kind :: enum u8 {
+    None = 0,
+    Clipboard = 1,
+    Notification = 2,
+    Pointer_Shape = 3,
+    File_Transfer = 4,
+    Drag_Drop = 5,
+    Container = 6,
+    Color_Preference = 7,
+    Media_Copy = 8,
+    Bell = 9,
+    Legacy_Control = 10,
+    Dcs = 11,
+    String_Control = 12,
+}
+
+Bridge_Consequence_Reply :: enum u8 {
+    Clipboard = 1,
+    Pointer_Shape = 2,
+    Color_Preference = 3,
+    Container_State = 4,
+    Container_Position = 5,
+    Container_Screen_Cells = 6,
+    Container_Icon_Title = 7,
+    Container_Decline = 8,
 }
 
 Profile_Env_Info :: struct {
