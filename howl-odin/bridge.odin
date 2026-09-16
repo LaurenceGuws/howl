@@ -47,7 +47,7 @@ foreign howl_bridge {
     history_count      :: proc(handle: rawptr) -> u32 ---
     history_row_base   :: proc(handle: rawptr) -> u32 ---
     text_truncated     :: proc(handle: rawptr) -> u8 ---
-    render_create      :: proc(endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    render_create      :: proc(endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     render_destroy     :: proc(handle: rawptr) ---
     render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---

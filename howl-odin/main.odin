@@ -403,6 +403,7 @@ App :: struct {
     text_engine: ^TTF.TextEngine,
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
+    terminal_fonts: Desktop_Fonts,
     terminal_font_preset: int,
     app_theme: App_Theme,
     running: bool,
@@ -925,7 +926,9 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
         set_canvas_error(view, "missing Session endpoint")
         return false
     }
-    font: string = UI_FONT_PATH
+    font := terminal_primary_font(&app.terminal_fonts)
+    fallback := terminal_fallback_font(&app.terminal_fonts)
+    secondary_fallback := terminal_secondary_fallback_font(&app.terminal_fonts)
     diagnostic: [160]u8
     diagnostic_len: c.size_t
     view.canvas = render_create(
@@ -933,6 +936,10 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
         c.size_t(len(endpoint)),
         raw_data(font),
         c.size_t(len(font)),
+        raw_data(fallback),
+        c.size_t(len(fallback)),
+        raw_data(secondary_fallback),
+        c.size_t(len(secondary_fallback)),
         pixels,
         raw_data(diagnostic[:]),
         c.size_t(len(diagnostic)),
@@ -6066,6 +6073,11 @@ main :: proc() {
     defer TTF.CloseFont(ui_font)
 
     user_config := load_user_config()
+    terminal_fonts: Desktop_Fonts
+    if font_error, fonts_ok := resolve_desktop_fonts(&terminal_fonts); !fonts_ok {
+        sdl_error(font_error)
+        return
+    }
     app_theme, theme_ok := parse_app_theme(user_config.app_theme)
     if !theme_ok {
         app_theme = .Howl_Dark
@@ -6085,6 +6097,7 @@ main :: proc() {
         text_engine = engine,
         ui_font = ui_font,
         terminal_font = terminal_font,
+        terminal_fonts = terminal_fonts,
         terminal_font_preset = terminal_font_preset,
         app_theme = app_theme,
         running = true,

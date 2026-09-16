@@ -453,15 +453,28 @@ These labels are descriptive, not priority scores.
   texture. A separate Sixel 60x30 red/green image rendered through the identical
   residency/refill path, proving Odin consumes canonical graphics state rather than
   a Kitty-specific protocol path.
+- Linux font fallback now follows the exact host-owned policy already pressure-tested
+  by Flutter: explicit `HOWL_FONT`, `HOWL_FALLBACK_FONT`, and
+  `HOWL_SECONDARY_FALLBACK_FONT` paths win; otherwise `fc-match` must resolve the
+  requested family without silent substitution. Odin uses JetBrainsMono Nerd Font,
+  Noto Sans Arabic, then Noto Sans CJK JP, and passes those explicit paths to one
+  `howl-text.FontSet`; no Unicode-specific shaping or raster logic exists in Odin.
+- A live style/Unicode corpus proved bold/dim/italic/reverse/strike, single/double/
+  curly/dotted/dashed underlines, independent underline color, truecolor foreground
+  and background, combining marks, JetBrains Mono ligatures, generated box drawing,
+  CJK wide-cell fallback, Arabic fallback/script shaping, and a CJK wide glyph at the
+  final terminal column without corrupting the following line.
 
 **WANTED**
 
 - Image pressure across split panes/history/resize and the seven-image external
   resource bound where canonical semantics permit it.
-- Font family selection and fallback policy through Howl text owners.
-- Underline/undercurl/style/color pressure corpus.
-- Emoji, combining marks, wide glyphs, ligatures/shaping, bidi policy where Howl
-  explicitly supports it.
+- User-facing font family selection now that the fallback owner is explicit.
+- Color-emoji support only after `howl-text` gains a color-glyph/resource contract;
+  its current raster API intentionally accepts only MONO/GRAY alpha masks, so Noto
+  Color Emoji is not silently admitted as an incompatible fallback.
+- Explicit bidi/reordering policy and pressure beyond HarfBuzz's per-run segment
+  property guessing; one Arabic shaping canary is not treated as a full bidi proof.
 - Renderer backend telemetry hidden behind diagnostics, not normal chrome.
 
 **EXPLORE**

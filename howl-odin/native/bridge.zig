@@ -200,6 +200,10 @@ pub export fn howl_odin_bridge_render_create(
     endpoint_len: usize,
     font_ptr: [*]const u8,
     font_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: [*]const u8,
+    secondary_fallback_len: usize,
     font_pixels: u16,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
@@ -227,8 +231,19 @@ pub export fn howl_odin_bridge_render_create(
         return null;
     };
     errdefer connection.deinit();
+    var fallback_storage: [2][]const u8 = undefined;
+    var fallback_count: usize = 0;
+    if (fallback_len != 0) {
+        fallback_storage[fallback_count] = fallback_ptr[0..fallback_len];
+        fallback_count += 1;
+    }
+    if (secondary_fallback_len != 0) {
+        fallback_storage[fallback_count] = secondary_fallback_ptr[0..secondary_fallback_len];
+        fallback_count += 1;
+    }
     const fonts = render.text.FontSet.init(allocator, .{
         .primary = font_ptr[0..font_len],
+        .fallbacks = fallback_storage[0..fallback_count],
         .size = .{ .pixels = font_pixels },
     }) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));

@@ -198,6 +198,14 @@ Current canary:
   reused without further transfer. Kitty replacement preserves logical Canvas
   resource identity while advancing generation; crop/z-order and exact removal are
   renderer-owned, and a Sixel canary proved the path is protocol-independent;
+- terminal font selection now supplies ordered `howl-text` fallbacks rather than
+  accepting replacement diamonds as desktop policy. On Linux, explicit `HOWL_FONT`,
+  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files win; otherwise
+  fontconfig must resolve JetBrainsMono Nerd Font, Noto Sans Arabic, and Noto Sans
+  CJK JP exactly. A live corpus proved combining marks, CJK wide cells, Arabic
+  fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
+  truecolor, and final-column wide-cell clipping. Color emoji remains explicit debt:
+  the current `howl-text` raster contract accepts mono/gray masks, not BGRA glyphs;
 - created Local-shell tabs own Session geometry leadership: the client derives
   rows/columns from the actual Howl Canvas cell metrics and current pane extent,
   while attached Home Session views remain observer-only and never resize the
