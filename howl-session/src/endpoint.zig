@@ -365,6 +365,7 @@ const Server = struct {
     clients: [maximum_clients]?Client = @splat(null),
     next_client_id: protocol.ClientId = 1,
     authority: protocol.ResizeAuthority = .{},
+    consequence_authority: protocol.ConsequenceAuthority = .{},
     // Endpoint observation, child lifecycle, and pending PTY output.
     observation_revision: u64 = 1,
     terminal_revision: u64,
@@ -475,11 +476,12 @@ const Server = struct {
         const pty_present = descriptors[1].fd >= 0;
         const pty_read_ready = pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0;
         const service_now_ns = nowNs(self.io);
-        const result = try howl.service(
+        const result = try howl.serviceWithConsequencePolicy(
             self.session,
             pty_read_ready,
             pty_present and pty_events & posix.POLL.OUT != 0,
             service_now_ns,
+            self.consequencePolicy(),
         );
         self.applyServiceResult(result, service_now_ns, pty_read_ready);
 
@@ -499,6 +501,10 @@ const Server = struct {
 
         try self.processBufferedRequests();
         try self.materializeObservers();
+    }
+
+    fn consequencePolicy(self: *const Server) howl.ConsequencePolicy {
+        return if (self.consequence_authority.leader() != null) .retain else .headless;
     }
 
     // -------------------------------------------------------------------------
@@ -658,6 +664,10 @@ const Server = struct {
             },
             .input => try self.handleInput(client, payload),
             .assign_leader => try self.handleAssignLeader(client, payload),
+            .assign_consequence_leader => try self.handleAssignConsequenceLeader(client, payload),
+            .consequence_observe => try self.handleConsequenceObserve(client, payload),
+            .consequence_consume => try self.handleConsequenceConsume(client, payload),
+            .consequence_reply => try self.handleConsequenceReply(client, payload),
             .resize => try self.handleResize(client, payload),
             .signal => try self.handleSignal(client, payload),
             .interaction_state => try self.handleInteractionState(client, payload),
@@ -728,7 +738,13 @@ const Server = struct {
         };
         howl.input(self.session, event) catch return self.queueResult(client, .input, .rejected);
         const service_now_ns = nowNs(self.io);
-        const serviced = try howl.service(self.session, false, true, service_now_ns);
+        const serviced = try howl.serviceWithConsequencePolicy(
+            self.session,
+            false,
+            true,
+            service_now_ns,
+            self.consequencePolicy(),
+        );
         self.applyServiceResult(serviced, service_now_ns, false);
         try self.queueResult(client, .input, .ok);
     }
@@ -841,6 +857,317 @@ const Server = struct {
         client.output_offset = 0;
     }
 
+    const ConsequenceWire = struct {
+        generation: u64 = 0,
+        kind: protocol.ConsequenceKind = .none,
+        reply_required: bool = false,
+        metadata: [protocol.consequence_metadata_bytes]u8 = @splat(0),
+        payload: []const u8 = &.{},
+    };
+
+    fn writeMetadataU16(output: []u8, value: u16) void {
+        std.debug.assert(output.len == 2);
+        output[0] = @truncate(value >> 8);
+        output[1] = @truncate(value);
+    }
+
+    fn writeMetadataU32(output: []u8, value: u32) void {
+        std.debug.assert(output.len == 4);
+        output[0] = @truncate(value >> 24);
+        output[1] = @truncate(value >> 16);
+        output[2] = @truncate(value >> 8);
+        output[3] = @truncate(value);
+    }
+
+    fn writeMetadataU64(output: []u8, value: u64) void {
+        std.debug.assert(output.len == 8);
+        for (0..8) |index| output[index] = @truncate(value >> @intCast((7 - index) * 8));
+    }
+
+    fn consequenceClipboardProtocol(value: howl.Consequence) protocol.ConsequenceClipboardProtocol {
+        return switch (value.clipboard.protocol) {
+            .osc52 => .osc52,
+            .kitty_5522 => .kitty_5522,
+        };
+    }
+
+    fn consequenceClipboardKind(value: howl.Consequence) protocol.ConsequenceClipboardKind {
+        return switch (value.clipboard.kind) {
+            .set => .set,
+            .query => .query,
+            .packet => .packet,
+        };
+    }
+
+    fn consequenceWire(value: ?howl.Consequence) !ConsequenceWire {
+        const consequence = value orelse return .{};
+        var result: ConsequenceWire = .{ .generation = consequence.id() };
+        switch (consequence) {
+            .clipboard => |request| {
+                if (request.selection.len > protocol.consequence_clipboard_selection_bytes)
+                    return error.InvalidConsequence;
+                result.kind = .clipboard;
+                result.metadata[0] = @backingInt(consequenceClipboardProtocol(consequence));
+                result.metadata[1] = @backingInt(consequenceClipboardKind(consequence));
+                result.metadata[2] = @intCast(request.selection.len);
+                @memcpy(result.metadata[4..][0..request.selection.len], request.selection);
+                result.payload = request.payload;
+                result.reply_required = request.kind == .query;
+            },
+            .notification => |notification| {
+                result.kind = .notification;
+                result.metadata[0] = @backingInt(switch (notification.kind) {
+                    .message => protocol.ConsequenceNotificationKind.message,
+                    .steal_focus => .steal_focus,
+                    .request_attention => .request_attention,
+                });
+                writeMetadataU16(result.metadata[2..4], notification.command);
+                result.payload = notification.payload;
+            },
+            .pointer_shape => |request| {
+                result.kind = .pointer_shape;
+                writeMetadataU64(result.metadata[0..8], request.reset_generation);
+                result.metadata[8] = @intFromBool(request.alternate_screen);
+                result.payload = request.payload;
+                result.reply_required = request.payload.len != 0 and request.payload[0] == '?';
+            },
+            .file_transfer => |packet| {
+                result.kind = .file_transfer;
+                result.metadata[0] = @backingInt(switch (packet.protocol) {
+                    .iterm2_1337 => protocol.ConsequenceFileTransferProtocol.iterm2_1337,
+                    .kitty_5113 => .kitty_5113,
+                });
+                result.payload = packet.payload;
+            },
+            .drag_drop => |command| {
+                result.kind = .drag_drop;
+                result.metadata[0] = @backingInt(switch (command.kind) {
+                    .enable => protocol.ConsequenceDragDropKind.enable,
+                    .disable => .disable,
+                    .accept => .accept,
+                    .request => .request,
+                    .complete => .complete,
+                    .query => .query,
+                    .continuation => .continuation,
+                    .unsupported => .unsupported,
+                });
+                result.metadata[1] = command.command;
+                var flags: u8 = 0;
+                if (command.more) flags |= 0x01;
+                if (command.remote) flags |= 0x02;
+                if (command.client_id) |id| {
+                    flags |= 0x04;
+                    writeMetadataU32(result.metadata[4..8], id);
+                }
+                if (command.operation) |operation| {
+                    flags |= 0x08;
+                    writeMetadataU32(result.metadata[8..12], operation);
+                }
+                if (command.index) |index| {
+                    flags |= 0x10;
+                    writeMetadataU32(result.metadata[12..16], index);
+                }
+                result.metadata[2] = flags;
+                result.payload = command.payload;
+            },
+            .container => |occurrence| {
+                result.kind = .container;
+                result.metadata[0] = @backingInt(switch (occurrence.request) {
+                    .deiconify => protocol.ConsequenceContainerKind.deiconify,
+                    .iconify => .iconify,
+                    .move => .move,
+                    .resize_pixels => .resize_pixels,
+                    .raise => .raise,
+                    .lower => .lower,
+                    .resize_rows => .resize_rows,
+                    .resize_columns => .resize_columns,
+                    .resize_cells => .resize_cells,
+                    .report_state => .report_state,
+                    .report_position => .report_position,
+                    .report_screen_cells => .report_screen_cells,
+                    .report_icon_title => .report_icon_title,
+                });
+                switch (occurrence.request) {
+                    .move => |request| {
+                        writeMetadataU32(result.metadata[4..8], request.x);
+                        writeMetadataU32(result.metadata[8..12], request.y);
+                    },
+                    .resize_pixels => |request| {
+                        writeMetadataU32(result.metadata[4..8], request.height);
+                        writeMetadataU32(result.metadata[8..12], request.width);
+                    },
+                    .resize_rows => |rows| writeMetadataU32(result.metadata[4..8], rows),
+                    .resize_columns => |columns| writeMetadataU32(result.metadata[4..8], @backingInt(columns)),
+                    .resize_cells => |request| {
+                        writeMetadataU32(result.metadata[4..8], request.rows);
+                        writeMetadataU32(result.metadata[8..12], request.cols);
+                    },
+                    .report_state, .report_position, .report_screen_cells, .report_icon_title => result.reply_required = true,
+                    else => {},
+                }
+            },
+            .color_preference_query => {
+                result.kind = .color_preference;
+                result.reply_required = true;
+            },
+            .media_copy => |occurrence| {
+                result.kind = .media_copy;
+                result.metadata[0] = @intFromBool(occurrence.request.private);
+                writeMetadataU16(result.metadata[2..4], occurrence.request.parameter);
+            },
+            .bell => result.kind = .bell,
+            .legacy_control => |occurrence| {
+                result.kind = .legacy_control;
+                result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                    .tek_point_plot => protocol.ConsequenceLegacyControlKind.tek_point_plot,
+                    .tek_graph => .tek_graph,
+                    .tek_incremental_plot => .tek_incremental_plot,
+                    .tek_alpha => .tek_alpha,
+                    .tek_copy => .tek_copy,
+                    .tek_special_point_plot => .tek_special_point_plot,
+                    .tek_write_thru_short_dashed => .tek_write_thru_short_dashed,
+                    .hp_memory_lock => .hp_memory_lock,
+                });
+            },
+            .dcs => |occurrence| {
+                result.kind = .dcs;
+                result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                    .xtsettcap => protocol.ConsequenceDcsKind.xtsettcap,
+                    .decudk => .decudk,
+                    .decaupss => .decaupss,
+                    .iterm_tmux_hook => .iterm_tmux_hook,
+                    .iterm_ssh_hook => .iterm_ssh_hook,
+                    .iterm_tmux_wrap => .iterm_tmux_wrap,
+                    .kitty_remote_command => .kitty_remote_command,
+                    .kitty_overlay_ready => .kitty_overlay_ready,
+                    .kitty_result => .kitty_result,
+                    .kitty_print => .kitty_print,
+                    .kitty_echo => .kitty_echo,
+                    .kitty_ssh => .kitty_ssh,
+                    .kitty_askpass => .kitty_askpass,
+                    .kitty_clone => .kitty_clone,
+                    .kitty_edit => .kitty_edit,
+                });
+                result.payload = occurrence.payload;
+            },
+            .string_control => |occurrence| {
+                result.kind = .string_control;
+                result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                    .apc => protocol.ConsequenceStringKind.apc,
+                    .pm => .pm,
+                    .sos => .sos,
+                });
+                result.payload = occurrence.payload;
+            },
+        }
+        if (result.payload.len > protocol.maximum_consequence_payload_bytes)
+            return error.InvalidConsequence;
+        return result;
+    }
+
+    fn handleConsequenceObserve(self: *Server, client: *Client, payload: []const u8) !void {
+        if (payload.len != protocol.payload_bytes.consequence_observe)
+            return self.queueResult(client, .consequence_observe, .malformed);
+        if (client.outputPending()) return error.ResponseAlreadyPending;
+        const snapshot = try consequenceWire(howl.consequenceHead(self.session));
+        const data_frames = std.math.divCeil(
+            usize,
+            snapshot.payload.len,
+            protocol.consequence_data_chunk_bytes,
+        ) catch return error.PayloadTooLarge;
+        const total_bound = protocol.header_bytes + protocol.payload_bytes.consequence_begin +
+            data_frames * protocol.header_bytes + snapshot.payload.len +
+            protocol.header_bytes + protocol.payload_bytes.consequence_end;
+        client.resetOutput(self.allocator);
+        errdefer client.resetOutput(self.allocator);
+        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+        var begin: [protocol.payload_bytes.consequence_begin]u8 = undefined;
+        try protocol.encodeConsequenceBegin(&begin, .{
+            .terminal_revision = howl.revision(self.session),
+            .authority_client_id = self.consequence_authority.leader() orelse protocol.no_client,
+            .generation = snapshot.generation,
+            .payload_len = @intCast(snapshot.payload.len),
+            .kind = snapshot.kind,
+            .reply_required = snapshot.reply_required,
+            .metadata = snapshot.metadata,
+        });
+        try self.appendFrame(&client.output, .consequence_begin, &begin);
+        var offset: usize = 0;
+        while (offset < snapshot.payload.len) {
+            const count = @min(protocol.consequence_data_chunk_bytes, snapshot.payload.len - offset);
+            try self.appendFrame(&client.output, .consequence_data, snapshot.payload[offset..][0..count]);
+            offset += count;
+        }
+        var end: [protocol.payload_bytes.consequence_end]u8 = undefined;
+        protocol.encodeConsequenceEnd(&end, snapshot.generation);
+        try self.appendFrame(&client.output, .consequence_end, &end);
+        std.debug.assert(client.output.items.len == total_bound);
+        client.output_offset = 0;
+    }
+
+    fn handleConsequenceConsume(self: *Server, client: *Client, payload: []const u8) !void {
+        if (!self.consequence_authority.mayHandle(client.id))
+            return self.queueResult(client, .consequence_consume, .not_leader);
+        const generation = protocol.decodeConsequenceIdentity(payload) catch
+            return self.queueResult(client, .consequence_consume, .malformed);
+        howl.consumeConsequence(self.session, generation) catch
+            return self.queueResult(client, .consequence_consume, .rejected);
+        try self.queueResult(client, .consequence_consume, .ok);
+    }
+
+    fn handleConsequenceReply(self: *Server, client: *Client, payload: []const u8) !void {
+        if (!self.consequence_authority.mayHandle(client.id))
+            return self.queueResult(client, .consequence_reply, .not_leader);
+        const reply = protocol.decodeConsequenceReply(payload) catch
+            return self.queueResult(client, .consequence_reply, .malformed);
+        switch (reply.kind) {
+            .clipboard => {
+                const replied = howl.replyClipboard(self.session, reply.generation, reply.body) catch
+                    return self.queueResult(client, .consequence_reply, .rejected);
+                if (!replied) return self.queueResult(client, .consequence_reply, .rejected);
+            },
+            .pointer_shape => howl.replyPointerShape(self.session, reply.generation, reply.body) catch
+                return self.queueResult(client, .consequence_reply, .rejected),
+            .color_preference => howl.replyColorPreference(
+                self.session,
+                reply.generation,
+                if (reply.body[0] == 1) .dark else .light,
+            ) catch return self.queueResult(client, .consequence_reply, .rejected),
+            .container_state => howl.replyContainer(
+                self.session,
+                reply.generation,
+                .{ .state = if (reply.body[0] == 1) .normal else .iconified },
+            ) catch return self.queueResult(client, .consequence_reply, .rejected),
+            .container_position => howl.replyContainer(
+                self.session,
+                reply.generation,
+                .{ .position = .{ .x = readU32(reply.body[0..4]), .y = readU32(reply.body[4..8]) } },
+            ) catch return self.queueResult(client, .consequence_reply, .rejected),
+            .container_screen_cells => howl.replyContainer(
+                self.session,
+                reply.generation,
+                .{ .screen_cells = .{ .rows = readU32(reply.body[0..4]), .cols = readU32(reply.body[4..8]) } },
+            ) catch return self.queueResult(client, .consequence_reply, .rejected),
+            .container_icon_title => howl.replyContainer(
+                self.session,
+                reply.generation,
+                .{ .icon_title = reply.body },
+            ) catch return self.queueResult(client, .consequence_reply, .rejected),
+            .container_decline => howl.declineContainerQuery(self.session, reply.generation) catch
+                return self.queueResult(client, .consequence_reply, .rejected),
+        }
+        const service_now_ns = nowNs(self.io);
+        const serviced = try howl.serviceWithConsequencePolicy(
+            self.session,
+            false,
+            true,
+            service_now_ns,
+            self.consequencePolicy(),
+        );
+        self.applyServiceResult(serviced, service_now_ns, false);
+        try self.queueResult(client, .consequence_reply, .ok);
+    }
+
     // -------------------------------------------------------------------------
     // Leadership, resize, and signals
     // -------------------------------------------------------------------------
@@ -855,6 +1182,17 @@ const Server = struct {
             self.bumpObservation();
         }
         try self.queueResult(client, .assign_leader, .ok);
+    }
+
+    fn handleAssignConsequenceLeader(self: *Server, client: *Client, payload: []const u8) !void {
+        const request = protocol.decodeAssignLeader(payload) catch
+            return self.queueResult(client, .assign_consequence_leader, .malformed);
+        if (request.client_id != protocol.no_client and !self.hasClient(request.client_id))
+            return self.queueResult(client, .assign_consequence_leader, .no_such_client);
+        if (self.consequence_authority.assign(request.client_id)) {
+            self.burst_publication.reset();
+        }
+        try self.queueResult(client, .assign_consequence_leader, .ok);
     }
 
     fn handleResize(self: *Server, client: *Client, payload: []const u8) !void {
@@ -896,6 +1234,9 @@ const Server = struct {
         if (self.authority.disconnected(id)) {
             self.burst_publication.reset();
             self.bumpObservation();
+        }
+        if (self.consequence_authority.disconnected(id)) {
+            self.burst_publication.reset();
         }
     }
 
@@ -2259,6 +2600,17 @@ const TestSnapshot = struct {
     }
 };
 
+const TestConsequenceSnapshot = struct {
+    allocator: std.mem.Allocator,
+    begin: protocol.ConsequenceBegin,
+    payload: []u8,
+
+    fn deinit(self: *TestConsequenceSnapshot) void {
+        self.allocator.free(self.payload);
+        self.* = undefined;
+    }
+};
+
 const TestTextSnapshot = struct {
     begin: protocol.SnapshotBegin,
     presentation_seen: bool = false,
@@ -3539,6 +3891,66 @@ fn sendAssignLeader(peer: *TestPeer, server: *Server, client_id: protocol.Client
     try peer.sendFrame(server, .assign_leader, &payload);
 }
 
+fn sendAssignConsequenceLeader(peer: *TestPeer, server: *Server, client_id: protocol.ClientId) !void {
+    var payload: [protocol.payload_bytes.assign_consequence_leader]u8 = undefined;
+    protocol.encodeAssignLeader(&payload, .{ .client_id = client_id });
+    try peer.sendFrame(server, .assign_consequence_leader, &payload);
+}
+
+fn sendConsequenceObserve(peer: *TestPeer, server: *Server) !void {
+    try peer.sendFrame(server, .consequence_observe, &.{});
+}
+
+fn sendConsequenceConsume(peer: *TestPeer, server: *Server, generation: u64) !void {
+    var payload: [protocol.payload_bytes.consequence_consume]u8 = undefined;
+    protocol.encodeConsequenceIdentity(&payload, generation);
+    try peer.sendFrame(server, .consequence_consume, &payload);
+}
+
+fn sendConsequenceReply(
+    peer: *TestPeer,
+    server: *Server,
+    generation: u64,
+    kind: protocol.ConsequenceReplyKind,
+    body: []const u8,
+) !void {
+    var payload: [protocol.maximum_request_payload_bytes]u8 = undefined;
+    const encoded = try protocol.encodeConsequenceReply(&payload, generation, kind, body);
+    try peer.sendFrame(server, .consequence_reply, encoded);
+}
+
+fn receiveConsequenceSnapshot(peer: *TestPeer, server: *Server) !TestConsequenceSnapshot {
+    var first = try awaitFrame(peer, server);
+    defer first.deinit();
+    if (first.kind != .consequence_begin) return error.UnexpectedTestFrame;
+    const begin = try protocol.decodeConsequenceBegin(first.payload);
+    var payload: std.ArrayList(u8) = .empty;
+    errdefer payload.deinit(peer.allocator);
+    while (true) {
+        var frame = try awaitFrame(peer, server);
+        defer frame.deinit();
+        switch (frame.kind) {
+            .consequence_data => {
+                if (payload.items.len + frame.payload.len > begin.payload_len)
+                    return error.MalformedTestSnapshot;
+                try payload.appendSlice(peer.allocator, frame.payload);
+            },
+            .consequence_end => {
+                const generation = try protocol.decodeConsequenceEnd(frame.payload);
+                if (generation != begin.generation or payload.items.len != begin.payload_len)
+                    return error.MalformedTestSnapshot;
+                break;
+            },
+            else => return error.UnexpectedTestFrame,
+        }
+    }
+    return .{
+        .allocator = peer.allocator,
+        .begin = begin,
+        .payload = try payload.toOwnedSlice(peer.allocator),
+    };
+}
+
 fn sendResize(peer: *TestPeer, server: *Server, rows: u16, columns: u16) !void {
     var payload: [protocol.payload_bytes.resize]u8 = undefined;
     protocol.encodeResize(&payload, .{ .rows = rows, .columns = columns });
@@ -4230,4 +4642,192 @@ test "oversized text_v1 observation is local rejection and recovers" {
     try std.testing.expectEqual(@as(u16, 8), recovered.begin.rows);
     try std.testing.expectEqual(@as(u16, 40), recovered.begin.columns);
     try std.testing.expect(recovered.begin.you_are_leader);
+}
+
+test "consequence authority observes consumes replies and fails headless on disconnect" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-consequence-authority.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 6,
+            .columns = 64,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\007\\033[?996n'; " ++
+                "dd bs=1 count=9 2>/dev/null | od -An -t x1; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\007'; sleep 30",
+        },
+    );
+    defer server.deinit();
+
+    var authority = try TestPeer.connect(std.testing.allocator, path);
+    defer authority.deinit();
+    const authority_welcome = try handshake(&authority, &server);
+    var observer = try TestPeer.connect(std.testing.allocator, path);
+    defer observer.deinit();
+    const observer_welcome = try handshake(&observer, &server);
+    try std.testing.expect(observer_welcome.client_id != protocol.no_client);
+
+    try sendAssignConsequenceLeader(&authority, &server, authority_welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+    try std.testing.expectEqual(authority_welcome.client_id, server.consequence_authority.leader().?);
+    try std.testing.expectEqual(howl.ConsequencePolicy.retain, server.consequencePolicy());
+
+    try sendInput(&authority, &server, "x");
+    try expectResult(&authority, &server, .input, .ok);
+    var attempts: usize = 0;
+    while (howl.consequenceCount(server.session) < 2 and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(u8, 2), howl.consequenceCount(server.session));
+
+    try sendConsequenceObserve(&observer, &server);
+    var bell = try receiveConsequenceSnapshot(&observer, &server);
+    defer bell.deinit();
+    try std.testing.expectEqual(protocol.ConsequenceKind.bell, bell.begin.kind);
+    try std.testing.expectEqual(authority_welcome.client_id, bell.begin.authority_client_id);
+    try std.testing.expect(!bell.begin.reply_required);
+    try std.testing.expectEqual(@as(usize, 0), bell.payload.len);
+
+    try sendConsequenceConsume(&observer, &server, bell.begin.generation);
+    try expectResult(&observer, &server, .consequence_consume, .not_leader);
+    try sendConsequenceConsume(&authority, &server, bell.begin.generation);
+    try expectResult(&authority, &server, .consequence_consume, .ok);
+
+    try sendConsequenceObserve(&authority, &server);
+    var color = try receiveConsequenceSnapshot(&authority, &server);
+    defer color.deinit();
+    try std.testing.expectEqual(protocol.ConsequenceKind.color_preference, color.begin.kind);
+    try std.testing.expect(color.begin.reply_required);
+    try std.testing.expect(color.begin.generation > bell.begin.generation);
+
+    try sendConsequenceReply(&observer, &server, color.begin.generation, .color_preference, &.{1});
+    try expectResult(&observer, &server, .consequence_reply, .not_leader);
+    try sendConsequenceReply(&authority, &server, color.begin.generation, .color_preference, &.{1});
+    try expectResult(&authority, &server, .consequence_reply, .ok);
+    try std.testing.expectEqual(@as(u8, 0), howl.consequenceCount(server.session));
+
+    var reply_snapshot = try observeUntilContains(
+        &observer,
+        &server,
+        0,
+        "1b 5b 3f 39 39 37 3b 31 6e",
+    );
+    reply_snapshot.deinit();
+
+    try sendInput(&observer, &server, "y");
+    try expectResult(&observer, &server, .input, .ok);
+    attempts = 0;
+    while (howl.consequenceCount(server.session) == 0 and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(u8, 1), howl.consequenceCount(server.session));
+    try std.testing.expectEqual(std.meta.Tag(howl.Consequence).bell, std.meta.activeTag(howl.consequenceHead(server.session).?));
+
+    authority.closeSocket();
+    attempts = 0;
+    while (server.consequence_authority.leader() != null and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(server.consequence_authority.leader() == null);
+    try std.testing.expectEqual(howl.ConsequencePolicy.headless, server.consequencePolicy());
+    attempts = 0;
+    while (howl.consequenceCount(server.session) != 0 and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(u8, 0), howl.consequenceCount(server.session));
+}
+
+test "consequence wire mapper satisfies frozen metadata grammar for every family" {
+    const values = [_]howl.Consequence{
+        .{ .clipboard = .{
+            .generation = 1,
+            .selection = "c",
+            .payload = "?",
+            .kind = .query,
+            .protocol = .osc52,
+        } },
+        .{ .notification = .{
+            .generation = 2,
+            .kind = .request_attention,
+            .command = 777,
+            .payload = "attention",
+        } },
+        .{ .pointer_shape = .{
+            .generation = 3,
+            .reset_generation = 9,
+            .alternate_screen = true,
+            .payload = "?",
+        } },
+        .{ .file_transfer = .{
+            .generation = 4,
+            .protocol = .kitty_5113,
+            .payload = "packet",
+        } },
+        .{ .drag_drop = .{
+            .generation = 5,
+            .kind = .request,
+            .command = 4,
+            .client_id = 7,
+            .more = true,
+            .operation = 2,
+            .index = 3,
+            .remote = true,
+            .payload = "mime",
+        } },
+        .{ .container = .{
+            .generation = 6,
+            .request = .{ .resize_cells = .{ .rows = 24, .cols = 80 } },
+        } },
+        .{ .color_preference_query = .{ .id = 7 } },
+        .{ .media_copy = .{
+            .generation = 8,
+            .request = .{ .private = true, .parameter = 11 },
+        } },
+        .{ .bell = .{ .id = 9 } },
+        .{ .legacy_control = .{ .generation = 10, .kind = .tek_graph } },
+        .{ .dcs = .{ .generation = 11, .kind = .kitty_remote_command, .payload = "remote" } },
+        .{ .string_control = .{ .generation = 12, .kind = .apc, .payload = "apc" } },
+    };
+    const expected_kinds = [_]protocol.ConsequenceKind{
+        .clipboard,
+        .notification,
+        .pointer_shape,
+        .file_transfer,
+        .drag_drop,
+        .container,
+        .color_preference,
+        .media_copy,
+        .bell,
+        .legacy_control,
+        .dcs,
+        .string_control,
+    };
+    for (values, expected_kinds) |value, expected| {
+        const wire = try Server.consequenceWire(value);
+        try std.testing.expectEqual(expected, wire.kind);
+        try std.testing.expect(wire.generation != 0);
+        var encoded: [protocol.payload_bytes.consequence_begin]u8 = undefined;
+        try protocol.encodeConsequenceBegin(&encoded, .{
+            .terminal_revision = 1,
+            .authority_client_id = 2,
+            .generation = wire.generation,
+            .payload_len = @intCast(wire.payload.len),
+            .kind = wire.kind,
+            .reply_required = wire.reply_required,
+            .metadata = wire.metadata,
+        });
+        const decoded = try protocol.decodeConsequenceBegin(&encoded);
+        try std.testing.expectEqual(wire.kind, decoded.kind);
+        try std.testing.expectEqual(wire.reply_required, decoded.reply_required);
+        try std.testing.expectEqual(@as(u32, @intCast(wire.payload.len)), decoded.payload_len);
+    }
 }

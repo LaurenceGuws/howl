@@ -15,6 +15,7 @@ pub const Cancellation = impl.Cancellation;
 pub const Connection = impl.Connection;
 
 pub const actions = @import("actions.zig");
+pub const consequences = @import("consequences.zig");
 pub const state = @import("state.zig");
 pub const snapshot = @import("snapshot.zig");
 pub const rich = @import("rich.zig");
