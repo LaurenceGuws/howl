@@ -54,3 +54,16 @@ lifecycle_action_hit_stays_inside_status_bar :: proc(t: ^testing.T) {
     testing.expect(t, action.x + action.w <= bar.x + bar.w)
     testing.expect(t, action.y + action.h <= bar.y + bar.h)
 }
+
+
+@(test)
+startup_arguments_separate_information_from_window_lifecycle :: proc(t: ^testing.T) {
+    testing.expect_value(t, startup_intent(nil), Startup_Intent.Run)
+    testing.expect_value(t, startup_intent([]string{"--help"}), Startup_Intent.Help)
+    testing.expect_value(t, startup_intent([]string{"-h"}), Startup_Intent.Help)
+    testing.expect_value(t, startup_intent([]string{"--version"}), Startup_Intent.Version)
+    invalid := [4][]string{{""}, {"--unknown"}, {"file"}, {"--help", "file"}}
+    for args in invalid {
+        testing.expect_value(t, startup_intent(args), Startup_Intent.Invalid)
+    }
+}

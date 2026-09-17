@@ -6229,7 +6229,32 @@ draw :: proc(app: ^App) {
     _ = SDL.RenderPresent(app.renderer)
 }
 
+Startup_Intent :: enum { Run, Help, Version, Invalid }
+
+startup_intent :: proc(args: []string) -> Startup_Intent {
+    if len(args) == 0 do return .Run
+    if len(args) != 1 do return .Invalid
+    switch args[0] {
+    case "--help", "-h": return .Help
+    case "--version": return .Version
+    }
+    return .Invalid
+}
+
 main :: proc() {
+    // Informational calls must not create an I/O runtime, window, or Session.
+    switch startup_intent(os.args[1:]) {
+    case .Help:
+        fmt.println("Usage: howl-odin [--help | --version]\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
+        return
+    case .Version:
+        fmt.printf("%s %s\n", APP_NAME, APP_VERSION)
+        return
+    case .Invalid:
+        fmt.eprintln("Usage: howl-odin [--help | --version]")
+        os.exit(2)
+    case .Run:
+    }
     if version() != 8 { fmt.eprintln("Howl bridge version mismatch"); return }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
