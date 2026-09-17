@@ -6,7 +6,7 @@ import "core:thread"
 import SDL "vendor:sdl3"
 
 MAX_CONSEQUENCE_OWNERS :: MAX_TABS * MAX_PANES_PER_TAB
-CONSEQUENCE_ENDPOINT_BYTES :: 160
+CONSEQUENCE_ENDPOINT_BYTES :: PROFILE_ENDPOINT_BYTES
 CONSEQUENCE_PAYLOAD_SCRATCH :: 4096
 
 Desktop_Consequence_Action :: enum u8 {
@@ -23,6 +23,7 @@ Consequence_Owner :: struct {
 	endpoint: [CONSEQUENCE_ENDPOINT_BYTES]u8,
 	endpoint_len: int,
 	handle: rawptr,
+    interrupt: rawptr,
 	client_id: u64,
 	worker: ^thread.Thread,
 	mutex: sync.Mutex,
@@ -199,6 +200,21 @@ process_consequence_owner :: proc(owner: ^Consequence_Owner) {
 
 consequence_owner_worker :: proc(data: rawptr) {
 	owner := (^Consequence_Owner)(data)
+    endpoint := consequence_endpoint(owner)
+    diagnostic: [160]u8
+    count: c.size_t
+    owner.handle = consequence_create(desktop_io_runtime, owner.interrupt,
+                                       raw_data(endpoint), c.size_t(len(endpoint)),
+                                       raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
+    if owner.handle == nil {
+        sync.mutex_lock(&owner.mutex)
+        owner.error_len = int(count)
+        copy(owner.error[:int(count)], diagnostic[:int(count)])
+        sync.mutex_unlock(&owner.mutex)
+        notify_session_update()
+        return
+    }
+    owner.client_id = consequence_client_id(owner.handle)
 	for {
 		sync.mutex_lock(&owner.mutex)
 		for !owner.stop && !owner.wake {
@@ -213,31 +229,17 @@ consequence_owner_worker :: proc(data: rawptr) {
 }
 
 create_consequence_owner :: proc(endpoint: string, rows, columns: u16) -> ^Consequence_Owner {
-	if len(endpoint) == 0 || len(endpoint) >= CONSEQUENCE_ENDPOINT_BYTES do return nil
-	diagnostic: [160]u8
-	diagnostic_len: c.size_t
-	handle := consequence_create(
-		raw_data(endpoint), c.size_t(len(endpoint)),
-		raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &diagnostic_len,
-	)
-	if handle == nil do return nil
-	owner := new(Consequence_Owner)
-	if owner == nil {
-		consequence_destroy(handle)
-		return nil
-	}
-	owner^ = Consequence_Owner{handle = handle, client_id = consequence_client_id(handle), rows = rows, columns = columns, wake = true}
-	copy(owner.endpoint[:len(endpoint)], transmute([]u8)endpoint)
-	owner.endpoint_len = len(endpoint)
-	owner.worker = thread.create_and_start_with_data(
-		rawptr(owner), consequence_owner_worker, name = "howl-odin-host-policy",
-	)
-	if owner.worker == nil {
-		consequence_destroy(handle)
-		free(owner)
-		return nil
-	}
-	return owner
+    if len(endpoint) == 0 || len(endpoint) >= CONSEQUENCE_ENDPOINT_BYTES do return nil
+    owner := new(Consequence_Owner)
+    if owner == nil do return nil
+    owner^ = Consequence_Owner{rows = rows, columns = columns, wake = true}
+    copy(owner.endpoint[:len(endpoint)], transmute([]u8)endpoint)
+    owner.endpoint_len = len(endpoint)
+    owner.interrupt = interrupt_create()
+    if owner.interrupt == nil { free(owner); return nil }
+    owner.worker = thread.create_and_start_with_data(rawptr(owner), consequence_owner_worker, name = "howl-odin-host-policy")
+    if owner.worker == nil { interrupt_destroy(owner.interrupt); free(owner); return nil }
+    return owner
 }
 
 destroy_consequence_owner :: proc(owner: ^Consequence_Owner) {
@@ -245,6 +247,7 @@ destroy_consequence_owner :: proc(owner: ^Consequence_Owner) {
 	sync.mutex_lock(&owner.mutex)
 	owner.stop = true
 	sync.mutex_unlock(&owner.mutex)
+    if owner.interrupt != nil do _ = interrupt_cancel(owner.interrupt)
 	sync.cond_signal(&owner.cond)
 	if owner.worker != nil {
 		thread.destroy(owner.worker)
@@ -254,6 +257,7 @@ destroy_consequence_owner :: proc(owner: ^Consequence_Owner) {
 		consequence_destroy(owner.handle)
 		owner.handle = nil
 	}
+    if owner.interrupt != nil do interrupt_destroy(owner.interrupt)
 	free(owner)
 }
 
@@ -286,7 +290,7 @@ reconcile_consequence_owners :: proc(app: ^App) {
 	}
 	for tab_index in 0..<app.tab_count {
 		for view in app.tabs[tab_index].panes {
-			if view == nil || view.control == nil do continue
+			if view == nil || view.control == nil || !session_interactive(view) do continue
 			endpoint := session_endpoint(view)
 			if len(endpoint) == 0 do continue
 			owner := find_consequence_owner(app, endpoint)

@@ -16,6 +16,7 @@ const unix_prefix = "unix:";
 
 pub const Error = ssh.Error || protocol.HeaderError || protocol.PayloadError || error{
     RouteUnavailable,
+    ConnectionCanceled,
     InvalidEndpoint,
     SocketCreateFailed,
     SocketDuplicateFailed,
@@ -84,11 +85,59 @@ pub const Cancellation = struct {
     }
 };
 
+// A single-use cancellation lifetime, created before connection setup. The
+// native caller retains it until every borrowing connection/worker has stopped.
+// Its private wake stream can interrupt a partial handshake, a full write buffer
+// or an idle observation without a periodic polling timer or FD-reuse race.
+pub const Interrupt = opaque {
+    pub fn init(allocator: std.mem.Allocator) Error!*Interrupt {
+        var pair: [2]posix.fd_t = undefined;
+        if (posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)) != .SUCCESS)
+            return error.SocketCreateFailed;
+        errdefer closeFd(pair[0]);
+        errdefer closeFd(pair[1]);
+        try setCloseOnExec(pair[0]);
+        try setCloseOnExec(pair[1]);
+        const value = try allocator.create(InterruptState);
+        value.* = .{ .allocator = allocator, .pair = pair };
+        return @ptrCast(value);
+    }
+
+    pub fn cancel(self: *Interrupt) error{SocketShutdownFailed}!void {
+        const value = self.state();
+        value.canceled.store(true, .release);
+        try shutdownFd(value.pair[1]);
+    }
+
+    pub fn deinit(self: *Interrupt) void {
+        const value = self.state();
+        closeFd(value.pair[1]);
+        closeFd(value.pair[0]);
+        value.allocator.destroy(value);
+    }
+
+    fn state(self: *Interrupt) *InterruptState {
+        return @ptrCast(@alignCast(self));
+    }
+};
+
+const InterruptState = struct {
+    allocator: std.mem.Allocator,
+    pair: [2]posix.fd_t,
+    canceled: std.atomic.Value(bool) = .init(false),
+};
+
+fn checkInterrupted(interrupt: ?*Interrupt) error{ConnectionCanceled}!void {
+    if (interrupt) |token| if (token.state().canceled.load(.acquire))
+        return error.ConnectionCanceled;
+}
+
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     fd: posix.fd_t,
     client_id: protocol.ClientId,
     ssh_process: ?*ssh.Process = null,
+    interrupt: ?*Interrupt = null,
 
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
         var diagnostic: ConnectDiagnostic = .{};
@@ -103,12 +152,12 @@ pub const Connection = struct {
         diagnostic.* = .{};
         diagnostic.stage = .endpoint;
         const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-            try connectTcp(try tcpEndpoint(endpoint), diagnostic)
+            try connectTcp(try tcpEndpoint(endpoint), diagnostic, null)
         else if (std.mem.startsWith(u8, endpoint, unix_prefix))
-            try connectUnix(endpoint[unix_prefix.len..])
+            try connectUnix(endpoint[unix_prefix.len..], null)
         else
             return error.InvalidEndpoint;
-        return initOwnedFd(allocator, fd, diagnostic, null);
+        return initOwnedFd(allocator, fd, diagnostic, null, null);
     }
 
     /// Opts a native host into its installed OpenSSH carrier. Socket-only and
@@ -122,19 +171,37 @@ pub const Connection = struct {
         endpoint: []const u8,
         diagnostic: *ConnectDiagnostic,
     ) Error!Connection {
-        if (!std.mem.startsWith(u8, endpoint, "ssh://"))
-            return connectDiagnosed(allocator, endpoint, diagnostic);
+        return connectNativeCancelable(allocator, io, endpoint, diagnostic, null);
+    }
+
+    /// Same native connection with one borrowed, single-use cancellation scope.
+    /// The scope outlives this connection, including its pending handshake; it
+    /// interrupts reads and backpressured writes but never replays an operation.
+    pub fn connectNativeCancelable(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        endpoint: []const u8,
+        diagnostic: *ConnectDiagnostic,
+        interrupt: ?*Interrupt,
+    ) Error!Connection {
         diagnostic.* = .{ .stage = .endpoint };
+        try checkInterrupted(interrupt);
+        const deadline = (try monotonicMilliseconds()) + tcp_connect_timeout_ms;
+        if (!std.mem.startsWith(u8, endpoint, "ssh://")) {
+            const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
+                try connectTcp(try tcpEndpoint(endpoint), diagnostic, interrupt)
+            else if (std.mem.startsWith(u8, endpoint, unix_prefix))
+                try connectUnix(endpoint[unix_prefix.len..], interrupt)
+            else
+                return error.InvalidEndpoint;
+            return initOwnedFd(allocator, fd, diagnostic, deadline, interrupt);
+        }
         if (comptime !ssh.supported) return error.RouteUnavailable;
         const route = try ssh.parse(endpoint);
         diagnostic.stage = .ssh_launch;
         const opened = try ssh.Process.open(allocator, io, route);
         errdefer diagnostic.route_message_len = opened.process.deinit(&diagnostic.route_message);
-        const deadline = (monotonicMilliseconds() catch {
-            closeFd(opened.fd);
-            return error.SocketConnectFailed;
-        }) + tcp_connect_timeout_ms;
-        var connection = try initOwnedFd(allocator, opened.fd, diagnostic, deadline);
+        var connection = try initOwnedFd(allocator, opened.fd, diagnostic, deadline, interrupt);
         connection.ssh_process = opened.process;
         return connection;
     }
@@ -168,17 +235,17 @@ pub const Connection = struct {
         if (payload.len > protocol.maximum_request_payload_bytes) return error.PayloadTooLarge;
         var header: [protocol.header_bytes]u8 = undefined;
         try protocol.encodeHeader(&header, .{ .kind = kind, .payload_len = @intCast(payload.len) });
-        try writeAll(self.fd, &header);
-        try writeAll(self.fd, payload);
+        try writeInterrupt(self.fd, &header, null, self.interrupt);
+        try writeInterrupt(self.fd, payload, null, self.interrupt);
     }
 
     pub fn receive(self: *Connection) Error!Frame {
         var header_bytes: [protocol.header_bytes]u8 = undefined;
-        try readExact(self.fd, &header_bytes);
+        try readInterrupt(self.fd, &header_bytes, null, self.interrupt);
         const header = try protocol.decodeHeader(&header_bytes);
         const payload = try self.allocator.alloc(u8, header.payload_len);
         errdefer self.allocator.free(payload);
-        try readExact(self.fd, payload);
+        try readInterrupt(self.fd, payload, null, self.interrupt);
         return .{ .allocator = self.allocator, .kind = header.kind, .payload = payload };
     }
 };
@@ -188,20 +255,27 @@ fn initOwnedFd(
     fd: posix.fd_t,
     diagnostic: *ConnectDiagnostic,
     deadline_ms: ?i64,
+    interrupt: ?*Interrupt,
 ) Error!Connection {
     errdefer closeFd(fd);
     diagnostic.stage = .close_on_exec;
     try setCloseOnExec(fd);
+    try checkInterrupted(interrupt);
+    const flags = try fileStatusFlags(fd);
+    if (deadline_ms != null or interrupt != null) try setFileStatusFlags(fd, flags | nonblockingFlag());
     var connection = Connection{
         .allocator = allocator,
         .fd = fd,
         .client_id = protocol.no_client,
+        .interrupt = interrupt,
     };
     diagnostic.stage = .hello_write;
-    try connection.send(.hello, &.{});
+    var hello: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
+    try writeInterrupt(fd, &hello, deadline_ms, interrupt);
     diagnostic.stage = .welcome_read;
     var header_bytes: [protocol.header_bytes]u8 = undefined;
-    try readHandshake(fd, &header_bytes, deadline_ms);
+    try readInterrupt(fd, &header_bytes, deadline_ms, interrupt);
     const header = try protocol.decodeHeader(&header_bytes);
     if (header.kind != .welcome) {
         diagnostic.stage = .welcome_kind;
@@ -210,9 +284,10 @@ fn initOwnedFd(
     diagnostic.stage = .welcome_payload;
     if (header.payload_len != protocol.payload_bytes.welcome) return error.InvalidPayload;
     var payload: [protocol.payload_bytes.welcome]u8 = undefined;
-    try readHandshake(fd, &payload, deadline_ms);
+    try readInterrupt(fd, &payload, deadline_ms, interrupt);
     const welcome = try protocol.decodeWelcome(&payload);
     connection.client_id = welcome.client_id;
+    if (interrupt == null) try setFileStatusFlags(fd, flags);
     diagnostic.stage = .ready;
     return connection;
 }
@@ -252,7 +327,8 @@ const tcp_connect_timeout_ms = 15_000;
 fn connectTcp(
     endpoint: TcpEndpoint,
     diagnostic: *ConnectDiagnostic,
-) error{ SocketCreateFailed, SocketConnectFailed, SocketConnectTimedOut, SocketOptionFailed }!posix.fd_t {
+    interrupt: ?*Interrupt,
+) Error!posix.fd_t {
     diagnostic.stage = .socket_create;
     const raw = system.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
     const socket_errno = posix.errno(raw);
@@ -295,30 +371,7 @@ fn connectTcp(
             try monotonicMilliseconds(),
             tcp_connect_timeout_ms,
         ) catch return error.SocketConnectFailed;
-        while (true) {
-            const now_ms = try monotonicMilliseconds();
-            if (now_ms >= deadline_ms) return error.SocketConnectTimedOut;
-            const remaining_ms: i32 = @intCast(@min(deadline_ms - now_ms, std.math.maxInt(i32)));
-            var fds = [_]posix.pollfd{.{
-                .fd = fd,
-                .events = posix.POLL.OUT,
-                .revents = 0,
-            }};
-            const ready_raw = system.poll(&fds, 1, remaining_ms);
-            switch (posix.errno(ready_raw)) {
-                .SUCCESS => {
-                    if (ready_raw == 0) return error.SocketConnectTimedOut;
-                    if (fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL | posix.POLL.OUT) == 0)
-                        return error.SocketConnectFailed;
-                    break;
-                },
-                .INTR => {
-                    diagnostic.poll_interrupts +|= 1;
-                    continue;
-                },
-                else => return error.SocketConnectFailed,
-            }
-        }
+        try waitReady(fd, posix.POLL.OUT, deadline_ms, interrupt, &diagnostic.poll_interrupts);
         diagnostic.stage = .socket_verify;
         try verifySocketConnected(fd, diagnostic);
     }
@@ -330,33 +383,76 @@ fn connectTcp(
     return fd;
 }
 
-// One total SSH handshake deadline, including a peer that drips a partial header.
-// Ordinary established long-poll observations remain intentionally unbounded and
-// wake via their independently owned Cancellation socket.
-fn readHandshake(fd: posix.fd_t, output: []u8, deadline_ms: ?i64) Error!void {
-    if (deadline_ms == null) return readExact(fd, output);
-    var offset: usize = 0;
-    while (offset < output.len) {
-        const remaining = deadline_ms.? - try monotonicMilliseconds();
-        if (remaining <= 0) return error.SocketConnectTimedOut;
-        var descriptors = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
-        const ready = system.poll(&descriptors, 1, @intCast(@min(remaining, std.math.maxInt(i32))));
+// Native waits share the same data-plane framing; only their caller-owned wake
+// descriptor differs. A canceled scope remains canceled through partial frames.
+fn waitReady(fd: posix.fd_t, events: i16, deadline_ms: ?i64, interrupt: ?*Interrupt, poll_interrupts: ?*u16) Error!void {
+    while (true) {
+        try checkInterrupted(interrupt);
+        const timeout: i32 = if (deadline_ms) |end| blk: {
+            const remaining = end - try monotonicMilliseconds();
+            if (remaining <= 0) return error.SocketConnectTimedOut;
+            break :blk @intCast(@min(remaining, std.math.maxInt(i32)));
+        } else -1;
+        var fds = [_]posix.pollfd{
+            .{ .fd = fd, .events = events, .revents = 0 },
+            .{ .fd = if (interrupt) |token| token.state().pair[0] else -1, .events = posix.POLL.IN, .revents = 0 },
+        };
+        const ready = system.poll(&fds, if (interrupt != null) 2 else 1, timeout);
         switch (posix.errno(ready)) {
-            .INTR => continue,
+            .INTR => {
+                if (poll_interrupts) |count| count.* +|= 1;
+                continue;
+            },
             .SUCCESS => if (ready == 0) {
                 return error.SocketConnectTimedOut;
             },
             else => return error.SocketReadFailed,
         }
+        try checkInterrupted(interrupt);
+        if (fds[1].revents != 0) return error.ConnectionCanceled;
+        if (fds[0].revents & posix.POLL.NVAL != 0) return error.SocketReadFailed;
+        if (fds[0].revents & (events | posix.POLL.HUP | posix.POLL.ERR) != 0) return;
+    }
+}
+
+fn readInterrupt(fd: posix.fd_t, output: []u8, deadline_ms: ?i64, interrupt: ?*Interrupt) Error!void {
+    if (deadline_ms == null and interrupt == null) return readExact(fd, output);
+    var offset: usize = 0;
+    while (offset < output.len) {
+        try checkInterrupted(interrupt);
+        if (deadline_ms) |end| if (try monotonicMilliseconds() >= end) return error.SocketConnectTimedOut;
         const count = system.read(fd, output[offset..].ptr, output.len - offset);
         switch (posix.errno(count)) {
             .INTR => continue,
+            .AGAIN => try waitReady(fd, posix.POLL.IN, deadline_ms, interrupt, null),
             .SUCCESS => {
                 if (count == 0) return error.ConnectionClosed;
                 offset += @intCast(count);
             },
             .CONNRESET, .NOTCONN => return error.ConnectionClosed,
             else => return error.SocketReadFailed,
+        }
+    }
+}
+
+fn writeInterrupt(fd: posix.fd_t, bytes: []const u8, deadline_ms: ?i64, interrupt: ?*Interrupt) Error!void {
+    if (deadline_ms == null and interrupt == null) return writeAll(fd, bytes);
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        try checkInterrupted(interrupt);
+        const count = if (builtin.os.tag == .linux)
+            system.sendto(fd, bytes[offset..].ptr, bytes.len - offset, posix.MSG.NOSIGNAL, null, 0)
+        else
+            system.write(fd, bytes[offset..].ptr, bytes.len - offset);
+        switch (posix.errno(count)) {
+            .INTR => continue,
+            .AGAIN => try waitReady(fd, posix.POLL.OUT, deadline_ms, interrupt, null),
+            .SUCCESS => {
+                if (count == 0) return error.ConnectionClosed;
+                offset += @intCast(count);
+            },
+            .PIPE, .CONNRESET, .NOTCONN => return error.ConnectionClosed,
+            else => return error.SocketWriteFailed,
         }
     }
 }
@@ -423,7 +519,7 @@ fn verifySocketConnected(
     }
 }
 
-fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed, SocketPathTooLong }!posix.fd_t {
+fn connectUnix(path: []const u8, interrupt: ?*Interrupt) Error!posix.fd_t {
     var address: posix.sockaddr.un = undefined;
     if (path.len == 0 or path.len >= address.path.len) return error.SocketPathTooLong;
     const length: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path.len + 1);
@@ -435,6 +531,8 @@ fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed,
     if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
+    if (interrupt != null) try setFileStatusFlags(fd, (try fileStatusFlags(fd)) | nonblockingFlag());
+    try checkInterrupted(interrupt);
     while (true) {
         const result = system.connect(fd, @ptrCast(&address), length);
         switch (posix.errno(result)) {
@@ -592,7 +690,7 @@ test "handshake establishes client identity without transport policy" {
     const pair = testSocketPair();
     const thread = try std.Thread.spawn(.{}, testHandshakePeer, .{pair[1]});
     var diagnostic: ConnectDiagnostic = .{};
-    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic, null);
+    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic, null, null);
     defer connection.deinit();
     thread.join();
     const fd_flags = system.fcntl(connection.fd, posix.F.GETFD, @as(usize, 0));
@@ -606,7 +704,7 @@ test "connection cancellation wakes a blocked receive while owner retains close"
     const pair = testSocketPair();
     const peer = try std.Thread.spawn(.{}, testHandshakePeerUntilClosed, .{pair[1]});
     var diagnostic: ConnectDiagnostic = .{};
-    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic, null);
+    var connection = try initOwnedFd(std.testing.allocator, pair[0], &diagnostic, null, null);
     defer connection.deinit();
     try std.testing.expectEqual(@as(protocol.ClientId, 72), connection.client_id);
 
@@ -655,7 +753,8 @@ test "SSH handshake has one bounded total deadline and preserves caller close" {
     defer closeFd(pair[1]);
     try writeAll(pair[1], "H");
     var header: [protocol.header_bytes]u8 = undefined;
-    try std.testing.expectError(error.SocketConnectTimedOut, readHandshake(pair[0], &header, (try monotonicMilliseconds()) + 20));
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    try std.testing.expectError(error.SocketConnectTimedOut, readInterrupt(pair[0], &header, (try monotonicMilliseconds()) + 20, null));
 }
 
 test "socket-only entrypoint never implicitly launches SSH" {
@@ -670,4 +769,93 @@ test "closed stream write reports failure without a process-wide SIGPIPE policy"
     defer closeFd(pair[0]);
     closeFd(pair[1]);
     try std.testing.expectError(error.ConnectionClosed, writeAll(pair[0], "not replayable"));
+}
+
+const InterruptProbe = struct {
+    fd: posix.fd_t,
+    interrupt: *Interrupt,
+    write: bool,
+    canceled: bool = false,
+};
+
+fn testInterruptedIo(probe: *InterruptProbe) void {
+    var byte = [_]u8{'x'};
+    const result = if (probe.write)
+        writeInterrupt(probe.fd, &byte, null, probe.interrupt)
+    else
+        readInterrupt(probe.fd, &byte, null, probe.interrupt);
+    result catch |failure| {
+        probe.canceled = failure == error.ConnectionCanceled;
+    };
+}
+
+test "native cancellation is single use and preempts connection creation" {
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    try interrupt.cancel();
+    try interrupt.cancel();
+    var diagnostic: ConnectDiagnostic = .{};
+    try std.testing.expectError(error.ConnectionCanceled, Connection.connectNativeCancelable(std.testing.allocator, std.testing.io, "ssh://unused.invalid/a", &diagnostic, interrupt));
+    try std.testing.expectEqual(ConnectStage.endpoint, diagnostic.stage);
+}
+
+test "native cancellation wakes an idle read without closing unrelated descriptors" {
+    const pair = testSocketPair();
+    defer closeFd(pair[0]);
+    defer closeFd(pair[1]);
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    var probe = InterruptProbe{ .fd = pair[0], .interrupt = interrupt, .write = false };
+    const worker = try std.Thread.spawn(.{}, testInterruptedIo, .{&probe});
+    try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
+    try interrupt.cancel();
+    worker.join();
+    try std.testing.expect(probe.canceled);
+    try writeAll(pair[1], "z");
+    var byte: [1]u8 = undefined;
+    try readExact(pair[0], &byte);
+    try std.testing.expectEqual(@as(u8, 'z'), byte[0]);
+}
+
+test "native cancellation wakes a backpressured write without consuming peer data" {
+    const pair = testSocketPair();
+    defer closeFd(pair[0]);
+    defer closeFd(pair[1]);
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    const payload: [4096]u8 = @splat('q');
+    var total: usize = 0;
+    while (true) {
+        const n = system.write(pair[0], &payload, payload.len);
+        if (posix.errno(n) == .AGAIN) break;
+        try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(n));
+        total += n;
+        try std.testing.expect(total <= 4 * 1024 * 1024);
+    }
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    var probe = InterruptProbe{ .fd = pair[0], .interrupt = interrupt, .write = true };
+    const worker = try std.Thread.spawn(.{}, testInterruptedIo, .{&probe});
+    try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
+    try interrupt.cancel();
+    worker.join();
+    try std.testing.expect(probe.canceled);
+    var byte: [1]u8 = undefined;
+    try readExact(pair[1], &byte);
+    try std.testing.expectEqual(@as(u8, 'q'), byte[0]);
+}
+
+test "native cancellation wins over already-readable buffered protocol bytes" {
+    const pair = testSocketPair();
+    defer closeFd(pair[0]);
+    defer closeFd(pair[1]);
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    try writeAll(pair[1], "old");
+    try interrupt.cancel();
+    var bytes: [3]u8 = undefined;
+    try std.testing.expectError(error.ConnectionCanceled, readInterrupt(pair[0], &bytes, null, interrupt));
+    try readExact(pair[0], &bytes);
+    try std.testing.expectEqualStrings("old", &bytes);
 }

@@ -80,12 +80,12 @@ history_follow_live_resets_for_alternate_screen :: proc(t: ^testing.T) {
 @(test)
 history_accept_snapshot_uses_server_clamp :: proc(t: ^testing.T) {
     view: Session_View
-    accept_history_snapshot(&view, 150, 100, 40, false)
+    accept_history_snapshot(&view, 150, 100, 40, false, view.history_generation)
     testing.expect_value(t, view.history_target_offset, u32(100))
     testing.expect_value(t, view.history_anchor_top_row, u64(40))
     testing.expect(t, view.history_anchor_valid)
 
-    accept_history_snapshot(&view, 0, 100, 40, false)
+    accept_history_snapshot(&view, 0, 100, 40, false, view.history_generation)
     testing.expect_value(t, view.history_target_offset, u32(0))
     testing.expect(t, !view.history_anchor_valid)
 }
@@ -295,4 +295,20 @@ history_drag_refuses_terminal_cells_empty_history_and_alternate_screen :: proc(t
     testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 953, 100))
     testing.expect(t, !begin_history_scrollbar_drag(nil, pane, 953, 100))
     testing.expect(t, !history_scrollbar_drag_active(&view))
+}
+
+
+@(test)
+late_history_frame_cannot_overwrite_newer_navigation_or_live_intent :: proc(t: ^testing.T) {
+    view := Session_View{history_count = 200, rows = 20, columns = 40}
+    testing.expect(t, set_history_offset(&view, 30))
+    issued := view.history_generation
+    testing.expect(t, set_history_offset(&view, 70))
+    accept_history_snapshot(&view, 30, 200, 0, false, issued)
+    testing.expect_value(t, view.history_target_offset, u32(70))
+    later := view.history_generation
+    testing.expect(t, return_history_live(&view))
+    accept_history_snapshot(&view, 70, 200, 0, false, later)
+    testing.expect_value(t, view.history_target_offset, u32(0))
+    testing.expect(t, !view.history_anchor_valid)
 }

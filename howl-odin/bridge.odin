@@ -7,15 +7,17 @@ foreign import howl_bridge "bridge:libhowl_odin_bridge.so"
 @(default_calling_convention="c", link_prefix="howl_odin_bridge_")
 foreign howl_bridge {
     version            :: proc() -> u32 ---
-    owned_session_create :: proc(runtime_dir: [^]u8, runtime_dir_len: c.size_t, shell: [^]u8, shell_len: c.size_t, command: [^]u8, command_len: c.size_t, cwd: [^]u8, cwd_len: c.size_t, env: [^]Profile_Env_Info, env_count: c.size_t, rows, columns: u16, identity: u32, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    runtime_create :: proc() -> rawptr ---
+    runtime_destroy :: proc(runtime: rawptr) ---
+    interrupt_create :: proc() -> rawptr ---
+    interrupt_cancel :: proc(token: rawptr) -> i32 ---
+    interrupt_destroy :: proc(token: rawptr) ---
+    owned_session_create :: proc(runtime: rawptr, runtime_dir: [^]u8, runtime_dir_len: c.size_t, shell: [^]u8, shell_len: c.size_t, command: [^]u8, command_len: c.size_t, cwd: [^]u8, cwd_len: c.size_t, env: [^]Profile_Env_Info, env_count: c.size_t, rows, columns: u16, identity: u32, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     owned_session_destroy :: proc(handle: rawptr) ---
     owned_session_copy_endpoint :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
-    create             :: proc(endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    create             :: proc(runtime, interrupt: rawptr, endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     destroy            :: proc(handle: rawptr) ---
-    cancellation_create  :: proc(handle: rawptr) -> rawptr ---
-    cancellation_cancel  :: proc(handle: rawptr) -> i32 ---
-    cancellation_destroy :: proc(handle: rawptr) ---
-    consequence_create :: proc(endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    consequence_create :: proc(runtime, interrupt: rawptr, endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     consequence_destroy :: proc(handle: rawptr) ---
     consequence_client_id :: proc(handle: rawptr) -> u64 ---
     consequence_acquire :: proc(handle: rawptr) -> i32 ---
@@ -59,9 +61,11 @@ foreign howl_bridge {
     history_count      :: proc(handle: rawptr) -> u32 ---
     history_row_base   :: proc(handle: rawptr) -> u32 ---
     text_truncated     :: proc(handle: rawptr) -> u8 ---
-    render_create      :: proc(endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    render_create      :: proc(runtime, interrupt: rawptr, endpoint: [^]u8, endpoint_len: c.size_t, font: [^]u8, font_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     render_destroy     :: proc(handle: rawptr) ---
     render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
+    render_prepare :: proc(handle: rawptr, history_offset: u32) -> i32 ---
+    render_accept :: proc(handle: rawptr) ---
     render_background_rgba :: proc(handle: rawptr) -> u32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---
     render_surface_height :: proc(handle: rawptr) -> u16 ---

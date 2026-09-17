@@ -68,14 +68,24 @@ No automatic route fallback, input replay, Session creation or remote deployment
 Linux broken socket writes use per-send SIGPIPE suppression, not a process-global
 signal handler. Carrier cleanup reaps its child and configured proxy group.
 
+`Connection.connectNativeCancelable(allocator, io, endpoint, &diagnostic,
+interrupt)` accepts a caller-owned `Interrupt` created before connection setup.
+It is single-use and sticky: cancellation wins over already buffered old bytes,
+partial handshakes and backpressured writes. The caller must join every borrowing
+worker and destroy its connections before destroying the scope. Readiness uses
+the data socket and a wake descriptor, with no periodic cancellation poll.
+The no-token socket entrypoints and byte-entry decoder keep their existing
+contracts; neither imports an application runtime or requires native SSH.
+
 Native connection opening/I/O is still blocking and belongs on an embedder I/O
 worker. This API is not a universal asynchronous route registry. The Web byte
 entry and socket-only mobile host remain free of subprocess requirements.
 A library-backed mobile SSH exec channel could carry the same Howl frames; an
 SSH shell/remote PTY feeding a local VT is a different, also valid topology.
 A local OS PTY is not required merely because the terminal engine is local.
-Actual mobile library wiring, local iOS process/PTY support and broad native GUI
-slow-route/reconnect acceptance remain separate work.
+Actual mobile library wiring, local iOS process/PTY support and broad sustained
+slow-route acceptance remain separate work. Odin now owns the native GUI worker
+lifetime rather than requiring the shared client to own SDL or platform loops.
 
 `howl-cli` consumes the engine and owns its human/agent command vocabulary plus
 compact text/JSON and explicit rich diagnostic formatting. The earlier generic

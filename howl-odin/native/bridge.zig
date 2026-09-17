@@ -13,6 +13,68 @@ const render = @import("howl_render");
 const canvas = render.canvas;
 const terminal_render = render.terminal;
 
+const RuntimeHandle = opaque {};
+const query_declined: i32 = 6;
+
+// One explicit desktop lifetime, constructed/destroyed by the application.
+// Process and route owners borrow its I/O; no per-connection signal handlers.
+const Runtime = struct {
+    threaded: std.Io.Threaded,
+    borrowers: std.atomic.Value(u32) = .init(0),
+};
+
+fn runtimeValue(raw: ?*RuntimeHandle) ?*Runtime {
+    return if (raw) |value| @ptrCast(@alignCast(value)) else null;
+}
+
+fn retainRuntime(value: ?*Runtime) void {
+    if (value) |runtime| {
+        const before = runtime.borrowers.fetchAdd(1, .monotonic);
+        std.debug.assert(before < 1024);
+    }
+}
+
+fn releaseRuntime(value: ?*Runtime) void {
+    if (value) |runtime| {
+        const before = runtime.borrowers.fetchSub(1, .release);
+        std.debug.assert(before > 0);
+    }
+}
+
+pub export fn howl_odin_bridge_runtime_create() ?*RuntimeHandle {
+    const value = std.heap.c_allocator.create(Runtime) catch return null;
+    value.* = .{ .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{ .environ = currentProcessEnviron() }) };
+    return @ptrCast(value);
+}
+
+pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
+    const value = runtimeValue(raw) orelse return;
+    std.debug.assert(value.borrowers.load(.acquire) == 0);
+    value.threaded.deinit();
+    std.heap.c_allocator.destroy(value);
+}
+
+pub export fn howl_odin_bridge_interrupt_create() ?*client.Interrupt {
+    return client.Interrupt.init(std.heap.c_allocator) catch null;
+}
+
+pub export fn howl_odin_bridge_interrupt_cancel(value: ?*client.Interrupt) i32 {
+    const token = value orelse return 1;
+    token.cancel() catch return 2;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void {
+    if (value) |token| token.deinit();
+}
+
+fn connectForHost(runtime: ?*Runtime, interrupt: ?*client.Interrupt, endpoint: []const u8, diagnostic: *client.ConnectDiagnostic) client.Error!client.Connection {
+    if (runtime) |value|
+        return client.Connection.connectNativeCancelable(std.heap.c_allocator, value.threaded.io(), endpoint, diagnostic, interrupt);
+    // Retained socket-only diagnostic seam, not a hidden default runtime.
+    return client.Connection.connectDiagnosed(std.heap.c_allocator, endpoint, diagnostic);
+}
+
 const RenderHandle = opaque {};
 
 // Called only after Connection has validated and opened the endpoint. Its only
@@ -144,8 +206,23 @@ const interaction_info_flags = struct {
 const maximum_search_query_bytes: usize = 4096;
 const maximum_search_retries: usize = 8;
 
+const RenderFront = struct {
+    frame_revision: u64 = 0,
+    session_revision: u64 = 0,
+    history_offset: u32 = 0,
+    history_count: u32 = 0,
+    history_row_base: u32 = 0,
+    alternate_screen: bool = false,
+    selection_begin: ?protocol.SnapshotBegin = null,
+    selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
+    surface: canvas.Size = .{ .width = 1, .height = 1 },
+    background_rgba: u32 = 0xff211918,
+};
+
 const Render = struct {
+    front: RenderFront = .{},
     allocator: std.mem.Allocator,
+    runtime: ?*Runtime = null,
     connection: client.Connection,
     raw_observation: bool,
     fonts: *render.text.FontSet,
@@ -229,6 +306,8 @@ fn renderSurface(rows: u16, columns: u16, cell: canvas.Size) !canvas.Size {
 }
 
 pub export fn howl_odin_bridge_render_create(
+    runtime_raw: ?*RuntimeHandle,
+    interrupt: ?*client.Interrupt,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
     font_ptr: [*]const u8,
@@ -248,9 +327,12 @@ pub export fn howl_odin_bridge_render_create(
         return null;
     }
     const allocator = std.heap.c_allocator;
+    const runtime = runtimeValue(runtime_raw);
+    var accepted = false;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    var connection = client.Connection.connectDiagnosed(
-        allocator,
+    var connection = connectForHost(
+        runtime,
+        interrupt,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
     ) catch |failure| {
@@ -263,7 +345,7 @@ pub export fn howl_odin_bridge_render_create(
         );
         return null;
     };
-    errdefer connection.deinit();
+    defer if (!accepted) connection.deinit();
     var fallback_storage: [2][]const u8 = undefined;
     var fallback_count: usize = 0;
     if (fallback_len != 0) {
@@ -282,7 +364,7 @@ pub export fn howl_odin_bridge_render_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    errdefer fonts.deinit();
+    defer if (!accepted) fonts.deinit();
     const metrics = fonts.metrics();
     const cell_size = canvas.Size{
         .width = metrics.advance_width,
@@ -292,7 +374,7 @@ pub export fn howl_odin_bridge_render_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    errdefer terminal_render.deinitContent(content);
+    defer if (!accepted) terminal_render.deinitContent(content);
     var composer = canvas.Composer.init(allocator, .{
         .sources = 1,
         .retained_resources = render_resource_limit,
@@ -306,7 +388,7 @@ pub export fn howl_odin_bridge_render_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    errdefer composer.deinit();
+    defer if (!accepted) composer.deinit();
     const source = composer.registerSource() catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
@@ -315,18 +397,19 @@ pub export fn howl_odin_bridge_render_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
     };
-    errdefer allocator.free(frame_commands);
+    defer if (!accepted) allocator.free(frame_commands);
     const frame_pixels = allocator.alloc(u8, render_pixel_capacity) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
     };
-    errdefer allocator.free(frame_pixels);
+    defer if (!accepted) allocator.free(frame_pixels);
     const value = allocator.create(Render) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
     };
     value.* = .{
         .allocator = allocator,
+        .runtime = runtime,
         .connection = connection,
         .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
         .fonts = fonts,
@@ -337,6 +420,8 @@ pub export fn howl_odin_bridge_render_create(
         .frame_commands = frame_commands,
         .frame_pixels = frame_pixels,
     };
+    retainRuntime(runtime);
+    accepted = true;
     return @ptrCast(value);
 }
 
@@ -351,6 +436,7 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     terminal_render.deinitContent(renderer.content);
     renderer.fonts.deinit();
     renderer.connection.deinit();
+    releaseRuntime(renderer.runtime);
     allocator.destroy(renderer);
 }
 
@@ -511,7 +597,31 @@ fn prepareExternalUploads(
     }
 }
 
+// Synchronous diagnostic entry; the desktop instead prepares on its worker and
+// accepts only after the GUI has successfully installed every SDL resource.
 pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offset: u32) i32 {
+    const result = howl_odin_bridge_render_prepare(raw, history_offset);
+    if (result == 0) howl_odin_bridge_render_accept(raw);
+    return result;
+}
+
+pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
+    const value = raw orelse return;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    renderer.front.frame_revision = renderer.frame_revision;
+    renderer.front.session_revision = renderer.session_revision;
+    renderer.front.history_offset = renderer.history_offset;
+    renderer.front.history_count = renderer.history_count;
+    renderer.front.history_row_base = renderer.history_row_base;
+    renderer.front.alternate_screen = renderer.alternate_screen;
+    renderer.front.selection_begin = renderer.selection_begin;
+    renderer.front.surface = renderer.surface;
+    renderer.front.background_rgba = renderer.background_rgba;
+    if (renderer.selection_begin) |begin|
+        @memcpy(renderer.front.selection_rows[0..begin.rows], renderer.selection_rows[0..begin.rows]);
+}
+
+pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offset: u32) i32 {
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.clearError();
@@ -682,19 +792,19 @@ fn paddingBackground(presentation: *const client.rich.Presentation) u32 {
 pub export fn howl_odin_bridge_render_background_rgba(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0xff211918;
     const renderer: *const Render = @ptrCast(@alignCast(value));
-    return renderer.background_rgba;
+    return renderer.front.background_rgba;
 }
 
 pub export fn howl_odin_bridge_render_surface_width(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.surface.width;
+    return renderer.front.surface.width;
 }
 
 pub export fn howl_odin_bridge_render_surface_height(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.surface.height;
+    return renderer.front.surface.height;
 }
 
 pub export fn howl_odin_bridge_render_cell_width(raw: ?*RenderHandle) u16 {
@@ -720,37 +830,37 @@ pub export fn howl_odin_bridge_render_maximum_columns() u16 {
 pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.frame_revision;
+    return renderer.front.frame_revision;
 }
 
 pub export fn howl_odin_bridge_render_session_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.session_revision;
+    return renderer.front.session_revision;
 }
 
 pub export fn howl_odin_bridge_render_history_offset(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.history_offset;
+    return renderer.front.history_offset;
 }
 
 pub export fn howl_odin_bridge_render_history_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.history_count;
+    return renderer.front.history_count;
 }
 
 pub export fn howl_odin_bridge_render_history_row_base(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.history_row_base;
+    return renderer.front.history_row_base;
 }
 
 pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return @intFromBool(renderer.alternate_screen);
+    return @intFromBool(renderer.front.alternate_screen);
 }
 
 /// Projects selection against this renderer's accepted frame only. No Session
@@ -771,8 +881,8 @@ pub export fn howl_odin_bridge_render_selection_span(
     last.* = 0;
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    const begin = renderer.selection_begin orelse return 0;
-    if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.selection_rows.len)
+    const begin = renderer.front.selection_begin orelse return 0;
+    if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.front.selection_rows.len)
         return 0;
     const range = client.selection.Range{
         .anchor = .{ .row = anchor_row, .column = anchor_column },
@@ -780,7 +890,7 @@ pub export fn howl_odin_bridge_render_selection_span(
         .columns = columns,
         .alternate_screen = alternate_screen != 0,
     };
-    const span = range.textSpan(&begin, viewport_row, renderer.selection_rows[viewport_row]) orelse return 0;
+    const span = range.textSpan(&begin, viewport_row, renderer.front.selection_rows[viewport_row]) orelse return 0;
     first.* = span.start_column;
     last.* = span.end_column;
     return 1;
@@ -1006,7 +1116,6 @@ pub export fn howl_odin_bridge_profile_env_info_size() u32 {
 }
 
 const Handle = opaque {};
-const CancellationHandle = opaque {};
 const OwnedSessionHandle = opaque {};
 const ConsequenceHandle = opaque {};
 
@@ -1027,6 +1136,7 @@ comptime {
 
 const ConsequenceBridge = struct {
     allocator: std.mem.Allocator,
+    runtime: ?*Runtime = null,
     connection: client.Connection,
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
@@ -1050,7 +1160,7 @@ const ConsequenceBridge = struct {
 
 const OwnedSession = struct {
     allocator: std.mem.Allocator,
-    threaded: std.Io.Threaded,
+    runtime: *Runtime,
     process: ?session_process.SessionProcess = null,
 };
 
@@ -1066,6 +1176,7 @@ fn currentProcessEnviron() std.process.Environ {
 
 const Bridge = struct {
     allocator: std.mem.Allocator,
+    runtime: ?*Runtime = null,
     connection: client.Connection,
     raw_observation: bool,
     last_begin: ?protocol.SnapshotBegin = null,
@@ -1094,7 +1205,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 5;
+    return 6;
 }
 
 /// Launches one client-owned canonical Session using the existing native
@@ -1102,6 +1213,7 @@ pub export fn howl_odin_bridge_version() u32 {
 /// the Odin executable. A null environment map deliberately inherits the
 /// desktop client's current environment.
 pub export fn howl_odin_bridge_owned_session_create(
+    runtime_raw: ?*RuntimeHandle,
     runtime_dir_ptr: [*]const u8,
     runtime_dir_len: usize,
     shell_ptr: [*]const u8,
@@ -1120,6 +1232,11 @@ pub export fn howl_odin_bridge_owned_session_create(
     diagnostic_len: *usize,
 ) ?*OwnedSessionHandle {
     diagnostic_len.* = 0;
+    const runtime = runtimeValue(runtime_raw) orelse {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "missing_host_runtime");
+        return null;
+    };
+    var accepted = false;
     if (runtime_dir_len == 0 or shell_len == 0 or rows == 0 or columns == 0 or identity == 0 or
         env_count > 32 or command_len > 16384 or cwd_len > 4096)
     {
@@ -1180,17 +1297,12 @@ pub export fn howl_odin_bridge_owned_session_create(
     };
     owned.* = .{
         .allocator = allocator,
-        .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{
-            .environ = currentProcessEnviron(),
-        }),
+        .runtime = runtime,
     };
-    errdefer {
-        owned.threaded.deinit();
-        allocator.destroy(owned);
-    }
+    defer if (!accepted) allocator.destroy(owned);
     owned.process = session_process.SessionProcess.launchSibling(
         allocator,
-        owned.threaded.io(),
+        runtime.threaded.io(),
         runtime_dir_ptr[0..runtime_dir_len],
         shell,
         command,
@@ -1203,6 +1315,8 @@ pub export fn howl_odin_bridge_owned_session_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
+    retainRuntime(runtime);
+    accepted = true;
     return @ptrCast(owned);
 }
 
@@ -1211,7 +1325,7 @@ pub export fn howl_odin_bridge_owned_session_destroy(raw: ?*OwnedSessionHandle) 
     const owned: *OwnedSession = @ptrCast(@alignCast(value));
     const allocator = owned.allocator;
     if (owned.process) |*process| process.deinit();
-    owned.threaded.deinit();
+    releaseRuntime(owned.runtime);
     allocator.destroy(owned);
 }
 
@@ -1232,6 +1346,8 @@ pub export fn howl_odin_bridge_owned_session_copy_endpoint(
 }
 
 pub export fn howl_odin_bridge_create(
+    runtime_raw: ?*RuntimeHandle,
+    interrupt: ?*client.Interrupt,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
     diagnostic_ptr: [*]u8,
@@ -1245,9 +1361,12 @@ pub export fn howl_odin_bridge_create(
     }
 
     const allocator = std.heap.c_allocator;
+    const runtime = runtimeValue(runtime_raw);
+    var accepted = false;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    var connection = client.Connection.connectDiagnosed(
-        allocator,
+    var connection = connectForHost(
+        runtime,
+        interrupt,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
     ) catch |failure| {
@@ -1260,7 +1379,7 @@ pub export fn howl_odin_bridge_create(
         );
         return null;
     };
-    errdefer connection.deinit();
+    defer if (!accepted) connection.deinit();
 
     const bridge = allocator.create(Bridge) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
@@ -1268,9 +1387,12 @@ pub export fn howl_odin_bridge_create(
     };
     bridge.* = .{
         .allocator = allocator,
+        .runtime = runtime,
         .connection = connection,
         .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
     };
+    retainRuntime(runtime);
+    accepted = true;
     return @ptrCast(bridge);
 }
 
@@ -1279,6 +1401,7 @@ pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const allocator = bridge.allocator;
     bridge.connection.deinit();
+    releaseRuntime(bridge.runtime);
     allocator.destroy(bridge);
 }
 
@@ -1287,32 +1410,6 @@ pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
 /// The duplicate never sends Howl protocol bytes. It only shuts down the
 /// observer socket so another thread can leave a blocked receive during client
 /// teardown.
-pub export fn howl_odin_bridge_cancellation_create(raw: ?*Handle) ?*CancellationHandle {
-    const value = raw orelse return null;
-    const bridge: *Bridge = @ptrCast(@alignCast(value));
-    const cancellation = bridge.allocator.create(client.Cancellation) catch return null;
-    cancellation.* = bridge.connection.cancellation() catch {
-        bridge.allocator.destroy(cancellation);
-        return null;
-    };
-    return @ptrCast(cancellation);
-}
-
-pub export fn howl_odin_bridge_cancellation_cancel(raw: ?*CancellationHandle) i32 {
-    const value = raw orelse return 1;
-    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
-    cancellation.cancel() catch return 2;
-    return 0;
-}
-
-pub export fn howl_odin_bridge_cancellation_destroy(raw: ?*CancellationHandle) void {
-    const value = raw orelse return;
-    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
-    const allocator = std.heap.c_allocator;
-    cancellation.deinit();
-    allocator.destroy(cancellation);
-}
-
 /// Requests one complete current viewport and projects it to bounded UTF-8.
 ///
 /// Revision zero is the intended immediate-snapshot canary lane. Later the Odin
@@ -1807,20 +1904,20 @@ pub export fn howl_odin_bridge_hyperlink_copy(
     const expected_alternate = expected_alternate_screen != 0;
     if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
         bridge.setError("hyperlink", "context_changed");
-        return 4;
+        return query_declined;
     }
     const viewport_row = selectionViewportRow(begin, target_row) orelse {
         bridge.setError("hyperlink", "target_moved");
-        return 4;
+        return query_declined;
     };
     if (target_column >= begin.columns) {
         bridge.setError("hyperlink", "target_column");
-        return 4;
+        return query_declined;
     }
     const uri = hyperlinkUriAt(snapshot, viewport_row, target_column) orelse return 0;
     if (uri.len > output_capacity) {
         bridge.setError("hyperlink", "short_buffer");
-        return 5;
+        return query_declined;
     }
     @memcpy(output_ptr[0..uri.len], uri);
     output_len.* = uri.len;
@@ -1870,15 +1967,15 @@ pub export fn howl_odin_bridge_selection_expand(
     const expected_alternate = expected_alternate_screen != 0;
     if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
         bridge.setError("selection_expand", "context_changed");
-        return 4;
+        return query_declined;
     }
     const viewport_row = selectionViewportRow(begin, target_row) orelse {
         bridge.setError("selection_expand", "target_moved");
-        return 4;
+        return query_declined;
     };
     if (target_column >= begin.columns) {
         bridge.setError("selection_expand", "target_column");
-        return 4;
+        return query_declined;
     }
 
     const maybe_range = if (kind == 1)
@@ -1887,14 +1984,14 @@ pub export fn howl_odin_bridge_selection_expand(
         client.selection.visualRow(snapshot, viewport_row);
     const range = maybe_range catch |failure| {
         bridge.setError("selection_expand", @errorName(failure));
-        return 4;
+        return query_declined;
     } orelse return 0;
     const ordered = range.ordered();
 
     var end_column = ordered.end.column;
     const end_viewport_row = selectionViewportRow(begin, ordered.end.row) orelse {
         bridge.setError("selection_expand", "expanded_end_not_visible");
-        return 4;
+        return query_declined;
     };
     if (client.selection.visualSpan(snapshot, range, end_viewport_row)) |span| {
         end_column = span.end_column;
@@ -1944,12 +2041,12 @@ pub export fn howl_odin_bridge_selection_extract(
         range,
     ) catch |failure| {
         bridge.setError("selection_extract", @errorName(failure));
-        return 4;
+        return if (failure == error.SelectionRejected) query_declined else 4;
     };
     defer bridge.allocator.free(text);
     if (text.len > output_capacity) {
         bridge.setError("selection_extract", "output_too_small");
-        return 5;
+        return query_declined;
     }
     @memcpy(output_ptr[0..text.len], text);
     output_len.* = text.len;
@@ -2198,6 +2295,12 @@ fn writeConnectDiagnostic(
         .{ failure_name, @tagName(diagnostic.stage), diagnostic.os_error },
     ) catch return;
     output_len.* = rendered.len;
+    if (diagnostic.route_message_len != 0 and rendered.len + 1 < output_capacity) {
+        output_ptr[rendered.len] = ' ';
+        const count = @min(output_capacity - rendered.len - 1, diagnostic.route_message_len);
+        @memcpy(output_ptr[rendered.len + 1 ..][0..count], diagnostic.route_message[0..count]);
+        output_len.* += 1 + count;
+    }
 }
 
 test "bridge named key action values stay protocol-aligned" {
@@ -2302,6 +2405,8 @@ test "Odin search selection and interaction C records stay fixed" {
 /// permits; this keeps independent desktop windows from stealing host policy
 /// merely by attaching later.
 pub export fn howl_odin_bridge_consequence_create(
+    runtime_raw: ?*RuntimeHandle,
+    interrupt: ?*client.Interrupt,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
     diagnostic_ptr: [*]u8,
@@ -2314,18 +2419,24 @@ pub export fn howl_odin_bridge_consequence_create(
         return null;
     }
     const allocator = std.heap.c_allocator;
+    const runtime = runtimeValue(runtime_raw);
+    var accepted = false;
+    var connect_diagnostic: client.ConnectDiagnostic = .{};
     const bridge = allocator.create(ConsequenceBridge) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
     };
-    errdefer allocator.destroy(bridge);
+    defer if (!accepted) allocator.destroy(bridge);
     bridge.* = .{
         .allocator = allocator,
-        .connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch |failure| {
-            writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+        .runtime = runtime,
+        .connection = connectForHost(runtime, interrupt, endpoint_ptr[0..endpoint_len], &connect_diagnostic) catch |failure| {
+            writeConnectDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure), connect_diagnostic);
             return null;
         },
     };
+    retainRuntime(runtime);
+    accepted = true;
     return @ptrCast(bridge);
 }
 
@@ -2353,6 +2464,7 @@ pub export fn howl_odin_bridge_consequence_destroy(raw: ?*ConsequenceHandle) voi
     // Deliberately close rather than sending assign(no_client): endpoint disconnect
     // clears authority only if this exact connection still owns it.
     bridge.connection.deinit();
+    releaseRuntime(bridge.runtime);
     allocator.destroy(bridge);
 }
 
@@ -2461,4 +2573,32 @@ test "pane gutter background follows accepted default color and screen reverse" 
     try std.testing.expectEqual(@as(u32, 0xff332211), paddingBackground(&presentation));
     presentation.reverse_screen = true;
     try std.testing.expectEqual(@as(u32, 0xffbbccdd), paddingBackground(&presentation));
+}
+
+test "pending Canvas facts stay invisible until the host accepts uploaded resources" {
+    var renderer: Render = undefined;
+    renderer.front = .{};
+    renderer.frame_revision = 17;
+    renderer.session_revision = 91;
+    renderer.history_offset = 4;
+    renderer.history_count = 100;
+    renderer.history_row_base = 2;
+    renderer.alternate_screen = false;
+    renderer.selection_begin = null;
+    renderer.surface = .{ .width = 400, .height = 200 };
+    renderer.background_rgba = 0xff123456;
+    const handle: *RenderHandle = @ptrCast(&renderer);
+    try std.testing.expectEqual(@as(u64, 0), howl_odin_bridge_render_session_revision(handle));
+    howl_odin_bridge_render_accept(handle);
+    try std.testing.expectEqual(@as(u64, 91), howl_odin_bridge_render_session_revision(handle));
+    renderer.session_revision = 92;
+    renderer.history_offset = 0;
+    try std.testing.expectEqual(@as(u64, 91), howl_odin_bridge_render_session_revision(handle));
+    try std.testing.expectEqual(@as(u32, 4), howl_odin_bridge_render_history_offset(handle));
+    try std.testing.expectEqual(@as(u16, 400), howl_odin_bridge_render_surface_width(handle));
+}
+
+test "completed selection rejection is distinct from interrupted transport" {
+    try std.testing.expectEqual(@as(i32, 6), query_declined);
+    try std.testing.expect(query_declined != 4);
 }

@@ -13,6 +13,7 @@ pub const ConnectStage = impl.ConnectStage;
 pub const ConnectDiagnostic = impl.ConnectDiagnostic;
 pub const Frame = impl.Frame;
 pub const Cancellation = impl.Cancellation;
+pub const Interrupt = impl.Interrupt;
 pub const Connection = impl.Connection;
 
 pub const actions = @import("actions.zig");

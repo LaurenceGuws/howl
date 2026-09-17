@@ -1031,3 +1031,29 @@ for repeatable input/control tests, then promotion of tested iterations into the
 physical dogfood window. Private fixtures keep private settings; a desktop launch
 uses Captain's saved profiles/bindings. Do not inject concurrent tests into an
 adopted user window or replace active unsaved work without a safe handoff.
+
+
+### SSH GUI worker-lifetime checkpoint, 2026-09-17
+
+The existing native SSH carrier is now consumed by Attach profiles through one
+application-owned I/O runtime. Pending connection, observation, ordered control,
+search, selection/link queries, image fetch/composition and consequence work run
+off the graphical thread. SDL accepts bounded prepared resources and stable front
+facts. Explicit reconnect never retries uncertain input. Local SSH-shell profiles
+and independently attached remote Sessions remain different ownership topologies.
+
+Private KWin qualification covers a partial SSH handshake while Settings and a
+Local tab remain usable, actual Brommer SSH input/history/progress/images,
+duplicate attachments and remote splits, disconnection/reconnect without replacing
+the remote Session, exact640x400 image pixels, and cancellation/child cleanup.
+A stopped renderer channel does not block input; delayed history cannot undo LIVE.
+Copy/Paste/Enter queued while SSH is stopped uses the completed Copy rather than
+the previous clipboard. Scope-specific receipts live in the desktop workstream's
+`evidence/ssh-gui-20260917/`.
+
+The first asynchronous version repainted both the old and new frame and increased
+local btop cost. Removing that scheduling-only repaint restored the matched dense
+61x271 baseline: about1.10–1.12% of one core terminal overhead, not a new claimed
+speedup. This does not remove duplicate snapshot/projection work or establish
+sustained SSH throughput, mobile support, interactive auth, automatic remote
+provisioning or geometry leadership. Those remain distinct open items.

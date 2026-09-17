@@ -150,11 +150,31 @@ Session_View :: struct {
     profile_index: int,
     profile_font_pixels: u16,
     control: rawptr,
+    control_pending_handle: rawptr,
+    control_connect_done: bool,
+    control_failed: bool,
+    control_notice: [160]u8,
+    control_notice_len: int,
+    io_failed: bool,
+    ui_dirty: bool,
+    control_interrupt: rawptr,
+    observer_interrupt: rawptr,
+    control_thread: ^thread.Thread,
+    control_cond: sync.Cond,
+    control_tasks: [CONTROL_QUEUE_ITEMS]Control_Task,
+    control_head, control_count, control_bytes: int,
+    control_result: Control_Result,
+    control_result_ready: bool,
+    copy_pending, copy_completed: bool,
+    copy_pending_request, copy_completed_request: u64,
+    clipboard_reply: []u8,
+    clipboard_reply_code: i32,
+    selection_generation: u64,
     observer: rawptr,
-    cancellation: rawptr,
     observer_thread: ^thread.Thread,
     search: rawptr,
-    search_cancellation: rawptr,
+    search_interrupt: rawptr,
+    search_failed: bool,
     search_thread: ^thread.Thread,
     search_cond: sync.Cond,
     search_pending: bool,
@@ -176,14 +196,13 @@ Session_View :: struct {
     search_error_len: int,
     interaction_state: Interaction_State_Info,
     interaction_state_valid: bool,
-    interaction_state_cached_at: time.Tick,
     terminal_mouse_buttons: u8,
     terminal_mouse_captured: bool,
     terminal_mouse_last_row: i32,
     terminal_mouse_last_column: u16,
     terminal_mouse_last_pixel_x: u32,
     terminal_mouse_last_pixel_y: u32,
-    endpoint: [160]u8,
+    endpoint: [PROFILE_ENDPOINT_BYTES]u8,
     endpoint_len: int,
     text: []u8,
     scratch: []u8,
@@ -202,6 +221,7 @@ Session_View :: struct {
     history_count: u32,
     history_row_base: u32,
     history_target_offset: u32,
+    history_generation: u64,
     history_anchor_top_row: u64,
     history_anchor_valid: bool,
     history_wheel_rows: f32,
@@ -227,6 +247,7 @@ Session_View :: struct {
     mutex: sync.Mutex,
     worker_stop: bool,
     canvas: rawptr,
+    render_work: ^Render_Work,
     canvas_font_pixels: u16,
     canvas_scale: f32,
     canvas_session_revision: u64,
@@ -423,6 +444,7 @@ palette := Palette{
     accent = {96, 165, 250, 255},
 }
 
+desktop_io_runtime: rawptr
 session_update_event_type: u32
 
 notify_session_update :: proc() {
@@ -435,6 +457,7 @@ notify_session_update :: proc() {
 }
 
 App :: struct {
+    clipboard_request: u64,
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
     ui_font: ^TTF.Font,
@@ -866,10 +889,11 @@ reset_canvas :: proc(view: ^Session_View) {
     }
     clear_selection(view)
     clear_canvas_resources(view)
-    if view.canvas != nil {
-        render_destroy(view.canvas)
-        view.canvas = nil
+    if view.render_work != nil {
+        stop_render_worker(view.render_work)
+        view.render_work = nil
     }
+    view.canvas = nil
     if view.canvas_commands != nil {
         delete(view.canvas_commands)
         view.canvas_commands = nil
@@ -927,7 +951,7 @@ resize_owned_session_to_pane :: proc(
     if history_columns_changed(current_columns, desired_columns) {
         _ = return_history_live(view)
     }
-    if send_resize(view.control, desired_rows, desired_columns, cell_width, cell_height) != 0 {
+    if queue_resize(view, desired_rows, desired_columns, cell_width, cell_height) != 0 {
         copy_bridge_error(view)
         return
     }
@@ -1059,55 +1083,31 @@ create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> boo
 }
 
 ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
-    if app == nil || app.window == nil || view == nil {
-        return false
-    }
+    if app == nil || app.window == nil || view == nil do return false
     logical_pixels := view.profile_font_pixels
-    if logical_pixels == 0 {
-        logical_pixels = font_pixels_for_preset(app.terminal_font_preset)
-    }
+    if logical_pixels == 0 do logical_pixels = font_pixels_for_preset(app.terminal_font_preset)
     scale := SDL.GetWindowDisplayScale(app.window)
     pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
-    if !scaled {
-        set_canvas_error(view, "invalid display scale")
-        return false
+    if !scaled { set_canvas_error(view, "invalid display scale"); return false }
+    if view.render_work != nil && view.canvas_font_pixels != pixels do reset_canvas(view)
+    if view.render_work == nil {
+        if len(session_endpoint(view)) == 0 do return false
+        view.render_work = start_render_worker(app, view, pixels)
+        if view.render_work == nil { set_canvas_error(view, "render worker creation failed"); return false }
+        view.canvas_font_pixels = pixels
     }
-    if view.canvas != nil && view.canvas_font_pixels == pixels {
-        view.canvas_scale = scale
-        return true
-    }
-    reset_canvas(view)
-    endpoint := session_endpoint(view)
-    if len(endpoint) == 0 {
-        set_canvas_error(view, "missing Session endpoint")
-        return false
-    }
-    font := terminal_primary_font(&app.terminal_fonts)
-    fallback := terminal_fallback_font(&app.terminal_fonts)
-    secondary_fallback := terminal_secondary_fallback_font(&app.terminal_fonts)
-    diagnostic: [160]u8
-    diagnostic_len: c.size_t
-    view.canvas = render_create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(font),
-        c.size_t(len(font)),
-        raw_data(fallback),
-        c.size_t(len(fallback)),
-        raw_data(secondary_fallback),
-        c.size_t(len(secondary_fallback)),
-        pixels,
-        raw_data(diagnostic[:]),
-        c.size_t(len(diagnostic)),
-        &diagnostic_len,
-    )
-    if view.canvas == nil {
-        set_canvas_error(view, string(diagnostic[:int(diagnostic_len)]))
-        return false
-    }
-    view.canvas_font_pixels = pixels
     view.canvas_scale = scale
-    return true
+    work := view.render_work
+    sync.mutex_lock(&work.mutex)
+    if work.created && view.canvas == nil {
+        view.canvas = work.handle
+        if work.failed {
+            set_canvas_error(view, string(work.error[:work.error_len]))
+            publish_initial_error(view, string(work.error[:work.error_len]))
+        }
+    }
+    sync.mutex_unlock(&work.mutex)
+    return view.canvas != nil
 }
 
 update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
@@ -1117,18 +1117,28 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     sync.mutex_lock(&view.mutex)
     target_revision := view.revision
     requested_history_offset := view.history_target_offset
+    requested_history_generation := view.history_generation
     sync.mutex_unlock(&view.mutex)
-    if target_revision == 0 {
-        return false
+    if target_revision == 0 do return false
+    work := view.render_work
+    sync.mutex_lock(&work.mutex)
+    ready := work.ready
+    code := work.code
+    prepared_history_generation := work.history_generation
+    sync.mutex_unlock(&work.mutex)
+    if !ready {
+        if view.canvas_session_revision < target_revision || view.canvas_history_offset != requested_history_offset || len(view.canvas_commands) == 0 {
+            request_render(work, target_revision, requested_history_offset, requested_history_generation)
+        }
+        return len(view.canvas_commands) != 0
     }
-    if view.canvas_session_revision >= target_revision &&
-       view.canvas_history_offset == requested_history_offset &&
-       len(view.canvas_commands) != 0 {
-        return true
-    }
-    if render_observe(view.canvas, requested_history_offset) != 0 {
+    if code != 0 {
         copy_canvas_bridge_error(view)
-        return false
+        publish_initial_error(view, string(view.canvas_error[:view.canvas_error_len]))
+        sync.mutex_lock(&work.mutex)
+        work.ready = false
+        sync.mutex_unlock(&work.mutex)
+        return len(view.canvas_commands) != 0
     }
 
     for index in 0..<int(render_removal_count(view.canvas)) {
@@ -1161,6 +1171,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
         delete(view.canvas_commands)
     }
     view.canvas_commands = commands
+    render_accept(view.canvas)
     view.canvas_surface_width = render_surface_width(view.canvas)
     view.canvas_surface_height = render_surface_height(view.canvas)
     view.canvas_frame_revision = render_frame_revision(view.canvas)
@@ -1172,8 +1183,20 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
         render_history_count(view.canvas),
         render_history_row_base(view.canvas),
         render_alternate_screen(view.canvas) != 0,
+        prepared_history_generation,
     )
     view.canvas_error_len = 0
+    sync.mutex_lock(&work.mutex)
+    work.ready = false
+    sync.mutex_unlock(&work.mutex)
+    sync.mutex_lock(&view.mutex)
+    latest_revision := view.revision
+    latest_history := view.history_target_offset
+    latest_generation := view.history_generation
+    sync.mutex_unlock(&view.mutex)
+    if view.canvas_session_revision < latest_revision || view.canvas_history_offset != latest_history {
+        request_render(work, latest_revision, latest_history, latest_generation)
+    }
     return true
 }
 
@@ -1320,12 +1343,16 @@ publish_bridge_error :: proc(view: ^Session_View, handle: rawptr) {
     sync.mutex_lock(&view.mutex)
     copy(view.error[:], message[:int(error_len)])
     view.error_len = int(error_len)
+    view.io_failed = true
+    view.ui_dirty = true
     sync.mutex_unlock(&view.mutex)
 }
 
 observe_session :: proc(data: rawptr) {
     view := (^Session_View)(data)
-    observer := view.observer
+    observer := connect_view_channel(view, view.observer_interrupt)
+    if observer == nil do return
+    view.observer = observer
     after_revision: u64
     for {
         sync.mutex_lock(&view.mutex)
@@ -1353,11 +1380,15 @@ observe_session :: proc(data: rawptr) {
             }
             publish_bridge_error(view, observer)
             notify_session_update()
-            after_revision = 0
-            time.sleep(SESSION_RETRY_MS * time.Millisecond)
-            continue
+            break // Explicit reconnect owns a fresh channel, never replay old input.
         }
 
+        fresh_interaction: Interaction_State_Info
+        if interaction_state(observer, &fresh_interaction) != 0 {
+            publish_bridge_error(view, observer)
+            notify_session_update()
+            break
+        }
         snapshot_revision := revision(observer)
         after_revision = snapshot_revision
         snapshot_terminal_revision := terminal_revision(observer)
@@ -1373,8 +1404,14 @@ observe_session :: proc(data: rawptr) {
         snapshot_stream_closed := stream_closed(observer) != 0
         snapshot_child_exited := child_exited(observer) != 0
         snapshot_text_truncated := text_truncated(observer) != 0
+        title_bytes: [1024]u8
+        title_len := int(snapshot_title(observer, raw_data(title_bytes[:]), c.size_t(len(title_bytes))))
+        progress := snapshot_progress(observer)
 
         sync.mutex_lock(&view.mutex)
+        chrome_changed := view.revision == 0 || view.stream_closed != snapshot_stream_closed ||
+                          view.child_exited != snapshot_child_exited || view.task_progress != progress ||
+                          string(view.display_title[:view.display_title_len]) != string(title_bytes[:title_len])
         validate_selection_context_locked(
             view,
             snapshot_columns,
@@ -1386,6 +1423,8 @@ observe_session :: proc(data: rawptr) {
         apply_history_geometry_locked(view, snapshot_columns)
         copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
         view.text_len = int(output_len)
+        view.interaction_state = fresh_interaction
+        view.interaction_state_valid = true
         view.revision = snapshot_revision
         view.terminal_revision = snapshot_terminal_revision
         view.rows = snapshot_rows
@@ -1406,9 +1445,11 @@ observe_session :: proc(data: rawptr) {
         view.stream_closed = snapshot_stream_closed
         view.child_exited = snapshot_child_exited
         view.text_truncated = snapshot_text_truncated
-        view.display_title_len = int(snapshot_title(observer, raw_data(view.display_title[:]), c.size_t(len(view.display_title))))
-        view.task_progress = snapshot_progress(observer)
-        view.error_len = 0
+        copy(view.display_title[:title_len], title_bytes[:title_len])
+        view.display_title_len = title_len
+        view.task_progress = progress
+        view.ui_dirty = view.ui_dirty || chrome_changed
+        if !view.control_failed && !view.io_failed do view.error_len = 0
         validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
         notify_session_update()
@@ -1451,6 +1492,7 @@ apply_search_result_locked :: proc(view: ^Session_View, result: Search_Match_Inf
         half_rows := i64(view.rows) / 2
         target_top := clamp(row - half_rows, first, live_top)
         offset := live_top - target_top
+        view.history_generation += 1
         view.history_target_offset = u32(offset)
         if offset == 0 {
             view.history_anchor_top_row = 0
@@ -1473,6 +1515,24 @@ copy_search_error :: proc(view: ^Session_View, handle: rawptr, destination: ^[16
 
 search_session :: proc(data: rawptr) {
     view := (^Session_View)(data)
+    endpoint := session_endpoint(view)
+    diagnostic: [160]u8
+    count: c.size_t
+    handle := create(desktop_io_runtime, view.search_interrupt, raw_data(endpoint), c.size_t(len(endpoint)),
+                     raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
+    view.search = handle
+    if handle == nil {
+        sync.mutex_lock(&view.mutex)
+        view.search_failed = true
+        view.ui_dirty = true
+        view.search_pending = false
+        view.search_state = .Error
+        view.search_error_len = int(count)
+        copy(view.search_error[:int(count)], diagnostic[:int(count)])
+        sync.mutex_unlock(&view.mutex)
+        notify_session_update()
+        return
+    }
     local_query: [SEARCH_QUERY_BYTES]u8
     for {
         sync.mutex_lock(&view.mutex)
@@ -1514,6 +1574,7 @@ search_session :: proc(data: rawptr) {
 
         sync.mutex_lock(&view.mutex)
         view.search_running = false
+        view.ui_dirty = true
         if !view.worker_stop && generation == view.search_generation {
             view.search_last_reverse = reverse
             view.search_last_complete = rc == 0 && result.complete != 0
@@ -1523,6 +1584,7 @@ search_session :: proc(data: rawptr) {
                 copy(view.search_error[:count], error_message[:count])
                 view.search_error_len = count
                 view.search_state = .Error
+                view.search_failed = true
             } else if result.found == 0 {
                 view.search_state = .Not_Found
             } else if apply_search_result_locked(view, result) {
@@ -1537,6 +1599,7 @@ search_session :: proc(data: rawptr) {
         }
         sync.mutex_unlock(&view.mutex)
         notify_session_update()
+        if rc != 0 do break
     }
 }
 
@@ -1555,66 +1618,19 @@ clear_search_result :: proc(view: ^Session_View) {
 }
 
 ensure_search_worker :: proc(view: ^Session_View) -> bool {
-    if view == nil || view.control == nil {
-        return false
-    }
-    if view.search != nil && view.search_thread != nil {
-        return true
-    }
-
-    endpoint := session_endpoint(view)
-    if len(endpoint) == 0 {
-        return false
-    }
-    diagnostic: [160]u8
-    diagnostic_len: c.size_t
-    handle := create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(diagnostic[:]),
-        c.size_t(len(diagnostic)),
-        &diagnostic_len,
-    )
-    if handle == nil {
-        sync.mutex_lock(&view.mutex)
-        count := min(int(diagnostic_len), len(view.search_error))
-        copy(view.search_error[:count], diagnostic[:count])
-        view.search_error_len = count
-        view.search_state = .Error
-        sync.mutex_unlock(&view.mutex)
-        return false
-    }
-
-    cancellation := cancellation_create(handle)
-    if cancellation == nil {
-        destroy(handle)
-        sync.mutex_lock(&view.mutex)
-        message := "search_cancellation_failed"
-        copy(view.search_error[:len(message)], transmute([]u8)message)
-        view.search_error_len = len(message)
-        view.search_state = .Error
-        sync.mutex_unlock(&view.mutex)
-        return false
-    }
-
-    view.search = handle
-    view.search_cancellation = cancellation
-    view.search_thread = thread.create_and_start_with_data(
-        rawptr(view),
-        search_session,
-        name = "howl-odin-search",
-    )
+    if view == nil || view.control == nil do return false
+    sync.mutex_lock(&view.mutex)
+    failed := view.search_failed
+    sync.mutex_unlock(&view.mutex)
+    if failed do return false
+    if view.search_thread != nil do return true
+    if len(session_endpoint(view)) == 0 do return false
+    view.search_interrupt = interrupt_create()
+    if view.search_interrupt == nil do return false
+    view.search_thread = thread.create_and_start_with_data(rawptr(view), search_session, name = "howl-odin-search")
     if view.search_thread == nil {
-        cancellation_destroy(cancellation)
-        destroy(handle)
-        view.search = nil
-        view.search_cancellation = nil
-        sync.mutex_lock(&view.mutex)
-        message := "search_thread_failed"
-        copy(view.search_error[:len(message)], transmute([]u8)message)
-        view.search_error_len = len(message)
-        view.search_state = .Error
-        sync.mutex_unlock(&view.mutex)
+        interrupt_destroy(view.search_interrupt)
+        view.search_interrupt = nil
         return false
     }
     return true
@@ -1651,11 +1667,14 @@ publish_initial_error :: proc(view: ^Session_View, message: string) {
         return
     }
     sync.mutex_lock(&view.mutex)
-    count := min(len(message), len(view.error))
-    for byte, index in message[:count] {
+    text := len(message) != 0 ? message : "Session I/O failed without a diagnostic"
+    count := min(len(text), len(view.error))
+    for byte, index in text[:count] {
         view.error[index] = u8(byte)
     }
     view.error_len = count
+    view.io_failed = true
+    view.ui_dirty = true
     sync.mutex_unlock(&view.mutex)
 }
 
@@ -1681,6 +1700,10 @@ session_lifecycle_state :: proc(view: ^Session_View) -> Session_Lifecycle_State 
         return .Unavailable
     }
     sync.mutex_lock(&view.mutex)
+    if view.error_len == 0 && view.control_thread != nil && !view.control_connect_done {
+        sync.mutex_unlock(&view.mutex)
+        return .Connecting
+    }
     state := session_lifecycle_state_values(
         view.revision,
         view.error_len,
@@ -1710,12 +1733,19 @@ session_attached :: proc(view: ^Session_View) -> bool {
 }
 
 copy_bridge_error :: proc(view: ^Session_View) {
-    if view != nil {
-        publish_bridge_error(view, view.control)
+    if view == nil do return
+    sync.mutex_lock(&view.mutex)
+    if view.error_len == 0 {
+        message := "Input not admitted; nothing was replayed"
+        copy(view.error[:], transmute([]u8)message)
+        view.error_len = len(message)
+        view.control_failed = true
     }
+    sync.mutex_unlock(&view.mutex)
 }
 
 clear_selection_locked :: proc(view: ^Session_View) {
+    view.selection_generation += 1
     view.selection_active = false
     view.selection_dragging = false
     view.selection_anchor_row = 0
@@ -1790,6 +1820,7 @@ validate_selection_context_locked :: proc(
 }
 
 reset_history_locked :: proc(view: ^Session_View) {
+    view.history_generation += 1
     view.history_target_offset = 0
     view.history_anchor_top_row = 0
     view.history_anchor_valid = false
@@ -1820,6 +1851,7 @@ follow_history_locked :: proc(
         reset_history_locked(view)
         return
     }
+    view.history_generation += 1
     view.history_target_offset = u32(clamped)
     if clamped != requested {
         view.history_anchor_top_row = newest_history_end - clamped
@@ -1842,9 +1874,13 @@ accept_history_snapshot :: proc(
     history_count: u32,
     history_row_base: u32,
     alternate_screen: bool,
+    requested_generation: u64,
 ) {
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
+    // A prepared older frame may be displayed, but cannot overwrite a newer
+    // wheel/drag/search/return-to-LIVE intent while route I/O was outstanding.
+    if requested_generation != view.history_generation do return
     if alternate_screen || history_offset == 0 || history_count == 0 {
         reset_history_locked(view)
         return
@@ -1854,6 +1890,7 @@ accept_history_snapshot :: proc(
         reset_history_locked(view)
         return
     }
+    view.history_generation += 1
     view.history_target_offset = accepted
     view.history_anchor_top_row = u64(history_row_base) + u64(history_count) - u64(accepted)
     view.history_anchor_valid = true
@@ -1874,6 +1911,7 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     if clamped == int(view.history_target_offset) {
         return false
     }
+    view.history_generation += 1
     view.history_target_offset = u32(clamped)
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -1900,6 +1938,7 @@ set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
     if clamped == view.history_target_offset {
         return false
     }
+    view.history_generation += 1
     view.history_target_offset = clamped
     if clamped == 0 {
         view.history_anchor_top_row = 0
@@ -1939,6 +1978,8 @@ scroll_history_wheel :: proc(view: ^Session_View, wheel_rows: f32) -> bool {
         view.history_wheel_rows = 0
         return false
     }
+
+    view.history_generation += 1
 
     view.history_target_offset = u32(clamped)
     if clamped == 0 {
@@ -2066,56 +2107,22 @@ allocate_session_view :: proc(owned_process: rawptr, ownership: Session_Ownershi
 
 create_session_view :: proc(endpoint: string, owned_process: rawptr, ownership: Session_Ownership) -> ^Session_View {
     view := allocate_session_view(owned_process, ownership)
-    if view == nil {
-        return nil
-    }
-    endpoint_count := min(len(endpoint), len(view.endpoint))
-    for byte, index in endpoint[:endpoint_count] {
-        view.endpoint[index] = u8(byte)
-    }
-    view.endpoint_len = endpoint_count
-
-    control_diagnostic: [160]u8
-    control_diagnostic_len: c.size_t
-    view.control = create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(control_diagnostic[:]),
-        c.size_t(len(control_diagnostic)),
-        &control_diagnostic_len,
-    )
-    if view.control == nil {
-        publish_initial_error(view, string(control_diagnostic[:int(control_diagnostic_len)]))
+    if view == nil do return nil
+    if len(endpoint) == 0 || len(endpoint) >= len(view.endpoint) {
+        publish_initial_error(view, "Session endpoint is empty or too long")
         return view
     }
-
-    observer_diagnostic: [160]u8
-    observer_diagnostic_len: c.size_t
-    view.observer = create(
-        raw_data(endpoint),
-        c.size_t(len(endpoint)),
-        raw_data(observer_diagnostic[:]),
-        c.size_t(len(observer_diagnostic)),
-        &observer_diagnostic_len,
-    )
-    if view.observer == nil {
-        publish_initial_error(view, string(observer_diagnostic[:int(observer_diagnostic_len)]))
+    copy(view.endpoint[:len(endpoint)], transmute([]u8)endpoint)
+    view.endpoint_len = len(endpoint)
+    view.control_interrupt = interrupt_create()
+    view.observer_interrupt = interrupt_create()
+    if view.control_interrupt == nil || view.observer_interrupt == nil {
+        publish_initial_error(view, "Session I/O cancellation allocation failed")
         return view
     }
-    view.cancellation = cancellation_create(view.observer)
-    if view.cancellation == nil {
-        publish_initial_error(view, "observer_cancellation_failed")
-        return view
-    }
-    view.observer_thread = thread.create_and_start_with_data(
-        rawptr(view),
-        observe_session,
-        name = "howl-odin-observe",
-    )
-    if view.observer_thread == nil {
-        publish_initial_error(view, "observer_thread_failed")
-    }
-
+    view.control_thread = thread.create_and_start_with_data(rawptr(view), control_session, name = "howl-odin-control")
+    view.observer_thread = thread.create_and_start_with_data(rawptr(view), observe_session, name = "howl-odin-observe")
+    if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Session I/O worker creation failed")
     return view
 }
 
@@ -2137,11 +2144,13 @@ destroy_session_view :: proc(view: ^Session_View) {
     view.worker_stop = true
     sync.mutex_unlock(&view.mutex)
     sync.cond_signal(&view.search_cond)
-    if view.cancellation != nil {
-        _ = cancellation_cancel(view.cancellation)
-    }
-    if view.search_cancellation != nil {
-        _ = cancellation_cancel(view.search_cancellation)
+    sync.cond_signal(&view.control_cond)
+    if view.control_interrupt != nil do _ = interrupt_cancel(view.control_interrupt)
+    if view.observer_interrupt != nil do _ = interrupt_cancel(view.observer_interrupt)
+    if view.search_interrupt != nil do _ = interrupt_cancel(view.search_interrupt)
+    if view.control_thread != nil {
+        thread.destroy(view.control_thread)
+        view.control_thread = nil
     }
     if view.observer_thread != nil {
         thread.destroy(view.observer_thread)
@@ -2151,21 +2160,22 @@ destroy_session_view :: proc(view: ^Session_View) {
         thread.destroy(view.search_thread)
         view.search_thread = nil
     }
-    if view.cancellation != nil {
-        cancellation_destroy(view.cancellation)
-    }
-    if view.search_cancellation != nil {
-        cancellation_destroy(view.search_cancellation)
-    }
+    if view.search_interrupt != nil do interrupt_destroy(view.search_interrupt)
     if view.observer != nil {
         destroy(view.observer)
     }
     if view.search != nil {
         destroy(view.search)
     }
-    if view.control != nil {
-        destroy(view.control)
+    if view.control_pending_handle != nil do destroy(view.control_pending_handle)
+    if view.control_interrupt != nil do interrupt_destroy(view.control_interrupt)
+    if view.observer_interrupt != nil do interrupt_destroy(view.observer_interrupt)
+    for view.control_count > 0 {
+        task, ok := control_queue_pop_locked(view)
+        if ok && task.payload != nil do delete(task.payload)
     }
+    if view.control_result.bytes != nil do delete(view.control_result.bytes)
+    if view.clipboard_reply != nil do delete(view.clipboard_reply)
     if view.owned_process != nil {
         owned_session_destroy(view.owned_process)
     }
@@ -2298,6 +2308,7 @@ create_owned_profile_session_view :: proc(app: ^App, profile: ^Profile, profile_
     diagnostic: [160]u8
     diagnostic_len: c.size_t
     owned := owned_session_create(
+        desktop_io_runtime,
         raw_data(runtime_dir),
         c.size_t(len(runtime_dir)),
         raw_data(shell),
@@ -2394,34 +2405,11 @@ route_desktop_wheel :: proc(
     return alternate_scroll ? .Alternate_Scroll : .Ignore
 }
 
-current_interaction_state :: proc(
-    view: ^Session_View,
-    force := false,
-) -> (state: Interaction_State_Info, ok: bool) {
-    if view == nil || view.control == nil {
-        return {}, false
-    }
-    now := time.tick_now()
+current_interaction_state :: proc(view: ^Session_View) -> (state: Interaction_State_Info, ok: bool) {
+    if view == nil || view.control == nil do return {}, false
     sync.mutex_lock(&view.mutex)
-    valid := view.interaction_state_valid
-    cached := view.interaction_state
-    cached_at := view.interaction_state_cached_at
-    sync.mutex_unlock(&view.mutex)
-    if !force && valid && time.tick_diff(cached_at, now) <= INTERACTION_CACHE_MS * time.Millisecond {
-        return cached, true
-    }
-
-    fresh: Interaction_State_Info
-    if interaction_state(view.control, &fresh) != 0 {
-        copy_bridge_error(view)
-        return {}, false
-    }
-    sync.mutex_lock(&view.mutex)
-    view.interaction_state = fresh
-    view.interaction_state_valid = true
-    view.interaction_state_cached_at = now
-    sync.mutex_unlock(&view.mutex)
-    return fresh, true
+    defer sync.mutex_unlock(&view.mutex)
+    return view.interaction_state, view.interaction_state_valid
 }
 
 terminal_pointer_location :: proc(
@@ -2492,8 +2480,8 @@ send_terminal_mouse :: proc(
     if view == nil || view.control == nil {
         return false
     }
-    if send_mouse(
-        view.control,
+    if queue_mouse(
+        view,
         u8(kind),
         u8(button),
         modifiers,
@@ -2650,7 +2638,7 @@ send_semantic_focus :: proc(view: ^Session_View, focused: bool) -> bool {
     if view == nil || view.control == nil {
         return false
     }
-    if send_focus(view.control, u8(focused ? Bridge_Focus.In : Bridge_Focus.Out)) != 0 {
+    if queue_focus(view, u8(focused ? Bridge_Focus.In : Bridge_Focus.Out)) != 0 {
         copy_bridge_error(view)
         return false
     }
@@ -2661,11 +2649,11 @@ send_named_key_cycle :: proc(view: ^Session_View, key: Bridge_Key) -> bool {
     if view == nil || view.control == nil {
         return false
     }
-    if send_named_key(view.control, u8(key), u8(Bridge_Key_Action.Press), 0) != 0 {
+    if queue_named_key(view, u8(key), u8(Bridge_Key_Action.Press), 0) != 0 {
         copy_bridge_error(view)
         return false
     }
-    if send_named_key(view.control, u8(key), u8(Bridge_Key_Action.Release), 0) != 0 {
+    if queue_named_key(view, u8(key), u8(Bridge_Key_Action.Release), 0) != 0 {
         copy_bridge_error(view)
         return false
     }
@@ -2756,8 +2744,8 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     } else if event.key.repeat {
         action = .Repeat
     }
-    result := send_named_key(
-        view.control,
+    result := queue_named_key(
+        view,
         u8(key),
         u8(action),
         bridge_modifiers(event.key.mod),
@@ -3375,23 +3363,13 @@ expand_selection_at :: proc(
         clear_selection(view)
         return true
     }
-    info: Selection_Range_Info
-    result := selection_expand(
-        view.control,
-        kind,
-        render_history_offset(view.canvas),
-        stable_row,
-        column,
-        columns,
-        alternate ? u8(1) : u8(0),
-        &info,
-    )
-    if result != 0 {
-        clear_selection(view)
-        copy_bridge_error(view)
-        return true
-    }
-    _ = apply_selection_range(view, info)
+    sync.mutex_lock(&view.mutex)
+    view.selection_generation += 1
+    generation := view.selection_generation
+    sync.mutex_unlock(&view.mutex)
+    _ = queue_control(view, {kind = .Expand, action = kind, history = render_history_offset(view.canvas),
+                            row = stable_row, column = column, columns = columns,
+                            alternate = alternate ? u8(1) : u8(0), generation = generation})
     return true
 }
 
@@ -3414,6 +3392,7 @@ begin_selection :: proc(
     sync.mutex_lock(&view.mutex)
     view.selection_active = true
     view.selection_dragging = true
+    view.selection_generation += 1
     view.selection_anchor_row = row
     view.selection_anchor_column = column
     view.selection_focus_row = row
@@ -3459,13 +3438,22 @@ extend_selection :: proc(
     sync.mutex_lock(&view.mutex)
     if view.selection_dragging && view.selection_columns == columns &&
        view.selection_alternate_screen == alternate {
-        view.selection_focus_row = row
-        view.selection_focus_column = column
+        _ = extend_selection_focus_locked(view, row, column)
         sync.mutex_unlock(&view.mutex)
         return true
     }
     sync.mutex_unlock(&view.mutex)
     return false
+}
+
+// Moving the selected endpoint retires the old visual intent, but not an explicit
+// Copy request already issued for that earlier range.
+extend_selection_focus_locked :: proc(view: ^Session_View, row: i32, column: u16) -> bool {
+    if view.selection_focus_row == row && view.selection_focus_column == column do return false
+    view.selection_generation += 1
+    view.selection_focus_row = row
+    view.selection_focus_column = column
+    return true
 }
 
 selection_edge_scroll_direction :: proc(
@@ -3597,7 +3585,7 @@ finish_selection :: proc(view: ^Session_View) {
     }
 }
 
-copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
+copy_selection_to_clipboard :: proc(app: ^App, view: ^Session_View) -> bool {
     if view == nil || view.control == nil {
         return false
     }
@@ -3612,42 +3600,38 @@ copy_selection_to_clipboard :: proc(view: ^Session_View) -> bool {
     focus_column := view.selection_focus_column
     selected_columns := view.selection_columns
     selected_alternate := view.selection_alternate_screen
+    generation := view.selection_generation
+    app.clipboard_request += 1
+    request := app.clipboard_request
+    view.copy_pending = true
+    view.copy_pending_request = request
     sync.mutex_unlock(&view.mutex)
-
-    buffer := make([]u8, SELECTION_TEXT_BYTES)
-    defer delete(buffer)
-    output_len: c.size_t
-    result := selection_extract(
-        view.control,
-        anchor_row,
-        anchor_column,
-        focus_row,
-        focus_column,
-        selected_columns,
-        selected_alternate ? u8(1) : u8(0),
-        raw_data(buffer),
-        c.size_t(len(buffer)),
-        &output_len,
-    )
-    if result != 0 || output_len == 0 {
-        copy_bridge_error(view)
-        return false
+    result := queue_control(view, {kind = .Extract, row = anchor_row, column = anchor_column,
+                                end_row = focus_row, end_column = focus_column, columns = selected_columns,
+                                alternate = selected_alternate ? u8(1) : u8(0), generation = generation, request = request})
+    if result != 0 {
+        sync.mutex_lock(&view.mutex)
+        view.copy_pending = false
+        sync.mutex_unlock(&view.mutex)
     }
-    terminated := make([]u8, int(output_len) + 1)
-    defer delete(terminated)
-    copy(terminated[:int(output_len)], buffer[:int(output_len)])
-    terminated[int(output_len)] = 0
-    if !SDL.SetClipboardText(cstring(raw_data(terminated))) {
-        return false
-    }
-    clear_selection(view)
-    return true
+    return result == 0
 }
 
 paste_clipboard :: proc(view: ^Session_View) -> bool {
-    if view == nil || view.control == nil || !session_interactive(view) || !SDL.HasClipboardText() {
+    if view == nil || view.control == nil || !session_interactive(view) {
         return false
     }
+    sync.mutex_lock(&view.mutex)
+    pending := view.copy_pending
+    request := view.copy_pending_request
+    sync.mutex_unlock(&view.mutex)
+    if pending {
+        // Preserve the copy's exact selection intent until its queued result
+        // reaches the clipboard. Successful Copy will clear it normally.
+        _ = return_history_live_navigation(view)
+        return queue_control(view, {kind = .Clipboard, request = request}) == 0
+    }
+    if !SDL.HasClipboardText() do return false
     bytes := SDL.GetClipboardText()
     if bytes == nil {
         return false
@@ -3658,7 +3642,7 @@ paste_clipboard :: proc(view: ^Session_View) -> bool {
         return false
     }
     _ = return_history_live(view)
-    if send_paste(view.control, raw_data(text), c.size_t(len(text))) != 0 {
+    if queue_text(view, raw_data(text), c.size_t(len(text)), true) != 0 {
         copy_bridge_error(view)
         return false
     }
@@ -4658,6 +4642,7 @@ handle_local_drag_interruption :: proc(app: ^App, event: ^SDL.Event) -> bool {
 }
 
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
+    apply_control_completions(app)
     defer {
         if event != nil && event.type == .KEY_DOWN do settings_reveal_selection(app)
     }
@@ -4767,7 +4752,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
             adjust_terminal_font(app, 1)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_C {
-            _ = copy_selection_to_clipboard(active_session_view(app))
+            _ = copy_selection_to_clipboard(app, active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
             _ = paste_clipboard(active_session_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
@@ -4809,8 +4794,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             if scalar > 0 && scalar < 0x80 {
                 _ = return_history_live(view)
                 action := event.key.repeat ? Bridge_Key_Action.Repeat : Bridge_Key_Action.Press
-                result := send_unicode_key(
-                    view.control,
+                result := queue_unicode_key(
+                    view,
                     scalar,
                     u8(action),
                     bridge_modifiers(event.key.mod),
@@ -4865,7 +4850,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             text := string(event.text.text)
             if len(text) != 0 {
                 _ = return_history_live(view)
-                result := send_text(view.control, raw_data(text), c.size_t(len(text)))
+                result := queue_text(view, raw_data(text), c.size_t(len(text)))
                 if result != 0 {
                     copy_bridge_error(view)
                 }
@@ -5069,7 +5054,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     false,
                 ) : Desktop_Primary_Pointer_Route.Local_Selection
                 if route == .Interaction_State {
-                    if state, state_ok := current_interaction_state(view, true); state_ok {
+                    if state, state_ok := current_interaction_state(view); state_ok {
                         route = route_desktop_primary_pointer(
                             history_is_active,
                             shift,
@@ -5105,7 +5090,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
 
             if session_interactive(view) && !history_is_active {
-                if state, state_ok := current_interaction_state(view, true); state_ok &&
+                if state, state_ok := current_interaction_state(view); state_ok &&
                    interaction_mouse_tracking_enabled(state) {
                     _ = terminal_mouse_press(
                         view,
@@ -5171,7 +5156,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     state_ok && interaction_alternate_scroll(state),
                 )
                 if route == .Interaction_State {
-                    if state, state_ok = current_interaction_state(view, true); state_ok {
+                    if state, state_ok = current_interaction_state(view); state_ok {
                         route = route_desktop_wheel(
                             history_is_active,
                             force_history,
@@ -5660,6 +5645,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
             draw_outline(app.renderer, badge, palette.accent)
             draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
         }
+        draw_control_notice(app, view, pane)
         draw_session_lifecycle(app, view, pane, lifecycle_state)
         return
     }
@@ -5671,24 +5657,35 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
 
     sync.mutex_lock(&view.mutex)
-    defer sync.mutex_unlock(&view.mutex)
+    error_text := view.error
+    error_count := view.error_len
+    text := make([]u8, view.text_len)
+    copy(text, view.text[:view.text_len])
+    cursor_is_visible := view.cursor_visible
+    current_rows, current_columns := view.rows, view.columns
+    cursor_row_value, cursor_column_value := view.cursor_row, view.cursor_column
+    shape := view.cursor_shape
+    truncated := view.text_truncated
+    sync.mutex_unlock(&view.mutex)
+    defer delete(text)
 
-    if view.error_len != 0 {
-        draw_text(app, app.ui_font, string(view.error[:view.error_len]), origin_x, origin_y, palette.accent)
+    if error_count != 0 {
+        draw_text(app, app.ui_font, string(error_text[:error_count]), origin_x, origin_y, palette.accent)
+        draw_control_notice(app, view, pane)
         draw_session_lifecycle(app, view, pane, lifecycle_state)
         return
     }
-    if view.text_len != 0 {
-        draw_text(app, app.terminal_font, string(view.text[:view.text_len]), origin_x, origin_y, palette.text)
+    if len(text) != 0 {
+        draw_text(app, app.terminal_font, string(text), origin_x, origin_y, palette.text)
     }
 
-    if view.cursor_visible && view.rows != 0 && view.columns != 0 {
+    if cursor_is_visible && current_rows != 0 && current_columns != 0 {
         cell_w, cell_h: c.int
         if TTF.GetStringSize(app.terminal_font, "M", 1, &cell_w, &cell_h) {
             line_h := TTF.GetFontLineSkip(app.terminal_font)
-            cursor_x := origin_x + f32(int(view.cursor_column) * int(cell_w))
-            cursor_y := origin_y + f32(int(view.cursor_row) * int(line_h))
-            switch view.cursor_shape {
+            cursor_x := origin_x + f32(int(cursor_column_value) * int(cell_w))
+            cursor_y := origin_y + f32(int(cursor_row_value) * int(line_h))
+            switch shape {
             case 1:
                 draw_fill(app.renderer, {cursor_x, cursor_y + f32(line_h - 2), f32(cell_w), 2}, palette.text)
             case 2:
@@ -5700,7 +5697,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         }
     }
 
-    if view.text_truncated {
+    if truncated {
         draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
     }
     draw_selection(app, view, pane)
@@ -5711,7 +5708,8 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         draw_outline(app.renderer, badge, palette.accent)
         draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
     }
-    draw_session_lifecycle(app, view, pane, lifecycle_state)
+    draw_control_notice(app, view, pane)
+        draw_session_lifecycle(app, view, pane, lifecycle_state)
 }
 
 clear_ime_preedit :: proc(app: ^App) {
@@ -6256,6 +6254,10 @@ draw :: proc(app: ^App) {
 }
 
 main :: proc() {
+    if version() != 6 { fmt.eprintln("Howl bridge version mismatch"); return }
+    desktop_io_runtime = runtime_create()
+    if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
+    defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }
     assert(size_of(Canvas_Resource_Info) == int(render_resource_info_size()))
     assert(size_of(Canvas_Removal_Info) == int(render_removal_info_size()))
     assert(size_of(Canvas_Command_Info) == int(render_command_info_size()))
@@ -6402,14 +6404,17 @@ main :: proc() {
         } else if !SDL.WaitEvent(&event) {
             continue
         }
+        input_dirty := u32(event.type) != session_update_event_type
         handle_event(&app, &event)
         for SDL.PollEvent(&event) {
+            input_dirty = input_dirty || u32(event.type) != session_update_event_type
             handle_event(&app, &event)
         }
         if app.running {
             reconcile_consequence_owners(&app)
             _ = apply_desktop_attention(&app)
-            draw(&app)
+            io_dirty := service_desktop_io(&app)
+            if input_dirty || io_dirty do draw(&app)
         }
     }
 

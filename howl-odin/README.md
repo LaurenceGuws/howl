@@ -328,17 +328,52 @@ close with exact teardown of three owned Sessions. These are scoped native
 controls proofs, not double-click-titlebar or mixed-monitor/hotplug acceptance.
 
 
-## Next native SSH integration
+## Native SSH attachment and asynchronous host I/O
 
-The shared client and CLI have an optional Linux OpenSSH route. The Odin bridge
-has **not** opted into it yet: the current GUI still opens connections and does
-some renderer I/O on the graphical thread, and must first supply one host-owned
-I/O runtime rather than creating process-global signal lifetimes per channel.
-An existing Launch profile running `ssh host` remains unchanged and useful; it
-feeds a local Session and is not a remote Howl Session attachment.
+An Attach profile can use the shared native route:
 
-Next integration needs bounded asynchronous connection/cancellation, responsive
-window/input handling during network waits, and explicit failure/reconnect UI.
-It should consume the existing native carrier, not implement another SSH client,
-key store or terminal. Library-backed mobile SSH and local/remote PTY placement
-remain separate choices. See `../howl-client/README.md` for the route foundation.
+```text
+ssh://[user@]host[:port]/absolute/session.sock[?bridge=/absolute/howl-session-bridge]
+```
+
+Prepared OpenSSH authentication and known-host trust are required. The remote
+Session and matching bridge must already exist. The GUI never installs software,
+creates a remote shell, changes network routes, or converts existing Launch
+profiles behind the user. A Launch profile running `ssh host` still feeds a local
+Session; an SSH Attach profile observes the independently owned remote Session.
+Closing the attachment does not terminate that remote PTY. Attached geometry
+remains explicit authority, not an automatic consequence of resizing this window.
+
+One application-owned I/O runtime outlives all pane workers and local Session
+processes. Connection setup, protocol requests/acknowledgements, search,
+selection/clipboard/link queries, image fetching, and host-policy I/O execute on
+workers. SDL windowing, drawing, resource submission, clipboard and browser
+opening remain on the graphical thread. The existing bounded local Session
+spawn/readiness path is separate from network setup.
+
+Each native channel borrows one sticky cancellation scope created before opening.
+Closing a pending tab can interrupt a partial SSH handshake; closing an attached
+tab also wakes an idle receive or backpressured write before joining its worker.
+Explicit Reconnect replaces the old pane/channel lifetime. Failed or uncertain
+input is reported and never replayed automatically.
+
+The input queue admits at most128 items and128KiB of queued byte payload, with
+one in-flight task and one bounded query result. Admission is not a server ACK.
+A full queue explicitly rejects input and retires the blocked channel. A completed
+stale-selection/link refusal is instead nonfatal: it shows a notice without
+turning a healthy connection into a reconnect requirement. Copy requests carry
+application-wide ordering separate from visual selection; immediate Copy/Paste
+waits for the corresponding clipboard result instead of pasting old contents.
+
+The renderer owns at most one pending/prepared frame. It cannot overwrite that
+frame while the GUI installs SDL resources. Selection/geometry/background getters
+stay at the accepted frame until all resources are installed. An older history
+response cannot overwrite a newer wheel/drag/return-to-LIVE intent. Scheduling
+wakeups do not repaint the old frame before the newly prepared one; there is no
+new repaint timer or loss of the measured local raw-snapshot optimization.
+
+This private native bridge is ABI6 and must ship with its matching Odin executable.
+The Session protocol stays framing-v9. Mobile SSH library integration, interactive
+authentication UI, automatic geometry leadership, remote provisioning, shared SSH
+masters, and sustained slow-link performance qualification remain separate work.
+See `../howl-client/README.md` for native route and cancellation ownership.

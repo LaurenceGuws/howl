@@ -67,7 +67,7 @@ drop_into_active_terminal :: proc(app: ^App, data: cstring, file: bool) -> bool 
 	}
 
 	_ = return_history_live(view)
-	if send_paste(view.control, raw_data(payload), c.size_t(len(payload))) != 0 {
+	if queue_text(view, raw_data(payload), c.size_t(len(payload)), true) != 0 {
 		copy_bridge_error(view)
 		return false
 	}

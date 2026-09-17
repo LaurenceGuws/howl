@@ -1,6 +1,6 @@
 package main
 
-import "core:c"
+import "core:sync"
 import "core:strings"
 import "core:unicode/utf8"
 import SDL "vendor:sdl3"
@@ -50,26 +50,11 @@ open_hyperlink_at :: proc(
 	if !hit {
 		return false, false
 	}
-	uri_storage: [HYPERLINK_URI_BYTES]u8
-	uri_len: c.size_t
-	result := hyperlink_copy(
-		view.control,
-		render_history_offset(view.canvas),
-		stable_row,
-		column,
-		columns,
-		alternate ? u8(1) : u8(0),
-		raw_data(uri_storage[:]),
-		c.size_t(len(uri_storage)),
-		&uri_len,
-	)
-	if result != 0 {
-		copy_bridge_error(view)
-		return true, false
-	}
-	if uri_len == 0 {
-		return false, false
-	}
-	uri := string(uri_storage[:int(uri_len)])
-	return true, open_platform_browser_uri(uri)
+    sync.mutex_lock(&view.mutex)
+    generation := view.selection_generation
+    sync.mutex_unlock(&view.mutex)
+    admitted := queue_control(view, {kind = .Link, history = render_history_offset(view.canvas),
+                                   row = stable_row, column = column, columns = columns,
+                                   alternate = alternate ? u8(1) : u8(0), generation = generation}) == 0
+    return true, admitted
 }
