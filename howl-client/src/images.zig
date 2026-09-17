@@ -29,6 +29,8 @@ pub const Resource = struct {
 };
 
 /// Fetches one exact image generation named by a rich snapshot manifest.
+/// After sending, any failure except ServerRejected requires retiring the
+/// connection: an unread or partially consumed frame is not safely resumable.
 pub fn request(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -66,14 +68,13 @@ fn receiveFrom(
     errdefer allocator.free(pixels);
     var offset: usize = 0;
     while (offset < pixels.len) {
-        var frame = try connection.receive();
-        defer frame.deinit();
-        if (frame.kind != .image_data or frame.payload.len == 0 or
-            frame.payload.len > protocol.graphics_v2.data_chunk_bytes or
-            frame.payload.len > pixels.len - offset)
-            return error.InvalidResource;
-        @memcpy(pixels[offset..][0..frame.payload.len], frame.payload);
-        offset += frame.payload.len;
+        const capacity = @min(pixels.len - offset, protocol.graphics_v2.data_chunk_bytes);
+        const count = connection.receiveInto(.image_data, pixels[offset..][0..capacity]) catch |failure| {
+            // Preserve the image receiver's existing semantic error vocabulary.
+            // Framing and transport failures propagate unchanged.
+            return if (failure == error.InvalidPayload) error.InvalidResource else failure;
+        };
+        offset += count;
     }
 
     var end_frame = try connection.receive();
@@ -104,6 +105,14 @@ const TestFrame = struct {
 const TestFrames = struct {
     frames: []const TestFrame,
     index: usize = 0,
+
+    fn receiveInto(self: *TestFrames, expected_kind: protocol.Kind, destination: []u8) Error!usize {
+        const frame = try self.receive();
+        if (frame.kind != expected_kind or frame.payload.len == 0 or frame.payload.len > destination.len)
+            return error.InvalidPayload;
+        @memcpy(destination[0..frame.payload.len], frame.payload);
+        return frame.payload.len;
+    }
 
     fn receive(self: *TestFrames) Error!TestFrame {
         if (self.index >= self.frames.len) return error.UnexpectedFrame;
@@ -174,4 +183,136 @@ test "image resource receiver rejects stale and incomplete identities" {
         error.UnexpectedFrame,
         receiveFrom(&incompatible, std.testing.allocator, 7, 9),
     );
+}
+
+test "image data semantic failures retain InvalidResource and release pixels" {
+    var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+    protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
+    const data: [17]u8 = @splat(0xa5);
+    for ([_]TestFrame{
+        .{ .kind = .image_end, .payload = data[0..4] },
+        .{ .kind = .image_data, .payload = data[0..0] },
+        .{ .kind = .image_data, .payload = &data },
+    }) |bad| {
+        const frames = [_]TestFrame{ .{ .kind = .image_begin, .payload = &begin }, bad };
+        var reader = TestFrames{ .frames = &frames };
+        try std.testing.expectError(error.InvalidResource, receiveFrom(&reader, std.testing.allocator, 7, 9));
+    }
+    protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 512, .height = 256, .byte_count = 524288 });
+    const oversized: [protocol.graphics_v2.data_chunk_bytes + 1]u8 = @splat(0);
+    const frames = [_]TestFrame{
+        .{ .kind = .image_begin, .payload = &begin },
+        .{ .kind = .image_data, .payload = &oversized },
+    };
+    var reader = TestFrames{ .frames = &frames };
+    try std.testing.expectError(error.InvalidResource, receiveFrom(&reader, std.testing.allocator, 7, 9));
+}
+
+test "image begin and end identities and malformed extent never publish resources" {
+    var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+    var end: [protocol.payload_bytes.image_end]u8 = undefined;
+    const data = [_]u8{ 1, 2, 3, 4 };
+    for (0..6) |case| {
+        protocol.encodeImageBegin(&begin, .{ .image_id = if (case == 0) 8 else 7, .generation = if (case == 1) 10 else 9, .width = 1, .height = 1, .byte_count = 4 });
+        protocol.encodeImageEnd(&end, .{ .image_id = if (case == 2) 8 else 7, .generation = if (case == 3) 10 else 9 });
+        if (case == 4) begin[23] = 8; // byte count disagrees with extent
+        if (case == 5) begin[15] = 0; // zero width
+        const frames = [_]TestFrame{
+            .{ .kind = .image_begin, .payload = &begin },
+            .{ .kind = .image_data, .payload = &data },
+            .{ .kind = .image_end, .payload = &end },
+        };
+        var reader = TestFrames{ .frames = &frames };
+        try std.testing.expectError(if (case >= 4) error.InvalidPayload else error.InvalidResource, receiveFrom(&reader, std.testing.allocator, 7, 9));
+    }
+}
+
+fn testResourceAllocation(allocator: std.mem.Allocator) !void {
+    var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+    protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 1, .height = 1, .byte_count = 4 });
+    var end: [protocol.payload_bytes.image_end]u8 = undefined;
+    protocol.encodeImageEnd(&end, .{ .image_id = 7, .generation = 9 });
+    const frames = [_]TestFrame{
+        .{ .kind = .image_begin, .payload = &begin },
+        .{ .kind = .image_data, .payload = &.{ 1, 2, 3 } },
+        .{ .kind = .image_data, .payload = &.{4} },
+        .{ .kind = .image_end, .payload = &end },
+    };
+    var reader = TestFrames{ .frames = &frames };
+    var resource = try receiveFrom(&reader, allocator, 7, 9);
+    defer resource.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, resource.pixels);
+}
+
+test "image final allocation failure leaks nothing" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testResourceAllocation, .{});
+}
+
+test "truncated real image body frees final pixels and owned begin frame" {
+    const posix = std.posix;
+    const system = posix.system;
+    var pair: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
+    var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var receiver = client.Connection{ .allocator = count.allocator(), .fd = pair[0], .client_id = 1 };
+    defer receiver.deinit();
+    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .fd = pair[1], .client_id = 2 };
+    defer sender.deinit();
+    var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+    protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
+    try sender.send(.image_begin, &begin);
+    var partial: [protocol.header_bytes + 3]u8 = @splat(0xa5);
+    try protocol.encodeHeader(partial[0..protocol.header_bytes], .{ .kind = .image_data, .payload_len = 16 });
+    const sent = system.write(pair[1], &partial, partial.len);
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(sent));
+    try std.testing.expectEqual(partial.len, sent);
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.shutdown(pair[1], posix.SHUT.WR)));
+    try std.testing.expectError(error.ConnectionClosed, receiveFrom(&receiver, count.allocator(), 7, 9));
+    try std.testing.expectEqual(@as(usize, 2), count.allocations);
+    try std.testing.expectEqual(count.allocations, count.deallocations);
+    try std.testing.expectEqual(count.allocated_bytes, count.freed_bytes);
+}
+
+const CanceledImageProbe = struct {
+    connection: *client.Connection,
+    allocator: std.mem.Allocator,
+    failure: ?Error = null,
+};
+
+fn testCanceledImageReceive(probe: *CanceledImageProbe) void {
+    var resource = receiveFrom(probe.connection, probe.allocator, 7, 9) catch |failure| {
+        probe.failure = failure;
+        return;
+    };
+    resource.deinit();
+}
+
+test "canceling real image receive releases owned frames and pixels" {
+    const posix = std.posix;
+    var pair: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
+    var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var receiver = client.Connection{ .allocator = count.allocator(), .fd = pair[0], .client_id = 1 };
+    defer receiver.deinit();
+    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .fd = pair[1], .client_id = 2 };
+    defer sender.deinit();
+    var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+    protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
+    try sender.send(.image_begin, &begin);
+    try sender.send(.image_data, &.{ 1, 2, 3, 4 });
+    var cancellation = try receiver.cancellation();
+    defer cancellation.deinit();
+    var probe = CanceledImageProbe{ .connection = &receiver, .allocator = count.allocator() };
+    const worker = try std.Thread.spawn(.{}, testCanceledImageReceive, .{&probe});
+    {
+        defer {
+            cancellation.cancel() catch {};
+            worker.join();
+        }
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
+        try cancellation.cancel();
+    }
+    try std.testing.expectEqual(error.ConnectionClosed, probe.failure.?);
+    try std.testing.expectEqual(count.allocations, count.deallocations);
+    try std.testing.expectEqual(count.allocated_bytes, count.freed_bytes);
 }

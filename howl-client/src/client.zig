@@ -239,6 +239,23 @@ pub const Connection = struct {
         try writeInterrupt(self.fd, payload, null, self.interrupt);
     }
 
+    /// Receives one nonempty frame of the expected kind into caller-owned storage.
+    /// Header/kind/extent checks precede any destination mutation. Returns the
+    /// initialized prefix length; no allocation or ownership transfer occurs.
+    /// InvalidPayload means wrong kind, empty body, or insufficient destination.
+    /// On ANY error the stream must be retired, not retried: a header or partial
+    /// body may already be consumed. I/O failure may leave a partial prefix.
+    pub fn receiveInto(self: *Connection, expected_kind: protocol.Kind, destination: []u8) Error!usize {
+        var header_bytes: [protocol.header_bytes]u8 = undefined;
+        try readInterrupt(self.fd, &header_bytes, null, self.interrupt);
+        const header = try protocol.decodeHeader(&header_bytes);
+        if (header.kind != expected_kind or header.payload_len == 0 or
+            header.payload_len > destination.len)
+            return error.InvalidPayload;
+        try readInterrupt(self.fd, destination[0..header.payload_len], null, self.interrupt);
+        return header.payload_len;
+    }
+
     pub fn receive(self: *Connection) Error!Frame {
         var header_bytes: [protocol.header_bytes]u8 = undefined;
         try readInterrupt(self.fd, &header_bytes, null, self.interrupt);
@@ -858,4 +875,133 @@ test "native cancellation wins over already-readable buffered protocol bytes" {
     try std.testing.expectError(error.ConnectionCanceled, readInterrupt(pair[0], &bytes, null, interrupt));
     try readExact(pair[0], &bytes);
     try std.testing.expectEqualStrings("old", &bytes);
+}
+
+test "receiveInto rejects headers before touching caller storage" {
+    const cases = [_]struct { kind: protocol.Kind, size: u32 }{
+        .{ .kind = .image_end, .size = 4 },
+        .{ .kind = .image_data, .size = 0 },
+        .{ .kind = .image_data, .size = 9 },
+        .{ .kind = .image_data, .size = protocol.graphics_v2.data_chunk_bytes + 1 },
+    };
+    for (cases) |case| {
+        const pair = testSocketPair();
+        defer closeFd(pair[1]);
+        var connection = Connection{ .allocator = std.testing.failing_allocator, .fd = pair[0], .client_id = 1 };
+        defer connection.deinit();
+        var header: [protocol.header_bytes]u8 = undefined;
+        try protocol.encodeHeader(&header, .{ .kind = case.kind, .payload_len = case.size });
+        try writeAll(pair[1], &header);
+        var guarded: [10]u8 = @splat(0xa5);
+        try std.testing.expectError(error.InvalidPayload, connection.receiveInto(.image_data, guarded[1..9]));
+        try std.testing.expectEqualSlices(u8, &@as([10]u8, @splat(0xa5)), &guarded);
+        // Header rejection is terminal; never attempt to parse the unread body.
+    }
+}
+
+test "receiveInto preserves protocol header errors without destination writes" {
+    for (0..5) |case| {
+        const pair = testSocketPair();
+        defer closeFd(pair[1]);
+        var connection = Connection{ .allocator = std.testing.failing_allocator, .fd = pair[0], .client_id = 1 };
+        defer connection.deinit();
+        var header: [protocol.header_bytes]u8 = undefined;
+        try protocol.encodeHeader(&header, .{ .kind = .image_data, .payload_len = 1 });
+        const expected: Error = switch (case) {
+            0 => value: {
+                header[0] = 0;
+                break :value error.InvalidMagic;
+            },
+            1 => value: {
+                header[4] = 0;
+                break :value error.UnsupportedFramingVersion;
+            },
+            2 => value: {
+                header[6] = 1;
+                break :value error.InvalidReservedBits;
+            },
+            3 => value: {
+                header[5] = 255;
+                break :value error.UnknownKind;
+            },
+            else => value: {
+                header[8] = 1;
+                break :value error.PayloadTooLarge;
+            },
+        };
+        try writeAll(pair[1], &header);
+        var destination = [_]u8{0xa5};
+        try std.testing.expectError(expected, connection.receiveInto(.image_data, &destination));
+        try std.testing.expectEqual(@as(u8, 0xa5), destination[0]);
+    }
+}
+
+const ReceiveIntoProbe = struct {
+    connection: *Connection,
+    result: ?Error = null,
+    received: ?usize = null,
+    bytes: [8]u8 = @splat(0xa5),
+};
+
+fn testBlockedReceiveInto(probe: *ReceiveIntoProbe) void {
+    probe.received = probe.connection.receiveInto(.image_data, &probe.bytes) catch |failure| {
+        probe.result = failure;
+        return;
+    };
+}
+
+test "receiveInto cancellation wakes blocked body and retains owner cleanup" {
+    const pair = testSocketPair();
+    defer closeFd(pair[1]);
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    var connection = Connection{ .allocator = std.testing.failing_allocator, .fd = pair[0], .client_id = 1, .interrupt = interrupt };
+    defer connection.deinit();
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    var header: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&header, .{ .kind = .image_data, .payload_len = 8 });
+    try writeAll(pair[1], &header);
+    var probe = ReceiveIntoProbe{ .connection = &connection };
+    const worker = try std.Thread.spawn(.{}, testBlockedReceiveInto, .{&probe});
+    {
+        defer {
+            interrupt.cancel() catch {};
+            worker.join();
+        }
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
+        try interrupt.cancel();
+    }
+    try std.testing.expectEqual(error.ConnectionCanceled, probe.result.?);
+    try std.testing.expect(probe.received == null);
+    try std.testing.expectEqualSlices(u8, &@as([8]u8, @splat(0xa5)), &probe.bytes);
+}
+
+fn testFragmentedFramePeer(fd: posix.fd_t) void {
+    defer closeFd(fd);
+    var header: [protocol.header_bytes]u8 = undefined;
+    protocol.encodeHeader(&header, .{ .kind = .image_data, .payload_len = 3 }) catch unreachable;
+    for (0..2) |_| {
+        for (header) |byte| writeAll(fd, &.{byte}) catch return;
+        for ("abc") |byte| writeAll(fd, &.{byte}) catch return;
+    }
+}
+
+test "receiveInto accepts fragmented frames without allocation or crossing frame boundary" {
+    const pair = testSocketPair();
+    var connection = Connection{ .allocator = std.testing.failing_allocator, .fd = pair[0], .client_id = 1 };
+    defer connection.deinit();
+    const worker = std.Thread.spawn(.{}, testFragmentedFramePeer, .{pair[1]}) catch |failure| {
+        closeFd(pair[1]);
+        return failure;
+    };
+    defer worker.join();
+    for (0..2) |_| {
+        var guarded: [10]u8 = @splat(0xa5);
+        try std.testing.expectEqual(@as(usize, 3), try connection.receiveInto(.image_data, guarded[1..9]));
+        try std.testing.expectEqualStrings("abc", guarded[1..4]);
+        try std.testing.expectEqual(@as(u8, 0xa5), guarded[0]);
+        for (guarded[4..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    }
+    var byte: [1]u8 = undefined;
+    try std.testing.expectError(error.ConnectionClosed, connection.receiveInto(.image_data, &byte));
 }
