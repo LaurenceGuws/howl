@@ -120,11 +120,16 @@ explicit formatting choice rather than TTY-dependent magic.
 
 ## Rich snapshot
 
-`snapshot --rich` exposes the complete v4 semantic snapshot manifest: the
-unchanged `text_v1` lifecycle/authority and terminal-text records plus the
-`graphics_v2` canonical cell lattice, image identities, and visible placements. Exact RGBA image bytes are
-not copied into every snapshot; graphical clients fetch a named image generation
-on demand through the separate bounded image-resource request.
+`snapshot --rich` exposes the coherent framing-v9 snapshot: `text_v1`
+lifecycle/authority and terminal-text records, the `graphics_v2` cell lattice,
+image identities and placements, and one bounded `properties_v1` packet. The
+properties record emits readable valid-UTF-8 title/progress plus lossless
+`packet_hex` for icon, directory, remote host, shell identity/marks, and all other
+property bytes. These labels do not confer process, path, or execution authority.
+
+Exact RGBA bytes are not copied into every snapshot; graphical clients fetch a
+named image generation on demand through the separate bounded resource request.
+The CLI and endpoint must use the same framing version.
 
 The rich form may remain NDJSON because streaming bounded records is useful for
 forensic inspection and tests. It is explicitly *not* the default AX surface.
@@ -211,18 +216,17 @@ oversized requests/snapshots, protocol disagreement, stale future pointer
 contracts and server result failures all fail closed. A successful socket write
 is never treated as proof that the terminal operation succeeded.
 
-## Ownership and future Flutter seam
+## Shared client ownership
 
-The first implementation may keep reusable protocol client code inside this
-package while the boundary is being learned. Do not create a standalone
-`howl-client` repository merely because Flutter might use it later.
+The in-tree `howl-client` module already owns connection/framing, semantic actions,
+rich decoding, raw-cache lifetime, and the opaque immutable coarse projection.
+The CLI consumes it and owns command vocabulary and diagnostic formatting only;
+there is no pending client-engine extraction or separate client repository.
 
-If CLI/Android measurement later proves that shared native snapshot decoding,
-history/diff processing or another hot path should be reused by Flutter, extract
-that client engine only then. Flutter should remain strong where it is useful:
-application lifecycle, IME, touch/gesture capture, accessibility and final UI
-composition. Canonical terminal state and terminal-specific heavy work stay in
-or move toward Zig without trading away visual quality or input latency.
+Native Flutter, Odin, and the Web decoding/rendering path reuse these boundaries.
+Application lifecycle, IME, gestures, accessibility, and presentation remain with
+their hosts. Building or testing the shared engine does not install a graphical
+client or update its running Session endpoint.
 
 ## User installation
 

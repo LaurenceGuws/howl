@@ -32,6 +32,11 @@ Howl remains the terminal. Odin owns the desktop application around it.
 
 These labels are descriptive, not priority scores.
 
+Status reconciled on 2026-09-17 through `c953298`: titles and progress have live
+Odin consumers; the image-scan and resize-discovery fixes are accepted. Build/test
+proof does not imply installation on another node or client. Shortcut spellings
+below describe defaults, not a user's persisted overrides.
+
 ## Product rules
 
 1. **One terminal truth.** Odin does not parse VT, generate escape sequences,
@@ -90,7 +95,8 @@ These labels are descriptive, not priority scores.
   but moving one window across differently scaled real outputs is not yet proven.
 - Explicit startup choices: default profile, attach a named Session, or restore
   an accepted previous application layout.
-- Native app identity/icon/package metadata instead of permanent “canary” chrome.
+- Qualify ordinary installed-bundle launch/update on the target desktop; native
+  identity, icons, and the owned installer already exist (section 16).
 
 **EXPLORE**
 
@@ -115,15 +121,22 @@ These labels are descriptive, not priority scores.
 - `Ctrl+Shift+D` duplicates the active tab's **profile recipe**, not live PTY
   state. Duplicating a Local tab increased owned children 2 → 3 and opened a
   fresh shell prompt.
-- Titles are stable profile-derived labels in this cut and are clipped to their
-  tab bounds. Howl owns OSC title semantics, but Session does not yet expose a
-  canonical title fact, so Odin does not reach into VT internals for dynamic titles.
+- Framing-v9 snapshots carry canonical title and progress properties. The active
+  pane supplies the tab label; an absent/empty title falls back to the profile
+  name without modifying the saved recipe. Desktop labels validate UTF-8,
+  replace control/bidi formatting, and stay clipped to their tab bounds.
+- The thin progress strip consumes retained OSC 9;4 normal, indeterminate,
+  failure, paused, and clear states. Indeterminate has no timer; zero-percent
+  error/pause still has a status cue. The strip and active-tab underline have
+  separate geometry. Metadata-only updates, title push/pop, clear, late attach,
+  and a real Zig build were exercised without reinterpreting terminal text.
+- The native window title remains Howl; dynamic tab labels are a separate policy.
 
 **WANTED**
 
 - Optional MRU switching behavior if it proves better than deterministic cycling.
-- Canonical dynamic application/session title once Session exposes the fact.
-- Activity/bell/attention indication that does not become a flashing dashboard.
+- Optional tab-local activity indication, separate from the already-proven
+  non-focus-stealing desktop attention policy.
 - Reopen recently closed client-owned tab when its Session still exists or the
   launch recipe is safely repeatable.
 - Tab context menu with the same action registry as the command palette.
@@ -208,9 +221,10 @@ These labels are descriptive, not priority scores.
 **WANTED**
 
 - Profile icon and optional color accent.
-- Profile defaults plus per-profile overrides.
-- Duplicate/edit/delete flows with explicit built-in vs user-owned distinction.
-- Launch profile from command palette and profile menu.
+- Additional per-profile defaults beyond the current typed launch recipe and
+  environment/font overrides. Built-in/user duplicate/edit/delete is proven.
+- Direct custom-profile launch from the command palette. The profile menu and
+  built-in Local/Home palette actions already work.
 - Working-directory inheritance when splitting or duplicating where the canonical
   child/session contract can support it honestly.
 - Import/export of user profile configuration without inventing compatibility
@@ -335,7 +349,8 @@ These labels are descriptive, not priority scores.
   reliable and their Unicode semantics are explicit.
 - Cross-soft-wrap logical-line search only if a stable logical-line identity earns it;
   do not silently pretend adjacent projected rows are one immutable string.
-- Selection edge-autoscroll while dragging beyond the visible top/bottom.
+- Preserve the proven selection edge-autoscroll behavior (section 8) under the
+  remaining multi-pane/history pressure cases.
 - A future cross-reflow anchor only if Session/VT gains a stable logical-line
   identity that can name the same text after column reflow. Do not fake this
   with row-number heuristics.
@@ -419,8 +434,8 @@ These labels are descriptive, not priority scores.
 - Cross-soft-wrap logical-line matching only with a stable logical-line identity.
 - Command-palette actions for oldest/LIVE, next/previous result, pane focus,
   profile launch, and layout operations.
-- Clickable URL/hyperlink navigation using canonical hyperlink facts rather than
-  regex-only guesses when available.
+- Broader navigation conveniences must preserve the proven canonical OSC 8
+  Ctrl+click policy (section 16); regex-only URL guessing is not a missing parser.
 
 ### 10. Alternate-screen and full-screen applications
 
@@ -432,8 +447,8 @@ These labels are descriptive, not priority scores.
 
 **WANTED**
 
-- Mouse-aware Neovim and btop.
-- tmux and zellij pressure.
+- Extend the existing Neovim/btop/tmux mouse/focus canaries (section 6) with
+  longer sessions and zellij pressure.
 - `less`, `man`, `fzf`, `yazi`, interactive Git TUIs, and long-running dashboards.
 - Repeated enter/exit with resize, split, font zoom, and focus churn.
 - No stale history chrome while the alternate screen owns interaction.
@@ -677,7 +692,8 @@ These labels are descriptive, not priority scores.
 - Recent/pinned attach targets where discovery has an explicit owner.
 - “Close tab” versus “terminate process/session” remains an explicit distinction.
 - Application shutdown explains what will remain alive and what is client-owned.
-- Session title/working-directory facts when canonical APIs support them.
+- Useful cwd/shell-mark consumers beyond the already-live title. These facts
+  cross the shared transport but do not yet imply automatic cwd inheritance.
 
 ### 16. Desktop/OS integration
 
@@ -733,7 +749,8 @@ These labels are descriptive, not priority scores.
   semantic; the desktop entry intentionally advertises no invented `MimeType`.
 - Audible bell and user-visible desktop notification delivery only if they add
   value beyond the proven non-focus-stealing attention policy.
-- Canonical dynamic terminal title updates where Session exposes the fact.
+- Further OS integration must keep the native window identity distinct from
+  the already-live canonical tab titles (section 2).
 - Sensible multi-monitor placement and restore.
 
 **EXPLORE**
@@ -749,7 +766,8 @@ These labels are descriptive, not priority scores.
 - Complete keyboard navigation for tabs, panes, menus, palette, and Settings.
 - Screen-reader projection from canonical semantic text and application chrome.
 - Focus indicators that remain visible without shouting.
-- High-contrast/system theme accommodation.
+- System-theme accommodation and full-surface contrast qualification. The
+  explicit High Contrast application theme already exists (section 12).
 - Reduced-motion behavior if animation is introduced later.
 - Pointer hit targets larger than the painted affordance where appropriate, as
   already done for the scrollback thumb.
@@ -795,9 +813,9 @@ These labels are descriptive, not priority scores.
 - The current Yazi 26.9.1 emits many cell-sized placements, unlike the earlier
   single-placement Yazi canary. Seven new parser/capture/fragmentation/manifest
   proofs cover this narrower optimization, including OOM and service boundaries.
-- A short terminal Doom gameplay smoke delivered 170 full image uploads in
-  10.6 s without observation errors. At about 16 image updates/s it still needs
-  performance work; image display correctness is not smooth-Doom acceptance.
+- The initial, pre-scan-guard Doom smoke delivered 170 full image uploads in
+  10.6 s without observation errors. This is historical baseline evidence;
+  the later full-size comparison and sustained run below supersede its rate.
 
 **PROVEN: local pixel geometry and full tiled-preview coverage**
 
@@ -812,9 +830,9 @@ These labels are descriptive, not priority scores.
 - A controlled 320x240 RGBA fixture survived source -> Session resource byte for
   byte, and all 76,800 displayed RGB pixels matched at 1:1. This is not a promise
   that arbitrary user images resized by their producer remain pixel-identical.
-- Terminal Doom now requests a 1452x912 destination for its 640x400 source in the
-  full-sized test pane. Geometry is fixed; the measured Session still approaches
-  one CPU core and sustained gameplay performance remains open.
+- Terminal Doom requests a 1452x912 destination for its 640x400 source in the
+  full-sized test pane. The geometry-only checkpoint still approached one CPU
+  core; the subsequent scan-guard checkpoint below addresses that measured cost.
 
 **PROVEN: full-sized Doom avoids impossible placeholder scans**
 
@@ -827,6 +845,10 @@ These labels are descriptive, not priority scores.
   The half-window repeat also reached ~70 uploads/s. Both retained exact image
   semantics and zero observation errors. These are scoped upload cadence/CPU
   measurements, not optical frame-rate or universal graphics acceptance.
+- A two-minute run at `545697a`, before framing v9, completed 8,440 uploads in
+  120.57 seconds with no observation errors. GUI sampled RSS rose about 2.26 MiB;
+  this is not an all-night memory plateau proof. A separate v9 gameplay smoke
+  preserved full destination geometry, graphics/properties updates, and teardown.
 
 **PROVEN: in-band resize discovery and normal TUI teardown**
 
@@ -844,10 +866,14 @@ These labels are descriptive, not priority scores.
 
 **ACTIVE — graphics performance qualification**
 
-- Local Yazi has the scoped before/after baseline above; sustained Doom and
-  other image-heavy workloads remain open. Quiet-text/btop and image-correctness
-  canaries do not prove general image throughput, animation cadence, or input
-  responsiveness under every graphics workload.
+- Local Yazi and full-sized Doom have the scoped measurements above. Longer
+  memory slopes, current-v9 cadence, input under churn, and other producers still
+  need qualification; quiet-text and image correctness are not universal proof.
+- Stock Yazi 26.9.1 selects KgpOld for Howl's unrecognized truthful identity and
+  requests cell-tiled stretching. Modern KGP/U=1 replay at the problem size is
+  pixel-identical, but the Howl-brand producer proposal is application-checked
+  only: it has not been compiled, submitted, or installed. Stock Yazi quality is
+  not accepted, and Howl must not ignore requested rectangles or spoof Kitty.
 - Separate transfer/decode, Session transport, client resource fetch, Canvas work,
   texture upload and presentation costs before choosing an optimization. Record
   workload, build mode, display scale and local-versus-remote producer context.
@@ -932,24 +958,26 @@ Howl's; SDL is the narrow platform/rendering substrate.
 
 ## Current near-term pressure lanes
 
-Refreshed from 2026-09-16 desktop dogfood. The existing Cairn renderer/desktop/
-accessibility and performance/reliability/packaging lanes remain open. The active
-workstream keeps the ordered checkpoints; this is the product-level priority map.
+Reconciled on 2026-09-17 after `a67fbd7`, `545697a`, and `c953298`. The existing
+Cairn renderer/desktop/accessibility and performance/reliability/packaging steps
+remain open; these are residual acceptance tasks, not a new run or schedule.
 
-1. Capture the slow graphics workload and baseline it by owner. Image display
-   correctness and good text-idle figures are not graphics performance acceptance.
-2. Carry existing title/icon/cwd/remote-host/shell metadata through a bounded,
-   coherent Session/client contract. Tab titles should consume canonical facts,
-   including metadata-only updates, late attach, clear/reset and profile fallback.
-3. Give terminal progress typed retained VT state, then transport it and expose a
-   restrained tab indicator. Keep ordinary notifications separate; do not parse
-   escape sequences or infer progress from rendered text in Odin.
-4. Fix measured graphics costs with same-workload before/after evidence, preserving
-   image generations, observer independence, input responsiveness and idle sleep.
-   Move a narrow proven fix earlier when real dogfood warrants it.
-5. Finish explicit property-consumption coverage, keyboard focus/accessibility,
-   font-family selection, diagnostics and mixed-monitor/platform qualification.
-   Recheck the full Cairn acceptance before calling either broad lane complete.
-6. Keep delivering green iterations into the shared GUI and stop to use them with
-   Captain. Preserve the WT-style shell and expose real rebindable actions rather
-   than treating the current default chords as mandatory or adding hidden aliases.
+1. Review the delivered tab-title/progress and graphics improvements in ordinary
+   co-op use. Keep checked source, built artifact, installation, and runtime proof
+   distinct. Roll out framing-v9 clients and their Session endpoints as matching
+   bundles; local Odin evidence does not update mobile, Web/PWA, or remote hosts.
+2. Complete the separately tested, truthful Yazi producer integration. Preserve
+   native-size pixel correctness, full preview coverage, and placement identity.
+3. Measure remaining Session CPU/copy costs, input during image churn, longer
+   memory slopes, and asynchronous presentation needs. Do not replace SDL from
+   folklore or describe image-upload rate as optical frame rate.
+4. Qualify the remaining late ACK/DSR and deferred host-reply classes separately
+   from the fixed mode-2048 discovery/teardown leak. No blanket reply dropping.
+5. Give other transported properties deliberate consumers where useful. Complete
+   native accessibility, keyboard focus, font-family selection, diagnostics,
+   mixed-monitor/hotplug, and distribution qualification. Existing partial proofs
+   do not close either broad Cairn step.
+6. Retain the wider WANTED/EXPLORE inventory above without silently treating
+   optional UI ideas, denied protocols, or future platforms as finished work.
+   Keep documentation and compact runtime receipts current, and keep temporary
+   experiments in the active workstream rather than adding another product layer.

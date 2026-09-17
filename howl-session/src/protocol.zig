@@ -882,11 +882,11 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     @as(usize, maximum_payload_bytes),
 ) catch unreachable;
 
-/// Hard upper bound for one complete v6 observation response.
+/// Hard upper bound for one complete v9 observation response.
 ///
-/// This includes the bounded `text_v1` transport body, all possible compressed
-/// raw, or delta data-frame headers, one complete `graphics_v2` manifest, and
-/// the begin/end envelopes.
+/// This includes the bounded `text_v1` transport body, all possible compressed,
+/// raw, or delta data-frame headers, one complete `graphics_v2` manifest, one
+/// bounded `properties_v1` packet, and the begin/end envelopes.
 /// Demand-fetched RGBA image resources are separate transactions and do not
 /// consume this budget.
 pub const maximum_observation_bytes: usize =

@@ -33,9 +33,9 @@ One frame payload is at most 1 MiB. The node-local endpoint accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
 be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
-v5 observation additionally carries one graphics manifest of at most 58,396
-bytes plus bounded frame headers; exact image pixels use separate resource
-transactions.
+v9 observation additionally carries one graphics manifest of at most 857,116
+bytes, one properties packet of at most 6,180 bytes, and bounded frame headers.
+Exact image pixels use separate resource transactions.
 
 Frame kinds are:
 
@@ -387,8 +387,9 @@ body. The canonical VT may retain one decoded RGBA image up to 16 MiB, so
 copying image bytes into every observation could not be complete within the
 snapshot bound and would retransmit unchanged content unnecessarily.
 
-Every v5 observation therefore includes exactly one `snapshot_graphics` frame
-after the final text-data chunk and before `snapshot_end`. Its payload is
+Every observation includes exactly one `snapshot_graphics` frame after the final
+text-data chunk. In v9 it is followed by exactly one `snapshot_properties` frame,
+then `snapshot_end`. The graphics payload is
 one 28-byte header, zero or more 20-byte image descriptors, then zero or more
 52-byte visible placements. The complete manifest always fits in one ordinary
 response frame.
@@ -598,10 +599,11 @@ A successful request returns one `text_extract_data` frame containing bounded UT
 most the ordinary 1 MiB response-frame ceiling. Extraction is read-only and does not change
 the terminal or observation revision.
 
-## Framing v8 compatibility and placement bounds
+## Placement bounds introduced in framing v8
 
-V8 is a complete bundle boundary, not a silent extension to v7. Endpoints and
-clients must be rebuilt together; mismatched headers are rejected explicitly.
+Framing v8 introduced the pixel-geometry/placement changes retained by v9.
+Current clients and endpoints must both use v9; mismatched headers are rejected
+rather than falling back to an older grammar.
 The image byte format remains exact RGBA8. The placement ceiling is 16,384
 independent identities to accommodate cell-tiled previews. The largest graphics
 manifest is 857,116 bytes, within the unchanged 1 MiB frame ceiling. Renderer

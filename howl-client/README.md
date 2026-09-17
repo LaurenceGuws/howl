@@ -4,10 +4,12 @@ Reusable native Zig client engine for an already-running `howl-session`.
 
 It owns explicit endpoint parsing, portable POSIX connection/handshake, bounded framed I/O,
 coherent interaction-state retrieval, canonical semantic client operations including
-mouse facts, and one lossless native `text_v1` snapshot model with compact and coarse
-projections. The
-coarse `view` projection owns one immutable allocation for a revision and exposes
-rows, cells, scalars, hyperlinks, and presentation facts in batches. Its backing
+mouse facts, and one lossless framing-v9 snapshot model with `text_v1`,
+`graphics_v2`, and complete bounded `properties_v1` state. Its rich, cached, and
+coarse projections retain property bytes with the same snapshot lifetime.
+The coarse `view` projection owns one immutable allocation for a revision and
+exposes rows, cells, scalars, hyperlinks, images, properties, and presentation facts
+in batches. Its backing
 layout is private: it is not a C/FFI ABI. These models retain typed terminal facts;
 they do not choose JSON, a renderer, a font, a platform UI, or a shell-command
 vocabulary.
