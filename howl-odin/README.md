@@ -19,6 +19,14 @@ and sends semantic input through `howl-client`. SDL3_ttf remains only for app
 chrome and as a fail-soft semantic-text fallback while the Canvas backend is
 being hardened.
 
+Local observation uses existing lossless raw snapshots on validated Unix sockets;
+TCP attachments retain compression, including loopback. Both paths use the same
+canonical client decoder and property/image contracts. The daily Odin build keeps
+debug symbols, assertions and bounds checks while explicitly selecting `-o:speed`.
+Contained texture quads share a pane clip; actual clipped/overhanging content keeps
+its exact requested clip. These are host-side cost reductions, not a new protocol,
+cache, frame-rate limit, or application-specific path.
+
 Current canary:
 
 - Settings, the profile menu, and Command Palette accept pointer input without

@@ -14,6 +14,34 @@ const canvas = render.canvas;
 const terminal_render = render.terminal;
 
 const RenderHandle = opaque {};
+
+// Called only after Connection has validated and opened the endpoint. Its only
+// accepted non-TCP spelling is a Unix socket. Do not infer that a TCP peer is
+// local or trade network bandwidth for CPU on remotely attached Sessions.
+fn rawObservationEndpoint(endpoint: []const u8) bool {
+    return std.mem.startsWith(u8, endpoint, "unix:");
+}
+
+fn requestObservation(
+    connection: *client.Connection,
+    allocator: std.mem.Allocator,
+    after_revision: u64,
+    history_offset: u32,
+    raw: bool,
+) client.rich.Error!client.rich.Snapshot {
+    if (raw) return client.rich.requestRaw(connection, allocator, after_revision, history_offset);
+    return client.rich.request(connection, allocator, after_revision, history_offset);
+}
+
+test "only validated Unix endpoints avoid same-machine text compression" {
+    try std.testing.expect(rawObservationEndpoint("unix:/run/user/1000/howl.sock"));
+    try std.testing.expect(!rawObservationEndpoint("/run/user/1000/howl.sock"));
+    try std.testing.expect(!rawObservationEndpoint("relative.sock"));
+    try std.testing.expect(!rawObservationEndpoint(""));
+    try std.testing.expect(!rawObservationEndpoint("https://example.invalid"));
+    try std.testing.expect(!rawObservationEndpoint("tcp://127.0.0.1:43127"));
+    try std.testing.expect(!rawObservationEndpoint("tcp://192.0.2.1:43127"));
+}
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
@@ -119,6 +147,7 @@ const maximum_search_retries: usize = 8;
 const Render = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    raw_observation: bool,
     fonts: *render.text.FontSet,
     content: *terminal_render.Content,
     composer: canvas.Composer,
@@ -299,6 +328,7 @@ pub export fn howl_odin_bridge_render_create(
     value.* = .{
         .allocator = allocator,
         .connection = connection,
+        .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
         .fonts = fonts,
         .content = content,
         .composer = composer,
@@ -486,11 +516,12 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.clearError();
     clearExternalUploads(renderer);
-    var rich = client.rich.request(
+    var rich = requestObservation(
         &renderer.connection,
         renderer.allocator,
         0,
         history_offset,
+        renderer.raw_observation,
     ) catch |failure| {
         renderer.setError("observe", @errorName(failure));
         return 2;
@@ -1036,6 +1067,7 @@ fn currentProcessEnviron() std.process.Environ {
 const Bridge = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    raw_observation: bool,
     last_begin: ?protocol.SnapshotBegin = null,
     text_truncated: bool = false,
     display_title: [protocol.properties.maximum_field_bytes]u8 = undefined,
@@ -1237,6 +1269,7 @@ pub export fn howl_odin_bridge_create(
     bridge.* = .{
         .allocator = allocator,
         .connection = connection,
+        .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
     };
     return @ptrCast(bridge);
 }
@@ -1298,11 +1331,12 @@ pub export fn howl_odin_bridge_snapshot(
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
 
-    var rich = client.rich.request(
+    var rich = requestObservation(
         &bridge.connection,
         bridge.allocator,
         after_revision,
         history_offset,
+        bridge.raw_observation,
     ) catch |failure| {
         bridge.setError("observe", @errorName(failure));
         return 2;

@@ -811,6 +811,30 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   view and roughly 1.9 ms on the larger Local shell during the first renderer
   canary.
 
+**PROVEN: whole-process-tree btop cost, 2026-09-17**
+
+- The earlier GUI-only figure above is a historical workload, not total terminal
+  overhead. Captain's dense 61x271 grid at 12px, 2000ms btop configuration, filtered
+  and collapsed on the owning GUI with process detail, was compared in private
+  KWin. Sixty-second process-local user+system ticks were summed exactly once;
+  100% is one logical CPU. btop/shell are included; compositor and sampler are not.
+- Baseline total was 3.23% (GUI 1.10%, Session 1.63%, btop 0.50%); matching Kitty
+  was 0.65% (GUI/helpers 0.12%, btop 0.53%). The accepted CPU slice measured 1.60%
+  total (GUI 0.57%, Session 0.58%, btop 0.45%). Howl overhead fell from 2.73% to
+  1.15%, about 58%, but remains materially above Kitty. Small differences between
+  runs are not stable promises; machine load was not frozen.
+- Unix observations avoid unnecessary compression/decompression using the shared
+  raw request; TCP retains compressed transfer. Explicit speed optimization keeps
+  debug/assert/bounds semantics. Redundant contained-quad clipping is eliminated
+  without changing command order, source pixels, or clipped glyph/image bounds.
+- An isolated raw-only stage comparison preserved 30 render observations, 30 wake
+  observations and 30 presentations over 20 seconds, with no errors. No btop
+  refresh slowdown, debounce, discarded snapshot or idle animation was introduced.
+- A reusable decode-cache trial did not establish a material further benefit at
+  this measurement resolution and was removed rather than retained speculatively.
+  The exact fixture/candidate hashes and pixel/transport checks live in the
+  desktop workstream's cpu-tabs-20260917 and btop-polish-20260917 evidence.
+
 **PROVEN: local Yazi image-path latency, 2026-09-16**
 
 - The local Pictures/40-item walk exposed shared VT and Session costs rather

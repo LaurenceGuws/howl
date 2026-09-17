@@ -1230,6 +1230,7 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
         if !SDL.GetRectIntersection(command_clip, pane_clip, &clip) {
             continue
         }
+        clip = canvas_effective_clip(destination, clip, pane_clip)
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
         source := SDL.FRect{
             f32(command.source_x),
