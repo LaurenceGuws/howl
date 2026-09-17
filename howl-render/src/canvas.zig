@@ -2763,8 +2763,23 @@ pub const Composer = struct {
             return;
         const binding = source.cursor_binding orelse return;
         if (!binding.visible or binding.shape == .none) return;
+        // The binding names the full cursor cell for recoloring/reconstruction.
+        // Thin shapes paint only their edge, not an opaque block without text.
+        // Match the existing two-pixel native fallback, bounded by tiny cells.
+        var painted = binding.rect;
+        switch (binding.shape) {
+            .block => {},
+            .bar => painted.width = @min(painted.width, 2),
+            .underline => {
+                const thickness = @min(painted.height, 2);
+                painted.y = std.math.add(i32, painted.y, @as(i32, painted.height - thickness)) catch
+                    return error.ArithmeticOverflow;
+                painted.height = thickness;
+            },
+            .none => unreachable,
+        }
         const background = Input{ .solid = .{
-            .rect = binding.rect,
+            .rect = painted,
             .clip = binding.clip,
             .color = binding.color,
         } };

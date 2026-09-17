@@ -1095,3 +1095,20 @@ The desktop workstream's `evidence/observation-20260917/` records same-grid btop
 CPU controls, native byte/cut accounting, transferred-view lifetime/failure proofs,
 text/graphics pixel comparisons and actual SSH transition tests. These scoped
 checks do not imply a mobile/Web install or universal remote throughput claim.
+
+
+### Canonical cursor shape presentation, 2026-09-17
+
+Neovim's DECSCUSR mode transitions were already retained by VT and Session:
+normal block, insert bar, replace underline. The shared Canvas compositor painted
+the complete target rectangle for all three, while (correctly) recoloring glyphs
+only for block. A requested thin cursor therefore looked like an opaque block
+hiding its character. Canvas now draws bounded two-pixel left/bottom strokes for
+bar/underline while preserving the full target binding and block recoloring.
+
+The regression proof changes only shape/revision with identical text, verifies
+block glyph recoloring, cursor-free frames, one-pixel cells and clipped strokes.
+The desktop workstream's cursor-20260917 evidence captures real clean Neovim mode
+changes and the user's cursor options in an isolated no-plugin configuration.
+No VT parsing, Session protocol, transport, blink policy or animation timer change.
+Cross-host source/build checks are distinct from runtime/device rollout.

@@ -3351,3 +3351,74 @@ test "removeSource releases only its exact shared ownership" {
             residency.resource.resource,
     );
 }
+
+test "cursor shape-only updates paint thin strokes and preserve block glyph recoloring" {
+    var composer = try canvas.Composer.init(std.testing.allocator, composerLimits());
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const resource = try local(1, 1);
+    const target = canvas.Rect{ .x = 4, .y = 5, .width = 10, .height = 20 };
+    const clip = canvas.Rect{ .x = 0, .y = 0, .width = 32, .height = 32 };
+    var glyph = sharedAlphaCommand(resource, 2, 2);
+    glyph.alpha_mask.destination = target;
+    glyph.alpha_mask.clip = clip;
+    glyph.alpha_mask.cursor_component = true;
+    const input = [_]canvas.Input{ .{ .solid = .{ .rect = clip, .clip = clip, .color = red } }, glyph };
+    const pixels = [_]u8{ 0, 255, 128, 0 };
+    const upload = canvas.ResourceUpload{ .resource = resource, .format = .alpha8, .pixels = .{ .bytes = &pixels, .width = 2, .height = 2, .stride = 2 } };
+    var binding = canvas.CursorBinding{ .pane = 1, .source = producer, .terminal_sequence = 1, .cursor_revision = 1, .visible_set_revision = 1, .lifecycle_revision = 1, .rect = target, .clip = clip, .visible = true, .color = white, .text_color = red };
+    try composer.setComposition(.{ .surface = .{ .width = 40, .height = 40 }, .sources = &.{.{ .source = producer, .origin = .{ .x = 3, .y = 4 }, .clip = clip }}, .focused_source = producer });
+    const cases = [_]struct { shape: canvas.CursorShape, expected: canvas.Rect, count: usize }{
+        .{ .shape = .block, .expected = .{ .x = 7, .y = 9, .width = 10, .height = 20 }, .count = 4 },
+        .{ .shape = .bar, .expected = .{ .x = 7, .y = 9, .width = 2, .height = 20 }, .count = 3 },
+        .{ .shape = .underline, .expected = .{ .x = 7, .y = 27, .width = 10, .height = 2 }, .count = 3 },
+        .{ .shape = .none, .expected = target, .count = 2 },
+        .{ .shape = .block, .expected = .{ .x = 7, .y = 9, .width = 10, .height = 20 }, .count = 4 },
+    };
+    var storage: FrameStorage = .{};
+    var previous_frame: u64 = 0;
+    for (cases, 0..) |case, i| {
+        binding.shape = case.shape;
+        binding.cursor_revision = i + 1;
+        try composer.apply(producer, .{ .revision = @fromBackingInt(@intCast(i + 1)), .uploads = if (i == 0) &.{upload} else &.{}, .removals = &.{}, .commands = &input, .cursor_binding = binding });
+        const frame = try composer.frame(&.{}, storage.buffers());
+        try std.testing.expect(@backingInt(frame.revision) > previous_frame);
+        previous_frame = @backingInt(frame.revision);
+        try std.testing.expectEqual(case.count, frame.commands.len);
+        // Original text command is still present. Only block adds a recolor.
+        try std.testing.expectEqualDeep(white, frame.commands[1].alpha_mask.color);
+        if (case.shape != .none) try std.testing.expectEqualDeep(case.expected, frame.commands[2].solid.rect);
+        if (case.shape == .block) {
+            try std.testing.expectEqualDeep(red, frame.commands[3].alpha_mask.color);
+            try std.testing.expectEqualDeep(case.expected, frame.commands[3].alpha_mask.clip);
+        }
+        try std.testing.expectEqualDeep(target, composer.cursorBinding(producer).?.rect);
+        const without_cursor = try composer.frameCursorFree(&.{}, storage.buffers());
+        try std.testing.expectEqual(@as(usize, 2), without_cursor.commands.len);
+    }
+}
+
+test "thin cursor edges are bounded for tiny cells and clipped without moving the target" {
+    const cases = [_]struct { shape: canvas.CursorShape, target: canvas.Rect, clip: canvas.Rect, expected: ?canvas.Rect }{
+        .{ .shape = .bar, .target = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .expected = .{ .x = 0, .y = 0, .width = 1, .height = 1 } },
+        .{ .shape = .underline, .target = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .expected = .{ .x = 0, .y = 0, .width = 1, .height = 1 } },
+        .{ .shape = .bar, .target = .{ .x = -1, .y = 0, .width = 10, .height = 20 }, .clip = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .expected = .{ .x = 0, .y = 0, .width = 1, .height = 20 } },
+        .{ .shape = .bar, .target = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .clip = .{ .x = 2, .y = 0, .width = 8, .height = 20 }, .expected = null },
+        .{ .shape = .underline, .target = .{ .x = 0, .y = 0, .width = 10, .height = 20 }, .clip = .{ .x = 0, .y = 0, .width = 10, .height = 18 }, .expected = null },
+    };
+    for (cases) |case| {
+        var composer = try canvas.Composer.init(std.testing.allocator, composerLimits());
+        defer composer.deinit();
+        const producer = try composer.registerSource();
+        const binding = canvas.CursorBinding{ .pane = 1, .source = producer, .terminal_sequence = 1, .cursor_revision = 1, .visible_set_revision = 1, .lifecycle_revision = 1, .rect = case.target, .clip = case.clip, .shape = case.shape, .visible = true };
+        try composer.apply(producer, .{ .revision = @fromBackingInt(@intCast(1)), .uploads = &.{}, .removals = &.{}, .commands = &.{}, .cursor_binding = binding });
+        try composer.setComposition(.{ .surface = .{ .width = 32, .height = 32 }, .sources = &.{.{ .source = producer, .origin = .{ .x = 0, .y = 0 }, .clip = .{ .x = 0, .y = 0, .width = 32, .height = 32 } }}, .focused_source = producer });
+        var storage: FrameStorage = .{};
+        const frame = try composer.frame(&.{}, storage.buffers());
+        if (case.expected) |rect| {
+            try std.testing.expectEqual(@as(usize, 1), frame.commands.len);
+            try std.testing.expectEqualDeep(rect, frame.commands[0].solid.rect);
+        } else try std.testing.expectEqual(@as(usize, 0), frame.commands.len);
+        try std.testing.expectEqualDeep(case.target, composer.cursorBinding(producer).?.rect);
+    }
+}
