@@ -103,3 +103,11 @@ snapshot without opening a socket. Native `rich.receive` and this byte-entry API
 share one decoder body. The returned rich snapshot owns its memory; the encoded
 input is borrowed only for the call. The Web canary uses this seam after bounded
 asynchronous assembly, not a second VT or a copied `text_v1` implementation.
+
+
+`actions.resizeGeometry` explicitly assigns the connection as geometry leader
+before resizing. `actions.resizeGeometryOwned` sends only a resize, and exposes
+`NotGeometryLeader` for the protocol's completed not-leader response. An embedder
+can stop its auto-sizing intent without losing its still-usable input stream.
+Never emulate conditional release with read-then-clear: assign-leader(no_client)
+is unconditional. Closing the actual owning connection already releases it.

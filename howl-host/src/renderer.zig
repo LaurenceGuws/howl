@@ -855,7 +855,9 @@ fn runFallible(
                 if (scale.scale_120 == display_scale_120) continue;
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
                 const next_cell_size = try terminal_scene.measureCellSize(
-                    allocator, font_path, next_font_pixels,
+                    allocator,
+                    font_path,
+                    next_font_pixels,
                 );
                 const next_surface_width = try scaledExtent(surface_logical_width, scale.scale_120);
                 const next_surface_height = try scaledExtent(surface_logical_height, scale.scale_120);
@@ -921,10 +923,22 @@ fn runFallible(
                 if (retiring_ring != null) return error.RingRetirementPending;
                 const next_revision = std.math.add(u64, ring.revision, 1) catch return error.RevisionOverflow;
                 var replacement = try createRenderRing(
-                    boundary, &graphics, device, memory_properties, feedback.modifier,
-                    dedicated_only, plane_count, next_surface_width, next_surface_height,
-                    surface_logical_width, surface_logical_height,
-                    get_memory_fd.?, get_modifier.?, drm_fd, acquire_handle, next_revision,
+                    boundary,
+                    &graphics,
+                    device,
+                    memory_properties,
+                    feedback.modifier,
+                    dedicated_only,
+                    plane_count,
+                    next_surface_width,
+                    next_surface_height,
+                    surface_logical_width,
+                    surface_logical_height,
+                    get_memory_fd.?,
+                    get_modifier.?,
+                    drm_fd,
+                    acquire_handle,
+                    next_revision,
                 );
                 retiring_ring = ring;
                 ring = replacement;
@@ -966,10 +980,22 @@ fn runFallible(
                 if (retiring_ring != null) return error.RingRetirementPending;
                 const next_revision = std.math.add(u64, ring.revision, 1) catch return error.RevisionOverflow;
                 var replacement = try createRenderRing(
-                    boundary, &graphics, device, memory_properties, feedback.modifier,
-                    dedicated_only, plane_count, requested_physical_width, requested_physical_height,
-                    requested.width, requested.height,
-                    get_memory_fd.?, get_modifier.?, drm_fd, acquire_handle, next_revision,
+                    boundary,
+                    &graphics,
+                    device,
+                    memory_properties,
+                    feedback.modifier,
+                    dedicated_only,
+                    plane_count,
+                    requested_physical_width,
+                    requested_physical_height,
+                    requested.width,
+                    requested.height,
+                    get_memory_fd.?,
+                    get_modifier.?,
+                    drm_fd,
+                    acquire_handle,
+                    next_revision,
                 );
                 retiring_ring = ring;
                 ring = replacement;
@@ -1265,7 +1291,7 @@ fn requestCanonicalGeometry(
     if (current.rows == rows and current.cols == cols) return;
     if (owned.*) {
         client.actions.resizeOwned(control, rows, cols) catch |failure| {
-            if (failure == error.ServerRejected) owned.* = false;
+            if (failure == error.ServerRejected or failure == error.NotGeometryLeader) owned.* = false;
             return failure;
         };
         return;
@@ -1618,9 +1644,23 @@ fn addTab(
     if (scene_count.* != 1 or mux.tabCount() != 1 or mux.paneCount() != 1)
         return error.TabStateMismatch;
     const endpoint = try createSecondSession(
-        allocator, boundary, runtime_dir, shell, environ_map, font_path, font_pixels, spawned_session,
-        scenes, initialized_scene_count, controls, geometry_control_count, prepared,
-        session_revisions, cancellations, workspace_rows, workspace_cols,
+        allocator,
+        boundary,
+        runtime_dir,
+        shell,
+        environ_map,
+        font_path,
+        font_pixels,
+        spawned_session,
+        scenes,
+        initialized_scene_count,
+        controls,
+        geometry_control_count,
+        prepared,
+        session_revisions,
+        cancellations,
+        workspace_rows,
+        workspace_cols,
     );
     var candidate = mux.*;
     const created = try candidate.createTab();
@@ -1816,9 +1856,13 @@ fn applyWindowGeometry(
             target_scene_cols[index],
         ) catch |failure| {
             rollbackInitialGeometry(
-                controls, applied, old_scene_rows, old_scene_cols, index,
+                controls,
+                applied,
+                old_scene_rows,
+                old_scene_cols,
+                index,
             ) catch return error.ResizeTransactionFailed;
-            if (failure == error.ServerRejected or failure == error.ResizeAuthorityUnavailable) {
+            if (failure == error.ServerRejected or failure == error.NotGeometryLeader or failure == error.ResizeAuthorityUnavailable) {
                 var old_active_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
                 const old_active = try mux.activeLayout(old_surface, &old_active_storage);
                 for (0..index) |rollback_index| {
@@ -1856,7 +1900,11 @@ fn applyWindowGeometry(
             &observation_armed[index],
         ) catch |failure| {
             rollbackInitialGeometry(
-                controls, applied, old_scene_rows, old_scene_cols, scene_count,
+                controls,
+                applied,
+                old_scene_rows,
+                old_scene_cols,
+                scene_count,
             ) catch return error.ResizeTransactionFailed;
             return failure;
         };
@@ -1977,7 +2025,7 @@ fn commitLiveGeometryCandidate(
                 old_cols,
                 scene_index,
             ) catch return error.ResizeTransactionFailed;
-            if (failure == error.ServerRejected) {
+            if (failure == error.ServerRejected or failure == error.NotGeometryLeader) {
                 try settleRolledBackGeometry(
                     scenes,
                     applied,
@@ -2354,8 +2402,20 @@ fn createRenderRing(
     };
     for (&result.slots, 0..) |*slot, index| {
         try constructSlot(
-            slot, graphics, device, memory_properties, modifier, dedicated_only, plane_count,
-            width, height, get_memory_fd, get_modifier, drm_fd, &offers[index], &offered_fds[index],
+            slot,
+            graphics,
+            device,
+            memory_properties,
+            modifier,
+            dedicated_only,
+            plane_count,
+            width,
+            height,
+            get_memory_fd,
+            get_modifier,
+            drm_fd,
+            &offers[index],
+            &offered_fds[index],
         );
         offers[index].ring_revision = revision;
         offers[index].logical_width = logical_width;

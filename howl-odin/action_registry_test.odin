@@ -4,7 +4,7 @@ import "core:testing"
 
 @(test)
 action_registry_has_unique_complete_metadata :: proc(t: ^testing.T) {
-    testing.expect_value(t, len(ACTION_DEFINITIONS), 19)
+    testing.expect_value(t, len(ACTION_DEFINITIONS), 21)
     for definition, index in ACTION_DEFINITIONS {
         testing.expect(t, len(definition.id) != 0)
         testing.expect(t, len(definition.label) != 0)

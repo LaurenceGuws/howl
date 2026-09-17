@@ -260,10 +260,7 @@ Session_View :: struct {
     canvas_commands: []Canvas_Command_Info,
     canvas_error: [160]u8,
     canvas_error_len: int,
-    requested_rows: u16,
-    requested_columns: u16,
-    requested_cell_width: u16,
-    requested_cell_height: u16,
+    size_control: Session_Size_Control,
 }
 
 App_Action :: enum {
@@ -286,6 +283,8 @@ App_Action :: enum {
     Close_Tab,
     Move_Tab_Left,
     Move_Tab_Right,
+    Take_Size_Control,
+    Stop_Resizing,
 }
 
 Action_Category :: enum u8 {
@@ -304,7 +303,7 @@ Action_Definition :: struct {
     category: Action_Category,
 }
 
-ACTION_DEFINITIONS :: [19]Action_Definition{
+ACTION_DEFINITIONS :: [21]Action_Definition{
     {.New_Tab, "new_tab", "New tab", "Ctrl+T", .Tab},
     {.New_Window, "new_window", "New window", "Ctrl+Shift+N", .Window},
     {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
@@ -324,9 +323,11 @@ ACTION_DEFINITIONS :: [19]Action_Definition{
     {.Close_Tab, "close_tab", "Close entire tab", "", .Tab},
     {.Move_Tab_Left, "move_tab_left", "Move tab left", "Ctrl+Shift+PageUp", .Tab},
     {.Move_Tab_Right, "move_tab_right", "Move tab right", "Ctrl+Shift+PageDown", .Tab},
+    {.Take_Size_Control, "take_size_control", "Take Session size control", "", .Pane},
+    {.Stop_Resizing, "stop_resizing", "Stop resizing Session", "", .Pane},
 }
 
-PALETTE_ACTIONS :: [17]App_Action{
+PALETTE_ACTIONS :: [19]App_Action{
     .New_Tab,
     .New_Window,
     .Duplicate_Tab,
@@ -336,6 +337,8 @@ PALETTE_ACTIONS :: [17]App_Action{
     .Open_Local,
     .Attach_Home,
     .Recover_Session,
+    .Take_Size_Control,
+    .Stop_Resizing,
     .Open_Settings,
     .Close_Pane,
     .Toggle_Fullscreen,
@@ -376,6 +379,8 @@ action_enabled :: proc(app: ^App, action: App_Action) -> bool {
     case .Toggle_Pane_Zoom:
         return app != nil && app.active_tab >= 0 && app.active_tab < app.tab_count &&
                app.tabs[app.active_tab].pane_count > 1
+    case .Take_Size_Control, .Stop_Resizing:
+        return app != nil && size_action_enabled(active_session_view(app), action)
     case .Recover_Session:
         return app != nil && session_recoverable(active_session_view(app))
     case .Close_Pane, .Close_Tab:
@@ -906,60 +911,11 @@ reset_canvas :: proc(view: ^Session_View) {
     view.canvas_surface_width = 0
     view.canvas_surface_height = 0
     view.canvas_error_len = 0
-    view.requested_rows = 0
-    view.requested_columns = 0
-    view.requested_cell_width = 0
-    view.requested_cell_height = 0
+    sync.mutex_lock(&view.mutex)
+    view.size_control.applied = {}
+    sync.mutex_unlock(&view.mutex)
 }
 
-resize_owned_session_to_pane :: proc(
-    app: ^App,
-    view: ^Session_View,
-    available_width, available_height: f32,
-) {
-    if view == nil || view.owned_process == nil || view.control == nil || !session_interactive(view) {
-        return
-    }
-    if !ensure_canvas(app, view) {
-        return
-    }
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
-    if cell_width == 0 || cell_height == 0 {
-        return
-    }
-    scale := canvas_scale_value(view)
-    width_cells := max(1, int(math.floor(available_width * scale)))
-    height_cells := max(1, int(math.floor(available_height * scale)))
-    desired_columns := u16(clamp(
-        width_cells / int(cell_width),
-        1,
-        int(render_maximum_columns()),
-    ))
-    desired_rows := u16(clamp(
-        height_cells / int(cell_height),
-        1,
-        int(render_maximum_rows()),
-    ))
-    if view.requested_rows == desired_rows && view.requested_columns == desired_columns &&
-       view.requested_cell_width == cell_width && view.requested_cell_height == cell_height {
-        return
-    }
-    sync.mutex_lock(&view.mutex)
-    current_columns := view.columns
-    sync.mutex_unlock(&view.mutex)
-    if history_columns_changed(current_columns, desired_columns) {
-        _ = return_history_live(view)
-    }
-    if queue_resize(view, desired_rows, desired_columns, cell_width, cell_height) != 0 {
-        copy_bridge_error(view)
-        return
-    }
-    view.requested_rows = desired_rows
-    view.requested_columns = desired_columns
-    view.requested_cell_width = cell_width
-    view.requested_cell_height = cell_height
-}
 
 find_canvas_resource :: proc(view: ^Session_View, source, resource, generation: u64) -> ^Canvas_Texture {
     for index in 0..<view.canvas_resource_count {
@@ -2094,6 +2050,7 @@ allocate_session_view :: proc(owned_process: rawptr, ownership: Session_Ownershi
     }
     view.ownership = ownership
     view.owned_process = owned_process
+    if ownership == .Owned do view.size_control.mode = .Taking
     view.text = make([]u8, SESSION_TEXT_BYTES)
     view.scratch = make([]u8, SESSION_TEXT_BYTES)
     if view.text == nil || view.scratch == nil {
@@ -4243,6 +4200,18 @@ execute_action :: proc(app: ^App, action: App_Action) {
         open_local_tab(app)
     case .Attach_Home:
         attach_home_tab(app)
+    case .Take_Size_Control, .Stop_Resizing:
+        app.palette_open = false
+        view := active_session_view(app)
+        sync.mutex_lock(&view.mutex)
+        set_size_intent(&view.size_control, action == .Take_Size_Control)
+        view.ui_dirty = true
+        sync.mutex_unlock(&view.mutex)
+        if action == .Stop_Resizing {
+            publish_control_notice(view, "Auto-sizing stopped here; the last Session size is kept")
+        } else {
+            publish_control_notice(view, "Taking Session size control...")
+        }
     case .Recover_Session:
         _ = recover_active_session(app)
     case .Open_Settings:
@@ -5634,7 +5603,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     origin_x := terminal_content_rect(pane).x
     origin_y := terminal_content_rect(pane).y
     content := terminal_content_rect(pane)
-    resize_owned_session_to_pane(app, view, content.w, content.h)
+    resize_session_to_pane(app, view, content.w, content.h)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
         draw_search_highlight(app, view, pane)
         draw_selection(app, view, pane)
@@ -6254,7 +6223,7 @@ draw :: proc(app: ^App) {
 }
 
 main :: proc() {
-    if version() != 6 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 7 { fmt.eprintln("Howl bridge version mismatch"); return }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }

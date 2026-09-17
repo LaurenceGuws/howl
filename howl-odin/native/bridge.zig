@@ -1205,7 +1205,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 6;
+    return 7;
 }
 
 /// Launches one client-owned canonical Session using the existing native
@@ -2172,18 +2172,29 @@ pub export fn howl_odin_bridge_send_resize(
     columns: u16,
     cell_width: u16,
     cell_height: u16,
+    claim: u8,
 ) i32 {
     const value = raw orelse return 1;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.actions.resizeGeometry(&bridge.connection, .{
+    if (claim > 1) return 3;
+    const geometry: protocol.Resize = .{
         .rows = rows,
         .columns = columns,
         .cell_pixel_width = cell_width,
         .cell_pixel_height = cell_height,
-    }) catch |failure| {
+    };
+    const outcome = if (claim == 1)
+        client.actions.resizeGeometry(&bridge.connection, geometry)
+    else
+        client.actions.resizeGeometryOwned(&bridge.connection, geometry);
+    outcome catch |failure| {
         bridge.setError("resize", @errorName(failure));
-        return 2;
+        return switch (failure) {
+            error.NotGeometryLeader => 7,
+            error.ServerRejected => 8,
+            else => 2,
+        };
     };
     return 0;
 }

@@ -13,6 +13,7 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     RequestTooLarge,
     UnexpectedFrame,
     ServerRejected,
+    NotGeometryLeader,
 };
 
 pub fn committedText(connection: *client.Connection, bytes: []const u8) Error!void {
@@ -151,6 +152,21 @@ fn expectOk(connection: *client.Connection, expected: protocol.Kind) Error!void 
     defer frame.deinit();
     if (frame.kind != .result) return error.UnexpectedFrame;
     const result = try protocol.decodeResult(frame.payload);
+    try checkResult(expected, result);
+}
+
+// Authority loss is a completed, nonfatal resize response, not a broken stream.
+// Preserve that distinction without weakening other action acknowledgements.
+fn checkResult(expected: protocol.Kind, result: protocol.Result) Error!void {
     if (result.request_kind != expected) return error.UnexpectedFrame;
+    if (expected == .resize and result.code == .not_leader) return error.NotGeometryLeader;
     if (result.code != .ok) return error.ServerRejected;
+}
+
+test "resize distinguishes authority loss from rejection and malformed acknowledgements" {
+    try checkResult(.resize, .{ .request_kind = .resize, .code = .ok });
+    try std.testing.expectError(error.NotGeometryLeader, checkResult(.resize, .{ .request_kind = .resize, .code = .not_leader }));
+    try std.testing.expectError(error.ServerRejected, checkResult(.resize, .{ .request_kind = .resize, .code = .rejected }));
+    try std.testing.expectError(error.UnexpectedFrame, checkResult(.resize, .{ .request_kind = .input, .code = .not_leader }));
+    try std.testing.expectError(error.ServerRejected, checkResult(.input, .{ .request_kind = .input, .code = .not_leader }));
 }

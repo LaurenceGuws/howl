@@ -235,10 +235,10 @@ Current canary:
   fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
   truecolor, and final-column wide-cell clipping. Color emoji remains explicit debt:
   the current `howl-text` raster contract accepts mono/gray masks, not BGRA glyphs;
-- created Local-shell tabs own Session geometry leadership: the client derives
-  rows/columns from the actual Howl Canvas cell metrics and current pane extent,
-  while attached Home Session views remain observer-only and never resize the
-  canonical Session merely because their desktop window is larger;
+- created Local-shell tabs acquire Session size control once, then submit only
+  owned resizes from actual Canvas cell metrics and pane extent. Attached views
+  preserve the Session size until the user chooses Take Session size control;
+  merely attaching, focusing, or opening a larger window never claims it;
 - pane lifecycle is explicit and ownership-aware. Canonical Session `stream_closed` /
   `child_exited` facts preserve the final frame behind a small recovery bar; an owned
   Local shell becomes `Process exited` with Restart, while an unavailable/closed attached
@@ -342,7 +342,7 @@ creates a remote shell, changes network routes, or converts existing Launch
 profiles behind the user. A Launch profile running `ssh host` still feeds a local
 Session; an SSH Attach profile observes the independently owned remote Session.
 Closing the attachment does not terminate that remote PTY. Attached geometry
-remains explicit authority, not an automatic consequence of resizing this window.
+stays unchanged until Take Session size control; attachment alone never resizes it.
 
 One application-owned I/O runtime outlives all pane workers and local Session
 processes. Connection setup, protocol requests/acknowledgements, search,
@@ -372,8 +372,39 @@ response cannot overwrite a newer wheel/drag/return-to-LIVE intent. Scheduling
 wakeups do not repaint the old frame before the newly prepared one; there is no
 new repaint timer or loss of the measured local raw-snapshot optimization.
 
-This private native bridge is ABI6 and must ship with its matching Odin executable.
+This private native bridge is ABI7 and must ship with its matching Odin executable.
 The Session protocol stays framing-v9. Mobile SSH library integration, interactive
-authentication UI, automatic geometry leadership, remote provisioning, shared SSH
+authentication UI, remote provisioning, shared SSH
 masters, and sustained slow-link performance qualification remain separate work.
 See `../howl-client/README.md` for native route and cancellation ownership.
+
+
+## Session size control
+
+Command Palette (`Ctrl+Shift+P`) and Settings > Actions expose two rebindable,
+initially unbound actions:
+
+- **Take Session size control** fits the active pane once, then follows that
+  pane's window/split/zoom/font changes while its control connection remains
+  the Session's geometry leader. This is an explicit takeover, not discovery.
+- **Stop resizing Session** disables this pane's future automatic size requests.
+  The last accepted size stays in place unless another client changes it.
+
+Local launches acquire once automatically as part of owning their new Session.
+Attachments, duplicates of attachment recipes, and reconnects begin fixed; they
+never inherit another pane's authority or silently claim it on focus. Subsequent
+automatic resizes use only the existing resize request, not assign-leader. A
+not-leader reply stops auto-sizing and leaves ordinary terminal input usable.
+There is no ownership polling timer and no automatic attempt to take it back.
+
+The shared client preserves NotGeometryLeader separately from transport failure.
+Odin allows one queued/in-flight size transaction per pane, remembers only ACKed
+geometry, and uses an intent generation so a queued old request is retired or a
+late completion cannot re-enable stopped/newly requested auto-sizing. A resize
+already transmitted may still complete after Stop; Stop is not an unsend promise.
+
+Stop deliberately does not send the protocol's unconditional clear-leader
+operation: a delayed clear could evict a different client's newer ownership.
+Another client may explicitly take control at any time; closing the owning
+connection releases its leadership naturally. No new wire operation, Session
+service update, route policy, profile conversion, or default shortcut is needed.

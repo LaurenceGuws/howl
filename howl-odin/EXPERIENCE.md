@@ -1057,3 +1057,21 @@ local btop cost. Removing that scheduling-only repaint restored the matched dens
 speedup. This does not remove duplicate snapshot/projection work or establish
 sustained SSH throughput, mobile support, interactive auth, automatic remote
 provisioning or geometry leadership. Those remain distinct open items.
+
+
+### Explicit attached size control, 2026-09-17
+
+Take Session size control and Stop resizing Session are palette/Actions entries,
+without a new permanent bar or hard-coded shortcut. Attachment/focus/reconnect
+remain non-mutating; explicit takeover fits once and then uses resize-only while
+authorised. Local launch also claims only once instead of fighting a later peer.
+One pending size transaction, acknowledged dimensions and intent-generation
+checks protect delayed stop/retake. Not-leader is nonfatal and never auto-reclaims.
+Stop is a local scheduling choice, not an unsafe global release or an unsend.
+
+Private same-Session two-window tests over Unix and real SSH exercise takeover,
+loss without input failure, resize/font/split/zoom, stop and close. A stopped SSH
+channel proves that late completion cannot re-enable auto-sizing. Workstream
+receipts: `evidence/geometry-20260917/`. Framing remains v9; the private matching
+Odin bridge is ABI7. Long SSH performance, mobile/runtime rollouts and other
+charter items are not included in this geometry checkpoint.

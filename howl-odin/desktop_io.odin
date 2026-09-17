@@ -112,9 +112,6 @@ queue_mouse :: proc(view: ^Session_View, kind, button, modifiers, buttons: u8, r
 queue_focus :: proc(view: ^Session_View, focus: u8) -> i32 {
     return queue_control(view, {kind = .Focus, action = focus})
 }
-queue_resize :: proc(view: ^Session_View, rows, columns, cell_width, cell_height: u16) -> i32 {
-    return queue_control(view, {kind = .Resize, rows = rows, columns = columns, cell_width = cell_width, cell_height = cell_height})
-}
 
 execute_control :: proc(handle: rawptr, task: Control_Task, result: ^Control_Result) -> i32 {
     switch task.kind {
@@ -125,7 +122,7 @@ execute_control :: proc(handle: rawptr, task: Control_Task, result: ^Control_Res
     case .Mouse: return send_mouse(handle, task.action, task.button, task.modifiers, task.buttons, task.row, task.column, task.alternate, task.pixel_x, task.pixel_y)
     case .Clipboard: return 1 // Serialized platform handoff is handled before this dispatcher.
     case .Focus: return send_focus(handle, task.action)
-    case .Resize: return send_resize(handle, task.rows, task.columns, task.cell_width, task.cell_height)
+    case .Resize: return send_resize(handle, task.rows, task.columns, task.cell_width, task.cell_height, task.action)
     case .Expand:
         return selection_expand(handle, task.action, task.history, task.row, task.column, task.columns, task.alternate, &result.range)
     case .Extract, .Link:
@@ -168,6 +165,16 @@ control_session :: proc(data: rawptr) {
         task, ok := control_queue_pop_locked(view)
         sync.mutex_unlock(&view.mutex)
         if !ok do continue
+        if task.kind == .Resize {
+            sync.mutex_lock(&view.mutex)
+            current := size_task_current(&view.size_control, task)
+            if !current {
+                view.size_control.pending = false
+                view.ui_dirty = true // A newer Take may now schedule its one task.
+            }
+            sync.mutex_unlock(&view.mutex)
+            if !current { notify_session_update(); continue }
+        }
         result := Control_Result{kind = task.kind, generation = task.generation, request = task.request}
         clipboard_failed := false
         if task.kind == .Clipboard {
@@ -198,12 +205,30 @@ control_session :: proc(data: rawptr) {
             result.code = execute_control(handle, task, &result)
         }
         if task.payload != nil do delete(task.payload)
+        size_result_current := true
+        if task.kind == .Resize {
+            sync.mutex_lock(&view.mutex)
+            size_result_current = size_task_current(&view.size_control, task)
+            accepted := finish_size_task(&view.size_control, task, result.code)
+            view.ui_dirty = true
+            sync.mutex_unlock(&view.mutex)
+            if accepted && task.action == 1 && view.ownership == .Attached {
+                publish_control_notice(view, "Size control acquired; this pane now resizes the Session")
+            }
+            notify_session_update()
+        }
         fatal := control_failure_is_fatal(task.kind, result.code)
-        if result.code != 0 && !fatal && !clipboard_failed {
+        if result.code != 0 && !fatal && !clipboard_failed && size_result_current {
             message: [160]u8
             count: c.size_t
             copy_error(handle, raw_data(message[:]), c.size_t(len(message)), &count)
-            publish_control_notice(view, string(message[:int(count)]))
+            if task.kind == .Resize {
+                message := "Session rejected the size; auto-sizing stopped here"
+                if result.code == BRIDGE_SIZE_NOT_LEADER do message = "Size control changed; use Take Session size control to resize again"
+                publish_control_notice(view, message)
+            } else {
+                publish_control_notice(view, string(message[:int(count)]))
+            }
         }
         if fatal {
             if !clipboard_failed do publish_bridge_error(view, handle)
@@ -348,6 +373,7 @@ clipboard_request_current :: proc(request, newest_request, owned_request: u64) -
 
 control_failure_is_fatal :: proc(kind: Control_Kind, code: i32) -> bool {
     if code == 0 do return false
+    if kind == .Resize && (code == BRIDGE_SIZE_NOT_LEADER || code == BRIDGE_SIZE_REJECTED) do return false
     query := kind == .Expand || kind == .Extract || kind == .Link || kind == .Clipboard
     return !(query && code == BRIDGE_QUERY_DECLINED)
 }
