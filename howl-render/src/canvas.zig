@@ -3003,6 +3003,13 @@ fn validateCursorBinding(binding: CursorBinding) Composer.Error!void {
     try validateComposerRect(binding.clip);
     if ((try intersectRects(binding.rect, binding.clip)) == null)
         return error.InvalidGeometry;
+    // Check the thin edge before committing the binding. Both conservative and
+    // exact frame paths must remain unable to fail after writing caller output.
+    if (binding.shape == .underline) {
+        const edge_offset: i32 = binding.rect.height - @min(binding.rect.height, 2);
+        if (binding.rect.y > std.math.maxInt(i32) - edge_offset)
+            return error.ArithmeticOverflow;
+    }
 }
 
 fn cursorBindingsEqual(left: ?CursorBinding, right: ?CursorBinding) bool {

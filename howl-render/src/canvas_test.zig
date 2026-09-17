@@ -3422,3 +3422,42 @@ test "thin cursor edges are bounded for tiny cells and clipped without moving th
         try std.testing.expectEqualDeep(case.target, composer.cursorBinding(producer).?.rect);
     }
 }
+
+test "underline coordinate overflow rejects the update before changing accepted state" {
+    var composer = try canvas.Composer.init(std.testing.allocator, composerLimits());
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const base = solidInput(red);
+    const binding = canvas.CursorBinding{
+        .pane = 1,
+        .source = producer,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = 1,
+        .rect = .{ .x = 0, .y = 0, .width = 4, .height = 3 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 8 },
+        .visible = true,
+    };
+    try composer.apply(producer, .{ .revision = @fromBackingInt(@intCast(1)), .uploads = &.{}, .removals = &.{}, .commands = &.{base}, .cursor_binding = binding });
+    const composition = canvas.Composer.Composition{ .surface = .{ .width = 16, .height = 8 }, .sources = &.{placement(producer, 0)}, .focused_source = producer };
+    try composer.setComposition(composition);
+    var before_storage: FrameStorage = .{};
+    const before = try composer.frame(&.{}, before_storage.buffers());
+    const accepted = composer.cursorBinding(producer).?;
+    var invalid = binding;
+    invalid.shape = .underline;
+    invalid.rect.y = std.math.maxInt(i32) - 5;
+    invalid.rect.height = 20;
+    invalid.clip = invalid.rect;
+    const rejected = canvas.ProducerUpdate{ .revision = @fromBackingInt(@intCast(2)), .uploads = &.{}, .removals = &.{}, .commands = &.{base}, .cursor_binding = invalid };
+    try std.testing.expectError(error.ArithmeticOverflow, composer.apply(producer, rejected));
+    try std.testing.expectError(error.ArithmeticOverflow, composer.applyCandidate(.{ .changes = &.{.{ .source = producer, .update = rejected }}, .composition = composition }));
+    var after_storage: FrameStorage = .{};
+    const after = try composer.frame(&.{}, after_storage.buffers());
+    try std.testing.expectEqual(before.revision, after.revision);
+    try std.testing.expectEqualDeep(before.commands, after.commands);
+    try std.testing.expectEqualDeep(accepted, composer.cursorBinding(producer).?);
+    // The refused sequence did not advance the accepted producer revision.
+    try composer.apply(producer, .{ .revision = @fromBackingInt(@intCast(2)), .uploads = &.{}, .removals = &.{}, .commands = &.{base}, .cursor_binding = binding });
+}
