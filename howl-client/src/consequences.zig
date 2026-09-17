@@ -184,6 +184,7 @@ test "consequence snapshot receiver rejects mismatched end identity" {
         .payload_len = 0,
         .kind = .bell,
         .reply_required = false,
+        .metadata = @splat(0),
     });
     var end_bytes: [protocol.payload_bytes.consequence_end]u8 = undefined;
     protocol.encodeConsequenceEnd(&end_bytes, 13);

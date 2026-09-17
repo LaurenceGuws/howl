@@ -1001,6 +1001,9 @@ fn decodeTextBody(
     const decoded_count = decompressor.reader.streamRemaining(&output) catch return error.InvalidSnapshot;
     if (decoded_count != uncompressed_len or output.buffered().len != uncompressed_len or input.seek != input.end)
         return error.InvalidSnapshot;
+    // Decompress parses the container footer; its caller verifies the content.
+    if (std.hash.Adler32.hash(decoded) != decompressor.container_metadata.zlib.adler)
+        return error.InvalidSnapshot;
     return decodeTextRecords(
         allocator,
         begin,
@@ -1396,7 +1399,8 @@ test "rich hyperlink preserves arbitrary URI bytes exactly" {
 }
 
 fn testDeflateBody(allocator: std.mem.Allocator, body: []const u8) ![]u8 {
-    var compressed: std.Io.Writer.Allocating = .init(allocator);
+    // Compressor initialization requires a nonempty writable output buffer.
+    var compressed = try std.Io.Writer.Allocating.initCapacity(allocator, 64);
     defer compressed.deinit();
     const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
     defer allocator.free(work);
@@ -1508,7 +1512,6 @@ test "deflated rich body rejects corrupt and oversized streams" {
     @memcpy(body[0..protocol.text_v1.record_header_bytes], &record_header);
     const encoded = try testDeflateBody(std.testing.allocator, &body);
     defer std.testing.allocator.free(encoded);
-    encoded[encoded.len - 1] ^= 0xff;
 
     const rows = try std.testing.allocator.alloc(Row, 0);
     defer std.testing.allocator.free(rows);
@@ -1521,20 +1524,28 @@ test "deflated rich body rejects corrupt and oversized streams" {
     var presentation_seen = false;
     var row_count: u16 = 0;
     var phase: DecodePhase = .presentation;
-    try std.testing.expectError(error.InvalidSnapshot, decodeTextBody(
-        std.testing.allocator,
-        begin,
-        encoded,
-        rows,
-        &initialized_rows,
-        &hyperlinks,
-        &referenced,
-        &resolved,
-        &presentation,
-        &presentation_seen,
-        &row_count,
-        &phase,
-    ));
+    for (1..5) |trailer_offset| {
+        encoded[encoded.len - trailer_offset] ^= 0xff;
+        defer encoded[encoded.len - trailer_offset] ^= 0xff;
+        try std.testing.expectError(error.InvalidSnapshot, decodeTextBody(
+            std.testing.allocator,
+            begin,
+            encoded,
+            rows,
+            &initialized_rows,
+            &hyperlinks,
+            &referenced,
+            &resolved,
+            &presentation,
+            &presentation_seen,
+            &row_count,
+            &phase,
+        ));
+        try std.testing.expect(!presentation_seen);
+        try std.testing.expectEqual(@as(usize, 0), initialized_rows);
+        try std.testing.expectEqual(@as(u16, 0), row_count);
+        try std.testing.expectEqual(DecodePhase.presentation, phase);
+    }
 
     var oversized: [protocol.text_v1.compressed_header_bytes + 1]u8 = @splat(0);
     encodeU32(oversized[0..protocol.text_v1.compressed_header_bytes], protocol.maximum_text_snapshot_bytes + 1);

@@ -423,8 +423,12 @@ test "word selection crosses soft wrap and visual span covers a wide grapheme" {
     try std.testing.expectEqual(Point{ .row = 1, .column = 0 }, ordered_word.end);
     try std.testing.expect((try word(snapshot, 0, 3)) == null);
 
-    const wide = (try word(snapshot, 1, 2)).?;
-    try std.testing.expectEqual(@as(?Span, .{ .start_column = 2, .end_column = 3 }), visualSpan(snapshot, wide, 1));
+    // The adjacent "z" belongs to the same non-space word as the wide glyph.
+    const wide_word = (try word(snapshot, 1, 2)).?;
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 2, .end_column = 4 }), visualSpan(snapshot, wide_word, 1));
+    const lead = try point(snapshot, 1, 2);
+    const wide_cell = Range{ .anchor = lead, .focus = lead, .columns = 6, .alternate_screen = false };
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 2, .end_column = 3 }), visualSpan(snapshot, wide_cell, 1));
 }
 
 test "row shape trims blank tail and preserves wide text plus wrap identity" {
