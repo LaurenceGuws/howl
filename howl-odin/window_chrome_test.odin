@@ -119,3 +119,22 @@ caption_hover_never_owns_a_terminal_drag_release :: proc(t: ^testing.T) {
     testing.expect(t, window_owns_button_event(.None, .Close, true))
     testing.expect(t, !window_owns_button_event(.None, .None, true))
 }
+
+
+@(test)
+window_menu_never_consumes_a_terminal_right_drag_release :: proc(t: ^testing.T) {
+    drag := SDL.FRect{100, 4, 120, 42}
+    event: SDL.Event
+    event.type = .MOUSE_BUTTON_UP
+    event.button.button = SDL.BUTTON_RIGHT
+    event.button.x, event.button.y = 150, 23
+    testing.expect(t, !window_system_menu_request(&event, drag))
+    event.type = .MOUSE_BUTTON_DOWN
+    testing.expect(t, window_system_menu_request(&event, drag))
+    event.button.x = 221
+    testing.expect(t, !window_system_menu_request(&event, drag))
+    event.button.x = 150
+    event.button.button = SDL.BUTTON_LEFT
+    testing.expect(t, !window_system_menu_request(&event, drag))
+    testing.expect(t, !window_system_menu_request(nil, drag))
+}

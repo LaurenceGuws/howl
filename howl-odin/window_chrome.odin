@@ -153,6 +153,14 @@ track_window_pointer_cycle :: proc(app: ^App, event: ^SDL.Event) {
     }
 }
 
+// Only a new right press requests a native menu. A right drag that began in
+// the terminal keeps its release even when it ends over the empty header.
+window_system_menu_request :: proc(event: ^SDL.Event, drag: SDL.FRect) -> bool {
+    return event != nil && event.type == .MOUSE_BUTTON_DOWN &&
+           event.button.button == SDL.BUTTON_RIGHT &&
+           inside(event.button.x, event.button.y, drag)
+}
+
 handle_window_chrome_event :: proc(app: ^App, event: ^SDL.Event) -> bool {
     if app == nil || event == nil || !app.client_chrome do return false
     if event.type == .WINDOW_MOUSE_LEAVE {
@@ -184,10 +192,8 @@ handle_window_chrome_event :: proc(app: ^App, event: ^SDL.Event) -> bool {
             return true
         }
     }
-    if event.button.button == SDL.BUTTON_RIGHT &&
-       inside(event.button.x, event.button.y, header_drag_rect(app.tab_count, width, true)) {
-        if event.type == .MOUSE_BUTTON_DOWN &&
-           !SDL.ShowWindowSystemMenu(app.window, c.int(event.button.x), c.int(event.button.y)) {
+    if window_system_menu_request(event, header_drag_rect(app.tab_count, width, true)) {
+        if !SDL.ShowWindowSystemMenu(app.window, c.int(event.button.x), c.int(event.button.y)) {
             sdl_error("Native window menu unavailable")
         }
         return true
