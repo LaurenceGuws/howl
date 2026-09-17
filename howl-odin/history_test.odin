@@ -1,6 +1,7 @@
 package main
 
 import "core:testing"
+import SDL "vendor:sdl3"
 
 @(test)
 history_scroll_rows_clamps_and_tracks_anchor :: proc(t: ^testing.T) {
@@ -206,4 +207,92 @@ history_wheel_clamp_and_discrete_navigation_clear_fraction :: proc(t: ^testing.T
     view.history_wheel_rows = -0.5
     testing.expect(t, set_history_offset(&view, 0))
     testing.expect_value(t, view.history_wheel_rows, f32(0))
+}
+
+
+@(test)
+history_thumb_drag_does_not_require_explicit_mouse_capture :: proc(t: ^testing.T) {
+    // No SDL window exists in this test, so explicit capture cannot succeed.
+    // The delivered pointer gesture still owns history until release/cancel.
+    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
+    geometry, ok := history_scrollbar_geometry(&view, pane)
+    testing.expect(t, ok)
+    x, y := geometry.thumb.x + 2, geometry.thumb.y + 5
+    testing.expect(t, begin_history_scrollbar_drag(&view, pane, x, y))
+    testing.expect(t, history_scrollbar_drag_active(&view))
+    testing.expect_value(t, view.history_scrollbar_grab_y, f32(5))
+    testing.expect_value(t, view.history_target_offset, u32(0))
+    testing.expect(t, update_history_scrollbar_drag(&view, pane, y - 140))
+    testing.expect(t, view.history_target_offset > 0)
+    testing.expect_value(t, view.history_scrollbar_grab_y, f32(5))
+    testing.expect(t, finish_history_scrollbar_drag(&view))
+    testing.expect(t, !history_scrollbar_drag_active(&view))
+    testing.expect_value(t, view.history_scrollbar_grab_y, f32(0))
+    stopped := view.history_target_offset
+    testing.expect(t, !update_history_scrollbar_drag(&view, pane, -1000))
+    testing.expect_value(t, view.history_target_offset, stopped)
+    testing.expect(t, !finish_history_scrollbar_drag(&view))
+}
+
+@(test)
+history_track_seek_continues_dragging_and_clamps_outside_the_pane :: proc(t: ^testing.T) {
+    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    pane := SDL.FRect{200, 100, 500, 400}
+    geometry, ok := history_scrollbar_geometry(&view, pane)
+    testing.expect(t, ok)
+    testing.expect(t, begin_history_scrollbar_drag(&view, pane, geometry.hit.x + 2,
+                                                geometry.track.y + geometry.track.h / 2))
+    middle := view.history_target_offset
+    testing.expect(t, middle > 0 && middle < view.history_count)
+    testing.expect(t, history_scrollbar_drag_active(&view))
+    testing.expect(t, update_history_scrollbar_drag(&view, pane, -1000))
+    testing.expect_value(t, view.history_target_offset, view.history_count)
+    testing.expect(t, update_history_scrollbar_drag(&view, pane, 10000))
+    testing.expect_value(t, view.history_target_offset, u32(0))
+    testing.expect(t, history_scrollbar_drag_active(&view))
+    testing.expect(t, finish_history_scrollbar_drag(&view))
+}
+
+@(test)
+history_drag_is_pane_local_and_focus_loss_cancels_without_changing_offsets :: proc(t: ^testing.T) {
+    first := Session_View{rows = 25, columns = 40, history_count = 500}
+    second := Session_View{rows = 25, columns = 40, history_count = 900}
+    pane := SDL.FRect{0, HEADER_HEIGHT, 500, 700}
+    geometry, ok := history_scrollbar_geometry(&first, pane)
+    testing.expect(t, ok)
+    testing.expect(t, begin_history_scrollbar_drag(&first, pane, geometry.hit.x + 2,
+                                                geometry.track.y + geometry.track.h / 2))
+    testing.expect(t, history_scrollbar_drag_active(&first))
+    testing.expect(t, !history_scrollbar_drag_active(&second))
+    testing.expect_value(t, second.history_target_offset, u32(0))
+    app: App
+    app.tab_count = 1
+    app.active_tab = 0
+    app.tabs[0].pane_count = 2
+    app.tabs[0].panes[0] = &first
+    app.tabs[0].panes[1] = &second
+    stopped := first.history_target_offset
+    event: SDL.Event
+    event.type = .WINDOW_FOCUS_LOST
+    handle_event(&app, &event)
+    testing.expect(t, !history_scrollbar_drag_active(&first))
+    testing.expect_value(t, first.history_target_offset, stopped)
+    testing.expect(t, !update_history_scrollbar_drag(&first, pane, 0))
+    testing.expect_value(t, second.history_target_offset, u32(0))
+}
+
+@(test)
+history_drag_refuses_terminal_cells_empty_history_and_alternate_screen :: proc(t: ^testing.T) {
+    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
+    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 6, 100))
+    testing.expect(t, !history_scrollbar_drag_active(&view))
+    view.history_count = 0
+    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 953, 100))
+    view.history_count = 500
+    view.alternate_screen = true
+    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 953, 100))
+    testing.expect(t, !begin_history_scrollbar_drag(nil, pane, 953, 100))
+    testing.expect(t, !history_scrollbar_drag_active(&view))
 }

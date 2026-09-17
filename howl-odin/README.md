@@ -162,10 +162,13 @@ Current canary:
 - retained history also exposes a thin per-pane position scrollbar: the thumb
   stays quiet at LIVE, becomes accent-colored while scrolled, tracks the
   accepted canonical history offset, and owns a forgiving pointer lane for
-  direct seek/drag without colliding with terminal text selection. SDL pointer
-  capture keeps a drag coherent outside the window, while button release,
-  focus loss, and window close terminate capture so later pointer motion cannot
-  keep scrolling accidentally.
+  direct seek/drag without colliding with terminal text selection. A delivered
+  button press owns the gesture even when explicit SDL capture is unsupported;
+  normal held-button delivery (including Wayland's implicit grab) handles dragging.
+  Release, focus loss, and window close terminate the gesture so later movement
+  cannot keep scrolling. Private KWin tests cover thumb/track dragging, release
+  outside the window, focus cancellation, and pane-local nested splits at 1x;
+  single/split thumb dragging also passes at 1.7x.
   `Ctrl+Shift+Home/End` jump directly to the oldest retained window or back to
   LIVE without stealing ordinary terminal Home/End. Vertical-only geometry
   changes preserve the absolute retained-row anchor; an owned horizontal reflow
@@ -304,3 +307,9 @@ Crowded tabs shrink; below 96 pixels their close target is removed, and below
 64 pixels a numbered chip keeps each tab reachable. The existing close action,
 keyboard navigation and palette still work. No installer or rollout is implied
 by rebuilding the development bundle.
+
+
+Private KWin qualification also exercises header drag, rim resize, native
+maximize/restore, minimize/restore, F11 fullscreen, the system menu, and caption
+close with exact teardown of three owned Sessions. These are scoped native
+controls proofs, not double-click-titlebar or mixed-monitor/hotplug acceptance.

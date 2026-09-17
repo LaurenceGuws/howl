@@ -314,13 +314,16 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Thin per-pane scrollbar indicates retained position.
 - Scrollbar supports direct seek and thumb drag with a forgiving invisible hit
   lane while preserving quiet visual chrome.
-- Scrollbar drag owns SDL pointer capture, including outside-window motion; a
-  release, focus loss, or window close ends the gesture so later pointer motion
-  cannot strand the pane in drag state.
+- A scrollbar button press owns its drag independently of optional explicit SDL
+  capture. The unsupported Wayland capture path no longer cancels after the
+  initial seek. Private KWin proves continuous thumb/track drag, outside-window
+  release, focus cancellation, and isolation across sibling/nested panes; 1.7x
+  single/split canaries also pass. Release/focus/close still end the gesture.
 - Vertical-only resize preserves the top retained row.
 - Horizontal reflow/column change deliberately returns an owned scrolled pane to
   LIVE because projected row identity is not stable across reflow.
-- Twelve executable Odin history/scrollbar tests run in the owner build.
+- Executable Odin history/scrollbar tests run in the owner build, including
+  capture-unavailable gesture admission, bounds, cancellation and pane isolation.
 
 **PROVEN — Find**
 
@@ -990,3 +993,10 @@ remain open; these are residual acceptance tasks, not a new run or schedule.
    optional UI ideas, denied protocols, or future platforms as finished work.
    Keep documentation and compact runtime receipts current, and keep temporary
    experiments in the active workstream rather than adding another product layer.
+
+
+Private-lab workflow (2026-09-17): Captain explicitly authorizes managed KWin
+for repeatable input/control tests, then promotion of tested iterations into the
+physical dogfood window. Private fixtures keep private settings; a desktop launch
+uses Captain's saved profiles/bindings. Do not inject concurrent tests into an
+adopted user window or replace active unsaved work without a safe handoff.

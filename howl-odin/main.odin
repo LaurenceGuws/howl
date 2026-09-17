@@ -5450,11 +5450,11 @@ begin_history_scrollbar_drag :: proc(
     view.history_scrollbar_grab_y = grab_y
     sync.mutex_unlock(&view.mutex)
     _ = update_history_scrollbar_drag(view, pane, y)
-    if !SDL.CaptureMouse(true) {
-        // Keep the initial click/seek, but never leave a drag active when SDL
-        // cannot guarantee delivery after the pointer leaves the window.
-        _ = finish_history_scrollbar_drag(view)
-    }
+    // Match selection/divider drags: delivered button-down owns this gesture.
+    // SDL auto-capture / Wayland's implicit grab supplies held-button events;
+    // unsupported explicit capture must not reduce dragging to the first seek.
+    // Release, focus loss, and application transitions retire it normally.
+    _ = SDL.CaptureMouse(true)
     return true
 }
 
