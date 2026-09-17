@@ -956,20 +956,116 @@ test "terminal Canvas keeps image-first and later atlas identities monotonic" {
             .{ .image_id = 4, .generation = 8, .resource = image_one },
         ),
     );
-    const image_three = render.canvas.ResourceRef{
-        .resource = try render.canvas.ResourceId.local(3),
-        .generation = @fromBackingInt(1),
-    };
-    const third = try render.terminal.takeContentUpdateWithImageBinding(
+    // Removal committed above: plan against actual Content high-water, not the
+    // removed binding. Reintroduction must allocate beyond both it and the atlas.
+    var planned: [render.terminal.maximum_external_images]render.terminal.ExternalImageBinding = undefined;
+    const reintroduced = try render.terminal.planExternalImageBindings(
+        &.{},
+        render.terminal.contentUsage(content),
+        client.view.graphics(image_view).images,
+        &planned,
+    );
+    const image_three = reintroduced[0].resource;
+    try std.testing.expectEqual(@as(u64, 3), try image_three.resource.identity());
+    try std.testing.expectEqual(@as(u64, 8), @backingInt(image_three.generation));
+    const third = try render.terminal.takeContentUpdateWithImageBindings(
         content,
         image_view,
         null,
-        .{ .image_id = 4, .generation = 8, .resource = image_three },
+        reintroduced,
     );
     try std.testing.expectEqual(@as(usize, 1), third.external_resources.len);
     try std.testing.expectEqualDeep(image_three, third.external_resources[0].resource);
     try std.testing.expectEqual(@as(u64, 3), render.terminal.contentUsage(content).resource_high_water);
     try composer.apply(producer, third);
+}
+
+test "terminal image planner retains exact generations and reserves only the first new identity" {
+    const terminal = render.terminal;
+    const maximum = terminal.maximum_external_images;
+    const empty_usage = std.mem.zeroes(terminal.ContentUsage);
+    var images: [maximum + 1]client.view.Image = undefined;
+    for (&images, 0..) |*image, index| image.* = .{
+        .image_id = @intCast(index + 1),
+        .generation = 1,
+        .width = 1,
+        .height = 1,
+    };
+    var output: [maximum]terminal.ExternalImageBinding = undefined;
+    try std.testing.expectEqual(@as(usize, 0), (try terminal.planExternalImageBindings(&.{}, empty_usage, &.{}, &output)).len);
+    try std.testing.expectError(error.ImageLimit, terminal.planExternalImageBindings(&.{}, empty_usage, &images, &output));
+    const first = try terminal.planExternalImageBindings(&.{}, empty_usage, images[0..maximum], &output);
+    try std.testing.expectEqual(maximum, first.len);
+    for (first, 0..) |binding, index| {
+        try std.testing.expectEqual(images[index].image_id, binding.image_id);
+        try std.testing.expectEqual(@as(u64, 1), binding.generation);
+        try std.testing.expectEqual(@as(u64, index + 2), try binding.resource.resource.identity());
+        try std.testing.expectEqual(@as(u64, 1), @backingInt(binding.resource.generation));
+    }
+    const retained = output;
+    var usage = empty_usage;
+    usage.resource_high_water = maximum + 1;
+    const stable = try terminal.planExternalImageBindings(&retained, usage, images[0..maximum], &output);
+    try std.testing.expectEqualDeep(&retained, stable);
+
+    // Reordering does not change a retained identity. A retained prefix must not
+    // consume the atlas reservation before the first new image.
+    var mixed = [_]client.view.Image{ images[1], images[maximum], images[0], images[maximum] };
+    mixed[3].image_id += 1;
+    mixed[2].generation = std.math.maxInt(u64);
+    const next = try terminal.planExternalImageBindings(&retained, usage, &mixed, &output);
+    try std.testing.expectEqualDeep(retained[1], next[0]);
+    try std.testing.expectEqual(@as(u64, maximum + 3), try next[1].resource.resource.identity());
+    try std.testing.expectEqual(retained[0].resource.resource, next[2].resource.resource);
+    try std.testing.expectEqual(std.math.maxInt(u64), next[2].generation);
+    try std.testing.expectEqual(std.math.maxInt(u64), @backingInt(next[2].resource.generation));
+    try std.testing.expectEqual(@as(u64, maximum + 4), try next[3].resource.resource.identity());
+    try std.testing.expectEqual(@as(u64, 1), retained[0].generation);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(retained[0].resource.generation));
+
+    usage.resource_generation = 1;
+    const with_atlas = try terminal.planExternalImageBindings(&retained, usage, &mixed, &output);
+    try std.testing.expectEqual(@as(u64, maximum + 2), try with_atlas[1].resource.resource.identity());
+    const current = output;
+    // A late failure may dirty scratch but must never change current bindings.
+    const saved = current;
+    mixed[3].generation = 0;
+    try std.testing.expectError(error.InvalidImageBinding, terminal.planExternalImageBindings(&current, usage, &mixed, &output));
+    try std.testing.expectEqualDeep(saved, current);
+    mixed[3].generation = 1;
+    mixed[3].image_id = 0;
+    try std.testing.expectError(error.InvalidImageBinding, terminal.planExternalImageBindings(&current, usage, &mixed, &output));
+    try std.testing.expectEqualDeep(saved, current);
+    mixed[3].image_id = maximum + 2;
+    mixed[2].generation = 1;
+    try std.testing.expectError(error.InvalidImageBinding, terminal.planExternalImageBindings(&current, usage, &mixed, &output));
+    try std.testing.expectEqualDeep(saved, current);
+}
+
+test "terminal image planner checks reservation and identity overflow without allocating retained images" {
+    const terminal = render.terminal;
+    const limit = render.canvas.ResourceId.max_identity;
+    const images = [_]client.view.Image{.{ .image_id = 1, .generation = 1, .width = 1, .height = 1 }};
+    var output: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+    var usage = std.mem.zeroes(terminal.ContentUsage);
+    usage.resource_high_water = limit - 2;
+    const reserved = try terminal.planExternalImageBindings(&.{}, usage, &images, &output);
+    try std.testing.expectEqual(limit, try reserved[0].resource.resource.identity());
+    const retained = [_]terminal.ExternalImageBinding{reserved[0]};
+    usage.resource_high_water = limit - 1;
+    try std.testing.expectError(error.ResourceIdentityOverflow, terminal.planExternalImageBindings(&.{}, usage, &images, &output));
+    usage.resource_generation = 1;
+    const last = try terminal.planExternalImageBindings(&.{}, usage, &images, &output);
+    try std.testing.expectEqual(limit, try last[0].resource.resource.identity());
+    for ([_]u64{ limit, std.math.maxInt(u64) - 1, std.math.maxInt(u64) }) |high_water| {
+        usage.resource_high_water = high_water;
+        for ([_]u64{ 0, 1 }) |atlas_generation| {
+            usage.resource_generation = atlas_generation;
+            try std.testing.expectError(error.ResourceIdentityOverflow, terminal.planExternalImageBindings(&.{}, usage, &images, &output));
+            const stable = try terminal.planExternalImageBindings(&retained, usage, &images, &output);
+            try std.testing.expectEqualDeep(retained[0], stable[0]);
+        }
+    }
 }
 
 test "terminal Canvas content reuses exact combining runs" {

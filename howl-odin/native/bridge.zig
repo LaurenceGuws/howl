@@ -448,16 +448,6 @@ fn clearExternalUploads(renderer: *Render) void {
     renderer.external_upload_count = 0;
 }
 
-fn findRenderImageBindingById(
-    bindings: []const RenderImageBinding,
-    image_id: u32,
-) ?RenderImageBinding {
-    for (bindings) |binding| {
-        if (binding.image_id == image_id) return binding;
-    }
-    return null;
-}
-
 fn findRenderImageBindingByResource(
     bindings: []const RenderImageBinding,
     resource: canvas.FrameResourceRef,
@@ -468,64 +458,6 @@ fn findRenderImageBindingByResource(
             return binding;
     }
     return null;
-}
-
-fn planRenderImageBindings(
-    renderer: *const Render,
-    images: []const client.view.Image,
-    output: *[terminal_render.maximum_external_images]RenderImageBinding,
-) ![]const RenderImageBinding {
-    return planImageBindings(
-        renderer.image_bindings[0..renderer.image_binding_count],
-        terminal_render.contentUsage(renderer.content),
-        images,
-        output,
-    );
-}
-
-fn planImageBindings(
-    current: []const RenderImageBinding,
-    usage: terminal_render.ContentUsage,
-    images: []const client.view.Image,
-    output: *[terminal_render.maximum_external_images]RenderImageBinding,
-) ![]const RenderImageBinding {
-    if (images.len > output.len) return error.ImageLimit;
-    var allocation_cursor = usage.resource_high_water;
-    var first_new = true;
-    for (images, 0..) |image, index| {
-        if (image.image_id == 0 or image.generation == 0)
-            return error.InvalidImageBinding;
-        if (findRenderImageBindingById(
-            current,
-            image.image_id,
-        )) |prior| {
-            if (image.generation < prior.generation) return error.InvalidImageBinding;
-            var binding = prior;
-            if (image.generation > prior.generation) {
-                binding.generation = image.generation;
-                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
-            }
-            output[index] = binding;
-            continue;
-        }
-
-        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
-        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
-            return error.ResourceIdentityOverflow;
-        first_new = false;
-        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
-            return error.ResourceIdentityOverflow;
-        output[index] = .{
-            .image_id = image.image_id,
-            .generation = image.generation,
-            .resource = .{
-                .resource = canvas.ResourceId.local(allocation_cursor) catch
-                    return error.ResourceIdentityOverflow,
-                .generation = @fromBackingInt(@intCast(image.generation)),
-            },
-        };
-    }
-    return output[0..images.len];
 }
 
 fn upsertResidency(
@@ -682,7 +614,12 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
     };
     const graphics = client.view.graphics(view);
     var candidate_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined;
-    const bindings = planRenderImageBindings(renderer, graphics.images, &candidate_bindings) catch |failure| {
+    const bindings = terminal_render.planExternalImageBindings(
+        renderer.image_bindings[0..renderer.image_binding_count],
+        terminal_render.contentUsage(renderer.content),
+        graphics.images,
+        &candidate_bindings,
+    ) catch |failure| {
         renderer.setError("image_bindings", @errorName(failure));
         return 3;
     };
@@ -2373,48 +2310,6 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(RenderCommandInfo));
     try std.testing.expectEqual(@as(u8, 0), @backingInt(canvas.ResourceFormat.alpha8));
     try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
-}
-
-test "Odin image bindings retain logical resources across image generations" {
-    const maximum = terminal_render.maximum_external_images;
-    var images: [maximum]client.view.Image = undefined;
-    for (&images, 0..) |*image, index| image.* = .{
-        .image_id = @intCast(index + 1),
-        .generation = 1,
-        .width = 1,
-        .height = 1,
-    };
-    var output: [maximum]RenderImageBinding = undefined;
-    const empty_usage = terminal_render.ContentUsage{
-        .shape = .{ .entries = 0, .scalars = 0, .glyphs = 0 },
-        .atlas_entries = 0,
-        .producer_revision = 0,
-        .resource_generation = 0,
-        .resource_high_water = 0,
-    };
-    const first = try planImageBindings(&.{}, empty_usage, &images, &output);
-    try std.testing.expectEqual(maximum, first.len);
-    for (first, 0..) |binding, index| {
-        try std.testing.expectEqual(@as(u64, @intCast(index + 2)), try binding.resource.resource.identity());
-        try std.testing.expectEqual(@as(u64, 1), @backingInt(binding.resource.generation));
-    }
-
-    var retained: [maximum]RenderImageBinding = undefined;
-    @memcpy(&retained, first);
-    images[0].generation = 2;
-    var replacement: [maximum]RenderImageBinding = undefined;
-    var later_usage = empty_usage;
-    later_usage.resource_high_water = maximum + 1;
-    const second = try planImageBindings(&retained, later_usage, &images, &replacement);
-    try std.testing.expectEqual(@as(u64, 2), second[0].generation);
-    try std.testing.expectEqual(@as(u64, 2), try second[0].resource.resource.identity());
-    try std.testing.expectEqual(@as(u64, 2), @backingInt(second[0].resource.generation));
-
-    images[0].generation = 1;
-    try std.testing.expectError(
-        error.InvalidImageBinding,
-        planImageBindings(second, later_usage, &images, &output),
-    );
 }
 
 test "Odin residency upsert replaces generations without growing the table" {

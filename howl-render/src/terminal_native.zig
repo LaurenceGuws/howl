@@ -147,6 +147,56 @@ pub const ContentUsage = struct {
     resource_high_water: u64,
 };
 
+/// Plans exact image generations in Content's local resource identity space.
+/// Reserves the first unpublished atlas slot and never recycles identities below
+/// the accepted high-water mark. No Content state or image bytes are changed.
+/// Current bindings and output must be disjoint; output is disposable scratch
+/// and may be partially written on error. Commit only after Content accepts.
+pub fn planExternalImageBindings(
+    current: []const ExternalImageBinding,
+    usage: ContentUsage,
+    images: []const View.Image,
+    output: *[maximum_external_images]ExternalImageBinding,
+) error{ ImageLimit, InvalidImageBinding, ResourceIdentityOverflow }![]const ExternalImageBinding {
+    if (images.len > output.len) return error.ImageLimit;
+    var allocation_cursor = usage.resource_high_water;
+    var first_new = true;
+    for (images, 0..) |image, index| {
+        if (image.image_id == 0 or image.generation == 0)
+            return error.InvalidImageBinding;
+        const retained: ?ExternalImageBinding = for (current) |binding| {
+            if (binding.image_id == image.image_id) break binding;
+        } else null;
+        if (retained) |prior| {
+            if (image.generation < prior.generation) return error.InvalidImageBinding;
+            var binding = prior;
+            if (image.generation > prior.generation) {
+                binding.generation = image.generation;
+                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
+            }
+            output[index] = binding;
+            continue;
+        }
+
+        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
+        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
+            return error.ResourceIdentityOverflow;
+        first_new = false;
+        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
+            return error.ResourceIdentityOverflow;
+        output[index] = .{
+            .image_id = image.image_id,
+            .generation = image.generation,
+            .resource = .{
+                .resource = canvas.ResourceId.local(allocation_cursor) catch
+                    return error.ResourceIdentityOverflow,
+                .generation = @fromBackingInt(@intCast(image.generation)),
+            },
+        };
+    }
+    return output[0..images.len];
+}
+
 pub const ContentInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
     InvalidContentConfig,
 };

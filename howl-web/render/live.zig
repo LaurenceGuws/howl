@@ -361,7 +361,15 @@ fn takeContentUpdate(
     if (graphics.images.len > maximum_terminal_images)
         return error.UnsupportedGraphics;
     var candidate: [maximum_terminal_images]ImageBinding = undefined;
-    const bindings = try prepareImageBindings(graphics.images, &candidate);
+    const bindings = render.terminal.planExternalImageBindings(
+        image_bindings[0..image_binding_count],
+        render.terminal.contentUsage(content.?),
+        graphics.images,
+        &candidate,
+    ) catch |err| switch (err) {
+        error.ImageLimit => return error.UnsupportedGraphics,
+        else => return err,
+    };
     const update = try render.terminal.takeContentUpdateWithImageBindings(
         content.?,
         view,
@@ -371,55 +379,6 @@ fn takeContentUpdate(
     @memcpy(image_bindings[0..bindings.len], bindings);
     image_binding_count = bindings.len;
     return update;
-}
-
-fn prepareImageBindings(
-    images: []const client.view.Image,
-    output: *[maximum_terminal_images]ImageBinding,
-) ![]const ImageBinding {
-    if (images.len > output.len) return error.UnsupportedGraphics;
-    const usage = render.terminal.contentUsage(content.?);
-    var allocation_cursor = usage.resource_high_water;
-    var first_new = true;
-    for (images, 0..) |image, index| {
-        if (image.image_id == 0 or image.generation == 0)
-            return error.InvalidImageBinding;
-        if (findImageBindingById(
-            image_bindings[0..image_binding_count],
-            image.image_id,
-        )) |prior| {
-            if (image.generation < prior.generation) return error.InvalidImageBinding;
-            var binding = prior;
-            if (image.generation > prior.generation) {
-                binding.generation = image.generation;
-                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
-            }
-            output[index] = binding;
-            continue;
-        }
-
-        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
-        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
-            return error.ResourceIdentityOverflow;
-        first_new = false;
-        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
-            return error.ResourceIdentityOverflow;
-        output[index] = .{
-            .image_id = image.image_id,
-            .generation = image.generation,
-            .resource = .{
-                .resource = canvas.ResourceId.local(allocation_cursor) catch
-                    return error.ResourceIdentityOverflow,
-                .generation = @fromBackingInt(@intCast(image.generation)),
-            },
-        };
-    }
-    return output[0..images.len];
-}
-
-fn findImageBindingById(bindings: []const ImageBinding, image_id: u32) ?ImageBinding {
-    for (bindings) |binding| if (binding.image_id == image_id) return binding;
-    return null;
 }
 
 fn findImageBindingByResource(
