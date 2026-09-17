@@ -77,9 +77,9 @@ fn connectForHost(runtime: ?*Runtime, interrupt: ?*client.Interrupt, endpoint: [
 
 const RenderHandle = opaque {};
 
-// Called only after Connection has validated and opened the endpoint. Its only
-// accepted non-TCP spelling is a Unix socket. Do not infer that a TCP peer is
-// local or trade network bandwidth for CPU on remotely attached Sessions.
+// Existing full-observation encoding preference, after endpoint validation.
+// TCP/SSH retain compression; Unix retains its measured raw-snapshot default.
+// View reuse below is independent of this heuristic and sends no extra bytes.
 fn rawObservationEndpoint(endpoint: []const u8) bool {
     return std.mem.startsWith(u8, endpoint, "unix:");
 }
@@ -642,6 +642,23 @@ pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offse
         return 3;
     };
     defer client.view.deinit(view);
+    return prepareProjectedView(renderer, view);
+}
+
+// The offered immutable view is borrowed only during this call. A stale offer
+// cannot roll back a renderer that observed farther ahead on its image channel.
+// Code 9 means this offer is ineligible, not a transport or terminal failure.
+pub export fn howl_odin_bridge_render_prepare_view(raw: ?*RenderHandle, view: ?*const client.view.Snapshot) i32 {
+    const value = raw orelse return 1;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    const snapshot = view orelse return 9;
+    if (!standaloneLiveView(snapshot) or client.view.begin(snapshot).revision < renderer.session_revision) return 9;
+    renderer.clearError();
+    clearExternalUploads(renderer);
+    return prepareProjectedView(renderer, snapshot);
+}
+
+fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i32 {
     const begin = client.view.begin(view).*;
     if (begin.rows > renderer.selection_rows.len) {
         renderer.setError("selection_rows", "row_limit");
@@ -1180,6 +1197,8 @@ const Bridge = struct {
     connection: client.Connection,
     raw_observation: bool,
     last_begin: ?protocol.SnapshotBegin = null,
+    // At most one self-contained live view, transferred or discarded by caller.
+    reusable_view: ?*client.view.Snapshot = null,
     text_truncated: bool = false,
     display_title: [protocol.properties.maximum_field_bytes]u8 = undefined,
     display_title_len: usize = 0,
@@ -1205,7 +1224,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 7;
+    return 8;
 }
 
 /// Launches one client-owned canonical Session using the existing native
@@ -1400,21 +1419,15 @@ pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
     const value = raw orelse return;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const allocator = bridge.allocator;
+    if (bridge.reusable_view) |view| client.view.deinit(view);
     bridge.connection.deinit();
     releaseRuntime(bridge.runtime);
     allocator.destroy(bridge);
 }
 
-/// Creates one independent wake handle for a potentially blocking observation.
-///
-/// The duplicate never sends Howl protocol bytes. It only shuts down the
-/// observer socket so another thread can leave a blocked receive during client
-/// teardown.
-/// Requests one complete current viewport and projects it to bounded UTF-8.
-///
-/// Revision zero is the intended immediate-snapshot canary lane. Later the Odin
-/// client may use revision-relative blocking observation on a worker without
-/// changing this ownership boundary.
+/// Requests a complete view and publishes compact metadata. The existing shared
+/// immutable projection may be taken once for rendering when it has no external
+/// image dependencies. Otherwise its observing connection's pin stays private.
 pub export fn howl_odin_bridge_snapshot(
     raw: ?*Handle,
     after_revision: u64,
@@ -1427,6 +1440,8 @@ pub export fn howl_odin_bridge_snapshot(
     const value = raw orelse return 1;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
+    if (bridge.reusable_view) |view| client.view.deinit(view);
+    bridge.reusable_view = null;
 
     var rich = requestObservation(
         &bridge.connection,
@@ -1444,7 +1459,10 @@ pub export fn howl_odin_bridge_snapshot(
         bridge.setError("project", @errorName(failure));
         return 3;
     };
-    defer client.view.deinit(projected);
+    if (standaloneLiveView(projected)) {
+        bridge.reusable_view = projected;
+    }
+    defer if (bridge.reusable_view == null) client.view.deinit(projected);
 
     const text = client.view.writeVisibleText(projected, output_ptr[0..output_capacity]);
     bridge.last_begin = client.view.begin(projected).*;
@@ -1454,6 +1472,26 @@ pub export fn howl_odin_bridge_snapshot(
     bridge.task_progress = properties.progress;
     output_len.* = text.bytes_written;
     return 0;
+}
+
+// No image bytes are fetched or eagerly cached to make a cut transferable.
+// Image-bearing and historical projections retain the original render channel.
+fn standaloneLiveView(view: *const client.view.Snapshot) bool {
+    return client.view.begin(view).history_offset == 0 and client.view.graphics(view).images.len == 0;
+}
+
+/// Moves the existing allocation out. It owns no connection or runtime borrow,
+/// survives further observation/bridge teardown, and must be destroyed once.
+pub export fn howl_odin_bridge_snapshot_take_view(raw: ?*Handle) ?*client.view.Snapshot {
+    const value = raw orelse return null;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    const view = bridge.reusable_view;
+    bridge.reusable_view = null;
+    return view;
+}
+
+pub export fn howl_odin_bridge_view_destroy(view: ?*client.view.Snapshot) void {
+    if (view) |value| client.view.deinit(value);
 }
 
 // Property bytes are untrusted labels, not terminal input or process identity.
@@ -2612,4 +2650,82 @@ test "pending Canvas facts stay invisible until the host accepts uploaded resour
 test "completed selection rejection is distinct from interrupted transport" {
     try std.testing.expectEqual(@as(i32, 6), query_declined);
     try std.testing.expect(query_declined != 4);
+}
+
+// Small coherent fixture; projections own their bytes rather than borrowing the
+// temporary rich model, just as in the real observer-to-render handoff.
+fn testReusableProjection(history: u32, with_image: bool) !*client.view.Snapshot {
+    var scalar = [_]u32{'x'};
+    var cells = [_]client.rich.Cell{std.mem.zeroes(client.rich.Cell)};
+    cells[0].scalars = &scalar;
+    cells[0].width = 1;
+    cells[0].height = 1;
+    cells[0].subscale_n = 1;
+    cells[0].subscale_d = 1;
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var rich = std.mem.zeroes(client.rich.View);
+    rich.begin.revision = 7;
+    rich.begin.terminal_revision = 5;
+    rich.begin.rows = 1;
+    rich.begin.columns = 1;
+    rich.begin.history_count = history;
+    rich.begin.history_offset = history;
+    rich.rows = &rows;
+    rich.properties.title = "shared title";
+    var image = [_]protocol.SnapshotImage{.{ .image_id = 1, .generation = 1, .width = 1, .height = 1 }};
+    var placement = [_]protocol.SnapshotImagePlacement{std.mem.zeroes(protocol.SnapshotImagePlacement)};
+    if (with_image) {
+        placement[0].image_id = 1;
+        placement[0].generation = 1;
+        placement[0].source_width = 1;
+        placement[0].source_height = 1;
+        placement[0].pixel_width = 1;
+        placement[0].pixel_height = 1;
+        rich.graphics.cell_pixel_width = 1;
+        rich.graphics.cell_pixel_height = 1;
+        rich.graphics.images = &image;
+        rich.graphics.placements = &placement;
+    }
+    return client.view.projectView(std.testing.allocator, &rich);
+}
+
+test "live view transfer keeps exact immutable text and metadata without a connection" {
+    const projected = try testReusableProjection(0, false);
+    var bridge: Bridge = undefined;
+    bridge.reusable_view = projected;
+    const handle: *Handle = @ptrCast(&bridge);
+    const taken = howl_odin_bridge_snapshot_take_view(handle).?;
+    defer howl_odin_bridge_view_destroy(taken);
+    try std.testing.expectEqual(projected, taken);
+    try std.testing.expectEqual(@as(?*client.view.Snapshot, null), howl_odin_bridge_snapshot_take_view(handle));
+    try std.testing.expect(standaloneLiveView(taken));
+    try std.testing.expectEqual(@as(u64, 7), client.view.begin(taken).revision);
+    try std.testing.expectEqualStrings("shared title", client.view.properties(taken).title.?);
+    var text: [16]u8 = undefined;
+    const written = client.view.writeVisibleText(taken, &text);
+    try std.testing.expectEqualStrings("x", text[0..written.bytes_written]);
+}
+
+test "only self-contained live views may cross the observation connection boundary" {
+    const live = try testReusableProjection(0, false);
+    defer client.view.deinit(live);
+    const historical = try testReusableProjection(1, false);
+    defer client.view.deinit(historical);
+    const image = try testReusableProjection(0, true);
+    defer client.view.deinit(image);
+    try std.testing.expect(standaloneLiveView(live));
+    try std.testing.expect(!standaloneLiveView(historical));
+    try std.testing.expect(!standaloneLiveView(image));
+    // Invalid offers cannot access this deliberately undefined connection or
+    // disturb accepted front facts. A renderer-owned request remains necessary.
+    var renderer: Render = undefined;
+    renderer.session_revision = 8;
+    renderer.front = .{ .session_revision = 8, .history_offset = 3 };
+    const handle: *RenderHandle = @ptrCast(&renderer);
+    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, live));
+    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, historical));
+    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, image));
+    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, null));
+    try std.testing.expectEqual(@as(u64, 8), renderer.front.session_revision);
+    try std.testing.expectEqual(@as(u32, 3), renderer.front.history_offset);
 }

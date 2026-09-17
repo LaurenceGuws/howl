@@ -15,6 +15,7 @@ Render_Work :: struct {
     pixels: u16,
     interrupt: rawptr,
     handle: rawptr,
+    offered_view: rawptr,
     worker: ^thread.Thread,
     mutex: sync.Mutex,
     cond: sync.Cond,
@@ -52,10 +53,17 @@ render_worker :: proc(data: rawptr) {
         }
         if work.stop { sync.mutex_unlock(&work.mutex); break }
         history := work.history
+        offered := work.offered_view
+        work.offered_view = nil
         work.pending = false
         work.busy = true
         sync.mutex_unlock(&work.mutex)
-        code := render_prepare(handle, history)
+        code: i32 = 9
+        if offered != nil {
+            code = render_prepare_view(handle, offered)
+            view_destroy(offered)
+        }
+        if code == 9 do code = render_prepare(handle, history)
         sync.mutex_lock(&work.mutex)
         work.busy = false
         work.ready = true
@@ -99,15 +107,24 @@ stop_render_worker :: proc(work: ^Render_Work) {
     _ = interrupt_cancel(work.interrupt)
     sync.cond_signal(&work.cond)
     if work.worker != nil do thread.destroy(work.worker)
+    if work.offered_view != nil do view_destroy(work.offered_view)
     if work.handle != nil do render_destroy(work.handle)
     interrupt_destroy(work.interrupt)
     free(work)
 }
 
-request_render :: proc(work: ^Render_Work, revision: u64, history: u32, history_generation: u64) {
+request_render :: proc(work: ^Render_Work, view: ^Session_View, revision: u64, history: u32, history_generation: u64) {
     if work == nil || revision == 0 do return
     sync.mutex_lock(&work.mutex)
     if !work.stop && !work.failed && !work.ready && !work.busy && !work.pending {
+        // Lock order is render job -> pane. Observer only takes the pane lock;
+        // no connection or resource fetching is shared between these workers.
+        if history == 0 {
+            sync.mutex_lock(&view.mutex)
+            work.offered_view = view.reusable_view
+            view.reusable_view = nil
+            sync.mutex_unlock(&view.mutex)
+        }
         work.history_generation = history_generation
         work.history = history
         work.pending = true

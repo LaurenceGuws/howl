@@ -372,7 +372,7 @@ response cannot overwrite a newer wheel/drag/return-to-LIVE intent. Scheduling
 wakeups do not repaint the old frame before the newly prepared one; there is no
 new repaint timer or loss of the measured local raw-snapshot optimization.
 
-This private native bridge is ABI7 and must ship with its matching Odin executable.
+This private native bridge is ABI8 and must ship with its matching Odin executable.
 The Session protocol stays framing-v9. Mobile SSH library integration, interactive
 authentication UI, remote provisioning, shared SSH
 masters, and sustained slow-link performance qualification remain separate work.
@@ -408,3 +408,32 @@ operation: a delayed clear could evict a different client's newer ownership.
 Another client may explicitly take control at any time; closing the owning
 connection releases its leadership naturally. No new wire operation, Session
 service update, route policy, profile conversion, or default shortcut is needed.
+
+
+## Reusing an observed live view
+
+An image-free live observation now transfers its existing immutable `howl-client`
+view to rendering instead of fetching and projecting the screen a second time.
+The pane owns at most one newest offer; a render request may own one transferred
+view. Replacement, failure and teardown destroy their own allocations. There is
+no reference counting, second terminal model, row replay, or unbounded backlog.
+An incoming observation still has its ordinary bounded transient decode storage.
+
+The renderer borrows that view for CPU preparation only; shared view storage is
+freed before the ready frame is published. SDL acceptance and stable front facts
+keep the same asynchronous lifetime as before. A stale offer cannot roll back a
+renderer that has already observed farther ahead on its own connection.
+
+This eligibility rule is independent of transport: Unix, TCP and native SSH use
+it equally. Existing lossless representation choices are unchanged. **External
+image-bearing snapshots and historical viewports retain renderer-owned full
+observation**. Their image generations are pinned by that connection and are not
+borrowed from a different observer. Clearing the last image can return to live
+view reuse. This is partial elimination of redundant work, not a claim that all
+observations or connection lifetimes have been merged.
+
+The two worker channels remain independent. A stalled external image fetch does
+not block the graphical thread, input worker, or newer observer metadata. Native
+text/image transition and stopped-carrier proofs remain required alongside the
+pixel and CPU controls. The improvement is in Odin's use of the existing shared
+model, not an implicit mobile/Web rollout or a new public client ABI.

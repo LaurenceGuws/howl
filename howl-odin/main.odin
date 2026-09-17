@@ -172,6 +172,8 @@ Session_View :: struct {
     selection_generation: u64,
     observer: rawptr,
     observer_thread: ^thread.Thread,
+    // Single latest immutable live projection. Main moves it to a render job.
+    reusable_view: rawptr,
     search: rawptr,
     search_interrupt: rawptr,
     search_failed: bool,
@@ -1084,7 +1086,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     sync.mutex_unlock(&work.mutex)
     if !ready {
         if view.canvas_session_revision < target_revision || view.canvas_history_offset != requested_history_offset || len(view.canvas_commands) == 0 {
-            request_render(work, target_revision, requested_history_offset, requested_history_generation)
+            request_render(work, view, target_revision, requested_history_offset, requested_history_generation)
         }
         return len(view.canvas_commands) != 0
     }
@@ -1151,7 +1153,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     latest_generation := view.history_generation
     sync.mutex_unlock(&view.mutex)
     if view.canvas_session_revision < latest_revision || view.canvas_history_offset != latest_history {
-        request_render(work, latest_revision, latest_history, latest_generation)
+        request_render(work, view, latest_revision, latest_history, latest_generation)
     }
     return true
 }
@@ -1364,7 +1366,10 @@ observe_session :: proc(data: rawptr) {
         title_len := int(snapshot_title(observer, raw_data(title_bytes[:]), c.size_t(len(title_bytes))))
         progress := snapshot_progress(observer)
 
+        transferred := snapshot_take_view(observer)
         sync.mutex_lock(&view.mutex)
+        displaced := view.reusable_view
+        view.reusable_view = transferred
         chrome_changed := view.revision == 0 || view.stream_closed != snapshot_stream_closed ||
                           view.child_exited != snapshot_child_exited || view.task_progress != progress ||
                           string(view.display_title[:view.display_title_len]) != string(title_bytes[:title_len])
@@ -1408,6 +1413,7 @@ observe_session :: proc(data: rawptr) {
         if !view.control_failed && !view.io_failed do view.error_len = 0
         validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
+        if displaced != nil do view_destroy(displaced)
         notify_session_update()
     }
 }
@@ -2136,6 +2142,7 @@ destroy_session_view :: proc(view: ^Session_View) {
     if view.owned_process != nil {
         owned_session_destroy(view.owned_process)
     }
+    if view.reusable_view != nil do view_destroy(view.reusable_view)
     delete(view.scratch)
     delete(view.text)
     free(view)
@@ -6223,7 +6230,7 @@ draw :: proc(app: ^App) {
 }
 
 main :: proc() {
-    if version() != 7 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 8 { fmt.eprintln("Howl bridge version mismatch"); return }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }

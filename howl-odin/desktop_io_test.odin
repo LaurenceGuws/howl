@@ -76,3 +76,40 @@ selection_motion_after_copy_does_not_erase_newer_range :: proc(t: ^testing.T) {
     testing.expect(t, clipboard_request_current(7, 7, 7))
     testing.expect_value(t, view.selection_focus_column, u16(12))
 }
+
+
+@(test)
+immutable_live_view_moves_only_into_an_available_render_request :: proc(t: ^testing.T) {
+    byte: u8
+    owned := rawptr(&byte)
+    view := Session_View{reusable_view = owned}
+    work: Render_Work
+    request_render(&work, &view, 7, 0, 0)
+    testing.expect(t, work.pending)
+    testing.expect_value(t, work.offered_view, owned)
+    testing.expect_value(t, view.reusable_view, rawptr(nil))
+    view.reusable_view = owned
+    request_render(&work, &view, 8, 0, 0)
+    testing.expect_value(t, view.reusable_view, owned)
+    testing.expect_value(t, work.offered_view, owned)
+}
+
+@(test)
+history_and_closed_render_jobs_do_not_consume_the_live_view :: proc(t: ^testing.T) {
+    byte: u8
+    owned := rawptr(&byte)
+    view := Session_View{reusable_view = owned}
+    work: Render_Work
+    request_render(&work, &view, 7, 4, 2)
+    testing.expect(t, work.pending)
+    testing.expect_value(t, work.offered_view, rawptr(nil))
+    testing.expect_value(t, view.reusable_view, owned)
+    work = Render_Work{stop = true}
+    request_render(&work, &view, 7, 0, 2)
+    testing.expect(t, !work.pending)
+    testing.expect_value(t, view.reusable_view, owned)
+    work = {}
+    request_render(&work, &view, 0, 0, 2)
+    testing.expect(t, !work.pending)
+    testing.expect_value(t, view.reusable_view, owned)
+}

@@ -27,6 +27,8 @@ foreign howl_bridge {
     consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
     consequence_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    snapshot_take_view :: proc(handle: rawptr) -> rawptr ---
+    view_destroy       :: proc(view: rawptr) ---
     snapshot_title     :: proc(handle: rawptr, output: [^]u8, capacity: c.size_t) -> c.size_t ---
     snapshot_progress  :: proc(handle: rawptr) -> u16 ---
     search_find        :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
@@ -65,6 +67,7 @@ foreign howl_bridge {
     render_destroy     :: proc(handle: rawptr) ---
     render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     render_prepare :: proc(handle: rawptr, history_offset: u32) -> i32 ---
+    render_prepare_view :: proc(handle, snapshot: rawptr) -> i32 ---
     render_accept :: proc(handle: rawptr) ---
     render_background_rgba :: proc(handle: rawptr) -> u32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---

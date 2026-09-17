@@ -1075,3 +1075,23 @@ channel proves that late completion cannot re-enable auto-sizing. Workstream
 receipts: `evidence/geometry-20260917/`. Framing remains v9; the private matching
 Odin bridge is ABI7. Long SSH performance, mobile/runtime rollouts and other
 charter items are not included in this geometry checkpoint.
+
+
+### Bounded live-view reuse, 2026-09-17
+
+Odin can transfer the existing image-free live `howl-client.view.Snapshot` from
+its observation worker to renderer preparation. One latest offer and one admitted
+render request own their allocations; displaced/consumed views are destroyed.
+Rendering still uses the same terminal Content and Canvas Composer. No codec,
+route, protocol, terminal quality, producer pacing, or redraw-rate change.
+
+This optimization applies independently to Unix/TCP/SSH. Image-bearing cuts and
+historical viewports deliberately retain the current renderer-owned observation,
+including that connection's exact generation retention. A late image-free cut
+cannot regress a newer accepted renderer revision. Full-image observation reuse
+and further common-client lifecycle simplification remain open, not hidden TODOs.
+
+The desktop workstream's `evidence/observation-20260917/` records same-grid btop
+CPU controls, native byte/cut accounting, transferred-view lifetime/failure proofs,
+text/graphics pixel comparisons and actual SSH transition tests. These scoped
+checks do not imply a mobile/Web install or universal remote throughput claim.
