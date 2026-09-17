@@ -1883,9 +1883,14 @@ const ScreenSet = struct {
         return if (self.alt_active) &self.alternate else &self.primary;
     }
 
-    /// Resets the active screen while preserving alternate-screen identity.
+    /// Resets both screen banks and selects the canonical primary screen.
+    ///
+    /// This is a direct identity change rather than an alternate-screen mode
+    /// transition: RIS must not restore a pre-reset 1049 cursor savepoint.
     fn reset(self: *ScreenSet) void {
-        self.active().reset();
+        self.alt_active = false;
+        self.primary.reset();
+        self.alternate.reset();
     }
 
     /// Atomically resize primary and alternate screens.
@@ -5844,8 +5849,6 @@ pub const Terminal = struct {
     pub fn hardReset(self: *Terminal) void {
         self.requireNoPreparedResize();
         self.screen_state.reset();
-        self.screen_state.primary.insert_mode = false;
-        self.screen_state.alternate.insert_mode = false;
         self.modes = .{};
         self.saved_all_modes = .{};
         self.primary_savepoint.clear();

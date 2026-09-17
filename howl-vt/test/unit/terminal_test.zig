@@ -909,24 +909,61 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     try std.testing.expect(saved.attrs.bold);
     try std.testing.expect(saved.attrs.italic);
 
-    // RIS resets the selected bank and all terminal-global save state without
-    // inventing an implicit screen switch or erasing the inactive bank.
-    try std.testing.expect((try vt.feed("\x1b[HKEEP\x1b[?47hALT2\x1b7\x1bc")).stateChanged());
-    view = vt.semanticView(0);
-    try std.testing.expect(view.is_alternate_screen);
-    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
-    try std.testing.expect(!vt.presentation().reverse_screen);
-
-    try std.testing.expect((try vt.feed("\x1b[?47l\x1b8")).stateChanged());
+    // RIS returns to a cleared primary bank, clears the inactive bank, and
+    // invalidates both explicit and 1049 cursor savepoints.
+    const revision_before_reset = vt.semanticSequence();
+    try std.testing.expect((try vt.feed(
+        "\x1b[HKEEP\x1b[?47h\x1b[6 q\x1b[1;3mALT2\x1b7\x1bc",
+    )).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expect(!view.is_alternate_screen);
-    try std.testing.expectEqual(@as(u21, 'K'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 2), view.rows);
+    try std.testing.expectEqual(@as(u16, 4), view.cols);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+    try std.testing.expectEqual(Terminal.CursorShape.block, view.cursor_shape);
+    try std.testing.expect(view.cursor_blink);
+    try std.testing.expect(view.cursor_visible);
+    try std.testing.expect(!vt.presentation().reverse_screen);
+    try std.testing.expectEqual(revision_before_reset + 1, vt.semanticSequence());
+
+    const canonical_revision = vt.semanticSequence();
+    try std.testing.expect(!(try vt.feed("\x1b[?47l\x1b8")).stateChanged());
+    try std.testing.expectEqual(canonical_revision, vt.semanticSequence());
+    view = vt.semanticView(0);
+    try std.testing.expect(!view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
     try std.testing.expect((try vt.feed("X")).stateChanged());
     const restored = vt.semanticView(0).cellInfoAt(0, 0);
-    try std.testing.expect(restored.attrs.bold);
-    try std.testing.expect(restored.attrs.italic);
+    try std.testing.expect(!restored.attrs.bold);
+    try std.testing.expect(!restored.attrs.italic);
+
+    // The inactive bank is reset too; entering it cannot reveal ALT2 or its
+    // saved cursor state. Repeated RIS remains a bounded headless revision.
+    try std.testing.expect((try vt.feed("\x1b[?47h")).stateChanged());
+    view = vt.semanticView(0);
+    try std.testing.expect(view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+    try std.testing.expectEqual(Terminal.CursorShape.block, view.cursor_shape);
+    try std.testing.expect(view.cursor_blink);
+    const alternate_revision = vt.semanticSequence();
+    try std.testing.expect(!(try vt.feed("\x1b8")).stateChanged());
+    try std.testing.expectEqual(alternate_revision, vt.semanticSequence());
+    try std.testing.expect((try vt.feed("Y")).stateChanged());
+    const alternate_cell = vt.semanticView(0).cellInfoAt(0, 0);
+    try std.testing.expect(!alternate_cell.attrs.bold);
+    try std.testing.expect(!alternate_cell.attrs.italic);
+    const revision_before_repeated_reset = vt.semanticSequence();
+    try std.testing.expect((try vt.feed("\x1bc")).stateChanged());
+    try std.testing.expectEqual(revision_before_repeated_reset + 1, vt.semanticSequence());
+    view = vt.semanticView(0);
+    try std.testing.expect(!view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
 }
 
 test "service-bounded feed stops exactly at child replies and host consequences" {

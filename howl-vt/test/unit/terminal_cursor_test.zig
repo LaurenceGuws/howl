@@ -209,7 +209,10 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(!view(&terminal).cursor_blink);
     try std.testing.expect(!(try terminal.feed("\x1b[2 q")).stateChanged());
-    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?47h\x1b[6 q\x1bc")).stateChanged());
+    try std.testing.expect(!view(&terminal).is_alternate_screen);
+    try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_col);
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(view(&terminal).cursor_visible);
