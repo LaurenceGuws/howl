@@ -150,6 +150,7 @@ const Render = struct {
     selection_begin: ?protocol.SnapshotBegin = null,
     selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
+    background_rgba: u32 = 0xff211918,
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
 
@@ -577,6 +578,7 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     renderer.pixel_count = frame.pixels.len;
     renderer.frame_revision = @backingInt(frame.revision);
     renderer.session_revision = begin.revision;
+    renderer.background_rgba = paddingBackground(client.view.presentation(view));
     renderer.history_offset = begin.history_offset;
     renderer.history_count = begin.history_count;
     renderer.history_row_base = begin.history_row_base;
@@ -637,6 +639,19 @@ fn updateRenderResidency(
             renderer.residency_count += 1;
         }
     }
+}
+
+// Padding follows the same accepted presentation cut, never an inferred cell
+// color or a host theme. Reverse-screen applies to the default outside-cell fill.
+fn paddingBackground(presentation: *const client.rich.Presentation) u32 {
+    const color = if (presentation.reverse_screen) presentation.foreground else presentation.background;
+    return @as(u32, color.r) | (@as(u32, color.g) << 8) | (@as(u32, color.b) << 16) | (@as(u32, color.a) << 24);
+}
+
+pub export fn howl_odin_bridge_render_background_rgba(raw: ?*RenderHandle) u32 {
+    const value = raw orelse return 0xff211918;
+    const renderer: *const Render = @ptrCast(@alignCast(value));
+    return renderer.background_rgba;
 }
 
 pub export fn howl_odin_bridge_render_surface_width(raw: ?*RenderHandle) u16 {
@@ -2402,4 +2417,14 @@ pub export fn howl_odin_bridge_consequence_copy_error(
     const count = @min(output_capacity, bridge.last_error_len);
     @memcpy(output_ptr[0..count], bridge.last_error[0..count]);
     output_len.* = count;
+}
+
+test "pane gutter background follows accepted default color and screen reverse" {
+    var presentation: client.rich.Presentation = undefined;
+    presentation.reverse_screen = false;
+    presentation.background = .{ .r = 17, .g = 34, .b = 51, .a = 255 };
+    presentation.foreground = .{ .r = 221, .g = 204, .b = 187, .a = 255 };
+    try std.testing.expectEqual(@as(u32, 0xff332211), paddingBackground(&presentation));
+    presentation.reverse_screen = true;
+    try std.testing.expectEqual(@as(u32, 0xffbbccdd), paddingBackground(&presentation));
 }

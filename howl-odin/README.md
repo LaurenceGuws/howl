@@ -278,3 +278,29 @@ shared transport but have no automatic desktop execution behavior or new UI yet.
 
 This uses the matching framing-v9 client/Session bundle. Rebuilding source does
 not update an independently running remote, mobile or browser Session service.
+
+
+## Compact desktop frame
+
+The tab strip and window controls share one 46-logical-pixel header. The spare
+header region delegates window movement to SDL's native hit-test API; the outer
+four-pixel rim delegates resizing. Minimize, maximize/restore and close use SDL
+window operations; close follows the existing Session/gesture cleanup path.
+Right-clicking spare header space requests the native system window menu. Do not
+assume native titlebar double-click behavior is available on every SDL backend.
+If hit testing or border removal is unavailable, the host reports that failure
+and keeps native decorations instead of leaving an immovable borderless window.
+
+There is no outer terminal mat. Paint, input, selection, search, IME and owned
+PTY sizing share one content rectangle: six logical pixels at left/top/bottom,
+and sixteen at right for the scrollbar's independent hit lane plus resize rim.
+Gutters and sub-cell remainder use the accepted Canvas snapshot's default
+background (foreground under screen reverse), not the application chrome theme.
+This changes no terminal cells, image bytes, protocol or saved profile settings.
+
+The 640x320 minimum and bounded eight-tab layout reserve window controls,
+Settings, new/profile buttons and at least 28 pixels of native drag space.
+Crowded tabs shrink; below 96 pixels their close target is removed, and below
+64 pixels a numbered chip keeps each tab reachable. The existing close action,
+keyboard navigation and palette still work. No installer or rollout is implied
+by rebuilding the development bundle.

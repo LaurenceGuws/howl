@@ -444,6 +444,10 @@ App :: struct {
     text_scale: f32,
     app_theme: App_Theme,
     running: bool,
+    client_chrome: bool,
+    chrome_pressed: Window_Button,
+    chrome_hover: Window_Button,
+    window_pointer_buttons: u32,
     tabs: [MAX_TABS]Tab,
     tab_count: int,
     active_tab: int,
@@ -1178,6 +1182,8 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
     if !update_canvas(app, view) {
         return false
     }
+    color := render_background_rgba(view.canvas)
+    draw_fill(app.renderer, pane, {rgba_channel(color, 0), rgba_channel(color, 8), rgba_channel(color, 16), rgba_channel(color, 24)})
     scale := canvas_scale_value(view)
     pane_left := c.int(math.floor(pane.x))
     pane_top := c.int(math.floor(pane.y))
@@ -2429,8 +2435,8 @@ terminal_pointer_location :: proc(
         return 0, 0, 0, 0, false
     }
     scale := canvas_scale_value(view)
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
     bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
@@ -2773,7 +2779,7 @@ inside :: proc(x, y: f32, rect: SDL.FRect) -> bool {
 }
 
 terminal_inset :: proc(width, height: f32) -> SDL.FRect {
-    return {18, 52, width - 36, height - 64}
+    return {0, HEADER_HEIGHT, max(f32(0), width), max(f32(0), height - HEADER_HEIGHT)}
 }
 
 PANE_GAP :: f32(4)
@@ -3241,8 +3247,8 @@ selection_cell_at :: proc(
         return 0, 0, false
     }
     scale := canvas_scale_value(view)
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
     bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
@@ -3488,7 +3494,7 @@ update_selection_edge_scroll_intent :: proc(
         return false
     }
     scale := canvas_scale_value(view)
-    surface_top := pane.y + 6
+    surface_top := terminal_content_rect(pane).y
     surface_bottom := surface_top + canvas_logical_extent(view, view.canvas_surface_height)
     alternate := render_alternate_screen(view.canvas) != 0
 
@@ -3684,8 +3690,8 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         return
     }
 
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
     scale := canvas_scale_value(view)
     pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
     _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
@@ -3746,8 +3752,8 @@ draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         return
     }
 
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
     scale := canvas_scale_value(view)
     rect := SDL.FRect{
         origin_x + f32(result.start_column * cell_width) / scale,
@@ -3763,11 +3769,18 @@ draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     draw_outline(app.renderer, rect, edge)
 }
 
-tab_controls :: proc(tab_count: int, width: f32) -> (plus, menu, settings: SDL.FRect) {
-    controls_x := TAB_X + f32(tab_count) * TAB_STEP
+tab_width_for_count :: proc(count: int, width: f32, custom := true) -> f32 {
+    if width <= 0 || count <= 0 do return TAB_WIDTH
+    right := header_settings_rect(width, custom).x
+    available := max(f32(0), right - TAB_X - 76 - 32)
+    return max(f32(16), min(TAB_WIDTH, available / f32(count) - TAB_GAP))
+}
+
+tab_controls :: proc(tab_count: int, width: f32, custom := true) -> (plus, menu, settings: SDL.FRect) {
+    controls_x := TAB_X + f32(tab_count) * (tab_width_for_count(tab_count, width, custom) + TAB_GAP)
     plus = {controls_x, 7, 34, 32}
     menu = {controls_x + 38, 7, 34, 32}
-    settings = {width - 114, 7, 104, 32}
+    settings = header_settings_rect(width, custom)
     return
 }
 
@@ -3816,32 +3829,35 @@ select_tab_index :: proc(app: ^App, index: int) -> bool {
     return true
 }
 
-tab_rect_for_index :: proc(index: int) -> SDL.FRect {
-    return {TAB_X + f32(index) * TAB_STEP, 7, TAB_WIDTH, 32}
+tab_rect_for_index :: proc(index: int, count := 1, width := f32(0), custom := true) -> SDL.FRect {
+    tab_width := tab_width_for_count(count, width, custom)
+    return {TAB_X + f32(index) * (tab_width + TAB_GAP), 7, tab_width, 32}
 }
 
-tab_close_rect_for_index :: proc(index: int) -> SDL.FRect {
-    rect := tab_rect_for_index(index)
+tab_close_rect_for_index :: proc(index: int, count := 1, width := f32(0), custom := true) -> SDL.FRect {
+    rect := tab_rect_for_index(index, count, width, custom)
+    if count <= 1 || rect.w < 96 do return {}
     return {rect.x + rect.w - 30, rect.y, 30, rect.h}
 }
 
-tab_index_at :: proc(x, y: f32, count: int) -> (int, bool) {
+tab_index_at :: proc(x, y: f32, count: int, width := f32(0), custom := true) -> (int, bool) {
     if count <= 0 || y < 7 || y >= 39 {
         return 0, false
     }
     for index in 0..<count {
-        if inside(x, y, tab_rect_for_index(index)) {
+        if inside(x, y, tab_rect_for_index(index, count, width, custom)) {
             return index, true
         }
     }
     return 0, false
 }
 
-tab_reorder_target :: proc(x: f32, count: int) -> int {
+tab_reorder_target :: proc(x: f32, count: int, width := f32(0), custom := true) -> int {
     if count <= 1 {
         return 0
     }
-    value := int((x - TAB_X + TAB_STEP / 2) / TAB_STEP)
+    step := tab_width_for_count(count, width, custom) + TAB_GAP
+    value := int((x - TAB_X + step / 2) / step)
     return clamp(value, 0, count - 1)
 }
 
@@ -3873,7 +3889,7 @@ update_tab_drag :: proc(app: ^App, x: f32) -> bool {
     if app == nil || !app.tab_dragging || app.tab_count <= 1 {
         return false
     }
-    target := tab_reorder_target(x, app.tab_count)
+    target := tab_reorder_target(x, app.tab_count, window_logical_width(app), app.client_chrome)
     if target == app.tab_drag_index {
         return false
     }
@@ -4475,9 +4491,10 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 profile_menu_rect :: proc(app: ^App) -> SDL.FRect {
     tab_count := app != nil ? app.tab_count : 0
     profile_count := app != nil ? app.profile_count : 0
-    _, menu, _ := tab_controls(tab_count, 0)
+    width := window_logical_width(app)
+    _, menu, _ := tab_controls(tab_count, width, app != nil && app.client_chrome)
     height := f32(20 + profile_count * 48 + 92)
-    return {menu.x - 8, 44, 350, height}
+    return {clamp(menu.x - 8, f32(8), max(f32(8), width - 358)), HEADER_HEIGHT, 350, height}
 }
 
 settings_panel_rect :: proc(width, height: f32) -> SDL.FRect {
@@ -4501,7 +4518,7 @@ settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool)
 }
 
 handle_click :: proc(app: ^App, x, y, width, height: f32) {
-    plus, menu, settings := tab_controls(app.tab_count, width)
+    plus, menu, settings := tab_controls(app.tab_count, width, app.client_chrome)
 
     if app.search_open && inside(x, y, search_bar_rect(width)) {
         return
@@ -4581,9 +4598,9 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         return
     }
 
-    if i, ok := tab_index_at(x, y, app.tab_count); ok {
+    if i, ok := tab_index_at(x, y, app.tab_count, width, app.client_chrome); ok {
         close_search(app)
-        if app.tab_count > 1 && inside(x, y, tab_close_rect_for_index(i)) {
+        if app.tab_count > 1 && inside(x, y, tab_close_rect_for_index(i, app.tab_count, width, app.client_chrome)) {
             close_tab(app, i)
             return
         }
@@ -4596,6 +4613,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     defer {
         if event != nil && event.type == .KEY_DOWN do settings_reveal_selection(app)
     }
+    track_window_pointer_cycle(app, event)
+    if handle_window_chrome_event(app, event) do return
     if consume_owned_action_key(app, event) {
         return
     }
@@ -4615,6 +4634,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = send_semantic_focus(active_session_view(app), false)
         app.running = false
     case .WINDOW_FOCUS_LOST:
+        app.chrome_pressed = .None
+        app.chrome_hover = .None
         clear_ime_preedit(app)
         _ = finish_tab_drag(app)
         _ = finish_pane_resize_drag(app)
@@ -4934,8 +4955,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
 
             if event.button.button == SDL.BUTTON_LEFT {
-                if tab_index, tab_ok := tab_index_at(event.button.x, event.button.y, app.tab_count); tab_ok {
-                    if !(app.tab_count > 1 && inside(event.button.x, event.button.y, tab_close_rect_for_index(tab_index))) {
+                if tab_index, tab_ok := tab_index_at(event.button.x, event.button.y, app.tab_count, f32(w), app.client_chrome); tab_ok {
+                    if !(app.tab_count > 1 && inside(event.button.x, event.button.y, tab_close_rect_for_index(tab_index, app.tab_count, f32(w), app.client_chrome))) {
                         _ = begin_tab_drag(app, tab_index)
                         return
                     }
@@ -5184,31 +5205,39 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
 draw_tabs :: proc(app: ^App, width: f32) {
     for i in 0..<app.tab_count {
         active := i == app.active_tab
-        rect := tab_rect_for_index(i)
+        rect := tab_rect_for_index(i, app.tab_count, width, app.client_chrome)
+        close_rect := tab_close_rect_for_index(i, app.tab_count, width, app.client_chrome)
+        compact := rect.w < 64
         draw_fill(app.renderer, rect, active ? palette.tab_active : palette.tab_idle)
         if active {
             underline := SDL.FRect{rect.x + 10, 37, rect.w - 20, 2}
             draw_fill(app.renderer, underline, palette.accent)
         }
 
-        title_right_pad := app.tab_count > 1 ? f32(52) : f32(28)
-        title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(rect.w - 16 - title_right_pad), c.int(rect.h)}
+        title_right_pad := close_rect.w > 0 ? f32(52) : (compact ? f32(0) : f32(20))
+        title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(max(f32(0), rect.w - 12 - title_right_pad)), c.int(rect.h)}
         _ = SDL.SetRenderClipRect(app.renderer, &title_clip)
         property_text: [1024]u8
         title, progress := tab_property_presentation(&app.tabs[i], property_text[:])
-        draw_text(app, app.ui_font, title, rect.x + 14, 14, active ? palette.text : palette.text_muted)
+        if compact {
+            number: [16]u8
+            title = fmt.bprintf(number[:], "%d", i + 1)
+            draw_text(app, app.ui_font, title, rect.x + 8, 14, active ? palette.text : palette.text_muted)
+        } else {
+            draw_text(app, app.ui_font, title, rect.x + 10, 14, active ? palette.text : palette.text_muted)
+        }
         _ = SDL.SetRenderClipRect(app.renderer, nil)
-        if app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
-            indicator_x := rect.x + rect.w - (app.tab_count > 1 ? 38 : 16)
+        if !compact && app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
+            indicator_x := rect.x + rect.w - (close_rect.w > 0 ? 38 : 12)
             draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
         }
-        if app.tab_count > 1 {
+        if close_rect.w > 0 {
             draw_text(app, app.ui_font, "x", rect.x + rect.w - 21, 14, palette.text_muted)
         }
         draw_tab_progress(app, rect, progress)
     }
 
-    plus, menu, settings := tab_controls(app.tab_count, width)
+    plus, menu, settings := tab_controls(app.tab_count, width, app.client_chrome)
     draw_fill(app.renderer, plus, palette.tab_idle)
     draw_fill(app.renderer, menu, palette.tab_idle)
     draw_fill(app.renderer, settings, palette.tab_idle)
@@ -5277,7 +5306,8 @@ history_scrollbar_geometry :: proc(
         return {}, false
     }
 
-    track := SDL.FRect{pane.x + pane.w - 5, pane.y + 6, 3, pane.h - 12}
+    content := terminal_content_rect(pane)
+    track := SDL.FRect{pane.x + pane.w - 8, content.y, 3, content.h}
     if track.h <= 0 {
         return {}, false
     }
@@ -5296,7 +5326,7 @@ history_scrollbar_geometry :: proc(
         5,
         thumb_height,
     }
-    hit := SDL.FRect{pane.x + pane.w - 14, track.y, 14, track.h}
+    hit := SDL.FRect{pane.x + pane.w - 16, track.y, 12, track.h}
     return History_Scrollbar_Geometry{
         track = track,
         thumb = thumb,
@@ -5554,9 +5584,10 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         return
     }
     lifecycle_state := session_lifecycle_state(view)
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
-    resize_owned_session_to_pane(app, view, pane.w - 20, pane.h - 12)
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
+    content := terminal_content_rect(pane)
+    resize_owned_session_to_pane(app, view, content.w, content.h)
     if draw_canvas_session(app, view, pane, origin_x, origin_y) {
         draw_search_highlight(app, view, pane)
         draw_selection(app, view, pane)
@@ -5716,8 +5747,8 @@ active_terminal_cursor_rect :: proc(
     row := min(view.cursor_row, rows - 1)
     column := min(view.cursor_column, columns - 1)
     sync.mutex_unlock(&view.mutex)
-    origin_x := pane.x + 10
-    origin_y := pane.y + 6
+    origin_x := terminal_content_rect(pane).x
+    origin_y := terminal_content_rect(pane).y
     scale := canvas_scale_value(view)
     cursor = {
         c.int(math.floor(origin_x + f32(u32(column) * u32(cell_width)) / scale)),
@@ -5925,9 +5956,6 @@ draw_placeholder_session :: proc(app: ^App) {
 }
 
 draw_terminal :: proc(app: ^App, width, height: f32) {
-    body := SDL.FRect{0, 46, width, height - 46}
-    draw_fill(app.renderer, body, palette.terminal_bg)
-
     inset := terminal_inset(width, height)
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
@@ -6139,9 +6167,10 @@ draw :: proc(app: ^App) {
     set_draw_color(app.renderer, palette.window_bg)
     _ = SDL.RenderClear(app.renderer)
 
-    tab_bar := SDL.FRect{0, 0, width, 46}
+    tab_bar := SDL.FRect{0, 0, width, HEADER_HEIGHT}
     draw_fill(app.renderer, tab_bar, palette.title_bg)
     draw_tabs(app, width)
+    draw_window_controls(app, width)
     draw_terminal(app, width, height)
 
     if app.search_open {
@@ -6274,6 +6303,11 @@ main :: proc() {
         next_session_identity = 1,
         startup_profile = 0,
     }
+    _ = SDL.SetWindowMinimumSize(window, 640, 320)
+    if !install_window_chrome(&app) {
+        sdl_error("Unified header unavailable; keeping native window decorations")
+    }
+    defer _ = SDL.SetWindowHitTest(window, nil, nil)
     if !update_text_display_scale(&app) {
         sdl_error("TTF display scale initialization failed")
         return

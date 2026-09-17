@@ -103,6 +103,15 @@ below describe defaults, not a user's persisted overrides.
 - Quake/drop-down summon mode.
 - Tab tear-out into another window and cross-window tab movement.
 
+**ACTIVE: compact desktop frame, 2026-09-17**
+
+The current iteration merges tabs/window controls, removes the nested terminal
+mat, and shares one content geometry across rendering and input. Gutter color
+comes from accepted canonical presentation. Resize rim, scrollbar and cells have
+separate hit lanes. Native drag/resize, matched caption clicks and compact tabs
+have bounded policy tests; real desktop regression coverage remains a co-op task.
+This is a source/bundle iteration, not an installer or new deployment channel.
+
 ### 2. Tabs
 
 **PROVEN**
