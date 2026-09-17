@@ -2,8 +2,9 @@
 //!
 //! This package owns client-side endpoint parsing, the frozen framed connection,
 //! handshake, bounded frame I/O, and request-result mechanics. It owns no PTY,
-//! VT, session lifecycle, discovery, remote transport, authentication, renderer,
-//! CLI presentation, or platform UI.
+//! VT, session lifecycle, discovery, renderer, CLI presentation, or platform UI.
+//! Native hosts may explicitly opt into the installed-OpenSSH carrier; SSH owns
+//! its authentication and encryption. Byte-entry consumers need no subprocess.
 
 const impl = @import("client.zig");
 

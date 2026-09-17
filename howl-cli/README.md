@@ -248,3 +248,22 @@ The CLI installer owns only `howl`. It does not install `howl-sessiond`, the SSH
 bridge, Remoter hooks, Fleet configuration, or graphical clients.
 
 Physical Unicode key identity is explicit: use `U+0061` for the physical Unicode key `a`. Ordinary committed text remains `howl type`; a bare `a` is not accepted as a physical-key spelling.
+
+
+## Native SSH attachment (Linux)
+
+The rebuilt CLI accepts the same semantic commands through an explicit SSH
+carrier, for example:
+
+```sh
+howl snapshot 'ssh://user@host/run/user/1000/session.sock' --text
+howl state 'ssh://host/run/user/1000/session.sock?bridge=/opt/howl/howl-session-bridge'
+```
+
+The target must already have an independently managed matching Howl Session and
+bridge. OpenSSH aliases, keys and trust are operator-owned; noninteractive auth
+and a known host are required. This is a binary exec channel, not `ssh` inside a
+local shell, a remote login/PTY allocator, or a remote installer. Closing the CLI
+closes only its route. Raw terminal data, images, semantic input and properties
+retain the same shared client/wire owners. See `../howl-client/README.md` for the
+bounded first endpoint spelling and its current limitations.

@@ -326,3 +326,19 @@ Private KWin qualification also exercises header drag, rim resize, native
 maximize/restore, minimize/restore, F11 fullscreen, the system menu, and caption
 close with exact teardown of three owned Sessions. These are scoped native
 controls proofs, not double-click-titlebar or mixed-monitor/hotplug acceptance.
+
+
+## Next native SSH integration
+
+The shared client and CLI have an optional Linux OpenSSH route. The Odin bridge
+has **not** opted into it yet: the current GUI still opens connections and does
+some renderer I/O on the graphical thread, and must first supply one host-owned
+I/O runtime rather than creating process-global signal lifetimes per channel.
+An existing Launch profile running `ssh host` remains unchanged and useful; it
+feeds a local Session and is not a remote Howl Session attachment.
+
+Next integration needs bounded asynchronous connection/cancellation, responsive
+window/input handling during network waits, and explicit failure/reconnect UI.
+It should consume the existing native carrier, not implement another SSH client,
+key store or terminal. Library-backed mobile SSH and local/remote PTY placement
+remain separate choices. See `../howl-client/README.md` for the route foundation.

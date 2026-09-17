@@ -48,5 +48,10 @@ pub fn build(b: *std.Build) void {
     observability.addArtifactArg(executable);
     observability.addArtifactArg(session.artifact("howl-sessiond"));
     test_step.dependOn(&observability.step);
+    const ssh_route = b.addSystemCommand(&.{ "python3", "test/ssh_route.py" });
+    ssh_route.setName("howl native SSH route failure boundaries");
+    ssh_route.setCwd(b.path("."));
+    ssh_route.addArtifactArg(executable);
+    test_step.dependOn(&ssh_route.step);
     b.default_step = check;
 }

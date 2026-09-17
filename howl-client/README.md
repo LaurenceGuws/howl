@@ -30,6 +30,53 @@ peers supplied by the caller; there is no DNS, discovery, authentication, route
 selection, or listener policy here. Session lifecycle, PTY/VT semantics, stale
 coordinate policy, UI, and rendering are deliberately outside this package.
 
+## Optional native SSH carrier
+
+`Connection.connect` / `connectDiagnosed` remain socket-only. A native embedder
+may explicitly call `Connection.connectNative(allocator, io, endpoint,
+&diagnostic)` to also accept:
+
+```text
+ssh://[user@]host[:port]/absolute/session.sock[?bridge=/absolute/howl-session-bridge]
+```
+
+The first implementation is **Linux plus installed OpenSSH**. The authority is
+an explicit SSH alias or ASCII hostname (an IPv6 destination may be configured
+behind an alias). Paths are literal ASCII without spaces/percent encoding in
+this first spelling. Unknown queries, passwords, ambiguous authorities and
+control bytes are rejected before launching anything. The bridge defaults to
+`howl-session-bridge` on the remote command PATH; an absolute override selects a
+staged/matching binary without installing or discovering one.
+
+OpenSSH uses its operator configuration and agent, with BatchMode and strict
+host-key verification, no transport PTY, agent/X11 forwarding, local forwards,
+background master or local-command hook. Prepared noninteractive authentication
+is required; unlocking/enrollment and interactive auth UI are not implemented by
+this carrier. The embedder supplies one I/O runtime that outlives its connections. The carrier
+never installs/restores process-global signal handlers per route.
+Each native connection owns its SSH process group, binary stdio
+socket and bounded sleeping stderr drain. Closing/canceling a connection never
+signals or terminates the independently managed remote Howl Session. The Howl
+handshake has a 15-second total deadline; initial SSH connect is bounded to ten
+seconds. Existing open observers remain cancellable long polls rather than idle
+connections that time out.
+
+The remote command is exactly one quoted bridge path and one quoted Session
+socket, not arbitrary shell source supplied by the caller. stderr never enters
+Howl framing; connection-failure diagnostics retain a sanitized 512-byte tail.
+No automatic route fallback, input replay, Session creation or remote deployment.
+Linux broken socket writes use per-send SIGPIPE suppression, not a process-global
+signal handler. Carrier cleanup reaps its child and configured proxy group.
+
+Native connection opening/I/O is still blocking and belongs on an embedder I/O
+worker. This API is not a universal asynchronous route registry. The Web byte
+entry and socket-only mobile host remain free of subprocess requirements.
+A library-backed mobile SSH exec channel could carry the same Howl frames; an
+SSH shell/remote PTY feeding a local VT is a different, also valid topology.
+A local OS PTY is not required merely because the terminal engine is local.
+Actual mobile library wiring, local iOS process/PTY support and broad native GUI
+slow-route/reconnect acceptance remain separate work.
+
 `howl-cli` consumes the engine and owns its human/agent command vocabulary plus
 compact text/JSON and explicit rich diagnostic formatting. The earlier generic
 NDJSON transport experiment was retired after its useful black-box proofs moved

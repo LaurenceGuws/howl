@@ -39,7 +39,12 @@ fn versionCommand(init: std.process.Init) !void {
 }
 
 fn connect(init: std.process.Init, endpoint: []const u8) !client.Connection {
-    return client.Connection.connect(init.gpa, endpoint);
+    var diagnostic: client.ConnectDiagnostic = .{};
+    return client.Connection.connectNative(init.gpa, init.io, endpoint, &diagnostic) catch |failure| {
+        if (diagnostic.route_message_len != 0)
+            std.debug.print("Howl SSH: {s}\n", .{diagnostic.route_message[0..diagnostic.route_message_len]});
+        return failure;
+    };
 }
 
 fn stdoutWriter(init: std.process.Init, buffer: []u8) std.Io.File.Writer {

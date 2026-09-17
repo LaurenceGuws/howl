@@ -1,7 +1,9 @@
+howl-client/src/client.zig|discard|if (self.ssh_process) |process| _ = process.deinit(&.{});
 howl-client/src/consequences.zig|anytype|fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
 howl-client/src/images.zig|anytype|connection: anytype,
 howl-client/src/rich.zig|anytype|fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
 howl-client/src/rich.zig|anytype|fn receiveFrom(self: *RawCache, connection: anytype) Error!View {
+howl-client/src/ssh.zig|discard|_ = value.process.deinit(&.{});
 howl-cli/src/rich_format.zig|anytype|fn emitJson(writer: *std.Io.Writer, value: anytype) !void {
 howl-host/src/window.zig|anyopaque|fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
