@@ -44,9 +44,14 @@ Current canary:
   owns its own `howl-sessiond`, PTY, observer/control clients, cancellation, and
   teardown while **Attach Home Session** remains a non-owning view of the
   existing `tcp://127.0.0.1:39601` Session;
-- tabs have stable profile-derived labels, Ctrl+Tab/reverse cycling, direct
+- tabs use canonical terminal titles with profile-name fallback, Ctrl+Tab/reverse cycling, direct
   Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
-  drag reorder through one shared ordering owner. `Ctrl+Shift+D` duplicates the
+  drag reorder through one shared ordering owner. A held chip gets an immediate
+  outline, follows the original pointer grab, and leaves an outlined destination
+  slot. Updates are input-driven; no tween timer or extra terminal texture exists.
+  Keyboard interruption retires local tab/scrollbar dragging and consumes only
+  that canceled gesture's pending left release before tab/overlay routing. TUI
+  mouse-reporting captures keep their own release path. `Ctrl+Shift+D` duplicates the
   active profile recipe into a fresh Session/view; closing a created tab retires
   only that tab's owned child Session, and closing the final single-pane tab closes
   the window;

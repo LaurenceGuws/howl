@@ -470,6 +470,9 @@ App :: struct {
     startup_profile: int,
     tab_dragging: bool,
     tab_drag_index: int,
+    tab_drag_x: f32,
+    tab_drag_grab_x: f32,
+    discard_local_drag_release: bool,
     pane_resize_node: ^Pane_Node,
     pane_resize_tab: int,
     action_bindings: [len(ACTION_DEFINITIONS)]Action_Binding,
@@ -3868,11 +3871,13 @@ finish_tab_drag :: proc(app: ^App) -> bool {
     }
     app.tab_dragging = false
     app.tab_drag_index = -1
+    app.tab_drag_x = 0
+    app.tab_drag_grab_x = 0
     _ = SDL.CaptureMouse(false)
     return true
 }
 
-begin_tab_drag :: proc(app: ^App, index: int) -> bool {
+begin_tab_drag :: proc(app: ^App, index: int, pointer_x: f32) -> bool {
     if app == nil || index < 0 || index >= app.tab_count {
         return false
     }
@@ -3882,23 +3887,42 @@ begin_tab_drag :: proc(app: ^App, index: int) -> bool {
     app.active_tab = index
     app.tab_dragging = true
     app.tab_drag_index = index
+    rect := tab_rect_for_index(index, app.tab_count, window_logical_width(app), app.client_chrome)
+    app.tab_drag_x = rect.x
+    app.tab_drag_grab_x = clamp(pointer_x - rect.x, f32(0), rect.w)
     _ = SDL.CaptureMouse(true)
     return true
 }
 
+// Follow the original grab point using the real chip, not a captured texture.
+// Slot order stays canonical and changes only at its existing midpoint boundary.
+tab_drag_rect :: proc(app: ^App, width: f32) -> SDL.FRect {
+    if app == nil || !app.tab_dragging || app.tab_drag_index < 0 ||
+       app.tab_drag_index >= app.tab_count {
+        return {}
+    }
+    rect := tab_rect_for_index(app.tab_drag_index, app.tab_count, width, app.client_chrome)
+    last := tab_rect_for_index(app.tab_count - 1, app.tab_count, width, app.client_chrome)
+    rect.x = clamp(app.tab_drag_x, TAB_X, last.x)
+    return rect
+}
+
+update_tab_drag_at_width :: proc(app: ^App, x, width: f32) -> bool {
+    if app == nil || !app.tab_dragging || app.tab_count <= 1 do return false
+    last := tab_rect_for_index(app.tab_count - 1, app.tab_count, width, app.client_chrome)
+    next_x := clamp(x - app.tab_drag_grab_x, TAB_X, last.x)
+    changed := next_x != app.tab_drag_x
+    app.tab_drag_x = next_x
+    target := tab_reorder_target(next_x, app.tab_count, width, app.client_chrome)
+    if target != app.tab_drag_index && move_tab(app, app.tab_drag_index, target) {
+        app.tab_drag_index = target
+        return true
+    }
+    return changed
+}
+
 update_tab_drag :: proc(app: ^App, x: f32) -> bool {
-    if app == nil || !app.tab_dragging || app.tab_count <= 1 {
-        return false
-    }
-    target := tab_reorder_target(x, app.tab_count, window_logical_width(app), app.client_chrome)
-    if target == app.tab_drag_index {
-        return false
-    }
-    if !move_tab(app, app.tab_drag_index, target) {
-        return false
-    }
-    app.tab_drag_index = target
-    return true
+    return update_tab_drag_at_width(app, x, window_logical_width(app))
 }
 
 tab_index_for_number_key :: proc(key: SDL.Keycode) -> (int, bool) {
@@ -4610,11 +4634,35 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
     }
 }
 
+// Keyboard interaction ends the local drag before tab/overlay routing. Its
+// eventual left release belongs to that canceled gesture, not newly exposed UI.
+// TUI mouse-reporting captures remain on their own semantic input path.
+handle_local_drag_interruption :: proc(app: ^App, event: ^SDL.Event) -> bool {
+    if app == nil || event == nil do return false
+    #partial switch event.type {
+    case .KEY_DOWN:
+        tab_ended := finish_tab_drag(app)
+        history_ended := finish_all_history_scrollbar_drags(app)
+        if tab_ended || history_ended do app.discard_local_drag_release = true
+    case .MOUSE_BUTTON_DOWN:
+        if event.button.button == SDL.BUTTON_LEFT do app.discard_local_drag_release = false
+    case .MOUSE_BUTTON_UP:
+        if event.button.button == SDL.BUTTON_LEFT && app.discard_local_drag_release {
+            app.discard_local_drag_release = false
+            return true
+        }
+    case .WINDOW_FOCUS_LOST, .WINDOW_CLOSE_REQUESTED, .QUIT:
+        app.discard_local_drag_release = false
+    }
+    return false
+}
+
 handle_event :: proc(app: ^App, event: ^SDL.Event) {
     defer {
         if event != nil && event.type == .KEY_DOWN do settings_reveal_selection(app)
     }
     track_window_pointer_cycle(app, event)
+    if handle_local_drag_interruption(app, event) do return
     if handle_window_chrome_event(app, event) do return
     if consume_owned_action_key(app, event) {
         return
@@ -4958,7 +5006,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             if event.button.button == SDL.BUTTON_LEFT {
                 if tab_index, tab_ok := tab_index_at(event.button.x, event.button.y, app.tab_count, f32(w), app.client_chrome); tab_ok {
                     if !(app.tab_count > 1 && inside(event.button.x, event.button.y, tab_close_rect_for_index(tab_index, app.tab_count, f32(w), app.client_chrome))) {
-                        _ = begin_tab_drag(app, tab_index)
+                        _ = begin_tab_drag(app, tab_index, event.button.x)
                         return
                     }
                 }
@@ -5203,39 +5251,52 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     }
 }
 
+draw_tab_chip :: proc(app: ^App, i: int, rect: SDL.FRect, width: f32) {
+    active := i == app.active_tab
+    close_rect := tab_close_rect_for_index(i, app.tab_count, width, app.client_chrome)
+    compact := rect.w < 64
+    draw_fill(app.renderer, rect, active ? palette.tab_active : palette.tab_idle)
+    if active {
+        underline := SDL.FRect{rect.x + 10, 37, rect.w - 20, 2}
+        draw_fill(app.renderer, underline, palette.accent)
+    }
+
+    title_right_pad := close_rect.w > 0 ? f32(52) : (compact ? f32(0) : f32(20))
+    title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(max(f32(0), rect.w - 12 - title_right_pad)), c.int(rect.h)}
+    _ = SDL.SetRenderClipRect(app.renderer, &title_clip)
+    property_text: [1024]u8
+    title, progress := tab_property_presentation(&app.tabs[i], property_text[:])
+    if compact {
+        number: [16]u8
+        title = fmt.bprintf(number[:], "%d", i + 1)
+        draw_text(app, app.ui_font, title, rect.x + 8, 14, active ? palette.text : palette.text_muted)
+    } else {
+        draw_text(app, app.ui_font, title, rect.x + 10, 14, active ? palette.text : palette.text_muted)
+    }
+    _ = SDL.SetRenderClipRect(app.renderer, nil)
+    if !compact && app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
+        indicator_x := rect.x + rect.w - (close_rect.w > 0 ? 38 : 12)
+        draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
+    }
+    if close_rect.w > 0 {
+        draw_text(app, app.ui_font, "x", rect.x + rect.w - 21, 14, palette.text_muted)
+    }
+    draw_tab_progress(app, rect, progress)
+}
+
 draw_tabs :: proc(app: ^App, width: f32) {
     for i in 0..<app.tab_count {
-        active := i == app.active_tab
         rect := tab_rect_for_index(i, app.tab_count, width, app.client_chrome)
-        close_rect := tab_close_rect_for_index(i, app.tab_count, width, app.client_chrome)
-        compact := rect.w < 64
-        draw_fill(app.renderer, rect, active ? palette.tab_active : palette.tab_idle)
-        if active {
-            underline := SDL.FRect{rect.x + 10, 37, rect.w - 20, 2}
-            draw_fill(app.renderer, underline, palette.accent)
-        }
-
-        title_right_pad := close_rect.w > 0 ? f32(52) : (compact ? f32(0) : f32(20))
-        title_clip := SDL.Rect{c.int(rect.x + 8), c.int(rect.y), c.int(max(f32(0), rect.w - 12 - title_right_pad)), c.int(rect.h)}
-        _ = SDL.SetRenderClipRect(app.renderer, &title_clip)
-        property_text: [1024]u8
-        title, progress := tab_property_presentation(&app.tabs[i], property_text[:])
-        if compact {
-            number: [16]u8
-            title = fmt.bprintf(number[:], "%d", i + 1)
-            draw_text(app, app.ui_font, title, rect.x + 8, 14, active ? palette.text : palette.text_muted)
+        if app.tab_dragging && i == app.tab_drag_index {
+            draw_outline(app.renderer, rect, palette.border)
         } else {
-            draw_text(app, app.ui_font, title, rect.x + 10, 14, active ? palette.text : palette.text_muted)
+            draw_tab_chip(app, i, rect, width)
         }
-        _ = SDL.SetRenderClipRect(app.renderer, nil)
-        if !compact && app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
-            indicator_x := rect.x + rect.w - (close_rect.w > 0 ? 38 : 12)
-            draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
-        }
-        if close_rect.w > 0 {
-            draw_text(app, app.ui_font, "x", rect.x + rect.w - 21, 14, palette.text_muted)
-        }
-        draw_tab_progress(app, rect, progress)
+    }
+    if app.tab_dragging && app.tab_drag_index >= 0 && app.tab_drag_index < app.tab_count {
+        rect := tab_drag_rect(app, width)
+        draw_tab_chip(app, app.tab_drag_index, rect, width)
+        draw_outline(app.renderer, rect, palette.accent)
     }
 
     plus, menu, settings := tab_controls(app.tab_count, width, app.client_chrome)

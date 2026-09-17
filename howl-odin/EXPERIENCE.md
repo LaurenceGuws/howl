@@ -124,6 +124,13 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   only disconnects that view.
 - `Ctrl+1…8` selects tab slots directly. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle,
   while `Ctrl+Shift+PageUp/PageDown` reorders the active tab.
+- Held tab chips immediately gain a small outline and follow the pointer's
+  original grab point before any reorder threshold is crossed. The destination
+  slot remains outlined. This is input-driven painting, not an animation clock,
+  texture copy, or duplicate Session state. A stationary held chip adds no timer.
+- Keyboard interruption cancels tab/scrollbar intent before navigation/overlays;
+  the canceled gesture's left release is consumed rather than clicking the new
+  surface. Unrelated buttons, fresh clicks and TUI mouse releases stay independent.
 - Pointer tab drag uses the same `move_tab` owner as keyboard reorder. A mixed
   Home/Local canary visibly changed `Home, Local A, Home, Local B` into
   `Home, Local B, Local A, Home` while both Local child PIDs remained unchanged.
