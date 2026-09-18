@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/platform_input.dart';
@@ -30,6 +31,30 @@ List<Object> actionValues(List<TerminalInputAction> actions) {
   }
   return values;
 }
+
+TextEditingDelta factoryDelta({
+  required String oldText,
+  required int start,
+  required int end,
+  required String text,
+  required int caret,
+  int composingStart = -1,
+  int composingEnd = -1,
+}) => TextEditingDelta.fromJSON(<String, dynamic>{
+  'oldText': oldText,
+  'deltaStart': start,
+  'deltaEnd': end,
+  'deltaText': text,
+  'selectionBase': caret,
+  'selectionExtent': caret,
+  'selectionAffinity': 'TextAffinity.downstream',
+  'selectionIsDirectional': false,
+  'composingBase': composingStart,
+  'composingExtent': composingEnd,
+});
+
+String guardedText(String text) =>
+    '${TerminalInputStager.leftGuard}$text${TerminalInputStager.rightGuard}';
 
 void main() {
   test('active IME composition stays local until final guarded commit', () {
@@ -162,6 +187,305 @@ void main() {
     },
   );
 
+  testWidgets('delta input belongs only to the native Linux editor', (
+    tester,
+  ) async {
+    for (final platform in TargetPlatform.values) {
+      final client = TerminalTextInputClient(
+        platformOverride: platform,
+        onCommit: (_) => fail('Configuration must not commit text'),
+        onEditKey: (_, _) => fail('Configuration must not emit keys'),
+      );
+      client.attach(viewId: tester.view.viewId);
+      expect(
+        tester.testTextInput.setClientArgs?['enableDeltaModel'],
+        !kIsWeb && platform == TargetPlatform.linux,
+        reason: platform.name,
+      );
+      client.detach();
+    }
+  });
+
+  testWidgets(
+    'Linux delta input consumes queued commits once without prefix heuristics',
+    (tester) async {
+      final committed = <String>[];
+      final client = TerminalTextInputClient(
+        platformOverride: TargetPlatform.linux,
+        onCommit: committed.add,
+        onEditKey: (_, _) => fail('Unexpected semantic edit key'),
+      );
+      client.attach(viewId: tester.view.viewId);
+      addTearDown(client.detach);
+
+      expect(tester.testTextInput.setClientArgs?['enableDeltaModel'], !kIsWeb);
+
+      const left = TerminalInputStager.leftGuard;
+      const right = TerminalInputStager.rightGuard;
+      void sendQueued(String text) {
+        var oldText = TerminalInputStager.guardText;
+        var insertionOffset = 1;
+        for (final character in text.split('')) {
+          client.updateEditingValueWithDeltas(<TextEditingDelta>[
+            TextEditingDeltaInsertion(
+              oldText: oldText,
+              textInserted: character,
+              insertionOffset: insertionOffset,
+              selection: TextSelection.collapsed(offset: insertionOffset + 1),
+              composing: TextRange.empty,
+            ),
+          ]);
+          oldText =
+              '$left${oldText.substring(1, insertionOffset)}$character$right';
+          insertionOffset += 1;
+        }
+      }
+
+      sendQueued('/bar');
+      sendQueued('abc');
+
+      expect(committed, <String>['/', 'b', 'a', 'r', 'a', 'b', 'c']);
+      expect(committed.join(), '/barabc');
+      expect(
+        client.currentTextEditingValue,
+        TerminalInputStager.canonicalValue,
+      );
+    },
+  );
+
+  test('Linux factory composition commits its final owned region', () {
+    List<Object> compose({
+      required String preedit,
+      required String committed,
+      required Matcher normalizedAs,
+    }) {
+      final staging = TerminalInputStager();
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: TerminalInputStager.guardText,
+            start: 1,
+            end: 1,
+            text: preedit,
+            caret: 1 + preedit.length,
+            composingStart: 1,
+            composingEnd: 1 + preedit.length,
+          ),
+        ),
+        isEmpty,
+      );
+      final end = factoryDelta(
+        oldText: guardedText(preedit),
+        start: 1,
+        end: 1 + preedit.length,
+        text: committed,
+        caret: 1 + committed.length,
+      );
+      expect(end, normalizedAs);
+      return actionValues(staging.updateDelta(end));
+    }
+
+    expect(
+      compose(
+        preedit: 'é',
+        committed: 'é',
+        normalizedAs: isA<TextEditingDeltaNonTextUpdate>(),
+      ),
+      <Object>['é'],
+    );
+    expect(
+      compose(
+        preedit: 'Flutter ',
+        committed: 'Flutter engine',
+        normalizedAs: isA<TextEditingDeltaInsertion>(),
+      ),
+      <Object>['Flutter engine'],
+    );
+    expect(
+      compose(
+        preedit: 'teh',
+        committed: 'the',
+        normalizedAs: isA<TextEditingDeltaReplacement>(),
+      ),
+      <Object>['the'],
+    );
+    expect(
+      compose(
+        preedit: 'ab',
+        committed: 'a',
+        normalizedAs: isA<TextEditingDeltaDeletion>(),
+      ),
+      <Object>['a'],
+    );
+  });
+
+  test(
+    'Linux composition excludes older commits and ignores cancellation and end',
+    () {
+      final staging = TerminalInputStager();
+      expect(
+        actionValues(
+          staging.updateDelta(
+            factoryDelta(
+              oldText: TerminalInputStager.guardText,
+              start: 1,
+              end: 1,
+              text: 'A',
+              caret: 2,
+            ),
+          ),
+        ),
+        <Object>['A'],
+      );
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: guardedText('A'),
+            start: 2,
+            end: 2,
+            text: 'Flutter ',
+            caret: 10,
+            composingStart: 2,
+            composingEnd: 10,
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        actionValues(
+          staging.updateDelta(
+            factoryDelta(
+              oldText: guardedText('AFlutter '),
+              start: 2,
+              end: 10,
+              text: 'Flutter engine',
+              caret: 16,
+            ),
+          ),
+        ),
+        <Object>['Flutter engine'],
+      );
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: guardedText('AFlutter engine'),
+            start: -1,
+            end: -1,
+            text: '',
+            caret: 16,
+          ),
+        ),
+        isEmpty,
+      );
+
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: TerminalInputStager.guardText,
+            start: 1,
+            end: 1,
+            text: 'cancel',
+            caret: 7,
+            composingStart: 1,
+            composingEnd: 7,
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: guardedText('cancel'),
+            start: 1,
+            end: 7,
+            text: '',
+            caret: 1,
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: TerminalInputStager.guardText,
+            start: -1,
+            end: -1,
+            text: '',
+            caret: 1,
+          ),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'Linux exact deltas preserve real repeats and reject private guards',
+    () {
+      final staging = TerminalInputStager();
+      TextEditingDelta insertion(String text) => factoryDelta(
+        oldText: TerminalInputStager.guardText,
+        start: 1,
+        end: 1,
+        text: text,
+        caret: 1 + text.length,
+      );
+
+      expect(
+        actionValues(
+          staging.updateDelta(
+            factoryDelta(
+              oldText: TerminalInputStager.guardText,
+              start: 0,
+              end: 2,
+              text: '/bar',
+              caret: 4,
+            ),
+          ),
+        ),
+        <Object>['/bar'],
+      );
+      expect(actionValues(staging.updateDelta(insertion('a'))), <Object>['a']);
+      expect(actionValues(staging.updateDelta(insertion('a'))), <Object>['a']);
+      expect(
+        staging.updateDelta(
+          insertion(
+            'x${TerminalInputStager.leftGuard}'
+            'y${TerminalInputStager.rightGuard}z',
+          ),
+        ),
+        isEmpty,
+      );
+
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: TerminalInputStager.guardText,
+            start: 1,
+            end: 1,
+            text: 'safe',
+            caret: 5,
+            composingStart: 1,
+            composingEnd: 5,
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        staging.updateDelta(
+          factoryDelta(
+            oldText: guardedText('safe'),
+            start: 1,
+            end: 5,
+            text: 'x${TerminalInputStager.leftGuard}y',
+            caret: 4,
+          ),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   testWidgets(
     'Flutter text input channel withholds preedit and emits one commit',
     (tester) async {
@@ -248,6 +572,7 @@ void main() {
       expect(platformInput.inputType, TextInputType.visiblePassword);
 
       final client = TerminalTextInputClient(
+        platformOverride: TargetPlatform.android,
         inputType: platformInput.inputType,
         onCommit: (_) {},
         onEditKey: (_, _) {},
@@ -259,6 +584,7 @@ void main() {
           tester.testTextInput.setClientArgs?['inputType']
               as Map<String, dynamic>?;
       expect(inputType?['name'], 'TextInputType.visiblePassword');
+      expect(tester.testTextInput.setClientArgs?['enableDeltaModel'], isFalse);
       expect(
         tester.testTextInput.editingState?['text'],
         TerminalInputStager.guardText,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
@@ -117,14 +118,78 @@ final class TerminalInputStager {
         leftCount * leftGuard.length,
         text.length - rightGuard.length,
       );
-      if (!committed.contains(leftGuard) && !committed.contains(rightGuard)) {
-        actions.addAll(_committedActions(committed));
-      }
+      actions.addAll(_safeCommittedActions(committed));
     } else if (!text.contains(leftGuard) && !text.contains(rightGuard)) {
       // Some IMEs replace the entire editable on commit instead of preserving
       // surrounding content. Empty replacement is ambiguous and intentionally
       // produces no terminal action.
-      actions.addAll(_committedActions(text));
+      actions.addAll(_safeCommittedActions(text));
+    }
+
+    _value = _canonicalValue;
+    return actions;
+  }
+
+  /// Consumes one exact native edit without treating its cumulative old text
+  /// as newly committed terminal input.
+  List<TerminalInputAction> updateDelta(TextEditingDelta delta) {
+    final previous = _value;
+    final wasComposing =
+        previous.composing.isValid && !previous.composing.isCollapsed;
+    final next = delta.apply(previous);
+    _value = next;
+    if (next.composing.isValid && !next.composing.isCollapsed) {
+      return const <TerminalInputAction>[];
+    }
+
+    if (wasComposing) {
+      // Linux may normalize the final commit to any delta subclass. The old
+      // composing start and final collapsed caret delimit only this client's
+      // preedit, excluding older committed text still retained by the engine.
+      final start = previous.composing.start;
+      final end = next.selection.extentOffset;
+      final committed =
+          next.selection.isValid &&
+              next.selection.isCollapsed &&
+              start >= 0 &&
+              end >= start &&
+              end <= next.text.length
+          ? next.text.substring(start, end)
+          : '';
+      _value = _canonicalValue;
+      return _safeCommittedActions(committed);
+    }
+
+    List<TerminalInputAction> actions;
+    switch (delta) {
+      case TextEditingDeltaInsertion(:final textInserted):
+        actions = _safeCommittedActions(textInserted);
+      case TextEditingDeltaReplacement(:final replacementText):
+        actions = _safeCommittedActions(replacementText);
+      case TextEditingDeltaDeletion(:final textDeleted):
+        if (textDeleted.isEmpty) {
+          actions = const <TerminalInputAction>[];
+        } else if (textDeleted.runes.every((rune) => rune == 0xE000)) {
+          actions = <TerminalInputAction>[
+            TerminalEditKeyAction(
+              TerminalEditKey.backspace,
+              count: textDeleted.runes.length,
+            ),
+          ];
+        } else if (textDeleted.runes.every((rune) => rune == 0xE001)) {
+          actions = <TerminalInputAction>[
+            TerminalEditKeyAction(
+              TerminalEditKey.delete,
+              count: textDeleted.runes.length,
+            ),
+          ];
+        } else {
+          actions = const <TerminalInputAction>[];
+        }
+      case TextEditingDeltaNonTextUpdate():
+        actions = const <TerminalInputAction>[];
+      default:
+        actions = const <TerminalInputAction>[];
     }
 
     _value = _canonicalValue;
@@ -133,6 +198,13 @@ final class TerminalInputStager {
 
   void reset() {
     _value = _canonicalValue;
+  }
+
+  static List<TerminalInputAction> _safeCommittedActions(String text) {
+    if (text.contains(leftGuard) || text.contains(rightGuard)) {
+      return const <TerminalInputAction>[];
+    }
+    return _committedActions(text);
   }
 
   static List<TerminalInputAction> _committedActions(String text) {
@@ -166,22 +238,28 @@ final class TerminalInputStager {
   }
 }
 
-final class TerminalTextInputClient with TextInputClient {
+final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
   TerminalTextInputClient({
     required this.onCommit,
     required this.onEditKey,
     this.inputType = TextInputType.text,
+    this.platformOverride,
     int backspaceRunway = 1,
   }) : _stager = TerminalInputStager(backspaceRunway: backspaceRunway);
 
   final void Function(String text) onCommit;
   final void Function(TerminalEditKey key, int count) onEditKey;
   final TextInputType inputType;
+  final TargetPlatform? platformOverride;
   final TerminalInputStager _stager;
   TextInputConnection? _connection;
   int? _viewId;
 
   bool get attached => _connection?.attached ?? false;
+
+  bool get _usesDeltaModel =>
+      !kIsWeb &&
+      (platformOverride ?? defaultTargetPlatform) == TargetPlatform.linux;
 
   TextInputConfiguration _configuration(int viewId) => TextInputConfiguration(
     viewId: viewId,
@@ -193,6 +271,7 @@ final class TerminalTextInputClient with TextInputClient {
     enableSuggestions: false,
     enableInteractiveSelection: false,
     enableIMEPersonalizedLearning: false,
+    enableDeltaModel: _usesDeltaModel,
   );
 
   void attach({required int viewId}) {
@@ -234,6 +313,26 @@ final class TerminalTextInputClient with TextInputClient {
   void updateEditingValue(TextEditingValue value) {
     final actions = _stager.update(value);
     if (_stager.value != value) {
+      _connection?.setEditingState(_stager.value);
+    }
+    for (final action in actions) {
+      switch (action) {
+        case TerminalCommittedText(:final text):
+          onCommit(text);
+        case TerminalEditKeyAction(:final key, :final count):
+          onEditKey(key, count);
+      }
+    }
+  }
+
+  @override
+  void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
+    final actions = <TerminalInputAction>[];
+    for (final delta in textEditingDeltas) {
+      actions.addAll(_stager.updateDelta(delta));
+    }
+    final composing = _stager.value.composing;
+    if (!composing.isValid || composing.isCollapsed) {
       _connection?.setEditingState(_stager.value);
     }
     for (final action in actions) {

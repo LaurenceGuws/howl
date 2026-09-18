@@ -179,21 +179,20 @@ NativeHostFrame parseNativeHostPacket(
   }
   final flags = data.getUint32(20, Endian.little);
   final columns = data.getUint16(54, Endian.little);
-  final selectionRows = List<TerminalSelectionRowShape>.generate(
-    rows,
-    (row) {
-      final encoded = data.getUint16(selectionRowsOffset + row * 2, Endian.little);
-      final contentEndExclusive = encoded & 0x7fff;
-      if (contentEndExclusive > columns) {
-        throw const NativeHostException('packet_selection_rows');
-      }
-      return TerminalSelectionRowShape(
-        contentEndExclusive: contentEndExclusive,
-        wrapped: encoded & 0x8000 != 0,
-      );
-    },
-    growable: false,
-  );
+  final selectionRows = List<TerminalSelectionRowShape>.generate(rows, (row) {
+    final encoded = data.getUint16(
+      selectionRowsOffset + row * 2,
+      Endian.little,
+    );
+    final contentEndExclusive = encoded & 0x7fff;
+    if (contentEndExclusive > columns) {
+      throw const NativeHostException('packet_selection_rows');
+    }
+    return TerminalSelectionRowShape(
+      contentEndExclusive: contentEndExclusive,
+      wrapped: encoded & 0x8000 != 0,
+    );
+  }, growable: false);
   final metadata = NativeHostMetadata(
     revision: data.getUint64(24, Endian.little),
     terminalRevision: data.getUint64(32, Endian.little),
@@ -303,8 +302,7 @@ Uint8List encodeNativeHostResidency(
   for (final value in preloaded) {
     final logical = (value.resource.key.source, value.resource.key.resource);
     final prior = resources[logical];
-    if (prior == null ||
-        value.resource.key.generation > prior.key.generation) {
+    if (prior == null || value.resource.key.generation > prior.key.generation) {
       resources[logical] = value.resource;
     }
   }
@@ -393,10 +391,13 @@ final class NativeHostObserver {
   int _nextId = 1;
   bool _closed = false;
 
+  /// Selects the native delta/raw-cache policy for live observations, including
+  /// one prearmed delta request. False uses compressed complete snapshots.
+  /// Dart's display overlap is independent of this native policy.
   static Future<NativeHostObserver> createPlatform({
     required String endpoint,
     required TerminalPresentation presentation,
-    bool armNextLiveObservation = false,
+    bool useLiveDeltas = false,
   }) async {
     final fonts = await _nativeHostFonts();
     return create(
@@ -405,7 +406,7 @@ final class NativeHostObserver {
       fallbackFontPath: fonts.fallback,
       secondaryFallbackFontPath: fonts.secondaryFallback,
       presentation: presentation,
-      armNextLiveObservation: armNextLiveObservation,
+      useLiveDeltas: useLiveDeltas,
     );
   }
 
@@ -415,21 +416,21 @@ final class NativeHostObserver {
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
     required TerminalPresentation presentation,
-    bool armNextLiveObservation = false,
+    bool useLiveDeltas = false,
   }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
     final dylib = _nativeHostLibrary();
-    final cancelCancellation = dylib.lookupFunction<
-      _CancellationCancelNative,
-      _CancellationCancelDart
-    >('howl_native_host_cancellation_cancel');
-    final destroyCancellation = dylib.lookupFunction<
-      _CancellationDestroyNative,
-      _CancellationDestroyDart
-    >('howl_native_host_cancellation_destroy');
+    final cancelCancellation = dylib
+        .lookupFunction<_CancellationCancelNative, _CancellationCancelDart>(
+          'howl_native_host_cancellation_cancel',
+        );
+    final destroyCancellation = dylib
+        .lookupFunction<_CancellationDestroyNative, _CancellationDestroyDart>(
+          'howl_native_host_cancellation_destroy',
+        );
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeHostWorker,
       <Object?>[
@@ -439,7 +440,7 @@ final class NativeHostObserver {
         primaryFontPath,
         fallbackFontPath,
         secondaryFallbackFontPath,
-        armNextLiveObservation,
+        useLiveDeltas,
         presentation.fontPixels,
         presentation.cellWidth,
         presentation.lineHeight,
@@ -654,46 +655,46 @@ Future<String> _fontconfigFile(String family) async {
   return path;
 }
 
-typedef _CreateNative =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Uint16,
-      ffi.Uint16,
-      ffi.Uint16,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _CreateDart =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      int,
-      int,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Size>,
-    );
+typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationCreateNative =
-    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationCreateDart =
-    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationCreateNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+);
+typedef _CancellationCreateDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+);
 typedef _CancellationCancelNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
 typedef _CancellationCancelDart = int Function(ffi.Pointer<ffi.Void>);
 typedef _CancellationDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
@@ -702,57 +703,51 @@ typedef _OutputMinimumBytesNative = ffi.Size Function();
 typedef _OutputMinimumBytesDart = int Function();
 typedef _ImageRefillSizeNative = ffi.Size Function(ffi.Pointer<ffi.Void>);
 typedef _ImageRefillSizeDart = int Function(ffi.Pointer<ffi.Void>);
-typedef _FetchImageRefillNative =
-    ffi.Int32 Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _FetchImageRefillDart =
-    int Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _ObserveNative =
-    ffi.Int32 Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Uint64,
-      ffi.Uint32,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _ObserveDart =
-    int Function(
-      ffi.Pointer<ffi.Void>,
-      int,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _SetLiveObservePipelineNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
+typedef _FetchImageRefillNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _FetchImageRefillDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ObserveNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ObserveDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _SetLiveObservePipelineNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+);
 typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
 typedef _PresentationBoundNative = ffi.Uint32 Function();
 typedef _PresentationBoundDart = int Function();
 
-ffi.DynamicLibrary _nativeHostLibrary() =>
-    Platform.isIOS
-        ? ffi.DynamicLibrary.process()
-        : ffi.DynamicLibrary.open('libhowl_native_host.so');
+ffi.DynamicLibrary _nativeHostLibrary() => Platform.isIOS
+    ? ffi.DynamicLibrary.process()
+    : ffi.DynamicLibrary.open('libhowl_native_host.so');
 
-String _nativeCreateDiagnostic(
-  ffi.Pointer<ffi.Uint8> bytes,
-  int length,
-) {
+String _nativeCreateDiagnostic(ffi.Pointer<ffi.Uint8> bytes, int length) {
   if (length <= 0 || length > _nativeCreateDiagnosticBytes) return '';
   return utf8
       .decode(bytes.asTypedList(length), allowMalformed: true)
@@ -767,7 +762,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final primary = init[3]! as String;
   final fallback = init[4]! as String;
   final secondaryFallback = init[5]! as String;
-  final armNextLiveObservation = init[6]! as bool;
+  final useLiveDeltas = init[6]! as bool;
   final fontPixels = init[7]! as int;
   final cellWidth = init[8]! as int;
   final lineHeight = init[9]! as int;
@@ -780,18 +775,18 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
-  final createCancellation = dylib.lookupFunction<
-    _CancellationCreateNative,
-    _CancellationCreateDart
-  >('howl_native_host_cancellation_create');
-  final maximumRows = dylib.lookupFunction<
-    _PresentationBoundNative,
-    _PresentationBoundDart
-  >('howl_native_host_maximum_rows')();
-  final maximumColumns = dylib.lookupFunction<
-    _PresentationBoundNative,
-    _PresentationBoundDart
-  >('howl_native_host_maximum_columns')();
+  final createCancellation = dylib
+      .lookupFunction<_CancellationCreateNative, _CancellationCreateDart>(
+        'howl_native_host_cancellation_create',
+      );
+  final maximumRows = dylib
+      .lookupFunction<_PresentationBoundNative, _PresentationBoundDart>(
+        'howl_native_host_maximum_rows',
+      )();
+  final maximumColumns = dylib
+      .lookupFunction<_PresentationBoundNative, _PresentationBoundDart>(
+        'howl_native_host_maximum_columns',
+      )();
   if (maximumRows <= 0 ||
       maximumRows > 0xffff ||
       maximumColumns <= 0 ||
@@ -800,8 +795,8 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     commands.close();
     return;
   }
-  final outputMinimumBytes =
-      dylib.lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
+  final outputMinimumBytes = dylib
+      .lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
         'howl_native_host_output_minimum_bytes',
       )();
   if (outputMinimumBytes <
@@ -822,10 +817,11 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final observe = dylib.lookupFunction<_ObserveNative, _ObserveDart>(
     'howl_native_host_observe',
   );
-  final setLiveObservePipeline = dylib.lookupFunction<
-    _SetLiveObservePipelineNative,
-    _SetLiveObservePipelineDart
-  >('howl_native_host_set_live_observe_pipeline');
+  final setLiveObservePipeline = dylib
+      .lookupFunction<
+        _SetLiveObservePipelineNative,
+        _SetLiveObservePipelineDart
+      >('howl_native_host_set_live_observe_pipeline');
 
   ffi.Pointer<ffi.Uint8> copyString(String value) {
     final encoded = utf8.encode(value);
@@ -841,10 +837,9 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final endpointPointer = copyString(endpoint);
   final primaryPointer = copyString(primary);
   final fallbackPointer = copyString(fallback);
-  final secondaryFallbackPointer =
-      secondaryFallbackBytes.isEmpty
-          ? ffi.nullptr
-          : copyString(secondaryFallback);
+  final secondaryFallbackPointer = secondaryFallbackBytes.isEmpty
+      ? ffi.nullptr
+      : copyString(secondaryFallback);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
   final host = create(
@@ -887,7 +882,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   calloc.free(diagnosticPointer);
   calloc.free(diagnosticLength);
 
-  if (armNextLiveObservation && setLiveObservePipeline(host, 1) != 0) {
+  if (useLiveDeltas && setLiveObservePipeline(host, 1) != 0) {
     destroy(host);
     ready.send('worker_live_observe_pipeline');
     commands.close();
@@ -1218,100 +1213,125 @@ enum _NativeControlOperation {
   close,
 }
 
-typedef _ControlCreateNative =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _ControlCreateDart =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Size>,
-    );
+typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
-typedef _ControlTextNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, ffi.Size);
-typedef _ControlTextDart =
-    int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, int);
-typedef _ControlNamedNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8, ffi.Uint8, ffi.Uint8);
+typedef _ControlTextNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+);
+typedef _ControlTextDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+);
+typedef _ControlNamedNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+  ffi.Uint8,
+  ffi.Uint8,
+);
 typedef _ControlNamedDart = int Function(ffi.Pointer<ffi.Void>, int, int, int);
-typedef _ControlUnicodeNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint32, ffi.Uint8, ffi.Uint8);
-typedef _ControlUnicodeDart =
-    int Function(ffi.Pointer<ffi.Void>, int, int, int);
-typedef _ControlFocusNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
+typedef _ControlUnicodeNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint32,
+  ffi.Uint8,
+  ffi.Uint8,
+);
+typedef _ControlUnicodeDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+);
+typedef _ControlFocusNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+);
 typedef _ControlFocusDart = int Function(ffi.Pointer<ffi.Void>, int);
-typedef _ControlResizeNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint16, ffi.Uint16);
+typedef _ControlResizeNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint16,
+  ffi.Uint16,
+);
 typedef _ControlResizeDart = int Function(ffi.Pointer<ffi.Void>, int, int);
-typedef _ControlSignalNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
+typedef _ControlSignalNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+);
 typedef _ControlSignalDart = int Function(ffi.Pointer<ffi.Void>, int);
-typedef _ControlMouseNative =
-    ffi.Int32 Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Uint8,
-      ffi.Uint8,
-      ffi.Uint8,
-      ffi.Uint8,
-      ffi.Int32,
-      ffi.Uint16,
-      ffi.Uint8,
-      ffi.Uint32,
-      ffi.Uint32,
-    );
-typedef _ControlMouseDart =
-    int Function(
-      ffi.Pointer<ffi.Void>,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-    );
-typedef _ControlInteractionStateNative =
-    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, ffi.Size);
-typedef _ControlInteractionStateDart =
-    int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, int);
-typedef _ControlTextExtractNative =
-    ffi.Int32 Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Int32,
-      ffi.Uint16,
-      ffi.Int32,
-      ffi.Uint16,
-      ffi.Uint16,
-      ffi.Uint8,
-      ffi.Pointer<ffi.Uint8>,
-      ffi.Size,
-      ffi.Pointer<ffi.Size>,
-    );
-typedef _ControlTextExtractDart =
-    int Function(
-      ffi.Pointer<ffi.Void>,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-      ffi.Pointer<ffi.Uint8>,
-      int,
-      ffi.Pointer<ffi.Size>,
-    );
+typedef _ControlMouseNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+  ffi.Uint8,
+  ffi.Uint8,
+  ffi.Uint8,
+  ffi.Int32,
+  ffi.Uint16,
+  ffi.Uint8,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef _ControlMouseDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+);
+typedef _ControlInteractionStateNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+);
+typedef _ControlInteractionStateDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+);
+typedef _ControlTextExtractNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+  ffi.Uint16,
+  ffi.Int32,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint8,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlTextExtractDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 
 Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
@@ -1351,10 +1371,11 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final mouse = dylib.lookupFunction<_ControlMouseNative, _ControlMouseDart>(
     'howl_native_control_mouse',
   );
-  final interactionState = dylib.lookupFunction<
-    _ControlInteractionStateNative,
-    _ControlInteractionStateDart
-  >('howl_native_control_interaction_state');
+  final interactionState = dylib
+      .lookupFunction<
+        _ControlInteractionStateNative,
+        _ControlInteractionStateDart
+      >('howl_native_control_interaction_state');
   final textExtract = dylib
       .lookupFunction<_ControlTextExtractNative, _ControlTextExtractDart>(
         'howl_native_control_text_extract',

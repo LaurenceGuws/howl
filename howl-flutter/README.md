@@ -122,12 +122,19 @@ remains the sole owner which destroys the native Host. This prevents idle
 presentation restarts from accumulating stale session clients without closing
 the same fd from two owners.
 
-Live presentation is latest-frame paced like the maintained Web client. Flutter
-requests the next canonical observation only after the previous frame reaches
-`endOfFrame`; Session then materializes the newest eligible revision. Short PTY
-redraw bursts therefore collapse before native rich decode and Canvas projection
-instead of building presentation backlog. Continuous animation still renders at
-the available display cadence because a newer canonical revision remains ready.
+TCP live presentation permits one pending native observation while Flutter waits for
+`endOfFrame`. That pending result owns only copied bytes, including any refill
+pixels; decoding `ui.Image` resources, adopting a lease, and retiring the previous
+lease remain sequential. A failed pending future stays observable by the next
+iteration, while observer cancellation can safely abandon it during restart or
+disposal. There is no frame queue or unbounded asynchronous image retirement.
+
+The Flutter host selects its existing native observation policy locally: Unix
+uses live row deltas, raw-cache reuse and native request prearming, retaining
+its display-boundary coalescing; TCP uses compressed complete snapshots. `useLiveDeltas` names that coupled native policy,
+not Dart display scheduling. History remains on compressed snapshots. No policy
+is imposed on the Web, Odin or Vulkan hosts, and canonical Session progress never
+waits for a client display boundary.
 
 Android accessibility is projected from the same immutable `howl-client.view`
 used by the native renderer; Flutter does not OCR its Canvas or maintain a
@@ -145,6 +152,12 @@ allowance is exhausted the visual frame still succeeds and the accessibility
 node discloses that its visible-text projection was truncated.
 
 ## Linux
+
+Native Linux uses GTK's exact text-edit deltas rather than interpreting queued
+cumulative editor snapshots as new terminal text. Active composition stays local
+until its final transition, including commits normalized by Flutter into insertion
+or non-text updates. Private guard characters never enter the terminal. Android
+and iOS keep their existing full-value IME and backspace-runway path.
 
 For an interactive Home/Linux comparison against the same local PTY as the Web
 client, run from the repository root:

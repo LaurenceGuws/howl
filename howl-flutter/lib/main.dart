@@ -297,7 +297,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         presentation: nativePresentation,
-        armNextLiveObservation: true,
+        // Keep cheap local row-delta reuse on Unix. TCP uses the existing
+        // compressed complete-snapshot path; native delta prearming is part
+        // of that alternative policy, not Dart's display overlap below.
+        useLiveDeltas: widget.endpoint.unixPath != null,
       );
       _diagnostics.record(
         'Observer',
@@ -342,18 +345,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       }
       var revision = 0;
       var loggedFirstFrame = false;
+      Future<NativeHostObservation>? prefetched;
       while (!_stopping && generation == _transportGeneration) {
-        // Match Web's latest-frame policy: only ask Session for the next live
-        // observation after the previous frame reached the display boundary.
-        // Session materializes the newest eligible canonical revision, so PTY
-        // bursts collapse before native rich decode / Canvas projection.
+        // One native observation may overlap the previous display boundary.
+        // It owns bytes only: image decoding/adoption stays in this loop, so
+        // abandoning a prefetched result cannot strand ui.Image resources.
         final observed = await _observeNativeFrame(
           observer: observer,
           afterRevision: revision,
           historyOffset: 0,
           lease: _nativeLiveLease,
           transportGeneration: generation,
+          prefetched: prefetched,
         );
+        prefetched = null;
         if (presentationChanged()) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           throw const _PresentationRestart();
@@ -414,6 +419,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() {});
         }
+        // TCP receive can overlap display pacing. Unix retains its existing
+        // display-boundary coalescing instead of importing network policy.
+        if (widget.endpoint.tcpPort != null) {
+          prefetched = Future<NativeHostObservation>.sync(
+            () => observer!.observe(
+              afterRevision: revision,
+              historyOffset: 0,
+              residency: encodeNativeHostResidency(_nativeLiveLease),
+            ),
+          );
+          // Failure may arrive before the next await. Keep that failure for
+          // the consumer, but handle it if restart/dispose abandons the bytes.
+          prefetched.ignore();
+        }
         await WidgetsBinding.instance.endOfFrame;
         for (final image in prepared.retired) {
           image.dispose();
@@ -444,19 +463,23 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     required int historyOffset,
     required NativeCanvasLease? lease,
     int? transportGeneration,
+    Future<NativeHostObservation>? prefetched,
   }) async {
     final preloaded = <(int, int), NativeCanvasPreloadedResource>{};
     var supersessions = 0;
     try {
       while (true) {
-        final future = observer.observe(
-          afterRevision: afterRevision,
-          historyOffset: historyOffset,
-          residency: encodeNativeHostResidency(
-            lease,
-            preloaded: preloaded.values,
-          ),
-        );
+        final future =
+            prefetched ??
+            observer.observe(
+              afterRevision: afterRevision,
+              historyOffset: historyOffset,
+              residency: encodeNativeHostResidency(
+                lease,
+                preloaded: preloaded.values,
+              ),
+            );
+        prefetched = null;
         final observation = transportGeneration == null
             ? await future
             : await _observeOrTransportFault(future, transportGeneration);
