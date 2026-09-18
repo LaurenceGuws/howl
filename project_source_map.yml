@@ -53,8 +53,10 @@ experimental:
     transactional Vulkan residency; physical xkb keyboard facts cross a dedicated
     bounded Input owner, while Wayland pointer facts cross Render-owned pane/cell
     projection into the existing semantic mouse action with causal ordered
-    button/wheel and coalesced motion; native host scrollback/alternate-scroll
-    wheel policy remains separate; not part of the core gate
+    button/wheel and coalesced motion; the canonical one-pane path also owns
+    mode-aware wheel policy for local retained-history scrollback and DECSET 1007
+    alternate-scroll, with history observations isolated from the live long-poll;
+    split/tab scrollback remains separate; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

@@ -24,11 +24,13 @@ pub const HostCommandKind = enum {
     new_tab,
     next_tab,
     close_created,
+    history_scroll,
 };
 
 pub const HostCommand = struct {
     kind: HostCommandKind,
     pane: u8,
+    amount: i16 = 0,
 };
 
 pub const PaneAttachKind = enum { split_horizontal, split_vertical, tab };
@@ -70,6 +72,8 @@ const SequencedPointer = struct {
 /// Routes one Render-projected semantic terminal mouse occurrence to Input.
 pub const RoutedMouse = struct {
     scene_index: u8,
+    history_offset: u32,
+    alternate_screen: bool,
     value: protocol.MouseInput,
 };
 

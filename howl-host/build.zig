@@ -137,6 +137,18 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&layout_tests.step);
 
+    const scrollback_tests = b.addTest(.{
+        .name = "howl-host-scrollback",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/scrollback.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&scrollback_tests.step);
+
     const input_test_module = b.createModule(.{
         .root_source_file = b.path("src/input_owner.zig"),
         .target = target,
@@ -206,6 +218,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(layout_tests).step);
+    test_step.dependOn(&b.addRunArtifact(scrollback_tests).step);
     test_step.dependOn(&b.addRunArtifact(input_tests).step);
     test_step.dependOn(&b.addRunArtifact(fast_tests).step);
     test_step.dependOn(&b.addRunArtifact(scene_tests).step);

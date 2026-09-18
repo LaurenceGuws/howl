@@ -49,6 +49,10 @@ pub const Prepared = struct {
     width: u16,
     height: u16,
     session_revision: u64,
+    history_offset: u32,
+    history_count: u32,
+    history_row_base: u32,
+    alternate_screen: bool,
     leader_present: bool,
     you_are_leader: bool,
     mode: union(enum) {
@@ -225,6 +229,22 @@ pub const Scene = struct {
         return self.connection.cancellation();
     }
 
+    /// Replaces only the live observation stream after a host-local history
+    /// excursion. Render/text/backend state remains resident; any old pending
+    /// long-poll dies with the retired connection and cannot replay stale pixels.
+    pub fn resetObserver(self: *Scene, endpoint: []const u8) !void {
+        if (endpoint.len == 0) return error.InvalidEndpoint;
+        var replacement = try client.Connection.connect(self.allocator, endpoint);
+        errdefer replacement.deinit();
+        const replacement_cache = client.rich.RawCache.init(self.allocator);
+
+        self.connection.deinit();
+        self.raw_cache.deinit();
+        self.connection = replacement;
+        self.raw_cache = replacement_cache;
+        self.observation_pending = false;
+    }
+
     /// Arms one revision-relative delta observation without receiving it yet.
     pub fn arm(self: *Scene, after_revision: u64) !void {
         if (self.observation_pending) return error.ObservationPending;
@@ -242,13 +262,40 @@ pub const Scene = struct {
         if (!self.observation_pending) return error.ObservationNotPending;
         const rich = try self.raw_cache.receive(&self.connection);
         self.observation_pending = false;
+        return self.prepareRich(&rich, &self.connection);
+    }
+
+    /// Requests and projects one complete historical observation on a caller-owned
+    /// control connection. Revision zero deliberately establishes a fresh baseline
+    /// for the requested history offset without disturbing the live observer cache.
+    pub fn prepareHistory(
+        self: *Scene,
+        connection: *client.Connection,
+        history_offset: u32,
+    ) !Prepared {
+        var snapshot = try client.rich.requestRaw(
+            connection,
+            self.allocator,
+            0,
+            history_offset,
+        );
+        defer snapshot.deinit();
+        const rich = snapshot.view();
+        return self.prepareRich(&rich, connection);
+    }
+
+    fn prepareRich(
+        self: *Scene,
+        rich: *const client.rich.View,
+        refill_connection: *client.Connection,
+    ) !Prepared {
         const begin = rich.begin;
         const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch
             return error.InvalidGeometry;
         const height = std.math.mul(u16, begin.rows, self.cell_size.height) catch
             return error.InvalidGeometry;
         if (width == 0 or height == 0) return error.InvalidGeometry;
-        if (try self.fast.prepare(&rich, width, height)) |fast| {
+        if (try self.fast.prepare(rich, width, height)) |fast| {
             var plan = empty_plan;
             var overlay_pending = false;
             if (fast.overlay_frame.commands.len != 0) {
@@ -257,23 +304,14 @@ pub const Scene = struct {
                 plan = try self.builder.build(&self.overlay_residency, fast.overlay_frame);
                 overlay_pending = true;
             }
-            return .{
-                .rows = begin.rows,
-                .cols = begin.columns,
-                .width = width,
-                .height = height,
-                .session_revision = begin.revision,
-                .leader_present = begin.leader_present,
-                .you_are_leader = begin.you_are_leader,
-                .mode = .{ .fast = .{
-                    .terminal = fast,
-                    .plan = plan,
-                    .overlay_pending = overlay_pending,
-                } },
-            };
+            return preparedEnvelope(begin, width, height, .{ .fast = .{
+                .terminal = fast,
+                .plan = plan,
+                .overlay_pending = overlay_pending,
+            } });
         }
 
-        const view = try client.view.projectView(self.allocator, &rich);
+        const view = try client.view.projectView(self.allocator, rich);
         defer client.view.deinit(view);
         const graphics = client.view.graphics(view);
         var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
@@ -305,6 +343,7 @@ pub const Scene = struct {
         var external_upload_count: usize = 0;
         defer clearExternalUploads(&external_uploads, &external_upload_count);
         try self.prepareExternalUploads(
+            refill_connection,
             bindings,
             &canvas_residency_count,
             &external_uploads,
@@ -330,20 +369,12 @@ pub const Scene = struct {
         try self.residency.stage(generic);
         errdefer self.residency.discard();
         const plan = try self.builder.build(&self.residency, generic);
-        return .{
-            .rows = begin.rows,
-            .cols = begin.columns,
-            .width = width,
-            .height = height,
-            .session_revision = begin.revision,
-            .leader_present = begin.leader_present,
-            .you_are_leader = begin.you_are_leader,
-            .mode = .{ .generic = .{ .plan = plan } },
-        };
+        return preparedEnvelope(begin, width, height, .{ .generic = .{ .plan = plan } });
     }
 
     fn prepareExternalUploads(
         self: *Scene,
+        refill_connection: *client.Connection,
         bindings: []const terminal.ExternalImageBinding,
         canvas_residency_count: *usize,
         uploads: *[terminal.maximum_external_images]ExternalUpload,
@@ -362,7 +393,7 @@ pub const Scene = struct {
             const binding = findImageBindingByResource(bindings, external.resource) orelse
                 return error.InvalidFrame;
             var fetched = try client.images.request(
-                &self.connection,
+                refill_connection,
                 self.allocator,
                 binding.image_id,
                 binding.generation,
@@ -419,6 +450,28 @@ pub const Scene = struct {
         try self.residency.complete();
     }
 };
+
+fn preparedEnvelope(
+    begin: @import("howl_session").protocol.SnapshotBegin,
+    width: u16,
+    height: u16,
+    mode: @FieldType(Prepared, "mode"),
+) Prepared {
+    return .{
+        .rows = begin.rows,
+        .cols = begin.columns,
+        .width = width,
+        .height = height,
+        .session_revision = begin.revision,
+        .history_offset = begin.history_offset,
+        .history_count = begin.history_count,
+        .history_row_base = begin.history_row_base,
+        .alternate_screen = begin.alternate_screen,
+        .leader_present = begin.leader_present,
+        .you_are_leader = begin.you_are_leader,
+        .mode = mode,
+    };
+}
 
 fn clearExternalUploads(
     uploads: *[terminal.maximum_external_images]ExternalUpload,

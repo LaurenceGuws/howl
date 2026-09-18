@@ -30,9 +30,13 @@ The current live loop deliberately bounds presentation backlog by compositor
 release while canonical Session progress remains observer-independent. It is a
 correctness baseline, not the final latency scheduler.
 
-Terminal mouse transport is now live, but host wheel policy is intentionally not
-claimed complete: primary-screen scrollback and alternate-screen alternate-scroll
-behavior still need a native-host policy owner when terminal mouse tracking is off.
+Terminal wheel policy is live on the canonical one-pane path. Mouse-tracking
+applications receive semantic wheel reports; an ordinary primary screen owns local
+retained-history scrollback; alternate screen + DECSET 1007 emits plain Up/Down
+key cycles. History observations use the existing Render control connection while
+the live long-poll remains isolated, and returning to live replaces that observer
+with a revision-zero baseline so stale queued cuts cannot replay. Split/tab
+scrollback remains outside this first happy-path slice.
 
 Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
 cost, and memory slope before optimizing scheduling. The current physical typing

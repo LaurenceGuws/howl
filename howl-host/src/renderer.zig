@@ -4,6 +4,7 @@ const std = @import("std");
 const c = @import("renderer_c");
 const client = @import("howl_client");
 const host_layout = @import("layout.zig");
+const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 const session_process = @import("session_process.zig");
 const terminal_scene = @import("terminal_scene.zig");
@@ -78,6 +79,8 @@ const PointerProjection = struct {
     display_scale_120: u32,
     mux: *host_layout.Mux,
     scene_panes: *const [2]?host_layout.PaneId,
+    prepared: *const [2]terminal_scene.Prepared,
+    history: *const [2]scrollback.State,
     scene_count: usize,
     workspace_rows: u16,
     workspace_cols: u16,
@@ -220,6 +223,7 @@ fn runFallible(
     }
     var prepared: [2]terminal_scene.Prepared = undefined;
     var session_revisions: [2]u64 = @splat(0);
+    var history: [2]scrollback.State = @splat(.{});
     for (0..scene_count) |scene_index| {
         prepared[scene_index] = try scenes[scene_index].?.prepare(0);
         session_revisions[scene_index] = prepared[scene_index].session_revision;
@@ -663,6 +667,8 @@ fn runFallible(
                 .display_scale_120 = display_scale_120,
                 .mux = &mux,
                 .scene_panes = &scene_panes,
+                .prepared = &prepared,
+                .history = &history,
                 .scene_count = scene_count,
                 .workspace_rows = workspace_rows,
                 .workspace_cols = workspace_cols,
@@ -721,6 +727,20 @@ fn runFallible(
                 },
                 .split_horizontal, .split_vertical => {
                     if (scene_count != 1) continue;
+                    if (history[0].active()) {
+                        try restoreHistoryLive(
+                            endpoint,
+                            &scenes[0].?,
+                            &geometry_controls[0].?,
+                            &prepared[0],
+                            &session_revisions[0],
+                            &observation_armed[0],
+                            &history[0],
+                            &changed[0],
+                            &cancellation_registry,
+                            0,
+                        );
+                    }
                     const axis: host_layout.SplitAxis = if (host_command.kind == .split_horizontal)
                         .horizontal
                     else
@@ -758,6 +778,20 @@ fn runFallible(
                 },
                 .new_tab => {
                     if (scene_count != 1) continue;
+                    if (history[0].active()) {
+                        try restoreHistoryLive(
+                            endpoint,
+                            &scenes[0].?,
+                            &geometry_controls[0].?,
+                            &prepared[0],
+                            &session_revisions[0],
+                            &observation_armed[0],
+                            &history[0],
+                            &changed[0],
+                            &cancellation_registry,
+                            0,
+                        );
+                    }
                     try addTab(
                         allocator,
                         boundary,
@@ -798,6 +832,23 @@ fn runFallible(
                         &changed,
                         &observation_armed,
                         &graphics,
+                    );
+                },
+                .history_scroll => {
+                    if (scene_count != 1 or host_command.pane != 0 or host_command.amount == 0)
+                        continue;
+                    try applyHistoryScroll(
+                        host_command.amount,
+                        endpoint,
+                        &scenes[0].?,
+                        &geometry_controls[0].?,
+                        &prepared[0],
+                        &session_revisions[0],
+                        &observation_armed[0],
+                        &history[0],
+                        &changed[0],
+                        &cancellation_registry,
+                        0,
                     );
                 },
                 .close_created => {
@@ -861,6 +912,20 @@ fn runFallible(
             },
             .display_scale => |scale| {
                 if (scale.scale_120 == display_scale_120) continue;
+                if (scene_count == 1 and history[0].active()) {
+                    try restoreHistoryLive(
+                        endpoint,
+                        &scenes[0].?,
+                        &geometry_controls[0].?,
+                        &prepared[0],
+                        &session_revisions[0],
+                        &observation_armed[0],
+                        &history[0],
+                        &changed[0],
+                        &cancellation_registry,
+                        0,
+                    );
+                }
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
                 const next_cell_size = try terminal_scene.measureCellSize(
                     allocator,
@@ -960,6 +1025,20 @@ fn runFallible(
             },
             .window_size => |requested| {
                 if (requested.width == surface_logical_width and requested.height == surface_logical_height) continue;
+                if (scene_count == 1 and history[0].active()) {
+                    try restoreHistoryLive(
+                        endpoint,
+                        &scenes[0].?,
+                        &geometry_controls[0].?,
+                        &prepared[0],
+                        &session_revisions[0],
+                        &observation_armed[0],
+                        &history[0],
+                        &changed[0],
+                        &cancellation_registry,
+                        0,
+                    );
+                }
                 const requested_physical_width = try scaledExtent(requested.width, display_scale_120);
                 const requested_physical_height = try scaledExtent(requested.height, display_scale_120);
                 const target_cols: u16 = @max(2, requested_physical_width / cell_size.width);
@@ -1104,12 +1183,138 @@ fn rebuildScenesForScale(
     primary_graphics.invalidateAtlases();
 }
 
+fn restoreHistoryLive(
+    endpoint: []const u8,
+    scene: *terminal_scene.Scene,
+    control: *client.Connection,
+    prepared: *terminal_scene.Prepared,
+    live_revision: *u64,
+    observation_armed: *bool,
+    history: *scrollback.State,
+    changed: *bool,
+    cancellations: *CancellationRegistry,
+    scene_index: usize,
+) !void {
+    if (!history.active()) return;
+    const live = try scene.prepareHistory(control, 0);
+    if (live.width != prepared.width or live.height != prepared.height) {
+        scene.discardPrepared(live);
+        return error.GeometryChanged;
+    }
+    prepared.* = live;
+    history.reset();
+    changed.* = true;
+    try resetLiveObserver(
+        endpoint,
+        scene,
+        live_revision,
+        observation_armed,
+        cancellations,
+        scene_index,
+    );
+}
+
+fn applyHistoryScroll(
+    amount: i16,
+    endpoint: []const u8,
+    scene: *terminal_scene.Scene,
+    control: *client.Connection,
+    prepared: *terminal_scene.Prepared,
+    live_revision: *u64,
+    observation_armed: *bool,
+    history: *scrollback.State,
+    changed: *bool,
+    cancellations: *CancellationRegistry,
+    scene_index: usize,
+) !void {
+    if (amount == 0) return;
+    var candidate = history.*;
+
+    // While history is frozen, first sample current live metadata on the
+    // independent control lane so the absolute anchor follows output growth.
+    if (candidate.active()) {
+        const live = try scene.prepareHistory(control, 0);
+        if (live.width != prepared.width or live.height != prepared.height) {
+            scene.discardPrepared(live);
+            return error.GeometryChanged;
+        }
+        candidate.follow(
+            live.history_count,
+            live.history_row_base,
+            live.alternate_screen,
+        );
+        candidate.scroll(
+            amount,
+            live.history_count,
+            live.history_row_base,
+            live.alternate_screen,
+        );
+        if (!candidate.active()) {
+            prepared.* = live;
+            history.* = candidate;
+            changed.* = true;
+            try resetLiveObserver(
+                endpoint,
+                scene,
+                live_revision,
+                observation_armed,
+                cancellations,
+                scene_index,
+            );
+            return;
+        }
+        scene.discardPrepared(live);
+    } else {
+        const previous_offset = candidate.offset;
+        candidate.scroll(
+            amount,
+            prepared.history_count,
+            prepared.history_row_base,
+            prepared.alternate_screen,
+        );
+        if (candidate.offset == previous_offset) return;
+    }
+
+    const historical = try scene.prepareHistory(control, candidate.offset);
+    if (historical.width != prepared.width or historical.height != prepared.height) {
+        scene.discardPrepared(historical);
+        return error.GeometryChanged;
+    }
+    candidate.accept(
+        historical.history_offset,
+        historical.history_count,
+        historical.history_row_base,
+        historical.alternate_screen,
+    );
+    prepared.* = historical;
+    history.* = candidate;
+    changed.* = true;
+}
+
+fn resetLiveObserver(
+    endpoint: []const u8,
+    scene: *terminal_scene.Scene,
+    live_revision: *u64,
+    observation_armed: *bool,
+    cancellations: *CancellationRegistry,
+    scene_index: usize,
+) !void {
+    cancellations.clear(scene_index);
+    try scene.resetObserver(endpoint);
+    try cancellations.set(scene_index, try scene.cancellation());
+    live_revision.* = 0;
+    observation_armed.* = false;
+    try scene.arm(0);
+    observation_armed.* = true;
+}
+
 fn routePointerEvent(
     boundary: *shared.Boundary,
     event: shared.PointerEvent,
     scale_120: u32,
     mux: *host_layout.Mux,
     scene_panes: *const [2]?host_layout.PaneId,
+    prepared: *const [2]terminal_scene.Prepared,
     scene_count: usize,
     workspace_rows: u16,
     workspace_cols: u16,
@@ -1148,6 +1353,8 @@ fn routePointerEvent(
             return error.DuetGeometry;
         try boundary.publishInput(.{ .mouse = .{
             .scene_index = @intCast(scene_index),
+            .history_offset = prepared[scene_index].history_offset,
+            .alternate_screen = prepared[scene_index].alternate_screen,
             .value = .{
                 .kind = event.kind,
                 .button = event.button,
@@ -1974,7 +2181,7 @@ fn applyDuetGeometryCommand(
     const cells: i32 = switch (command.kind) {
         .grow_focused => 1,
         .shrink_focused => -1,
-        .split_horizontal, .split_vertical, .new_tab, .next_tab, .close_created => return error.HostCommandUnsupported,
+        .split_horizontal, .split_vertical, .new_tab, .next_tab, .close_created, .history_scroll => return error.HostCommandUnsupported,
     };
     if (!(try candidate.resizeFocused(
         .{ .width = workspace_cols, .height = workspace_rows },
@@ -2169,7 +2376,7 @@ fn waitDuetReady(
     var descriptors: [3]c.pollfd = undefined;
     for (0..scene_count) |index| descriptors[index] = .{
         .fd = scenes[index].?.readinessFd(),
-        .events = c.POLLIN,
+        .events = if (pointer.history[index].active()) 0 else c.POLLIN,
         .revents = 0,
     };
     descriptors[scene_count] = .{
@@ -2211,6 +2418,7 @@ fn waitDuetReady(
                     pointer.display_scale_120,
                     pointer.mux,
                     pointer.scene_panes,
+                    pointer.prepared,
                     pointer.scene_count,
                     pointer.workspace_rows,
                     pointer.workspace_cols,

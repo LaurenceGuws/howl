@@ -9,9 +9,11 @@
 
 const std = @import("std");
 const client = @import("howl_client");
+const protocol = @import("howl_session").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const layout = @import("layout.zig");
+const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 
 const next_tab_keysym: u32 = 0xffc2; // F5
@@ -203,7 +205,11 @@ fn runFallible(
                     const target: usize = mouse.scene_index;
                     if (target >= connection_count or connections[target] == null)
                         return error.InputTopologyMismatch;
-                    try client.actions.mouse(&connections[target].?, mouse.value);
+                    try deliverMouse(
+                        boundary,
+                        &connections[target].?,
+                        mouse,
+                    );
                 },
                 .key => |key| {
                     const split_topology = connection_count == 2 and mux.tabCount() == 1;
@@ -282,6 +288,65 @@ fn runFallible(
             if (close_pending or tab_switch_pending) break;
         };
         if (!consumed) try waitInput(boundary);
+    }
+}
+
+fn deliverMouse(
+    boundary: *shared.Boundary,
+    connection: *client.Connection,
+    mouse: shared.RoutedMouse,
+) !void {
+    if (mouse.value.kind != .wheel) {
+        try client.actions.mouse(connection, mouse.value);
+        return;
+    }
+    const amount: i16 = switch (mouse.value.button) {
+        .wheel_up => 3,
+        .wheel_down => -3,
+        else => return error.InputTopologyMismatch,
+    };
+    const force_history =
+        mouse.value.modifiers & protocol.typed_input.modifiers.shift != 0;
+    var route = scrollback.routeWheel(
+        mouse.history_offset != 0,
+        force_history,
+        false,
+        false,
+        mouse.alternate_screen,
+        false,
+    );
+    var state: protocol.InteractionStateSnapshot = undefined;
+    if (route == .interaction_state) {
+        state = try client.state.get(connection);
+        route = scrollback.routeWheel(
+            mouse.history_offset != 0,
+            force_history,
+            true,
+            state.mouse_tracking != .off,
+            mouse.alternate_screen,
+            state.alternate_scroll,
+        );
+    }
+    switch (route) {
+        .history => boundary.publishHostCommand(.{
+            .kind = .history_scroll,
+            .pane = mouse.scene_index,
+            .amount = amount,
+        }) catch |failure| switch (failure) {
+            // Wheel intent is safely coalescible at the UX boundary. If the
+            // bounded host-control queue is full, newer pointer input will
+            // provide another opportunity instead of retiring Input.
+            error.HostCommandLimit => {},
+            else => |err| return err,
+        },
+        .terminal_mouse => try client.actions.mouse(connection, mouse.value),
+        .alternate_scroll => {
+            const key: protocol.InputKeyName = if (amount > 0) .up else .down;
+            try client.actions.namedKey(connection, key, .press, 0);
+            try client.actions.namedKey(connection, key, .release, 0);
+        },
+        .ignore => {},
+        .interaction_state => unreachable,
     }
 }
 
