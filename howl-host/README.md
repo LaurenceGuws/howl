@@ -16,6 +16,8 @@ Current foundation:
   ownership before reuse; closing Window cancels a blocked Session observation;
 - physical Wayland/xkb keyboard input delivered by a dedicated bounded Input
   owner so compositor dispatch never waits on Session action acknowledgements;
+  Window owns compositor-advertised key repeat timing and re-resolves repeated
+  keys through current xkb modifiers without catch-up bursts;
 - terminal mouse tracking from Wayland motion/button/wheel facts: Window preserves
   raw surface occurrences, Render alone resolves pane/cell/pixel geometry, and
   Input forwards the existing canonical mouse action. Motion is latest-wins while

@@ -44,6 +44,11 @@ pub const Keymap = struct {
         ) orelse return error.InvalidKeymap } };
     }
 
+    /// Reports whether xkb marks one hardware keycode as repeatable.
+    pub fn keyRepeats(self: *const Keymap, keycode: u32) bool {
+        return c.xkb_keymap_key_repeats(self.storage.ptr, @intCast(keycode)) != 0;
+    }
+
     /// Releases the compiled keymap.
     pub fn deinit(self: *Keymap) void {
         c.xkb_keymap_unref(self.storage.ptr);

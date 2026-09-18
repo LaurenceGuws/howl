@@ -4,6 +4,7 @@ const std = @import("std");
 const wayland = @import("howl_wayland");
 const c = wayland.c;
 const posix = @import("host_c");
+const key_repeat = @import("key_repeat.zig");
 const shared = @import("shared.zig");
 
 const format_limit: usize = 256;
@@ -118,6 +119,7 @@ const State = struct {
     xkb_state: ?wayland.xkb.State = null,
     keyboard_modifiers: wayland.input.Modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 },
     keyboard_semantic_modifiers: wayland.input.SemanticModifiers = .{},
+    key_repeat: key_repeat.State = .{},
 
     fn deinit(self: *State) void {
         if (self.xkb_state) |*value| value.deinit();
@@ -222,11 +224,17 @@ fn runFallible(boundary: *shared.Boundary) !void {
             .{ .fd = display_fd, .events = posix.POLLIN, .revents = 0 },
             .{ .fd = boundary.windowFd(), .events = posix.POLLIN, .revents = 0 },
         };
-        const ready = posix.poll(&descriptors, descriptors.len, -1);
+        const ready = posix.poll(
+            &descriptors,
+            descriptors.len,
+            state.key_repeat.timeoutMs(try monotonicNs()),
+        );
         if (ready < 0 and std.c.errno(ready) != .INTR) return error.Dispatch;
         if (ready > 0 and (descriptors[1].revents & posix.POLLIN) != 0) try boundary.drainWindowWake();
         if (ready > 0 and (descriptors[0].revents & posix.POLLIN) != 0 and c.wl_display_dispatch(display) < 0) return error.Dispatch;
         if (c.wl_display_get_error(display) != 0) return error.Protocol;
+        if (state.key_repeat.takeDue(try monotonicNs())) |held|
+            try publishKey(&state, held.serial, held.time, held.keycode, .repeated);
     }
     if (state.surface) |surface| {
         c.wl_surface_attach(surface, null, 0, 0);
@@ -376,6 +384,7 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) cal
         if (c.wl_keyboard_add_listener(state.keyboard.?, &keyboard_listener, state) != 0)
             return state.boundary.requestStop(.window);
     } else if (!keyboard_capability and state.keyboard != null) {
+        state.key_repeat.cancel();
         c.wl_keyboard_destroy(state.keyboard.?);
         state.keyboard = null;
         if (state.xkb_state) |*value| value.deinit();
@@ -427,6 +436,7 @@ fn keyboardKeymap(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, format: u3
         keymap.deinit();
         return state.boundary.requestStop(.window);
     };
+    state.key_repeat.cancel();
     if (state.xkb_state) |*old| old.deinit();
     if (state.xkb_keymap) |*old| old.deinit();
     state.xkb_keymap = keymap;
@@ -453,6 +463,7 @@ fn keyboardLeave(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, _: u32, sur
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or surface != state.surface)
         return state.boundary.requestStop(.window);
+    state.key_repeat.cancel();
     state.boundary.publishInput(.{ .focus = false }) catch inputFailure(state);
 }
 
@@ -465,18 +476,48 @@ fn keyboardKey(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, 
         c.WL_KEYBOARD_KEY_STATE_REPEATED => .repeated,
         else => return state.boundary.requestStop(.window),
     };
-    if (key_value > std.math.maxInt(u32) - 8) return state.boundary.requestStop(.window);
+    publishKey(state, serial, time, key_value, key_state) catch
+        return state.boundary.requestStop(.window);
+
+    switch (key_state) {
+        .pressed => {
+            if (key_value > std.math.maxInt(u32) - 8)
+                return state.boundary.requestStop(.window);
+            const repeatable = if (state.xkb_keymap) |*keymap|
+                keymap.keyRepeats(key_value + 8)
+            else
+                false;
+            const now = monotonicNs() catch return state.boundary.requestStop(.window);
+            state.key_repeat.press(
+                .{ .keycode = key_value, .serial = serial, .time = time },
+                repeatable,
+                now,
+            );
+        },
+        .released => state.key_repeat.release(key_value),
+        .repeated => {},
+    }
+}
+
+fn publishKey(
+    state: *State,
+    serial: u32,
+    time: u32,
+    key_value: u32,
+    key_state: wayland.input.KeyState,
+) !void {
+    if (key_value > std.math.maxInt(u32) - 8) return error.InvalidKey;
     const xkb_key = key_value + 8;
     var text: [wayland.input.key_text_limit]u8 = @splat(0);
     const keysym = if (state.xkb_state) |*keyboard_state|
         keyboard_state.keySym(xkb_key)
     else
-        return state.boundary.requestStop(.window);
+        return error.XkbUnavailable;
     const text_len = if (state.xkb_state) |*keyboard_state|
-        keyboard_state.keyUtf8(xkb_key, &text) catch return state.boundary.requestStop(.window)
+        try keyboard_state.keyUtf8(xkb_key, &text)
     else
-        return state.boundary.requestStop(.window);
-    state.boundary.publishInput(.{ .key = .{
+        return error.XkbUnavailable;
+    try state.boundary.publishInput(.{ .key = .{
         .keycode = key_value,
         .time = time,
         .state = key_state,
@@ -486,7 +527,7 @@ fn keyboardKey(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, 
         .keysym = @fromBackingInt(@intCast(keysym)),
         .text_len = @intCast(text_len),
         .text = text,
-    } }) catch inputFailure(state);
+    } });
 }
 
 fn keyboardModifiers(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
@@ -502,7 +543,9 @@ fn keyboardModifiers(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial:
 fn keyboardRepeat(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or rate < 0 or delay < 0)
-        state.boundary.requestStop(.window);
+        return state.boundary.requestStop(.window);
+    const now = monotonicNs() catch return state.boundary.requestStop(.window);
+    state.key_repeat.configure(@intCast(rate), @intCast(delay), now);
 }
 
 const keyboard_listener = c.wl_keyboard_listener{
@@ -741,6 +784,15 @@ const feedback_listener = c.zwp_linux_dmabuf_feedback_v1_listener{
     .tranche_formats = trancheFormats,
     .tranche_flags = trancheFlags,
 };
+
+fn monotonicNs() !u64 {
+    var now: std.posix.timespec = undefined;
+    if (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.MONOTONIC, &now)) != .SUCCESS)
+        return error.Clock;
+    const seconds = std.math.mul(u64, @intCast(now.sec), std.time.ns_per_s) catch
+        return error.Clock;
+    return std.math.add(u64, seconds, @intCast(now.nsec)) catch error.Clock;
+}
 
 fn closeDescriptor(descriptor: i32) void {
     if (posix.close(descriptor) != 0) @panic("Window descriptor cleanup failed");
