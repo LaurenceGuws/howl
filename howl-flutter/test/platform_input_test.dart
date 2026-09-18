@@ -18,4 +18,18 @@ void main() {
       );
     },
   );
+
+  test('iOS editing value owns newline action', () {
+    expect(
+      const TerminalPlatformInput(platformOverride: TargetPlatform.iOS)
+          .newlineActionFallback,
+      isFalse,
+    );
+    expect(
+      const TerminalPlatformInput(platformOverride: TargetPlatform.android)
+          .newlineActionFallback,
+      isTrue,
+    );
+  });
+
 }

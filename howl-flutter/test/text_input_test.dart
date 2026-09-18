@@ -596,4 +596,18 @@ void main() {
       expect(tester.testTextInput.isVisible, isFalse);
     },
   );
+
+  test('newline action fallback can be disabled', () {
+    var enters = 0;
+    final client = TerminalTextInputClient(
+      newlineActionFallback: false,
+      onCommit: (_) {},
+      onEditKey: (key, count) {
+        if (key == TerminalEditKey.enter) enters += count;
+      },
+    );
+    client.performAction(TextInputAction.newline);
+    expect(enters, 0);
+  });
+
 }

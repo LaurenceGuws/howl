@@ -10,6 +10,7 @@ import 'desktop_selection.dart';
 import 'diagnostics.dart';
 import 'platform_input.dart';
 import 'history_viewport.dart';
+import 'held_key_repeat.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
 import 'ios_network_probe.dart';
@@ -155,6 +156,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
   late final TerminalKeyRepeatDrainer _softwareBackspaceRepeat;
+  late final HeldKeyRepeat _iosPhysicalArrowRepeat;
 
   @override
   void initState() {
@@ -164,6 +166,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       'App',
       'start platform=${Platform.operatingSystem} endpoint=${widget.endpoint} '
           'backspace_runway=${_platformInput.backspaceRunway}',
+    );
+    _iosPhysicalArrowRepeat = HeldKeyRepeat(
+      onRepeat: (keyName, modifiers) => _sendNamedKey(
+        keyName: keyName,
+        action: HowlInput.keyRepeat,
+        modifiers: modifiers,
+      ),
     );
     _softwareBackspaceRepeat = TerminalKeyRepeatDrainer(
       interval: const Duration(milliseconds: 25),
@@ -178,6 +187,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       backspaceRunway: _platformInput.backspaceRunway,
+      newlineActionFallback: _platformInput.newlineActionFallback,
       onCommit: (text) {
         _softwareBackspaceRepeat.cancelPending();
         _returnToLiveForInput();
@@ -525,6 +535,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (generation != _transportGeneration) return;
     _diagnostics.record('Transport', 'drop generation=$generation');
     _leaveHistory();
+    _iosPhysicalArrowRepeat.cancel();
     _softwareBackspaceRepeat.cancelPending();
     _transportGeneration += 1;
     final observer = _nativeObserver;
@@ -895,6 +906,21 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       KeyUpEvent() => HowlInput.keyRelease,
       _ => HowlInput.keyPress,
     };
+    if (_platformInput.platform == TargetPlatform.iOS &&
+        keyName != null &&
+        _iosRepeatableArrow(keyName)) {
+      switch (event) {
+        case KeyDownEvent():
+          _iosPhysicalArrowRepeat.start(keyName, modifiers);
+        case KeyRepeatEvent():
+          // Prefer native repeats if a future Flutter/iOS engine exposes them.
+          _iosPhysicalArrowRepeat.cancel(key: keyName);
+        case KeyUpEvent():
+          _iosPhysicalArrowRepeat.cancel(key: keyName);
+        default:
+          break;
+      }
+    }
     if (keyName != null) {
       _sendNamedKey(keyName: keyName, action: action, modifiers: modifiers);
     } else {
@@ -1543,6 +1569,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _onFocusChange(bool focused) {
+    if (!focused) _iosPhysicalArrowRepeat.cancel();
     if (focused && _hasControl && _selection == null) {
       _textInput.attach(viewId: View.of(context).viewId);
       _scheduleTextInputShow();
@@ -1634,6 +1661,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    _iosPhysicalArrowRepeat.close();
     _softwareBackspaceRepeat.close();
     _historyWheelTimer?.cancel();
     _historyWheelTimer = null;
@@ -1872,6 +1900,12 @@ final howlNamedKeys = <PhysicalKeyboardKey, int>{
 };
 
 int? howlNamedKey(PhysicalKeyboardKey key) => howlNamedKeys[key];
+
+bool _iosRepeatableArrow(int keyName) =>
+    keyName == HowlInput.namedArrowLeft ||
+    keyName == HowlInput.namedArrowDown ||
+    keyName == HowlInput.namedArrowUp ||
+    keyName == HowlInput.namedArrowRight;
 
 /// Projects a printable physical Ctrl chord into Howl's Unicode-key vocabulary.
 ///

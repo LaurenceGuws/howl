@@ -245,12 +245,14 @@ final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
     this.inputType = TextInputType.text,
     this.platformOverride,
     int backspaceRunway = 1,
+    this.newlineActionFallback = true,
   }) : _stager = TerminalInputStager(backspaceRunway: backspaceRunway);
 
   final void Function(String text) onCommit;
   final void Function(TerminalEditKey key, int count) onEditKey;
   final TextInputType inputType;
   final TargetPlatform? platformOverride;
+  final bool newlineActionFallback;
   final TerminalInputStager _stager;
   TextInputConnection? _connection;
   int? _viewId;
@@ -347,7 +349,9 @@ final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
 
   @override
   void performAction(TextInputAction action) {
-    if (action == TextInputAction.newline) onEditKey(TerminalEditKey.enter, 1);
+    if (newlineActionFallback && action == TextInputAction.newline) {
+      onEditKey(TerminalEditKey.enter, 1);
+    }
   }
 
   @override
