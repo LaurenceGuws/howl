@@ -9,8 +9,9 @@ mouse facts, and one lossless framing-v9 snapshot model with `text_v1`,
 coarse projections retain property bytes with the same snapshot lifetime.
 The coarse `view` projection owns one immutable allocation for a revision and
 exposes rows, cells, scalars, hyperlinks, images, properties, and presentation facts
-in batches. Its backing
-layout is private: it is not a C/FFI ABI. These models retain typed terminal facts;
+in batches. It resolves transported style bits, cursor-shape values, DEC row geometry,
+and the Kitty image-placeholder scalar into semantic helpers before presentation code
+consumes them. Its backing layout is private: it is not a C/FFI ABI. These models retain typed terminal facts;
 they do not choose JSON, a renderer, a font, a platform UI, or a shell-command
 vocabulary.
 

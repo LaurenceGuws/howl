@@ -310,7 +310,7 @@ fn selectableLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) b
     if (column >= row.cell_count) return false;
     const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
     if (cell.x != 0 or cell.y != 0 or cell.scalar_count == 0 or
-        cell.style_bits & protocol.text_v1.style.invisible != 0)
+        view.cellStyle(cell).invisible)
         return false;
     const first_scalar = view.scalars(snapshot)[cell.scalar_offset];
     return first_scalar != ' ';

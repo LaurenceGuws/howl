@@ -32,6 +32,7 @@ ownership:
   - a session lives on the node, not in a client
   - one session owns exactly one authoritative PTY and VT
   - clients observe semantic state and submit serialized input or explicit control mutations
+  - client views resolve transported numeric/bit encodings before presentation code consumes them
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
   - renderer and platform policy stay outside VT and session

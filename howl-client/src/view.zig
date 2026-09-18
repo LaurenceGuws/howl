@@ -21,6 +21,38 @@ pub const ImagePlacement = protocol.SnapshotImagePlacement;
 pub const maximum_images = protocol.graphics_v2.maximum_images;
 pub const maximum_image_placements = protocol.graphics_v2.maximum_placements;
 
+/// Semantic cell rendition exported by the projected client view.
+/// Wire bit positions remain private to this module.
+pub const CellStyle = struct {
+    bold: bool,
+    dim: bool,
+    italic: bool,
+    blink: bool,
+    blink_fast: bool,
+    reverse: bool,
+    invisible: bool,
+    underline: bool,
+    strikethrough: bool,
+};
+
+/// Semantic cursor shape exported independently of the snapshot wire encoding.
+pub const CursorShape = enum {
+    block,
+    underline,
+    bar,
+    none,
+};
+
+/// Semantic DEC row geometry exported independently of text_v1 row bytes.
+pub const LineGeometry = enum {
+    single_width,
+    double_width,
+    double_height_top,
+    double_height_bottom,
+};
+
+const kitty_image_placeholder: u32 = 0x10eeee;
+
 /// Opaque owner of one immutable projected revision.
 pub const Snapshot = opaque {};
 
@@ -334,6 +366,58 @@ pub fn scalars(snapshot: *const Snapshot) []const u32 {
     return constSliceAt(u32, ownerBytes(impl), impl.scalars_offset, impl.scalar_count);
 }
 
+/// Resolves validated cell rendition without exposing text_v1 style bits.
+pub fn cellStyle(cell: Cell) CellStyle {
+    return .{
+        .bold = cell.style_bits & protocol.text_v1.style.bold != 0,
+        .dim = cell.style_bits & protocol.text_v1.style.dim != 0,
+        .italic = cell.style_bits & protocol.text_v1.style.italic != 0,
+        .blink = cell.style_bits & protocol.text_v1.style.blink != 0,
+        .blink_fast = cell.style_bits & protocol.text_v1.style.blink_fast != 0,
+        .reverse = cell.style_bits & protocol.text_v1.style.reverse != 0,
+        .invisible = cell.style_bits & protocol.text_v1.style.invisible != 0,
+        .underline = cell.style_bits & protocol.text_v1.style.underline != 0,
+        .strikethrough = cell.style_bits & protocol.text_v1.style.strikethrough != 0,
+    };
+}
+
+/// Resolves the validated snapshot cursor shape without exposing wire values.
+pub fn cursorShape(snapshot: *const Snapshot) CursorShape {
+    return switch (begin(snapshot).cursor_shape) {
+        0 => .block,
+        1 => .underline,
+        2 => .bar,
+        3 => .none,
+        else => unreachable,
+    };
+}
+
+/// Resolves validated DEC row geometry without exposing text_v1 numeric values.
+pub fn lineGeometry(row: Row) LineGeometry {
+    return switch (row.line_geometry) {
+        0 => .single_width,
+        1 => .double_width,
+        2 => .double_height_top,
+        3 => .double_height_bottom,
+        else => unreachable,
+    };
+}
+
+/// Borrows exactly one projected cell's scalar sequence.
+pub fn cellScalars(snapshot: *const Snapshot, cell: Cell) []const u32 {
+    const values = scalars(snapshot);
+    const first: usize = cell.scalar_offset;
+    const count: usize = cell.scalar_count;
+    std.debug.assert(first <= values.len and count <= values.len - first);
+    return values[first .. first + count];
+}
+
+/// Reports the Kitty Unicode-placement placeholder semantic without leaking its
+/// private scalar identity to presentation consumers.
+pub fn isImagePlaceholder(sequence: []const u32) bool {
+    return sequence.len != 0 and sequence[0] == kitty_image_placeholder;
+}
+
 pub fn hyperlinks(snapshot: *const Snapshot) []const Hyperlink {
     const impl = constImpl(snapshot);
     return constSliceAt(Hyperlink, ownerBytes(impl), impl.hyperlinks_offset, impl.hyperlink_count);
@@ -511,7 +595,7 @@ fn lastTextCell(row_cells: []const Cell) ?usize {
 }
 
 fn textCellVisible(cell: Cell) bool {
-    return cell.style_bits & protocol.text_v1.style.invisible == 0;
+    return !cellStyle(cell).invisible;
 }
 
 const Counts = struct {
@@ -521,7 +605,7 @@ const Counts = struct {
 };
 
 fn validateAndCount(source: *const rich.View) Error!Counts {
-    if (source.rows.len != source.begin.rows) {
+    if (source.rows.len != source.begin.rows or source.begin.cursor_shape > 3) {
         return error.InvalidRichSnapshot;
     }
     if (source.changed_rows) |changed| {
@@ -944,11 +1028,18 @@ test "coarse view preserves rich semantics in one allocation" {
     try std.testing.expectEqual(@as(u32, 2), rows(snapshot)[0].cell_count);
     try std.testing.expect(rows(snapshot)[0].wrapped);
     try std.testing.expectEqual(@as(u8, 2), rows(snapshot)[0].line_geometry);
+    try std.testing.expectEqual(LineGeometry.double_height_top, lineGeometry(rows(snapshot)[0]));
+    try std.testing.expectEqual(CursorShape.bar, cursorShape(snapshot));
     try std.testing.expectEqual(@as(usize, 2), cells(snapshot).len);
     try std.testing.expectEqual(@as(u32, 0), cells(snapshot)[0].scalar_offset);
     try std.testing.expectEqual(@as(u8, 2), cells(snapshot)[0].scalar_count);
     try std.testing.expectEqual(protocol.TextColorKind.rgb, cells(snapshot)[0].foreground.kind);
     try std.testing.expectEqual(@as(u32, 0x112233), cells(snapshot)[0].foreground.value);
+    const style = cellStyle(cells(snapshot)[0]);
+    try std.testing.expect(style.bold);
+    try std.testing.expect(style.underline);
+    try std.testing.expect(!style.dim and !style.reverse and !style.invisible);
+    try std.testing.expectEqualSlices(u32, &.{ 'e', 0x0301 }, cellScalars(snapshot, cells(snapshot)[0]));
     try std.testing.expectEqualSlices(u32, &.{ 'e', 0x0301 }, scalars(snapshot));
     try std.testing.expectEqual(@as(usize, 1), hyperlinks(snapshot).len);
     try std.testing.expectEqual(@as(u32, 7), hyperlinks(snapshot)[0].link_id);
@@ -1068,6 +1159,23 @@ test "coarse view rejects malformed rich geometry before allocation" {
     try std.testing.expectError(error.InvalidRichSnapshot, project(allocator.allocator(), &source));
     try std.testing.expectEqual(@as(usize, 0), allocator.allocations);
     try std.testing.expectEqual(@as(usize, 0), allocator.allocated_bytes);
+}
+
+test "coarse view rejects unknown cursor wire shape before allocation" {
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    var begin_value = testBegin(0, 0);
+    begin_value.cursor_shape = 4;
+    const source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = begin_value,
+        .presentation = testPresentation(palette),
+        .rows = &.{},
+        .hyperlinks = &.{},
+    };
+
+    var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    try std.testing.expectError(error.InvalidRichSnapshot, project(allocator.allocator(), &source));
+    try std.testing.expectEqual(@as(usize, 0), allocator.allocations);
 }
 
 test "accessible text keeps canonical Unicode caret and conceals hidden text" {

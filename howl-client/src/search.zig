@@ -180,7 +180,7 @@ fn lastSearchCell(row_cells: []const view.Cell) ?usize {
 }
 
 fn textCellVisible(cell: view.Cell) bool {
-    return cell.style_bits & protocol.text_v1.style.invisible == 0;
+    return !view.cellStyle(cell).invisible;
 }
 
 fn testCell(scalars: []const u32, width: u8) rich.Cell {

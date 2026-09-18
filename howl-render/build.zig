@@ -132,7 +132,7 @@ fn terminalNativeModule(
     canvas: *std.Build.Module,
 ) *std.Build.Module {
     const terminal = b.createModule(.{
-        .root_source_file = b.path("src/terminal_native.zig"),
+        .root_source_file = b.path("src/terminal.zig"),
         .target = target,
         .optimize = optimize,
     });

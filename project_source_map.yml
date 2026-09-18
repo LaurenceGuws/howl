@@ -17,18 +17,19 @@ experimental:
     reusable UI-agnostic native session client engine: portable local
     connection/framing, interaction state, canonical semantic actions including
     mouse, one lossless rich text_v1 / revision-relative text_delta_v2
-    decoder, compact semantic snapshots, and
-    an explicit-lifetime one-allocation coarse semantic view
+    decoder, compact semantic snapshots, and an explicit-lifetime
+    one-allocation coarse semantic view which resolves cell-style, cursor-shape,
+    DEC-line-geometry, and image-placeholder wire encodings once for presenters
   howl-cli: >-
     native human/agent session client under active proof; compact semantic
     observation plus canonical input/control, not shell execution or remote
     transport
   howl-render: >-
-    backend-neutral rendering experiments consuming howl-text and
+    backend-neutral drawing/presentation experiments consuming howl-text and
     howl-client.view; terminal Content emits complete Canvas ProducerUpdate
-    state through private caller-bounded shape/atlas caches plus exact
-    Host-recoverable terminal-image resources, using howl-text for ordinary and generated terminal-glyph
-    shaping/rasterization;
+    state, while private terminal_glyph_cache owns caller-bounded shaping/alpha
+    atlas reuse using howl-text only; terminal presentation additionally owns
+    exact Host-recoverable terminal-image resource projection;
     Composer-derived Canvas frames are the native/Web pressure-proven semantic
     presentation seam; no stable mobile ABI is accepted
   howl-flutter: >-

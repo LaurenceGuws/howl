@@ -69,7 +69,7 @@ pub fn build(b: *std.Build) void {
     });
     canvas.addImport("canvas_validation", validation);
     const terminal = b.createModule(.{
-        .root_source_file = render_dependency.path("src/terminal_native.zig"),
+        .root_source_file = render_dependency.path("src/terminal.zig"),
         .target = target,
         .optimize = optimize,
     });

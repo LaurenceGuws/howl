@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     const canvas = localModule(b, target, optimize, repo, "howl-render/src/canvas.zig");
     canvas.addImport("canvas_validation", validation);
 
-    const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal_native.zig");
+    const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal.zig");
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
     terminal.addImport("canvas", canvas);
