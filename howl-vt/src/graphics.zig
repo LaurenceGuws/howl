@@ -2141,6 +2141,8 @@ fn inflateLoading(self: *Plane) std.mem.Allocator.Error!bool {
     if (decoded_count != loading.expected_bytes or output.buffered().len != loading.expected_bytes or
         input.seek != input.end)
         return false;
+    if (std.hash.Adler32.hash(raw) != decompressor.container_metadata.zlib.adler)
+        return false;
     self.allocator.free(loading.bytes);
     loading.bytes = raw;
     loading.used = loading.expected_bytes;
@@ -3466,4 +3468,68 @@ fn allocationFailure(allocator: std.mem.Allocator) !void {
         1,
     )).changed);
     try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+}
+
+test "Kitty zlib checksum failures preserve images and frames before valid recovery" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=81,q=2;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const identity = plane.image(0).?.id;
+    const generation = plane.generation();
+    const valid = "eJxjYPj/HwADAQH/";
+    var compressed: [12]u8 = undefined;
+    try std.base64.standard.Decoder.decode(&compressed, valid);
+    for (1..5) |offset| {
+        compressed[compressed.len - offset] ^= 1;
+        defer compressed[compressed.len - offset] ^= 1;
+        var encoded: [16]u8 = undefined;
+        const payload = std.base64.standard.Encoder.encode(&encoded, &compressed);
+        for ([_][]const u8{
+            "a=t,f=32,s=1,v=1,i=82,o=z,q=2;",
+            "a=t,f=32,s=1,v=1,i=81,o=z,q=2;",
+            "a=f,f=32,s=1,v=1,i=81,r=2,o=z,C=1,q=2;",
+        }) |prefix| {
+            var command: [128]u8 = undefined;
+            const text = try std.fmt.bufPrint(&command, "{s}{s}", .{ prefix, payload });
+            const rejected = try plane.command(text, .primary, 0, 0, 0, 1, 1);
+            try std.testing.expectEqual(Failure.invalid, rejected.failure.?);
+            try std.testing.expect(!rejected.changed);
+            try std.testing.expectEqual(generation, plane.generation());
+            try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+            try std.testing.expectEqual(identity, plane.image(0).?.id);
+            try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
+            try std.testing.expect(plane.frameByNumber(identity, 2) == null);
+        }
+    }
+    const frame = try plane.command(
+        "a=f,f=32,s=1,v=1,i=81,r=2,o=z,C=1,q=2;" ++ valid,
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(frame.changed);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.frameByNumber(identity, 2).?.pixels);
+    const replacement = try plane.command(
+        "a=t,f=32,s=1,v=1,i=81,o=z,q=2;" ++ valid,
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(replacement.changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.image(0).?.pixels);
 }
