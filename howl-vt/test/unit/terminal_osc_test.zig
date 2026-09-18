@@ -1,6 +1,7 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/howl_vt.zig");
 const reply_fill = @import("../support/reply_fill.zig");
+const parser_mod = @import("../../src/parser.zig");
 
 const Terminal = terminal_mod.Terminal;
 const Rgb = Terminal.Rgb;
@@ -37,6 +38,51 @@ test "OSC title updates terminal title under stream path" {
 
     try feed(&terminal, "\x1b]0;My Title\x07");
     try std.testing.expectEqualStrings("My Title", terminal.title().?);
+}
+
+test "OSC 4 accepts one complete Kitty-style 256-color palette transaction" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]4;");
+    const payload_start = sequence.items.len;
+    for (0..256) |index| {
+        if (index != 0) try sequence.append(allocator, ';');
+        var pair: [32]u8 = undefined;
+        const encoded = try std.fmt.bufPrint(&pair, "{d};#010203", .{index});
+        try sequence.appendSlice(allocator, encoded);
+    }
+    const payload_len = sequence.items.len - payload_start;
+    try std.testing.expectEqual(@as(usize, 2961), payload_len);
+    try std.testing.expect(payload_len > expected_string_control_bytes);
+    try std.testing.expect(payload_len <= parser_mod.max_palette_control_bytes);
+    try sequence.append(allocator, 0x07);
+
+    const summary = try terminal.feed(sequence.items);
+    try std.testing.expect(summary.stateChanged());
+    const presentation = terminal.presentation();
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, presentation.palette[0]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, presentation.palette[255]);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]4;");
+    const oversized = try allocator.alloc(u8, parser_mod.max_palette_control_bytes + 1);
+    defer allocator.free(oversized);
+    @memset(oversized, 'x');
+    try sequence.appendSlice(allocator, oversized);
+    try sequence.append(allocator, 0x07);
+    try sequence.appendSlice(allocator, "ok");
+    const recovered = try terminal.feed(sequence.items);
+    try std.testing.expect(recovered.stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'o'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
+    const after = terminal.presentation();
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, after.palette[0]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, after.palette[255]);
 }
 
 test "GNU Screen title retains bounded title and icon with exact mutation" {
@@ -212,7 +258,7 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try sequence.appendSlice(std.testing.allocator, "\x1b]46;");
     try sequence.appendSlice(std.testing.allocator, payload);
     try sequence.append(std.testing.allocator, 0x07);
-    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 }
 
@@ -786,7 +832,7 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
     try sequence.appendSlice(allocator, "\x1b]5522;");
     try sequence.appendSlice(allocator, payload);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -878,14 +924,14 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     try sequence.appendSlice(allocator, "\x1b]1337;");
     try sequence.appendSlice(allocator, iterm_payload);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]5113;");
     try sequence.appendSlice(allocator, payload);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(!(try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 

@@ -2232,7 +2232,7 @@ test "DCS payload bound reports overflow and remains restartable" {
     try std.testing.expect(!(try terminal.feed(header)).historyLost());
     try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('y')))).historyLost());
     try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('y')))).historyLost());
-    try std.testing.expectError(error.StringControlLimit, terminal.feed("y"));
+    try std.testing.expect(!(try terminal.feed("y\x1b\\")).stateChanged());
     try std.testing.expectEqual(expected_string_control_bytes, dcsPayload(&terminal).?.len);
     try std.testing.expectEqual(@as(u8, 'x'), dcsPayload(&terminal).?[5]);
 

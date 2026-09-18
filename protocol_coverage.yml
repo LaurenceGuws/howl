@@ -3660,8 +3660,8 @@ references:
         records:
           kitty.osc_ignore.special_colors_5: {raw: "OSC 5 ; Pt (BEL|ST)", effect: ignore xterm special colors,
             conditions: &kitty_ignored_osc_condition "Howl silently drops the command within its 2 KiB ordinary OSC
-              bound and rejects overflow with StringControlLimit; Kitty recognizes the selector and may log its
-              ignored status",
+              bound and consumes any overflow through its terminator without semantic effect; Kitty recognizes the
+              selector and may log its ignored status",
             relevance: compatibility, howl: *howl_ignored_color_policy}
           kitty.osc_ignore.special_colors_105: {raw: "OSC 105 ; Pt (BEL|ST)", effect: ignore xterm special colors,
             conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}

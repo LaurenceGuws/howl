@@ -3797,14 +3797,13 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
 // Fragmented stream ingestion
 // =============================================================================
 
-// Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
+// Reports parser allocation or retained-state/consequence failure.
 const TerminalFeedError = error{
     ConsequenceLimit,
     OutOfMemory,
     PropertyLimit,
     ReplyLimit,
     ParsedEventLimit,
-    StringControlLimit,
 };
 
 /// Reports the one packed mutation set crossing the VT feed boundary.
@@ -4115,6 +4114,10 @@ const TerminalStream = struct {
 
     fn endDcs(self: *TerminalStream) TerminalFeedError!EventEffect {
         const state = &self.terminal.stream_state;
+        if (state.dcs.didOverflow()) {
+            state.dcs.reset();
+            return discardedStringControl();
+        }
         if (state.dcs.isSixel()) {
             defer state.dcs.reset();
             return self.applySixel(state.dcs.payload(), state.dcs.parameters());
@@ -4352,6 +4355,12 @@ test "discarded string controls stream without retaining payload bytes" {
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("\x1bX");
     try stream.nextSlice(&@as([8192]u8, @splat('z')));
+    try stream.nextSlice("\x1b\\");
+    try stream.nextSlice("\x1b]2;");
+    try stream.nextSlice(&@as([8192]u8, @splat('t')));
+    try stream.nextSlice("\x07");
+    try stream.nextSlice("\x1bPp");
+    try stream.nextSlice(&@as([8192]u8, @splat('d')));
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("ok");
 

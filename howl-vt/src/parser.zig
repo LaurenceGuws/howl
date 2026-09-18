@@ -37,6 +37,13 @@ const control_init_capacity = 256;
 // Ghostty's fixed OSC parser demonstrates that ordinary terminal metadata fits
 // in 2 KiB. Howl uses that scale for controls whose complete value is metadata.
 const metadata_control_max_bytes = 2 * 1024;
+// One OSC 4 can update every color Howl represents: 256 ordinary palette
+// entries plus five xterm special-palette slots. The longest canonical color
+// spelling accepted here is rgb:RRRR/GGGG/BBBB (18 bytes). Three decimal index
+// bytes, one separator before the color, and one separator between pairs bound
+// a complete useful palette transaction to 6002 payload bytes.
+const palette_control_max_bytes: u32 =
+    261 * (3 + 1 + 18) + (261 - 1);
 // OSC 52 is an unchunked clipboard protocol, so parser acceptance remains
 // larger than metadata while caller retention applies the same explicit bound.
 const clipboard_control_max_bytes = 1024 * 1024;
@@ -53,6 +60,8 @@ pub const max_intermediates = csi_max_intermediates;
 pub const CsiSeparatorList = std.StaticBitSet(csi_max_params);
 /// Maximum complete payload accepted for one ordinary metadata control.
 pub const max_metadata_control_bytes = metadata_control_max_bytes;
+/// Maximum complete payload accepted for one full xterm palette transaction.
+pub const max_palette_control_bytes = palette_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
 pub const max_chunk_control_bytes = chunk_control_max_bytes;
 
@@ -331,10 +340,12 @@ pub const Parser = struct {
         self.latin1 = false;
     }
 
-    /// Returns and clears the pending buffered string-control allocation or bound failure.
-    pub fn takeStringControlFailed(self: *Parser) ?error{ OutOfMemory, StringControlLimit } {
-        if (self.osc.takeFailure()) |failure| return failure;
-        return null;
+    /// Returns and clears a pending buffered string-control allocation failure.
+    ///
+    /// Byte-limit overflow is parser-local discard state and never escapes the
+    /// terminal lifetime as an exceptional failure.
+    pub fn takeStringControlFailed(self: *Parser) ?error{OutOfMemory} {
+        return self.osc.takeFailure();
     }
 
     // -------------------------------------------------------------------------
@@ -417,6 +428,10 @@ pub const Parser = struct {
             .put => .{ null, null, null },
             .finish => finish: {
                 self.state = .ground;
+                if (self.osc.didOverflow()) {
+                    self.osc.reset();
+                    break :finish .{ null, null, null };
+                }
                 break :finish .{ .{ .screen_title = self.osc.payload() }, null, null };
             },
         };
@@ -510,6 +525,10 @@ pub const Parser = struct {
                         break :exit null;
                     },
                 };
+                if (self.osc.didOverflow()) {
+                    self.osc.reset();
+                    break :exit null;
+                }
                 break :exit .{ .osc_dispatch = self.osc.snapshot(term) };
             },
             .dcs_passthrough => dcs: {
@@ -1334,7 +1353,7 @@ const DelimitedState = enum {
 
 /// Owns bounded OSC parsing and lends its mutually exclusive payload allocation to ESC k titles.
 pub const OscControl = struct {
-    const Failure = error{ OutOfMemory, StringControlLimit };
+    const Failure = error{OutOfMemory};
     const prefix_max_bytes = 8;
 
     const CommandPolicy = struct {
@@ -1531,6 +1550,7 @@ pub const OscControl = struct {
 
     /// Borrows the completed OSC action until reset, start, feed, or deinit.
     pub fn snapshot(self: *const OscControl, term: OscTerminator) OscAction {
+        std.debug.assert(!self.overflowed);
         return switch (self.policy.class) {
             .raw_title => .{ .raw_title = .{ .payload = self.buffer.items, .term = term } },
             .raw_other => .{ .raw_other = .{ .payload = self.buffer.items, .term = term } },
@@ -1591,17 +1611,19 @@ pub const OscControl = struct {
         };
     }
 
-    /// Returns and clears the first OSC allocation or bound failure.
+    /// Returns and clears the first OSC allocation failure.
+    ///
+    /// Bounded overflow stays latched until completion so the parser can consume
+    /// through BEL/ST and suppress the complete control atomically.
     pub fn takeFailure(self: *OscControl) ?Failure {
-        var failure: ?Failure = null;
-        if (self.overflowed) {
-            failure = error.StringControlLimit;
-        } else if (self.alloc_failed) {
-            failure = error.OutOfMemory;
-        }
+        if (!self.alloc_failed) return null;
         self.alloc_failed = false;
-        self.overflowed = false;
-        return failure;
+        return error.OutOfMemory;
+    }
+
+    /// Reports whether the current OSC exceeded its command-specific bound.
+    pub fn didOverflow(self: *const OscControl) bool {
+        return self.overflowed;
     }
 
     // -------------------------------------------------------------------------
@@ -1784,10 +1806,12 @@ pub const OscControl = struct {
     }
 
     fn append(self: *OscControl, byte: u8) void {
+        if (self.overflowed) return;
         std.debug.assert(self.buffer.items.len <= std.math.maxInt(u32));
         const buffer_len: u32 = @intCast(self.buffer.items.len);
         if (buffer_len >= self.policy.max_len) {
             self.overflowed = true;
+            self.buffer.clearRetainingCapacity();
             return;
         }
         self.buffer.append(self.allocator, byte) catch {
@@ -2020,8 +2044,13 @@ pub const OscControl = struct {
             .c0 => .{ .command = 0, .class = .title, .max_len = self.metadata_max_len },
             .c1 => .{ .command = 1, .class = .icon, .max_len = self.metadata_max_len },
             .c2 => .{ .command = 2, .class = .title, .max_len = self.metadata_max_len },
-            .c4, .c5 => |state| .{
-                .command = if (state == .c4) 4 else 5,
+            .c4 => .{
+                .command = 4,
+                .class = .palette_control,
+                .max_len = palette_control_max_bytes,
+            },
+            .c5 => .{
+                .command = 5,
                 .class = .palette_control,
                 .max_len = self.metadata_max_len,
             },

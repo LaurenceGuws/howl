@@ -20,8 +20,8 @@ comptime {
 pub const DcsCapture = struct {
     /// Reports allocation failure while materializing one DCS hook prefix.
     pub const StartError = error{OutOfMemory};
-    /// Reports allocation or the exact payload bound while appending DCS bytes.
-    pub const PutError = error{ OutOfMemory, StringControlLimit };
+    /// Reports allocation failure while appending bounded DCS bytes.
+    pub const PutError = error{OutOfMemory};
 
     allocator: std.mem.Allocator,
     bytes: std.ArrayList(u8) = .empty,
@@ -32,6 +32,7 @@ pub const DcsCapture = struct {
     param_count: u8 = 0,
     intermediates_len: u8 = 0,
     active: bool = false,
+    overflowed: bool = false,
 
     /// Initializes one inactive capture with caller-owned allocation policy.
     pub fn init(allocator: std.mem.Allocator) DcsCapture {
@@ -51,6 +52,7 @@ pub const DcsCapture = struct {
         self.final = 0;
         self.param_count = 0;
         self.intermediates_len = 0;
+        self.overflowed = false;
         self.bytes.clearRetainingCapacity();
     }
 
@@ -87,15 +89,29 @@ pub const DcsCapture = struct {
     }
 
     /// Appends one payload byte within the sixel or metadata-specific bound.
+    ///
+    /// Once the bound is exceeded, retained bytes are released and later payload
+    /// bytes are ignored until DCS completion/cancellation. Allocation failure
+    /// remains exceptional.
     pub fn put(self: *DcsCapture, byte: u8) PutError!void {
         std.debug.assert(self.active);
+        if (self.overflowed) return;
         const limit: usize = if (self.isSixel())
             sixel.max_encoded_bytes
         else
             parser.max_metadata_control_bytes;
-        if (self.bytes.items.len - self.payload_start >= limit)
-            return error.StringControlLimit;
+        if (self.bytes.items.len - self.payload_start >= limit) {
+            self.overflowed = true;
+            self.bytes.clearRetainingCapacity();
+            self.payload_start = 0;
+            return;
+        }
         try self.bytes.append(self.allocator, byte);
+    }
+
+    /// Reports whether this DCS exceeded its bounded retained payload.
+    pub fn didOverflow(self: *const DcsCapture) bool {
+        return self.overflowed;
     }
 
     /// Reports whether the active capture is an unintermediated sixel DCS.
@@ -106,6 +122,7 @@ pub const DcsCapture = struct {
     /// Borrows captured payload bytes until the next capture mutation.
     pub fn payload(self: *const DcsCapture) []const u8 {
         std.debug.assert(self.active);
+        std.debug.assert(!self.overflowed);
         return self.bytes.items[self.payload_start..];
     }
 
@@ -118,6 +135,7 @@ pub const DcsCapture = struct {
     /// Borrows one complete parser event until the next capture mutation.
     pub fn event(self: *const DcsCapture) parser.Event {
         std.debug.assert(self.active);
+        std.debug.assert(!self.overflowed);
         return .{ .dcs = .{
             .body = self.bytes.items,
             .payload = self.payload(),
@@ -296,7 +314,12 @@ test "DCS capture start and put report exact failures and remain reusable" {
     try put(&capture, 'y');
     while (capture.payload().len < parser.max_metadata_control_bytes)
         try put(&capture, 'z');
-    try std.testing.expectError(error.StringControlLimit, put(&capture, 'z'));
+    try put(&capture, 'z');
+    try std.testing.expect(capture.didOverflow());
+    try std.testing.expect(capture.active);
+    try std.testing.expectEqual(@as(usize, 0), capture.bytes.items.len);
+    try put(&capture, 'y');
+    try std.testing.expectEqual(@as(usize, 0), capture.bytes.items.len);
     capture.reset();
     try std.testing.expect(!capture.active);
     try start(&capture, hook);

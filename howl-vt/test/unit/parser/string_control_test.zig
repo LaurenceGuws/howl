@@ -105,13 +105,16 @@ test "parser string controls: GNU Screen title shares the exact metadata bound" 
     try expectNoActions(parser.next('k'));
     for (0..parser_mod.max_metadata_control_bytes) |_| try expectNoActions(parser.next('x'));
     try std.testing.expectEqual(
-        @as(?(error{ OutOfMemory, StringControlLimit }), null),
+        @as(?error{OutOfMemory}, null),
         parser.takeStringControlFailed(),
     );
 
     try expectNoActions(parser.next('x'));
-    try std.testing.expectEqual(error.StringControlLimit, parser.takeStringControlFailed().?);
-    parser.reset();
+    try std.testing.expectEqual(
+        @as(?error{OutOfMemory}, null),
+        parser.takeStringControlFailed(),
+    );
+    try expectNoActions(parser.next('\r'));
     const phases = parser.next('A');
     try std.testing.expectEqual(@as(u21, 'A'), phases[1].?.print);
 }
@@ -497,11 +500,14 @@ test "osc control: title payload keeps metadata limit" {
     osc.start();
     try putOscBytes(&osc, "0;hello");
     try finishOscBel(&osc);
+    try std.testing.expect(osc.didOverflow());
+    try std.testing.expectEqual(@as(?error{OutOfMemory}, null), osc.takeFailure());
+    osc.reset();
+    osc.start();
+    try putOscBytes(&osc, "0;ok");
+    try finishOscBel(&osc);
     const snapshot = osc.snapshot(.bel);
-    try std.testing.expectEqual(@as(?u16, 0), snapshot.command());
-    try std.testing.expectEqual(std.meta.Tag(parser_mod.OscAction).title, std.meta.activeTag(snapshot));
-    try std.testing.expectEqualStrings("hell", snapshot.payload());
-    try std.testing.expectEqual(error.StringControlLimit, osc.takeFailure().?);
+    try std.testing.expectEqualStrings("ok", snapshot.payload());
 }
 
 test "osc control: clipboard payload uses large limit" {
@@ -514,7 +520,7 @@ test "osc control: clipboard payload uses large limit" {
     try std.testing.expectEqual(@as(?u16, 52), snapshot.command());
     try std.testing.expectEqual(std.meta.Tag(parser_mod.OscAction).clipboard, std.meta.activeTag(snapshot));
     try std.testing.expectEqualStrings("c;abcdefgh", snapshot.payload());
-    try std.testing.expectEqual(@as(?(error{ OutOfMemory, StringControlLimit }), null), osc.takeFailure());
+    try std.testing.expectEqual(@as(?error{OutOfMemory}, null), osc.takeFailure());
 }
 
 test "osc control: clipboard boundary rejects and resets exactly" {
@@ -536,16 +542,13 @@ test "osc control: clipboard boundary rejects and resets exactly" {
         osc.start();
         try putOscBytes(&osc, case.body);
         try finishOscBel(&osc);
-        const snapshot = osc.snapshot(.bel);
-        try std.testing.expectEqualStrings(case.payload, snapshot.payload());
         if (case.exceeds_limit) {
-            try std.testing.expectEqual(error.StringControlLimit, osc.takeFailure().?);
+            try std.testing.expect(osc.didOverflow());
         } else {
-            try std.testing.expectEqual(
-                @as(?(error{ OutOfMemory, StringControlLimit }), null),
-                osc.takeFailure(),
-            );
+            const snapshot = osc.snapshot(.bel);
+            try std.testing.expectEqualStrings(case.payload, snapshot.payload());
         }
+        try std.testing.expectEqual(@as(?error{OutOfMemory}, null), osc.takeFailure());
     }
 }
 
@@ -568,15 +571,12 @@ test "osc control: chunked protocol boundary rejects and resets exactly" {
         osc.start();
         try putOscBytes(&osc, case.body);
         try finishOscBel(&osc);
-        const snapshot = osc.snapshot(.bel);
-        try std.testing.expectEqualStrings(case.payload, snapshot.payload());
         if (case.exceeds_limit) {
-            try std.testing.expectEqual(error.StringControlLimit, osc.takeFailure().?);
+            try std.testing.expect(osc.didOverflow());
         } else {
-            try std.testing.expectEqual(
-                @as(?(error{ OutOfMemory, StringControlLimit }), null),
-                osc.takeFailure(),
-            );
+            const snapshot = osc.snapshot(.bel);
+            try std.testing.expectEqualStrings(case.payload, snapshot.payload());
         }
+        try std.testing.expectEqual(@as(?error{OutOfMemory}, null), osc.takeFailure());
     }
 }
