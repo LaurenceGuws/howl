@@ -28,10 +28,10 @@ active:
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
-  - bootstrap an experimental Odin/SDL3 desktop shell for Windows-familiar tabs, profiles, settings, actions, and future pane layout without duplicating terminal semantics
+  - iterate the Odin/SDL3 desktop canary with tabs/splits, profiles, settings, explicit attachments and shared Canvas presentation without duplicating terminal semantics
 
 deferred:
-  - promote the Odin desktop proof into a durable graphical client after Session/render integration earns that status
+  - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior
   - durable Android visual client and app lifecycle integration
   - authenticated/public remote Howl transport policy
   - renderer backend selection and presentation polish

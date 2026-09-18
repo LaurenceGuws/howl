@@ -64,8 +64,9 @@ experimental:
     acceptance lane while Safari/Home-Screen is the WebKit/PWA platform canary;
     outside the root core gate
   howl-odin: >-
-    experimental polished desktop application shell in Odin over SDL3 and
-    SDL3_ttf; owns windows, tabs, future pane/profile/settings/action UI and OS
-    integration only, with terminal semantics remaining behind the existing
-    Howl client/session boundaries; current terminal body is a placeholder;
-    outside the root core gate
+    experimental desktop application in Odin over SDL3 and SDL3_ttf; owns
+    native window chrome, tabs/splits, profiles, settings/actions, history and
+    selection UI, plus bounded asynchronous client workers. Terminal pixels
+    come from shared howl-client views, howl-text and Canvas; local owned
+    Sessions and explicit Unix/TCP/SSH attachments retain canonical Session/VT
+    ownership. Daily desktop canary; outside the root core gate
