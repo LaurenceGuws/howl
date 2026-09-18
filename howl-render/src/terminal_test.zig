@@ -277,6 +277,7 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     host.residencies[0] = .{ .resource = first_resource, .format = .alpha8, .size = replay.uploads[0].size };
     const regenerated = try host.present(view);
     try std.testing.expectEqual(@as(usize, 1), regenerated.frame.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), regenerated.frame.removals.len);
     try std.testing.expectEqual(@backingInt(first_resource.resource), @backingInt(regenerated.frame.uploads[0].resource.resource));
     try std.testing.expect(@backingInt(regenerated.frame.uploads[0].resource.generation) > @backingInt(first_resource.generation));
 }
@@ -630,7 +631,9 @@ test "terminal Canvas external image residency is requested once and removed whe
 
     const without = try host.present(plain_view);
     var removed = false;
-    for (without.frame.removals) |value| if (std.meta.eql(value, image_resource)) removed = true;
+    for (without.frame.removals) |value| {
+        if (std.meta.eql(value, image_resource)) removed = true;
+    }
     try std.testing.expect(removed);
     try std.testing.expect(firstRgba(without.frame.commands) == null);
 }

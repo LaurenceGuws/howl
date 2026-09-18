@@ -558,6 +558,10 @@ pub fn frame(
     var removal_count: usize = 0;
     for (residency) |value| {
         if (residencyRequired(impl, atlas, value)) continue;
+        // A newer atlas generation replaces the same backend identity atomically.
+        // Emitting a removal for that identity in the same frame would make the
+        // replacement transaction internally contradictory.
+        if (atlas_upload and value.resource.resource == atlas_ref.?.resource) continue;
         if (removal_count == buffers.removals.len) return error.ResourceLimit;
         removal_count += 1;
     }
@@ -598,6 +602,7 @@ pub fn frame(
     var removal_at: usize = 0;
     for (residency) |value| {
         if (residencyRequired(impl, atlas, value)) continue;
+        if (atlas_upload and value.resource.resource == atlas_ref.?.resource) continue;
         buffers.removals[removal_at] = value.resource;
         removal_at += 1;
     }

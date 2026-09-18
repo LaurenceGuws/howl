@@ -103,6 +103,30 @@ pub fn build(b: *std.Build) void {
     run_tests.addPassthruArgs();
     const test_step = b.step("test", "Run selected drawing and terminal-presentation proofs");
     test_step.dependOn(&run_tests.step);
+
+    if (native_enabled) {
+        const terminal_test_module = b.createModule(.{
+            .root_source_file = b.path("src/terminal_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        terminal_test_module.addImport("howl_render", test_module);
+        terminal_test_module.addImport("howl_client", client.?);
+        terminal_test_module.addImport("howl_text", text.?);
+        terminal_test_module.addImport("test_fonts", text_test_fonts.?);
+        const terminal_tests = b.addTest(.{
+            .name = "howl-render-terminal-residency",
+            .root_module = terminal_test_module,
+            .filters = &.{"terminal Canvas owns final atlas residency and recovers after backend loss"},
+            .use_llvm = false,
+            .use_lld = false,
+        });
+        check.dependOn(&terminal_tests.step);
+        const run_terminal_tests = b.addRunArtifact(terminal_tests);
+        run_terminal_tests.addPassthruArgs();
+        test_step.dependOn(&run_terminal_tests.step);
+    }
+
     b.default_step = check;
 }
 
