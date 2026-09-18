@@ -519,7 +519,6 @@ let renderTail = Promise.resolve();
 function rendererMissingExternal() {
   if (renderer.exports.rv_missing_external() !== 1) return null;
   const q = [
-    renderer.exports.rv_missing_source(),
     renderer.exports.rv_missing_resource(),
     renderer.exports.rv_missing_generation(),
   ];

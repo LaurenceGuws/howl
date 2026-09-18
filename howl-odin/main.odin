@@ -126,7 +126,6 @@ Tab :: struct {
 }
 
 Canvas_Texture :: struct {
-    source: u64,
     resource: u64,
     generation: u64,
     texture: ^SDL.Texture,
@@ -919,21 +918,21 @@ reset_canvas :: proc(view: ^Session_View) {
 }
 
 
-find_canvas_resource :: proc(view: ^Session_View, source, resource, generation: u64) -> ^Canvas_Texture {
+find_canvas_resource :: proc(view: ^Session_View, resource, generation: u64) -> ^Canvas_Texture {
     for index in 0..<view.canvas_resource_count {
         value := &view.canvas_resources[index]
-        if value.source == source && value.resource == resource && value.generation == generation {
+        if value.resource == resource && value.generation == generation {
             return value
         }
     }
     return nil
 }
 
-remove_canvas_resource_key :: proc(view: ^Session_View, source, resource, generation: u64, exact_generation: bool) {
+remove_canvas_resource_key :: proc(view: ^Session_View, resource, generation: u64, exact_generation: bool) {
     index := 0
     for index < view.canvas_resource_count {
         value := view.canvas_resources[index]
-        if value.source == source && value.resource == resource && (!exact_generation || value.generation == generation) {
+        if value.resource == resource && (!exact_generation || value.generation == generation) {
             remove_canvas_resource_at(view, index)
             if !exact_generation {
                 continue
@@ -1021,14 +1020,13 @@ create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> boo
         return false
     }
 
-    remove_canvas_resource_key(view, info.source, info.resource, 0, false)
+    remove_canvas_resource_key(view, info.resource, 0, false)
     if view.canvas_resource_count >= MAX_CANVAS_RESOURCES {
         set_canvas_error(view, "Canvas resource cache full")
         SDL.DestroyTexture(texture)
         return false
     }
     view.canvas_resources[view.canvas_resource_count] = Canvas_Texture{
-        source = info.source,
         resource = info.resource,
         generation = info.generation,
         texture = texture,
@@ -1106,7 +1104,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
             reset_canvas(view)
             return false
         }
-        remove_canvas_resource_key(view, info.source, info.resource, info.generation, true)
+        remove_canvas_resource_key(view, info.resource, info.generation, true)
     }
     for index in 0..<int(render_upload_count(view.canvas)) {
         if !create_canvas_texture(app, view, u32(index)) {
@@ -1196,7 +1194,7 @@ draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, ori
             _ = SDL.RenderFillRect(app.renderer, &draw_rect)
             continue
         }
-        resource := find_canvas_resource(view, command.resource_source, command.resource, command.generation)
+        resource := find_canvas_resource(view, command.resource, command.generation)
         if resource == nil || resource.texture == nil {
             set_canvas_error(view, "Canvas command references missing texture")
             return false

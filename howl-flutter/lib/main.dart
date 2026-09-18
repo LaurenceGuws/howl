@@ -476,7 +476,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     int? transportGeneration,
     Future<NativeHostObservation>? prefetched,
   }) async {
-    final preloaded = <(int, int), NativeCanvasPreloadedResource>{};
+    final preloaded = <int, NativeCanvasPreloadedResource>{};
     var supersessions = 0;
     try {
       while (true) {
@@ -515,10 +515,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         final decoded = await prepareNativeCanvasExternalUpload(
           observation.upload,
         );
-        final logical = (
-          decoded.resource.key.source,
-          decoded.resource.key.resource,
-        );
+        final logical = decoded.resource.key.resource;
         final replaced = preloaded[logical];
         if (replaced != null && replaced.image != decoded.image) {
           replaced.image.dispose();

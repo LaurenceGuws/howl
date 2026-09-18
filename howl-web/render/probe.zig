@@ -169,7 +169,7 @@ fn execute(font_input: []u8) !void {
         .height = metrics.line_height,
     };
     var uploads: [2]canvas.FrameResourceUpload = undefined;
-    var removals: [2]canvas.FrameResourceRef = undefined;
+    var removals: [2]canvas.ResourceRef = undefined;
     var commands: [128]canvas.Command = undefined;
     const frame = try render.terminal.frame(terminal_canvas, &.{}, .{
         .uploads = &uploads,

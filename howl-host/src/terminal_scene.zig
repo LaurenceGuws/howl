@@ -75,7 +75,7 @@ pub const Scene = struct {
     canvas: *terminal.Canvas,
     cell_size: canvas.Size,
     frame_uploads: []canvas.FrameResourceUpload,
-    frame_removals: []canvas.FrameResourceRef,
+    frame_removals: []canvas.ResourceRef,
     frame_commands: []canvas.Command,
     frame_pixels: []u8,
     surface_uploads: []vk_surface.Upload,
@@ -140,7 +140,7 @@ pub const Scene = struct {
 
         const frame_uploads = try allocator.alloc(canvas.FrameResourceUpload, resource_limit);
         errdefer allocator.free(frame_uploads);
-        const frame_removals = try allocator.alloc(canvas.FrameResourceRef, resource_limit);
+        const frame_removals = try allocator.alloc(canvas.ResourceRef, resource_limit);
         errdefer allocator.free(frame_removals);
         const frame_commands = try allocator.alloc(canvas.Command, command_capacity);
         errdefer allocator.free(frame_commands);
@@ -407,23 +407,21 @@ fn adaptCanvasFrame(
     };
 }
 
-fn surfaceResource(value: canvas.FrameResourceRef) error{InvalidFrame}!vk_surface.ResourceGeneration {
+fn surfaceResource(value: canvas.ResourceRef) error{InvalidFrame}!vk_surface.ResourceGeneration {
+    value.validate() catch return error.InvalidFrame;
     return vk_surface.ResourceGeneration.init(
-        @backingInt(value.source),
         @backingInt(value.resource),
         @backingInt(value.generation),
     ) catch error.InvalidFrame;
 }
 
-fn canvasResource(value: vk_surface.ResourceGeneration) error{InvalidFrame}!canvas.FrameResourceRef {
-    const resource = canvas.ResourceId.fromEncoded(value.resource) catch
-        return error.InvalidFrame;
-    if (value.source != @backingInt(terminal.terminal_source))
-        return error.InvalidFrame;
-    return canvas.FrameResourceRef.local(.{
-        .resource = resource,
-        .generation = @fromBackingInt(@intCast(value.generation)),
-    }) catch error.InvalidFrame;
+fn canvasResource(value: vk_surface.ResourceGeneration) error{InvalidFrame}!canvas.ResourceRef {
+    value.validate() catch return error.InvalidFrame;
+    return .{
+        .resource = canvas.ResourceId.fromEncoded(value.resource) catch
+            return error.InvalidFrame,
+        .generation = @fromBackingInt(value.generation),
+    };
 }
 
 fn surfaceRect(value: canvas.Rect) vk_surface.Rect {

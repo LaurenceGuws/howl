@@ -33,7 +33,7 @@ var metadata_used: usize = 0;
 var pixels: [atlas_bytes]u8 = undefined;
 var pixels_used: usize = 0;
 var frame_uploads: [residency_capacity]canvas.FrameResourceUpload = undefined;
-var frame_removals: [residency_capacity]canvas.FrameResourceRef = undefined;
+var frame_removals: [residency_capacity]canvas.ResourceRef = undefined;
 var frame_commands: [command_capacity]canvas.Command = undefined;
 var accepted_residency: [residency_capacity]canvas.Residency = undefined;
 var accepted_residency_count: usize = 0;
@@ -118,9 +118,6 @@ export fn rv_ready() u32 {
 }
 export fn rv_missing_external() u32 {
     return @intFromBool(missing_external != null);
-}
-export fn rv_missing_source() u64 {
-    return if (missing_external) |value| @backingInt(value.resource.source) else 0;
 }
 export fn rv_missing_resource() u64 {
     return if (missing_external) |value| @backingInt(value.resource.resource) else 0;
@@ -338,9 +335,7 @@ export fn rv_accept_external() u32 {
         .size = value.size,
     };
     for (accepted_residency[0..accepted_residency_count]) |*current| {
-        if (@backingInt(current.resource.source) == @backingInt(residency.resource.source) and
-            @backingInt(current.resource.resource) == @backingInt(residency.resource.resource))
-        {
+        if (@backingInt(current.resource.resource) == @backingInt(residency.resource.resource)) {
             current.* = residency;
             missing_external = null;
             missing_image_binding = null;
@@ -376,7 +371,7 @@ fn updateCanvas(view: *const client.view.Snapshot) !void {
 
 fn findImageBindingByResource(
     bindings: []const ImageBinding,
-    resource: canvas.FrameResourceRef,
+    resource: canvas.ResourceRef,
 ) ?ImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -391,9 +386,7 @@ fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !Pending
         return error.InvalidExternalResource;
     var selected: ?PendingExternal = null;
     for (missing, 0..) |value, index| {
-        if (value.resource.source != render.terminal.terminal_source or
-            value.format != .rgba8)
-            return error.InvalidExternalResource;
+        if (value.format != .rgba8) return error.InvalidExternalResource;
         const binding = findImageBindingByResource(
             image_bindings[0..image_binding_count],
             value.resource,
@@ -423,16 +416,15 @@ export fn rv_ack() u32 {
     return 1;
 }
 
-fn exactResourceEqual(a: canvas.FrameResourceRef, b: canvas.FrameResourceRef) bool {
-    return @backingInt(a.source) == @backingInt(b.source) and
-        @backingInt(a.resource) == @backingInt(b.resource) and
+fn exactResourceEqual(a: canvas.ResourceRef, b: canvas.ResourceRef) bool {
+    return @backingInt(a.resource) == @backingInt(b.resource) and
         @backingInt(a.generation) == @backingInt(b.generation);
 }
 
 fn collectPendingResidency(commands: []const canvas.Command) error{ResidencyLimit}!void {
     pending_residency_count = 0;
     for (commands) |command| {
-        const view: ?canvas.FrameResourceView = switch (command) {
+        const view: ?canvas.ResourceView = switch (command) {
             .solid => null,
             .alpha_mask => |value| value.resource,
             .rgba => |value| value.resource,
@@ -481,11 +473,12 @@ fn writeFrame(
     for (frame.uploads, 0..) |upload, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.print(
-            "{{\"q\":[{d},{d},{d}],\"f\":{d},\"z\":[{d},{d}],\"o\":{d},\"n\":{d},\"stride\":{d}}}",
+            "{{\"q\":[{d},{d}],\"f\":{d},\"z\":[{d},{d}],\"o\":{d},\"n\":{d},\"stride\":{d}}}",
             .{
-                @backingInt(upload.resource.source), @backingInt(upload.resource.resource), @backingInt(upload.resource.generation),
-                @backingInt(upload.format),          upload.size.width,                     upload.size.height,
-                upload.pixel_offset,                 upload.pixel_count,                    upload.stride,
+                @backingInt(upload.resource.resource), @backingInt(upload.resource.generation),
+                @backingInt(upload.format),            upload.size.width,
+                upload.size.height,                    upload.pixel_offset,
+                upload.pixel_count,                    upload.stride,
             },
         );
     }
@@ -539,9 +532,9 @@ fn writeFrame(
     metadata_used = writer.end;
 }
 
-fn writeQualified(writer: *std.Io.Writer, value: canvas.FrameResourceRef) !void {
-    try writer.print("[{d},{d},{d}]", .{
-        @backingInt(value.source), @backingInt(value.resource), @backingInt(value.generation),
+fn writeQualified(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+    try writer.print("[{d},{d}]", .{
+        @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 

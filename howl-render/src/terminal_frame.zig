@@ -1,8 +1,8 @@
 //! Private final-frame vocabulary for one terminal presentation.
 //!
-//! There is exactly one terminal source. This file owns clipping, exact resource
-//! metadata, backend residency comparison, and final command projection only.
-//! It owns no retained terminal state and no multi-source composition.
+//! There is exactly one terminal resource identity space. This file owns
+//! clipping, exact resource metadata, backend residency comparison, and final
+//! command projection only. It owns no retained terminal state.
 
 const std = @import("std");
 const validation = @import("terminal_frame_validation.zig");
@@ -31,59 +31,38 @@ pub const SourceRect = struct { x: u16, y: u16, width: u16, height: u16 };
 
 pub const ResourceId = enum(u64) {
     _,
-    const shared_bit: u64 = @as(u64, 1) << 63;
-    pub const max_identity: u64 = shared_bit - 1;
+    pub const max_identity: u64 = std.math.maxInt(u64);
     pub const InitError = error{InvalidIdentity};
 
-    pub fn local(identity_value: u64) InitError!ResourceId {
-        if (identity_value == 0 or identity_value > max_identity) return error.InvalidIdentity;
-        return @fromBackingInt(identity_value);
+    pub fn init(value: u64) InitError!ResourceId {
+        if (value == 0) return error.InvalidIdentity;
+        return @fromBackingInt(value);
     }
 
-    pub fn fromEncoded(encoded: u64) InitError!ResourceId {
-        const result: ResourceId = @fromBackingInt(encoded);
-        try result.validate();
-        return result;
+    pub fn fromEncoded(value: u64) InitError!ResourceId {
+        return init(value);
     }
 
     pub fn validate(self: ResourceId) InitError!void {
-        if (@backingInt(self) & max_identity == 0) return error.InvalidIdentity;
-    }
-
-    pub fn isShared(self: ResourceId) bool {
-        return @backingInt(self) & shared_bit != 0;
+        if (@backingInt(self) == 0) return error.InvalidIdentity;
     }
 
     pub fn identity(self: ResourceId) InitError!u64 {
         try self.validate();
-        return @backingInt(self) & max_identity;
+        return @backingInt(self);
     }
 };
 
-/// Transitional packet namespace. Terminal always uses `terminal_source`.
-pub const SourceId = enum(u64) { _ };
-pub const terminal_source: SourceId = @fromBackingInt(1);
 pub const ResourceGeneration = enum(u64) { _ };
 pub const ResourceFormat = enum(u8) { alpha8, rgba8 };
 
 pub const ResourceRef = struct {
     resource: ResourceId,
     generation: ResourceGeneration,
-};
 
-pub const FrameResourceRef = struct {
-    source: SourceId,
-    resource: ResourceId,
-    generation: ResourceGeneration,
-
-    pub fn local(value: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!FrameResourceRef {
-        try validateLocalRef(value);
-        return .{ .source = terminal_source, .resource = value.resource, .generation = value.generation };
-    }
-
-    pub fn validate(self: FrameResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
-        if (self.source != terminal_source) return error.InvalidIdentity;
-        try validateLocalRef(.{ .resource = self.resource, .generation = self.generation });
+    pub fn validate(self: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
+        try self.resource.validate();
+        try validation.localIdentity(try self.resource.identity(), @backingInt(self.generation));
     }
 };
 
@@ -91,13 +70,7 @@ pub const ResourceView = struct {
     resource: ResourceRef,
     format: ResourceFormat,
     size: Size,
-    source: ?SourceRect = null,
-};
-
-pub const FrameResourceView = struct {
-    resource: FrameResourceRef,
-    format: ResourceFormat,
-    size: Size,
+    /// Optional pixel sub-rectangle inside the retained resource.
     source: ?SourceRect = null,
 };
 
@@ -109,13 +82,13 @@ pub const ExternalResource = struct {
 };
 
 pub const Residency = struct {
-    resource: FrameResourceRef,
+    resource: ResourceRef,
     format: ResourceFormat,
     size: Size,
 };
 
 pub const FrameResourceUpload = struct {
-    resource: FrameResourceRef,
+    resource: ResourceRef,
     format: ResourceFormat,
     size: Size,
     pixel_offset: usize,
@@ -124,7 +97,7 @@ pub const FrameResourceUpload = struct {
 };
 
 pub const FrameExternalResource = struct {
-    resource: FrameResourceRef,
+    resource: ResourceRef,
     format: ResourceFormat,
     size: Size,
     stride: usize,
@@ -147,16 +120,12 @@ pub const Command = union(enum) {
     alpha_mask: struct {
         destination: Rect,
         clip: Rect,
-        resource: FrameResourceView,
+        resource: ResourceView,
         color: Color,
         cursor_component: bool = false,
     },
-    rgba: struct { destination: Rect, clip: Rect, resource: FrameResourceView },
+    rgba: struct { destination: Rect, clip: Rect, resource: ResourceView },
 };
-
-pub fn qualify(value: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!FrameResourceRef {
-    return FrameResourceRef.local(value);
-}
 
 pub fn project(
     surface: Size,
@@ -184,14 +153,14 @@ pub fn project(
             .alpha_mask => |value| .{ .alpha_mask = .{
                 .destination = value.destination,
                 .clip = visible,
-                .resource = try qualifyView(value.resource),
+                .resource = try validatedView(value.resource),
                 .color = value.color,
                 .cursor_component = value.cursor_component,
             } },
             .rgba => |value| .{ .rgba = .{
                 .destination = value.destination,
                 .clip = visible,
-                .resource = try qualifyView(value.resource),
+                .resource = try validatedView(value.resource),
             } },
         };
         used += 1;
@@ -205,9 +174,9 @@ pub fn residencyMatches(
     format: ResourceFormat,
     size: Size,
 ) bool {
-    const qualified = qualify(resource) catch return false;
+    resource.validate() catch return false;
     for (residency) |value| {
-        if (!std.meta.eql(value.resource, qualified)) continue;
+        if (!std.meta.eql(value.resource, resource)) continue;
         return value.format == format and std.meta.eql(value.size, size);
     }
     return false;
@@ -225,7 +194,7 @@ pub fn validateResidencies(residency: []const Residency) Error!void {
 }
 
 pub fn validateExternal(value: ExternalResource) Error!void {
-    validateLocalRef(value.resource) catch |err| return err;
+    value.resource.validate() catch |err| return err;
     try validateExtent(value.size, null);
     const bpp: usize = switch (value.format) {
         .alpha8 => 1,
@@ -244,7 +213,7 @@ pub fn resourceVisible(inputs: []const Input, resource: ResourceRef) bool {
     return false;
 }
 
-pub fn resourceReferencedByCommand(command: Command) ?FrameResourceView {
+pub fn resourceReferencedByCommand(command: Command) ?ResourceView {
     return switch (command) {
         .solid => null,
         .alpha_mask => |value| value.resource,
@@ -268,14 +237,9 @@ pub fn intersectRects(left: Rect, right: Rect) Error!?Rect {
     };
 }
 
-fn qualifyView(value: ResourceView) Error!FrameResourceView {
+fn validatedView(value: ResourceView) Error!ResourceView {
     try validateResourceView(value);
-    return .{
-        .resource = try qualify(value.resource),
-        .format = value.format,
-        .size = value.size,
-        .source = value.source,
-    };
+    return value;
 }
 
 fn visibleRect(input: Input, surface: Size) Error!?Rect {
@@ -295,14 +259,8 @@ fn visibleRect(input: Input, surface: Size) Error!?Rect {
 }
 
 fn validateResourceView(value: ResourceView) Error!void {
-    validateLocalRef(value.resource) catch |err| return err;
+    value.resource.validate() catch |err| return err;
     try validateExtent(value.size, value.source);
-}
-
-fn validateLocalRef(value: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
-    if (value.resource.isShared()) return error.InvalidIdentity;
-    const id = try value.resource.identity();
-    try validation.localIdentity(id, @backingInt(value.generation));
 }
 
 fn validateExtent(size: Size, source: ?SourceRect) Error!void {

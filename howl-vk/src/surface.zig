@@ -51,77 +51,30 @@ pub const FrameTarget = struct {
     destination_queue_family: u32,
 };
 
-/// Identifies one exact generic resource generation.
-///
-/// The resource high bit selects the shared namespace. Local values require a
-/// nonzero caller-owned source; shared values require source zero.
+/// Identifies one exact terminal resource generation.
 pub const ResourceGeneration = struct {
-    source: u64,
     resource: u64,
     generation: u64,
 
-    const shared_bit: u64 = @as(u64, 1) << 63;
-    /// Largest independently issuable identity in either namespace.
-    pub const max_identity: u64 = shared_bit - 1;
-    /// Reports malformed namespace, identity, source, or generation values.
+    pub const max_identity: u64 = std.math.maxInt(u64);
     pub const InitError = error{ InvalidIdentity, InvalidGeneration };
 
-    /// Constructs and validates one generic resource update mechanically.
     pub fn init(
-        source: u64,
-        encoded_resource: u64,
+        resource: u64,
         generation: u64,
     ) InitError!ResourceGeneration {
-        const identity_value = encoded_resource & max_identity;
-        if (identity_value == 0 or ((source == 0) !=
-            (encoded_resource & shared_bit != 0)))
-            return error.InvalidIdentity;
+        if (resource == 0) return error.InvalidIdentity;
         if (generation == 0) return error.InvalidGeneration;
-        return .{
-            .source = source,
-            .resource = encoded_resource,
-            .generation = generation,
-        };
+        return .{ .resource = resource, .generation = generation };
     }
 
-    /// Constructs one source-qualified local resource generation.
-    pub fn local(
-        source: u64,
-        identity_value: u64,
-        generation: u64,
-    ) InitError!ResourceGeneration {
-        if (identity_value == 0 or identity_value > max_identity)
-            return error.InvalidIdentity;
-        return init(source, identity_value, generation);
-    }
-
-    /// Constructs one source-independent shared resource generation.
-    pub fn shared(
-        identity_value: u64,
-        generation: u64,
-    ) InitError!ResourceGeneration {
-        if (identity_value == 0 or identity_value > max_identity)
-            return error.InvalidIdentity;
-        return init(0, identity_value | shared_bit, generation);
-    }
-
-    /// Reports whether this resource occupies the shared namespace.
-    pub fn isShared(self: ResourceGeneration) bool {
-        return self.resource & shared_bit != 0;
-    }
-
-    /// Returns the nonzero identity without its namespace bit.
     pub fn identity(self: ResourceGeneration) InitError!u64 {
-        const value = self.resource & max_identity;
-        if (value == 0) return error.InvalidIdentity;
-        return value;
+        try self.validate();
+        return self.resource;
     }
 
-    /// Validates the complete namespace and generation relationship.
     pub fn validate(self: ResourceGeneration) InitError!void {
-        if (self.resource & max_identity == 0 or
-            ((self.source == 0) != self.isShared()))
-            return error.InvalidIdentity;
+        if (self.resource == 0) return error.InvalidIdentity;
         if (self.generation == 0) return error.InvalidGeneration;
     }
 };
@@ -1427,9 +1380,9 @@ test "atlas resources retain isolated edge-extrusion gutters" {
     @memset(builder.alpha_pixels, 0xa5);
     @memset(builder.rgba_pixels, 0xa5);
 
-    const first = try ResourceGeneration.local(1, 1, 1);
-    const second = try ResourceGeneration.local(1, 2, 1);
-    const image = try ResourceGeneration.local(1, 3, 1);
+    const first = try ResourceGeneration.init(1, 1);
+    const second = try ResourceGeneration.init(2, 1);
+    const image = try ResourceGeneration.init(3, 1);
     const first_pixels = [_]u8{ 0x11, 0x12, 0x13, 0x14 };
     const second_pixels = [_]u8{ 0x21, 0x22, 0x23, 0x24 };
     const image_pixels = [_]u8{
@@ -1552,7 +1505,7 @@ test "atlas gutter pressure rejects before reusable candidate completion" {
     const pixels = try std.testing.allocator.alloc(u8, atlas_extent - 1);
     defer std.testing.allocator.free(pixels);
     @memset(pixels, 0xff);
-    const resource = try ResourceGeneration.local(1, 1, 1);
+    const resource = try ResourceGeneration.init(1, 1);
     const too_wide = Frame{
         .revision = 1,
         .uploads = &.{.{
@@ -1612,7 +1565,7 @@ fn validateRect(rect: Rect) ResidencyStore.StoreError!void {
 }
 
 fn sameIdentity(left: ResourceGeneration, right: ResourceGeneration) bool {
-    return left.source == right.source and left.resource == right.resource;
+    return left.resource == right.resource;
 }
 
 fn findEntry(entries: []const ResidencyStore.Entry, key: ResourceGeneration) ?ResidencyStore.Entry {
@@ -1734,7 +1687,6 @@ test "pixel coordinates convert to Vulkan NDC without inversion drift" {
         .commands = &.{.{ .kind = .solid, .first_index = 0, .index_count = 3, .clip = .{ .x = 0, .y = 0, .width = 100, .height = 80 } }},
     }, 100, 80);
 }
-
 
 test "placed generic layer translates local clips through the shared surface" {
     var context = Context{};

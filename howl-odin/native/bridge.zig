@@ -116,7 +116,6 @@ const ExternalUpload = struct {
 };
 
 pub const RenderResourceInfo = extern struct {
-    source: u64 = 0,
     resource: u64 = 0,
     generation: u64 = 0,
     pixel_count: u64 = 0,
@@ -124,17 +123,15 @@ pub const RenderResourceInfo = extern struct {
     width: u16 = 0,
     height: u16 = 0,
     format: u8 = 0,
-    _reserved: [7]u8 = @splat(0),
+    _reserved: [3]u8 = @splat(0),
 };
 
 pub const RenderRemovalInfo = extern struct {
-    source: u64 = 0,
     resource: u64 = 0,
     generation: u64 = 0,
 };
 
 pub const RenderCommandInfo = extern struct {
-    resource_source: u64 = 0,
     resource: u64 = 0,
     generation: u64 = 0,
     color_rgba: u32 = 0,
@@ -224,7 +221,7 @@ const Render = struct {
     canvas: *terminal_render.Canvas,
     cell_size: canvas.Size,
     frame_uploads: [render_resource_limit]canvas.FrameResourceUpload = undefined,
-    frame_removals: [render_resource_limit]canvas.FrameResourceRef = undefined,
+    frame_removals: [render_resource_limit]canvas.ResourceRef = undefined,
     frame_commands: []canvas.Command,
     frame_pixels: []u8,
     residencies: [render_resource_limit]canvas.Residency = undefined,
@@ -417,7 +414,7 @@ fn clearExternalUploads(renderer: *Render) void {
 
 fn findRenderImageBindingByResource(
     bindings: []const RenderImageBinding,
-    resource: canvas.FrameResourceRef,
+    resource: canvas.ResourceRef,
 ) ?RenderImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -435,9 +432,7 @@ fn upsertResidency(
     var index: usize = 0;
     while (index < count.*) : (index += 1) {
         const existing = storage[index];
-        if (@backingInt(existing.resource.source) == @backingInt(value.resource.source) and
-            @backingInt(existing.resource.resource) == @backingInt(value.resource.resource))
-        {
+        if (@backingInt(existing.resource.resource) == @backingInt(value.resource.resource)) {
             storage[index] = value;
             return;
         }
@@ -462,8 +457,7 @@ fn prepareExternalUploads(
     errdefer clearExternalUploads(renderer);
 
     for (missing) |external| {
-        if (external.resource.source != terminal_render.terminal_source or
-            external.format != .rgba8)
+        if (external.format != .rgba8)
             return error.InvalidExternalResource;
         const binding = findRenderImageBindingByResource(bindings, external.resource) orelse
             return error.InvalidImageBinding;
@@ -636,7 +630,7 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
 fn updateRenderResidency(
     renderer: *Render,
     uploads: []const canvas.FrameResourceUpload,
-    removals: []const canvas.FrameResourceRef,
+    removals: []const canvas.ResourceRef,
 ) void {
     for (removals) |removal| {
         var index: usize = 0;
@@ -653,9 +647,7 @@ fn updateRenderResidency(
         var index: usize = 0;
         while (index < renderer.residency_count) : (index += 1) {
             const existing = renderer.residencies[index];
-            if (@backingInt(existing.resource.source) == @backingInt(upload.resource.source) and
-                @backingInt(existing.resource.resource) == @backingInt(upload.resource.resource))
-            {
+            if (@backingInt(existing.resource.resource) == @backingInt(upload.resource.resource)) {
                 renderer.residencies[index] = .{
                     .resource = upload.resource,
                     .format = upload.format,
@@ -812,14 +804,12 @@ pub export fn howl_odin_bridge_render_command_count(raw: ?*RenderHandle) u32 {
     return @intCast(renderer.command_count);
 }
 
-fn fillRenderResourceRef(resource: canvas.FrameResourceRef, output: *RenderResourceInfo) void {
-    output.source = @backingInt(resource.source);
+fn fillRenderResourceRef(resource: canvas.ResourceRef, output: *RenderResourceInfo) void {
     output.resource = @backingInt(resource.resource);
     output.generation = @backingInt(resource.generation);
 }
 
-fn fillRenderRemovalRef(resource: canvas.FrameResourceRef, output: *RenderRemovalInfo) void {
-    output.source = @backingInt(resource.source);
+fn fillRenderRemovalRef(resource: canvas.ResourceRef, output: *RenderRemovalInfo) void {
     output.resource = @backingInt(resource.resource);
     output.generation = @backingInt(resource.generation);
 }
@@ -906,8 +896,7 @@ fn colorBits(color: canvas.Color) u32 {
         (@as(u32, color.a) << 24);
 }
 
-fn fillCommandResource(output: *RenderCommandInfo, resource: canvas.FrameResourceView) void {
-    output.resource_source = @backingInt(resource.resource.source);
+fn fillCommandResource(output: *RenderCommandInfo, resource: canvas.ResourceView) void {
     output.resource = @backingInt(resource.resource.resource);
     output.generation = @backingInt(resource.resource.generation);
     output.format = @backingInt(resource.format);
@@ -2249,22 +2238,22 @@ test "bridge named key action values stay protocol-aligned" {
 }
 
 test "Odin Canvas C records stay fixed and format tags follow Canvas" {
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(RenderResourceInfo));
-    try std.testing.expectEqual(@as(usize, 24), @sizeOf(RenderRemovalInfo));
-    try std.testing.expectEqual(@as(usize, 72), @sizeOf(RenderCommandInfo));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(RenderResourceInfo));
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(RenderRemovalInfo));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(RenderCommandInfo));
     try std.testing.expectEqual(@as(u8, 0), @backingInt(canvas.ResourceFormat.alpha8));
     try std.testing.expectEqual(@as(u8, 1), @backingInt(canvas.ResourceFormat.rgba8));
 }
 
 test "Odin residency upsert replaces generations without growing the table" {
     const local = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.local(9),
+        .resource = try canvas.ResourceId.init(9),
         .generation = @fromBackingInt(1),
     };
     var storage: [render_resource_limit]canvas.Residency = undefined;
     var count: usize = 0;
     try upsertResidency(&storage, &count, .{
-        .resource = try canvas.FrameResourceRef.local(local),
+        .resource = local,
         .format = .rgba8,
         .size = .{ .width = 2, .height = 2 },
     });
@@ -2272,7 +2261,7 @@ test "Odin residency upsert replaces generations without growing the table" {
     var replacement = local;
     replacement.generation = @fromBackingInt(2);
     try upsertResidency(&storage, &count, .{
-        .resource = try canvas.FrameResourceRef.local(replacement),
+        .resource = replacement,
         .format = .rgba8,
         .size = .{ .width = 4, .height = 3 },
     });

@@ -54,7 +54,6 @@ assert.equal(w.rv_render_count(), 0n);
 assert.equal(w.rv_render(snapshot.length), 2, errorText());
 assert.equal(w.rv_render_count(), 0n);
 assert.equal(w.rv_missing_external(), 1);
-assert.ok(w.rv_missing_source() > 0n);
 assert.ok(w.rv_missing_resource() > 0n);
 assert.equal(w.rv_missing_generation(), 9n);
 assert.equal(w.rv_missing_format(), 1);
@@ -64,7 +63,6 @@ assert.equal(w.rv_missing_stride(), 8);
 assert.equal(w.rv_missing_image_id(), 7);
 assert.equal(w.rv_missing_image_generation(), 9n);
 const externalKey = [
-  w.rv_missing_source(),
   w.rv_missing_resource(),
   w.rv_missing_generation(),
 ].map(String);

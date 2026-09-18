@@ -219,7 +219,7 @@ pub const Adapter = struct {
                                 cursor_draw.col == column)
                                 return null;
                             projected.glyph_slot = backend.blank_glyph;
-                            const resource = surface.ResourceGeneration.shared(
+                            const resource = surface.ResourceGeneration.init(
                                 overlay_identity_base + glyph_index,
                                 begin.revision,
                             ) catch return null;

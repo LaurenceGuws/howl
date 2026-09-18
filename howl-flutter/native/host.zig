@@ -7,13 +7,13 @@ const canvas = terminal;
 const presentation = @import("presentation");
 
 const host_header_bytes: usize = 64;
-const global_header_bytes: usize = 32;
+const global_header_bytes: usize = 16;
 const frame_header_bytes: usize = 48;
-const resource_record_bytes: usize = 48;
-const removal_record_bytes: usize = 24;
+const resource_record_bytes: usize = 40;
+const removal_record_bytes: usize = 16;
 const command_record_bytes: usize = 40;
 const maximum_frame_resources: usize = 8;
-const image_refill_header_bytes: usize = 64;
+const image_refill_header_bytes: usize = 56;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
@@ -95,7 +95,7 @@ const Host = struct {
     fonts: *text.FontSet,
     canvas: *terminal.Canvas,
     frame_uploads: [maximum_frame_resources]canvas.FrameResourceUpload = undefined,
-    frame_removals: [maximum_frame_resources]canvas.FrameResourceRef = undefined,
+    frame_removals: [maximum_frame_resources]canvas.ResourceRef = undefined,
     frame_commands: [command_capacity]canvas.Command = undefined,
     frame_pixels: [pixel_capacity]u8 = undefined,
     residencies: [maximum_frame_resources]canvas.Residency = undefined,
@@ -837,7 +837,7 @@ fn updateHostCanvas(
 
 fn findImageBindingByResource(
     bindings: []const HostImageBinding,
-    resource: canvas.FrameResourceRef,
+    resource: canvas.ResourceRef,
 ) ?HostImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -854,8 +854,7 @@ fn selectPendingImage(
     if (missing.len == 0 or missing.len > bindings.len) return error.InvalidHost;
     var selected: ?PendingImage = null;
     for (missing, 0..) |value, index| {
-        if (value.resource.source != terminal.terminal_source or value.format != .rgba8)
-            return error.InvalidHost;
+        if (value.format != .rgba8) return error.InvalidHost;
         const binding = findImageBindingByResource(bindings, value.resource) orelse
             return error.InvalidHost;
         if (index == 0) selected = .{ .binding = binding, .external = value };
@@ -904,11 +903,10 @@ fn writeImageRefill(
     var writer = Writer{ .bytes = output };
     const magic = try writer.need(4);
     @memcpy(magic, "HIR1");
-    try writer.writeU16(1);
+    try writer.writeU16(2);
     try writer.writeU16(image_refill_header_bytes);
     try writer.writeU32(@intCast(expected_total));
     try writer.writeU32(@intCast(pixels.len));
-    try writer.writeU64(@backingInt(pending.external.resource.source));
     try writer.writeU64(@backingInt(pending.external.resource.resource));
     try writer.writeU64(@backingInt(pending.external.resource.generation));
     try writer.writeU32(pending.binding.image_id);
@@ -979,11 +977,11 @@ test "native host distinguishes superseded image generation from refill failure"
 
 test "native host selects one exact refill from multiple missing images" {
     const first_local = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.local(2),
+        .resource = try canvas.ResourceId.init(2),
         .generation = @fromBackingInt(5),
     };
     const second_local = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.local(3),
+        .resource = try canvas.ResourceId.init(3),
         .generation = @fromBackingInt(7),
     };
     const bindings = [_]HostImageBinding{
@@ -992,13 +990,13 @@ test "native host selects one exact refill from multiple missing images" {
     };
     var missing = [_]canvas.FrameExternalResource{
         .{
-            .resource = try canvas.FrameResourceRef.local(first_local),
+            .resource = first_local,
             .format = .rgba8,
             .size = .{ .width = 2, .height = 2 },
             .stride = 8,
         },
         .{
-            .resource = try canvas.FrameResourceRef.local(second_local),
+            .resource = second_local,
             .format = .rgba8,
             .size = .{ .width = 3, .height = 1 },
             .stride = 12,
@@ -1009,16 +1007,19 @@ test "native host selects one exact refill from multiple missing images" {
     try std.testing.expectEqualDeep(missing[0], selected.external);
 
     const first_resource = missing[0].resource;
-    missing[0].resource.source = @fromBackingInt(2);
+    missing[0].resource = .{
+        .resource = try canvas.ResourceId.init(99),
+        .generation = first_resource.generation,
+    };
     try std.testing.expectError(error.InvalidHost, selectPendingImage(&bindings, &missing));
     missing[0].resource = first_resource;
 
     const second_resource = missing[1].resource;
     const unknown = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.local(9),
+        .resource = try canvas.ResourceId.init(9),
         .generation = @fromBackingInt(1),
     };
-    missing[1].resource = try canvas.FrameResourceRef.local(unknown);
+    missing[1].resource = unknown;
     try std.testing.expectError(error.InvalidHost, selectPendingImage(&bindings, &missing));
     missing[1].resource = second_resource;
 
@@ -1031,9 +1032,8 @@ test "native host selects one exact refill from multiple missing images" {
 }
 
 test "native host image refill packet carries exact terminal identity" {
-    const source = terminal.terminal_source;
     const local_resource = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.local(7),
+        .resource = try canvas.ResourceId.init(7),
         .generation = @fromBackingInt(11),
     };
     const pending = PendingImage{
@@ -1043,7 +1043,7 @@ test "native host image refill packet carries exact terminal identity" {
             .resource = local_resource,
         },
         .external = .{
-            .resource = try canvas.FrameResourceRef.local(local_resource),
+            .resource = local_resource,
             .format = .rgba8,
             .size = .{ .width = 2, .height = 2 },
             .stride = 8,
@@ -1059,7 +1059,7 @@ test "native host image refill packet carries exact terminal identity" {
     try writeImageRefill(&packet, pending, &pixels);
 
     try std.testing.expectEqualSlices(u8, "HIR1", packet[0..4]);
-    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, packet[4..6], .little));
+    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[4..6], .little));
     try std.testing.expectEqual(
         @as(u16, image_refill_header_bytes),
         std.mem.readInt(u16, packet[6..8], .little),
@@ -1073,23 +1073,19 @@ test "native host image refill packet carries exact terminal identity" {
         std.mem.readInt(u32, packet[12..16], .little),
     );
     try std.testing.expectEqual(
-        @backingInt(source),
+        @backingInt(local_resource.resource),
         std.mem.readInt(u64, packet[16..24], .little),
     );
     try std.testing.expectEqual(
-        @backingInt(local_resource.resource),
+        @backingInt(local_resource.generation),
         std.mem.readInt(u64, packet[24..32], .little),
     );
-    try std.testing.expectEqual(
-        @backingInt(local_resource.generation),
-        std.mem.readInt(u64, packet[32..40], .little),
-    );
-    try std.testing.expectEqual(@as(u32, 17), std.mem.readInt(u32, packet[40..44], .little));
-    try std.testing.expectEqual(@backingInt(canvas.ResourceFormat.rgba8), packet[44]);
-    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[46..48], .little));
-    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[48..50], .little));
-    try std.testing.expectEqual(@as(u32, 8), std.mem.readInt(u32, packet[52..56], .little));
-    try std.testing.expectEqual(@as(u64, 23), std.mem.readInt(u64, packet[56..64], .little));
+    try std.testing.expectEqual(@as(u32, 17), std.mem.readInt(u32, packet[32..36], .little));
+    try std.testing.expectEqual(@backingInt(canvas.ResourceFormat.rgba8), packet[36]);
+    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[38..40], .little));
+    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[40..42], .little));
+    try std.testing.expectEqual(@as(u32, 8), std.mem.readInt(u32, packet[44..48], .little));
+    try std.testing.expectEqual(@as(u64, 23), std.mem.readInt(u64, packet[48..56], .little));
     try std.testing.expectEqualSlices(u8, &pixels, packet[image_refill_header_bytes..]);
 
     try std.testing.expectError(
@@ -1130,16 +1126,14 @@ fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
 fn writeGlobalHeader(writer: *Writer, surface: canvas.Size) !void {
     const magic = try writer.need(4);
     @memcpy(magic, "HCR1");
-    try writer.writeU16(1);
+    try writer.writeU16(2);
     try writer.writeU16(global_header_bytes);
-    try writer.writeU32(1);
-    try writer.writeU32(1);
     try writer.writeU16(surface.width);
     try writer.writeU16(surface.height);
-    try writer.zeroes(global_header_bytes - 20);
+    try writer.writeU32(0);
 }
 
-const residency_record_bytes: usize = 32;
+const residency_record_bytes: usize = 24;
 
 fn decodeResidencies(host: *Host, bytes: []const u8) HostPacketError![]const canvas.Residency {
     if (bytes.len % residency_record_bytes != 0) return error.InvalidResidency;
@@ -1147,24 +1141,22 @@ fn decodeResidencies(host: *Host, bytes: []const u8) HostPacketError![]const can
     if (count > host.residencies.len) return error.InvalidResidency;
     for (0..count) |index| {
         const at = bytes[index * residency_record_bytes ..][0..residency_record_bytes];
-        const source: u64 = std.mem.readInt(u64, at[0..8], .little);
-        const resource_encoded: u64 = std.mem.readInt(u64, at[8..16], .little);
-        const generation: u64 = std.mem.readInt(u64, at[16..24], .little);
-        const format_value = at[24];
-        const width: u16 = std.mem.readInt(u16, at[26..28], .little);
-        const height: u16 = std.mem.readInt(u16, at[28..30], .little);
-        if (source != @backingInt(terminal.terminal_source) or generation == 0 or
-            width == 0 or height == 0 or
+        const resource_encoded: u64 = std.mem.readInt(u64, at[0..8], .little);
+        const generation: u64 = std.mem.readInt(u64, at[8..16], .little);
+        const format_value = at[16];
+        const width: u16 = std.mem.readInt(u16, at[18..20], .little);
+        const height: u16 = std.mem.readInt(u16, at[20..22], .little);
+        if (generation == 0 or width == 0 or height == 0 or
+            at[17] != 0 or std.mem.readInt(u16, at[22..24], .little) != 0 or
             format_value > @backingInt(canvas.ResourceFormat.rgba8))
             return error.InvalidResidency;
         const resource = canvas.ResourceId.fromEncoded(resource_encoded) catch
             return error.InvalidResidency;
-        if (resource.isShared()) return error.InvalidResidency;
         host.residencies[index] = .{
-            .resource = canvas.FrameResourceRef.local(.{
+            .resource = .{
                 .resource = resource,
                 .generation = @fromBackingInt(@intCast(generation)),
-            }) catch return error.InvalidResidency,
+            },
             .format = @fromBackingInt(@intCast(format_value)),
             .size = .{ .width = width, .height = height },
         };
@@ -1213,7 +1205,7 @@ const Writer = struct {
 };
 
 fn writeFrame(writer: *Writer, frame: terminal.Frame, flags: u32) !void {
-    var resources: [maximum_frame_resources]canvas.FrameResourceView = undefined;
+    var resources: [maximum_frame_resources]canvas.ResourceView = undefined;
     const resource_count = try collectFrameResources(frame.commands, &resources);
     const resource_bytes = try checkedMul(resource_count, resource_record_bytes);
     const removal_bytes = try checkedMul(frame.removals.len, removal_record_bytes);
@@ -1245,7 +1237,6 @@ fn writeFrame(writer: *Writer, frame: terminal.Frame, flags: u32) !void {
     for (resources[0..resource_count]) |resource|
         try writeResource(writer, resource, frame);
     for (frame.removals) |removal| {
-        try writer.writeU64(@backingInt(removal.source));
         try writer.writeU64(@backingInt(removal.resource));
         try writer.writeU64(@backingInt(removal.generation));
     }
@@ -1257,11 +1248,11 @@ fn writeFrame(writer: *Writer, frame: terminal.Frame, flags: u32) !void {
 
 fn collectFrameResources(
     commands: []const canvas.Command,
-    output: *[maximum_frame_resources]canvas.FrameResourceView,
+    output: *[maximum_frame_resources]canvas.ResourceView,
 ) !usize {
     var used: usize = 0;
     for (commands) |command| {
-        const view: ?canvas.FrameResourceView = switch (command) {
+        const view: ?canvas.ResourceView = switch (command) {
             .solid => null,
             .alpha_mask => |value| value.resource,
             .rgba => |value| value.resource,
@@ -1286,7 +1277,7 @@ fn collectFrameResources(
 
 fn writeResource(
     writer: *Writer,
-    resource: canvas.FrameResourceView,
+    resource: canvas.ResourceView,
     frame: terminal.Frame,
 ) !void {
     var upload: ?canvas.FrameResourceUpload = null;
@@ -1296,7 +1287,6 @@ fn writeResource(
             break;
         }
     }
-    try writer.writeU64(@backingInt(resource.resource.source));
     try writer.writeU64(@backingInt(resource.resource.resource));
     try writer.writeU64(@backingInt(resource.resource.generation));
     try writer.writeU8(@backingInt(resource.format));
@@ -1322,7 +1312,7 @@ fn writeResource(
 fn writeCommand(
     writer: *Writer,
     command: canvas.Command,
-    resources: []const canvas.FrameResourceView,
+    resources: []const canvas.ResourceView,
 ) !void {
     switch (command) {
         .solid => |value| {
@@ -1359,8 +1349,8 @@ fn writeCommand(
 }
 
 fn frameResourceIndex(
-    resources: []const canvas.FrameResourceView,
-    resource: canvas.FrameResourceRef,
+    resources: []const canvas.ResourceView,
+    resource: canvas.ResourceRef,
 ) !u8 {
     for (resources, 0..) |candidate, index| {
         if (std.meta.eql(candidate.resource, resource)) return @intCast(index);
@@ -1375,7 +1365,7 @@ fn writeRect(writer: *Writer, rect: canvas.Rect) !void {
     try writer.writeU16(rect.height);
 }
 
-fn writeSourceRect(writer: *Writer, resource: canvas.FrameResourceView) !void {
+fn writeSourceRect(writer: *Writer, resource: canvas.ResourceView) !void {
     const source = resource.source orelse canvas.SourceRect{
         .x = 0,
         .y = 0,

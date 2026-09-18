@@ -9,24 +9,22 @@ final class NativeCanvasException implements Exception {
 }
 
 final class NativeCanvasResourceKey {
-  const NativeCanvasResourceKey(this.source, this.resource, this.generation);
+  const NativeCanvasResourceKey(this.resource, this.generation);
 
-  final int source;
   final int resource;
   final int generation;
 
   @override
   bool operator ==(Object other) =>
       other is NativeCanvasResourceKey &&
-      source == other.source &&
       resource == other.resource &&
       generation == other.generation;
 
   @override
-  int get hashCode => Object.hash(source, resource, generation);
+  int get hashCode => Object.hash(resource, generation);
 
   @override
-  String toString() => '$source:$resource:$generation';
+  String toString() => '$resource:$generation';
 }
 
 final class NativeCanvasResource {
@@ -88,10 +86,10 @@ final class NativeCanvasFrame {
   }) : _bytes = bytes,
        _data = ByteData.sublistView(bytes);
 
-  static const int globalHeaderBytes = 32;
+  static const int globalHeaderBytes = 16;
   static const int frameHeaderBytes = 48;
-  static const int resourceRecordBytes = 48;
-  static const int removalRecordBytes = 24;
+  static const int resourceRecordBytes = 40;
+  static const int removalRecordBytes = 16;
   static const int commandRecordBytes = 40;
 
   final Uint8List _bytes;
@@ -119,14 +117,13 @@ final class NativeCanvasFrame {
         bytes[3] != 0x31) {
       throw const NativeCanvasException('magic');
     }
-    if (data.getUint16(4, Endian.little) != 1 ||
+    if (data.getUint16(4, Endian.little) != 2 ||
         data.getUint16(6, Endian.little) != globalHeaderBytes ||
-        data.getUint32(8, Endian.little) != 1 ||
-        data.getUint32(12, Endian.little) != 1) {
+        data.getUint32(12, Endian.little) != 0) {
       throw const NativeCanvasException('version');
     }
-    final width = data.getUint16(16, Endian.little);
-    final height = data.getUint16(18, Endian.little);
+    final width = data.getUint16(8, Endian.little);
+    final height = data.getUint16(10, Endian.little);
     if (width == 0 || height == 0) {
       throw const NativeCanvasException('surface');
     }
@@ -187,14 +184,13 @@ final class NativeCanvasFrame {
       key: NativeCanvasResourceKey(
         _data.getUint64(offset, Endian.little),
         _data.getUint64(offset + 8, Endian.little),
-        _data.getUint64(offset + 16, Endian.little),
       ),
-      format: _data.getUint8(offset + 24),
-      width: _data.getUint16(offset + 26, Endian.little),
-      height: _data.getUint16(offset + 28, Endian.little),
-      stride: _data.getUint32(offset + 32, Endian.little),
-      uploadOffset: _data.getUint32(offset + 36, Endian.little),
-      uploadLength: _data.getUint32(offset + 40, Endian.little),
+      format: _data.getUint8(offset + 16),
+      width: _data.getUint16(offset + 18, Endian.little),
+      height: _data.getUint16(offset + 20, Endian.little),
+      stride: _data.getUint32(offset + 24, Endian.little),
+      uploadOffset: _data.getUint32(offset + 28, Endian.little),
+      uploadLength: _data.getUint32(offset + 32, Endian.little),
     );
   }
 
@@ -206,7 +202,6 @@ final class NativeCanvasFrame {
     return NativeCanvasResourceKey(
       _data.getUint64(offset, Endian.little),
       _data.getUint64(offset + 8, Endian.little),
-      _data.getUint64(offset + 16, Endian.little),
     );
   }
 
@@ -239,13 +234,18 @@ final class NativeCanvasFrame {
     final resources = <NativeCanvasResource>[];
     for (var i = 0; i < resourceCount; i++) {
       final value = resource(i);
-      if (value.key.source == 0 ||
-          value.key.resource == 0 ||
+      if (value.key.resource == 0 ||
           value.key.generation == 0 ||
           value.width == 0 ||
           value.height == 0 ||
           (value.format != 0 && value.format != 1)) {
         throw const NativeCanvasException('resource_bounds');
+      }
+      final offset = _resourceOffset + i * resourceRecordBytes;
+      if (_data.getUint8(offset + 17) != 0 ||
+          _data.getUint16(offset + 22, Endian.little) != 0 ||
+          _data.getUint32(offset + 36, Endian.little) != 0) {
+        throw const NativeCanvasException('resource_reserved');
       }
       if (value.uploaded) {
         if (value.stride == 0 ||
@@ -261,7 +261,7 @@ final class NativeCanvasFrame {
     }
     for (var i = 0; i < removalCount; i++) {
       final key = removal(i);
-      if (key.source == 0 || key.resource == 0 || key.generation == 0) {
+      if (key.resource == 0 || key.generation == 0) {
         throw const NativeCanvasException('removal_identity');
       }
     }

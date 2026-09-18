@@ -133,7 +133,6 @@ const loadSnapshot = () => bytesAt(w.rv_snapshot_ptr(), snapshot.length).set(sna
 function missing() {
   assert.equal(w.rv_missing_external(), 1);
   return {
-    source:w.rv_missing_source(),
     resource:w.rv_missing_resource(),
     generation:w.rv_missing_generation(),
     imageId:w.rv_missing_image_id(),
@@ -143,7 +142,7 @@ function missing() {
     stride:w.rv_missing_stride(),
   };
 }
-const qualified = value => [value.source, value.resource, value.generation].map(String);
+const qualified = value => [value.resource, value.generation].map(String);
 
 assert.equal(w.rv_render_count(), 0n);
 const misses = [];

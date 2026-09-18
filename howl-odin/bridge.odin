@@ -273,7 +273,6 @@ BRIDGE_MOD_CAPS  :: u8(1 << 6)
 BRIDGE_MOD_NUM   :: u8(1 << 7)
 
 Canvas_Resource_Info :: struct {
-    source: u64,
     resource: u64,
     generation: u64,
     pixel_count: u64,
@@ -281,17 +280,15 @@ Canvas_Resource_Info :: struct {
     width: u16,
     height: u16,
     format: u8,
-    _reserved: [7]u8,
+    _reserved: [3]u8,
 }
 
 Canvas_Removal_Info :: struct {
-    source: u64,
     resource: u64,
     generation: u64,
 }
 
 Canvas_Command_Info :: struct {
-    resource_source: u64,
     resource: u64,
     generation: u64,
     color_rgba: u32,

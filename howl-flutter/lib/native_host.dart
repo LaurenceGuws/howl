@@ -16,12 +16,12 @@ import 'terminal_selection.dart';
 const int nativeSelectionOutputBytes = 1024 * 1024;
 const int nativeInteractionStateBytes = 20;
 const int _nativeHostMaximumOutputBytes = 8 * 1024 * 1024;
-const int _nativeHostImageRefillHeaderBytes = 64;
+const int _nativeHostImageRefillHeaderBytes = 56;
 const int _nativeHostMaximumImageBytes = 16 * 1024 * 1024;
 const int _nativeHostMaximumImageRefillBytes =
     _nativeHostImageRefillHeaderBytes + _nativeHostMaximumImageBytes;
 const int _hostHeaderBytes = 64;
-const int _residencyRecordBytes = 32;
+const int _residencyRecordBytes = 24;
 const int _nativeCreateDiagnosticBytes = 256;
 
 final class NativeHostException implements Exception {
@@ -246,27 +246,25 @@ NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
     throw const NativeHostException('image_refill_magic');
   }
   final data = ByteData.sublistView(bytes);
-  if (data.getUint16(4, Endian.little) != 1 ||
+  if (data.getUint16(4, Endian.little) != 2 ||
       data.getUint16(6, Endian.little) != _nativeHostImageRefillHeaderBytes) {
     throw const NativeHostException('image_refill_version');
   }
   final total = data.getUint32(8, Endian.little);
   final pixelLength = data.getUint32(12, Endian.little);
-  final source = data.getUint64(16, Endian.little);
-  final resource = data.getUint64(24, Endian.little);
-  final generation = data.getUint64(32, Endian.little);
-  final imageId = data.getUint32(40, Endian.little);
-  final format = data.getUint8(44);
-  final width = data.getUint16(46, Endian.little);
-  final height = data.getUint16(48, Endian.little);
-  final stride = data.getUint32(52, Endian.little);
-  final imageGeneration = data.getUint64(56, Endian.little);
+  final resource = data.getUint64(16, Endian.little);
+  final generation = data.getUint64(24, Endian.little);
+  final imageId = data.getUint32(32, Endian.little);
+  final format = data.getUint8(36);
+  final width = data.getUint16(38, Endian.little);
+  final height = data.getUint16(40, Endian.little);
+  final stride = data.getUint32(44, Endian.little);
+  final imageGeneration = data.getUint64(48, Endian.little);
   final expectedPixels = stride * height;
   if (total != bytes.length ||
       pixelLength != bytes.length - _nativeHostImageRefillHeaderBytes ||
       pixelLength == 0 ||
       pixelLength > _nativeHostMaximumImageBytes ||
-      source == 0 ||
       resource == 0 ||
       generation == 0 ||
       imageId == 0 ||
@@ -276,13 +274,13 @@ NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
       height == 0 ||
       stride != width * 4 ||
       expectedPixels != pixelLength ||
-      data.getUint8(45) != 0 ||
-      data.getUint16(50, Endian.little) != 0) {
+      data.getUint8(37) != 0 ||
+      data.getUint16(42, Endian.little) != 0) {
     throw const NativeHostException('image_refill_layout');
   }
   return NativeCanvasExternalUpload(
     resource: NativeCanvasResource(
-      key: NativeCanvasResourceKey(source, resource, generation),
+      key: NativeCanvasResourceKey(resource, generation),
       format: format,
       width: width,
       height: height,
@@ -298,9 +296,9 @@ Uint8List encodeNativeHostResidency(
   NativeCanvasLease? lease, {
   Iterable<NativeCanvasPreloadedResource> preloaded = const [],
 }) {
-  final resources = <(int, int), NativeCanvasResource>{};
+  final resources = <int, NativeCanvasResource>{};
   for (final value in preloaded) {
-    final logical = (value.resource.key.source, value.resource.key.resource);
+    final logical = value.resource.key.resource;
     final prior = resources[logical];
     if (prior == null || value.resource.key.generation > prior.key.generation) {
       resources[logical] = value.resource;
@@ -309,7 +307,7 @@ Uint8List encodeNativeHostResidency(
   if (lease != null) {
     for (var index = 0; index < lease.frame.resourceCount; index++) {
       final resource = lease.frame.resource(index);
-      final logical = (resource.key.source, resource.key.resource);
+      final logical = resource.key.resource;
       if (lease.images.containsKey(resource.key) &&
           !resources.containsKey(logical) &&
           resources.length < 8) {
@@ -327,12 +325,11 @@ Uint8List encodeNativeHostResidency(
   for (var index = 0; index < ordered.length; index++) {
     final resource = ordered[index];
     final offset = index * _residencyRecordBytes;
-    data.setUint64(offset, resource.key.source, Endian.little);
-    data.setUint64(offset + 8, resource.key.resource, Endian.little);
-    data.setUint64(offset + 16, resource.key.generation, Endian.little);
-    data.setUint8(offset + 24, resource.format);
-    data.setUint16(offset + 26, resource.width, Endian.little);
-    data.setUint16(offset + 28, resource.height, Endian.little);
+    data.setUint64(offset, resource.key.resource, Endian.little);
+    data.setUint64(offset + 8, resource.key.generation, Endian.little);
+    data.setUint8(offset + 16, resource.format);
+    data.setUint16(offset + 18, resource.width, Endian.little);
+    data.setUint16(offset + 20, resource.height, Endian.little);
   }
   return bytes;
 }

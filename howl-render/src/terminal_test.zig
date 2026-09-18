@@ -112,7 +112,7 @@ const Harness = struct {
     allocator: std.mem.Allocator,
     canvas: *terminal.Canvas,
     uploads: []terminal.FrameResourceUpload,
-    removals: []terminal.FrameResourceRef,
+    removals: []terminal.ResourceRef,
     commands: []terminal.Command,
     pixels: []u8,
     residencies: [terminal.maximum_external_images + 1]terminal.Residency = undefined,
@@ -128,7 +128,7 @@ const Harness = struct {
         errdefer terminal.deinitCanvas(owner);
         const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_external_images + 1);
         errdefer allocator.free(uploads);
-        const removals = try allocator.alloc(terminal.FrameResourceRef, terminal.maximum_external_images + 1);
+        const removals = try allocator.alloc(terminal.ResourceRef, terminal.maximum_external_images + 1);
         errdefer allocator.free(removals);
         const commands = try allocator.alloc(terminal.Command, config.command_capacity + 128);
         errdefer allocator.free(commands);
@@ -514,7 +514,7 @@ test "terminal Canvas places image z phases around terminal paint phases" {
     const binding = terminal.ExternalImageBinding{
         .image_id = 7,
         .generation = 9,
-        .resource = .{ .resource = try terminal.ResourceId.local(2), .generation = @fromBackingInt(9) },
+        .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(9) },
     };
     const default_background = terminal.Color{ .r = 1, .g = 2, .b = 3, .a = 255 };
     const cell_background = terminal.Color{ .r = 0x11, .g = 0x22, .b = 0x33, .a = 255 };
@@ -617,7 +617,7 @@ test "terminal Canvas external image residency is requested once and removed whe
     const binding = terminal.ExternalImageBinding{
         .image_id = 7,
         .generation = 9,
-        .resource = .{ .resource = try terminal.ResourceId.local(2), .generation = @fromBackingInt(9) },
+        .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(9) },
     };
 
     const with_image = try host.presentWithBindings(image_view, &.{binding});

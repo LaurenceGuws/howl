@@ -17,12 +17,10 @@ Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
   final bytes = Uint8List(global + recordBytes);
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x43, 0x52, 0x31]);
-  data.setUint16(4, 1, Endian.little);
+  data.setUint16(4, 2, Endian.little);
   data.setUint16(6, global, Endian.little);
-  data.setUint32(8, 1, Endian.little);
-  data.setUint32(12, 1, Endian.little);
-  data.setUint16(16, surfaceWidth, Endian.little);
-  data.setUint16(18, surfaceHeight, Endian.little);
+  data.setUint16(8, surfaceWidth, Endian.little);
+  data.setUint16(10, surfaceHeight, Endian.little);
 
   var at = global;
   data.setUint32(at, recordBytes, Endian.little);
@@ -39,13 +37,12 @@ Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
 
   data.setUint64(at, 1, Endian.little);
   data.setUint64(at + 8, 1, Endian.little);
-  data.setUint64(at + 16, 1, Endian.little);
-  data.setUint8(at + 24, 0);
-  data.setUint16(at + 26, 1, Endian.little);
-  data.setUint16(at + 28, 1, Endian.little);
+  data.setUint8(at + 16, 0);
+  data.setUint16(at + 18, 1, Endian.little);
+  data.setUint16(at + 20, 1, Endian.little);
+  data.setUint32(at + 24, 1, Endian.little);
+  data.setUint32(at + 28, 0, Endian.little);
   data.setUint32(at + 32, 1, Endian.little);
-  data.setUint32(at + 36, 0, Endian.little);
-  data.setUint32(at + 40, 1, Endian.little);
   at += resource;
 
   void rect(int offset, int x, int y, int width, int height) {
@@ -236,24 +233,23 @@ Uint8List _imageRefillPacket({
     255,
   ],
 }) {
-  const header = 64;
+  const header = 56;
   assert(pixels.length == 16);
   final bytes = Uint8List(header + pixels.length);
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x49, 0x52, 0x31]);
-  data.setUint16(4, 1, Endian.little);
+  data.setUint16(4, 2, Endian.little);
   data.setUint16(6, header, Endian.little);
   data.setUint32(8, bytes.length, Endian.little);
   data.setUint32(12, pixels.length, Endian.little);
-  data.setUint64(16, 3, Endian.little);
-  data.setUint64(24, 7, Endian.little);
-  data.setUint64(32, 11, Endian.little);
-  data.setUint32(40, 17, Endian.little);
-  data.setUint8(44, 1);
-  data.setUint16(46, 2, Endian.little);
-  data.setUint16(48, 2, Endian.little);
-  data.setUint32(52, 8, Endian.little);
-  data.setUint64(56, 23, Endian.little);
+  data.setUint64(16, 7, Endian.little);
+  data.setUint64(24, 11, Endian.little);
+  data.setUint32(32, 17, Endian.little);
+  data.setUint8(36, 1);
+  data.setUint16(38, 2, Endian.little);
+  data.setUint16(40, 2, Endian.little);
+  data.setUint32(44, 8, Endian.little);
+  data.setUint64(48, 23, Endian.little);
   bytes.setAll(header, pixels);
   return bytes;
 }
@@ -267,12 +263,10 @@ Uint8List _externalRgbaCanvas() {
   final bytes = Uint8List(global + recordBytes);
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x43, 0x52, 0x31]);
-  data.setUint16(4, 1, Endian.little);
+  data.setUint16(4, 2, Endian.little);
   data.setUint16(6, global, Endian.little);
-  data.setUint32(8, 1, Endian.little);
-  data.setUint32(12, 1, Endian.little);
-  data.setUint16(16, 20, Endian.little);
-  data.setUint16(18, 20, Endian.little);
+  data.setUint16(8, 20, Endian.little);
+  data.setUint16(10, 20, Endian.little);
 
   var at = global;
   data.setUint32(at, recordBytes, Endian.little);
@@ -287,12 +281,11 @@ Uint8List _externalRgbaCanvas() {
   data.setUint32(at + 40, command, Endian.little);
   at += frame;
 
-  data.setUint64(at, 3, Endian.little);
-  data.setUint64(at + 8, 7, Endian.little);
-  data.setUint64(at + 16, 11, Endian.little);
-  data.setUint8(at + 24, 1);
-  data.setUint16(at + 26, 2, Endian.little);
-  data.setUint16(at + 28, 2, Endian.little);
+  data.setUint64(at, 7, Endian.little);
+  data.setUint64(at + 8, 11, Endian.little);
+  data.setUint8(at + 16, 1);
+  data.setUint16(at + 18, 2, Endian.little);
+  data.setUint16(at + 20, 2, Endian.little);
   at += resource;
 
   data.setUint8(at, 2);
@@ -478,7 +471,7 @@ void main() {
 
   test('native host external refill becomes exact Canvas residency', () async {
     final upload = parseNativeHostImageRefill(_imageRefillPacket());
-    expect(upload.resource.key, const NativeCanvasResourceKey(3, 7, 11));
+    expect(upload.resource.key, const NativeCanvasResourceKey(7, 11));
     expect(upload.resource.format, 1);
     expect(upload.resource.width, 2);
     expect(upload.resource.height, 2);
@@ -491,13 +484,12 @@ void main() {
       preloaded: <NativeCanvasPreloadedResource>[preload],
     );
     final residency = ByteData.sublistView(beforeFrame);
-    expect(beforeFrame.length, 32);
-    expect(residency.getUint64(0, Endian.little), 3);
-    expect(residency.getUint64(8, Endian.little), 7);
-    expect(residency.getUint64(16, Endian.little), 11);
-    expect(residency.getUint8(24), 1);
-    expect(residency.getUint16(26, Endian.little), 2);
-    expect(residency.getUint16(28, Endian.little), 2);
+    expect(beforeFrame.length, 24);
+    expect(residency.getUint64(0, Endian.little), 7);
+    expect(residency.getUint64(8, Endian.little), 11);
+    expect(residency.getUint8(16), 1);
+    expect(residency.getUint16(18, Endian.little), 2);
+    expect(residency.getUint16(20, Endian.little), 2);
 
     final frame = NativeCanvasFrame.parse(_externalRgbaCanvas());
     final prepared = await prepareNativeCanvasFrame(
@@ -521,12 +513,11 @@ void main() {
   test(
     'external sRGB images round-trip through linear terminal composition',
     () async {
-      final gray =
-          List<int>.filled(4 * 4, 32)
-            ..setAll(3, const <int>[255])
-            ..setAll(7, const <int>[255])
-            ..setAll(11, const <int>[255])
-            ..setAll(15, const <int>[255]);
+      final gray = List<int>.filled(4 * 4, 32)
+        ..setAll(3, const <int>[255])
+        ..setAll(7, const <int>[255])
+        ..setAll(11, const <int>[255])
+        ..setAll(15, const <int>[255]);
       final preload = await prepareNativeCanvasExternalUpload(
         parseNativeHostImageRefill(_imageRefillPacket(pixels: gray)),
       );
@@ -579,8 +570,8 @@ void main() {
 
       final newerPacket = _imageRefillPacket();
       final newerData = ByteData.sublistView(newerPacket);
-      newerData.setUint64(32, 12, Endian.little);
-      newerData.setUint64(56, 24, Endian.little);
+      newerData.setUint64(24, 12, Endian.little);
+      newerData.setUint64(48, 24, Endian.little);
       final newer = await prepareNativeCanvasExternalUpload(
         parseNativeHostImageRefill(newerPacket),
       );
@@ -589,11 +580,10 @@ void main() {
           previous.lease,
           preloaded: <NativeCanvasPreloadedResource>[newer],
         );
-        expect(encoded.length, 32);
+        expect(encoded.length, 24);
         final data = ByteData.sublistView(encoded);
-        expect(data.getUint64(0, Endian.little), 3);
-        expect(data.getUint64(8, Endian.little), 7);
-        expect(data.getUint64(16, Endian.little), 12);
+        expect(data.getUint64(0, Endian.little), 7);
+        expect(data.getUint64(8, Endian.little), 12);
       } finally {
         disposeNativeCanvasPreloadedResources(<NativeCanvasPreloadedResource>[
           newer,
@@ -672,13 +662,13 @@ void main() {
 
   test('native host external refill rejects stale packet layout', () {
     final badStride = _imageRefillPacket();
-    ByteData.sublistView(badStride).setUint32(52, 4, Endian.little);
+    ByteData.sublistView(badStride).setUint32(44, 4, Endian.little);
     expect(
       () => parseNativeHostImageRefill(badStride),
       throwsA(isA<NativeHostException>()),
     );
     final badGeneration = _imageRefillPacket();
-    ByteData.sublistView(badGeneration).setUint64(32, 0, Endian.little);
+    ByteData.sublistView(badGeneration).setUint64(24, 0, Endian.little);
     expect(
       () => parseNativeHostImageRefill(badGeneration),
       throwsA(isA<NativeHostException>()),

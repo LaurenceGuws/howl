@@ -32,14 +32,10 @@ pub const Size = drawing.Size;
 pub const Rect = drawing.Rect;
 pub const SourceRect = drawing.SourceRect;
 pub const ResourceId = drawing.ResourceId;
-pub const SourceId = drawing.SourceId;
-pub const terminal_source = drawing.terminal_source;
 pub const ResourceGeneration = drawing.ResourceGeneration;
 pub const ResourceFormat = drawing.ResourceFormat;
 pub const ResourceRef = drawing.ResourceRef;
-pub const FrameResourceRef = drawing.FrameResourceRef;
 pub const ResourceView = drawing.ResourceView;
-pub const FrameResourceView = drawing.FrameResourceView;
 pub const Residency = drawing.Residency;
 pub const FrameResourceUpload = drawing.FrameResourceUpload;
 pub const FrameExternalResource = drawing.FrameExternalResource;
@@ -90,7 +86,7 @@ pub const CanvasUsage = struct {
 
 pub const FrameBuffers = struct {
     uploads: []canvas.FrameResourceUpload,
-    removals: []canvas.FrameResourceRef,
+    removals: []canvas.ResourceRef,
     commands: []canvas.Command,
     pixels: []u8,
 };
@@ -98,7 +94,7 @@ pub const FrameBuffers = struct {
 pub const Frame = struct {
     revision: u64,
     uploads: []const canvas.FrameResourceUpload,
-    removals: []const canvas.FrameResourceRef,
+    removals: []const canvas.ResourceRef,
     commands: []const canvas.Command,
     pixels: []const u8,
 };
@@ -156,7 +152,7 @@ pub fn planExternalImageBindings(
             .image_id = image.image_id,
             .generation = image.generation,
             .resource = .{
-                .resource = canvas.ResourceId.local(allocation_cursor) catch
+                .resource = canvas.ResourceId.init(allocation_cursor) catch
                     return error.ResourceIdentityOverflow,
                 .generation = @fromBackingInt(image.generation),
             },
@@ -410,7 +406,7 @@ fn updateInner(
         if (next_resource_high_water >= canvas.ResourceId.max_identity)
             return error.ResourceIdentityOverflow;
         next_resource_high_water += 1;
-        next_atlas_resource_id = canvas.ResourceId.local(next_resource_high_water) catch
+        next_atlas_resource_id = canvas.ResourceId.init(next_resource_high_water) catch
             return error.ResourceIdentityOverflow;
     }
     const atlas_resource = if (projection.has_raster) contentResource(
@@ -516,7 +512,7 @@ pub fn missingExternalResources(
         if (canvas.residencyMatches(residency, external.resource, external.format, external.size)) continue;
         if (needed == output.len) return error.ResourceLimit;
         output[needed] = .{
-            .resource = try canvas.qualify(external.resource),
+            .resource = external.resource,
             .format = external.format,
             .size = external.size,
             .stride = external.stride,
@@ -588,7 +584,7 @@ pub fn frame(
     if (atlas_upload) {
         @memcpy(buffers.pixels[0..atlas.pixels.len], atlas.pixels);
         buffers.uploads[0] = .{
-            .resource = try canvas.qualify(atlas_ref.?),
+            .resource = atlas_ref.?,
             .format = .alpha8,
             .size = .{ .width = atlas.width, .height = atlas.height },
             .pixel_offset = 0,
@@ -624,7 +620,7 @@ fn residencyRequired(
         if (impl.resource_generation != 0) {
             const ref = contentResource(id, impl.resource_generation);
             if (canvas.resourceVisible(impl.commands[0..impl.command_count], ref) and
-                std.meta.eql(value.resource, canvas.qualify(ref) catch return false))
+                std.meta.eql(value.resource, ref))
                 return value.format == .alpha8 and
                     std.meta.eql(value.size, canvas.Size{ .width = atlas.width, .height = atlas.height });
         }
@@ -632,7 +628,7 @@ fn residencyRequired(
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
         if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
-        if (std.meta.eql(value.resource, canvas.qualify(external.resource) catch return false))
+        if (std.meta.eql(value.resource, external.resource))
             return value.format == external.format and std.meta.eql(value.size, external.size);
     }
     return false;
@@ -1883,7 +1879,7 @@ fn bindContentResource(commands: []canvas.Input, resource: canvas.ResourceRef) v
 
 fn placeholderContentResource() canvas.ResourceRef {
     return .{
-        .resource = canvas.ResourceId.local(1) catch unreachable,
+        .resource = canvas.ResourceId.init(1) catch unreachable,
         .generation = @fromBackingInt(1),
     };
 }
@@ -1897,8 +1893,7 @@ fn contentResource(resource: canvas.ResourceId, generation: u64) canvas.Resource
 }
 
 fn contentExternalIdentity(resource: canvas.ResourceRef) CanvasError!u64 {
-    if (resource.resource.isShared() or @backingInt(resource.generation) == 0)
-        return error.InvalidImageBinding;
+    resource.validate() catch return error.InvalidImageBinding;
     return resource.resource.identity() catch error.InvalidImageBinding;
 }
 
