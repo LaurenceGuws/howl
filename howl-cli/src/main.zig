@@ -194,6 +194,7 @@ fn emitActionReceipt(init: std.process.Init, operation: []const u8) !void {
 fn usage() error{InvalidArguments} {
     std.debug.print(
         \\usage:
+        \\  howl server RUNTIME_DIR NAME [NAME...] [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N] [--columns N]
         \\  howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
         \\  howl state ENDPOINT
         \\  howl type ENDPOINT TEXT|--stdin
