@@ -2065,3 +2065,48 @@ test "terminal Canvas incremental rows are exact against complete projection" {
     try std.testing.expectEqualDeep(cached_inplace.commands, complete_inplace.commands);
     try std.testing.expectEqualDeep(cached_inplace.uploads, complete_inplace.uploads);
 }
+
+test "terminal Canvas row font geometry stays local across skipped and generated cells" {
+    var a = [_]u32{'A'};
+    var line = [_]u32{0x2500};
+    var cells = [_]client.rich.Cell{
+        cell(&.{}, 1, 0), cell(&a, 1, 0), cell(&line, 1, 0),
+        cell(&a, 1, 0),   cell(&a, 1, 0),
+    };
+    cells[1].style_bits |= 1 << 6;
+    var rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &cells },
+    };
+    const source = sourceSnapshot(&rows, 5);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(16));
+    defer render.terminal.deinitContent(content);
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    var glyphs: [6]@FieldType(render.canvas.Input, "alpha_mask") = undefined;
+    var count: usize = 0;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            try std.testing.expect(count < glyphs.len);
+            glyphs[count] = value;
+            count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(glyphs.len, count);
+    for ([_]usize{ 1, 2, 4, 5 }) |index| {
+        const row: i32 = if (index < 3) 0 else 1;
+        try std.testing.expectEqualDeep(render.canvas.Rect{
+            .x = 0,
+            .y = row * 20,
+            .width = 50,
+            .height = 20,
+        }, glyphs[index].clip);
+    }
+    try std.testing.expectEqual(glyphs[1].destination.y, glyphs[2].destination.y);
+    try std.testing.expectEqual(glyphs[1].destination.y + 20, glyphs[4].destination.y);
+    try std.testing.expectEqual(glyphs[4].destination.y, glyphs[5].destination.y);
+}

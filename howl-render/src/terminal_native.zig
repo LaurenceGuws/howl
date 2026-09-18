@@ -1728,6 +1728,9 @@ fn buildContentCommands(
         if (end > cells.len or count != begin.columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(begin.columns, row.line_geometry);
         const row_cells = cells[first..][0..line_columns];
+        // Evaluate only after a visible font cell reaches the original checks.
+        var plain_row_clip: ?canvas.Rect = null;
+        var plain_row_baseline: ?i64 = null;
         var skip_until: usize = 0;
         for (row_cells, 0..) |cell, column| {
             if (column < skip_until or cell.scalar_count == 0) continue;
@@ -1871,9 +1874,12 @@ fn buildContentCommands(
                     shaped_scratch,
                 );
             const font_clip = if (plain_geometry) blk: {
-                var row_clip = try contentCellRect(row_index, 0, cell_size);
-                row_clip.width = surface.width;
-                break :blk row_clip;
+                if (plain_row_clip == null) {
+                    var row_clip = try contentCellRect(row_index, 0, cell_size);
+                    row_clip.width = surface.width;
+                    plain_row_clip = row_clip;
+                }
+                break :blk plain_row_clip.?;
             } else if (contextual) blk: {
                 var row_clip = try contentCellRect(row_index, 0, cell_size);
                 row_clip.width = surface.width;
@@ -1895,12 +1901,18 @@ fn buildContentCommands(
 
             var pen_x = std.math.mul(i64, @as(i64, physical.x), 64) catch
                 return error.InvalidPresentationGeometry;
-            const baseline_px = std.math.add(
-                i64,
-                std.math.add(i64, @as(i64, physical.y), line_offset) catch
-                    return error.InvalidPresentationGeometry,
-                @as(i64, metrics.baseline),
-            ) catch return error.InvalidPresentationGeometry;
+            const baseline_px = if (plain_geometry and plain_row_baseline != null)
+                plain_row_baseline.?
+            else blk: {
+                const value = std.math.add(
+                    i64,
+                    std.math.add(i64, @as(i64, physical.y), line_offset) catch
+                        return error.InvalidPresentationGeometry,
+                    @as(i64, metrics.baseline),
+                ) catch return error.InvalidPresentationGeometry;
+                if (plain_geometry) plain_row_baseline = value;
+                break :blk value;
+            };
             var pen_y: i64 = 0;
             for (run.glyphs) |shaped| {
                 const cluster_adjust = std.math.mul(
