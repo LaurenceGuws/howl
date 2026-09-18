@@ -1,10 +1,11 @@
 # Howl native CLI contract
 
-`howl` is the native human/agent client for one already-running Howl session.
-It is not a shell executor, session-discovery service, remote transport, renderer,
-or compatibility wrapper around Remoter. It speaks the same frozen
-`howl-session` client protocol as graphical clients and projects canonical
-terminal state into a form that is pleasant to reason about.
+`howl` is the native human/agent terminal CLI and the first node-local terminal
+server owner. Client commands speak the same frozen `howl-session` attach protocol
+as graphical clients and project canonical terminal state into a form that is
+pleasant to reason about. `howl server` owns a small named collection of PTY+VT
+terminal instances in one process; it is not a renderer, remote transport, or
+compatibility wrapper around Remoter.
 
 The CLI is intentionally built before the durable graphical client. It should
 teach us which canonical facts deserve first-class client vocabulary. Terminal
@@ -25,9 +26,11 @@ authentication and encryption stay outside Howl. An operator may use SSH or SSH
 port forwarding to make a remote session locally reachable without teaching
 Howl node names, Fleet topology, Mesh routes or credentials.
 
-The first CLI cut owns no session registry and performs no endpoint discovery.
-That is deliberate. Session lifecycle/discovery must earn its contract from real
-use rather than being bundled into the observation client.
+The first server cut deliberately avoids a second management/discovery protocol.
+One foreground `howl server` process owns several named terminals and publishes a
+startup manifest containing their ordinary Unix attach endpoints. This proves the
+collection/lifetime shape without making process-per-terminal permanent or
+prematurely designing a tmux-style control plane.
 
 ## Commands
 
@@ -35,6 +38,7 @@ The intended first vocabulary is:
 
 ```text
 howl version
+howl server RUNTIME_DIR NAME [NAME...] [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N] [--columns N]
 howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
 howl state ENDPOINT
 howl type ENDPOINT TEXT
@@ -47,9 +51,10 @@ howl resize ENDPOINT ROWS COLUMNS
 howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate
 ```
 
-There is intentionally no `exec`, `run`, `shell`, `command`, or equivalent.
-To interact with a program running in the PTY, clients submit terminal input.
-How the child shell interprets that input is not a Howl API.
+There is intentionally no client-side `exec`, `run`, or shell-evaluation
+operation. `howl server --command` only selects the child command at terminal
+creation time. Attached clients still interact with the running PTY by submitting
+terminal input; How the child interprets that input is not a Howl API.
 
 Mouse input is part of the canonical session protocol but is intentionally not
 in the first CLI mutation cut. Terminal coordinates can become semantically
@@ -58,6 +63,24 @@ terminal revision on mouse input, so a client-side observe-then-click check
 would create false confidence. A future CLI mouse command must first gain an
 atomic stale-target contract at the session boundary or another equally strong
 mechanism.
+
+## Multi-terminal server
+
+`howl server` is a foreground collection owner. All named terminals live in the
+same `howl` process; each terminal currently publishes one Unix attach socket
+under the supplied absolute runtime directory so existing Flutter, Web, Odin and
+CLI clients can attach without a new routing protocol.
+
+For example, `howl server /run/user/1000/howl work logs` publishes
+`unix:/run/user/1000/howl/work.sock` and `unix:/run/user/1000/howl/logs.sock` in
+one JSON startup manifest. The process then services both PTY+VT instances until
+it exits. Names are bounded safe path components, duplicate names are rejected,
+and at most sixteen terminals are admitted in this canary.
+
+This is intentionally not yet a daemon registry, reattach UI, or dynamic
+`new/list/kill` control protocol. The purpose of this slice is to establish that
+one process can directly own many independent terminals while all maintained
+clients continue using the existing attach protocol.
 
 ## Compact snapshot
 
@@ -244,7 +267,7 @@ and locally changed installed binaries are refused. The migration rule exists so
 the retired pre-2026-08-30 `start`/`stop`/`sessions` CLI can be replaced without
 teaching future installers to recognize its command vocabulary.
 
-The CLI installer owns only `howl`. It does not install `howl-sessiond`, the SSH
+The CLI installer owns `howl`; `howl server` needs no `howl-sessiond` child. It does not install the SSH
 bridge, Remoter hooks, Fleet configuration, or graphical clients.
 
 Physical Unicode key identity is explicit: use `U+0061` for the physical Unicode key `a`. Ordinary committed text remains `howl type`; a bare `a` is not accepted as a physical-key spelling.

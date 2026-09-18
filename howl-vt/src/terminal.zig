@@ -5544,13 +5544,14 @@ pub const Terminal = struct {
             @panic("terminal mutation during prepared resize");
     }
 
-    fn initWithScreens(
+    fn initWithScreensInto(
+        terminal: *Terminal,
         allocator: std.mem.Allocator,
         stream_state: TerminalStreamState,
         state: Screen,
         alt_state: Screen,
-    ) Terminal {
-        return .{
+    ) void {
+        terminal.* = .{
             .allocator = allocator,
             .stream_state = stream_state,
             .screen_state = ScreenSet.init(state, alt_state),
@@ -5559,6 +5560,17 @@ pub const Terminal = struct {
             .reply_buffer = replies.Buffer.init(allocator),
             .consequences = consequences.State.init(allocator),
         };
+    }
+
+    fn initWithScreens(
+        allocator: std.mem.Allocator,
+        stream_state: TerminalStreamState,
+        state: Screen,
+        alt_state: Screen,
+    ) Terminal {
+        var terminal: Terminal = undefined;
+        initWithScreensInto(&terminal, allocator, stream_state, state, alt_state);
+        return terminal;
     }
 
     /// Initialize terminal state with owned primary and alternate cell storage.
@@ -5587,6 +5599,21 @@ pub const Terminal = struct {
         cols: u16,
         history_capacity: u16,
     ) InitError!Terminal {
+        var terminal: Terminal = undefined;
+        try initWithHistoryInto(&terminal, allocator, rows, cols, history_capacity);
+        return terminal;
+    }
+
+    /// Initializes one stable caller-owned Terminal without returning the large
+    /// owner by value. Embedders which already own storage should prefer this
+    /// path so terminal lifetime does not consume an additional stack frame.
+    pub fn initWithHistoryInto(
+        terminal: *Terminal,
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        history_capacity: u16,
+    ) InitError!void {
         try validateDimensions(rows, cols);
         var stream_state = try TerminalStreamState.init(allocator);
         errdefer stream_state.deinit();
@@ -5594,7 +5621,7 @@ pub const Terminal = struct {
         errdefer state.deinit(allocator);
         var alt_state = try Screen.initWithCells(allocator, rows, cols);
         errdefer alt_state.deinit(allocator);
-        return initWithScreens(allocator, stream_state, state, alt_state);
+        initWithScreensInto(terminal, allocator, stream_state, state, alt_state);
     }
 
     /// Release Terminal resources.

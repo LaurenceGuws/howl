@@ -163,7 +163,7 @@ pub fn init(
 ) InitError!*Session {
     const state = try allocator.create(State);
     errdefer allocator.destroy(state);
-    state.* = try State.init(allocator, inherited_environment, launch);
+    try state.initInto(allocator, inherited_environment, launch);
     return @ptrCast(state);
 }
 
@@ -459,11 +459,12 @@ const State = struct {
     child_exit: ?ChildExit = null,
     stream_closed: bool = false,
 
-    fn init(
+    fn initInto(
+        self: *State,
         allocator: std.mem.Allocator,
         inherited_environment: std.process.Environ,
         launch: Launch,
-    ) InitError!State {
+    ) InitError!void {
         if (launch.rows == 0 or launch.columns == 0 or
             launch.cell_pixel_width == 0 or launch.cell_pixel_height == 0)
             return error.InvalidDimensions;
@@ -479,15 +480,23 @@ const State = struct {
         const pixel_width = try ptyPixelExtent(launch.columns, launch.cell_pixel_width);
         const pixel_height = try ptyPixelExtent(launch.rows, launch.cell_pixel_height);
         try transport.startWithPixels(launch.columns, launch.rows, pixel_width, pixel_height);
-        var terminal = try vt.Terminal.initWithHistory(
+
+        self.allocator = allocator;
+        self.transport = transport;
+        self.writes = .{};
+        self.read_start = 0;
+        self.read_end = 0;
+        self.child_exit = null;
+        self.stream_closed = false;
+        try vt.Terminal.initWithHistoryInto(
+            &self.terminal,
             allocator,
             launch.rows,
             launch.columns,
             launch.history_rows,
         );
-        errdefer terminal.deinit();
-        try terminal.setCellPixelSize(launch.cell_pixel_width, launch.cell_pixel_height);
-        return .{ .allocator = allocator, .transport = transport, .terminal = terminal };
+        errdefer self.terminal.deinit();
+        try self.terminal.setCellPixelSize(launch.cell_pixel_width, launch.cell_pixel_height);
     }
 
     fn deinit(self: *State) void {

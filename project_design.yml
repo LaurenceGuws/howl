@@ -15,7 +15,7 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 planned:
-  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; every client deliberately pressures the same canonical session and keeps PTY/VT ownership out of presentation code
+  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; the CLI also hosts the first one-process multi-terminal collection canary while graphical clients remain ordinary attach consumers
 
 experimental:
   - howl-client

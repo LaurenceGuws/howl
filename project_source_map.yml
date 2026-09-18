@@ -21,9 +21,11 @@ experimental:
     one-allocation coarse semantic view which resolves cell-style, cursor-shape,
     DEC-line-geometry, and image-placeholder wire encodings once for presenters
   howl-cli: >-
-    native human/agent session client under active proof; compact semantic
-    observation plus canonical input/control, not shell execution or remote
-    transport
+    native human/agent terminal CLI plus first node-local multi-terminal server
+    canary; one foreground howl server process can own multiple independent
+    PTY+VT terminal endpoints while existing clients attach through the current
+    protocol; dynamic registry/control and a single multiplexed attach route are
+    intentionally deferred
   howl-render: >-
     one shared Terminal Canvas consuming howl-client.view and howl-text;
     it owns terminal pixel geometry, colors/decorations/cursor presentation,

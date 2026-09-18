@@ -128,7 +128,8 @@ fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32, publication_wait
 // Listener and client storage
 // =============================================================================
 
-const ListenerSpec = union(enum) {
+/// Selects one local byte-stream listener for a terminal endpoint owner.
+pub const ListenerSpec = union(enum) {
     unix: []const u8,
     tcp_loopback: u16,
 };
@@ -356,7 +357,8 @@ const DeltaRowCache = struct {
     }
 };
 
-const Server = struct {
+/// Owns one attach endpoint around one existing PTY+VT terminal instance.
+pub const Server = struct {
     // -------------------------------------------------------------------------
     // Retained endpoint owners
     // -------------------------------------------------------------------------
@@ -398,7 +400,7 @@ const Server = struct {
     // Construction and lifecycle loop
     // -------------------------------------------------------------------------
 
-    fn init(
+    fn initImpl(
         allocator: std.mem.Allocator,
         io: std.Io,
         inherited_environment: std.process.Environ,
@@ -426,7 +428,24 @@ const Server = struct {
         };
     }
 
-    fn deinit(self: *Server) void {
+    /// Exact construction failures for one terminal endpoint.
+    pub const InitError = @typeInfo(
+        @typeInfo(@TypeOf(initImpl)).@"fn".return_type.?,
+    ).error_union.error_set;
+
+    /// Constructs one terminal endpoint and its local listener.
+    pub fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        inherited_environment: std.process.Environ,
+        listener_spec: ListenerSpec,
+        launch: howl.Launch,
+    ) InitError!Server {
+        return initImpl(allocator, io, inherited_environment, listener_spec, launch);
+    }
+
+    /// Releases attached clients, listener state, and the owned terminal instance.
+    pub fn deinit(self: *Server) void {
         for (&self.clients) |*client| {
             if (client.*) |*active| active.deinit(self.allocator);
             client.* = null;
@@ -442,7 +461,7 @@ const Server = struct {
         self.* = undefined;
     }
 
-    fn turn(self: *Server, timeout_ms: i32) !void {
+    fn turnImpl(self: *Server, timeout_ms: i32) !void {
         try self.materializeObservers();
         try self.processBufferedRequests();
 
@@ -506,6 +525,16 @@ const Server = struct {
 
         try self.processBufferedRequests();
         try self.materializeObservers();
+    }
+
+    /// Exact failures from one endpoint service turn.
+    pub const TurnError = @typeInfo(
+        @typeInfo(@TypeOf(turnImpl)).@"fn".return_type.?,
+    ).error_union.error_set;
+
+    /// Services one bounded endpoint/PTY/client turn.
+    pub fn turn(self: *Server, timeout_ms: i32) TurnError!void {
+        return self.turnImpl(timeout_ms);
     }
 
     fn consequencePolicy(self: *const Server) howl.ConsequencePolicy {

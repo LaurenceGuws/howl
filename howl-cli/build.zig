@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_cli", module);
     root.addImport("howl_client", client.module("howl_client"));
     root.addImport("howl_session", session.module("howl_session"));
+    root.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
     const executable = b.addExecutable(.{ .name = "howl", .root_module = root });
     b.installArtifact(executable);
 
@@ -31,11 +32,26 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const server_tests_root = b.createModule(.{
+        .root_source_file = b.path("src/server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    server_tests_root.addImport("howl_session", session.module("howl_session"));
+    server_tests_root.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
+    const server_tests = b.addTest(.{
+        .name = "howl-cli-server",
+        .root_module = server_tests_root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     const check = b.step("check", "Compile the native Howl session client");
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
+    check.dependOn(&server_tests.step);
     const test_step = b.step("test", "Run native Howl CLI proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(server_tests).step);
     const composition = b.addSystemCommand(&.{ "python3", "test/composition.py" });
     composition.setName("howl CLI canonical state composition");
     composition.setCwd(b.path("."));
@@ -53,5 +69,10 @@ pub fn build(b: *std.Build) void {
     ssh_route.setCwd(b.path("."));
     ssh_route.addArtifactArg(executable);
     test_step.dependOn(&ssh_route.step);
+    const server_multi = b.addSystemCommand(&.{ "python3", "test/server_multi.py" });
+    server_multi.setName("howl CLI multi-terminal server");
+    server_multi.setCwd(b.path("."));
+    server_multi.addArtifactArg(executable);
+    test_step.dependOn(&server_multi.step);
     b.default_step = check;
 }

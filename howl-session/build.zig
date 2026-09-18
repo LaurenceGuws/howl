@@ -18,6 +18,12 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const endpoint_module = b.addModule("howl_session_endpoint", .{
+        .root_source_file = b.path("src/endpoint.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    endpoint_module.addImport("howl_session", module);
     const server_module = b.createModule(.{
         .root_source_file = b.path("src/endpoint.zig"),
         .target = target,

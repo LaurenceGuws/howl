@@ -2,6 +2,7 @@ const std = @import("std");
 const cli = @import("howl_cli");
 const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
+const server = @import("server.zig");
 
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
@@ -10,6 +11,10 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, operation, "version")) {
         if (argv.len != 2) return usage();
         return versionCommand(init);
+    }
+    if (std.mem.eql(u8, operation, "server")) {
+        if (argv.len < 4) return usage();
+        return server.run(init, argv[2..]);
     }
     if (argv.len < 3) return usage();
     const endpoint = std.mem.span(argv[2]);
