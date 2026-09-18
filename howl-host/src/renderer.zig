@@ -72,7 +72,17 @@ const DuetReady = union(enum) {
     command: shared.HostCommand,
     window_size: shared.WindowSize,
     display_scale: shared.DisplayScale,
-    pointer: shared.PointerEvent,
+};
+
+const PointerProjection = struct {
+    display_scale_120: u32,
+    mux: *host_layout.Mux,
+    scene_panes: *const [2]?host_layout.PaneId,
+    scene_count: usize,
+    workspace_rows: u16,
+    workspace_cols: u16,
+    cell_width: u16,
+    cell_height: u16,
 };
 
 const GenericDraw = struct {
@@ -649,6 +659,16 @@ fn runFallible(
             &scenes,
             scene_count,
             next_ready_start,
+            .{
+                .display_scale_120 = display_scale_120,
+                .mux = &mux,
+                .scene_panes = &scene_panes,
+                .scene_count = scene_count,
+                .workspace_rows = workspace_rows,
+                .workspace_cols = workspace_cols,
+                .cell_width = cell_size.width,
+                .cell_height = cell_size.height,
+            },
         ) catch |failure| {
             if (boundary.shouldStop()) break;
             return failure;
@@ -839,18 +859,6 @@ fn runFallible(
                     }
                 },
             },
-            .pointer => |event| try routePointerEvent(
-                boundary,
-                event,
-                display_scale_120,
-                &mux,
-                &scene_panes,
-                scene_count,
-                workspace_rows,
-                workspace_cols,
-                cell_size.width,
-                cell_size.height,
-            ),
             .display_scale => |scale| {
                 if (scale.scale_120 == display_scale_120) continue;
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
@@ -2154,6 +2162,7 @@ fn waitDuetReady(
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     start: usize,
+    pointer: PointerProjection,
 ) !DuetReady {
     if (scene_count == 0 or scene_count > scenes.len or start >= scene_count)
         return error.DuetGeometry;
@@ -2168,6 +2177,7 @@ fn waitDuetReady(
         .events = c.POLLIN,
         .revents = 0,
     };
+    var prefer_scene = false;
     while (true) {
         for (descriptors[0 .. scene_count + 1]) |*descriptor| descriptor.revents = 0;
         const ready = c.poll(&descriptors, scene_count + 1, -1);
@@ -2180,19 +2190,50 @@ fn waitDuetReady(
         const control_events = descriptors[scene_count].revents;
         if (control_events & (c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
             return error.ScenePoll;
+
+        // Once pointer input has been routed, repoll and give the terminal
+        // response first chance before accepting another pointer sample. This
+        // prevents drag traffic from starving application redraws while keeping
+        // motion coalesced at the Boundary.
+        if (prefer_scene) {
+            if (readyScene(descriptors[0..scene_count], start)) |index|
+                return .{ .scene = index };
+        }
         if (control_events & c.POLLIN != 0) {
             try boundary.drainControlWake();
             if (boundary.takeHostCommand()) |command| return .{ .command = command };
             if (boundary.takeWindowSize()) |size| return .{ .window_size = size };
             if (boundary.takeDisplayScale()) |scale| return .{ .display_scale = scale };
-            if (boundary.takePointer()) |event| return .{ .pointer = event };
+            if (boundary.takePointer()) |event| {
+                try routePointerEvent(
+                    boundary,
+                    event,
+                    pointer.display_scale_120,
+                    pointer.mux,
+                    pointer.scene_panes,
+                    pointer.scene_count,
+                    pointer.workspace_rows,
+                    pointer.workspace_cols,
+                    pointer.cell_width,
+                    pointer.cell_height,
+                );
+                prefer_scene = true;
+                continue;
+            }
         }
-        for (0..scene_count) |offset| {
-            const index = (start + offset) % scene_count;
-            if (descriptors[index].revents & (c.POLLIN | c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
-                return .{ .scene = index };
-        }
+        if (readyScene(descriptors[0..scene_count], start)) |index|
+            return .{ .scene = index };
     }
+}
+
+fn readyScene(descriptors: []const c.pollfd, start: usize) ?usize {
+    if (descriptors.len == 0 or start >= descriptors.len) return null;
+    for (0..descriptors.len) |offset| {
+        const index = (start + offset) % descriptors.len;
+        if (descriptors[index].revents & (c.POLLIN | c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
+            return index;
+    }
+    return null;
 }
 
 fn watchStop(
