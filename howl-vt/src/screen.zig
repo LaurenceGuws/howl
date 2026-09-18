@@ -3403,6 +3403,18 @@ pub const Screen = struct {
 
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
+
+        // Terminal-native inline UIs keep a fixed composer below a scrolling
+        // top region. Rows leaving a full-width region anchored at screen row
+        // zero belong to primary scrollback even when the lower margin stops
+        // above the physical screen bottom.
+        if (top == 0 and left == 0 and right + 1 == self.cols and self.history_capacity != 0) {
+            var history_row: u16 = 0;
+            while (history_row < amount) : (history_row += 1)
+                self.storeHistoryRow(history_row);
+            changed = true;
+        }
+
         if (left != 0 or right + 1 != self.cols) {
             changed = self.clearClustersIntersecting(top, bounded_bottom + 1, left, right + 1) or changed;
         }
@@ -6980,6 +6992,30 @@ test "scroll rows preserve scalar tails while transferring cell metadata" {
         &tail,
         try screen.scalars.?.tail(top, source.combining_len),
     );
+}
+
+test "only full-width scroll regions anchored at row zero feed projected history" {
+    var anchored = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 4, 8);
+    defer anchored.deinit(std.testing.allocator);
+    anchored.cells.?[@intCast(anchored.rowStart(0))].codepoint = 'A';
+    try std.testing.expect(anchored.scrollUpRegion(0, 2, 1));
+    try std.testing.expectEqual(@as(u32, 1), anchored.historyCount());
+    try std.testing.expectEqual(@as(u21, 'A'), anchored.historyRowAt(0, 0));
+
+    var lower = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 4, 8);
+    defer lower.deinit(std.testing.allocator);
+    lower.cells.?[@intCast(lower.rowStart(1))].codepoint = 'B';
+    try std.testing.expect(lower.scrollUpRegion(1, 2, 1));
+    try std.testing.expectEqual(@as(u32, 0), lower.historyCount());
+
+    var narrowed = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 4, 8);
+    defer narrowed.deinit(std.testing.allocator);
+    narrowed.left_right_margin_mode = true;
+    narrowed.left_margin = 1;
+    narrowed.right_margin = 2;
+    narrowed.cells.?[@intCast(narrowed.rowStart(0) + 1)].codepoint = 'C';
+    try std.testing.expect(narrowed.scrollUpRegion(0, 2, 1));
+    try std.testing.expectEqual(@as(u32, 0), narrowed.historyCount());
 }
 
 test "partial row scroll preserves inline grapheme cells without scalar tails" {

@@ -7440,6 +7440,42 @@ test "terminal borrows bounded caller-selected history projections" {
     try std.testing.expectEqual(@as(u32, 0), bottom.history_offset);
 }
 
+test "top-anchored partial scroll region retains rows above fixed composer" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 6, 8, 16);
+    defer terminal.deinit();
+
+    // Codex keeps its composer below a top-anchored scroll region and commits
+    // finalized transcript rows by printing CRLF at that region's bottom.
+    const replay = try terminal.feed(
+        "\x1b[1;1HAAAA" ++
+            "\x1b[2;1HBBBB" ++
+            "\x1b[3;1HCCCC" ++
+            "\x1b[4;1HDDDD" ++
+            "\x1b[5;1HCOMP1" ++
+            "\x1b[6;1HCOMP2" ++
+            "\x1b[1;4r" ++
+            "\x1b[4;1H" ++
+            "\r\n1111" ++
+            "\r\n2222" ++
+            "\x1b[r",
+    );
+    try std.testing.expect(replay.stateChanged());
+
+    const live = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 2), live.history_count);
+    try std.testing.expectEqual(@as(u21, 'C'), live.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), live.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, '1'), live.cellAt(2, 0));
+    try std.testing.expectEqual(@as(u21, '2'), live.cellAt(3, 0));
+    try std.testing.expectEqual(@as(u21, '1'), live.cellAt(4, 4));
+    try std.testing.expectEqual(@as(u21, '2'), live.cellAt(5, 4));
+
+    const oldest = terminal.semanticView(std.math.maxInt(u32));
+    try std.testing.expectEqual(@as(u32, 2), oldest.history_offset);
+    try std.testing.expectEqual(@as(u21, 'A'), oldest.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), oldest.cellAt(1, 0));
+}
+
 test "terminal feed retains no caller scrolling intent" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
     defer vt.deinit();
