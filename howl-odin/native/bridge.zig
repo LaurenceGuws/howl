@@ -208,12 +208,7 @@ const maximum_search_retries: usize = 8;
 
 const RenderFront = struct {
     frame_revision: u64 = 0,
-    session_revision: u64 = 0,
-    history_offset: u32 = 0,
-    history_count: u32 = 0,
-    history_row_base: u32 = 0,
-    alternate_screen: bool = false,
-    selection_begin: ?protocol.SnapshotBegin = null,
+    begin: ?protocol.SnapshotBegin = null,
     selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     background_rgba: u32 = 0xff211918,
@@ -247,13 +242,8 @@ const Render = struct {
     command_count: usize = 0,
     pixel_count: usize = 0,
     frame_revision: u64 = 0,
-    session_revision: u64 = 0,
-    history_offset: u32 = 0,
-    history_count: u32 = 0,
-    history_row_base: u32 = 0,
-    alternate_screen: bool = false,
-    // Small row facts from the accepted Canvas revision, not a second text cache.
-    selection_begin: ?protocol.SnapshotBegin = null,
+    // Pending snapshot facts are published only after the host accepts resources.
+    begin: ?protocol.SnapshotBegin = null,
     selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     background_rgba: u32 = 0xff211918,
@@ -541,15 +531,10 @@ pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
     const value = raw orelse return;
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.front.frame_revision = renderer.frame_revision;
-    renderer.front.session_revision = renderer.session_revision;
-    renderer.front.history_offset = renderer.history_offset;
-    renderer.front.history_count = renderer.history_count;
-    renderer.front.history_row_base = renderer.history_row_base;
-    renderer.front.alternate_screen = renderer.alternate_screen;
-    renderer.front.selection_begin = renderer.selection_begin;
+    renderer.front.begin = renderer.begin;
     renderer.front.surface = renderer.surface;
     renderer.front.background_rgba = renderer.background_rgba;
-    if (renderer.selection_begin) |begin|
+    if (renderer.begin) |begin|
         @memcpy(renderer.front.selection_rows[0..begin.rows], renderer.selection_rows[0..begin.rows]);
 }
 
@@ -584,7 +569,8 @@ pub export fn howl_odin_bridge_render_prepare_view(raw: ?*RenderHandle, view: ?*
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     const snapshot = view orelse return 9;
-    if (!standaloneLiveView(snapshot) or client.view.begin(snapshot).revision < renderer.session_revision) return 9;
+    const pending_revision = if (renderer.begin) |begin| begin.revision else 0;
+    if (!standaloneLiveView(snapshot) or client.view.begin(snapshot).revision < pending_revision) return 9;
     renderer.clearError();
     clearExternalUploads(renderer);
     return prepareProjectedView(renderer, snapshot);
@@ -672,16 +658,11 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
     renderer.command_count = frame.commands.len;
     renderer.pixel_count = frame.pixels.len;
     renderer.frame_revision = @backingInt(frame.revision);
-    renderer.session_revision = begin.revision;
     renderer.background_rgba = paddingBackground(client.view.presentation(view));
-    renderer.history_offset = begin.history_offset;
-    renderer.history_count = begin.history_count;
-    renderer.history_row_base = begin.history_row_base;
-    renderer.alternate_screen = begin.alternate_screen;
     for (0..begin.rows) |row| {
         renderer.selection_rows[row] = client.selection.rowShape(view, @intCast(row)).?;
     }
-    renderer.selection_begin = begin;
+    renderer.begin = begin;
     renderer.surface = surface;
     updateRenderResidency(renderer, frame.uploads, frame.removals);
     for (renderer.external_uploads[0..renderer.external_upload_count]) |external| {
@@ -790,31 +771,36 @@ pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {
 pub export fn howl_odin_bridge_render_session_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.front.session_revision;
+    const begin = renderer.front.begin orelse return 0;
+    return begin.revision;
 }
 
 pub export fn howl_odin_bridge_render_history_offset(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.front.history_offset;
+    const begin = renderer.front.begin orelse return 0;
+    return begin.history_offset;
 }
 
 pub export fn howl_odin_bridge_render_history_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.front.history_count;
+    const begin = renderer.front.begin orelse return 0;
+    return begin.history_count;
 }
 
 pub export fn howl_odin_bridge_render_history_row_base(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return renderer.front.history_row_base;
+    const begin = renderer.front.begin orelse return 0;
+    return begin.history_row_base;
 }
 
 pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    return @intFromBool(renderer.front.alternate_screen);
+    const begin = renderer.front.begin orelse return 0;
+    return @intFromBool(begin.alternate_screen);
 }
 
 /// Projects selection against this renderer's accepted frame only. No Session
@@ -835,7 +821,7 @@ pub export fn howl_odin_bridge_render_selection_span(
     last.* = 0;
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
-    const begin = renderer.front.selection_begin orelse return 0;
+    const begin = renderer.front.begin orelse return 0;
     if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.front.selection_rows.len)
         return 0;
     const range = client.selection.Range{
@@ -2519,27 +2505,93 @@ test "pane gutter background follows accepted default color and screen reverse" 
     try std.testing.expectEqual(@as(u32, 0xffbbccdd), paddingBackground(&presentation));
 }
 
-test "pending Canvas facts stay invisible until the host accepts uploaded resources" {
+test "render headers publish metadata and selection only on acceptance" {
     var renderer: Render = undefined;
     renderer.front = .{};
+    renderer.begin = null;
     renderer.frame_revision = 17;
-    renderer.session_revision = 91;
-    renderer.history_offset = 4;
-    renderer.history_count = 100;
-    renderer.history_row_base = 2;
-    renderer.alternate_screen = false;
-    renderer.selection_begin = null;
     renderer.surface = .{ .width = 400, .height = 200 };
     renderer.background_rgba = 0xff123456;
+    renderer.external_upload_count = 0;
+    // Eligible offers fail before accessing the deliberately undefined composer.
+    renderer.cell_size = .{ .width = 0, .height = 0 };
     const handle: *RenderHandle = @ptrCast(&renderer);
-    try std.testing.expectEqual(@as(u64, 0), howl_odin_bridge_render_session_revision(handle));
-    howl_odin_bridge_render_accept(handle);
-    try std.testing.expectEqual(@as(u64, 91), howl_odin_bridge_render_session_revision(handle));
-    renderer.session_revision = 92;
-    renderer.history_offset = 0;
-    try std.testing.expectEqual(@as(u64, 91), howl_odin_bridge_render_session_revision(handle));
-    try std.testing.expectEqual(@as(u32, 4), howl_odin_bridge_render_history_offset(handle));
-    try std.testing.expectEqual(@as(u16, 400), howl_odin_bridge_render_surface_width(handle));
+    var first_begin = std.mem.zeroes(protocol.SnapshotBegin);
+    first_begin.revision = 6;
+    first_begin.history_offset = 4;
+    first_begin.history_count = 100;
+    first_begin.history_row_base = 2;
+    first_begin.rows = 1;
+    first_begin.columns = 8;
+    var next_begin = first_begin;
+    next_begin.revision = 8;
+    next_begin.history_offset = 0;
+    next_begin.history_count = 0;
+    next_begin.history_row_base = 0;
+    next_begin.alternate_screen = true;
+    const live = try testReusableProjection(0, false);
+    defer client.view.deinit(live);
+    const historical = try testReusableProjection(1, false);
+    defer client.view.deinit(historical);
+    const image = try testReusableProjection(0, true);
+    defer client.view.deinit(image);
+
+    // null, unprepared, prepared, accepted, next prepared/rejected, next accepted
+    for (0..6) |stage| {
+        switch (stage) {
+            2 => {
+                renderer.begin = first_begin;
+                renderer.selection_rows[0] = .{ .content_end_exclusive = 3, .wrapped = false };
+            },
+            3, 5 => howl_odin_bridge_render_accept(handle),
+            4 => {
+                // Missing, older, and equal pending headers all permit revision 7.
+                // A surface failure must leave the accepted cut and selection intact.
+                for ([_]?u64{ null, 6, 7 }) |revision| {
+                    renderer.begin = if (revision) |value| blk: {
+                        var begin = next_begin;
+                        begin.revision = value;
+                        break :blk begin;
+                    } else null;
+                    try std.testing.expectEqual(@as(i32, 3), howl_odin_bridge_render_prepare_view(handle, live));
+                    try std.testing.expectEqualDeep(first_begin, renderer.front.begin.?);
+                    try std.testing.expectEqualDeep(client.selection.RowShape{ .content_end_exclusive = 3, .wrapped = false }, renderer.front.selection_rows[0]);
+                    try std.testing.expectEqualStrings("surface:InvalidSurface", renderer.last_error[0..renderer.last_error_len]);
+                }
+                // Invalid cuts remain rejected even at an eligible revision.
+                for ([_]?*const client.view.Snapshot{ historical, image, null }) |offer| {
+                    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, offer));
+                    try std.testing.expectEqualDeep(first_begin, renderer.front.begin.?);
+                }
+                renderer.begin = next_begin;
+                renderer.selection_rows[0] = .{ .content_end_exclusive = 1, .wrapped = true };
+                // Revision 7 is newer than front 6 but older than pending 8.
+                try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, live));
+                try std.testing.expectEqualDeep(first_begin, renderer.front.begin.?);
+                try std.testing.expectEqualDeep(next_begin, renderer.begin.?);
+            },
+            else => {},
+        }
+        const raw = if (stage == 0) null else handle;
+        const expected = if (stage < 3) std.mem.zeroes(protocol.SnapshotBegin) else if (stage == 5) next_begin else first_begin;
+        try std.testing.expectEqual(expected.revision, howl_odin_bridge_render_session_revision(raw));
+        try std.testing.expectEqual(expected.history_offset, howl_odin_bridge_render_history_offset(raw));
+        try std.testing.expectEqual(expected.history_count, howl_odin_bridge_render_history_count(raw));
+        try std.testing.expectEqual(expected.history_row_base, howl_odin_bridge_render_history_row_base(raw));
+        try std.testing.expectEqual(@as(u8, @intFromBool(expected.alternate_screen)), howl_odin_bridge_render_alternate_screen(raw));
+        var first: u16 = 99;
+        var last: u16 = 99;
+        const selected = howl_odin_bridge_render_selection_span(raw, 98, 0, 98, 7, 8, 0, 0, &first, &last);
+        try std.testing.expectEqual(@as(u8, if (stage == 3 or stage == 4) 1 else 0), selected);
+        try std.testing.expectEqual(@as(u16, 0), first);
+        try std.testing.expectEqual(@as(u16, if (selected == 1) 2 else 0), last);
+        if (stage == 5) {
+            try std.testing.expectEqual(@as(u8, 1), howl_odin_bridge_render_selection_span(raw, 0, 0, 0, 7, 8, 1, 0, &first, &last));
+            try std.testing.expectEqual(@as(u16, 0), first);
+            try std.testing.expectEqual(@as(u16, 0), last);
+        }
+        if (stage >= 3) try std.testing.expectEqual(@as(u16, 400), howl_odin_bridge_render_surface_width(raw));
+    }
 }
 
 test "completed selection rejection is distinct from interrupted transport" {
@@ -2611,16 +2663,4 @@ test "only self-contained live views may cross the observation connection bounda
     try std.testing.expect(standaloneLiveView(live));
     try std.testing.expect(!standaloneLiveView(historical));
     try std.testing.expect(!standaloneLiveView(image));
-    // Invalid offers cannot access this deliberately undefined connection or
-    // disturb accepted front facts. A renderer-owned request remains necessary.
-    var renderer: Render = undefined;
-    renderer.session_revision = 8;
-    renderer.front = .{ .session_revision = 8, .history_offset = 3 };
-    const handle: *RenderHandle = @ptrCast(&renderer);
-    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, live));
-    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, historical));
-    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, image));
-    try std.testing.expectEqual(@as(i32, 9), howl_odin_bridge_render_prepare_view(handle, null));
-    try std.testing.expectEqual(@as(u64, 8), renderer.front.session_revision);
-    try std.testing.expectEqual(@as(u32, 3), renderer.front.history_offset);
 }
