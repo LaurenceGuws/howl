@@ -12,8 +12,10 @@ const read_buffer_bytes: usize = 16 * 1024;
 const write_bytes_per_turn: usize = 64 * 1024;
 const write_calls_per_turn: usize = 4;
 
-/// Opaque handle to one canonical terminal-work owner.
+/// Opaque handle to one canonical PTY + VT lifetime owner.
 pub const Session = opaque {};
+/// Canonical terminal engine type owned by one Session.
+pub const Terminal = vt.Terminal;
 /// Host-neutral input accepted by the canonical VT owner.
 pub const Input = vt.Terminal.InputEvent;
 /// Names physical non-Unicode key identities accepted by canonical input encoding.
@@ -32,50 +34,12 @@ pub const MouseButton = vt.Terminal.MouseButton;
 pub const maximum_key_text_bytes = vt.Terminal.maximum_key_text_bytes;
 /// Bounds legacy key bytes while leaving canonical Meta prefix headroom.
 pub const maximum_legacy_key_bytes = vt.Terminal.maximum_legacy_key_bytes;
-/// Copies one complete terminal cell without exposing VT storage.
-pub const Cell = vt.Terminal.Cell;
-/// Copies one resolved terminal cursor shape.
-pub const CursorShape = vt.Terminal.CursorShape;
-/// Copies the semantic terminal-color class used by cell attributes.
-pub const ColorKind = vt.Terminal.ColorKind;
-/// Copies terminal palette and dynamic visual defaults.
-pub const Presentation = vt.Terminal.Presentation;
-/// Copies one row's DEC presentation geometry.
-pub const LineGeometry = vt.Terminal.LineGeometry;
-/// Borrows one immutable decoded terminal image.
-pub const Image = vt.Terminal.Image;
-/// Copies one image placement resolved into a visible terminal view.
-pub const ImagePlacement = vt.Terminal.ImagePlacement;
-/// Borrows coherent image-plane state for one terminal view.
-pub const Images = vt.Terminal.Images;
-/// Identifies one terminal cell in stable projected history-and-screen coordinates.
-pub const TextPoint = vt.Terminal.TextPoint;
-/// Identifies one inclusive terminal-text range.
-pub const TextRange = vt.Terminal.TextRange;
-/// Reports bounded canonical terminal-text extraction failure.
-pub const TextError = vt.Terminal.TextError;
 /// Maximum scalars retained by one bounded terminal grapheme.
 pub const maximum_cell_scalars = vt.scalar.maximum_scalars;
-/// Bounds one retained OSC 8 hyperlink target in bytes.
-pub const maximum_hyperlink_uri_bytes = vt.Terminal.maximum_hyperlink_uri_bytes;
-/// Bounds stable one-based OSC 8 hyperlink identities.
-pub const maximum_hyperlinks = vt.Terminal.maximum_hyperlinks;
-/// Bounds one decoded RGBA image retained by the canonical terminal.
-pub const maximum_image_bytes = vt.Terminal.maximum_image_bytes;
-/// Bounds total decoded graphics storage retained by one canonical terminal.
-pub const maximum_image_storage_bytes = vt.Terminal.maximum_image_storage_bytes;
-/// Bounds either decoded image dimension.
-pub const maximum_image_dimension = vt.Terminal.maximum_image_dimension;
-/// Bounds retained terminal image identities.
-pub const maximum_images = vt.Terminal.maximum_images;
-/// Bounds retained terminal image placements.
-pub const maximum_image_placements = vt.Terminal.maximum_image_placements;
 /// Fixed process-group signal vocabulary.
 pub const Signal = pty.Signal;
 /// Exact process-group signal delivery outcome.
 pub const SignalResult = pty.SignalResult;
-/// Coherent terminal modes that direct caller-originated interaction.
-pub const InteractionState = vt.Terminal.InteractionState;
 /// One ordered host-facing consequence retained by the canonical VT.
 pub const Consequence = vt.Terminal.Consequence;
 /// Reports stale occurrence identity or a consequence requiring a typed reply.
@@ -124,25 +88,6 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.ColorPreferenceReplyError || vt.Terminal.ContainerReplyError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
 
-/// Copies one coherent semantic observation without exposing VT storage.
-pub const Status = struct {
-    revision: u64,
-    rows: u16,
-    columns: u16,
-    cursor_row: u16,
-    cursor_column: u16,
-    cursor_visible: bool,
-    cursor_shape: CursorShape,
-    cursor_blink: bool,
-    cursor_movement_timestamp_ns: u64,
-    alternate_screen: bool,
-    history_offset: u32,
-    history_count: u32,
-    history_row_base: u32,
-};
-
-/// Reports invalid row selection or insufficient caller-owned cell storage.
-pub const CopyRowError = error{ InvalidRow, OutputTooSmall };
 /// Summarizes one bounded service turn without exposing PTY or VT ownership.
 pub const Service = struct {
     changed: bool,
@@ -180,149 +125,12 @@ pub fn descriptor(session: *const Session) error{NotStarted}!std.posix.fd_t {
     return stateConst(session).transport.masterFd();
 }
 
-/// Returns the monotonic canonical VT semantic revision.
-pub fn revision(session: *const Session) u64 {
-    return stateConst(session).terminal.semanticSequence();
-}
-
-/// Reports whether the canonical VT is inside DEC synchronized-output mode.
+/// Borrows the canonical VT read-only until the next Session mutation.
 ///
-/// Session callers may use this only to decide when an immutable presentation
-/// cut becomes observable. Canonical PTY/VT progress never waits on observers.
-pub fn synchronizedOutput(session: *const Session) bool {
-    return stateConst(session).terminal.synchronizedOutput();
-}
-
-/// Copies coherent history, geometry, and cursor facts for one requested viewport.
-pub fn status(session: *const Session, history_offset: u32) Status {
-    const terminal_view = stateConst(session).terminal.semanticView(history_offset);
-    return .{
-        .revision = stateConst(session).terminal.semanticSequence(),
-        .rows = terminal_view.rows,
-        .columns = terminal_view.cols,
-        .cursor_row = terminal_view.cursor_row,
-        .cursor_column = terminal_view.cursor_col,
-        .cursor_visible = terminal_view.cursor_visible,
-        .cursor_shape = terminal_view.cursor_shape,
-        .cursor_blink = terminal_view.cursor_blink,
-        .cursor_movement_timestamp_ns = terminal_view.cursor_movement_timestamp_ns,
-        .alternate_screen = terminal_view.is_alternate_screen,
-        .history_offset = terminal_view.history_offset,
-        .history_count = terminal_view.history_count,
-        .history_row_base = terminal_view.history_row_base,
-    };
-}
-
-/// Copies one complete visible row into caller-owned storage.
-pub fn copyRow(
-    session: *const Session,
-    history_offset: u32,
-    row: u16,
-    output: []Cell,
-) CopyRowError![]const Cell {
-    const terminal_view = stateConst(session).terminal.semanticView(history_offset);
-    if (row >= terminal_view.rows) return error.InvalidRow;
-    if (output.len < terminal_view.cols) return error.OutputTooSmall;
-    const cells = terminal_view.rowCells(row);
-    @memcpy(output[0..cells.len], cells);
-    return output[0..cells.len];
-}
-
-/// Copies one complete grapheme scalar sequence into fixed caller storage.
-pub fn copyCellScalars(
-    session: *const Session,
-    history_offset: u32,
-    row: u16,
-    column: u16,
-    output: *[maximum_cell_scalars]u21,
-) []const u21 {
-    return stateConst(session).terminal.semanticView(history_offset).cellScalarsAt(
-        row,
-        column,
-        output,
-    );
-}
-
-/// Copies the terminal palette and dynamic visual defaults.
-pub fn presentation(session: *const Session) Presentation {
-    return stateConst(session).terminal.presentation();
-}
-
-/// Borrows the URI interned for one nonzero terminal-cell hyperlink identity.
-pub fn hyperlinkUri(session: *const Session, link_id: u32) ?[]const u8 {
-    return stateConst(session).terminal.hyperlinkUri(link_id);
-}
-
-/// Borrows complete live terminal properties until the next canonical mutation.
-/// Reported names, paths and host identities never acquire execution authority.
-pub fn properties(session: *const Session) protocol.properties.View {
-    const terminal = &stateConst(session).terminal;
-    const directory = terminal.workingDirectory();
-    const shell = terminal.shellIntegration();
-    const mark = terminal.shellMark();
-    const progress = terminal.taskProgress();
-    return .{
-        .title = terminal.title(),
-        .icon = terminal.icon(),
-        .directory = if (directory) |value| .{
-            .kind = switch (value.kind) {
-                .uri => .uri,
-                .path => .path,
-            },
-            .value = value.value,
-        } else null,
-        .remote_host = terminal.remoteHost(),
-        .shell = if (shell) |value| .{ .version = value.version, .name = value.shell } else null,
-        .mark = .{ .generation = mark.generation, .kind = mark.kind, .status = mark.status, .metadata = mark.metadata },
-        .progress = .{ .kind = switch (progress.kind) {
-            .none => .none,
-            .normal => .normal,
-            .failure => .failure,
-            .indeterminate => .indeterminate,
-            .paused => .paused,
-        }, .value = progress.value },
-    };
-}
-
-/// Borrows coherent image resources and visible placements for one viewport.
-pub fn images(session: *const Session, history_offset: u32) Images {
-    return stateConst(session).terminal.images(history_offset);
-}
-
-/// Borrows one exact decoded RGBA image identity, rejecting stale generations.
-pub fn image(session: *const Session, image_id: u32, generation: u64) ?Image {
-    var view = stateConst(session).terminal.images(0);
-    var index: usize = 0;
-    while (index < view.imageCount()) : (index += 1) {
-        const candidate = view.image(index) orelse continue;
-        if (candidate.id == image_id and candidate.generation == generation) return candidate;
-    }
-    return null;
-}
-
-/// Copies one visible row's DEC presentation geometry.
-pub fn lineGeometry(session: *const Session, history_offset: u32, row: u16) LineGeometry {
-    return stateConst(session).terminal.semanticView(history_offset).lineGeometry(row);
-}
-
-/// Reports whether one visible row is a soft continuation of its predecessor.
-pub fn rowWrapped(session: *const Session, history_offset: u32, row: u16) bool {
-    return stateConst(session).terminal.semanticView(history_offset).rowWrapped(row);
-}
-
-/// Copies one stable projected terminal range as bounded UTF-8 without mutating the session.
-pub fn copyText(
-    session: *const Session,
-    allocator: std.mem.Allocator,
-    range: TextRange,
-    max_bytes: usize,
-) TextError![]const u8 {
-    return stateConst(session).terminal.copyText(allocator, range, max_bytes);
-}
-
-/// Copies the terminal modes that direct the next caller interaction.
-pub fn interactionState(session: *const Session) InteractionState {
-    return stateConst(session).terminal.interactionState();
+/// Mutation remains Session-owned so PTY writes, replies, resize and child
+/// lifetime cannot be bypassed through this embedder observation seam.
+pub fn terminal(session: *const Session) *const Terminal {
+    return &stateConst(session).terminal;
 }
 
 /// Borrows the oldest retained host consequence until canonical terminal mutation.
@@ -701,13 +509,12 @@ fn inputAdmissionBytes(event: Input) error{WriteQueueFull}!usize {
 }
 
 fn snapshotAscii(session: *const Session, output: []u8) error{SnapshotLimit}![]const u8 {
-    const current = status(session, 0);
-    var row_cells: [512]Cell = undefined;
-    if (current.columns > row_cells.len) return error.SnapshotLimit;
+    const current = terminal(session).semanticView(0);
+    if (current.cols > 512) return error.SnapshotLimit;
     var offset: usize = 0;
     var row: u16 = 0;
     while (row < current.rows) : (row += 1) {
-        const cells = copyRow(session, 0, row, &row_cells) catch return error.SnapshotLimit;
+        const cells = current.rowCells(row);
         for (cells) |cell| {
             if (offset == output.len) return error.SnapshotLimit;
             output[offset] = if (cell.x == 0 and cell.y == 0 and cell.codepoint >= 0x20 and cell.codepoint <= 0x7e)
@@ -721,6 +528,16 @@ fn snapshotAscii(session: *const Session, output: []u8) error{SnapshotLimit}![]c
         offset += 1;
     }
     return output[0..offset];
+}
+
+fn testTerminalImage(machine: *const Terminal, image_id: u32, generation: u64) ?Terminal.Image {
+    var images = machine.images(0);
+    var index: usize = 0;
+    while (index < images.imageCount()) : (index += 1) {
+        const candidate = images.image(index) orelse continue;
+        if (candidate.id == image_id and candidate.generation == generation) return candidate;
+    }
+    return null;
 }
 
 fn sleepOneMillisecond() void {
@@ -755,7 +572,7 @@ test "headless session drains host consequences without an observer" {
     defer deinit(session);
     const state = stateMut(session);
 
-    const before = status(session, 0);
+    const before = terminal(session).semanticView(0);
     const prepared = try state.terminal.feed(
         "\x1b]22;?__current__\x1b\\" ++
             "\x1b]52;c;?\x07" ++
@@ -765,9 +582,9 @@ test "headless session drains host consequences without an observer" {
     );
     try std.testing.expect(prepared.stateChanged());
     try state.drainConsequences();
-    const after = status(session, 0);
+    const after = terminal(session).semanticView(0);
     try std.testing.expectEqual(before.rows, after.rows);
-    try std.testing.expectEqual(before.columns, after.columns);
+    try std.testing.expectEqual(before.cols, after.cols);
     try std.testing.expect(state.terminal.consequenceHead() == null);
     try std.testing.expect(std.mem.indexOf(u8, state.terminal.replyBytes(), "default") != null);
 }
@@ -819,27 +636,27 @@ test "session services terminal animation without PTY readiness" {
         "\x1b_Ga=a,i=20,s=3,r=1,z=40,q=2\x1b\\",
     )).stateChanged());
 
-    var initial_images = images(session, 0);
+    var initial_images = terminal(session).images(0);
     const initial = initial_images.image(0) orelse return error.MissingImage;
     const image_id = initial.id;
     const initial_generation = initial.generation;
-    const started_revision = revision(session);
+    const started_revision = terminal(session).semanticSequence();
 
     const started = try service(session, false, false, 100 * std.time.ns_per_ms);
     try std.testing.expect(!started.changed);
     try std.testing.expectEqual(@as(?u32, 40), started.animation_wait_ms);
-    try std.testing.expectEqual(started_revision, revision(session));
+    try std.testing.expectEqual(started_revision, terminal(session).semanticSequence());
 
     const advanced = try service(session, false, false, 140 * std.time.ns_per_ms);
     try std.testing.expect(advanced.changed);
     try std.testing.expectEqual(@as(?u32, 50), advanced.animation_wait_ms);
-    try std.testing.expectEqual(started_revision + 1, revision(session));
-    var advanced_images = images(session, 0);
+    try std.testing.expectEqual(started_revision + 1, terminal(session).semanticSequence());
+    var advanced_images = terminal(session).images(0);
     const current = advanced_images.image(0) orelse return error.MissingImage;
     try std.testing.expect(current.generation > initial_generation);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
-    try std.testing.expect(image(session, image_id, initial_generation) == null);
-    try std.testing.expect(image(session, image_id, current.generation) != null);
+    try std.testing.expect(testTerminalImage(terminal(session), image_id, initial_generation) == null);
+    try std.testing.expect(testTerminalImage(terminal(session), image_id, current.generation) != null);
 }
 
 test "retained host query falls back headlessly when external authority disappears" {
@@ -889,10 +706,10 @@ test "one PTY and VT remain canonical for independent observers" {
     defer deinit(session);
     try serviceUntilContains(session, "READY");
 
-    const before = revision(session);
+    const before = terminal(session).semanticSequence();
     try input(session, .{ .bytes = "SHARED-LINE\n" });
     try serviceUntilContains(session, "SHARED-LINE");
-    try std.testing.expect(revision(session) > before);
+    try std.testing.expect(terminal(session).semanticSequence() > before);
 
     var first: [4096]u8 = undefined;
     var second: [4096]u8 = undefined;
@@ -931,9 +748,9 @@ test "Session pixel geometry agrees with PTY reports and rejects overflow transa
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqual(@as(u16, 80), size.xpixel);
     try std.testing.expectEqual(@as(u16, 60), size.ypixel);
-    const before = revision(session);
+    const before = terminal(session).semanticSequence();
     try resizeGeometry(session, 3, 8, 11, 24);
-    try std.testing.expect(revision(session) > before);
+    try std.testing.expect(terminal(session).semanticSequence() > before);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqual(@as(u16, 88), size.xpixel);
     try std.testing.expectEqual(@as(u16, 72), size.ypixel);
@@ -942,16 +759,16 @@ test "Session pixel geometry agrees with PTY reports and rejects overflow transa
     try std.testing.expectEqualStrings("\x1b[4;72;88t\x1b[6;24;11t", state.terminal.replyBytes());
     try resize(session, 4, 9);
     try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
-    const accepted = status(session, 0);
+    const accepted = terminal(session).semanticView(0);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     const accepted_pty = size;
     try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 11, 0));
     try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 65535, 24));
-    try std.testing.expectEqualDeep(accepted, status(session, 0));
+    try std.testing.expectEqualDeep(accepted, terminal(session).semanticView(0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqualDeep(accepted_pty, size);
     state.transport.stop();
     try std.testing.expectError(error.NotStarted, resizeGeometry(session, 5, 10, 12, 26));
-    try std.testing.expectEqualDeep(accepted, status(session, 0));
+    try std.testing.expectEqualDeep(accepted, terminal(session).semanticView(0));
     try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
 }

@@ -45,8 +45,8 @@ const burst_publication_scroll_max_ns: u64 = 8 * std.time.ns_per_ms;
 // manifest is observed. One client therefore retains exactly the resources
 // named by its most recently delivered snapshot until that client advances to
 // another snapshot. Control-only clients retain no image bytes.
-const snapshot_image_bytes: usize = howl.maximum_image_storage_bytes;
-const snapshot_image_entries: usize = howl.maximum_images;
+const snapshot_image_bytes: usize = howl.Terminal.maximum_image_storage_bytes;
+const snapshot_image_entries: usize = howl.Terminal.maximum_images;
 
 const BurstPublicationGate = struct {
     started_ns: ?u64 = null,
@@ -180,7 +180,7 @@ const ImageResourceCache = struct {
         self.* = .{};
     }
 
-    fn find(self: *const ImageResourceCache, id: u32, generation: u64) ?howl.Image {
+    fn find(self: *const ImageResourceCache, id: u32, generation: u64) ?howl.Terminal.Image {
         for (self.entries.items) |entry| {
             if (entry.id != id or entry.generation != generation) continue;
             return .{
@@ -196,7 +196,7 @@ const ImageResourceCache = struct {
 
     fn captureVisible(
         allocator: std.mem.Allocator,
-        images: *const howl.Images,
+        images: *const howl.Terminal.Images,
     ) !ImageResourceCache {
         var result: ImageResourceCache = .{};
         errdefer result.deinit(allocator);
@@ -204,7 +204,7 @@ const ImageResourceCache = struct {
         while (index < images.imageCount()) : (index += 1) {
             const image = images.image(index) orelse return error.InvalidSnapshot;
             if (!imageVisible(images, image.id)) continue;
-            if (image.pixels.len > howl.maximum_image_bytes or
+            if (image.pixels.len > howl.Terminal.maximum_image_bytes or
                 result.entries.items.len >= snapshot_image_entries or
                 result.bytes > snapshot_image_bytes - image.pixels.len)
                 return error.InvalidSnapshot;
@@ -227,17 +227,17 @@ const ImageResourceCache = struct {
 comptime {
     if (howl.maximum_cell_scalars != protocol.text_v1.maximum_cell_scalars)
         @compileError("text_v1 scalar bound must match canonical VT grapheme bound");
-    if (howl.maximum_hyperlinks != protocol.text_v1.maximum_hyperlinks)
+    if (howl.Terminal.maximum_hyperlinks != protocol.text_v1.maximum_hyperlinks)
         @compileError("text_v1 hyperlink identity bound must match canonical VT bound");
-    if (howl.maximum_hyperlink_uri_bytes != protocol.text_v1.maximum_hyperlink_uri_bytes)
+    if (howl.Terminal.maximum_hyperlink_uri_bytes != protocol.text_v1.maximum_hyperlink_uri_bytes)
         @compileError("text_v1 hyperlink URI bound must match canonical VT bound");
-    if (howl.maximum_image_bytes != protocol.graphics_v2.maximum_image_bytes)
+    if (howl.Terminal.maximum_image_bytes != protocol.graphics_v2.maximum_image_bytes)
         @compileError("graphics image byte bound must match canonical VT bound");
-    if (howl.maximum_image_dimension != protocol.graphics_v2.maximum_dimension)
+    if (howl.Terminal.maximum_image_dimension != protocol.graphics_v2.maximum_dimension)
         @compileError("graphics image dimension bound must match canonical VT bound");
-    if (howl.maximum_images != protocol.graphics_v2.maximum_images)
+    if (howl.Terminal.maximum_images != protocol.graphics_v2.maximum_images)
         @compileError("graphics image count must match canonical VT bound");
-    if (howl.maximum_image_placements != protocol.graphics_v2.maximum_placements)
+    if (howl.Terminal.maximum_image_placements != protocol.graphics_v2.maximum_placements)
         @compileError("graphics placement count must match canonical VT bound");
     if (howl.maximum_key_text_bytes != protocol.typed_input.maximum_key_text_bytes)
         @compileError("typed key committed-text bound must match canonical VT bound");
@@ -289,11 +289,11 @@ const Client = struct {
 const DeltaRowCache = struct {
     const Entry = struct {
         wrapped: bool = false,
-        geometry: howl.LineGeometry = .single_width,
+        geometry: howl.Terminal.LineGeometry = .single_width,
         valid: bool = false,
     };
 
-    cells: []howl.Cell = &.{},
+    cells: []howl.Terminal.Cell = &.{},
     entries: []Entry = &.{},
     row_count: u16 = 0,
     column_count: u16 = 0,
@@ -332,7 +332,7 @@ const DeltaRowCache = struct {
             return error.SnapshotTooLarge;
         if (cell_count == 0 or cell_count > maximum_delta_cells)
             return error.SnapshotTooLarge;
-        self.cells = try allocator.alloc(howl.Cell, cell_count);
+        self.cells = try allocator.alloc(howl.Terminal.Cell, cell_count);
         errdefer {
             allocator.free(self.cells);
             self.cells = &.{};
@@ -348,7 +348,7 @@ const DeltaRowCache = struct {
         self.history_offset = history_offset;
     }
 
-    fn rowCells(self: *DeltaRowCache, row: u16, columns: u16) []howl.Cell {
+    fn rowCells(self: *DeltaRowCache, row: u16, columns: u16) []howl.Terminal.Cell {
         std.debug.assert(row < self.row_count);
         std.debug.assert(columns == self.column_count);
         const start = @as(usize, row) * columns;
@@ -387,7 +387,6 @@ pub const Server = struct {
     // Rich snapshots are serialized synchronously on the endpoint thread, so
     // retain bounded scratch across observer cuts instead of returning the
     // same hot allocations to the allocator every frame.
-    snapshot_cells: std.ArrayList(howl.Cell) = .empty,
     // Bounded exact visible-row mirror owned only by the revision-relative
     // delta lane. Complete observation lanes never allocate or maintain it.
     delta_rows: DeltaRowCache = .{},
@@ -421,7 +420,7 @@ pub const Server = struct {
             .io = io,
             .session = session,
             .listener = listener,
-            .terminal_revision = howl.revision(session),
+            .terminal_revision = howl.terminal(session).semanticSequence(),
             .snapshot_compressed = .init(allocator),
             .snapshot_flate_work = snapshot_flate_work,
             .snapshot_compressor = snapshot_compressor,
@@ -450,7 +449,6 @@ pub const Server = struct {
             if (client.*) |*active| active.deinit(self.allocator);
             client.* = null;
         }
-        self.snapshot_cells.deinit(self.allocator);
         self.delta_rows.deinit(self.allocator);
         self.snapshot_body.deinit(self.allocator);
         self.snapshot_compressed.deinit();
@@ -790,10 +788,10 @@ pub const Server = struct {
     fn handleInteractionState(self: *Server, client: *Client, payload: []const u8) !void {
         if (payload.len != protocol.payload_bytes.interaction_state)
             return self.queueResult(client, .interaction_state, .malformed);
-        const state = howl.interactionState(self.session);
+        const state = howl.terminal(self.session).interactionState();
         var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
         protocol.encodeInteractionStateSnapshot(&encoded, .{
-            .terminal_revision = howl.revision(self.session),
+            .terminal_revision = howl.terminal(self.session).semanticSequence(),
             .keyboard_action_mode = state.keyboard_action_mode,
             .auto_repeat = state.auto_repeat,
             .newline_mode = state.newline_mode,
@@ -832,11 +830,11 @@ pub const Server = struct {
     fn handleTextExtract(self: *Server, client: *Client, payload: []const u8) !void {
         const request = protocol.decodeTextExtract(payload) catch
             return self.queueResult(client, .text_extract, .malformed);
-        const current = howl.status(self.session, 0);
-        if (request.columns != current.columns or request.alternate_screen != current.alternate_screen)
+        const machine = howl.terminal(self.session);
+        const current = machine.semanticView(0);
+        if (request.columns != current.cols or request.alternate_screen != current.is_alternate_screen)
             return self.queueResult(client, .text_extract, .rejected);
-        const text = howl.copyText(
-            self.session,
+        const text = machine.copyText(
             self.allocator,
             .{
                 .start = .{ .row = request.start.row, .col = request.start.column },
@@ -851,7 +849,7 @@ pub const Server = struct {
     fn handleImageRequest(self: *Server, client: *Client, payload: []const u8) !void {
         const request = protocol.decodeImageRequest(payload) catch
             return self.queueResult(client, .image_request, .malformed);
-        const image = howl.image(self.session, request.image_id, request.generation) orelse
+        const image = terminalImage(howl.terminal(self.session), request.image_id, request.generation) orelse
             client.snapshot_images.find(request.image_id, request.generation) orelse
             return self.queueResult(client, .image_request, .rejected);
         const expected = std.math.mul(u64, image.width, image.height) catch
@@ -1121,7 +1119,7 @@ pub const Server = struct {
         try client.output.ensureTotalCapacity(self.allocator, total_bound);
         var begin: [protocol.payload_bytes.consequence_begin]u8 = undefined;
         try protocol.encodeConsequenceBegin(&begin, .{
-            .terminal_revision = howl.revision(self.session),
+            .terminal_revision = howl.terminal(self.session).semanticSequence(),
             .authority_client_id = self.consequence_authority.leader() orelse protocol.no_client,
             .generation = snapshot.generation,
             .payload_len = @intCast(snapshot.payload.len),
@@ -1279,7 +1277,7 @@ pub const Server = struct {
     }
 
     fn refreshObservation(self: *Server) void {
-        const current = howl.revision(self.session);
+        const current = howl.terminal(self.session).semanticSequence();
         if (current == self.terminal_revision) return;
         self.terminal_revision = current;
         self.burst_publication.reset();
@@ -1293,7 +1291,7 @@ pub const Server = struct {
         viewport_changed: bool,
         now_ns: u64,
     ) TerminalPublication {
-        if (!howl.synchronizedOutput(self.session)) {
+        if (!howl.terminal(self.session).synchronizedOutput()) {
             const release_pending = self.synchronized_output_pending;
             self.synchronized_output_started_ns = null;
             self.synchronized_output_timed_out = false;
@@ -1333,7 +1331,7 @@ pub const Server = struct {
         self.stream_closed = next_stream_closed;
         self.child_exited = next_child_exited;
 
-        const current_terminal_revision = howl.revision(self.session);
+        const current_terminal_revision = howl.terminal(self.session).semanticSequence();
         const terminal_changed = current_terminal_revision != self.terminal_revision;
         if (terminal_changed) self.terminal_revision = current_terminal_revision;
 
@@ -1352,7 +1350,7 @@ pub const Server = struct {
                 publish = true;
             },
         }
-        if (howl.synchronizedOutput(self.session) and !self.synchronized_output_timed_out)
+        if (howl.terminal(self.session).synchronizedOutput() and !self.synchronized_output_timed_out)
             self.burst_publication.reset();
         if (!publish and self.burst_publication.ready(now_ns)) publish = true;
         if (lifecycle_changed) {
@@ -1415,48 +1413,48 @@ pub const Server = struct {
         request: protocol.Observe,
         mode: ObserveMode,
     ) !void {
-        const status = howl.status(self.session, request.history_offset);
+        const machine = howl.terminal(self.session);
+        const terminal_view = machine.semanticView(request.history_offset);
+        const terminal_revision = machine.semanticSequence();
         const raw = mode != .compressed;
         const delta = mode == .delta;
-        var graphics = howl.images(self.session, status.history_offset);
+        var graphics = machine.images(terminal_view.history_offset);
         const graphics_counts = try countSnapshotGraphics(&graphics);
         const observed_ns = nowNs(self.io);
-        const cursor_age_ns = if (status.cursor_movement_timestamp_ns == 0)
+        const cursor_age_ns = if (terminal_view.cursor_movement_timestamp_ns == 0)
             protocol.text_v1.no_cursor_movement_age_ns
         else
-            observed_ns -| status.cursor_movement_timestamp_ns;
+            observed_ns -| terminal_view.cursor_movement_timestamp_ns;
         var referenced_links: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
 
-        try self.snapshot_cells.resize(self.allocator, status.columns);
-        const cells = self.snapshot_cells.items;
         if (delta) try self.delta_rows.ensure(
             self.allocator,
-            status.rows,
-            status.columns,
-            status.history_offset,
+            terminal_view.rows,
+            terminal_view.cols,
+            terminal_view.history_offset,
         );
         errdefer if (delta) self.delta_rows.invalidate();
         const delta_reuse_allowed = delta and request.after_revision != 0 and
             request.after_revision == self.delta_rows.revision and
-            self.delta_rows.history_offset == status.history_offset and
-            self.delta_rows.row_count == status.rows and
-            self.delta_rows.column_count == status.columns;
-        const current_row_origin: ?u64 = if (status.alternate_screen or
-            status.history_offset > status.history_count)
+            self.delta_rows.history_offset == terminal_view.history_offset and
+            self.delta_rows.row_count == terminal_view.rows and
+            self.delta_rows.column_count == terminal_view.cols;
+        const current_row_origin: ?u64 = if (terminal_view.is_alternate_screen or
+            terminal_view.history_offset > terminal_view.history_count)
             null
         else
-            @as(u64, status.history_row_base) + status.history_count - status.history_offset;
+            @as(u64, terminal_view.history_row_base) + terminal_view.history_count - terminal_view.history_offset;
         const shifted_rows: ?u16 = if (delta_reuse_allowed and
             self.delta_rows.row_origin != null and current_row_origin != null and
             current_row_origin.? > self.delta_rows.row_origin.?)
         blk: {
             const distance = current_row_origin.? - self.delta_rows.row_origin.?;
-            if (distance >= status.rows) break :blk null;
+            if (distance >= terminal_view.rows) break :blk null;
             break :blk std.math.cast(u16, distance);
         } else null;
         self.snapshot_body.clearRetainingCapacity();
         const body = &self.snapshot_body;
-        try self.appendPresentationRecord(body, cursor_age_ns);
+        try self.appendPresentationRecord(machine, body, cursor_age_ns);
         if (delta_reuse_allowed) {
             const record = try self.beginTextRecord(body, .row_shift);
             var shift_payload: [protocol.text_delta_v2.row_shift_bytes]u8 = undefined;
@@ -1465,45 +1463,43 @@ pub const Server = struct {
             try finishTextRecord(body, record);
         }
 
-        // Copy each visible row and each cell's scalar payload exactly once.
-        // The old builder first walked the complete grid to size the body and
-        // then walked it again to encode the same facts. ArrayList growth is
-        // still bounded by the frozen 4 MiB text_v1 limit below.
+        // Borrow each visible VT row directly for this synchronous observation
+        // cut. Delta retention takes the only full-row copy after comparison.
         var row: u16 = 0;
-        while (row < status.rows) : (row += 1) {
-            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-            const wrapped = howl.rowWrapped(self.session, status.history_offset, row);
-            const geometry = howl.lineGeometry(self.session, status.history_offset, row);
+        while (row < terminal_view.rows) : (row += 1) {
+            const current_cells = terminal_view.rowCells(row);
+            const wrapped = terminal_view.rowWrapped(row);
+            const geometry = terminal_view.lineGeometry(row);
             const destination_cache: ?*DeltaRowCache.Entry = if (delta)
                 &self.delta_rows.entries[@as(usize, row)]
             else
                 null;
-            const destination_cells: []howl.Cell = if (delta)
-                self.delta_rows.rowCells(row, status.columns)
+            const destination_cells: []howl.Terminal.Cell = if (delta)
+                self.delta_rows.rowCells(row, terminal_view.cols)
             else
                 &.{};
             const source_row: ?u16 = if (shifted_rows) |shift| blk: {
                 const shifted = std.math.add(u16, row, shift) catch break :blk null;
-                if (shifted >= status.rows) break :blk null;
+                if (shifted >= terminal_view.rows) break :blk null;
                 break :blk shifted;
             } else if (delta) row else null;
             const source_cache: ?*const DeltaRowCache.Entry = if (source_row) |source|
                 &self.delta_rows.entries[@as(usize, source)]
             else
                 null;
-            const source_cells: []const howl.Cell = if (source_row) |source|
-                self.delta_rows.rowCells(source, status.columns)
+            const source_cells: []const howl.Terminal.Cell = if (source_row) |source|
+                self.delta_rows.rowCells(source, terminal_view.cols)
             else
                 &.{};
 
             // Delta rows must retain current hyperlink references even when no
             // cell bytes are emitted. Complete lanes collect links while encoding.
-            if (delta) for (copied) |cell| try self.noteSnapshotLink(cell, &referenced_links);
+            if (delta) for (current_cells) |cell| try noteSnapshotLink(machine, cell, &referenced_links);
 
             const reusable = if (source_cache) |value|
                 delta_reuse_allowed and value.valid and
                     value.wrapped == wrapped and value.geometry == geometry and
-                    rowCellsExactlyReusable(copied, source_cells)
+                    rowCellsExactlyReusable(current_cells, source_cells)
             else
                 false;
             if (reusable) {
@@ -1515,17 +1511,15 @@ pub const Server = struct {
                 var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
                     @intFromBool(wrapped),
                     richLineGeometry(geometry),
-                    @truncate(status.columns >> 8),
-                    @truncate(status.columns),
+                    @truncate(terminal_view.cols >> 8),
+                    @truncate(terminal_view.cols),
                 };
                 try body.appendSlice(self.allocator, &row_header);
-                for (copied, 0..) |cell, column| {
-                    if (!delta) try self.noteSnapshotLink(cell, &referenced_links);
+                for (current_cells, 0..) |cell, column| {
+                    if (!delta) try noteSnapshotLink(machine, cell, &referenced_links);
                     var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
                     const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
-                        howl.copyCellScalars(
-                            self.session,
-                            status.history_offset,
+                        terminal_view.cellScalarsAt(
                             row,
                             @intCast(column),
                             &scalar_storage,
@@ -1546,7 +1540,7 @@ pub const Server = struct {
             }
 
             if (destination_cache) |value| {
-                @memcpy(destination_cells, copied);
+                @memcpy(destination_cells, current_cells);
                 value.wrapped = wrapped;
                 value.geometry = geometry;
                 value.valid = true;
@@ -1556,7 +1550,7 @@ pub const Server = struct {
         var link_id: usize = 1;
         while (link_id < referenced_links.len) : (link_id += 1) {
             if (!referenced_links[link_id]) continue;
-            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
+            const uri = machine.hyperlinkUri(@intCast(link_id)) orelse
                 return error.InvalidSnapshot;
             if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
                 return error.InvalidSnapshot;
@@ -1607,7 +1601,7 @@ pub const Server = struct {
             protocol.maximum_payload_bytes,
         ) catch return error.SnapshotTooLarge;
         var property_payload: [protocol.properties.maximum_bytes]u8 = undefined;
-        const property_bytes = try protocol.properties.encode(&property_payload, howl.properties(self.session));
+        const property_bytes = try protocol.properties.encode(&property_payload, terminalProperties(machine));
         const total_bound = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
             data_frames * protocol.header_bytes + encoded_bytes +
             protocol.header_bytes + property_bytes +
@@ -1624,18 +1618,18 @@ pub const Server = struct {
         var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
         protocol.encodeSnapshotBegin(&begin_payload, .{
             .revision = self.observation_revision,
-            .terminal_revision = status.revision,
-            .history_offset = status.history_offset,
-            .history_count = status.history_count,
-            .history_row_base = status.history_row_base,
-            .rows = status.rows,
-            .columns = status.columns,
-            .cursor_row = status.cursor_row,
-            .cursor_column = status.cursor_column,
-            .cursor_shape = @intCast(@backingInt(status.cursor_shape)),
-            .cursor_visible = status.cursor_visible,
-            .cursor_blink = status.cursor_blink,
-            .alternate_screen = status.alternate_screen,
+            .terminal_revision = terminal_revision,
+            .history_offset = terminal_view.history_offset,
+            .history_count = terminal_view.history_count,
+            .history_row_base = terminal_view.history_row_base,
+            .rows = terminal_view.rows,
+            .columns = terminal_view.cols,
+            .cursor_row = terminal_view.cursor_row,
+            .cursor_column = terminal_view.cursor_col,
+            .cursor_shape = @intCast(@backingInt(terminal_view.cursor_shape)),
+            .cursor_visible = terminal_view.cursor_visible,
+            .cursor_blink = terminal_view.cursor_blink,
+            .alternate_screen = terminal_view.is_alternate_screen,
             .stream_closed = self.stream_closed,
             .child_exited = self.child_exited,
             .leader_present = self.authority.leader() != null,
@@ -1675,8 +1669,8 @@ pub const Server = struct {
     }
 
     fn noteSnapshotLink(
-        self: *Server,
-        cell: howl.Cell,
+        machine: *const howl.Terminal,
+        cell: howl.Terminal.Cell,
         referenced_links: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
     ) !void {
         if (cell.attrs.link_id == 0) return;
@@ -1684,7 +1678,7 @@ pub const Server = struct {
             return error.InvalidSnapshot;
         const link_index: usize = @intCast(cell.attrs.link_id);
         if (referenced_links[link_index]) return;
-        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
+        const uri = machine.hyperlinkUri(cell.attrs.link_id) orelse
             return error.InvalidSnapshot;
         if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
             return error.InvalidSnapshot;
@@ -1754,12 +1748,13 @@ pub const Server = struct {
 
     fn appendPresentationRecord(
         self: *Server,
+        machine: *const howl.Terminal,
         output: *std.ArrayList(u8),
         cursor_age_ns: u64,
     ) !void {
         const record = try self.beginTextRecord(output, .presentation);
         const payload_start = output.items.len;
-        const presentation = howl.presentation(self.session);
+        const presentation = machine.presentation();
         var fixed: [12]u8 = @splat(0);
         encodeU64(fixed[0..8], cursor_age_ns);
         if (presentation.cursor != null)
@@ -1788,7 +1783,7 @@ pub const Server = struct {
     fn appendTextCell(
         self: *Server,
         output: *std.ArrayList(u8),
-        cell: howl.Cell,
+        cell: howl.Terminal.Cell,
         scalars: []const u21,
     ) !void {
         var encoded: [protocol.text_v1.cell_header_bytes]u8 = @splat(0);
@@ -1872,13 +1867,64 @@ pub const Server = struct {
 // Terminal input and rich snapshot adapters
 // =============================================================================
 
+fn terminalImage(
+    machine: *const howl.Terminal,
+    image_id: u32,
+    generation: u64,
+) ?howl.Terminal.Image {
+    var images = machine.images(0);
+    var index: usize = 0;
+    while (index < images.imageCount()) : (index += 1) {
+        const candidate = images.image(index) orelse continue;
+        if (candidate.id == image_id and candidate.generation == generation)
+            return candidate;
+    }
+    return null;
+}
+
+fn terminalProperties(machine: *const howl.Terminal) protocol.properties.View {
+    const directory = machine.workingDirectory();
+    const shell = machine.shellIntegration();
+    const mark = machine.shellMark();
+    const progress = machine.taskProgress();
+    return .{
+        .title = machine.title(),
+        .icon = machine.icon(),
+        .directory = if (directory) |value| .{
+            .kind = switch (value.kind) {
+                .uri => .uri,
+                .path => .path,
+            },
+            .value = value.value,
+        } else null,
+        .remote_host = machine.remoteHost(),
+        .shell = if (shell) |value| .{ .version = value.version, .name = value.shell } else null,
+        .mark = .{
+            .generation = mark.generation,
+            .kind = mark.kind,
+            .status = mark.status,
+            .metadata = mark.metadata,
+        },
+        .progress = .{
+            .kind = switch (progress.kind) {
+                .none => .none,
+                .normal => .normal,
+                .failure => .failure,
+                .indeterminate => .indeterminate,
+                .paused => .paused,
+            },
+            .value = progress.value,
+        },
+    };
+}
+
 const SnapshotGraphicsCounts = struct {
     images: u16,
     placements: u16,
     payload_bytes: usize,
 };
 
-fn countSnapshotGraphics(images: *const howl.Images) !SnapshotGraphicsCounts {
+fn countSnapshotGraphics(images: *const howl.Terminal.Images) !SnapshotGraphicsCounts {
     var image_count: usize = 0;
     var image_index: usize = 0;
     while (image_index < images.imageCount()) : (image_index += 1) {
@@ -1916,7 +1962,7 @@ fn countSnapshotGraphics(images: *const howl.Images) !SnapshotGraphicsCounts {
 }
 
 fn encodeSnapshotGraphics(
-    images: *const howl.Images,
+    images: *const howl.Terminal.Images,
     counts: SnapshotGraphicsCounts,
     output: []u8,
 ) !void {
@@ -1978,7 +2024,7 @@ fn encodeSnapshotGraphics(
     if (offset != output.len) return error.InvalidSnapshot;
 }
 
-fn imageVisible(images: *const howl.Images, image_id: u32) bool {
+fn imageVisible(images: *const howl.Terminal.Images, image_id: u32) bool {
     const placement_slots = images.placementCount();
     var index: usize = 0;
     while (index < placement_slots) : (index += 1) {
@@ -1988,7 +2034,7 @@ fn imageVisible(images: *const howl.Images, image_id: u32) bool {
     return false;
 }
 
-fn imagePresent(images: *const howl.Images, image_id: u32) bool {
+fn imagePresent(images: *const howl.Terminal.Images, image_id: u32) bool {
     var index: usize = 0;
     while (index < images.imageCount()) : (index += 1) {
         const image = images.image(index) orelse continue;
@@ -2116,7 +2162,7 @@ fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffset
     );
 }
 
-fn rowCellsExactlyReusable(current: []const howl.Cell, cached: []const howl.Cell) bool {
+fn rowCellsExactlyReusable(current: []const howl.Terminal.Cell, cached: []const howl.Terminal.Cell) bool {
     if (current.len != cached.len) return false;
     for (current, cached) |now, before| {
         // Cell owns the base scalar and up to three combining scalars inline.
@@ -2130,7 +2176,7 @@ fn rowCellsExactlyReusable(current: []const howl.Cell, cached: []const howl.Cell
     return true;
 }
 
-fn richLineGeometry(value: howl.LineGeometry) u8 {
+fn richLineGeometry(value: howl.Terminal.LineGeometry) u8 {
     return switch (value) {
         .single_width => 0,
         .double_width => 1,
@@ -2139,7 +2185,7 @@ fn richLineGeometry(value: howl.LineGeometry) u8 {
     };
 }
 
-fn richBaseline(value: @TypeOf(@as(howl.Cell, undefined).attrs.baseline)) u8 {
+fn richBaseline(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.baseline)) u8 {
     return switch (value) {
         .normal => 0,
         .raised => 1,
@@ -2147,7 +2193,7 @@ fn richBaseline(value: @TypeOf(@as(howl.Cell, undefined).attrs.baseline)) u8 {
     };
 }
 
-fn richUnderlineStyle(value: @TypeOf(@as(howl.Cell, undefined).attrs.underline_style)) u8 {
+fn richUnderlineStyle(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.underline_style)) u8 {
     return switch (value) {
         .straight => 0,
         .double => 1,
@@ -2157,7 +2203,7 @@ fn richUnderlineStyle(value: @TypeOf(@as(howl.Cell, undefined).attrs.underline_s
     };
 }
 
-fn richProtection(value: @TypeOf(@as(howl.Cell, undefined).attrs.protected)) u8 {
+fn richProtection(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.protected)) u8 {
     return switch (value) {
         .none => 0,
         .iso => 1,
@@ -2165,7 +2211,7 @@ fn richProtection(value: @TypeOf(@as(howl.Cell, undefined).attrs.protected)) u8 
     };
 }
 
-fn richStyle(attrs: @TypeOf(@as(howl.Cell, undefined).attrs)) u16 {
+fn richStyle(attrs: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs)) u16 {
     var result: u16 = 0;
     if (attrs.bold) result |= protocol.text_v1.style.bold;
     if (attrs.dim) result |= protocol.text_v1.style.dim;
@@ -2179,7 +2225,7 @@ fn richStyle(attrs: @TypeOf(@as(howl.Cell, undefined).attrs)) u16 {
     return result;
 }
 
-fn encodeRichColor(output: []u8, color: @TypeOf(@as(howl.Cell, undefined).attrs.fg)) !void {
+fn encodeRichColor(output: []u8, color: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.fg)) !void {
     std.debug.assert(output.len == protocol.text_v1.color_bytes);
     const kind: protocol.TextColorKind = switch (color.colorKind()) {
         .default => .default,
@@ -2197,7 +2243,7 @@ fn encodeRichColor(output: []u8, color: @TypeOf(@as(howl.Cell, undefined).attrs.
 fn appendRgba(
     allocator: std.mem.Allocator,
     output: *std.ArrayList(u8),
-    rgb: @TypeOf(@as(howl.Presentation, undefined).palette[0]),
+    rgb: @TypeOf(@as(howl.Terminal.Presentation, undefined).palette[0]),
 ) !void {
     try output.appendSlice(allocator, &.{ rgb.r, rgb.g, rgb.b, rgb.a });
 }
@@ -2205,7 +2251,7 @@ fn appendRgba(
 fn appendOptionalRgba(
     allocator: std.mem.Allocator,
     output: *std.ArrayList(u8),
-    rgb: ?@TypeOf(@as(howl.Presentation, undefined).palette[0]),
+    rgb: ?@TypeOf(@as(howl.Terminal.Presentation, undefined).palette[0]),
 ) !void {
     if (rgb) |value| return appendRgba(allocator, output, value);
     try output.appendSlice(allocator, &.{ 0, 0, 0, 0 });
@@ -2803,9 +2849,9 @@ test "interaction state exposes invisible input modes" {
     try attach(&peer, &server);
 
     var turns: usize = 0;
-    while (!howl.interactionState(server.session).bracketed_paste and turns < 1000) : (turns += 1)
+    while (!howl.terminal(server.session).interactionState().bracketed_paste and turns < 1000) : (turns += 1)
         try server.turn(1);
-    try std.testing.expect(howl.interactionState(server.session).bracketed_paste);
+    try std.testing.expect(howl.terminal(server.session).interactionState().bracketed_paste);
 
     try peer.sendFrame(&server, .interaction_state, &.{});
     var frame = try awaitFrame(&peer, &server);
@@ -2813,7 +2859,7 @@ test "interaction state exposes invisible input modes" {
     try std.testing.expectEqual(protocol.Kind.interaction_state_snapshot, frame.kind);
     const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
     try std.testing.expect(state.bracketed_paste);
-    try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
+    try std.testing.expectEqual(howl.terminal(server.session).semanticSequence(), state.terminal_revision);
 }
 
 test "raw observer returns the same bounded text_v1 body without DEFLATE" {
@@ -2902,9 +2948,9 @@ test "delta observation falls back raw then reuses rows from exact requested bas
     try sendInput(&peer, &server, "x");
     try expectResult(&peer, &server, .input, .ok);
     var attempts: usize = 0;
-    while (howl.revision(server.session) <= baseline_terminal_revision and attempts < 1000) : (attempts += 1)
+    while (howl.terminal(server.session).semanticSequence() <= baseline_terminal_revision and attempts < 1000) : (attempts += 1)
         try server.turn(1);
-    try std.testing.expect(howl.revision(server.session) > baseline_terminal_revision);
+    try std.testing.expect(howl.terminal(server.session).semanticSequence() > baseline_terminal_revision);
     attempts = 0;
     while (server.observation_revision <= baseline_revision and attempts < 1000) : (attempts += 1)
         try server.turn(1);
@@ -3063,18 +3109,18 @@ test "synchronized output withholds observer until coherent release" {
     try sendInput(&control, &server, "x");
     try expectResult(&control, &server, .input, .ok);
     var attempts: usize = 0;
-    while (!howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+    while (!howl.terminal(server.session).synchronizedOutput() and attempts < 1000) : (attempts += 1)
         try server.turn(1);
-    try std.testing.expect(howl.synchronizedOutput(server.session));
+    try std.testing.expect(howl.terminal(server.session).synchronizedOutput());
     try std.testing.expect(server.synchronized_output_pending);
     try std.testing.expectEqual(baseline_revision, server.observation_revision);
 
     try sendInput(&control, &server, "y");
     try expectResult(&control, &server, .input, .ok);
     attempts = 0;
-    while (howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+    while (howl.terminal(server.session).synchronizedOutput() and attempts < 1000) : (attempts += 1)
         try server.turn(1);
-    try std.testing.expect(!howl.synchronizedOutput(server.session));
+    try std.testing.expect(!howl.terminal(server.session).synchronizedOutput());
     try std.testing.expect(server.observation_revision > baseline_revision);
 
     var coherent = try receiveSnapshot(&observer, &server);
@@ -3127,9 +3173,9 @@ test "synchronized output timeout fails observer publication open" {
     try expectResult(&control, &server, .input, .ok);
 
     var attempts: usize = 0;
-    while (!howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+    while (!howl.terminal(server.session).synchronizedOutput() and attempts < 1000) : (attempts += 1)
         try server.turn(1);
-    try std.testing.expect(howl.synchronizedOutput(server.session));
+    try std.testing.expect(howl.terminal(server.session).synchronizedOutput());
     const started_ns = server.synchronized_output_started_ns orelse return error.TestTimeout;
     try std.testing.expect(server.synchronized_output_pending);
     try std.testing.expectEqual(baseline_revision, server.observation_revision);
@@ -3183,7 +3229,7 @@ test "selected text extracts stable history range without mutating canonical ter
     defer visible.deinit();
     try std.testing.expectEqual(@as(u32, 1), visible.begin.history_count);
     const first_row = visible.begin.history_row_base;
-    const before_revision = howl.revision(server.session);
+    const before_revision = howl.terminal(server.session).semanticSequence();
 
     var request: [protocol.payload_bytes.text_extract]u8 = undefined;
     protocol.encodeTextExtract(&request, .{
@@ -3197,7 +3243,7 @@ test "selected text extracts stable history range without mutating canonical ter
     defer frame.deinit();
     try std.testing.expectEqual(protocol.Kind.text_extract_data, frame.kind);
     try std.testing.expectEqualStrings("ONE\nTWO\nTHREE", frame.payload);
-    try std.testing.expectEqual(before_revision, howl.revision(server.session));
+    try std.testing.expectEqual(before_revision, howl.terminal(server.session).semanticSequence());
 
     try peer.sendFrame(&server, .text_extract, request[0 .. request.len - 1]);
     try expectResult(&peer, &server, .text_extract, .malformed);
@@ -3210,7 +3256,7 @@ test "selected text extracts stable history range without mutating canonical ter
     });
     try peer.sendFrame(&server, .text_extract, &request);
     try expectResult(&peer, &server, .text_extract, .rejected);
-    try std.testing.expectEqual(before_revision, howl.revision(server.session));
+    try std.testing.expectEqual(before_revision, howl.terminal(server.session).semanticSequence());
 }
 
 test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
@@ -3296,11 +3342,11 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     try sendInput(&peer, &server, "go\n");
     try expectResult(&peer, &server, .input, .ok);
     attempts = 0;
-    while (attempts < 64 and howl.image(server.session, image.image_id, image.generation) != null) : (attempts += 1)
+    while (attempts < 64 and terminalImage(howl.terminal(server.session), image.image_id, image.generation) != null) : (attempts += 1)
         try server.turn(1);
-    try std.testing.expect(howl.image(server.session, image.image_id, image.generation) == null);
+    try std.testing.expect(terminalImage(howl.terminal(server.session), image.image_id, image.generation) == null);
 
-    const before_fetch = howl.revision(server.session);
+    const before_fetch = howl.terminal(server.session).semanticSequence();
     var request: [protocol.payload_bytes.image_request]u8 = undefined;
     protocol.encodeImageRequest(&request, .{
         .image_id = image.image_id,
@@ -3327,7 +3373,7 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     const end = try protocol.decodeImageEnd(end_frame.payload);
     try std.testing.expectEqual(begin.image_id, end.image_id);
     try std.testing.expectEqual(begin.generation, end.generation);
-    try std.testing.expectEqual(before_fetch, howl.revision(server.session));
+    try std.testing.expectEqual(before_fetch, howl.terminal(server.session).semanticSequence());
 
     // Deliver the replacement snapshot. That advances this client beyond the
     // old manifest, so the previous generation is no longer promised.
@@ -3356,7 +3402,7 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     });
     try peer.sendFrame(&server, .image_request, &request);
     try expectResult(&peer, &server, .image_request, .rejected);
-    try std.testing.expectEqual(before_fetch, howl.revision(server.session));
+    try std.testing.expectEqual(before_fetch, howl.terminal(server.session).semanticSequence());
 }
 
 test "idle Kitty animation releases observer with a new exact image generation" {
@@ -3388,14 +3434,14 @@ test "idle Kitty animation releases observer with a new exact image generation" 
     var attempts: usize = 0;
     while (attempts < 1000) : (attempts += 1) {
         try server.turn(1);
-        var current = howl.images(server.session, 0);
+        var current = howl.terminal(server.session).images(0);
         if (current.imageCount() == 1 and server.animation_wait_ms != null) break;
     }
     if (server.animation_wait_ms == null) return error.TestTimeout;
-    var before_images = howl.images(server.session, 0);
+    var before_images = howl.terminal(server.session).images(0);
     const before_image = before_images.image(0) orelse return error.TestTimeout;
     const before_generation = before_image.generation;
-    const before_terminal_revision = howl.revision(server.session);
+    const before_terminal_revision = howl.terminal(server.session).semanticSequence();
     const before_observation_revision = server.observation_revision;
 
     try sendObserve(&peer, &server, before_observation_revision);
@@ -3405,13 +3451,13 @@ test "idle Kitty animation releases observer with a new exact image generation" 
     const serviced = try howl.service(server.session, false, false, forced_now);
     try std.testing.expect(serviced.changed);
     server.applyServiceResult(serviced, forced_now, false);
-    try std.testing.expect(howl.revision(server.session) > before_terminal_revision);
+    try std.testing.expect(howl.terminal(server.session).semanticSequence() > before_terminal_revision);
     try std.testing.expect(server.observation_revision > before_observation_revision);
 
     var wire = try receiveWireSnapshot(&peer, &server);
     defer wire.deinit();
     try std.testing.expect(wire.begin.revision > before_observation_revision);
-    try std.testing.expectEqual(howl.revision(server.session), wire.begin.terminal_revision);
+    try std.testing.expectEqual(howl.terminal(server.session).semanticSequence(), wire.begin.terminal_revision);
     const graphics_header = try protocol.decodeSnapshotGraphicsHeader(
         wire.graphics[0..protocol.graphics_v2.manifest_header_bytes],
     );
@@ -3420,8 +3466,8 @@ test "idle Kitty animation releases observer with a new exact image generation" 
         wire.graphics[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes],
     );
     try std.testing.expect(image.generation > before_generation);
-    try std.testing.expect(howl.image(server.session, image.image_id, before_generation) == null);
-    const current = howl.image(server.session, image.image_id, image.generation) orelse
+    try std.testing.expect(terminalImage(howl.terminal(server.session), image.image_id, before_generation) == null);
+    const current = terminalImage(howl.terminal(server.session), image.image_id, image.generation) orelse
         return error.TestTimeout;
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
 }
@@ -3455,7 +3501,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     var attempts: usize = 0;
     while (attempts < 1000) : (attempts += 1) {
         try server.turn(1);
-        var current = howl.images(server.session, 0);
+        var current = howl.terminal(server.session).images(0);
         if (current.imageCount() == 1 and server.animation_wait_ms != null) break;
     }
     const first_wait = server.animation_wait_ms orelse return error.TestTimeout;
@@ -3465,12 +3511,12 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     try std.testing.expect(first.changed);
     server.applyServiceResult(first, first_now, false);
     const second_wait = server.animation_wait_ms orelse return error.TestTimeout;
-    var first_images = howl.images(server.session, 0);
+    var first_images = howl.terminal(server.session).images(0);
     const first_image = first_images.image(0) orelse return error.TestTimeout;
     const last_frame_generation = first_image.generation;
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, first_image.pixels);
     const before_stop_observation = server.observation_revision;
-    const before_stop_terminal = howl.revision(server.session);
+    const before_stop_terminal = howl.terminal(server.session).semanticSequence();
 
     try sendObserve(&peer, &server, before_stop_observation);
     const stop_now = first_now +
@@ -3480,9 +3526,9 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     try std.testing.expectEqual(@as(?u32, null), stopped.animation_wait_ms);
     server.applyServiceResult(stopped, stop_now, false);
     try std.testing.expect(server.animation_wait_ms == null);
-    try std.testing.expect(howl.revision(server.session) > before_stop_terminal);
+    try std.testing.expect(howl.terminal(server.session).semanticSequence() > before_stop_terminal);
     try std.testing.expect(server.observation_revision > before_stop_observation);
-    var stopped_images = howl.images(server.session, 0);
+    var stopped_images = howl.terminal(server.session).images(0);
     const stopped_image = stopped_images.image(0) orelse return error.TestTimeout;
     try std.testing.expectEqual(last_frame_generation, stopped_image.generation);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, stopped_image.pixels);
@@ -3490,7 +3536,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     var wire = try receiveWireSnapshot(&peer, &server);
     defer wire.deinit();
     try std.testing.expect(wire.begin.revision > before_stop_observation);
-    try std.testing.expectEqual(howl.revision(server.session), wire.begin.terminal_revision);
+    try std.testing.expectEqual(howl.terminal(server.session).semanticSequence(), wire.begin.terminal_revision);
     const graphics_header = try protocol.decodeSnapshotGraphicsHeader(
         wire.graphics[0..protocol.graphics_v2.manifest_header_bytes],
     );
@@ -3501,7 +3547,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     try std.testing.expectEqual(last_frame_generation, wire_image.generation);
 
     const stopped_observation = server.observation_revision;
-    const stopped_terminal = howl.revision(server.session);
+    const stopped_terminal = howl.terminal(server.session).semanticSequence();
     const idle = try howl.service(
         server.session,
         false,
@@ -3511,7 +3557,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     try std.testing.expect(!idle.changed);
     try std.testing.expectEqual(@as(?u32, null), idle.animation_wait_ms);
     server.applyServiceResult(idle, stop_now + std.time.ns_per_s, false);
-    try std.testing.expectEqual(stopped_terminal, howl.revision(server.session));
+    try std.testing.expectEqual(stopped_terminal, howl.terminal(server.session).semanticSequence());
     try std.testing.expectEqual(stopped_observation, server.observation_revision);
 }
 
@@ -4517,15 +4563,15 @@ test "Unix clients share one session and explicit geometry authority" {
     protocol.encodeResize(&resize_pixels, .{ .rows = 10, .columns = 50, .cell_pixel_width = 11, .cell_pixel_height = 24 });
     try second.sendFrame(&server, .resize, &resize_pixels);
     try expectResult(&second, &server, .resize, .not_leader);
-    try std.testing.expectEqual(@as(u32, 10), howl.images(server.session, 0).cell_pixel_width);
+    try std.testing.expectEqual(@as(u32, 10), howl.terminal(server.session).images(0).cell_pixel_width);
     try first.sendFrame(&server, .resize, &resize_pixels);
     try expectResult(&first, &server, .resize, .ok);
-    try std.testing.expectEqual(@as(u32, 11), howl.images(server.session, 0).cell_pixel_width);
-    try std.testing.expectEqual(@as(u32, 24), howl.images(server.session, 0).cell_pixel_height);
+    try std.testing.expectEqual(@as(u32, 11), howl.terminal(server.session).images(0).cell_pixel_width);
+    try std.testing.expectEqual(@as(u32, 24), howl.terminal(server.session).images(0).cell_pixel_height);
     protocol.encodeResize(&resize_pixels, .{ .rows = 10, .columns = 50, .cell_pixel_width = 65535, .cell_pixel_height = 24 });
     try first.sendFrame(&server, .resize, &resize_pixels);
     try expectResult(&first, &server, .resize, .rejected);
-    try std.testing.expectEqual(@as(u32, 11), howl.images(server.session, 0).cell_pixel_width);
+    try std.testing.expectEqual(@as(u32, 11), howl.terminal(server.session).images(0).cell_pixel_width);
 
     stage = "resized observation";
     try sendObserve(&second, &server, shared.begin.revision);
@@ -4971,8 +5017,8 @@ test "many physical image placements preserve exact manifest and visible resourc
     try std.testing.expect(welcome.client_id != protocol.no_client);
     var ready = try observeUntilContains(&peer, &server, 0, "PLACEMENTS_READY");
     ready.deinit();
-    var images = howl.images(server.session, 0);
-    const before = howl.revision(server.session);
+    var images = howl.terminal(server.session).images(0);
+    const before = howl.terminal(server.session).semanticSequence();
     try std.testing.expectEqual(@as(usize, 2), images.imageCount());
     const counts = try countSnapshotGraphics(&images);
     try std.testing.expectEqual(@as(u16, 1), counts.images);
@@ -4998,7 +5044,7 @@ test "many physical image placements preserve exact manifest and visible resourc
     defer retained.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), retained.entries.items.len);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, retained.find(image.image_id, image.generation).?.pixels);
-    try std.testing.expectEqual(before, howl.revision(server.session));
+    try std.testing.expectEqual(before, howl.terminal(server.session).semanticSequence());
 }
 
 test "coherent properties wake without text and survive late attachment title stack and clear" {
@@ -5023,7 +5069,7 @@ test "coherent properties wake without text and survive late attachment title st
     defer control.deinit();
     try attach(&control, &server);
     var tries: usize = 0;
-    while (tries < 1000 and howl.properties(server.session).progress.value != 63) : (tries += 1) try server.turn(1);
+    while (tries < 1000 and terminalProperties(howl.terminal(server.session)).progress.value != 63) : (tries += 1) try server.turn(1);
     try std.testing.expect(tries < 1000);
     try sendRawObserve(&observer, &server, 0);
     var first = try receiveWireSnapshot(&observer, &server);
