@@ -16,6 +16,7 @@ final class TerminalFit {
   static TerminalFit? contain({
     required ui.Size viewportSize,
     required ui.Size logicalSize,
+    double? devicePixelRatio,
   }) {
     if (!viewportSize.width.isFinite ||
         !viewportSize.height.isFinite ||
@@ -36,15 +37,35 @@ final class TerminalFit {
     );
     final width = logicalSize.width * scale;
     final height = logicalSize.height * scale;
+    final origin = centeredOrigin(
+      viewportSize: viewportSize,
+      contentSize: ui.Size(width, height),
+      devicePixelRatio: devicePixelRatio,
+    );
     return TerminalFit._(
       scale: scale,
-      rect: ui.Rect.fromLTWH(
-        (viewportSize.width - width) / 2,
-        (viewportSize.height - height) / 2,
-        width,
-        height,
-      ),
+      rect: ui.Rect.fromLTWH(origin.dx, origin.dy, width, height),
     );
+  }
+
+  /// Centers one surface and optionally snaps its origin to physical pixels.
+  ///
+  /// This is shared by the render-tree child placement and pointer/selection
+  /// geometry so the terminal cannot be painted on one pixel phase while input
+  /// still targets the unsnapped centered rectangle.
+  static ui.Offset centeredOrigin({
+    required ui.Size viewportSize,
+    required ui.Size contentSize,
+    double? devicePixelRatio,
+  }) {
+    final raw = ui.Offset(
+      (viewportSize.width - contentSize.width) / 2,
+      (viewportSize.height - contentSize.height) / 2,
+    );
+    final ratio = devicePixelRatio;
+    if (ratio == null || !ratio.isFinite || ratio <= 0) return raw;
+    double snap(double value) => (value * ratio).round() / ratio;
+    return ui.Offset(snap(raw.dx), snap(raw.dy));
   }
 
   ui.Offset? logicalOffset(ui.Offset position) {

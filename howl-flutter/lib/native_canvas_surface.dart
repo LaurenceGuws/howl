@@ -538,17 +538,20 @@ final class NativeCanvasPainter extends CustomPainter {
     required this.lease,
     required this.logicalWidth,
     required this.logicalHeight,
+    this.devicePixelRatio,
   });
 
   final NativeCanvasLease lease;
   final double logicalWidth;
   final double logicalHeight;
+  final double? devicePixelRatio;
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     final fit = TerminalFit.contain(
       viewportSize: size,
       logicalSize: ui.Size(logicalWidth, logicalHeight),
+      devicePixelRatio: devicePixelRatio,
     );
     if (fit == null) return;
     final surfaceWidth = lease.frame.surfaceWidth.toDouble();
@@ -575,7 +578,8 @@ final class NativeCanvasPainter extends CustomPainter {
       oldDelegate.lease.frame.surfaceWidth != lease.frame.surfaceWidth ||
       oldDelegate.lease.frame.surfaceHeight != lease.frame.surfaceHeight ||
       oldDelegate.logicalWidth != logicalWidth ||
-      oldDelegate.logicalHeight != logicalHeight;
+      oldDelegate.logicalHeight != logicalHeight ||
+      oldDelegate.devicePixelRatio != devicePixelRatio;
 }
 
 ui.Rect _destination(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(
