@@ -609,5 +609,4 @@ void main() {
     client.performAction(TextInputAction.newline);
     expect(enters, 0);
   });
-
 }

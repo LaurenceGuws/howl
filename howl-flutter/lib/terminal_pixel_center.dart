@@ -26,7 +26,8 @@ final class TerminalPixelAlignedCenter extends StatelessWidget {
   );
 }
 
-final class _TerminalPixelAlignedCenterDelegate extends SingleChildLayoutDelegate {
+final class _TerminalPixelAlignedCenterDelegate
+    extends SingleChildLayoutDelegate {
   const _TerminalPixelAlignedCenterDelegate(this.devicePixelRatio);
 
   final double devicePixelRatio;

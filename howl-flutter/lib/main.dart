@@ -1792,7 +1792,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                               columns: nativeMetadata.columns,
                               cellWidth: _cellWidth,
                               rowHeight: _lineHeight,
-                              devicePixelRatio: View.of(context).devicePixelRatio,
+                              devicePixelRatio: View.of(context)
+                                  .devicePixelRatio,
                             ),
                           ),
                         ),
@@ -1808,7 +1809,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                                 columns: nativeMetadata.columns,
                                 cellWidth: _cellWidth,
                                 rowHeight: _lineHeight,
-                                devicePixelRatio: View.of(context).devicePixelRatio,
+                                devicePixelRatio: View.of(context)
+                                    .devicePixelRatio,
                               ),
                               onStartChanged: _changeSelectionStart,
                               onEndChanged: _changeSelectionEnd,

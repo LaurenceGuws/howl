@@ -113,8 +113,7 @@ final class _RgbaSegment extends _PaintSegment {
       image,
       source,
       destination,
-      ui.Paint()
-        ..colorFilter = const ui.ColorFilter.srgbToLinearGamma(),
+      ui.Paint()..colorFilter = const ui.ColorFilter.srgbToLinearGamma(),
     );
     canvas.restore();
   }
