@@ -72,7 +72,7 @@ const DuetReady = union(enum) {
     command: shared.HostCommand,
     window_size: shared.WindowSize,
     display_scale: shared.DisplayScale,
-    pointer_focus: shared.PointerFocus,
+    pointer: shared.PointerEvent,
 };
 
 const GenericDraw = struct {
@@ -839,9 +839,9 @@ fn runFallible(
                     }
                 },
             },
-            .pointer_focus => |point| try focusPointerPane(
+            .pointer => |event| try routePointerEvent(
                 boundary,
-                point,
+                event,
                 display_scale_120,
                 &mux,
                 &scene_panes,
@@ -1096,9 +1096,9 @@ fn rebuildScenesForScale(
     primary_graphics.invalidateAtlases();
 }
 
-fn focusPointerPane(
+fn routePointerEvent(
     boundary: *shared.Boundary,
-    point: shared.PointerFocus,
+    event: shared.PointerEvent,
     scale_120: u32,
     mux: *host_layout.Mux,
     scene_panes: *const [2]?host_layout.PaneId,
@@ -1109,8 +1109,8 @@ fn focusPointerPane(
     cell_height: u16,
 ) !void {
     if (scale_120 == 0 or cell_width == 0 or cell_height == 0) return error.InvalidDisplayScale;
-    const x = try scaledPointerCoordinate(point.x, scale_120);
-    const y = try scaledPointerCoordinate(point.y, scale_120);
+    const x = try scaledPointerCoordinate(event.point.x, scale_120);
+    const y = try scaledPointerCoordinate(event.point.y, scale_120);
     var storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
     const visible = try projectActivePixels(
         mux,
@@ -1128,8 +1128,29 @@ fn focusPointerPane(
         if (x < placement.rect.x or x >= right or y < placement.rect.y or y >= bottom) continue;
         const scene_index = sceneIndexForPane(scene_panes, scene_count, placement.pane) orelse
             return error.SceneTopologyMismatch;
-        const changed = mux.focusPane(placement.pane) catch return error.SceneTopologyMismatch;
-        if (changed) try boundary.publishPaneFocus(@intCast(scene_index));
+        if (event.kind == .press and event.button == .left) {
+            const changed = mux.focusPane(placement.pane) catch return error.SceneTopologyMismatch;
+            if (changed) try boundary.publishPaneFocus(@intCast(scene_index));
+        }
+        const pixel_x = x - placement.rect.x;
+        const pixel_y = y - placement.rect.y;
+        const row_u32 = pixel_y / cell_height;
+        const column_u32 = pixel_x / cell_width;
+        if (row_u32 > std.math.maxInt(i32) or column_u32 > std.math.maxInt(u16))
+            return error.DuetGeometry;
+        try boundary.publishInput(.{ .mouse = .{
+            .scene_index = @intCast(scene_index),
+            .value = .{
+                .kind = event.kind,
+                .button = event.button,
+                .modifiers = event.modifiers,
+                .buttons_down = event.buttons_down,
+                .row = @intCast(row_u32),
+                .column = @intCast(column_u32),
+                .pixel_x = pixel_x,
+                .pixel_y = pixel_y,
+            },
+        } });
         return;
     }
 }
@@ -2164,7 +2185,7 @@ fn waitDuetReady(
             if (boundary.takeHostCommand()) |command| return .{ .command = command };
             if (boundary.takeWindowSize()) |size| return .{ .window_size = size };
             if (boundary.takeDisplayScale()) |scale| return .{ .display_scale = scale };
-            if (boundary.takePointerFocus()) |point| return .{ .pointer_focus = point };
+            if (boundary.takePointer()) |event| return .{ .pointer = event };
         }
         for (0..scene_count) |offset| {
             const index = (start + offset) % scene_count;

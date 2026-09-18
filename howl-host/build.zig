@@ -74,6 +74,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("howl_client", client);
+    root.addImport("howl_session", session.module("howl_session"));
     root.addImport("howl_text", text);
     root.addImport("presentation", presentation);
     root.addImport("terminal", terminal);
@@ -108,6 +109,7 @@ pub fn build(b: *std.Build) void {
     });
     shared.addImport("host_c", host_c);
     shared.addImport("howl_wayland", wayland.module("howl_wayland"));
+    shared.addImport("howl_session", session.module("howl_session"));
     const test_module = b.createModule(.{
         .root_source_file = b.path("test/test.zig"),
         .target = target,
@@ -143,6 +145,7 @@ pub fn build(b: *std.Build) void {
     });
     input_test_module.addImport("howl_client", client);
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
+    input_test_module.addImport("howl_session", session.module("howl_session"));
     input_test_module.addImport("host_c", host_c);
     const input_tests = b.addTest(.{
         .name = "howl-host-input",

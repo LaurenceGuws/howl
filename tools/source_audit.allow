@@ -18,7 +18,7 @@ howl-host/src/window.zig|anyopaque|fn keyboardModifiers(data: ?*anyopaque, keybo
 howl-host/src/window.zig|anyopaque|fn keyboardRepeat(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, axis: u32, value: c.wl_fixed_t) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, button: u32, button_state: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn pointerEnter(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn pointerLeave(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface) callconv(.c) void {

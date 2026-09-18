@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("host_c");
 const wayland = @import("howl_wayland");
+const protocol = @import("howl_session").protocol;
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
@@ -10,6 +11,8 @@ pub const slot_count: usize = 3;
 pub const input_capacity: usize = 128;
 /// Bounds host-local control requests awaiting Render ownership.
 pub const host_command_capacity: usize = 16;
+/// Bounds ordered pointer button/wheel occurrences awaiting Render projection.
+pub const pointer_event_capacity: usize = 32;
 /// Bounds one copied private Unix endpoint handed from Render to Input.
 pub const pane_endpoint_capacity: usize = 108;
 
@@ -47,13 +50,48 @@ pub const DisplayScale = struct {
     scale_120: u32,
 };
 
-/// Copies one logical surface click for Render-owned pane hit testing.
-pub const PointerFocus = struct { x: u16, y: u16 };
+/// Copies one logical surface point for Render-owned pane/cell projection.
+pub const PointerPoint = struct { x: u16, y: u16 };
+
+/// Copies one compositor pointer fact without guessing terminal geometry.
+pub const PointerEvent = struct {
+    kind: protocol.InputMouseKind,
+    button: protocol.InputMouseButton,
+    modifiers: u8,
+    buttons_down: u8,
+    point: PointerPoint,
+};
+
+const SequencedPointer = struct {
+    sequence: u64,
+    event: PointerEvent,
+};
+
+/// Routes one Render-projected semantic terminal mouse occurrence to Input.
+pub const RoutedMouse = struct {
+    scene_index: u8,
+    value: protocol.MouseInput,
+};
 
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
+    mouse: RoutedMouse,
 };
+
+/// Projects xkb-resolved semantic modifiers into the frozen typed-input bits.
+pub fn semanticModifierBits(value: wayland.input.SemanticModifiers) u8 {
+    var result: u8 = 0;
+    if (value.shift) result |= protocol.typed_input.modifiers.shift;
+    if (value.alt) result |= protocol.typed_input.modifiers.alt;
+    if (value.control) result |= protocol.typed_input.modifiers.control;
+    if (value.super) result |= protocol.typed_input.modifiers.super;
+    if (value.hyper) result |= protocol.typed_input.modifiers.hyper;
+    if (value.meta) result |= protocol.typed_input.modifiers.meta;
+    if (value.caps_lock) result |= protocol.typed_input.modifiers.caps_lock;
+    if (value.num_lock) result |= protocol.typed_input.modifiers.num_lock;
+    return result;
+}
 /// Bounds the DRM memory-plane facts copied for one slot.
 pub const plane_limit: usize = 4;
 
@@ -153,7 +191,11 @@ pub const Boundary = struct {
     tab_switched_pending: bool = false,
     window_size: ?WindowSize = null,
     display_scale: ?DisplayScale = null,
-    pointer_focus: ?PointerFocus = null,
+    pointer_events: [pointer_event_capacity]SequencedPointer = undefined,
+    pointer_event_head: u8 = 0,
+    pointer_event_count: u8 = 0,
+    pointer_motion: ?SequencedPointer = null,
+    pointer_sequence: u64 = 0,
     pane_focus: ?u8 = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
@@ -284,6 +326,14 @@ pub const Boundary = struct {
         signal(self.control_fd);
     }
 
+    fn renderControlPendingLocked(self: *const Boundary) bool {
+        return self.host_command_count != 0 or
+            self.window_size != null or
+            self.display_scale != null or
+            self.pointer_event_count != 0 or
+            self.pointer_motion != null;
+    }
+
     /// Removes and copies the oldest pending host-local Render command.
     pub fn takeHostCommand(self: *Boundary) ?HostCommand {
         self.mutex.lockUncancelable(self.io);
@@ -294,7 +344,7 @@ pub const Boundary = struct {
         const result = self.host_commands[self.host_command_head];
         self.host_command_head = @intCast((@as(usize, self.host_command_head) + 1) % host_command_capacity);
         self.host_command_count -= 1;
-        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null or self.pointer_focus != null;
+        const more = self.renderControlPendingLocked();
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
@@ -321,7 +371,7 @@ pub const Boundary = struct {
             return null;
         };
         self.window_size = null;
-        const more = self.host_command_count != 0 or self.display_scale != null or self.pointer_focus != null;
+        const more = self.renderControlPendingLocked();
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
@@ -351,33 +401,96 @@ pub const Boundary = struct {
             return null;
         };
         self.display_scale = null;
-        const more = self.host_command_count != 0 or self.window_size != null or self.pointer_focus != null;
+        const more = self.renderControlPendingLocked();
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
     }
 
-    /// Replaces the latest logical left-click for Render-owned pane hit testing.
-    pub fn publishPointerFocus(self: *Boundary, point: PointerFocus) error{Stopping}!void {
+    fn nextPointerSequenceLocked(self: *Boundary) error{PointerSequenceOverflow}!u64 {
+        const next = std.math.add(u64, self.pointer_sequence, 1) catch
+            return error.PointerSequenceOverflow;
+        self.pointer_sequence = next;
+        return next;
+    }
+
+    /// Replaces the latest pointer motion and wakes Render. Motion is explicitly
+    /// coalesced so compositor cadence cannot saturate occurrence queues.
+    pub fn publishPointerMotion(self: *Boundary, event: PointerEvent) error{ Stopping, InvalidPointerEvent, PointerSequenceOverflow }!void {
+        if (event.kind != .move or event.button != .none) return error.InvalidPointerEvent;
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
             return error.Stopping;
         }
-        self.pointer_focus = point;
+        const sequence = self.nextPointerSequenceLocked() catch |failure| {
+            self.mutex.unlock(self.io);
+            return failure;
+        };
+        self.pointer_motion = .{ .sequence = sequence, .event = event };
         self.mutex.unlock(self.io);
         signal(self.control_fd);
     }
 
-    /// Transfers the latest coalesced logical pointer-focus request.
-    pub fn takePointerFocus(self: *Boundary) ?PointerFocus {
+    /// Appends one ordered pointer button/wheel occurrence for Render projection.
+    pub fn publishPointerEvent(self: *Boundary, event: PointerEvent) error{ Stopping, PointerEventLimit, InvalidPointerEvent, PointerSequenceOverflow }!void {
+        if (event.kind == .move) return error.InvalidPointerEvent;
         self.mutex.lockUncancelable(self.io);
-        const result = self.pointer_focus orelse {
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.pointer_event_count == pointer_event_capacity) {
+            self.mutex.unlock(self.io);
+            return error.PointerEventLimit;
+        }
+        const sequence = self.nextPointerSequenceLocked() catch |failure| {
+            self.mutex.unlock(self.io);
+            return failure;
+        };
+        const tail = (@as(usize, self.pointer_event_head) + self.pointer_event_count) % pointer_event_capacity;
+        self.pointer_events[tail] = .{ .sequence = sequence, .event = event };
+        self.pointer_event_count += 1;
+        self.mutex.unlock(self.io);
+        signal(self.control_fd);
+    }
+
+    /// Transfers the oldest causally pending pointer fact.
+    ///
+    /// Motion remains latest-wins, but its sequence is compared with the ordered
+    /// button/wheel head so coalescing can never move a pre-release drag motion
+    /// behind that release.
+    pub fn takePointer(self: *Boundary) ?PointerEvent {
+        self.mutex.lockUncancelable(self.io);
+        const ordered: ?SequencedPointer = if (self.pointer_event_count != 0)
+            self.pointer_events[self.pointer_event_head]
+        else
+            null;
+        const motion = self.pointer_motion;
+        if (ordered == null and motion == null) {
             self.mutex.unlock(self.io);
             return null;
+        }
+
+        const take_ordered = if (ordered) |occurrence|
+            if (motion) |coalesced|
+                occurrence.sequence < coalesced.sequence
+            else
+                true
+        else
+            false;
+
+        const result = if (take_ordered) result: {
+            const occurrence = ordered.?;
+            self.pointer_event_head = @intCast((@as(usize, self.pointer_event_head) + 1) % pointer_event_capacity);
+            self.pointer_event_count -= 1;
+            break :result occurrence.event;
+        } else result: {
+            const occurrence = motion.?;
+            self.pointer_motion = null;
+            break :result occurrence.event;
         };
-        self.pointer_focus = null;
-        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null;
+        const more = self.renderControlPendingLocked();
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;

@@ -51,7 +51,10 @@ experimental:
     through current client/text/Canvas/Vulkan boundaries with bounded explicit-sync
     ring reuse, cancellable observation, and exact terminal-image refill into
     transactional Vulkan residency; physical xkb keyboard facts cross a dedicated
-    bounded Input owner into Session; not part of the core gate
+    bounded Input owner, while Wayland pointer facts cross Render-owned pane/cell
+    projection into the existing semantic mouse action with causal ordered
+    button/wheel and coalesced motion; native host scrollback/alternate-scroll
+    wheel policy remains separate; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

@@ -1,4 +1,4 @@
-//! Owns native-host keyboard delivery and host-local pane focus.
+//! Owns native-host keyboard, mouse, focus delivery and host-local pane focus.
 //!
 //! Window copies interpreted Wayland/xkb facts into Boundary. This owner alone
 //! performs potentially blocking Session action round trips so compositor
@@ -199,6 +199,12 @@ fn runFallible(
                         window_focused = focused;
                     }
                 },
+                .mouse => |mouse| {
+                    const target: usize = mouse.scene_index;
+                    if (target >= connection_count or connections[target] == null)
+                        return error.InputTopologyMismatch;
+                    try client.actions.mouse(&connections[target].?, mouse.value);
+                },
                 .key => |key| {
                     const split_topology = connection_count == 2 and mux.tabCount() == 1;
                     const host_resize = if (split_topology) hostResizeCommand(key) else null;
@@ -355,7 +361,7 @@ pub fn projectKey(key: wayland.input.Key) Command {
         .repeated => 2,
         .released => 3,
     };
-    const modifiers = modifierBits(key.semantic_modifiers);
+    const modifiers = shared.semanticModifierBits(key.semantic_modifiers);
     if (namedKey(@backingInt(key.keysym))) |named|
         return .{ .named = .{ .key = named, .action = action, .modifiers = modifiers } };
 
@@ -371,19 +377,6 @@ pub fn projectKey(key: wayland.input.Key) Command {
 
     if (key.state == .released or key.text_len == 0) return .ignored;
     return .{ .committed_text = .{ .len = key.text_len, .bytes = key.text } };
-}
-
-fn modifierBits(value: wayland.input.SemanticModifiers) u8 {
-    var result: u8 = 0;
-    if (value.shift) result |= 1 << 0;
-    if (value.alt) result |= 1 << 1;
-    if (value.control) result |= 1 << 2;
-    if (value.super) result |= 1 << 3;
-    if (value.hyper) result |= 1 << 4;
-    if (value.meta) result |= 1 << 5;
-    if (value.caps_lock) result |= 1 << 6;
-    if (value.num_lock) result |= 1 << 7;
-    return result;
 }
 
 fn namedKey(keysym: u32) ?u8 {

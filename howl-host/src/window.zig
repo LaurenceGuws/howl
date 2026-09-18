@@ -82,7 +82,8 @@ const State = struct {
     seat: ?*c.wl_seat = null,
     keyboard: ?*c.wl_keyboard = null,
     pointer: ?*c.wl_pointer = null,
-    pointer_position: ?shared.PointerFocus = null,
+    pointer_position: ?shared.PointerPoint = null,
+    pointer_buttons_down: u8 = 0,
     surface: ?*c.wl_surface = null,
     xdg_surface: ?*c.xdg_surface = null,
     toplevel: ?*c.xdg_toplevel = null,
@@ -181,7 +182,8 @@ fn runFallible(boundary: *shared.Boundary) !void {
     if ((state.fractional_manager == null) != (state.viewporter == null)) return error.RequiredGlobal;
     if (state.fractional_manager != null) {
         state.fractional_scale = c.wp_fractional_scale_manager_v1_get_fractional_scale(
-            state.fractional_manager.?, state.surface.?,
+            state.fractional_manager.?,
+            state.surface.?,
         ) orelse return error.FractionalScale;
         if (c.wp_fractional_scale_v1_add_listener(state.fractional_scale.?, &fractional_scale_listener, &state) != 0)
             return error.Listener;
@@ -248,8 +250,11 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
     if (revision == 0 or width == 0 or height == 0 or logical_width == 0 or logical_height == 0)
         return error.InvalidPlane;
     var ring = WindowRing{
-        .revision = revision, .width = width, .height = height,
-        .logical_width = logical_width, .logical_height = logical_height,
+        .revision = revision,
+        .width = width,
+        .height = height,
+        .logical_width = logical_width,
+        .logical_height = logical_height,
     };
     errdefer ring.deinit();
     for (0..offers.len) |slot| {
@@ -388,6 +393,7 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) cal
         c.wl_pointer_destroy(state.pointer.?);
         state.pointer = null;
         state.pointer_position = null;
+        state.pointer_buttons_down = 0;
     }
 }
 
@@ -509,8 +515,10 @@ const keyboard_listener = c.wl_keyboard_listener{
 };
 
 const left_pointer_button: u32 = 0x110;
+const right_pointer_button: u32 = 0x111;
+const middle_pointer_button: u32 = 0x112;
 
-fn pointerPosition(surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) ?shared.PointerFocus {
+fn pointerPosition(surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) ?shared.PointerPoint {
     const x = c.wl_fixed_to_int(surface_x);
     const y = c.wl_fixed_to_int(surface_y);
     if (x < 0 or y < 0 or x > std.math.maxInt(u16) or y > std.math.maxInt(u16)) return null;
@@ -534,20 +542,68 @@ fn pointerLeave(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c
 fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
-    state.pointer_position = pointerPosition(surface_x, surface_y);
+    const position = pointerPosition(surface_x, surface_y) orelse {
+        state.pointer_position = null;
+        return;
+    };
+    state.pointer_position = position;
+    state.boundary.publishPointerMotion(.{
+        .kind = .move,
+        .button = .none,
+        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .buttons_down = state.pointer_buttons_down,
+        .point = position,
+    }) catch inputFailure(state);
+}
+
+const PointerButton = struct { button: @FieldType(shared.PointerEvent, "button"), bit: u8 };
+
+fn pointerButtonIdentity(button: u32) ?PointerButton {
+    return switch (button) {
+        left_pointer_button => .{ .button = .left, .bit = 1 },
+        middle_pointer_button => .{ .button = .middle, .bit = 2 },
+        right_pointer_button => .{ .button = .right, .bit = 4 },
+        else => null,
+    };
 }
 
 fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, button: u32, button_state: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
-    if (button != left_pointer_button or button_state != c.WL_POINTER_BUTTON_STATE_PRESSED) return;
+    const mapped = pointerButtonIdentity(button) orelse return;
+    const kind: @FieldType(shared.PointerEvent, "kind") = switch (button_state) {
+        c.WL_POINTER_BUTTON_STATE_PRESSED => .press,
+        c.WL_POINTER_BUTTON_STATE_RELEASED => .release,
+        else => return state.boundary.requestStop(.window),
+    };
     const position = state.pointer_position orelse return;
-    state.boundary.publishPointerFocus(position) catch state.boundary.requestStop(.window);
+    const next_buttons = switch (kind) {
+        .press => state.pointer_buttons_down | mapped.bit,
+        .release => state.pointer_buttons_down & ~mapped.bit,
+        else => unreachable,
+    };
+    state.pointer_buttons_down = next_buttons;
+    state.boundary.publishPointerEvent(.{
+        .kind = kind,
+        .button = mapped.button,
+        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .buttons_down = next_buttons,
+        .point = position,
+    }) catch inputFailure(state);
 }
 
-fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {
+fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, axis: u32, value: c.wl_fixed_t) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (pointer != state.pointer) state.boundary.requestStop(.window);
+    if (pointer != state.pointer) return state.boundary.requestStop(.window);
+    if (axis != c.WL_POINTER_AXIS_VERTICAL_SCROLL or value == 0) return;
+    const position = state.pointer_position orelse return;
+    state.boundary.publishPointerEvent(.{
+        .kind = .wheel,
+        .button = if (value < 0) .wheel_up else .wheel_down,
+        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .buttons_down = state.pointer_buttons_down,
+        .point = position,
+    }) catch inputFailure(state);
 }
 
 const pointer_listener = c.wl_pointer_listener{

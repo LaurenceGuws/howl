@@ -267,21 +267,166 @@ fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
     }
 }
 
-test "pointer focus is latest-wins and pane focus wakes Input" {
+test "pane focus is latest-wins and wakes Input" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishPointerFocus(.{ .x = 11, .y = 22 });
-    try value.publishPointerFocus(.{ .x = 33, .y = 44 });
-    try expectReadable(value.controlFd());
-    try value.drainControlWake();
-    const point = value.takePointerFocus().?;
-    try std.testing.expectEqual(@as(u16, 33), point.x);
-    try std.testing.expectEqual(@as(u16, 44), point.y);
-    try std.testing.expect(value.takePointerFocus() == null);
-
+    try value.publishPaneFocus(0);
     try value.publishPaneFocus(1);
     try expectReadable(value.inputFd());
     try value.drainInputWake();
     try std.testing.expectEqual(@as(u8, 1), value.takePaneFocus().?);
     try std.testing.expect(value.takePaneFocus() == null);
+}
+
+test "pointer motion coalesces while button and wheel occurrences stay ordered" {
+    var value = try boundary();
+    defer value.deinit();
+
+    const first_motion = shared.PointerEvent{
+        .kind = .move,
+        .button = .none,
+        .modifiers = 1,
+        .buttons_down = 0,
+        .point = .{ .x = 10, .y = 20 },
+    };
+    const latest_motion = shared.PointerEvent{
+        .kind = .move,
+        .button = .none,
+        .modifiers = 4,
+        .buttons_down = 1,
+        .point = .{ .x = 30, .y = 40 },
+    };
+    const press = shared.PointerEvent{
+        .kind = .press,
+        .button = .left,
+        .modifiers = 4,
+        .buttons_down = 1,
+        .point = .{ .x = 30, .y = 40 },
+    };
+    const wheel = shared.PointerEvent{
+        .kind = .wheel,
+        .button = .wheel_down,
+        .modifiers = 0,
+        .buttons_down = 1,
+        .point = .{ .x = 31, .y = 41 },
+    };
+
+    try value.publishPointerMotion(first_motion);
+    try value.publishPointerMotion(latest_motion);
+    try value.publishPointerEvent(press);
+    try value.publishPointerEvent(wheel);
+    try expectReadable(value.controlFd());
+    try value.drainControlWake();
+
+    try std.testing.expectEqualDeep(latest_motion, value.takePointer().?);
+    try std.testing.expectEqualDeep(press, value.takePointer().?);
+    try std.testing.expectEqualDeep(wheel, value.takePointer().?);
+    try std.testing.expect(value.takePointer() == null);
+
+    try std.testing.expectError(error.InvalidPointerEvent, value.publishPointerEvent(first_motion));
+    try std.testing.expectError(error.InvalidPointerEvent, value.publishPointerMotion(press));
+}
+
+test "pointer occurrence queue is bounded without consuming motion state" {
+    var value = try boundary();
+    defer value.deinit();
+
+    const motion = shared.PointerEvent{
+        .kind = .move,
+        .button = .none,
+        .modifiers = 0,
+        .buttons_down = 0,
+        .point = .{ .x = 7, .y = 9 },
+    };
+    try value.publishPointerMotion(motion);
+    for (0..shared.pointer_event_capacity) |index| {
+        try value.publishPointerEvent(.{
+            .kind = .wheel,
+            .button = if (index % 2 == 0) .wheel_up else .wheel_down,
+            .modifiers = 0,
+            .buttons_down = 0,
+            .point = .{ .x = 7, .y = 9 },
+        });
+    }
+    try std.testing.expectError(error.PointerEventLimit, value.publishPointerEvent(.{
+        .kind = .press,
+        .button = .left,
+        .modifiers = 0,
+        .buttons_down = 1,
+        .point = .{ .x = 7, .y = 9 },
+    }));
+    try std.testing.expectEqualDeep(motion, value.takePointer().?);
+    for (0..shared.pointer_event_capacity) |_| try std.testing.expect(value.takePointer() != null);
+}
+
+test "semantic modifier bits are identical for keyboard and pointer transport" {
+    const bits = shared.semanticModifierBits(.{
+        .shift = true,
+        .control = true,
+        .alt = true,
+        .super = true,
+        .hyper = true,
+        .meta = true,
+        .caps_lock = true,
+        .num_lock = true,
+    });
+    try std.testing.expectEqual(@as(u8, 0xff), bits);
+}
+
+test "routed mouse input preserves target pane and canonical coordinates" {
+    var value = try boundary();
+    defer value.deinit();
+
+    const routed = shared.RoutedMouse{
+        .scene_index = 1,
+        .value = .{
+            .kind = .press,
+            .button = .right,
+            .modifiers = 5,
+            .buttons_down = 4,
+            .row = 12,
+            .column = 34,
+            .pixel_x = 345,
+            .pixel_y = 678,
+        },
+    };
+    try value.publishInput(.{ .mouse = routed });
+    const event = value.takeInput().?;
+    try std.testing.expect(event == .mouse);
+    try std.testing.expectEqualDeep(routed, event.mouse);
+}
+
+test "coalesced drag motion cannot cross an ordered release" {
+    var value = try boundary();
+    defer value.deinit();
+
+    const press = shared.PointerEvent{
+        .kind = .press,
+        .button = .left,
+        .modifiers = 0,
+        .buttons_down = 1,
+        .point = .{ .x = 10, .y = 10 },
+    };
+    const drag = shared.PointerEvent{
+        .kind = .move,
+        .button = .none,
+        .modifiers = 0,
+        .buttons_down = 1,
+        .point = .{ .x = 20, .y = 20 },
+    };
+    const release = shared.PointerEvent{
+        .kind = .release,
+        .button = .left,
+        .modifiers = 0,
+        .buttons_down = 0,
+        .point = .{ .x = 20, .y = 20 },
+    };
+    try value.publishPointerEvent(press);
+    try value.publishPointerMotion(drag);
+    try value.publishPointerEvent(release);
+
+    try std.testing.expectEqualDeep(press, value.takePointer().?);
+    try std.testing.expectEqualDeep(drag, value.takePointer().?);
+    try std.testing.expectEqualDeep(release, value.takePointer().?);
+    try std.testing.expect(value.takePointer() == null);
 }
