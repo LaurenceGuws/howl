@@ -54,13 +54,28 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    const generated_contract = b.createModule(.{
+        .root_source_file = b.path("src/generated_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    generated_contract.addImport("howl_text", tested);
+    const generated_tests = b.addTest(.{
+        .name = "howl-text-generated",
+        .root_module = generated_contract,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const check = b.step("check", "Compile native text shaping and rasterization proofs");
     check.dependOn(&tests.step);
     check.dependOn(&contract_tests.step);
+    check.dependOn(&generated_tests.step);
 
     const test_step = b.step("test", "Run native text shaping and rasterization proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(contract_tests).step);
+    test_step.dependOn(&b.addRunArtifact(generated_tests).step);
     b.default_step = check;
 }
 

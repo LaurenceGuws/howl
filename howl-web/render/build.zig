@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .native_text = true,
-        .generated_glyphs = false,
         .bundled_text = true,
     });
     const text = b.dependency("howl_text", .{

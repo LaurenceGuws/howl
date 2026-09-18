@@ -11,7 +11,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseSafe,
         .native_text = false,
-        .generated_glyphs = false,
     });
     const root = b.createModule(.{
         .root_source_file = b.path("src/wasm.zig"),

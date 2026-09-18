@@ -12,7 +12,7 @@ core:
   howl-pty:
     role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
   howl-text:
-    role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
+    role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 planned:
   clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; every client deliberately pressures the same canonical session and keeps PTY/VT ownership out of presentation code

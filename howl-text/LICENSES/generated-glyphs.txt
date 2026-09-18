@@ -1,0 +1,7 @@
+Generated terminal glyph provenance
+===================================
+
+The generated box, block, Braille, sextant, octant, Powerline, progress/spinner,
+and branch algorithms are maintained as native howl-text code. Kitty and Foot
+are behavioral references for Unicode mappings and terminal geometry. Howl
+carries no source file from either project in this implementation.

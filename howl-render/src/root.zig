@@ -1,8 +1,6 @@
-//! Exposes the selected compile-time Howl rendering capabilities.
+//! Exposes the backend-neutral Howl drawing capability.
 
-/// Owns the bounded maintained-client terminal presentation envelope.
+/// Owns the bounded maintained-client presentation envelope.
 pub const presentation = @import("presentation");
-/// Owns bounded backend-neutral clipped drawing input.
+/// Owns bounded backend-neutral clipped drawing and retained resource state.
 pub const canvas = @import("canvas");
-/// Owns caller-neutral tab, pane-frame, label, and scrollbar projection.
-pub const chrome = @import("chrome");

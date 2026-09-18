@@ -1,8 +1,8 @@
 # howl-text
 
-`howl-text` is a small native Zig text engine for bounded font loading, metrics,
-fallback selection, OpenType shaping, source-cluster identity, glyph lookup, and
-alpha rasterization.
+`howl-text` is the terminal glyph-production owner: bounded font loading, metrics,
+fallback selection, OpenType shaping, source-cluster identity, glyph lookup, ordinary
+alpha rasterization, and generated terminal-cell glyph rasterization.
 
 It deliberately stops before presentation. Windows, widgets, terminal cells,
 line wrapping, clipping, GPU resources, and application layout belong to its
@@ -21,6 +21,9 @@ The public module is `howl_text`.
 - `rasterize` returns a tightly packed bounded alpha mask at the configured font
   size with the glyph's natural bearings. It does not rescale or crop to fit a
   presentation box.
+- `generated` owns the repository's Kitty-derived box/block/Braille/sextant/octant,
+  Powerline, progress/spinner, and branch terminal-cell masks from explicit cell
+  geometry. These are glyph production, not a rendering backend.
 
 Retained FreeType and HarfBuzz state is opaque to consumers. Allocation
 ownership and shaping/raster ceilings are explicit in the API.
@@ -49,7 +52,8 @@ zig build test
 ```
 
 Deterministic font fixtures used by the native proofs are documented in
-`LICENSES/test-fonts.txt`.
+`LICENSES/test-fonts.txt`. Generated terminal-glyph provenance is documented in
+`LICENSES/generated-glyphs.txt`.
 
 ## Owned font bytes
 

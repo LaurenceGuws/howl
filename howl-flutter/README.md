@@ -200,7 +200,7 @@ iOS remains a client only: it does not own a PTY, shell, or Unix userland. The n
 - `howl-session` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
 - `howl-client.rich` remains the single `text_v1` byte parser.
 - `howl-client.view` is immutable, explicitly owned native semantic state.
-- `howl-text` owns native metrics, fallback, ordinary shaping, glyph identity, and rasterization; the Kitty-derived generated renderer owns supported terminal drawing glyph geometry.
+- `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.
 - `howl-render.terminal.Content` owns bounded shape/atlas caches and emits complete Canvas state.
 - Flutter owns only platform capture, viewport/history UX, copied resource lifetime, and backend batching.
 - The app-private host packet and FFI symbols are version-locked implementation details, not compatibility surfaces.

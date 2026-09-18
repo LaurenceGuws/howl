@@ -9,7 +9,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .native_text = true,
-        .generated_glyphs = true,
         .bundled_text = false,
     });
     const session_process = b.createModule(.{

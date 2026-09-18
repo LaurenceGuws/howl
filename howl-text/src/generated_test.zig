@@ -1,7 +1,7 @@
 //! Proves the selected generated terminal-glyph capability.
 
 const std = @import("std");
-const generated = @import("howl_render").generated;
+const generated = @import("howl_text").generated;
 
 test "generated public surface retains exact curated values" {
     try std.testing.expect(!@hasDecl(generated, "Range"));

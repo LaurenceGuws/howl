@@ -27,9 +27,8 @@ experimental:
     backend-neutral rendering experiments consuming howl-text and
     howl-client.view; terminal Content emits complete Canvas ProducerUpdate
     state through private caller-bounded shape/atlas caches plus exact
-    Host-recoverable terminal-image resources, using howl-text for ordinary
-    shaping/rasterization and the Kitty-derived generated terminal-glyph
-    rasterizer for supported box/block/Braille/Powerline families;
+    Host-recoverable terminal-image resources, using howl-text for ordinary and generated terminal-glyph
+    shaping/rasterization;
     Composer-derived Canvas frames are the native/Web pressure-proven semantic
     presentation seam; no stable mobile ABI is accepted
   howl-flutter: >-

@@ -68,11 +68,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     canvas.addImport("canvas_validation", validation);
-    const generated = b.createModule(.{
-        .root_source_file = render_dependency.path("src/generated.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     const terminal = b.createModule(.{
         .root_source_file = render_dependency.path("src/terminal_native.zig"),
         .target = target,
@@ -81,7 +76,6 @@ pub fn build(b: *std.Build) void {
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
     terminal.addImport("canvas", canvas);
-    terminal.addImport("generated_glyphs", generated);
 
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

@@ -4,7 +4,8 @@ const std = @import("std");
 const render = @import("howl_render");
 const client = @import("howl_client");
 const fonts = @import("test_fonts");
-const generated = @import("generated_glyphs");
+const text = @import("howl_text");
+const generated = text.generated;
 
 fn presentation() client.rich.Presentation {
     return .{
@@ -94,8 +95,8 @@ fn contentConfig(command_capacity: usize) render.terminal.ContentConfig {
     };
 }
 
-fn contentFont() !*render.text.FontSet {
-    return render.text.FontSet.init(std.testing.allocator, .{
+fn contentFont() !*text.FontSet {
+    return text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .size = .{ .pixels = 16 },
     });
@@ -117,7 +118,7 @@ fn firstRgba(commands: []const render.canvas.Input) ?@FieldType(render.canvas.In
     return null;
 }
 
-fn constructTerminalContent(allocator: std.mem.Allocator, font: *render.text.FontSet) !void {
+fn constructTerminalContent(allocator: std.mem.Allocator, font: *text.FontSet) !void {
     const content = try render.terminal.initContent(allocator, font, contentConfig(64));
     render.terminal.deinitContent(content);
 }
@@ -1111,7 +1112,7 @@ test "terminal Canvas contextually shapes bounded primary operators without coll
     const contextual_source = sourceSnapshot(&contextual_rows, 2);
     const contextual_view = try client.view.project(std.testing.allocator, &contextual_source);
     defer client.view.deinit(contextual_view);
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
+    const font = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.normal_ligature_font,
         .size = .{ .pixels = 16 },
     });
@@ -1436,7 +1437,7 @@ test "terminal Canvas preserves ordinary font overhang across neighboring cells"
     const source = sourceSnapshot(&rows, 3);
     const view = try client.view.project(std.testing.allocator, &source);
     defer client.view.deinit(view);
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
+    const font = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
         .size = .{ .pixels = 18 },
     });
@@ -1469,7 +1470,7 @@ test "terminal Canvas content retains howl-text whole-sequence fallback" {
     const view = try client.view.project(std.testing.allocator, &source);
     defer client.view.deinit(view);
     const fallbacks = [_][]const u8{fonts.symbol_font};
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
+    const font = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .fallbacks = &fallbacks,
         .size = .{ .pixels = 16 },

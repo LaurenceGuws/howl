@@ -9,7 +9,7 @@ const std = @import("std");
 const client = @import("howl_client");
 const text = @import("howl_text");
 const canvas = @import("canvas");
-const generated = @import("generated_glyphs");
+const generated = text.generated;
 
 pub const View = client.view;
 const TextColor = View.TextColor;

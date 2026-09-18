@@ -1,13 +1,10 @@
-//! Exposes the selected compile-time Howl rendering capabilities.
+//! Exposes backend-neutral drawing plus terminal-to-Canvas presentation.
 
-/// Owns the bounded maintained-client terminal presentation envelope.
+/// Owns the bounded maintained-client presentation envelope.
 pub const presentation = @import("presentation");
-/// Owns bounded backend-neutral clipped drawing input.
+/// Owns bounded backend-neutral clipped drawing and retained resource state.
 pub const canvas = @import("canvas");
-/// Owns caller-neutral tab, pane-frame, label, and scrollbar projection.
-pub const chrome = @import("chrome");
-
-/// Owns native font loading, shaping, metrics, and alpha rasterization.
+/// Temporary package-graph pass-through; implementation ownership remains howl-text.
 pub const text = @import("howl_text");
-/// Projects immutable terminal client views through howl-text into bounded Canvas producer updates.
+/// Projects immutable terminal client views through howl-text into Canvas updates.
 pub const terminal = @import("terminal");
