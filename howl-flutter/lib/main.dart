@@ -130,7 +130,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   final TransportRecovery _transportRecovery = TransportRecovery();
   bool _historyRequestRunning = false;
   bool _historyRequestPending = false;
-  int _historyGeneration = 0;
   Timer? _historyWheelTimer;
   NativeInteractionState? _interactionStateCache;
   DateTime? _interactionStateCachedAt;
@@ -399,19 +398,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _transportRecovery.succeeded();
         _failure = null;
         _reconnecting = false;
+        final wasHistoryActive = _history.active;
+        _history.followLive(
+          rows: packet.metadata.rows,
+          columns: packet.metadata.columns,
+          historyCount: packet.metadata.historyCount,
+          historyRowBase: packet.metadata.historyRowBase,
+          alternateScreen: packet.metadata.alternateScreen,
+        );
         if (_history.active) {
-          _history.followLive(
-            historyCount: packet.metadata.historyCount,
-            historyRowBase: packet.metadata.historyRowBase,
-            alternateScreen: packet.metadata.alternateScreen,
-          );
-          _historyGeneration += 1;
-          if (_history.active) {
-            _scheduleHistorySnapshot();
-            setState(() {});
-          } else {
-            _leaveHistory();
-          }
+          _scheduleHistorySnapshot();
+          setState(() {});
+        } else if (wasHistoryActive) {
+          _leaveHistory();
         } else {
           setState(() {});
         }
@@ -501,6 +500,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void _dropTransport(int generation) {
     if (generation != _transportGeneration) return;
     _diagnostics.record('Transport', 'drop generation=$generation');
+    _leaveHistory();
     _softwareBackspaceRepeat.cancelPending();
     _transportGeneration += 1;
     final observer = _nativeObserver;
@@ -1135,7 +1135,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       alternateScreen: metadata.alternateScreen,
     );
     if (!changed) return false;
-    _historyGeneration += 1;
     if (_history.active) {
       _pointerInput.clear();
       _scheduleHistorySnapshot();
@@ -1228,7 +1227,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       alternateScreen: alternateScreen,
     );
     if (!changed) return;
-    _historyGeneration += 1;
     if (_history.active) {
       _scheduleHistorySnapshot();
     } else {
@@ -1253,10 +1251,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   Future<void> _drainHistorySnapshots() async {
     if (_historyRequestRunning || _stopping || !_history.active) return;
     _historyRequestRunning = true;
+    var request = _history.captureRequest();
     try {
       while (!_stopping && _history.active) {
         _historyRequestPending = false;
-        final generation = _historyGeneration;
         var observer = _nativeHistoryObserver;
         if (observer == null) {
           final nativePresentation = _presentation.rasterized(
@@ -1266,25 +1264,22 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             endpoint: widget.endpoint.toString(),
             presentation: nativePresentation,
           );
-          if (!mounted || _stopping || !_history.active) {
+          if (!mounted || _stopping || !_history.ownsRequest(request)) {
             unawaited(observer.close());
             return;
           }
           _nativeHistoryObserver = observer;
         }
+        request = _history.captureRequest();
         final observed = await _observeNativeFrame(
           observer: observer,
           afterRevision: 0,
-          historyOffset: _history.targetOffset,
+          historyOffset: request.offset,
           lease: _nativeHistoryLease,
         );
-        if (!mounted || _stopping || !_history.active) {
+        if (!mounted || _stopping || !_history.ownsRequest(request)) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           return;
-        }
-        if (generation != _historyGeneration) {
-          disposeNativeCanvasPreloadedResources(observed.preloaded);
-          continue;
         }
         final NativeHostFrame packet;
         try {
@@ -1296,15 +1291,16 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           rethrow;
         }
-        _history.acceptSnapshot(
+        if (!_history.canPresent(
+          request,
           historyOffset: packet.metadata.historyOffset,
           historyCount: packet.metadata.historyCount,
           historyRowBase: packet.metadata.historyRowBase,
+          rows: packet.metadata.rows,
+          columns: packet.metadata.columns,
           alternateScreen: packet.metadata.alternateScreen,
-        );
-        if (!_history.active) {
+        )) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
-          _leaveHistory();
           return;
         }
         final NativeCanvasLeaseUpdate prepared;
@@ -1313,13 +1309,21 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           packet.canvas,
           preloaded: observed.preloaded,
         );
-        if (!mounted || _stopping || !_history.active) {
+        if (!mounted || _stopping || !_history.ownsRequest(request)) {
           disposeNativeCanvasLeaseCandidate(prepared);
           return;
         }
-        if (generation != _historyGeneration) {
+        if (!_history.acceptSnapshot(
+          request,
+          historyOffset: packet.metadata.historyOffset,
+          historyCount: packet.metadata.historyCount,
+          historyRowBase: packet.metadata.historyRowBase,
+          rows: packet.metadata.rows,
+          columns: packet.metadata.columns,
+          alternateScreen: packet.metadata.alternateScreen,
+        )) {
           disposeNativeCanvasLeaseCandidate(prepared);
-          continue;
+          return;
         }
         _nativeHistoryMetadata = packet.metadata;
         _validateSelection(packet.metadata);
@@ -1331,10 +1335,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         for (final image in prepared.retired) {
           image.dispose();
         }
-        if (generation == _historyGeneration) return;
+        if (!_history.ownsRequest(request) || !_historyRequestPending) return;
       }
     } catch (error) {
-      if (!_stopping && _history.active) {
+      if (mounted && !_stopping && _history.ownsRequest(request)) {
         _leaveHistory();
         _reportFailure(error);
       }
@@ -1447,7 +1451,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       alternateScreen: metadata.alternateScreen,
     );
     if (!changed) return;
-    _historyGeneration += 1;
     if (_history.active) {
       _scheduleHistorySnapshot();
     } else {
@@ -1459,7 +1462,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _historyWheelTimer?.cancel();
     _historyWheelTimer = null;
     _history.reset();
-    _historyGeneration += 1;
     _historyRequestPending = false;
     final nativeHistoryObserver = _nativeHistoryObserver;
     _nativeHistoryObserver = null;

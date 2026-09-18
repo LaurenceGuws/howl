@@ -106,8 +106,8 @@ void main() {
 
   test('live history growth preserves absolute anchored top row', () {
     final viewport = HistoryViewport();
-    viewport.acceptSnapshot(
-      historyOffset: 10,
+    viewport.scrollRows(
+      10,
       historyCount: 100,
       historyRowBase: 1000,
       alternateScreen: false,
@@ -116,6 +116,8 @@ void main() {
 
     expect(
       viewport.followLive(
+        rows: 24,
+        columns: 80,
         historyCount: 101,
         historyRowBase: 1000,
         alternateScreen: false,
@@ -128,14 +130,16 @@ void main() {
 
   test('ring rotation preserves anchor and eviction clamps to oldest row', () {
     final viewport = HistoryViewport();
-    viewport.acceptSnapshot(
-      historyOffset: 10,
+    viewport.scrollRows(
+      10,
       historyCount: 100,
       historyRowBase: 1000,
       alternateScreen: false,
     );
 
     viewport.followLive(
+      rows: 24,
+      columns: 80,
       historyCount: 100,
       historyRowBase: 1001,
       alternateScreen: false,
@@ -144,6 +148,8 @@ void main() {
     expect(viewport.anchorTopRow, 1090);
 
     viewport.followLive(
+      rows: 24,
+      columns: 80,
       historyCount: 100,
       historyRowBase: 1100,
       alternateScreen: false,
@@ -180,17 +186,37 @@ void main() {
 
   test('server-clamped snapshot becomes the new canonical anchor', () {
     final viewport = HistoryViewport();
-    viewport.acceptSnapshot(
-      historyOffset: 7,
-      historyCount: 7,
+    viewport.followLive(
+      rows: 24,
+      columns: 80,
+      historyCount: 10,
       historyRowBase: 20,
       alternateScreen: false,
+    );
+    viewport.scrollRows(
+      10,
+      historyCount: 10,
+      historyRowBase: 20,
+      alternateScreen: false,
+    );
+    expect(
+      viewport.acceptSnapshot(
+        viewport.captureRequest(),
+        historyOffset: 7,
+        historyCount: 7,
+        historyRowBase: 20,
+        rows: 24,
+        columns: 80,
+        alternateScreen: false,
+      ),
+      isTrue,
     );
     expect(viewport.targetOffset, 7);
     expect(viewport.anchorTopRow, 20);
 
-    viewport.acceptSnapshot(
-      historyOffset: 0,
+    viewport.followLive(
+      rows: 24,
+      columns: 80,
       historyCount: 0,
       historyRowBase: 0,
       alternateScreen: true,
