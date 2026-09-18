@@ -57,17 +57,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const validation = b.createModule(.{
-        .root_source_file = render_dependency.path("src/canvas_validation.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const canvas = b.createModule(.{
-        .root_source_file = render_dependency.path("src/canvas.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    canvas.addImport("canvas_validation", validation);
     const terminal = b.createModule(.{
         .root_source_file = render_dependency.path("src/terminal.zig"),
         .target = target,
@@ -75,7 +64,6 @@ pub fn build(b: *std.Build) void {
     });
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
-    terminal.addImport("canvas", canvas);
 
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -88,7 +76,6 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_client", client);
     root.addImport("howl_text", text);
     root.addImport("presentation", presentation);
-    root.addImport("canvas", canvas);
     root.addImport("terminal", terminal);
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);

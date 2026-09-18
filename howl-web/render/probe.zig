@@ -1,8 +1,8 @@
-//! Exercises client.view -> howl-text -> terminal renderer -> Canvas Composer in Wasm.
+//! Exercises client.view -> howl-text -> the shared terminal Canvas in Wasm.
 const std = @import("std");
 const client = @import("howl_client");
 const render = @import("howl_render");
-const canvas = render.canvas;
+const canvas = render.terminal;
 const text = render.text;
 
 pub const panic = std.debug.FullPanic(trapPanic);
@@ -150,7 +150,7 @@ fn execute(font_input: []u8) !void {
     const view = try client.view.project(allocator, &source);
     defer client.view.deinit(view);
 
-    const content = try render.terminal.initContent(allocator, fonts, .{
+    const terminal_canvas = try render.terminal.initCanvas(allocator, fonts, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
@@ -162,37 +162,16 @@ fn execute(font_input: []u8) !void {
         .raster_bytes = 65536,
         .command_capacity = 128,
     });
-    defer render.terminal.deinitContent(content);
-    var composer = try canvas.Composer.init(allocator, .{
-        .sources = 1,
-        .retained_resources = 2,
-        .retained_commands = 128,
-        .retained_pixel_bytes = frame_pixels.len,
-        .composition_sources = 1,
-        .candidate_resources = 2,
-        .candidate_commands = 128,
-        .candidate_pixel_bytes = frame_pixels.len,
-    });
-    defer composer.deinit();
-    const producer = try composer.registerSource();
-    const update = try render.terminal.takeContentUpdate(content, view, null);
-    try composer.apply(producer, update);
+    defer render.terminal.deinitCanvas(terminal_canvas);
+    try render.terminal.update(terminal_canvas, view);
     const surface = canvas.Size{
         .width = @intCast(@as(u32, metrics.advance_width) * cells.len),
         .height = metrics.line_height,
     };
-    try composer.setComposition(.{
-        .surface = surface,
-        .sources = &.{.{
-            .source = producer,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
-        }},
-    });
     var uploads: [2]canvas.FrameResourceUpload = undefined;
     var removals: [2]canvas.FrameResourceRef = undefined;
     var commands: [128]canvas.Command = undefined;
-    const frame = try composer.frame(&.{}, .{
+    const frame = try render.terminal.frame(terminal_canvas, &.{}, .{
         .uploads = &uploads,
         .removals = &removals,
         .commands = &commands,
@@ -211,9 +190,9 @@ fn execute(font_input: []u8) !void {
         .schema = "howl.web-render-proof/v1",
         .surface = surface,
         .metrics = metrics,
-        .producer_revision = render.terminal.contentUsage(content).producer_revision,
-        .shape_entries = render.terminal.contentUsage(content).shape.entries,
-        .atlas_entries = render.terminal.contentUsage(content).atlas_entries,
+        .producer_revision = render.terminal.canvasUsage(terminal_canvas).revision,
+        .shape_entries = render.terminal.canvasUsage(terminal_canvas).shape.entries,
+        .atlas_entries = render.terminal.canvasUsage(terminal_canvas).atlas_entries,
         .uploads = frame.uploads.len,
         .commands = frame.commands.len,
         .alpha_commands = alpha_commands,

@@ -8,7 +8,8 @@
 const std = @import("std");
 const client = @import("howl_client");
 const text = @import("howl_text");
-const canvas = @import("canvas");
+const drawing = @import("terminal_frame.zig");
+const canvas = drawing;
 const generated = text.generated;
 const glyph_cache = @import("terminal_glyph_cache.zig");
 
@@ -26,16 +27,33 @@ pub const View = client.view;
 const TextColor = View.TextColor;
 const Metrics = text.Metrics;
 
+pub const Color = drawing.Color;
+pub const Size = drawing.Size;
+pub const Rect = drawing.Rect;
+pub const SourceRect = drawing.SourceRect;
+pub const ResourceId = drawing.ResourceId;
+pub const SourceId = drawing.SourceId;
+pub const terminal_source = drawing.terminal_source;
+pub const ResourceGeneration = drawing.ResourceGeneration;
+pub const ResourceFormat = drawing.ResourceFormat;
+pub const ResourceRef = drawing.ResourceRef;
+pub const FrameResourceRef = drawing.FrameResourceRef;
+pub const ResourceView = drawing.ResourceView;
+pub const FrameResourceView = drawing.FrameResourceView;
+pub const Residency = drawing.Residency;
+pub const FrameResourceUpload = drawing.FrameResourceUpload;
+pub const FrameExternalResource = drawing.FrameExternalResource;
+pub const Command = drawing.Command;
+
 // File map:
 //   - bounded Content lifecycle and Canvas resource publication
 //   - terminal cell/DEC geometry, color, and decoration projection
 //   - retained-row command reuse for revision-relative observations
 //   - terminal text, image, and cursor projection into Canvas commands
 
-/// Fixes every allocation and terminal presentation lattice used by one
-/// Canvas producer. The font set supplied to `initContent` must outlive the
-/// producer. None of these values are terminal truth or stable ABI.
-pub const ContentConfig = struct {
+/// Fixes every allocation and terminal presentation lattice used by one terminal Canvas.
+/// The supplied FontSet remains caller-owned and must outlive the Canvas.
+pub const CanvasConfig = struct {
     cell_size: canvas.Size,
     box_drawing: generated.BoxDrawingConfig,
     shape_cache: ShapeCacheConfig,
@@ -48,55 +66,64 @@ pub const ContentConfig = struct {
     incremental_command_capacity: usize = 0,
 };
 
-/// Supplies topology identity which terminal state cannot own.
-///
-/// The presentation host issues these values. Terminal presentation combines
-/// them with exact cursor target/revision/color facts from the immutable view.
-pub const CursorContext = struct {
-    pane: u64,
-    source: canvas.SourceId,
-    visible_set_revision: u64,
-    lifecycle_revision: u64,
-};
-
-/// Binds one exact terminal image generation to a Host-managed Canvas resource.
-///
-/// Content never owns or fetches the RGBA bytes. The Host keeps this association
-/// so a later Canvas missing-resource result can be mapped back to the exact
-/// terminal `image_id + generation` fetch key.
+/// Binds one exact terminal image generation to Host-owned RGBA residency.
 pub const ExternalImageBinding = struct {
     image_id: u32,
     generation: u64,
     resource: canvas.ResourceRef,
 };
 
-/// Portable static-image resource bound shared by the maintained native and Web
-/// hosts. Native Canvas retains eight resources total and may spend one on the
-/// glyph atlas, leaving seven exact terminal image resources.
+/// Static image bound shared by maintained hosts. One resource slot is reserved
+/// for the glyph atlas, leaving seven exact terminal image resources.
 pub const maximum_external_images: usize = 7;
-/// Opaque bounded owner of terminal -> Canvas presentation state.
-///
-/// Returned `canvas.ProducerUpdate` slices borrow this owner and must be applied
-/// or copied synchronously before any later Content operation. Canvas/Composer
-/// retain their own accepted resource and command copies.
-pub const Content = opaque {};
 
-pub const ContentUsage = struct {
+/// One terminal presentation owner. There is no producer/compositor layer.
+pub const Canvas = opaque {};
+
+pub const CanvasUsage = struct {
     shape: ShapeCacheUsage,
     atlas_entries: usize,
-    producer_revision: u64,
+    revision: u64,
     resource_generation: u64,
     resource_high_water: u64,
 };
 
-/// Plans exact image generations in Content's local resource identity space.
-/// Reserves the first unpublished atlas slot and never recycles identities below
-/// the accepted high-water mark. No Content state or image bytes are changed.
-/// Current bindings and output must be disjoint; output is disposable scratch
-/// and may be partially written on error. Commit only after Content accepts.
+pub const FrameBuffers = struct {
+    uploads: []canvas.FrameResourceUpload,
+    removals: []canvas.FrameResourceRef,
+    commands: []canvas.Command,
+    pixels: []u8,
+};
+
+pub const Frame = struct {
+    revision: u64,
+    uploads: []const canvas.FrameResourceUpload,
+    removals: []const canvas.FrameResourceRef,
+    commands: []const canvas.Command,
+    pixels: []const u8,
+};
+
+pub const CanvasInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
+    InvalidCanvasConfig,
+};
+
+pub const CanvasError = AtlasError || ShapeCacheError || canvas.Error || error{
+    InvalidView,
+    InvalidColor,
+    InvalidImageBinding,
+    ImageLimit,
+    InvalidPresentationGeometry,
+    CommandLimit,
+    RevisionOverflow,
+    ResourceIdentityOverflow,
+    ResourceGenerationOverflow,
+};
+
+/// Plans exact image generations in this Canvas' local resource identity space.
+/// Identities never recycle below the accepted high-water mark.
 pub fn planExternalImageBindings(
     current: []const ExternalImageBinding,
-    usage: ContentUsage,
+    usage: CanvasUsage,
     images: []const View.Image,
     output: *[maximum_external_images]ExternalImageBinding,
 ) error{ ImageLimit, InvalidImageBinding, ResourceIdentityOverflow }![]const ExternalImageBinding {
@@ -104,8 +131,7 @@ pub fn planExternalImageBindings(
     var allocation_cursor = usage.resource_high_water;
     var first_new = true;
     for (images, 0..) |image, index| {
-        if (image.image_id == 0 or image.generation == 0)
-            return error.InvalidImageBinding;
+        if (image.image_id == 0 or image.generation == 0) return error.InvalidImageBinding;
         const retained: ?ExternalImageBinding = for (current) |binding| {
             if (binding.image_id == image.image_id) break binding;
         } else null;
@@ -114,7 +140,7 @@ pub fn planExternalImageBindings(
             var binding = prior;
             if (image.generation > prior.generation) {
                 binding.generation = image.generation;
-                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
+                binding.resource.generation = @fromBackingInt(image.generation);
             }
             output[index] = binding;
             continue;
@@ -132,28 +158,19 @@ pub fn planExternalImageBindings(
             .resource = .{
                 .resource = canvas.ResourceId.local(allocation_cursor) catch
                     return error.ResourceIdentityOverflow,
-                .generation = @fromBackingInt(@intCast(image.generation)),
+                .generation = @fromBackingInt(image.generation),
             },
         };
     }
     return output[0..images.len];
 }
 
-pub const ContentInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
-    InvalidContentConfig,
-};
-
-pub const ContentError = AtlasError || ShapeCacheError || error{
-    InvalidView,
-    InvalidColor,
-    InvalidCursorContext,
-    InvalidImageBinding,
-    ImageLimit,
-    InvalidPresentationGeometry,
-    CommandLimit,
-    ProducerRevisionOverflow,
-    ResourceIdentityOverflow,
-    ResourceGenerationOverflow,
+const Cursor = struct {
+    rect: canvas.Rect,
+    clip: canvas.Rect,
+    shape: View.CursorShape,
+    color: canvas.Color,
+    text_color: canvas.Color,
 };
 
 const IncrementalRowCommands = struct {
@@ -167,10 +184,10 @@ const IncrementalPlan = struct {
     y_delta: i32,
 };
 
-const ContentImpl = struct {
+const CanvasImpl = struct {
     allocator: std.mem.Allocator,
     fonts: *text.FontSet,
-    config: ContentConfig,
+    config: CanvasConfig,
     shape_cache: *ShapeCache,
     atlas: *Atlas,
     clusters: []u32,
@@ -189,11 +206,8 @@ const ContentImpl = struct {
     incremental_foreground: client.rich.Rgba = undefined,
     incremental_background: client.rich.Rgba = undefined,
     incremental_ready: bool = false,
-    uploads: [1]canvas.ResourceUpload = undefined,
-    external_resources: [maximum_external_images]canvas.ExternalResourceDeclaration = undefined,
-    removals: [maximum_external_images]canvas.ResourceRemoval = undefined,
     placement_order: [View.maximum_image_placements]u16 = undefined,
-    producer_revision: u64 = 0,
+    revision: u64 = 0,
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
     atlas_resource_id: ?canvas.ResourceId = null,
@@ -201,12 +215,15 @@ const ContentImpl = struct {
     published_image_count: usize = 0,
     published_atlas_generation: u64 = 0,
     published_atlas_entries: usize = 0,
+    surface: canvas.Size = .{ .width = 1, .height = 1 },
+    command_count: usize = 0,
+    cursor: ?Cursor = null,
 };
 
 const PublishedImage = struct {
     image_id: u32,
     generation: u64,
-    external: canvas.ExternalResourceDeclaration,
+    external: canvas.ExternalResource,
 };
 
 const ProjectedPlacement = struct {
@@ -218,18 +235,18 @@ const ProjectedPlacement = struct {
 /// The producer owns presentation caches and fixed scratch only. `fonts` remains
 /// caller-owned and must outlive Content. Every later Content operation is
 /// allocation-free.
-pub fn initContent(
+pub fn initCanvas(
     allocator: std.mem.Allocator,
     fonts: *text.FontSet,
-    config: ContentConfig,
-) ContentInitError!*Content {
+    config: CanvasConfig,
+) CanvasInitError!*Canvas {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
         config.command_capacity == 0 or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
-        return error.InvalidContentConfig;
+        return error.InvalidCanvasConfig;
 
-    const impl = try allocator.create(ContentImpl);
+    const impl = try allocator.create(CanvasImpl);
     errdefer allocator.destroy(impl);
     const shape_cache = try glyph_cache.initShapeCache(allocator, fonts, config.shape_cache);
     errdefer glyph_cache.deinitShapeCache(shape_cache);
@@ -267,9 +284,9 @@ pub fn initContent(
     return @ptrCast(impl);
 }
 
-/// Releases one terminal Canvas producer and every private presentation cache.
-pub fn deinitContent(content: *Content) void {
-    const impl = contentImpl(content);
+/// Releases one terminal Canvas and every private presentation cache.
+pub fn deinitCanvas(owner: *Canvas) void {
+    const impl = canvasImpl(owner);
     const allocator = impl.allocator;
     const shape_cache = impl.shape_cache;
     const atlas = impl.atlas;
@@ -293,93 +310,64 @@ pub fn deinitContent(content: *Content) void {
     allocator.destroy(impl);
 }
 
-/// Explicitly forgets private shaping and raster caches.
-///
-/// Previously accepted Canvas/Composer state remains independent. The next
-/// successful update which references raster content publishes a newer resource
-/// generation. No cache reset occurs implicitly.
-pub fn resetContentCaches(content: *Content) AtlasError!void {
-    const impl = contentImpl(content);
+/// Explicitly forgets private shaping and raster caches. The next successful
+/// update which uses glyphs publishes a newer atlas generation.
+pub fn resetCanvasCaches(owner: *Canvas) AtlasError!void {
+    const impl = canvasImpl(owner);
     impl.incremental_ready = false;
     try glyph_cache.resetAtlas(impl.atlas);
     glyph_cache.resetShapeCache(impl.shape_cache);
 }
 
-pub fn contentUsage(content: *const Content) ContentUsage {
-    const impl = constContentImpl(content);
+pub fn canvasUsage(owner: *const Canvas) CanvasUsage {
+    const impl = constCanvasImpl(owner);
     return .{
         .shape = glyph_cache.shapeCacheUsage(impl.shape_cache),
         .atlas_entries = glyph_cache.atlasEntryCount(impl.atlas),
-        .producer_revision = impl.producer_revision,
+        .revision = impl.revision,
         .resource_generation = impl.resource_generation,
         .resource_high_water = impl.resource_high_water,
     };
 }
 
-/// Projects one immutable terminal view into one complete Canvas producer state.
-///
-/// `cursor_context` is optional because terminal state does not own pane,
-/// Composer-source, visible-set, or lifecycle identity. When supplied, those
-/// host facts are combined with exact terminal cursor target/revision/color facts
-/// into one `canvas.CursorBinding`. Returned slices borrow Content until the next
-/// Content operation and must be synchronously copied or applied before then.
-pub fn takeContentUpdate(
-    content: *Content,
-    snapshot: *const View.Snapshot,
-    cursor_context: ?CursorContext,
-) ContentError!canvas.ProducerUpdate {
-    if (View.graphics(snapshot).images.len != 0)
-        return error.InvalidImageBinding;
-    return takeContentUpdateInner(content, snapshot, cursor_context, &.{});
+/// Replaces this Canvas with one immutable terminal view.
+pub fn update(owner: *Canvas, snapshot: *const View.Snapshot) CanvasError!void {
+    if (View.graphics(snapshot).images.len != 0) return error.InvalidImageBinding;
+    return updateInner(owner, snapshot, &.{});
 }
 
-/// Projects one immutable terminal view plus one exact Host image binding.
-///
-/// This deliberately narrow image lane accepts exactly one visible image and
-/// one placement. Kitty z-index selects one of the three terminal paint phases;
-/// RGBA bytes remain outside Content and Canvas recovery storage.
-pub fn takeContentUpdateWithImageBinding(
-    content: *Content,
+pub fn updateWithImageBinding(
+    owner: *Canvas,
     snapshot: *const View.Snapshot,
-    cursor_context: ?CursorContext,
     image_binding: ExternalImageBinding,
-) ContentError!canvas.ProducerUpdate {
-    return takeContentUpdateWithImageBindings(
-        content,
-        snapshot,
-        cursor_context,
-        &.{image_binding},
-    );
+) CanvasError!void {
+    return updateWithImageBindings(owner, snapshot, &.{image_binding});
 }
 
-/// Projects one immutable terminal view plus bounded exact Host image bindings.
-///
-/// Every visible image descriptor requires exactly one matching binding. One
-/// image resource may have multiple placements. Placements are ordered by z,
-/// then by canonical placement generation, independent of backend storage order.
-pub fn takeContentUpdateWithImageBindings(
-    content: *Content,
+/// Replaces this Canvas with one immutable terminal view and exact Host image
+/// resource bindings. RGBA bytes remain Host-owned and are requested by `frame`
+/// through `missingExternalResources` when backend residency is absent.
+pub fn updateWithImageBindings(
+    owner: *Canvas,
     snapshot: *const View.Snapshot,
-    cursor_context: ?CursorContext,
     image_bindings: []const ExternalImageBinding,
-) ContentError!canvas.ProducerUpdate {
-    return takeContentUpdateInner(content, snapshot, cursor_context, image_bindings);
+) CanvasError!void {
+    return updateInner(owner, snapshot, image_bindings);
 }
 
-fn takeContentUpdateInner(
-    content: *Content,
+fn updateInner(
+    owner: *Canvas,
     snapshot: *const View.Snapshot,
-    cursor_context: ?CursorContext,
     image_bindings: []const ExternalImageBinding,
-) ContentError!canvas.ProducerUpdate {
-    const impl = contentImpl(content);
+) CanvasError!void {
+    const impl = canvasImpl(owner);
     errdefer impl.incremental_ready = false;
     const begin = View.begin(snapshot);
     const surface = try contentSurfaceSize(begin, impl.config.cell_size);
     const row_shift = View.rowShift(snapshot);
     const wants_incremental = row_shift != null and row_shift.? != 0;
     const incremental_plan = if (wants_incremental)
-        try planIncrementalRows(content, snapshot)
+        try planIncrementalRows(owner, snapshot)
     else
         null;
     const candidate_rows = if (wants_incremental and begin.rows <= impl.incremental_candidate_rows.len)
@@ -425,12 +413,11 @@ fn takeContentUpdateInner(
         next_atlas_resource_id = canvas.ResourceId.local(next_resource_high_water) catch
             return error.ResourceIdentityOverflow;
     }
-    const resource = if (projection.has_raster) contentResource(
+    const atlas_resource = if (projection.has_raster) contentResource(
         next_atlas_resource_id orelse return error.InvalidPresentationGeometry,
         next_resource_generation,
     ) else null;
-    if (resource) |value|
-        bindContentResource(impl.commands[0..command_count], value);
+    if (atlas_resource) |value| bindContentResource(impl.commands[0..command_count], value);
 
     const graphics = View.graphics(snapshot);
     if (graphics.images.len > maximum_external_images) return error.ImageLimit;
@@ -439,52 +426,37 @@ fn takeContentUpdateInner(
 
     var next_published_images: [maximum_external_images]PublishedImage = undefined;
     var next_published_count: usize = 0;
-    var external_count: usize = 0;
-    var removal_count: usize = 0;
     const new_resource_floor = next_resource_high_water;
     for (graphics.images) |image| {
         const binding = findExternalImageBinding(image_bindings, image.image_id, image.generation) orelse
             return error.InvalidImageBinding;
         const published = try publishedImage(image, binding);
+        try canvas.validateExternal(published.external);
         const image_identity = try contentExternalIdentity(published.external.resource);
         if (next_atlas_resource_id) |atlas_id| {
-            if (atlas_id == published.external.resource.resource)
-                return error.InvalidImageBinding;
+            if (atlas_id == published.external.resource.resource) return error.InvalidImageBinding;
         }
         for (next_published_images[0..next_published_count]) |prior| {
             if (prior.image_id == published.image_id or
                 prior.external.resource.resource == published.external.resource.resource)
                 return error.InvalidImageBinding;
         }
-
-        const prior_resource = findPublishedImageByResource(
+        const prior = findPublishedImageByResource(
             impl.published_images[0..impl.published_image_count],
             published.external.resource.resource,
         );
-        if (prior_resource) |prior| {
-            if (prior.image_id != published.image_id) return error.InvalidImageBinding;
-            if (!std.meta.eql(prior, published) and
+        if (prior) |value| {
+            if (value.image_id != published.image_id) return error.InvalidImageBinding;
+            if (!std.meta.eql(value, published) and
                 @backingInt(published.external.resource.generation) <=
-                    @backingInt(prior.external.resource.generation))
+                    @backingInt(value.external.resource.generation))
                 return error.InvalidImageBinding;
         } else {
             if (image_identity <= new_resource_floor) return error.InvalidImageBinding;
             next_resource_high_water = @max(next_resource_high_water, image_identity);
         }
-        if (prior_resource == null or !std.meta.eql(prior_resource.?, published)) {
-            impl.external_resources[external_count] = published.external;
-            external_count += 1;
-        }
         next_published_images[next_published_count] = published;
         next_published_count += 1;
-    }
-    for (impl.published_images[0..impl.published_image_count]) |published| {
-        if (findPublishedImageByResource(
-            next_published_images[0..next_published_count],
-            published.external.resource.resource,
-        ) != null) continue;
-        impl.removals[removal_count] = .{ .resource = published.external.resource };
-        removal_count += 1;
     }
 
     try insertExternalPlacements(
@@ -498,32 +470,14 @@ fn takeContentUpdateInner(
         &impl.placement_order,
     );
 
-    const cursor_binding = try contentCursorBinding(
-        snapshot,
-        surface,
-        impl.config.cell_size,
-        cursor_context,
-    );
-    if (impl.producer_revision == std.math.maxInt(u64))
-        return error.ProducerRevisionOverflow;
-    const next_producer_revision = impl.producer_revision + 1;
+    const cursor = try contentCursor(snapshot, surface, impl.config.cell_size);
+    if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
+    const next_revision = impl.revision + 1;
 
-    const uploads: []const canvas.ResourceUpload = if (publish_atlas) blk: {
-        const value = resource orelse return error.InvalidPresentationGeometry;
-        impl.uploads[0] = .{
-            .resource = value,
-            .format = .alpha8,
-            .pixels = .{
-                .bytes = atlas.pixels,
-                .width = atlas.width,
-                .height = atlas.height,
-                .stride = atlas.width,
-            },
-        };
-        break :blk impl.uploads[0..1];
-    } else &.{};
-
-    impl.producer_revision = next_producer_revision;
+    impl.revision = next_revision;
+    impl.surface = surface;
+    impl.command_count = command_count;
+    impl.cursor = cursor;
     impl.resource_high_water = next_resource_high_water;
     impl.atlas_resource_id = next_atlas_resource_id;
     @memcpy(
@@ -540,19 +494,217 @@ fn takeContentUpdateInner(
     const incremental_eligible = incremental_plan != null or
         (incremental_enabled and projection.default_background_end == 1 and
             projection.background_end == 1 and try incrementalViewEligible(snapshot, null));
-    if (incremental_eligible) {
-        rememberIncrementalCommands(content, snapshot);
-    } else {
+    if (incremental_eligible)
+        rememberIncrementalCommands(owner, snapshot)
+    else
         impl.incremental_ready = false;
+}
+
+/// Lists Host-owned terminal image resources required by the current frame but
+/// absent from exact backend residency.
+pub fn missingExternalResources(
+    owner: *const Canvas,
+    residency: []const canvas.Residency,
+    output: []canvas.FrameExternalResource,
+) CanvasError![]const canvas.FrameExternalResource {
+    const impl = constCanvasImpl(owner);
+    try canvas.validateResidencies(residency);
+    var needed: usize = 0;
+    for (impl.published_images[0..impl.published_image_count]) |published| {
+        const external = published.external;
+        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (canvas.residencyMatches(residency, external.resource, external.format, external.size)) continue;
+        if (needed == output.len) return error.ResourceLimit;
+        output[needed] = .{
+            .resource = try canvas.qualify(external.resource),
+            .format = external.format,
+            .size = external.size,
+            .stride = external.stride,
+        };
+        needed += 1;
     }
+    return output[0..needed];
+}
+
+/// Derives one complete terminal frame against exact backend residency.
+pub fn frame(
+    owner: *const Canvas,
+    residency: []const canvas.Residency,
+    buffers: FrameBuffers,
+) CanvasError!Frame {
+    const impl = constCanvasImpl(owner);
+    if (impl.revision == 0) return error.InvalidView;
+    try canvas.validateResidencies(residency);
+
+    for (impl.published_images[0..impl.published_image_count]) |published| {
+        const external = published.external;
+        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!canvas.residencyMatches(residency, external.resource, external.format, external.size))
+            return error.MissingExternalResource;
+    }
+
+    const atlas = glyph_cache.atlasView(impl.atlas);
+    const atlas_ref: ?canvas.ResourceRef = if (impl.atlas_resource_id != null and impl.resource_generation != 0)
+        contentResource(impl.atlas_resource_id.?, impl.resource_generation)
+    else
+        null;
+    const atlas_required = if (atlas_ref) |value|
+        canvas.resourceVisible(impl.commands[0..impl.command_count], value)
+    else
+        false;
+    const atlas_upload = atlas_required and !canvas.residencyMatches(
+        residency,
+        atlas_ref.?,
+        .alpha8,
+        .{ .width = atlas.width, .height = atlas.height },
+    );
+
+    var removal_count: usize = 0;
+    for (residency) |value| {
+        if (residencyRequired(impl, atlas, value)) continue;
+        if (removal_count == buffers.removals.len) return error.ResourceLimit;
+        removal_count += 1;
+    }
+    const cursor_extra = try cursorCommandUpperBound(impl);
+    const command_limit = std.math.add(usize, impl.command_count, cursor_extra) catch
+        return error.CommandLimit;
+    if (buffers.commands.len < command_limit) return error.CommandLimit;
+    if (atlas_upload) {
+        if (buffers.uploads.len < 1) return error.ResourceLimit;
+        if (buffers.pixels.len < atlas.pixels.len) return error.PixelLimit;
+    }
+
+    var projected = try canvas.project(
+        impl.surface,
+        impl.commands[0..impl.command_count],
+        buffers.commands,
+    );
+    var command_count = projected.len;
+    try appendCursorCommands(impl, buffers.commands, &command_count);
+    projected = buffers.commands[0..command_count];
+
+    var upload_count: usize = 0;
+    var pixel_count: usize = 0;
+    if (atlas_upload) {
+        @memcpy(buffers.pixels[0..atlas.pixels.len], atlas.pixels);
+        buffers.uploads[0] = .{
+            .resource = try canvas.qualify(atlas_ref.?),
+            .format = .alpha8,
+            .size = .{ .width = atlas.width, .height = atlas.height },
+            .pixel_offset = 0,
+            .pixel_count = atlas.pixels.len,
+            .stride = atlas.width,
+        };
+        upload_count = 1;
+        pixel_count = atlas.pixels.len;
+    }
+
+    var removal_at: usize = 0;
+    for (residency) |value| {
+        if (residencyRequired(impl, atlas, value)) continue;
+        buffers.removals[removal_at] = value.resource;
+        removal_at += 1;
+    }
+
     return .{
-        .revision = @fromBackingInt(@intCast(next_producer_revision)),
-        .uploads = uploads,
-        .external_resources = impl.external_resources[0..external_count],
-        .removals = impl.removals[0..removal_count],
-        .commands = impl.commands[0..command_count],
-        .cursor_binding = cursor_binding,
+        .revision = impl.revision,
+        .uploads = buffers.uploads[0..upload_count],
+        .removals = buffers.removals[0..removal_at],
+        .commands = projected,
+        .pixels = buffers.pixels[0..pixel_count],
     };
+}
+
+fn residencyRequired(
+    impl: *const CanvasImpl,
+    atlas: glyph_cache.AtlasView,
+    value: canvas.Residency,
+) bool {
+    if (impl.atlas_resource_id) |id| {
+        if (impl.resource_generation != 0) {
+            const ref = contentResource(id, impl.resource_generation);
+            if (canvas.resourceVisible(impl.commands[0..impl.command_count], ref) and
+                std.meta.eql(value.resource, canvas.qualify(ref) catch return false))
+                return value.format == .alpha8 and
+                    std.meta.eql(value.size, canvas.Size{ .width = atlas.width, .height = atlas.height });
+        }
+    }
+    for (impl.published_images[0..impl.published_image_count]) |published| {
+        const external = published.external;
+        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (std.meta.eql(value.resource, canvas.qualify(external.resource) catch return false))
+            return value.format == external.format and std.meta.eql(value.size, external.size);
+    }
+    return false;
+}
+
+fn cursorCommandUpperBound(impl: *const CanvasImpl) CanvasError!usize {
+    const cursor = impl.cursor orelse return 0;
+    var count: usize = 1;
+    if (cursor.shape != .block) return count;
+    for (impl.commands[0..impl.command_count]) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (value.cursor_component and
+                (try canvas.intersectRects(value.destination, cursor.rect)) != null)
+                count = std.math.add(usize, count, 1) catch return error.CommandLimit;
+        },
+        else => {},
+    };
+    return count;
+}
+
+fn appendCursorCommands(
+    impl: *const CanvasImpl,
+    commands: []canvas.Command,
+    used: *usize,
+) CanvasError!void {
+    const cursor = impl.cursor orelse return;
+    var painted = cursor.rect;
+    switch (cursor.shape) {
+        .block => {},
+        .bar => painted.width = @min(painted.width, 2),
+        .underline => {
+            const thickness = @min(painted.height, 2);
+            painted.y = std.math.add(i32, painted.y, @as(i32, painted.height - thickness)) catch
+                return error.InvalidPresentationGeometry;
+            painted.height = thickness;
+        },
+        .none => return,
+    }
+    try appendProjectedInput(impl.surface, .{ .solid = .{
+        .rect = painted,
+        .clip = cursor.clip,
+        .color = cursor.color,
+    } }, commands, used);
+    if (cursor.shape != .block) return;
+
+    for (impl.commands[0..impl.command_count]) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (!value.cursor_component) continue;
+            const clip = (try canvas.intersectRects(value.clip, cursor.clip)) orelse continue;
+            const cursor_clip = (try canvas.intersectRects(clip, cursor.rect)) orelse continue;
+            try appendProjectedInput(impl.surface, .{ .alpha_mask = .{
+                .destination = value.destination,
+                .clip = cursor_clip,
+                .resource = value.resource,
+                .color = cursor.text_color,
+                .cursor_component = false,
+            } }, commands, used);
+        },
+        else => {},
+    };
+}
+
+fn appendProjectedInput(
+    surface: canvas.Size,
+    input: canvas.Input,
+    commands: []canvas.Command,
+    used: *usize,
+) CanvasError!void {
+    if (used.* == commands.len) return error.CommandLimit;
+    var one = [_]canvas.Input{input};
+    const projected = try canvas.project(surface, &one, commands[used.*..]);
+    if (projected.len == 1) used.* += 1;
 }
 
 const maximum_operator_run_cells: usize = 4;
@@ -567,7 +719,7 @@ const ContentCellColors = struct {
     underline: canvas.Color,
 };
 
-fn contentSurfaceSize(begin: *const View.Begin, cell_size: canvas.Size) ContentError!canvas.Size {
+fn contentSurfaceSize(begin: *const View.Begin, cell_size: canvas.Size) CanvasError!canvas.Size {
     const width = std.math.mul(
         u32,
         @as(u32, begin.columns),
@@ -588,7 +740,7 @@ fn contentSurfaceRect(size: canvas.Size) canvas.Rect {
     return .{ .x = 0, .y = 0, .width = size.width, .height = size.height };
 }
 
-fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) ContentError!canvas.Rect {
+fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) CanvasError!canvas.Rect {
     const x = std.math.mul(usize, column, @as(usize, cell_size.width)) catch
         return error.InvalidPresentationGeometry;
     const y = std.math.mul(usize, row, @as(usize, cell_size.height)) catch
@@ -615,7 +767,7 @@ fn contentCellSizing(
     column: usize,
     cell: View.Cell,
     cell_size: canvas.Size,
-) ContentError!ContentCellSizing {
+) CanvasError!ContentCellSizing {
     if (cell.width == 0 or cell.height == 0 or cell.width % cell.height != 0)
         return error.InvalidView;
     const base_width_cells = cell.width / cell.height;
@@ -683,7 +835,7 @@ fn contentCellSizing(
     };
 }
 
-fn contentScaleExtent(value: u16, numerator: u16, denominator: u16) ContentError!u16 {
+fn contentScaleExtent(value: u16, numerator: u16, denominator: u16) CanvasError!u16 {
     if (value == 0 or numerator == 0 or denominator == 0)
         return error.InvalidPresentationGeometry;
     const product = std.math.mul(u32, value, numerator) catch
@@ -694,7 +846,7 @@ fn contentScaleExtent(value: u16, numerator: u16, denominator: u16) ContentError
     return std.math.cast(u16, result) orelse error.InvalidPresentationGeometry;
 }
 
-fn contentScaleCoordinate(value: i64, numerator: u16, denominator: u16) ContentError!i64 {
+fn contentScaleCoordinate(value: i64, numerator: u16, denominator: u16) CanvasError!i64 {
     if (numerator == 0 or denominator == 0) return error.InvalidPresentationGeometry;
     const product = std.math.mul(i64, value, numerator) catch
         return error.InvalidPresentationGeometry;
@@ -704,7 +856,7 @@ fn contentScaleCoordinate(value: i64, numerator: u16, denominator: u16) ContentE
 fn contentCellTransformRect(
     rect: canvas.Rect,
     sizing: ContentCellSizing,
-) ContentError!canvas.Rect {
+) CanvasError!canvas.Rect {
     const local_x = std.math.sub(i64, rect.x, sizing.origin.x) catch
         return error.InvalidPresentationGeometry;
     const local_y = std.math.sub(i64, rect.y, sizing.origin.y) catch
@@ -735,7 +887,7 @@ const ContentLineScale = struct {
     bottom_half: bool,
 };
 
-fn contentLineScale(geometry: View.LineGeometry) ContentError!ContentLineScale {
+fn contentLineScale(geometry: View.LineGeometry) CanvasError!ContentLineScale {
     return switch (geometry) {
         .single_width => .{ .x = 1, .y = 1, .bottom_half = false },
         .double_width => .{ .x = 2, .y = 1, .bottom_half = false },
@@ -744,7 +896,7 @@ fn contentLineScale(geometry: View.LineGeometry) ContentError!ContentLineScale {
     };
 }
 
-fn contentLineColumnCount(columns: u16, geometry: View.LineGeometry) ContentError!u16 {
+fn contentLineColumnCount(columns: u16, geometry: View.LineGeometry) CanvasError!u16 {
     const scale = try contentLineScale(geometry);
     return if (scale.x == 1) columns else @max(@as(u16, 1), columns / 2);
 }
@@ -754,7 +906,7 @@ fn contentLineTransformRect(
     row: usize,
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
-) ContentError!canvas.Rect {
+) CanvasError!canvas.Rect {
     const scale = try contentLineScale(geometry);
     const row_y = std.math.mul(i64, @as(i64, @intCast(row)), @as(i64, cell_size.height)) catch
         return error.InvalidPresentationGeometry;
@@ -807,7 +959,7 @@ fn contentLineClip(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!?canvas.Rect {
+) CanvasError!?canvas.Rect {
     const transformed = try contentLineTransformRect(clip, row, geometry, cell_size);
     var row_strip = try contentCellRect(row, 0, cell_size);
     row_strip.width = surface.width;
@@ -821,7 +973,7 @@ fn contentCellVisibleClip(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!?canvas.Rect {
+) CanvasError!?canvas.Rect {
     if (sizing.allocation.height == cell_size.height or geometry != .single_width)
         return contentLineClip(sizing.allocation, row, geometry, cell_size, surface);
     const transformed = try contentLineTransformRect(
@@ -850,7 +1002,7 @@ fn contentUsesPlainGeometry(cell: View.Cell, line_geometry: View.LineGeometry) b
 fn contentIsContextualOperatorCell(
     cell: View.Cell,
     scalars: []const u32,
-) ContentError!bool {
+) CanvasError!bool {
     if (cell.scalar_count != 1 or cell.width != 1 or cell.height != 1 or
         cell.x != 0 or cell.y != 0 or cell.subscale_n != 0 or cell.subscale_d != 0 or
         cell.vertical_align != 0 or cell.horizontal_align != 0 or cell.semantic_width or
@@ -892,7 +1044,7 @@ fn contentFontVisibleClip(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!?canvas.Rect {
+) CanvasError!?canvas.Rect {
     if (contentUsesMulticellAllocation(cell))
         return contentCellVisibleClip(sizing, row, geometry, cell_size, surface);
     var row_strip = try contentCellRect(row, 0, cell_size);
@@ -910,7 +1062,7 @@ fn appendContentLineSolid(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!void {
+) CanvasError!void {
     const visible_clip = try contentLineClip(clip, row, geometry, cell_size, surface) orelse return;
     try appendContentSolid(
         output,
@@ -931,7 +1083,7 @@ fn appendContentCellSolid(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!void {
+) CanvasError!void {
     const visible_clip = try contentCellVisibleClip(
         sizing,
         row,
@@ -957,7 +1109,7 @@ fn contentColor(
     value: TextColor,
     presentation: *const View.Presentation,
     foreground: bool,
-) ContentError!canvas.Color {
+) CanvasError!canvas.Color {
     return switch (value.kind) {
         .default => richColor(if (foreground) presentation.foreground else presentation.background),
         .indexed => blk: {
@@ -982,7 +1134,7 @@ fn dimContentColor(value: canvas.Color) canvas.Color {
 fn contentCellColors(
     cell: View.Cell,
     presentation: *const View.Presentation,
-) ContentError!ContentCellColors {
+) CanvasError!ContentCellColors {
     var foreground = try contentColor(cell.foreground, presentation, true);
     var background = try contentColor(cell.background, presentation, false);
     const style = View.cellStyle(cell);
@@ -1003,7 +1155,7 @@ fn appendContentInput(
     output: []canvas.Input,
     used: *usize,
     value: canvas.Input,
-) ContentError!void {
+) CanvasError!void {
     if (used.* >= output.len) return error.CommandLimit;
     output[used.*] = value;
     used.* += 1;
@@ -1015,7 +1167,7 @@ fn appendContentSolid(
     rect: canvas.Rect,
     clip: canvas.Rect,
     color: canvas.Color,
-) ContentError!void {
+) CanvasError!void {
     try appendContentInput(output, used, .{ .solid = .{
         .rect = rect,
         .clip = clip,
@@ -1036,7 +1188,7 @@ fn appendContentUnderline(
     geometry: View.LineGeometry,
     cell_size: canvas.Size,
     surface: canvas.Size,
-) ContentError!void {
+) CanvasError!void {
     const height = @max(@as(u16, 1), thickness);
     switch (style) {
         1 => {
@@ -1119,7 +1271,7 @@ fn appendContentUnderline(
     }
 }
 
-fn fixedContent26_6(value: i64) ContentError!i32 {
+fn fixedContent26_6(value: i64) CanvasError!i32 {
     return std.math.cast(i32, @divFloor(value, 64)) orelse
         error.InvalidPresentationGeometry;
 }
@@ -1130,7 +1282,7 @@ fn contentLineOffset(metrics: Metrics, cell_size: canvas.Size) i64 {
 }
 
 fn sameIncrementalCellPresentation(
-    impl: *const ContentImpl,
+    impl: *const CanvasImpl,
     presentation: *const View.Presentation,
 ) bool {
     return impl.incremental_reverse_screen == presentation.reverse_screen and
@@ -1142,7 +1294,7 @@ fn sameIncrementalCellPresentation(
 fn incrementalRowLayerEligible(
     snapshot: *const View.Snapshot,
     row_index: usize,
-) ContentError!bool {
+) CanvasError!bool {
     const begin = View.begin(snapshot);
     const presentation = View.presentation(snapshot);
     const rows = View.rows(snapshot);
@@ -1169,7 +1321,7 @@ fn incrementalRowLayerEligible(
 fn incrementalViewEligible(
     snapshot: *const View.Snapshot,
     changed_rows: ?[]const bool,
-) ContentError!bool {
+) CanvasError!bool {
     const begin = View.begin(snapshot);
     const rows = View.rows(snapshot);
     const graphics = View.graphics(snapshot);
@@ -1184,10 +1336,10 @@ fn incrementalViewEligible(
 }
 
 fn planIncrementalRows(
-    content: *Content,
+    content: *Canvas,
     snapshot: *const View.Snapshot,
-) ContentError!?IncrementalPlan {
-    const impl = contentImpl(content);
+) CanvasError!?IncrementalPlan {
+    const impl = canvasImpl(content);
     if (!impl.incremental_ready or impl.incremental_commands.len == 0 or
         impl.incremental_rows.len == 0)
         return null;
@@ -1227,7 +1379,7 @@ fn planIncrementalRows(
 fn translateIncrementalGlyph(
     value: canvas.Input,
     y_delta: i32,
-) ContentError!canvas.Input {
+) CanvasError!canvas.Input {
     return switch (value) {
         .alpha_mask => |mask| blk: {
             var shifted = mask;
@@ -1242,10 +1394,10 @@ fn translateIncrementalGlyph(
 }
 
 fn rememberIncrementalCommands(
-    content: *Content,
+    content: *Canvas,
     snapshot: *const View.Snapshot,
 ) void {
-    const impl = contentImpl(content);
+    const impl = canvasImpl(content);
     const begin = View.begin(snapshot);
     if (begin.rows == 0 or begin.rows > impl.incremental_rows.len) {
         impl.incremental_ready = false;
@@ -1304,7 +1456,7 @@ fn buildContentCommands(
     cluster_scratch: []u32,
     shaped_scratch: []text.Glyph,
     raster_scratch: []u8,
-) ContentError!ContentProjection {
+) CanvasError!ContentProjection {
     if (!glyph_cache.sameFontSet(shape_cache, atlas))
         return error.FontSetMismatch;
     const fonts = glyph_cache.fontSet(atlas);
@@ -1744,7 +1896,7 @@ fn contentResource(resource: canvas.ResourceId, generation: u64) canvas.Resource
     };
 }
 
-fn contentExternalIdentity(resource: canvas.ResourceRef) ContentError!u64 {
+fn contentExternalIdentity(resource: canvas.ResourceRef) CanvasError!u64 {
     if (resource.resource.isShared() or @backingInt(resource.generation) == 0)
         return error.InvalidImageBinding;
     return resource.resource.identity() catch error.InvalidImageBinding;
@@ -1754,7 +1906,7 @@ fn contentGraphicsScaleFloor(
     value: u64,
     numerator: u16,
     denominator: u32,
-) ContentError!u64 {
+) CanvasError!u64 {
     if (denominator == 0) return error.InvalidPresentationGeometry;
     const product = std.math.mul(u64, value, numerator) catch
         return error.InvalidPresentationGeometry;
@@ -1765,7 +1917,7 @@ fn contentGraphicsScaleCeil(
     value: u64,
     numerator: u16,
     denominator: u32,
-) ContentError!u64 {
+) CanvasError!u64 {
     if (denominator == 0) return error.InvalidPresentationGeometry;
     const product = std.math.mul(u64, value, numerator) catch
         return error.InvalidPresentationGeometry;
@@ -1799,7 +1951,7 @@ fn findPublishedImageByResource(
 fn publishedImage(
     image: View.Image,
     binding: ExternalImageBinding,
-) ContentError!PublishedImage {
+) CanvasError!PublishedImage {
     if (binding.image_id != image.image_id or binding.generation != image.generation)
         return error.InvalidImageBinding;
     const image_width = std.math.cast(u16, image.width) orelse
@@ -1848,7 +2000,7 @@ fn insertExternalPlacements(
     output: []canvas.Input,
     used: *usize,
     order_storage: *[View.maximum_image_placements]u16,
-) ContentError!void {
+) CanvasError!void {
     const graphics = View.graphics(snapshot);
     if (graphics.placements.len == 0) return;
     if (graphics.placements.len > order_storage.len) return error.ImageLimit;
@@ -1928,7 +2080,7 @@ fn projectExternalPlacement(
     binding: ExternalImageBinding,
     surface: canvas.Size,
     cell_size: canvas.Size,
-) ContentError!ProjectedPlacement {
+) CanvasError!ProjectedPlacement {
     if (binding.image_id != image.image_id or binding.generation != image.generation)
         return error.InvalidImageBinding;
     if (placement.image_id != image.image_id) return error.InvalidView;
@@ -2017,23 +2169,16 @@ fn projectExternalPlacement(
     };
 }
 
-fn contentCursorBinding(
+fn contentCursor(
     snapshot: *const View.Snapshot,
     surface: canvas.Size,
     cell_size: canvas.Size,
-    context: ?CursorContext,
-) ContentError!?canvas.CursorBinding {
-    const host = context orelse return null;
-    if (host.pane == 0 or @backingInt(host.source) == 0 or
-        host.visible_set_revision == 0 or host.lifecycle_revision == 0)
-        return error.InvalidCursorContext;
+) CanvasError!?Cursor {
     const begin = View.begin(snapshot);
     const cursor_shape = View.cursorShape(snapshot);
     if (!begin.cursor_visible or cursor_shape == .none) return null;
     if (begin.cursor_row >= begin.rows or begin.cursor_column >= begin.columns)
         return null;
-    if (begin.revision == 0 or begin.terminal_revision == 0)
-        return error.InvalidCursorContext;
     const presentation = View.presentation(snapshot);
     const rows = View.rows(snapshot);
     const row = rows[begin.cursor_row];
@@ -2048,32 +2193,18 @@ fn contentCursorBinding(
         surface,
     ) orelse return null;
     return .{
-        .pane = host.pane,
-        .source = host.source,
-        .terminal_sequence = begin.terminal_revision,
-        .cursor_revision = begin.revision,
-        .visible_set_revision = host.visible_set_revision,
-        .lifecycle_revision = host.lifecycle_revision,
         .rect = rect,
-        .cell_origin = .{ .x = 0, .y = 0 },
-        .cell_size = .{ .width = rect.width, .height = rect.height },
         .clip = contentSurfaceRect(surface),
-        .shape = switch (cursor_shape) {
-            .block => .block,
-            .underline => .underline,
-            .bar => .bar,
-            .none => .none,
-        },
+        .shape = cursor_shape,
         .color = richColor(presentation.cursor orelse presentation.foreground),
         .text_color = richColor(presentation.cursor_text orelse presentation.background),
-        .visible = true,
     };
 }
 
-fn contentImpl(content: *Content) *ContentImpl {
+fn canvasImpl(content: *Canvas) *CanvasImpl {
     return @ptrCast(@alignCast(content));
 }
 
-fn constContentImpl(content: *const Content) *const ContentImpl {
+fn constCanvasImpl(content: *const Canvas) *const CanvasImpl {
     return @ptrCast(@alignCast(content));
 }

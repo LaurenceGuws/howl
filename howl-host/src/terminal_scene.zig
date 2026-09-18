@@ -6,9 +6,9 @@
 
 const std = @import("std");
 const client = @import("howl_client");
-const canvas = @import("canvas");
 const presentation = @import("presentation");
 const terminal = @import("terminal");
+const canvas = terminal;
 const terminal_fast = @import("terminal_fast.zig");
 const text = @import("howl_text");
 const vk_surface = @import("howl_vk").surface;
@@ -72,9 +72,7 @@ pub const Scene = struct {
     raw_cache: client.rich.RawCache,
     fonts: *text.FontSet,
     fast: terminal_fast.Adapter,
-    content: *terminal.Content,
-    composer: canvas.Composer,
-    source: canvas.SourceId,
+    canvas: *terminal.Canvas,
     cell_size: canvas.Size,
     frame_uploads: []canvas.FrameResourceUpload,
     frame_removals: []canvas.FrameResourceRef,
@@ -113,7 +111,7 @@ pub const Scene = struct {
             .width = metrics.advance_width,
             .height = metrics.line_height,
         };
-        const content = try terminal.initContent(
+        const terminal_canvas = try terminal.initCanvas(
             allocator,
             fonts,
             .{
@@ -138,19 +136,7 @@ pub const Scene = struct {
                 .command_capacity = command_capacity,
             },
         );
-        errdefer terminal.deinitContent(content);
-        var composer = try canvas.Composer.init(allocator, .{
-            .sources = 1,
-            .retained_resources = resource_limit,
-            .retained_commands = command_capacity,
-            .retained_pixel_bytes = atlas_pixel_bytes,
-            .composition_sources = 1,
-            .candidate_resources = resource_limit,
-            .candidate_commands = command_capacity,
-            .candidate_pixel_bytes = atlas_pixel_bytes,
-        });
-        errdefer composer.deinit();
-        const source = try composer.registerSource();
+        errdefer terminal.deinitCanvas(terminal_canvas);
 
         const frame_uploads = try allocator.alloc(canvas.FrameResourceUpload, resource_limit);
         errdefer allocator.free(frame_uploads);
@@ -189,9 +175,7 @@ pub const Scene = struct {
             .raw_cache = raw_cache,
             .fonts = fonts,
             .fast = fast,
-            .content = content,
-            .composer = composer,
-            .source = source,
+            .canvas = terminal_canvas,
             .cell_size = cell_size,
             .frame_uploads = frame_uploads,
             .frame_removals = frame_removals,
@@ -221,8 +205,7 @@ pub const Scene = struct {
         self.allocator.free(self.frame_commands);
         self.allocator.free(self.frame_removals);
         self.allocator.free(self.frame_uploads);
-        self.composer.deinit();
-        terminal.deinitContent(self.content);
+        terminal.deinitCanvas(self.canvas);
         self.fast.deinit();
         self.fonts.deinit();
         self.raw_cache.deinit();
@@ -286,27 +269,7 @@ pub const Scene = struct {
         defer client.view.deinit(view);
         if (client.view.graphics(view).images.len != 0)
             return error.GraphicsRefillNotImplemented;
-        const placement = canvas.Composer.Placement{
-            .source = self.source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = width, .height = height },
-        };
-        try self.composer.setComposition(.{
-            .surface = .{ .width = width, .height = height },
-            .sources = &.{placement},
-            .focused_source = self.source,
-        });
-        const update = try terminal.takeContentUpdate(
-            self.content,
-            view,
-            .{
-                .pane = 1,
-                .source = self.source,
-                .visible_set_revision = 1,
-                .lifecycle_revision = 1,
-            },
-        );
-        try self.composer.apply(self.source, update);
+        try terminal.update(self.canvas, view);
 
         const resident = try self.residency.enumerate(self.surface_residencies);
         if (resident.len > self.canvas_residencies.len) return error.Capacity;
@@ -321,7 +284,8 @@ pub const Scene = struct {
                 .size = .{ .width = value.width, .height = value.height },
             };
         }
-        const frame = try self.composer.frame(
+        const frame = try terminal.frame(
+            self.canvas,
             self.canvas_residencies[0..resident.len],
             .{
                 .uploads = self.frame_uploads,
@@ -377,7 +341,7 @@ pub const Scene = struct {
 };
 
 fn adaptCanvasFrame(
-    frame: canvas.Composer.Frame,
+    frame: terminal.Frame,
     uploads: []vk_surface.Upload,
     removals: []vk_surface.Removal,
     commands: []vk_surface.FrameCommand,
@@ -436,7 +400,7 @@ fn adaptCanvasFrame(
         } },
     };
     return .{
-        .revision = @backingInt(frame.revision),
+        .revision = frame.revision,
         .uploads = uploads[0..frame.uploads.len],
         .removals = removals[0..frame.removals.len],
         .commands = commands[0..frame.commands.len],
@@ -454,11 +418,12 @@ fn surfaceResource(value: canvas.FrameResourceRef) error{InvalidFrame}!vk_surfac
 fn canvasResource(value: vk_surface.ResourceGeneration) error{InvalidFrame}!canvas.FrameResourceRef {
     const resource = canvas.ResourceId.fromEncoded(value.resource) catch
         return error.InvalidFrame;
-    return canvas.FrameResourceRef.init(
-        @fromBackingInt(@intCast(value.source)),
-        resource,
-        @fromBackingInt(@intCast(value.generation)),
-    ) catch error.InvalidFrame;
+    if (value.source != @backingInt(terminal.terminal_source))
+        return error.InvalidFrame;
+    return canvas.FrameResourceRef.local(.{
+        .resource = resource,
+        .generation = @fromBackingInt(@intCast(value.generation)),
+    }) catch error.InvalidFrame;
 }
 
 fn surfaceRect(value: canvas.Rect) vk_surface.Rect {

@@ -3,7 +3,7 @@ const std = @import("std");
 const session = @import("howl_session");
 const client = @import("howl_client");
 const render = @import("howl_render");
-const canvas = render.canvas;
+const canvas = render.terminal;
 const text = render.text;
 const p = session.protocol;
 
@@ -50,10 +50,8 @@ var failure: []const u8 = "";
 var persistent = std.heap.FixedBufferAllocator.init(&persistent_heap);
 var transient = std.heap.FixedBufferAllocator.init(&transient_heap);
 var fonts: ?*text.FontSet = null;
-var content: ?*render.terminal.Content = null;
-var composer: canvas.Composer = undefined;
-var composer_ready = false;
-var producer: canvas.SourceId = @fromBackingInt(0);
+var terminal_canvas: ?*render.terminal.Canvas = null;
+var canvas_ready = false;
 var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
 var surface: canvas.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
@@ -116,7 +114,7 @@ export fn rv_render_count() u64 {
     return rendered;
 }
 export fn rv_ready() u32 {
-    return @intFromBool(composer_ready);
+    return @intFromBool(canvas_ready);
 }
 export fn rv_missing_external() u32 {
     return @intFromBool(missing_external != null);
@@ -195,7 +193,7 @@ fn initRenderer(
     font_pixels: u32,
     requested_cell: ?canvas.Size,
 ) u32 {
-    if (composer_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
+    if (canvas_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
         fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
         symbol_font_length == 0 or symbol_font_length > symbol_font_input.len) return 0;
     persistent.reset();
@@ -230,7 +228,7 @@ fn initRenderer(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const new_content = render.terminal.initContent(allocator, new_fonts, .{
+    const new_canvas = render.terminal.initCanvas(allocator, new_fonts, .{
         .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
@@ -247,39 +245,23 @@ fn initRenderer(
         .raster_bytes = 256 * 1024,
         .command_capacity = command_capacity,
     }) catch |err| return fail(@errorName(err));
-    errdefer render.terminal.deinitContent(new_content);
-    var new_composer = canvas.Composer.init(allocator, .{
-        .sources = 1,
-        .retained_resources = residency_capacity,
-        .retained_commands = command_capacity,
-        .retained_pixel_bytes = atlas_bytes,
-        .composition_sources = 1,
-        .candidate_resources = residency_capacity,
-        .candidate_commands = command_capacity,
-        .candidate_pixel_bytes = atlas_bytes,
-    }) catch |err| return fail(@errorName(err));
-    errdefer new_composer.deinit();
-    const new_producer = new_composer.registerSource() catch |err| return fail(@errorName(err));
+    errdefer render.terminal.deinitCanvas(new_canvas);
 
     fonts = new_fonts;
-    content = new_content;
-    composer = new_composer;
-    producer = new_producer;
+    terminal_canvas = new_canvas;
     cell_size = presentation_cell;
-    composer_ready = true;
+    canvas_ready = true;
     return 1;
 }
 
 export fn rv_reset() u32 {
-    if (composer_ready) {
-        composer.deinit();
-        render.terminal.deinitContent(content.?);
+    if (canvas_ready) {
+        render.terminal.deinitCanvas(terminal_canvas.?);
         fonts.?.deinit();
     }
     fonts = null;
-    content = null;
-    composer_ready = false;
-    producer = @fromBackingInt(0);
+    terminal_canvas = null;
+    canvas_ready = false;
     persistent.reset();
     transient.reset();
     accepted_residency_count = 0;
@@ -296,7 +278,7 @@ export fn rv_reset() u32 {
 }
 
 export fn rv_render(snapshot_length: usize) u32 {
-    if (!composer_ready or pending_ack or snapshot_length == 0 or snapshot_length > snapshot_input.len)
+    if (!canvas_ready or pending_ack or snapshot_length == 0 or snapshot_length > snapshot_input.len)
         return 0;
     failure = "";
     metadata_used = 0;
@@ -320,28 +302,12 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     defer client.view.deinit(view);
     const begin = client.view.begin(view);
     const next_render = std.math.add(u64, rendered, 1) catch return error.RenderRevisionOverflow;
-    const cursor = render.terminal.CursorContext{
-        .pane = 1,
-        .source = producer,
-        .visible_set_revision = next_render,
-        .lifecycle_revision = 1,
-    };
-    const update = try takeContentUpdate(view, cursor);
-    try composer.apply(producer, update);
+    try updateCanvas(view);
     surface = .{
         .width = std.math.mul(u16, begin.columns, cell_size.width) catch return error.SurfaceOverflow,
         .height = std.math.mul(u16, begin.rows, cell_size.height) catch return error.SurfaceOverflow,
     };
-    try composer.setComposition(.{
-        .surface = surface,
-        .sources = &.{.{
-            .source = producer,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
-        }},
-        .focused_source = producer,
-    });
-    const frame = composer.frame(accepted_residency[0..accepted_residency_count], .{
+    const frame = render.terminal.frame(terminal_canvas.?, accepted_residency[0..accepted_residency_count], .{
         .uploads = &frame_uploads,
         .removals = &frame_removals,
         .commands = &frame_commands,
@@ -364,7 +330,7 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
 /// Installs the exact externally uploaded resource currently requested by
 /// `rv_render`. The browser calls this only after its backend resource exists.
 export fn rv_accept_external() u32 {
-    if (!composer_ready or pending_ack) return 0;
+    if (!canvas_ready or pending_ack) return 0;
     const value = missing_external orelse return 0;
     const residency = canvas.Residency{
         .resource = value.resource,
@@ -389,32 +355,23 @@ export fn rv_accept_external() u32 {
     return 1;
 }
 
-fn takeContentUpdate(
-    view: *const client.view.Snapshot,
-    cursor: render.terminal.CursorContext,
-) !canvas.ProducerUpdate {
+fn updateCanvas(view: *const client.view.Snapshot) !void {
     const graphics = client.view.graphics(view);
     if (graphics.images.len > maximum_terminal_images)
         return error.UnsupportedGraphics;
     var candidate: [maximum_terminal_images]ImageBinding = undefined;
     const bindings = render.terminal.planExternalImageBindings(
         image_bindings[0..image_binding_count],
-        render.terminal.contentUsage(content.?),
+        render.terminal.canvasUsage(terminal_canvas.?),
         graphics.images,
         &candidate,
     ) catch |err| switch (err) {
         error.ImageLimit => return error.UnsupportedGraphics,
         else => return err,
     };
-    const update = try render.terminal.takeContentUpdateWithImageBindings(
-        content.?,
-        view,
-        cursor,
-        bindings,
-    );
+    try render.terminal.updateWithImageBindings(terminal_canvas.?, view, bindings);
     @memcpy(image_bindings[0..bindings.len], bindings);
     image_binding_count = bindings.len;
-    return update;
 }
 
 fn findImageBindingByResource(
@@ -434,7 +391,7 @@ fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !Pending
         return error.InvalidExternalResource;
     var selected: ?PendingExternal = null;
     for (missing, 0..) |value, index| {
-        if (@backingInt(value.resource.source) != @backingInt(producer) or
+        if (value.resource.source != render.terminal.terminal_source or
             value.format != .rgba8)
             return error.InvalidExternalResource;
         const binding = findImageBindingByResource(
@@ -447,7 +404,8 @@ fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !Pending
 }
 
 fn prepareMissingExternal() !void {
-    const missing = try composer.missingExternalResources(
+    const missing = try render.terminal.missingExternalResources(
+        terminal_canvas.?,
         accepted_residency[0..accepted_residency_count],
         &missing_external_storage,
     );
@@ -457,7 +415,7 @@ fn prepareMissingExternal() !void {
 }
 
 export fn rv_ack() u32 {
-    if (!composer_ready or !pending_ack) return 0;
+    if (!canvas_ready or !pending_ack) return 0;
     @memcpy(accepted_residency[0..pending_residency_count], pending_residency[0..pending_residency_count]);
     accepted_residency_count = pending_residency_count;
     pending_residency_count = 0;
@@ -499,7 +457,7 @@ fn collectPendingResidency(commands: []const canvas.Command) error{ResidencyLimi
 }
 
 fn writeFrame(
-    frame: canvas.Composer.Frame,
+    frame: render.terminal.Frame,
     snapshot: *const client.view.Snapshot,
     observation_revision: u64,
     terminal_revision: u64,

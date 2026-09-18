@@ -13,14 +13,13 @@ const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr'
   'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste', 'hw_request_interaction_state', 'hw_request_text_extract',
   'hw_request_image', 'hw_release_image',
   'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_mouse', 'hw_send_resize', 'hw_send_resize_owned',
-  'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
+  'hw_feed', 'hw_finish'].sort();
 assert.deepEqual(WebAssembly.Module.exports(module).map(x => x.name).sort(), expected);
 const w = (await WebAssembly.instantiate(module)).exports;
 assert.equal(w.memory.buffer.byteLength, 32 * 1024 * 1024);
 assert.throws(() => w.memory.grow(1), RangeError);
 assert.equal(w.hw_maximum_rows(), 192);
 assert.equal(w.hw_maximum_columns(), 512);
-assert.equal(w.hw_canvas_check(), 0);
 assert.equal(w.hw_text_truncated(), 0);
 assert.equal(w.hw_leader_present(), 0);
 function feed(bytes) {
@@ -244,4 +243,4 @@ assert.equal(w.hw_rows(), 1);
 assert.equal(w.hw_columns(), 1);
 console.log(JSON.stringify({status:'pass', wasmBytes:bytes.length, memoryBytes:w.memory.buffer.byteLength,
   imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, semanticMouse:true, textExtract:true, resizeFollowup:true,
-  imageFetch:true, graphicsSnapshot:true, canvasComposer:true}));
+  imageFetch:true, graphicsSnapshot:true}));

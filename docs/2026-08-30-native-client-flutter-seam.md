@@ -1,5 +1,14 @@
 # Native Howl client -> Flutter seam checkpoint — 2026-08-30
 
+> **Historical architecture note (2026-09-18):** the measurements below describe
+> the then-current `terminal.Content -> canvas.Composer` seam. That generic
+> multi-source compositor was later removed after every maintained graphical host
+> proved to be a single terminal source. The accepted owner is now one
+> `terminal.Canvas` producing the final backend-neutral terminal frame directly.
+> The measurements remain useful evidence for the work that led to the current
+> text/rendering implementation.
+
+
 ## Status
 
 The first native client-engine extraction is accepted enough to guide the next

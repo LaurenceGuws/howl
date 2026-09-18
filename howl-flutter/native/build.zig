@@ -47,14 +47,10 @@ pub fn build(b: *std.Build) void {
     text.addImport("native_c", native_c);
 
     const presentation = localModule(b, target, optimize, repo, "howl-render/src/presentation.zig");
-    const validation = localModule(b, target, optimize, repo, "howl-render/src/canvas_validation.zig");
-    const canvas = localModule(b, target, optimize, repo, "howl-render/src/canvas.zig");
-    canvas.addImport("canvas_validation", validation);
 
     const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal.zig");
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
-    terminal.addImport("canvas", canvas);
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),
@@ -66,7 +62,6 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_client", client);
     root.addImport("howl_session", session);
     root.addImport("howl_text", text);
-    root.addImport("canvas", canvas);
     root.addImport("terminal", terminal);
     root.addImport("presentation", presentation);
 

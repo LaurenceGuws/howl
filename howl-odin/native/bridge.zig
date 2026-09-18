@@ -10,8 +10,8 @@ const protocol = @import("howl_session").protocol;
 const session_process = @import("session_process");
 
 const render = @import("howl_render");
-const canvas = render.canvas;
 const terminal_render = render.terminal;
+const canvas = terminal_render;
 
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;
@@ -221,9 +221,7 @@ const Render = struct {
     connection: client.Connection,
     raw_observation: bool,
     fonts: *render.text.FontSet,
-    content: *terminal_render.Content,
-    composer: canvas.Composer,
-    source: canvas.SourceId,
+    canvas: *terminal_render.Canvas,
     cell_size: canvas.Size,
     frame_uploads: [render_resource_limit]canvas.FrameResourceUpload = undefined,
     frame_removals: [render_resource_limit]canvas.FrameResourceRef = undefined,
@@ -263,7 +261,7 @@ const Render = struct {
     }
 };
 
-fn renderContentConfig(cell_size: canvas.Size) terminal_render.ContentConfig {
+fn renderContentConfig(cell_size: canvas.Size) terminal_render.CanvasConfig {
     return .{
         .cell_size = cell_size,
         .box_drawing = .{
@@ -360,29 +358,11 @@ pub export fn howl_odin_bridge_render_create(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const content = terminal_render.initContent(allocator, fonts, renderContentConfig(cell_size)) catch |failure| {
+    const terminal_canvas = terminal_render.initCanvas(allocator, fonts, renderContentConfig(cell_size)) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    defer if (!accepted) terminal_render.deinitContent(content);
-    var composer = canvas.Composer.init(allocator, .{
-        .sources = 1,
-        .retained_resources = render_resource_limit,
-        .retained_commands = render_command_capacity,
-        .retained_pixel_bytes = render_pixel_capacity,
-        .composition_sources = 1,
-        .candidate_resources = render_resource_limit,
-        .candidate_commands = render_command_capacity,
-        .candidate_pixel_bytes = render_pixel_capacity,
-    }) catch |failure| {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
-        return null;
-    };
-    defer if (!accepted) composer.deinit();
-    const source = composer.registerSource() catch |failure| {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
-        return null;
-    };
+    defer if (!accepted) terminal_render.deinitCanvas(terminal_canvas);
     const frame_commands = allocator.alloc(canvas.Command, render_command_capacity) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
@@ -403,9 +383,7 @@ pub export fn howl_odin_bridge_render_create(
         .connection = connection,
         .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
         .fonts = fonts,
-        .content = content,
-        .composer = composer,
-        .source = source,
+        .canvas = terminal_canvas,
         .cell_size = cell_size,
         .frame_commands = frame_commands,
         .frame_pixels = frame_pixels,
@@ -422,8 +400,7 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     clearExternalUploads(renderer);
     allocator.free(renderer.frame_pixels);
     allocator.free(renderer.frame_commands);
-    renderer.composer.deinit();
-    terminal_render.deinitContent(renderer.content);
+    terminal_render.deinitCanvas(renderer.canvas);
     renderer.fonts.deinit();
     renderer.connection.deinit();
     releaseRuntime(renderer.runtime);
@@ -476,7 +453,8 @@ fn prepareExternalUploads(
     residency: *[render_resource_limit]canvas.Residency,
     residency_count: *usize,
 ) !void {
-    const missing = try renderer.composer.missingExternalResources(
+    const missing = try terminal_render.missingExternalResources(
+        renderer.canvas,
         renderer.residencies[0..renderer.residency_count],
         &renderer.missing_external,
     );
@@ -484,7 +462,7 @@ fn prepareExternalUploads(
     errdefer clearExternalUploads(renderer);
 
     for (missing) |external| {
-        if (@backingInt(external.resource.source) != @backingInt(renderer.source) or
+        if (external.resource.source != terminal_render.terminal_source or
             external.format != .rgba8)
             return error.InvalidExternalResource;
         const binding = findRenderImageBindingByResource(bindings, external.resource) orelse
@@ -586,44 +564,23 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
         renderer.setError("surface", @errorName(failure));
         return 3;
     };
-    renderer.composer.setComposition(.{
-        .surface = surface,
-        .sources = &.{.{
-            .source = renderer.source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
-        }},
-        .focused_source = renderer.source,
-    }) catch |failure| {
-        renderer.setError("composition", @errorName(failure));
-        return 3;
-    };
     const graphics = client.view.graphics(view);
     var candidate_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined;
     const bindings = terminal_render.planExternalImageBindings(
         renderer.image_bindings[0..renderer.image_binding_count],
-        terminal_render.contentUsage(renderer.content),
+        terminal_render.canvasUsage(renderer.canvas),
         graphics.images,
         &candidate_bindings,
     ) catch |failure| {
         renderer.setError("image_bindings", @errorName(failure));
         return 3;
     };
-    const update = terminal_render.takeContentUpdateWithImageBindings(renderer.content, view, .{
-        .pane = 1,
-        .source = renderer.source,
-        .visible_set_revision = 1,
-        .lifecycle_revision = 1,
-    }, bindings) catch |failure| {
-        renderer.setError("content", @errorName(failure));
+    terminal_render.updateWithImageBindings(renderer.canvas, view, bindings) catch |failure| {
+        renderer.setError("terminal_canvas", @errorName(failure));
         return 3;
     };
     @memcpy(renderer.image_bindings[0..bindings.len], bindings);
     renderer.image_binding_count = bindings.len;
-    renderer.composer.apply(renderer.source, update) catch |failure| {
-        renderer.setError("apply", @errorName(failure));
-        return 3;
-    };
     var prospective_residencies: [render_resource_limit]canvas.Residency = undefined;
     @memcpy(
         prospective_residencies[0..renderer.residency_count],
@@ -639,7 +596,8 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
         renderer.setError("image_refill", @errorName(failure));
         return 3;
     };
-    const frame = renderer.composer.frame(
+    const frame = terminal_render.frame(
+        renderer.canvas,
         prospective_residencies[0..prospective_residency_count],
         .{
             .uploads = &renderer.frame_uploads,
@@ -657,7 +615,7 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
     renderer.removal_count = frame.removals.len;
     renderer.command_count = frame.commands.len;
     renderer.pixel_count = frame.pixels.len;
-    renderer.frame_revision = @backingInt(frame.revision);
+    renderer.frame_revision = frame.revision;
     renderer.background_rgba = paddingBackground(client.view.presentation(view));
     for (0..begin.rows) |row| {
         renderer.selection_rows[row] = client.selection.rowShape(view, @intCast(row)).?;
@@ -2299,7 +2257,6 @@ test "Odin Canvas C records stay fixed and format tags follow Canvas" {
 }
 
 test "Odin residency upsert replaces generations without growing the table" {
-    const source: canvas.SourceId = @fromBackingInt(3);
     const local = canvas.ResourceRef{
         .resource = try canvas.ResourceId.local(9),
         .generation = @fromBackingInt(1),
@@ -2307,7 +2264,7 @@ test "Odin residency upsert replaces generations without growing the table" {
     var storage: [render_resource_limit]canvas.Residency = undefined;
     var count: usize = 0;
     try upsertResidency(&storage, &count, .{
-        .resource = try canvas.FrameResourceRef.local(source, local),
+        .resource = try canvas.FrameResourceRef.local(local),
         .format = .rgba8,
         .size = .{ .width = 2, .height = 2 },
     });
@@ -2315,7 +2272,7 @@ test "Odin residency upsert replaces generations without growing the table" {
     var replacement = local;
     replacement.generation = @fromBackingInt(2);
     try upsertResidency(&storage, &count, .{
-        .resource = try canvas.FrameResourceRef.local(source, replacement),
+        .resource = try canvas.FrameResourceRef.local(replacement),
         .format = .rgba8,
         .size = .{ .width = 4, .height = 3 },
     });

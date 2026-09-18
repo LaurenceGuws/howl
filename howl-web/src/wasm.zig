@@ -4,7 +4,6 @@ const p = @import("howl_session").protocol;
 const client = @import("howl_client");
 const rich = client.rich;
 const render = @import("howl_render");
-const canvas = render.canvas;
 const presentation = render.presentation;
 
 // A deliberately coarse canary budget, not the final terminal-renderer budget.
@@ -640,38 +639,4 @@ export fn hw_finish() u32 {
     phase = 0;
     output_len = 0;
     return 1;
-}
-
-// Actual shared Composer operations, not a compile-only import or glyph claim.
-export fn hw_canvas_check() u32 {
-    var memory = std.heap.FixedBufferAllocator.init(&arena);
-    var composer = canvas.Composer.init(memory.allocator(), .{
-        .sources = 1,
-        .retained_resources = 1,
-        .retained_commands = 4,
-        .retained_pixel_bytes = 64,
-        .composition_sources = 1,
-        .candidate_resources = 1,
-        .candidate_commands = 4,
-        .candidate_pixel_bytes = 64,
-    }) catch return 1;
-    defer composer.deinit();
-    const source = composer.registerSource() catch return 2;
-    const inputs = [_]canvas.Input{.{ .solid = .{
-        .rect = .{ .x = -4, .y = 2, .width = 20, .height = 10 },
-        .clip = .{ .x = 0, .y = 0, .width = 12, .height = 12 },
-        .color = .{ .r = 20, .g = 180, .b = 255, .a = 255 },
-    } }};
-    composer.apply(source, .{ .revision = @fromBackingInt(1), .uploads = &.{}, .removals = &.{}, .commands = &inputs }) catch return 3;
-    const placements = [_]canvas.Composer.Placement{.{
-        .source = source,
-        .origin = .{ .x = 0, .y = 0 },
-        .clip = .{ .x = 0, .y = 0, .width = 12, .height = 12 },
-    }};
-    composer.setComposition(.{ .surface = .{ .width = 12, .height = 12 }, .sources = &placements }) catch return 4;
-    var commands: [4]canvas.Command = undefined;
-    const frame = composer.frame(&.{}, .{ .uploads = &.{}, .removals = &.{}, .commands = &commands, .pixels = &.{} }) catch return 5;
-    if (frame.commands.len != 1) return 6;
-    const rect = frame.commands[0].solid.rect;
-    return if (rect.x == 0 and rect.y == 2 and rect.width == 12 and rect.height == 10) 0 else 7;
 }

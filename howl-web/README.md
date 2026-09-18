@@ -11,7 +11,7 @@ Web now has two maintained Wasm lanes with deliberately different host contracts
 The zero-import freestanding wire module owns bounded Howl framing, snapshot
 assembly and semantic control messages. The `wasm32-wasi` renderer lane owns the
 real `howl-client.view -> howl-text -> howl-render.terminal.Content -> Canvas
-Composer` path with the pinned FreeType/HarfBuzz target. The node still owns the
+Terminal Canvas` path with the pinned FreeType/HarfBuzz target. The node still owns the
 only canonical PTY and VT.
 
 The live canary keeps independent live-observer and control wire modules, and
@@ -163,8 +163,8 @@ real phone. Stop the dedicated session after testing.
 view. `zig build render-web` additionally builds the local live browser artifact
 under `render/zig-out/live-web/`. The live renderer accepts only complete bounded
 Howl snapshot responses, decodes through `howl-client.rich`, projects the shared
-client view, shapes/rasterizes through `howl-text`, publishes terminal Content,
-and derives a Canvas Composer frame.
+client view, shapes/rasterizes through `howl-text`, updates the shared Terminal Canvas,
+and derives one final terminal frame.
 
 The current live renderer uses coarse canary budgets: 128 MiB initial / 192 MiB
 maximum Wasm memory, a 24 MiB persistent Zig arena, a 20 MiB transient decode

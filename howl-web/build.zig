@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
         "hw_observe",                    "hw_request_image",              "hw_release_image",                 "hw_request_interaction_state",
         "hw_request_text_extract",       "hw_send_text",                  "hw_send_paste",                    "hw_send_named_key",
         "hw_send_unicode_key",           "hw_send_focus",                 "hw_send_mouse",                    "hw_send_resize",
-        "hw_send_resize_owned",          "hw_feed",                       "hw_finish",                        "hw_canvas_check",
+        "hw_send_resize_owned",          "hw_feed",                       "hw_finish",
     };
     wasm.export_memory = true;
     wasm.initial_memory = 32 * 1024 * 1024;

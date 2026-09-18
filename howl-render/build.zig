@@ -40,20 +40,6 @@ pub fn build(b: *std.Build) void {
     module.addImport("presentation", presentation);
     test_module.addImport("presentation", presentation);
 
-    const canvas_validation = b.createModule(.{
-        .root_source_file = b.path("src/canvas_validation.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const canvas = b.createModule(.{
-        .root_source_file = b.path("src/canvas.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    canvas.addImport("canvas_validation", canvas_validation);
-    module.addImport("canvas", canvas);
-    test_module.addImport("canvas", canvas);
-
     var client: ?*std.Build.Module = null;
     var text: ?*std.Build.Module = null;
     var text_test_fonts: ?*std.Build.Module = null;
@@ -81,7 +67,6 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
-            canvas,
         ));
         test_module.addImport("terminal", terminalNativeModule(
             b,
@@ -89,7 +74,6 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
-            canvas,
         ));
     }
 
@@ -101,7 +85,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     capability_tests.addImport("howl_render", test_module);
-    capability_tests.addImport("canvas", canvas);
     capability_tests.addImport("selected_capabilities", selected.createModule());
     if (client) |value| capability_tests.addImport("howl_client", value);
     if (text) |value| capability_tests.addImport("howl_text", value);
@@ -123,14 +106,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = check;
 }
 
-fn terminalNativeModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    client: *std.Build.Module,
-    text: *std.Build.Module,
-    canvas: *std.Build.Module,
-) *std.Build.Module {
+fn terminalNativeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, client: *std.Build.Module, text: *std.Build.Module) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -138,6 +114,5 @@ fn terminalNativeModule(
     });
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
-    terminal.addImport("canvas", canvas);
     return terminal;
 }

@@ -1,4 +1,4 @@
-//! Shares stateless Canvas identity, extent, and pixel-syntax validation.
+//! Shares stateless terminal-frame identity, extent, and pixel-syntax validation.
 
 const std = @import("std");
 
@@ -11,7 +11,7 @@ pub const Error = error{
     ArithmeticOverflow,
 };
 
-/// Rejects the reserved zero Composer source identity.
+/// Rejects the reserved zero terminal source identity.
 pub fn sourceIdentity(value: u64) error{InvalidIdentity}!void {
     if (value == 0) return error.InvalidIdentity;
 }

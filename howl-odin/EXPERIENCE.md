@@ -476,7 +476,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **PROVEN**
 
-- Real `howl-render` terminal Content + Canvas Composer.
+- Real shared `howl-render` Terminal Canvas.
 - SDL consumes Canvas solids, alpha masks, and RGBA resources without terminal
   cell parsing.
 - Canvas residency avoids redundant atlas upload on unchanged generations.
@@ -1082,7 +1082,7 @@ charter items are not included in this geometry checkpoint.
 Odin can transfer the existing image-free live `howl-client.view.Snapshot` from
 its observation worker to renderer preparation. One latest offer and one admitted
 render request own their allocations; displaced/consumed views are destroyed.
-Rendering still uses the same terminal Content and Canvas Composer. No codec,
+Rendering uses the same shared Terminal Canvas. No codec,
 route, protocol, terminal quality, producer pacing, or redraw-rate change.
 
 This optimization applies independently to Unix/TCP/SSH. Image-bearing cuts and

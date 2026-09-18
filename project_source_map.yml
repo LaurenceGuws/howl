@@ -25,13 +25,12 @@ experimental:
     observation plus canonical input/control, not shell execution or remote
     transport
   howl-render: >-
-    backend-neutral drawing/presentation experiments consuming howl-text and
-    howl-client.view; terminal Content emits complete Canvas ProducerUpdate
-    state, while private terminal_glyph_cache owns caller-bounded shaping/alpha
-    atlas reuse using howl-text only; terminal presentation additionally owns
-    exact Host-recoverable terminal-image resource projection;
-    Composer-derived Canvas frames are the native/Web pressure-proven semantic
-    presentation seam; no stable mobile ABI is accepted
+    one shared Terminal Canvas consuming howl-client.view and howl-text;
+    it owns terminal pixel geometry, colors/decorations/cursor presentation,
+    exact terminal-image resource projection, backend residency reconciliation,
+    and final backend-neutral terminal frames; private terminal_glyph_cache owns
+    bounded shape/alpha-atlas reuse using howl-text only; there is no generic
+    multi-source Canvas compositor or stable mobile ABI
   howl-flutter: >-
     maintained native visual canary for the Howl client: platform
     input/viewport/history/selection/native-size UX plus an app-private

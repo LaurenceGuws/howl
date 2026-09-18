@@ -216,8 +216,8 @@ Current canary:
   text-shaped extent, trimming untouched trailing blank cells rather than
   pretending a wrapped logical line has one stable desktop identity. VT itself
   normalizes wide-cell continuation endpoints during canonical text extraction;
-- terminal content is now projected by the real `howl-render` terminal Content
-  and Canvas Composer; the Odin bridge exposes fixed C resource/removal/command
+- terminal content is projected by the shared `howl-render` Terminal Canvas;
+  the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,
   alpha-mask, and RGBA commands without parsing terminal cells itself;
 - Canvas residency survives unchanged revisions, so the first frame uploads only
