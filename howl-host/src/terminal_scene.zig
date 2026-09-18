@@ -14,11 +14,17 @@ const text = @import("howl_text");
 const vk_surface = @import("howl_vk").surface;
 
 const resource_limit: usize = terminal.maximum_external_images + 1;
+const prospective_resource_limit: usize = resource_limit + terminal.maximum_external_images;
 const overlay_resource_limit: usize = terminal_fast.overlay_resource_limit;
 const atlas_extent: u16 = 512;
 const atlas_pixel_bytes: usize = @as(usize, atlas_extent) * atlas_extent;
 const command_capacity: usize = presentation.maximum_canvas_commands;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
+
+const ExternalUpload = struct {
+    external: canvas.FrameExternalResource,
+    fetched: client.images.Resource,
+};
 
 pub const GenericPrepared = struct {
     plan: vk_surface.Plan,
@@ -83,6 +89,8 @@ pub const Scene = struct {
     surface_commands: []vk_surface.FrameCommand,
     surface_residencies: []vk_surface.Residency,
     canvas_residencies: []canvas.Residency,
+    image_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined,
+    image_binding_count: usize = 0,
     builder: vk_surface.FrameBuilder,
     residency: vk_surface.ResidencyStore,
     overlay_residency: vk_surface.ResidencyStore,
@@ -154,7 +162,7 @@ pub const Scene = struct {
         errdefer allocator.free(surface_commands);
         const surface_residencies = try allocator.alloc(vk_surface.Residency, resource_limit);
         errdefer allocator.free(surface_residencies);
-        const canvas_residencies = try allocator.alloc(canvas.Residency, resource_limit);
+        const canvas_residencies = try allocator.alloc(canvas.Residency, prospective_resource_limit);
         errdefer allocator.free(canvas_residencies);
         var builder = try vk_surface.FrameBuilder.init(allocator);
         errdefer builder.deinit();
@@ -267,9 +275,17 @@ pub const Scene = struct {
 
         const view = try client.view.projectView(self.allocator, &rich);
         defer client.view.deinit(view);
-        if (client.view.graphics(view).images.len != 0)
-            return error.GraphicsRefillNotImplemented;
-        try terminal.update(self.canvas, view);
+        const graphics = client.view.graphics(view);
+        var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+        const bindings = try terminal.planExternalImageBindings(
+            self.image_bindings[0..self.image_binding_count],
+            terminal.canvasUsage(self.canvas),
+            graphics.images,
+            &candidate_bindings,
+        );
+        try terminal.updateWithImageBindings(self.canvas, view, bindings);
+        @memcpy(self.image_bindings[0..bindings.len], bindings);
+        self.image_binding_count = bindings.len;
 
         const resident = try self.residency.enumerate(self.surface_residencies);
         if (resident.len > self.canvas_residencies.len) return error.Capacity;
@@ -284,9 +300,19 @@ pub const Scene = struct {
                 .size = .{ .width = value.width, .height = value.height },
             };
         }
+        var canvas_residency_count = resident.len;
+        var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
+        var external_upload_count: usize = 0;
+        defer clearExternalUploads(&external_uploads, &external_upload_count);
+        try self.prepareExternalUploads(
+            bindings,
+            &canvas_residency_count,
+            &external_uploads,
+            &external_upload_count,
+        );
         const frame = try terminal.frame(
             self.canvas,
-            self.canvas_residencies[0..resident.len],
+            self.canvas_residencies[0..canvas_residency_count],
             .{
                 .uploads = self.frame_uploads,
                 .removals = self.frame_removals,
@@ -296,6 +322,7 @@ pub const Scene = struct {
         );
         const generic = try adaptCanvasFrame(
             frame,
+            external_uploads[0..external_upload_count],
             self.surface_uploads,
             self.surface_removals,
             self.surface_commands,
@@ -313,6 +340,59 @@ pub const Scene = struct {
             .you_are_leader = begin.you_are_leader,
             .mode = .{ .generic = .{ .plan = plan } },
         };
+    }
+
+    fn prepareExternalUploads(
+        self: *Scene,
+        bindings: []const terminal.ExternalImageBinding,
+        canvas_residency_count: *usize,
+        uploads: *[terminal.maximum_external_images]ExternalUpload,
+        upload_count: *usize,
+    ) !void {
+        var missing_storage: [terminal.maximum_external_images]canvas.FrameExternalResource = undefined;
+        const missing = try terminal.missingExternalResources(
+            self.canvas,
+            self.canvas_residencies[0..canvas_residency_count.*],
+            &missing_storage,
+        );
+        if (missing.len > uploads.len) return error.Capacity;
+
+        for (missing) |external| {
+            if (external.format != .rgba8) return error.InvalidFrame;
+            const binding = findImageBindingByResource(bindings, external.resource) orelse
+                return error.InvalidFrame;
+            var fetched = try client.images.request(
+                &self.connection,
+                self.allocator,
+                binding.image_id,
+                binding.generation,
+            );
+            var fetched_owned = true;
+            errdefer if (fetched_owned) fetched.deinit();
+
+            const stride = std.math.mul(usize, @as(usize, external.size.width), 4) catch
+                return error.ArithmeticOverflow;
+            const pixel_count = std.math.mul(usize, stride, external.size.height) catch
+                return error.ArithmeticOverflow;
+            if (external.stride != stride or
+                fetched.width != external.size.width or
+                fetched.height != external.size.height or
+                fetched.pixels.len != pixel_count)
+                return error.InvalidFrame;
+
+            uploads[upload_count.*] = .{ .external = external, .fetched = fetched };
+            upload_count.* += 1;
+            fetched_owned = false;
+            try upsertCanvasResidency(
+                self.canvas_residencies,
+                canvas_residency_count,
+                .{
+                    .resource = external.resource,
+                    .format = external.format,
+                    .size = external.size,
+                },
+            );
+        }
     }
 
     /// Abandons one prepared frame that will never be submitted. This is used
@@ -340,13 +420,52 @@ pub const Scene = struct {
     }
 };
 
+fn clearExternalUploads(
+    uploads: *[terminal.maximum_external_images]ExternalUpload,
+    count: *usize,
+) void {
+    while (count.* != 0) {
+        count.* -= 1;
+        uploads[count.*].fetched.deinit();
+    }
+}
+
+fn findImageBindingByResource(
+    bindings: []const terminal.ExternalImageBinding,
+    resource: canvas.ResourceRef,
+) ?terminal.ExternalImageBinding {
+    for (bindings) |binding| {
+        if (std.meta.eql(binding.resource, resource)) return binding;
+    }
+    return null;
+}
+
+fn upsertCanvasResidency(
+    storage: []canvas.Residency,
+    count: *usize,
+    value: canvas.Residency,
+) error{Capacity}!void {
+    for (storage[0..count.*]) |*existing| {
+        if (existing.resource.resource == value.resource.resource) {
+            existing.* = value;
+            return;
+        }
+    }
+    if (count.* == storage.len) return error.Capacity;
+    storage[count.*] = value;
+    count.* += 1;
+}
+
 fn adaptCanvasFrame(
     frame: terminal.Frame,
+    external_uploads: []const ExternalUpload,
     uploads: []vk_surface.Upload,
     removals: []vk_surface.Removal,
     commands: []vk_surface.FrameCommand,
 ) !vk_surface.Frame {
-    if (frame.uploads.len > uploads.len or
+    const upload_count = std.math.add(usize, frame.uploads.len, external_uploads.len) catch
+        return error.ArithmeticOverflow;
+    if (upload_count > uploads.len or
         frame.removals.len > removals.len or
         frame.commands.len > commands.len)
         return error.Capacity;
@@ -364,6 +483,16 @@ fn adaptCanvasFrame(
             .height = value.size.height,
             .stride = value.stride,
             .pixels = frame.pixels[value.pixel_offset..end],
+        };
+    }
+    for (external_uploads, frame.uploads.len..) |value, index| {
+        uploads[index] = .{
+            .resource = try surfaceResource(value.external.resource),
+            .kind = .rgba,
+            .width = value.external.size.width,
+            .height = value.external.size.height,
+            .stride = value.external.stride,
+            .pixels = value.fetched.pixels,
         };
     }
     for (frame.removals, 0..) |value, index| removals[index] = .{
@@ -401,7 +530,7 @@ fn adaptCanvasFrame(
     };
     return .{
         .revision = frame.revision,
-        .uploads = uploads[0..frame.uploads.len],
+        .uploads = uploads[0..upload_count],
         .removals = removals[0..frame.removals.len],
         .commands = commands[0..frame.commands.len],
     };
@@ -435,4 +564,88 @@ fn surfaceColor(value: canvas.Color) [4]f32 {
         @as(f32, @floatFromInt(value.b)) / 255.0,
         @as(f32, @floatFromInt(value.a)) / 255.0,
     };
+}
+
+test "terminal scene prospective residency replaces one logical image identity" {
+    var storage: [3]canvas.Residency = undefined;
+    var count: usize = 0;
+    const resource = try canvas.ResourceId.init(2);
+    const first = canvas.Residency{
+        .resource = .{ .resource = resource, .generation = @fromBackingInt(3) },
+        .format = .rgba8,
+        .size = .{ .width = 2, .height = 2 },
+    };
+    const replacement = canvas.Residency{
+        .resource = .{ .resource = resource, .generation = @fromBackingInt(4) },
+        .format = .rgba8,
+        .size = .{ .width = 3, .height = 1 },
+    };
+    try upsertCanvasResidency(&storage, &count, first);
+    try upsertCanvasResidency(&storage, &count, replacement);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqualDeep(replacement, storage[0]);
+
+    const second = canvas.Residency{
+        .resource = .{
+            .resource = try canvas.ResourceId.init(3),
+            .generation = @fromBackingInt(1),
+        },
+        .format = .rgba8,
+        .size = .{ .width = 1, .height = 1 },
+    };
+    try upsertCanvasResidency(&storage, &count, second);
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
+    const pixels = try std.testing.allocator.dupe(u8, &.{ 1, 2, 3, 4 });
+    var fetched = client.images.Resource{
+        .allocator = std.testing.allocator,
+        .image_id = 7,
+        .generation = 9,
+        .width = 1,
+        .height = 1,
+        .pixels = pixels,
+    };
+    defer fetched.deinit();
+
+    const resource = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.init(2),
+        .generation = @fromBackingInt(9),
+    };
+    const external = ExternalUpload{
+        .external = .{
+            .resource = resource,
+            .format = .rgba8,
+            .size = .{ .width = 1, .height = 1 },
+            .stride = 4,
+        },
+        .fetched = fetched,
+    };
+    const frame = terminal.Frame{
+        .revision = 1,
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .pixels = &.{},
+    };
+    var uploads: [1]vk_surface.Upload = undefined;
+    var removals: [1]vk_surface.Removal = undefined;
+    var commands: [1]vk_surface.FrameCommand = undefined;
+    const adapted = try adaptCanvasFrame(
+        frame,
+        &.{external},
+        &uploads,
+        &removals,
+        &commands,
+    );
+    try std.testing.expectEqual(@as(usize, 1), adapted.uploads.len);
+    const upload = adapted.uploads[0];
+    try std.testing.expectEqual(vk_surface.Kind.rgba, upload.kind);
+    try std.testing.expectEqual(@as(u64, 2), upload.resource.resource);
+    try std.testing.expectEqual(@as(u64, 9), upload.resource.generation);
+    try std.testing.expectEqual(@as(u16, 1), upload.width);
+    try std.testing.expectEqual(@as(u16, 1), upload.height);
+    try std.testing.expectEqual(@as(usize, 4), upload.stride);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, upload.pixels);
 }

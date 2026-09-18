@@ -167,7 +167,8 @@ pub fn build(b: *std.Build) void {
         "primary_font",
         b.root.joinString(b.allocator, "../howl-text/testdata/primary.ttf") catch @panic("OOM"),
     );
-    fast_test_module.addImport("test_fonts", fast_test_fonts.createModule());
+    const test_fonts = fast_test_fonts.createModule();
+    fast_test_module.addImport("test_fonts", test_fonts);
     fast_test_module.linkSystemLibrary("vulkan", .{});
     const fast_tests = b.addTest(.{
         .name = "howl-host-terminal-fast",
@@ -177,10 +178,33 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&fast_tests.step);
 
+    const scene_test_module = b.createModule(.{
+        .root_source_file = b.path("src/terminal_scene.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
+    scene_test_module.addImport("howl_client", client);
+    scene_test_module.addImport("howl_text", text);
+    scene_test_module.addImport("presentation", presentation);
+    scene_test_module.addImport("terminal", terminal);
+    scene_test_module.addImport("test_fonts", test_fonts);
+    scene_test_module.linkSystemLibrary("vulkan", .{});
+    const scene_tests = b.addTest(.{
+        .name = "howl-host-terminal-scene",
+        .root_module = scene_test_module,
+        .filters = &.{"terminal scene"},
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&scene_tests.step);
+
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(layout_tests).step);
     test_step.dependOn(&b.addRunArtifact(input_tests).step);
     test_step.dependOn(&b.addRunArtifact(fast_tests).step);
+    test_step.dependOn(&b.addRunArtifact(scene_tests).step);
     b.default_step = check;
 }
