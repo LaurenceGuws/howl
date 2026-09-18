@@ -3334,11 +3334,12 @@ references:
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/terminal.zig,
               symbol: scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
-          kitty.csi.decstr: {raw: "CSI ! p", effect: reject unsupported DECSTR,
-            conditions: Kitty recognizes the final but rejects the unsupported intermediate while Howl applies DECSTR,
+          kitty.csi.decstr: {raw: "CSI ! p", effect: soft reset,
+            conditions: Howl clears both Kitty keyboard stacks including saved predecessors like Kitty while
+              retaining its non-erasing no-cursor-movement and no-bank-switch soft-reset policy,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
-              path: howl-vt/test/unit/terminal_test.zig,
-              symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECSTR clears both Kitty stacks without erasing moving or switching banks"}}}
           kitty.csi.decrqm: {raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
             conditions: supported ANSI and DEC mode sets differ, howl: {support: partial,
               disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,

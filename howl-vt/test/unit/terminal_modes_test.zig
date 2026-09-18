@@ -366,6 +366,66 @@ test "kitty keyboard flags stay separate across alternate screen" {
     try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
 }
 
+test "DECSTR clears both Kitty stacks without erasing moving or switching banks" {
+    for ([_]bool{ false, true }) |reset_on_alt| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        write(&terminal, "\x1b[=1u\x1b[>9u\x1b[?u\x1b[?47h\x1b[=3u\x1b[>8u\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?9u\x1b[?8u", pendingOutput(&terminal));
+        try consumeReplies(&terminal);
+        if (!reset_on_alt) write(&terminal, "\x1b[?47l");
+        write(&terminal, "\x1b[1mX\x1b[2;3H");
+        try std.testing.expectEqualStrings("\x1b[27u", encodeKey(&terminal, .{ .named = .escape }, .{}));
+        try std.testing.expectEqualStrings("\x1b[233u", encodeKey(&terminal, try Terminal.Key.initUnicode('é'), .{}));
+
+        try std.testing.expect((try terminal.feed("\x1b[!p")).stateChanged());
+        const view = terminal.semanticView(0);
+        try std.testing.expectEqual(reset_on_alt, view.is_alternate_screen);
+        try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+        try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+        try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+        try std.testing.expect(view.cellInfoAt(0, 0).attrs.bold);
+        try std.testing.expectEqualStrings("\x1b", encodeKey(&terminal, .{ .named = .escape }, .{}));
+        try std.testing.expectEqualStrings("é", encodeKey(&terminal, try Terminal.Key.initUnicode('é'), .{}));
+        write(&terminal, "Y");
+        try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 2).attrs.bold);
+
+        write(&terminal, "\x1b[?47l\x1b[?u");
+        try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
+        write(&terminal, "\x1b[?u\x1b[?47h\x1b[?u");
+        try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?0u\x1b[?0u\x1b[?0u\x1b[?0u", pendingOutput(&terminal));
+    }
+}
+
+test "DECSTR counts live Kitty predecessors but not popped tail bytes" {
+    const cases = [_]struct { setup: []const u8, changed: bool }{
+        .{ .setup = "", .changed = false },
+        .{ .setup = "\x1b[=5u\x1b[>0u", .changed = true },
+        .{ .setup = "\x1b[>0u", .changed = true },
+        .{ .setup = "\x1b[?47h\x1b[=3u\x1b[?47l", .changed = true },
+        .{ .setup = "\x1b[?47h\x1b[=3u\x1b[>0u\x1b[?47l", .changed = true },
+        .{ .setup = "\x1b[=5u\x1b[>0u\x1b[<u\x1b[=0u", .changed = false },
+    };
+    for (cases) |case| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        write(&terminal, case.setup);
+        const before = terminal.semanticSequence();
+        try std.testing.expectEqual(case.changed, (try terminal.feed("\x1b[!p")).stateChanged());
+        try std.testing.expectEqual(before + @intFromBool(case.changed), terminal.semanticSequence());
+        const after = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed("\x1b[!p\x1b[!p")).stateChanged());
+        try std.testing.expectEqual(after, terminal.semanticSequence());
+        try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
+        write(&terminal, "\x1b[?u\x1b[?47h");
+        try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
+        write(&terminal, "\x1b[?u");
+        try std.testing.expectEqualStrings("\x1b[?0u\x1b[?0u", pendingOutput(&terminal));
+    }
+}
+
 test "kitty keyboard query preserves full pending output on failure" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
@@ -512,6 +572,8 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     defer enabled_repeat.deinit();
     try std.testing.expectEqualStrings("\x1b[97;1:2u", enabled_repeat.bytes);
     try std.testing.expect((try terminal.feed("\x1b[?8r")).stateChanged());
+    // DECSTR clears Kitty flags, but preserves DECARM's restored repeat policy.
+    try std.testing.expect((try terminal.feed("\x1b[!p")).stateChanged());
     try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
 
     try consumeReplies(&terminal);

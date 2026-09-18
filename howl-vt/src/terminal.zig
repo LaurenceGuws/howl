@@ -5856,7 +5856,7 @@ pub const Terminal = struct {
         self.charset = .{};
         self.stream_state.parser.resetTextEncoding();
         self.reply_buffer.resetFraming();
-        self.kitty.resetTerminalState();
+        self.kitty = .{};
         self.locator.reset();
         self.consequences.resetTerminal();
         self.properties.resetTerminal();
@@ -5894,6 +5894,7 @@ pub const Terminal = struct {
         self.modes.mouse_protocol = .none;
         changed = self.reply_buffer.setEightBitControls(false) or changed;
         changed = self.charset.reset() or changed;
+        changed = self.kitty.resetTerminalState() or changed;
         return changed;
     }
 

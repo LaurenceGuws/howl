@@ -162,10 +162,12 @@ pub const KeyboardState = struct {
         return if (alt_active) &self.alt else &self.main;
     }
 
-    /// Resets both per-screen keyboard stacks during terminal hard reset.
-    pub fn resetTerminalState(self: *KeyboardState) void {
-        self.main = .{};
-        self.alt = .{};
+    /// Clears both keyboard stacks, reporting only live semantic state.
+    pub fn resetTerminalState(self: *KeyboardState) bool {
+        const changed = self.main.keyboard.flags != 0 or self.main.keyboard.len != 0 or
+            self.alt.keyboard.flags != 0 or self.alt.keyboard.len != 0;
+        self.* = .{};
+        return changed;
     }
 };
 
@@ -181,7 +183,7 @@ test "keyboard state keeps primary and alternate stacks independent" {
     try std.testing.expectEqual(@as(u8, 3), state.activeScreenConst(false).keyboard.flags);
     try std.testing.expectEqual(@as(u8, 2), state.activeScreenConst(true).keyboard.flags);
 
-    state.resetTerminalState();
+    try std.testing.expect(state.resetTerminalState());
     try std.testing.expectEqual(@as(u8, 0), state.activeScreenConst(false).keyboard.flags);
     try std.testing.expectEqual(@as(u8, 0), state.activeScreenConst(true).keyboard.flags);
     try std.testing.expectEqual(@as(u8, 0), state.activeScreenConst(false).keyboard.len);
