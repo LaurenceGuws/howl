@@ -13,7 +13,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v39';
+const CANARY_GENERATION = 'v41-retina';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -55,6 +55,9 @@ const glyphCoverageLut = Uint8Array.from({length:256}, (_, value) => {
 const stager = new TerminalInputStager();
 const modifiedKeys = new Map();
 const presentationPixels = [16, 12, 9];
+const presentationCellWidths = [10, 8, 6];
+const presentationLineHeights = [20, 15, 12];
+const rasterScale = Math.max(1, Math.min(4, Math.ceil(devicePixelRatio || 1)));
 let presentationIndex = 0;
 let presentationChanging = false;
 let renderAssets = null;
@@ -130,6 +133,7 @@ function telemetryContext() {
   return {
     generation: CANARY_GENERATION,
     presentation_pixels:presentationPixels[presentationIndex],
+    raster_scale:rasterScale,
     display_mode: matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser',
     visibility: document.visibilityState,
     focused: document.hasFocus(),
@@ -160,7 +164,7 @@ async function fetchBytes(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-function initializeRendererPresentation(target, fontPixels) {
+function initializeRendererPresentation(target, fontPixels, cellWidth, lineHeight) {
   if (!renderAssets) throw new Error('renderer assets are not loaded');
   const {font, fallbackFont, nerdFont} = renderAssets;
   if (font.length > target.exports.rv_font_capacity()) throw new Error('font exceeds renderer input bound');
@@ -169,11 +173,14 @@ function initializeRendererPresentation(target, fontPixels) {
   bytesAt(target.exports.memory, target.exports.rv_font_ptr(), font.length).set(font);
   bytesAt(target.exports.memory, target.exports.rv_fallback_font_ptr(), fallbackFont.length).set(fallbackFont);
   bytesAt(target.exports.memory, target.exports.rv_symbol_font_ptr(), nerdFont.length).set(nerdFont);
-  if (target.exports.rv_init(font.length, fallbackFont.length, nerdFont.length, fontPixels) !== 1)
+  if (target.exports.rv_init_presentation(
+    font.length, fallbackFont.length, nerdFont.length,
+    fontPixels * rasterScale, cellWidth * rasterScale, lineHeight * rasterScale,
+  ) !== 1)
     throw new Error(errorText(target.exports) || 'renderer init failed');
 }
 
-async function instantiateRenderer(fontPixels) {
+async function instantiateRenderer(fontPixels, cellWidth, lineHeight) {
   if (!renderAssets) throw new Error('renderer assets are not loaded');
   const {module, byteLength} = renderAssets;
   const runtime = createTextRuntime({output:()=>{}});
@@ -181,7 +188,7 @@ async function instantiateRenderer(fontPixels) {
   runtime.bind(instance.exports.memory);
   instance.exports._initialize?.();
   const candidate = {exports:instance.exports, runtime, bytes:byteLength};
-  initializeRendererPresentation(candidate, fontPixels);
+  initializeRendererPresentation(candidate, fontPixels, cellWidth, lineHeight);
   return candidate;
 }
 
@@ -194,7 +201,11 @@ async function load() {
   const renderModule = await WebAssembly.compile(renderBytes);
   assertTextImports(renderModule);
   renderAssets = {module:renderModule, byteLength:renderBytes.length, font, fallbackFont, nerdFont};
-  renderer = await instantiateRenderer(presentationPixels[presentationIndex]);
+  renderer = await instantiateRenderer(
+    presentationPixels[presentationIndex],
+    presentationCellWidths[presentationIndex],
+    presentationLineHeights[presentationIndex],
+  );
   observer = await WireConnection.connect('observer');
   control = await WireConnection.connect('control');
   resetEditor();
@@ -843,6 +854,11 @@ function drawFrame(frame, framePixels) {
   const [width, height] = frame.surface;
   const surfaceResized = terminal.width !== width || terminal.height !== height;
   if (surfaceResized) { terminal.width = width; terminal.height = height; }
+  const logicalWidth = width / rasterScale;
+  if (terminal.style.width !== `${logicalWidth}px`) terminal.style.width = `${logicalWidth}px`;
+  // CSS `height:auto` preserves the backing-store aspect ratio if max-width
+  // temporarily constrains a follower before its next geometry cut.
+  if (terminal.style.height) terminal.style.height = '';
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, width, height);
   const surfaceFinished = performance.now();
@@ -1189,7 +1205,7 @@ function scrollHistoryWheel({deltaY, deltaMode}) {
   if (historyWheelTimer == null) history.beginGesture();
   else clearTimeout(historyWheelTimer);
   historyWheelTimer = setTimeout(() => { history.endGesture(); historyWheelTimer = null; }, 160);
-  const rowHeight = lastFrame.cell[1];
+  const rowHeight = lastFrame.cell[1] / rasterScale;
   let pixels = deltaY;
   if (deltaMode === WheelEvent.DOM_DELTA_LINE) pixels *= rowHeight;
   else if (deltaMode === WheelEvent.DOM_DELTA_PAGE) pixels *= Math.max(rowHeight, terminal.clientHeight);
@@ -1256,6 +1272,8 @@ async function cyclePresentationZoom() {
   if (presentationChanging || !renderAssets) return;
   const nextIndex = (presentationIndex + 1) % presentationPixels.length;
   const nextPixels = presentationPixels[nextIndex];
+  const nextCellWidth = presentationCellWidths[nextIndex];
+  const nextLineHeight = presentationLineHeights[nextIndex];
   presentationChanging = true;
   zoomButton.disabled = true;
   liveFrameScheduler.reset();
@@ -1264,10 +1282,15 @@ async function cyclePresentationZoom() {
     const previousPixels = presentationPixels[presentationIndex];
     if (renderer.exports.rv_reset() !== 1) throw new Error('renderer reset failed');
     try {
-      initializeRendererPresentation(renderer, nextPixels);
+      initializeRendererPresentation(renderer, nextPixels, nextCellWidth, nextLineHeight);
     } catch (error) {
       renderer.exports.rv_reset();
-      initializeRendererPresentation(renderer, previousPixels);
+      initializeRendererPresentation(
+        renderer,
+        previousPixels,
+        presentationCellWidths[presentationIndex],
+        presentationLineHeights[presentationIndex],
+      );
       throw error;
     }
     resources.clear();
@@ -1300,7 +1323,8 @@ keyboardButton.addEventListener('click', focusKeyboard);
 zoomButton.addEventListener('click', () => { void cyclePresentationZoom(); });
 leaderButton.addEventListener('click', () => {
   if (!lastFrame?.cell || !control || control.closed) return;
-  const [cellWidth, cellHeight] = lastFrame.cell;
+  const cellWidth = lastFrame.cell[0] / rasterScale;
+  const cellHeight = lastFrame.cell[1] / rasterScale;
   if (!cellWidth || !cellHeight) return;
   const viewportHeight = Math.floor(window.visualViewport?.height ?? window.innerHeight);
   const width = Math.floor(main.clientWidth);
@@ -1464,7 +1488,8 @@ function scheduleViewportResize() {
   resizeTimer = setTimeout(() => {
     resizeTimer = null;
     if (!lastFrame?.cell || !control || control.closed) return;
-    const [cellWidth, cellHeight] = lastFrame.cell;
+    const cellWidth = lastFrame.cell[0] / rasterScale;
+    const cellHeight = lastFrame.cell[1] / rasterScale;
     if (!cellWidth || !cellHeight) return;
     const viewportHeight = Math.floor(window.visualViewport?.height ?? window.innerHeight);
     const width = Math.floor(main.clientWidth);
@@ -1477,8 +1502,8 @@ function scheduleViewportResize() {
       Math.floor(Math.max(cellHeight * 2, viewportHeight - top - toolbarHeight - 28) / cellHeight),
       2, maximumRows,
     );
-    const currentColumns = Math.floor(lastFrame.surface[0] / cellWidth);
-    const currentRows = Math.floor(lastFrame.surface[1] / cellHeight);
+    const currentColumns = Math.floor(lastFrame.surface[0] / lastFrame.cell[0]);
+    const currentRows = Math.floor(lastFrame.surface[1] / lastFrame.cell[1]);
     if ((rows === currentRows && columns === currentColumns) ||
         (requestedGeometry?.rows === rows && requestedGeometry?.columns === columns)) return;
     const controlId = control?.clientId == null ? null : String(control.clientId);
