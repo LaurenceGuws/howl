@@ -3,6 +3,16 @@
 `howl-host` is Howl's native Linux performance canary. It is a concrete client,
 not a shared UI framework and not part of the core gate.
 
+Startup is attach-only:
+
+    howl-host ENDPOINT FONT
+    howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT
+
+The Host never creates its initial terminal. That lifetime belongs to the external
+terminal owner, normally howl server. The experimental F9/F11/F12 split/tab
+canary may still create one sibling howl-sessiond; that exception remains
+explicit until terminal creation earns a canonical server-owned control surface.
+
 Current foundation:
 
 - one Wayland window owner;

@@ -48,7 +48,8 @@ experimental:
     path accepted, Linux bundled host proven, iOS native-host semantics
     pressure-proven; iOS owns no PTY/userland; not part of the core gate
   howl-host: >-
-    native Linux Vulkan performance canary: concrete Wayland window and
+    native Linux Vulkan performance canary: attach-only process root over
+    externally owned terminal endpoints, concrete Wayland window and
     explicit-sync DMA-BUF presentation, plus a deliberately small host-local
     bounded tab/split topology that prevents single-terminal architecture from
     becoming implicit product policy; canonical Session revisions now stream
