@@ -15,7 +15,7 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 planned:
-  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; the CLI also hosts the first one-process multi-terminal collection canary while graphical clients remain ordinary attach consumers
+  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; the CLI hosts the one-process shared-terminal collection while the native Vulkan host proves an in-process Session route and advanced embedders may use howl-vt directly
 
 experimental:
   - howl-client
@@ -29,15 +29,16 @@ experimental:
   - howl-odin
 
 ownership:
-  - a session lives on the node, not in a client
-  - one session owns exactly one authoritative PTY and VT
-  - clients observe semantic state and submit serialized input or explicit control mutations
+  - terminal lifetime ownership is explicit: a shared owner may publish Session endpoints, a local application may own Session in-process, and an advanced embedder may own its byte runtime around howl-vt directly
+  - one Session owns exactly one authoritative PTY and VT; Session is the batteries-included Linux coupling, not a prerequisite for direct howl-vt embedding
+  - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
+  - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
   - client views resolve transported numeric/bit encodings before presentation code consumes them
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
   - renderer and platform policy stay outside VT and session
-  - VT owns retained image/frame/animation semantics; Session owns monotonic service/wake scheduling; clients and renderers do not run terminal animation clocks
-  - canonical graphics/resource identity crosses the Session boundary, while Terminal Canvas/backend residency stays presentation-local
+  - VT owns retained image/frame/animation semantics; Session supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock; renderers do not invent a second terminal-animation clock
+  - canonical graphics/resource identity crosses an attach boundary when one exists, while Terminal Canvas/backend residency stays presentation-local
 
 workspace:
   local_root_gate: [howl-vt, howl-session, howl-pty, howl-text]
