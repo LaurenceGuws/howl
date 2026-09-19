@@ -50,6 +50,14 @@ pub fn build(b: *std.Build) void {
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const client = client_dependency.module("howl_client");
+    const local_terminal = b.createModule(.{
+        .root_source_file = b.path("src/local_terminal.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    local_terminal.addImport("host_c", host_c);
+    local_terminal.addImport("howl_session", session.module("howl_session"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const text = text_dependency.module("howl_text");
     const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
@@ -77,6 +85,8 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("howl_client", client);
     root.addImport("howl_session", session.module("howl_session"));
+    root.addImport("howl_vt", vt.module("howl_vt"));
+    root.addImport("local_terminal", local_terminal);
     root.addImport("howl_text", text);
     root.addImport("presentation", presentation);
     root.addImport("terminal", terminal);
@@ -127,6 +137,14 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const local_terminal_tests = b.addTest(.{
+        .name = "howl-host-local-terminal",
+        .root_module = local_terminal,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&local_terminal_tests.step);
+
     const layout_tests = b.addTest(.{
         .name = "howl-host-layout",
         .root_module = b.createModule(.{
@@ -172,6 +190,7 @@ pub fn build(b: *std.Build) void {
     input_test_module.addImport("howl_client", client);
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     input_test_module.addImport("howl_session", session.module("howl_session"));
+    input_test_module.addImport("local_terminal", local_terminal);
     input_test_module.addImport("host_c", host_c);
     const input_tests = b.addTest(.{
         .name = "howl-host-input",
@@ -215,7 +234,10 @@ pub fn build(b: *std.Build) void {
     });
     scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
     scene_test_module.addImport("howl_client", client);
+    scene_test_module.addImport("howl_session", session.module("howl_session"));
+    scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("howl_text", text);
+    scene_test_module.addImport("local_terminal", local_terminal);
     scene_test_module.addImport("presentation", presentation);
     scene_test_module.addImport("terminal", terminal);
     scene_test_module.addImport("test_fonts", test_fonts);
@@ -231,6 +253,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(local_terminal_tests).step);
     test_step.dependOn(&b.addRunArtifact(layout_tests).step);
     test_step.dependOn(&b.addRunArtifact(key_repeat_tests).step);
     test_step.dependOn(&b.addRunArtifact(scrollback_tests).step);

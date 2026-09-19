@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
+const local_terminal = @import("local_terminal");
 const presentation = @import("presentation");
 const terminal = @import("terminal");
 const canvas = terminal;
@@ -23,7 +24,15 @@ const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 
 const ExternalUpload = struct {
     external: canvas.FrameExternalResource,
-    fetched: client.images.Resource,
+    width: u32,
+    height: u32,
+    pixels: []const u8,
+    fetched: ?client.images.Resource = null,
+
+    fn deinit(self: *ExternalUpload) void {
+        if (self.fetched) |*owned| owned.deinit();
+        self.* = undefined;
+    }
 };
 
 pub const GenericPrepared = struct {
@@ -77,9 +86,18 @@ pub fn measureCellSize(
 }
 
 pub const Scene = struct {
+    const Remote = struct {
+        connection: client.Connection,
+        raw_cache: client.rich.RawCache,
+    };
+
+    const Source = union(enum) {
+        remote: Remote,
+        local: *local_terminal.Owner,
+    };
+
     allocator: std.mem.Allocator,
-    connection: client.Connection,
-    raw_cache: client.rich.RawCache,
+    source: Source,
     fonts: *text.FontSet,
     fast: terminal_fast.Adapter,
     canvas: *terminal.Canvas,
@@ -111,6 +129,32 @@ pub const Scene = struct {
         errdefer connection.deinit();
         var raw_cache = client.rich.RawCache.init(allocator);
         errdefer raw_cache.deinit();
+        return initSource(
+            allocator,
+            .{ .remote = .{ .connection = connection, .raw_cache = raw_cache } },
+            font_path,
+            font_pixels,
+        );
+    }
+
+    pub fn initLocal(
+        allocator: std.mem.Allocator,
+        owner: *local_terminal.Owner,
+        font_path: []const u8,
+        font_pixels: u16,
+    ) !Scene {
+        if (font_pixels == 0) return error.InvalidFontPixels;
+        return initSource(allocator, .{ .local = owner }, font_path, font_pixels);
+    }
+
+    fn initSource(
+        allocator: std.mem.Allocator,
+        source: Source,
+        font_path: []const u8,
+        font_pixels: u16,
+    ) !Scene {
+        var owned_source = source;
+        errdefer deinitSource(&owned_source);
         const fonts = try text.FontSet.init(allocator, .{
             .primary = font_path,
             .size = .{ .pixels = font_pixels },
@@ -183,8 +227,7 @@ pub const Scene = struct {
 
         return .{
             .allocator = allocator,
-            .connection = connection,
-            .raw_cache = raw_cache,
+            .source = owned_source,
             .fonts = fonts,
             .fast = fast,
             .canvas = terminal_canvas,
@@ -220,49 +263,97 @@ pub const Scene = struct {
         terminal.deinitCanvas(self.canvas);
         self.fast.deinit();
         self.fonts.deinit();
-        self.raw_cache.deinit();
-        self.connection.deinit();
+        deinitSource(&self.source);
         self.* = undefined;
     }
 
+    fn deinitSource(owner_source: *Source) void {
+        switch (owner_source.*) {
+            .remote => |*remote_state| {
+                remote_state.raw_cache.deinit();
+                remote_state.connection.deinit();
+            },
+            .local => {},
+        }
+    }
+
+    fn remoteSource(self: *Scene) !*Remote {
+        if (self.source != .remote) return error.LocalScene;
+        return &self.source.remote;
+    }
+
+    pub fn isLocal(self: *const Scene) bool {
+        return switch (self.source) {
+            .remote => false,
+            .local => true,
+        };
+    }
+
     pub fn cancellation(self: *const Scene) error{ SocketDuplicateFailed, SocketOptionFailed }!client.Cancellation {
-        return self.connection.cancellation();
+        return switch (self.source) {
+            .remote => |source| source.connection.cancellation(),
+            .local => unreachable,
+        };
     }
 
     /// Replaces only the live observation stream after a host-local history
     /// excursion. Render/text/backend state remains resident; any old pending
     /// long-poll dies with the retired connection and cannot replay stale pixels.
     pub fn resetObserver(self: *Scene, endpoint: []const u8) !void {
+        if (self.isLocal()) {
+            self.observation_pending = false;
+            return;
+        }
         if (endpoint.len == 0) return error.InvalidEndpoint;
         var replacement = try client.Connection.connect(self.allocator, endpoint);
         errdefer replacement.deinit();
         const replacement_cache = client.rich.RawCache.init(self.allocator);
 
-        self.connection.deinit();
-        self.raw_cache.deinit();
-        self.connection = replacement;
-        self.raw_cache = replacement_cache;
+        const remote = try self.remoteSource();
+        remote.connection.deinit();
+        remote.raw_cache.deinit();
+        remote.connection = replacement;
+        remote.raw_cache = replacement_cache;
         self.observation_pending = false;
     }
 
     /// Arms one revision-relative delta observation without receiving it yet.
     pub fn arm(self: *Scene, after_revision: u64) !void {
         if (self.observation_pending) return error.ObservationPending;
-        try self.raw_cache.sendDeltaRequest(&self.connection, after_revision, 0);
+        switch (self.source) {
+            .remote => |*source| try source.raw_cache.sendDeltaRequest(
+                &source.connection,
+                after_revision,
+                0,
+            ),
+            .local => |owner| owner.armObservation(after_revision),
+        }
         self.observation_pending = true;
     }
 
     /// Borrows this Scene's socket only for readiness polling.
     pub fn readinessFd(self: *const Scene) std.posix.fd_t {
-        return self.connection.readinessFd();
+        return switch (self.source) {
+            .remote => |source| source.connection.readinessFd(),
+            .local => |owner| owner.observationFd(),
+        };
     }
 
     /// Receives and projects exactly one previously armed delta/raw-fallback observation.
     pub fn receivePrepared(self: *Scene) !Prepared {
         if (!self.observation_pending) return error.ObservationNotPending;
-        const rich = try self.raw_cache.receive(&self.connection);
-        self.observation_pending = false;
-        return self.prepareRich(&rich, &self.connection);
+        return switch (self.source) {
+            .remote => |*source| blk: {
+                const rich = try source.raw_cache.receive(&source.connection);
+                self.observation_pending = false;
+                break :blk try self.prepareRich(&rich, &source.connection);
+            },
+            .local => |owner| blk: {
+                try owner.drainObservationWake();
+                self.observation_pending = false;
+                break :blk try self.prepareLocal(owner, 0);
+            },
+        };
     }
 
     /// Requests and projects one complete historical observation on a caller-owned
@@ -270,18 +361,23 @@ pub const Scene = struct {
     /// for the requested history offset without disturbing the live observer cache.
     pub fn prepareHistory(
         self: *Scene,
-        connection: *client.Connection,
+        connection: ?*client.Connection,
         history_offset: u32,
     ) !Prepared {
+        switch (self.source) {
+            .local => |owner| return self.prepareLocal(owner, history_offset),
+            .remote => {},
+        }
+        const control = connection orelse return error.InvalidControl;
         var snapshot = try client.rich.requestRaw(
-            connection,
+            control,
             self.allocator,
             0,
             history_offset,
         );
         defer snapshot.deinit();
         const rich = snapshot.view();
-        return self.prepareRich(&rich, connection);
+        return self.prepareRich(&rich, control);
     }
 
     fn prepareRich(
@@ -323,6 +419,88 @@ pub const Scene = struct {
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
 
+        var canvas_residency_count = try self.acceptedCanvasResidencies();
+        var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
+        var external_upload_count: usize = 0;
+        defer clearExternalUploads(&external_uploads, &external_upload_count);
+        try self.prepareRemoteExternalUploads(
+            refill_connection,
+            bindings,
+            &canvas_residency_count,
+            &external_uploads,
+            &external_upload_count,
+        );
+        const generic = try self.finishGeneric(
+            canvas_residency_count,
+            external_uploads[0..external_upload_count],
+        );
+        return preparedEnvelope(begin, width, height, .{ .generic = generic });
+    }
+
+    fn prepareLocal(
+        self: *Scene,
+        owner: *local_terminal.Owner,
+        history_offset: u32,
+    ) !Prepared {
+        var guard = owner.observe();
+        defer guard.deinit();
+        const observation = guard.value;
+        const view = observation.semanticView(history_offset);
+        const width = std.math.mul(u16, view.cols, self.cell_size.width) catch
+            return error.InvalidGeometry;
+        const height = std.math.mul(u16, view.rows, self.cell_size.height) catch
+            return error.InvalidGeometry;
+        if (width == 0 or height == 0) return error.InvalidGeometry;
+
+        var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+        const bindings = try terminal.planObservationImageBindings(
+            self.image_bindings[0..self.image_binding_count],
+            terminal.canvasUsage(self.canvas),
+            observation,
+            history_offset,
+            &candidate_bindings,
+        );
+        try terminal.updateObservation(
+            self.canvas,
+            observation,
+            history_offset,
+            bindings,
+        );
+        @memcpy(self.image_bindings[0..bindings.len], bindings);
+        self.image_binding_count = bindings.len;
+
+        var canvas_residency_count = try self.acceptedCanvasResidencies();
+        var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
+        var external_upload_count: usize = 0;
+        try self.prepareLocalExternalUploads(
+            observation,
+            history_offset,
+            bindings,
+            &canvas_residency_count,
+            &external_uploads,
+            &external_upload_count,
+        );
+        const generic = try self.finishGeneric(
+            canvas_residency_count,
+            external_uploads[0..external_upload_count],
+        );
+        return .{
+            .rows = view.rows,
+            .cols = view.cols,
+            .width = width,
+            .height = height,
+            .session_revision = observation.semanticSequence(),
+            .history_offset = view.history_offset,
+            .history_count = view.history_count,
+            .history_row_base = view.history_row_base,
+            .alternate_screen = view.is_alternate_screen,
+            .leader_present = false,
+            .you_are_leader = true,
+            .mode = .{ .generic = generic },
+        };
+    }
+
+    fn acceptedCanvasResidencies(self: *Scene) !usize {
         const resident = try self.residency.enumerate(self.surface_residencies);
         if (resident.len > self.canvas_residencies.len) return error.Capacity;
         for (resident, 0..) |value, index| {
@@ -336,17 +514,14 @@ pub const Scene = struct {
                 .size = .{ .width = value.width, .height = value.height },
             };
         }
-        var canvas_residency_count = resident.len;
-        var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
-        var external_upload_count: usize = 0;
-        defer clearExternalUploads(&external_uploads, &external_upload_count);
-        try self.prepareExternalUploads(
-            refill_connection,
-            bindings,
-            &canvas_residency_count,
-            &external_uploads,
-            &external_upload_count,
-        );
+        return resident.len;
+    }
+
+    fn finishGeneric(
+        self: *Scene,
+        canvas_residency_count: usize,
+        external_uploads: []const ExternalUpload,
+    ) !GenericPrepared {
         const frame = try terminal.frame(
             self.canvas,
             self.canvas_residencies[0..canvas_residency_count],
@@ -359,7 +534,7 @@ pub const Scene = struct {
         );
         const generic = try adaptCanvasFrame(
             frame,
-            external_uploads[0..external_upload_count],
+            external_uploads,
             self.surface_uploads,
             self.surface_removals,
             self.surface_commands,
@@ -367,10 +542,10 @@ pub const Scene = struct {
         try self.residency.stage(generic);
         errdefer self.residency.discard();
         const plan = try self.builder.build(&self.residency, generic);
-        return preparedEnvelope(begin, width, height, .{ .generic = .{ .plan = plan } });
+        return .{ .plan = plan };
     }
 
-    fn prepareExternalUploads(
+    fn prepareRemoteExternalUploads(
         self: *Scene,
         refill_connection: *client.Connection,
         bindings: []const terminal.ExternalImageBinding,
@@ -409,9 +584,70 @@ pub const Scene = struct {
                 fetched.pixels.len != pixel_count)
                 return error.InvalidFrame;
 
-            uploads[upload_count.*] = .{ .external = external, .fetched = fetched };
+            uploads[upload_count.*] = .{
+                .external = external,
+                .width = fetched.width,
+                .height = fetched.height,
+                .pixels = fetched.pixels,
+                .fetched = fetched,
+            };
             upload_count.* += 1;
             fetched_owned = false;
+            try upsertCanvasResidency(
+                self.canvas_residencies,
+                canvas_residency_count,
+                .{
+                    .resource = external.resource,
+                    .format = external.format,
+                    .size = external.size,
+                },
+            );
+        }
+    }
+
+    fn prepareLocalExternalUploads(
+        self: *Scene,
+        observation: *const @import("howl_vt").Terminal.Observation,
+        history_offset: u32,
+        bindings: []const terminal.ExternalImageBinding,
+        canvas_residency_count: *usize,
+        uploads: *[terminal.maximum_external_images]ExternalUpload,
+        upload_count: *usize,
+    ) !void {
+        var missing_storage: [terminal.maximum_external_images]canvas.FrameExternalResource = undefined;
+        const missing = try terminal.missingExternalResources(
+            self.canvas,
+            self.canvas_residencies[0..canvas_residency_count.*],
+            &missing_storage,
+        );
+        if (missing.len > uploads.len) return error.Capacity;
+        const graphics = observation.images(history_offset);
+
+        for (missing) |external| {
+            if (external.format != .rgba8) return error.InvalidFrame;
+            const binding = findImageBindingByResource(bindings, external.resource) orelse
+                return error.InvalidFrame;
+            const image = findObservationImage(
+                &graphics,
+                binding.image_id,
+                binding.generation,
+            ) orelse return error.InvalidFrame;
+            const stride = std.math.mul(usize, @as(usize, external.size.width), 4) catch
+                return error.ArithmeticOverflow;
+            const pixel_count = std.math.mul(usize, stride, external.size.height) catch
+                return error.ArithmeticOverflow;
+            if (external.stride != stride or
+                image.width != external.size.width or
+                image.height != external.size.height or
+                image.pixels.len != pixel_count)
+                return error.InvalidFrame;
+            uploads[upload_count.*] = .{
+                .external = external,
+                .width = image.width,
+                .height = image.height,
+                .pixels = image.pixels,
+            };
+            upload_count.* += 1;
             try upsertCanvasResidency(
                 self.canvas_residencies,
                 canvas_residency_count,
@@ -477,8 +713,21 @@ fn clearExternalUploads(
 ) void {
     while (count.* != 0) {
         count.* -= 1;
-        uploads[count.*].fetched.deinit();
+        uploads[count.*].deinit();
     }
+}
+
+fn findObservationImage(
+    graphics: *const @import("howl_vt").Terminal.Images,
+    image_id: u32,
+    generation: u64,
+) ?@import("howl_vt").Terminal.Image {
+    var index: usize = 0;
+    while (index < graphics.imageCount()) : (index += 1) {
+        const image = graphics.image(index) orelse continue;
+        if (image.id == image_id and image.generation == generation) return image;
+    }
+    return null;
 }
 
 fn findImageBindingByResource(
@@ -540,10 +789,10 @@ fn adaptCanvasFrame(
         uploads[index] = .{
             .resource = try surfaceResource(value.external.resource),
             .kind = .rgba,
-            .width = value.external.size.width,
-            .height = value.external.size.height,
+            .width = @intCast(value.width),
+            .height = @intCast(value.height),
             .stride = value.external.stride,
-            .pixels = value.fetched.pixels,
+            .pixels = value.pixels,
         };
     }
     for (frame.removals, 0..) |value, index| removals[index] = .{
@@ -671,7 +920,9 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
             .size = .{ .width = 1, .height = 1 },
             .stride = 4,
         },
-        .fetched = fetched,
+        .width = fetched.width,
+        .height = fetched.height,
+        .pixels = fetched.pixels,
     };
     const frame = terminal.Frame{
         .revision = 1,
@@ -699,4 +950,66 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
     try std.testing.expectEqual(@as(u16, 1), upload.height);
     try std.testing.expectEqual(@as(usize, 4), upload.stride);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, upload.pixels);
+}
+
+test "terminal scene projects one local Session image without client transport" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(
+        std.testing.allocator,
+        threaded.io(),
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "printf 'A\\033_Ga=T,f=32,s=1,v=1,i=7;/////w==\\033\\\\'; sleep 30",
+            .rows = 2,
+            .columns = 4,
+            .history_rows = 8,
+        },
+    );
+    defer owner.deinit();
+
+    var ready = false;
+    var attempts: u16 = 0;
+    while (attempts < 2000) : (attempts += 1) {
+        const state = owner.pollState();
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = state.descriptor,
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
+            .revents = 0,
+        }};
+        const count = try std.posix.poll(&descriptors, 1);
+        const serviced = try owner.service(
+            count != 0 and descriptors[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+            false,
+            try local_terminal.monotonicNs(),
+        );
+        try std.testing.expectEqual(serviced.write_pending, owner.pollState().write_pending);
+        var guard = owner.observe();
+        const view = guard.value.semanticView(0);
+        const images = guard.value.images(0);
+        ready = view.cellAt(0, 0) == 'A' and images.imageCount() != 0;
+        guard.deinit();
+        if (ready) break;
+    }
+    try std.testing.expect(ready);
+
+    var scene = try Scene.initLocal(
+        std.testing.allocator,
+        &owner,
+        @import("test_fonts").primary_font,
+        16,
+    );
+    defer scene.deinit();
+    const prepared = try scene.prepareHistory(null, 0);
+    defer scene.discardPrepared(prepared);
+    try std.testing.expect(prepared.mode == .generic);
+    try std.testing.expectEqual(@as(usize, 1), scene.image_binding_count);
+
+    const image_start = (@as(usize, vk_surface.image_atlas_extent) + 1) * 4;
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0xff, 0xff, 0xff, 0xff },
+        scene.builder.rgba_pixels[image_start .. image_start + 4],
+    );
 }

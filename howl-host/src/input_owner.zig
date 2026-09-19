@@ -13,6 +13,8 @@ const protocol = @import("howl_session").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const layout = @import("layout.zig");
+const local_terminal = @import("local_terminal");
+const session = @import("howl_session");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 
@@ -289,6 +291,321 @@ fn runFallible(
         };
         if (!consumed) try waitInput(boundary);
     }
+}
+
+/// Owns one-pane host input for an in-process Session. The remote multi-pane
+/// runner remains unchanged; unsupported local split/tab shortcuts stay
+/// reserved rather than spawning an endpoint-backed sibling.
+pub fn runLocal(
+    boundary: *shared.Boundary,
+    owner: *local_terminal.Owner,
+    mux: layout.Mux,
+) void {
+    runLocalFallible(boundary, owner, mux) catch |failure| {
+        std.debug.print("Local input failure: {s}\n", .{@errorName(failure)});
+        boundary.requestStop(.input);
+    };
+    boundary.markStopped(.input);
+}
+
+fn runLocalFallible(
+    boundary: *shared.Boundary,
+    owner: *local_terminal.Owner,
+    mux: layout.Mux,
+) !void {
+    if (mux.tabCount() != 1 or mux.paneCount() != 1) return error.InputTopologyMismatch;
+    var window_focused = false;
+    while (!boundary.shouldStop()) {
+        const state = owner.pollState();
+        var descriptors = [_]c.pollfd{
+            .{
+                .fd = boundary.inputFd(),
+                .events = @intCast(c.POLLIN),
+                .revents = 0,
+            },
+            .{
+                .fd = state.descriptor,
+                .events = @intCast(if (state.descriptor < 0)
+                    0
+                else if (state.stream_closed)
+                    (if (state.write_pending) c.POLLOUT else 0)
+                else
+                    c.POLLIN | c.POLLHUP | (if (state.write_pending) c.POLLOUT else 0)),
+                .revents = 0,
+            },
+        };
+        const timeout: c_int = @intCast(@min(
+            state.animation_wait_ms orelse 100,
+            @as(u32, 100),
+        ));
+        const ready = c.poll(&descriptors, descriptors.len, timeout);
+        if (ready < 0) {
+            if (std.c.errno(ready) == .INTR) continue;
+            return error.Wake;
+        }
+        if (boundary.shouldStop()) return;
+
+        const input_events = descriptors[0].revents;
+        if (input_events & (c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
+            return error.Wake;
+        if (input_events & c.POLLIN != 0) try boundary.drainInputWake();
+
+        const pty_events = descriptors[1].revents;
+        if (pty_events & (c.POLLERR | c.POLLNVAL) != 0)
+            return error.PtyPoll;
+        const readable = state.descriptor >= 0 and
+            pty_events & (c.POLLIN | c.POLLHUP) != 0;
+
+        var consumed: usize = 0;
+        if (boundary.takePaneFocus()) |focus_index| {
+            if (focus_index != 0) return error.InputTopologyMismatch;
+        }
+        if (boundary.takePaneEndpoint() != null or
+            boundary.takePaneRetired() or
+            boundary.takeTabSwitched())
+            return error.InputTopologyMismatch;
+
+        while (consumed < shared.input_capacity) : (consumed += 1) {
+            const event = boundary.takeInput() orelse break;
+            switch (event) {
+                .focus => |focused| {
+                    if (focused != window_focused) {
+                        try deliverFocusLocal(owner, focused);
+                        window_focused = focused;
+                    }
+                },
+                .mouse => |mouse| {
+                    if (mouse.scene_index != 0) return error.InputTopologyMismatch;
+                    try deliverMouseLocal(boundary, owner, mouse);
+                },
+                .key => |key| {
+                    // Preserve the host's one-pane shortcut reservation. F6/F7/F8
+                    // were never reserved in the one-pane topology and continue
+                    // to reach the terminal.
+                    if (isClosePane(key) or
+                        isNewTab(key) or
+                        isNextTab(key) or
+                        hostSplitCommand(key) != null)
+                    {
+                        continue;
+                    }
+                    try deliverKeyLocal(owner, key);
+                },
+            }
+            if (boundary.shouldStop()) return;
+        }
+
+        // Input admission queues bytes but intentionally does not flush them.
+        // An input turn may therefore optimistically attempt the nonblocking
+        // write; EAGAIN is retained as write_pending for the next POLLOUT turn.
+        const writable = state.write_pending or consumed != 0 or
+            (state.descriptor >= 0 and pty_events & c.POLLOUT != 0);
+        const serviced = try owner.service(
+            readable,
+            writable,
+            try local_terminal.monotonicNs(),
+        );
+        if (serviced.stream_closed and serviced.child_exit != null and !serviced.write_pending) {
+            boundary.requestStop(null);
+            return;
+        }
+    }
+}
+
+fn deliverMouseLocal(
+    boundary: *shared.Boundary,
+    owner: *local_terminal.Owner,
+    mouse: shared.RoutedMouse,
+) !void {
+    if (mouse.value.kind != .wheel) {
+        try owner.input(.{ .mouse = nativeMouse(mouse.value) });
+        return;
+    }
+    const amount: i16 = switch (mouse.value.button) {
+        .wheel_up => 3,
+        .wheel_down => -3,
+        else => return error.InputTopologyMismatch,
+    };
+    const force_history =
+        mouse.value.modifiers & protocol.typed_input.modifiers.shift != 0;
+    var route = scrollback.routeWheel(
+        mouse.history_offset != 0,
+        force_history,
+        false,
+        false,
+        mouse.alternate_screen,
+        false,
+    );
+    if (route == .interaction_state) {
+        const state = owner.interactionState();
+        route = scrollback.routeWheel(
+            mouse.history_offset != 0,
+            force_history,
+            true,
+            state.mouse_tracking != .off,
+            mouse.alternate_screen,
+            state.alternate_scroll,
+        );
+    }
+    switch (route) {
+        .history => boundary.publishHostCommand(.{
+            .kind = .history_scroll,
+            .pane = 0,
+            .amount = amount,
+        }) catch |failure| switch (failure) {
+            error.HostCommandLimit => {},
+            else => |err| return err,
+        },
+        .terminal_mouse => try owner.input(.{ .mouse = nativeMouse(mouse.value) }),
+        .alternate_scroll => {
+            const key: session.KeyName = if (amount > 0) .up else .down;
+            try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .press } });
+            try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .release } });
+        },
+        .ignore => {},
+        .interaction_state => unreachable,
+    }
+}
+
+fn deliverFocusLocal(owner: *local_terminal.Owner, focused: bool) !void {
+    try owner.input(.{ .focus = if (focused) .in else .out });
+}
+
+fn deliverKeyLocal(owner: *local_terminal.Owner, key: wayland.input.Key) !void {
+    switch (projectKey(key)) {
+        .ignored => {},
+        .committed_text => |text| {
+            const bytes = text.bytes[0..text.len];
+            if (bytes.len == 0 or !std.unicode.utf8ValidateSlice(bytes))
+                return error.InvalidText;
+            try owner.input(.{ .bytes = bytes });
+        },
+        .named => |named| try owner.input(.{ .key = .{
+            .key = .{ .named = nativeNamedKey(named.key) orelse return error.InvalidKey },
+            .action = nativeAction(named.action) orelse return error.InvalidKey,
+            .mods = nativeModifiers(named.modifiers),
+        } }),
+        .unicode => |unicode| {
+            const scalar = std.math.cast(u21, unicode.scalar) orelse
+                return error.InvalidUnicodeScalar;
+            try owner.input(.{ .key = .{
+                .key = try session.Key.initUnicode(scalar),
+                .action = nativeAction(unicode.action) orelse return error.InvalidKey,
+                .mods = nativeModifiers(unicode.modifiers),
+            } });
+        },
+    }
+}
+
+fn nativeAction(value: u8) ?session.KeyAction {
+    return switch (value) {
+        1 => .press,
+        2 => .repeat,
+        3 => .release,
+        else => null,
+    };
+}
+
+fn nativeModifiers(value: u8) session.InputModifier {
+    return .{
+        .shift = value & protocol.typed_input.modifiers.shift != 0,
+        .alt = value & protocol.typed_input.modifiers.alt != 0,
+        .control = value & protocol.typed_input.modifiers.control != 0,
+        .super = value & protocol.typed_input.modifiers.super != 0,
+        .hyper = value & protocol.typed_input.modifiers.hyper != 0,
+        .meta = value & protocol.typed_input.modifiers.meta != 0,
+        .caps_lock = value & protocol.typed_input.modifiers.caps_lock != 0,
+        .num_lock = value & protocol.typed_input.modifiers.num_lock != 0,
+    };
+}
+
+fn nativeMouse(value: protocol.MouseInput) session.Input {
+    return .{ .mouse = .{
+        .kind = switch (value.kind) {
+            .press => .press,
+            .release => .release,
+            .move => .move,
+            .wheel => .wheel,
+        },
+        .button = switch (value.button) {
+            .none => .none,
+            .left => .left,
+            .middle => .middle,
+            .right => .right,
+            .wheel_up => .wheel_up,
+            .wheel_down => .wheel_down,
+        },
+        .row = value.row,
+        .col = value.column,
+        .pixel_x = value.pixel_x,
+        .pixel_y = value.pixel_y,
+        .mod = nativeModifiers(value.modifiers),
+        .buttons_down = value.buttons_down,
+    } };
+}
+
+fn nativeNamedKey(value: u8) ?session.KeyName {
+    return switch (value) {
+        1 => .enter,
+        2 => .tab,
+        3 => .backspace,
+        4 => .escape,
+        5 => .up,
+        6 => .down,
+        7 => .left,
+        8 => .right,
+        9 => .insert,
+        10 => .delete,
+        11 => .home,
+        12 => .end,
+        13 => .page_up,
+        14 => .page_down,
+        15 => .left_shift,
+        16 => .right_shift,
+        17 => .left_control,
+        18 => .right_control,
+        19 => .left_alt,
+        20 => .right_alt,
+        21 => .left_super,
+        22 => .right_super,
+        23 => .left_hyper,
+        24 => .right_hyper,
+        25 => .left_meta,
+        26 => .right_meta,
+        27 => .caps_lock,
+        28 => .num_lock,
+        29 => .f1,
+        30 => .f2,
+        31 => .f3,
+        32 => .f4,
+        33 => .f5,
+        34 => .f6,
+        35 => .f7,
+        36 => .f8,
+        37 => .f9,
+        38 => .f10,
+        39 => .f11,
+        40 => .f12,
+        41 => .keypad_0,
+        42 => .keypad_1,
+        43 => .keypad_2,
+        44 => .keypad_3,
+        45 => .keypad_4,
+        46 => .keypad_5,
+        47 => .keypad_6,
+        48 => .keypad_7,
+        49 => .keypad_8,
+        50 => .keypad_9,
+        51 => .keypad_decimal,
+        52 => .keypad_add,
+        53 => .keypad_subtract,
+        54 => .keypad_multiply,
+        55 => .keypad_divide,
+        56 => .keypad_separator,
+        57 => .keypad_equal,
+        58 => .keypad_enter,
+        else => null,
+    };
 }
 
 fn deliverMouse(
