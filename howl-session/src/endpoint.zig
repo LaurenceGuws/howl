@@ -1669,7 +1669,7 @@ pub const Server = struct {
     }
 
     fn noteSnapshotLink(
-        machine: *const howl.Terminal,
+        machine: *const howl.Terminal.Observation,
         cell: howl.Terminal.Cell,
         referenced_links: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
     ) !void {
@@ -1748,7 +1748,7 @@ pub const Server = struct {
 
     fn appendPresentationRecord(
         self: *Server,
-        machine: *const howl.Terminal,
+        machine: *const howl.Terminal.Observation,
         output: *std.ArrayList(u8),
         cursor_age_ns: u64,
     ) !void {
@@ -1868,7 +1868,7 @@ pub const Server = struct {
 // =============================================================================
 
 fn terminalImage(
-    machine: *const howl.Terminal,
+    machine: *const howl.Terminal.Observation,
     image_id: u32,
     generation: u64,
 ) ?howl.Terminal.Image {
@@ -1882,7 +1882,7 @@ fn terminalImage(
     return null;
 }
 
-fn terminalProperties(machine: *const howl.Terminal) protocol.properties.View {
+fn terminalProperties(machine: *const howl.Terminal.Observation) protocol.properties.View {
     const directory = machine.workingDirectory();
     const shell = machine.shellIntegration();
     const mark = machine.shellMark();

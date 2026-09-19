@@ -68,3 +68,28 @@ test "native root owns the complete embedding contract" {
     try std.testing.expectEqual(@as(u16, 3), resized.rows);
     try std.testing.expectEqual(@as(u16, 10), resized.cols);
 }
+
+test "native observation capability hides retained owners" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    const observation = terminal.observation();
+    try std.testing.expectEqual(terminal.semanticSequence(), observation.semanticSequence());
+
+    const observation_pointer = @typeInfo(@TypeOf(observation)).pointer;
+    try std.testing.expect(observation_pointer.attrs.@"const");
+    try std.testing.expect(@typeInfo(observation_pointer.child) == .@"opaque");
+
+    const view = observation.semanticView(0);
+    const screen_pointer = @typeInfo(@TypeOf(view.screen)).pointer;
+    try std.testing.expect(screen_pointer.attrs.@"const");
+    try std.testing.expect(@typeInfo(screen_pointer.child) == .@"opaque");
+
+    const images = observation.images(0);
+    const image_pointer = @typeInfo(@TypeOf(images.plane)).pointer;
+    try std.testing.expect(image_pointer.attrs.@"const");
+    try std.testing.expect(@typeInfo(image_pointer.child) == .@"opaque");
+
+    const mark_pointer = @typeInfo(@TypeOf(observation.shellMark().metadata)).pointer;
+    try std.testing.expect(mark_pointer.attrs.@"const");
+}

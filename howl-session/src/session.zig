@@ -125,22 +125,22 @@ pub fn descriptor(session: *const Session) error{NotStarted}!std.posix.fd_t {
     return stateConst(session).transport.masterFd();
 }
 
-/// Borrows the canonical VT read-only until the next Session mutation.
+/// Borrows the canonical VT observation capability until the next Session mutation.
 ///
 /// Mutation remains Session-owned so PTY writes, replies, resize and child
 /// lifetime cannot be bypassed through this embedder observation seam.
-pub fn terminal(session: *const Session) *const Terminal {
-    return &stateConst(session).terminal;
+pub fn terminal(session: *const Session) *const Terminal.Observation {
+    return stateConst(session).terminal.observation();
 }
 
 /// Borrows the oldest retained host consequence until canonical terminal mutation.
 pub fn consequenceHead(session: *const Session) ?Consequence {
-    return stateConst(session).terminal.consequenceHead();
+    return terminal(session).consequenceHead();
 }
 
 /// Returns the bounded count of retained host consequences.
 pub fn consequenceCount(session: *const Session) u16 {
-    return stateConst(session).terminal.consequenceCount();
+    return terminal(session).consequenceCount();
 }
 
 /// Consumes one non-reply consequence by exact global FIFO identity.
@@ -530,7 +530,7 @@ fn snapshotAscii(session: *const Session, output: []u8) error{SnapshotLimit}![]c
     return output[0..offset];
 }
 
-fn testTerminalImage(machine: *const Terminal, image_id: u32, generation: u64) ?Terminal.Image {
+fn testTerminalImage(machine: *const Terminal.Observation, image_id: u32, generation: u64) ?Terminal.Image {
     var images = machine.images(0);
     var index: usize = 0;
     while (index < images.imageCount()) : (index += 1) {
@@ -771,4 +771,12 @@ test "Session pixel geometry agrees with PTY reports and rejects overflow transa
     try std.testing.expectError(error.NotStarted, resizeGeometry(session, 5, 10, 12, 26));
     try std.testing.expectEqualDeep(accepted, terminal(session).semanticView(0));
     try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
+}
+
+test "Session lends only the opaque VT observation capability" {
+    const return_type = @typeInfo(@TypeOf(terminal)).@"fn".return_type.?;
+    const pointer = @typeInfo(return_type).pointer;
+    try std.testing.expect(pointer.attrs.@"const");
+    try std.testing.expect(pointer.child == Terminal.Observation);
+    try std.testing.expect(@typeInfo(pointer.child) == .@"opaque");
 }

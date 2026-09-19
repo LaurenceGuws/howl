@@ -114,9 +114,6 @@ const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
 /// Bounds one retained consequence payload owned by this composition state.
 const consequence_payload_max_bytes: u32 = 1024;
 const pointer_shape_reply_max_bytes: u32 = (consequence_payload_max_bytes / 12) * 14 - 1;
-// Owns the latest bounded OSC 133 shell mark.
-const ShellMark = properties.ShellMark;
-
 // Internal composition alias for the consequence-owned notification classification.
 const NotificationKind = consequences.NotificationKind;
 // Internal composition alias for the consequence-owned notification view.
@@ -1956,7 +1953,7 @@ fn visibleView(screen_state: *const ScreenSet, history_offset: u32) Terminal.Sem
         .history_count = history_count,
         .history_row_base = active.historyRowBase(),
         .start = start,
-        .screen = active,
+        .screen = @ptrCast(active),
     };
 }
 
@@ -4613,6 +4610,12 @@ pub const Terminal = struct {
     // Public observation and value vocabulary
     // -------------------------------------------------------------------------
 
+    /// Opaque backing owner for one borrowed semantic view.
+    ///
+    /// Embedders observe rows through SemanticView methods instead of gaining
+    /// structural access to the mutable Screen owner retained by Terminal.
+    pub const SemanticScreen = opaque {};
+
     /// Borrows a unified history-and-screen view until terminal mutation.
     pub const SemanticView = struct {
         rows: u16,
@@ -4629,7 +4632,11 @@ pub const Terminal = struct {
         history_count: u32,
         history_row_base: u32,
         start: u32,
-        screen: *const Screen,
+        screen: *const SemanticScreen,
+
+        fn backingScreen(self: *const SemanticView) *const Screen {
+            return @ptrCast(@alignCast(self.screen));
+        }
 
         fn rowSource(self: *const SemanticView, row: u16) RowSource {
             if (self.rows == 0 or row >= self.rows) return .{ .screen = 0 };
@@ -4647,9 +4654,10 @@ pub const Terminal = struct {
         /// private; the returned cells share this view's mutation lifetime.
         pub fn rowCells(self: *const SemanticView, row: u16) []const Cell {
             std.debug.assert(row < self.rows);
+            const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
-                .history => |recency| self.screen.historyRowCells(recency),
-                .screen => |screen_row| self.screen.visibleRowCells(screen_row),
+                .history => |recency| screen.historyRowCells(recency),
+                .screen => |screen_row| screen.visibleRowCells(screen_row),
             };
         }
 
@@ -4675,14 +4683,15 @@ pub const Terminal = struct {
             output: *[24]u21,
         ) []const u21 {
             if (row >= self.rows or col >= self.cols) return &.{};
+            const screen = self.backingScreen();
             var retained: [24]u32 = undefined;
             const values = switch (self.rowSource(row)) {
-                .history => |recency| self.screen.historyCellScalarsAt(
+                .history => |recency| screen.historyCellScalarsAt(
                     recency,
                     col,
                     &retained,
                 ),
-                .screen => |screen_row| self.screen.cellScalarsAt(
+                .screen => |screen_row| screen.cellScalarsAt(
                     screen_row,
                     col,
                     &retained,
@@ -4694,9 +4703,10 @@ pub const Terminal = struct {
 
         /// Returns one visible row's DEC geometry without prescribing caller scaling.
         pub fn lineGeometry(self: *const SemanticView, row: u16) Screen.LineGeometry {
+            const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
-                .history => |recency| self.screen.historyLineGeometry(recency),
-                .screen => |screen_row| self.screen.lineGeometry(screen_row),
+                .history => |recency| screen.historyLineGeometry(recency),
+                .screen => |screen_row| screen.lineGeometry(screen_row),
             };
         }
 
@@ -4710,9 +4720,10 @@ pub const Terminal = struct {
         /// Reports whether one visible row continues the preceding logical row.
         pub fn rowWrapped(self: *const SemanticView, row: u16) bool {
             if (row >= self.rows) return false;
+            const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
-                .history => |recency| self.screen.historyRowWrapped(recency),
-                .screen => |screen_row| self.screen.rowWrapped(screen_row),
+                .history => |recency| screen.historyRowWrapped(recency),
+                .screen => |screen_row| screen.rowWrapped(screen_row),
             };
         }
     };
@@ -4876,6 +4887,13 @@ pub const Terminal = struct {
     pub const ColorPreferenceReplyError = replies.AppendError || error{StaleColorPreferenceQuery};
     /// Borrows validated shell-integration identity from one state snapshot.
     pub const ShellIntegration = ItermShellIntegration;
+    /// Copies one retained shell mark while borrowing immutable metadata bytes.
+    pub const ShellMark = struct {
+        generation: u64 = 0,
+        kind: u8 = 0,
+        status: ?i32 = null,
+        metadata: []const u8 = &.{},
+    };
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
     pub const WorkingDirectory = WorkingDirectoryReport;
     /// Reports stale or non-query identity, allocation failure, or bounded OSC 22 reply saturation.
@@ -5108,9 +5126,12 @@ pub const Terminal = struct {
         /// Orders the image relative to terminal text.
         z: i32,
     };
+    /// Opaque backing owner for one borrowed image observation.
+    pub const ImagePlane = opaque {};
+
     /// Borrows coherent image-plane state until terminal mutation.
     pub const Images = struct {
-        plane: *const graphics_mod.Plane,
+        plane: *const ImagePlane,
         bank: graphics_mod.Bank,
         view: SemanticView,
         visible_row_start: u64,
@@ -5121,26 +5142,32 @@ pub const Terminal = struct {
         cell_pixel_width: u32,
         cell_pixel_height: u32,
 
+        fn backingPlane(self: *const Images) *const graphics_mod.Plane {
+            return @ptrCast(@alignCast(self.plane));
+        }
+
         /// Returns the dense retained image count.
         pub fn imageCount(self: *const Images) usize {
-            return self.plane.image_count;
+            return self.backingPlane().image_count;
         }
 
         /// Borrows one retained image.
         pub fn image(self: *const Images, index: usize) ?Image {
-            return self.plane.image(index);
+            return self.backingPlane().image(index);
         }
 
         /// Returns the bounded retained/projection placement index space.
         pub fn placementCount(self: *const Images) usize {
-            const room = maximum_image_placements -| self.plane.placement_count;
-            return self.plane.placement_count + @min(self.virtualRunCount(), room);
+            const plane = self.backingPlane();
+            const room = maximum_image_placements -| plane.placement_count;
+            return plane.placement_count + @min(self.virtualRunCount(), room);
         }
 
         /// Copies one physical or Unicode-placeholder placement visible in the current view.
         pub fn placement(self: *const Images, index: usize) ?ImagePlacement {
-            if (index < self.plane.placement_count) {
-                const value = self.plane.placement(index) orelse return null;
+            const plane = self.backingPlane();
+            if (index < plane.placement_count) {
+                const value = plane.placement(index) orelse return null;
                 if (value.virtual or value.bank != self.bank or value.row < self.visible_row_start or
                     value.row >= self.visible_row_start + self.rows)
                     return null;
@@ -5160,7 +5187,7 @@ pub const Terminal = struct {
                     .z = value.z,
                 };
             }
-            return self.virtualRun(index - self.plane.placement_count);
+            return self.virtualRun(index - plane.placement_count);
         }
 
         const Placeholder = struct {
@@ -5197,7 +5224,7 @@ pub const Terminal = struct {
             // Cell placeholders cannot project without a prototype in this
             // bank. Ordinary images must not make each retained image's
             // visibility test scan the entire terminal cell lattice.
-            if (!self.plane.hasVirtualPlacement(self.bank)) return 0;
+            if (!self.backingPlane().hasVirtualPlacement(self.bank)) return 0;
             var count: usize = 0;
             var row: u16 = 0;
             while (row < self.view.rows) : (row += 1) {
@@ -5211,7 +5238,7 @@ pub const Terminal = struct {
         }
 
         fn virtualRun(self: *const Images, requested_index: usize) ?ImagePlacement {
-            if (!self.plane.hasVirtualPlacement(self.bank)) return null;
+            if (!self.backingPlane().hasVirtualPlacement(self.bank)) return null;
             var current: usize = 0;
             var row: u16 = 0;
             while (row < self.view.rows) : (row += 1) {
@@ -5313,7 +5340,8 @@ pub const Terminal = struct {
             output: *[maximum_images]bool,
         ) void {
             @memset(output, false);
-            const room = maximum_image_placements -| self.plane.placement_count;
+            const plane = self.backingPlane();
+            const room = maximum_image_placements -| plane.placement_count;
             if (room == 0) return;
             var projected_count: usize = 0;
             var row: u16 = 0;
@@ -5324,8 +5352,8 @@ pub const Terminal = struct {
                     if (projected_count == room) return;
                     projected_count += 1;
                     var image_index: usize = 0;
-                    while (image_index < self.plane.image_count) : (image_index += 1) {
-                        const image_value = self.plane.image(image_index) orelse continue;
+                    while (image_index < plane.image_count) : (image_index += 1) {
+                        const image_value = plane.image(image_index) orelse continue;
                         if (image_value.id != projected.image_id) continue;
                         output[image_index] = true;
                         break;
@@ -5336,7 +5364,7 @@ pub const Terminal = struct {
 
         fn projectVirtualRun(self: *const Images, run: PlaceholderRun) ?ImagePlacement {
             if (self.cell_pixel_width == 0 or self.cell_pixel_height == 0) return null;
-            const prototype = self.plane.virtualPrototype(self.bank, run.image_id, run.placement_id) orelse return null;
+            const prototype = self.backingPlane().virtualPrototype(self.bank, run.image_id, run.placement_id) orelse return null;
             if (prototype.cols == 0 or prototype.rows == 0 or prototype.image_width == 0 or prototype.image_height == 0)
                 return null;
 
@@ -5514,6 +5542,164 @@ pub const Terminal = struct {
         oldest: u64,
         /// Identifies the newest retained line, or zero when empty.
         newest: u64,
+    };
+
+    /// Read-only capability over one live Terminal.
+    ///
+    /// A Terminal owner keeps the direct mutable embedding API. A coordinator
+    /// such as Session may instead lend this opaque capability so another
+    /// component can observe canonical VT semantics without copying the owning
+    /// Terminal value or reaching mutable retained storage.
+    pub const Observation = opaque {
+        fn terminal(self: *const Observation) *const Terminal {
+            return @ptrCast(@alignCast(self));
+        }
+
+        /// Copies the accepted terminal cell-pixel lattice.
+        pub fn cellPixelSize(self: *const Observation) ?CellPixelSize {
+            return self.terminal().cellPixelSize();
+        }
+
+        /// Reports whether typed one-byte keys request foreground termios signal handling.
+        pub fn termiosSignals(self: *const Observation) bool {
+            return self.terminal().termiosSignals();
+        }
+
+        /// Reports whether the operator-triggered MIME paste exchange is enabled.
+        pub fn pasteEvents(self: *const Observation) bool {
+            return self.terminal().pasteEvents();
+        }
+
+        /// Reports whether alternate-screen wheel translation is enabled.
+        pub fn alternateScroll(self: *const Observation) bool {
+            return self.terminal().alternateScroll();
+        }
+
+        /// Reports whether Meta-modified legacy input is Escape-prefixed.
+        pub fn metaSendsEscape(self: *const Observation) bool {
+            return self.terminal().metaSendsEscape();
+        }
+
+        /// Reports whether key-release input is requested.
+        pub fn reportKeyUp(self: *const Observation) bool {
+            return self.terminal().reportKeyUp();
+        }
+
+        /// Copies the canonical semantic mutation identity.
+        pub fn semanticSequence(self: *const Observation) u64 {
+            return self.terminal().semanticSequence();
+        }
+
+        /// Borrows canonical cells and cursor state at one history offset.
+        pub fn semanticView(self: *const Observation, history_offset: u32) SemanticView {
+            return self.terminal().semanticView(history_offset);
+        }
+
+        /// Copies canonical terminal colors and reverse-screen state.
+        pub fn presentation(self: *const Observation) Presentation {
+            return self.terminal().presentation();
+        }
+
+        /// Borrows decoded terminal image and placement state at one history offset.
+        pub fn images(self: *const Observation, history_offset: u32) Images {
+            return self.terminal().images(history_offset);
+        }
+
+        /// Copies the coherent caller-interaction mode state.
+        pub fn interactionState(self: *const Observation) InteractionState {
+            return self.terminal().interactionState();
+        }
+
+        /// Reports whether synchronized-output mode is enabled.
+        pub fn synchronizedOutput(self: *const Observation) bool {
+            return self.terminal().synchronizedOutput();
+        }
+
+        /// Copies the retained task-progress state.
+        pub fn taskProgress(self: *const Observation) Progress {
+            return self.terminal().taskProgress();
+        }
+
+        /// Borrows the current terminal title until mutation.
+        pub fn title(self: *const Observation) ?[]const u8 {
+            return self.terminal().title();
+        }
+
+        /// Borrows the current terminal icon title until mutation.
+        pub fn icon(self: *const Observation) ?[]const u8 {
+            return self.terminal().icon();
+        }
+
+        /// Borrows the latest child-reported working directory.
+        pub fn workingDirectory(self: *const Observation) ?Terminal.WorkingDirectory {
+            return self.terminal().workingDirectory();
+        }
+
+        /// Borrows the latest child-reported remote-host identity.
+        pub fn remoteHost(self: *const Observation) ?[]const u8 {
+            return self.terminal().remoteHost();
+        }
+
+        /// Borrows the latest shell-integration identity.
+        pub fn shellIntegration(self: *const Observation) ?Terminal.ShellIntegration {
+            return self.terminal().shellIntegration();
+        }
+
+        /// Copies the latest shell-mark state while borrowing immutable metadata.
+        pub fn shellMark(self: *const Observation) Terminal.ShellMark {
+            return self.terminal().shellMark();
+        }
+
+        /// Borrows the oldest retained caller-neutral consequence.
+        pub fn consequenceHead(self: *const Observation) ?Consequence {
+            return self.terminal().consequenceHead();
+        }
+
+        /// Returns the bounded retained consequence count.
+        pub fn consequenceCount(self: *const Observation) u16 {
+            return self.terminal().consequenceCount();
+        }
+
+        /// Copies the terminal reset identity for pointer-shape stacks.
+        pub fn pointerShapeResetSequence(self: *const Observation) u64 {
+            return self.terminal().pointerShapeResetSequence();
+        }
+
+        /// Reports whether color-preference notifications are enabled.
+        pub fn colorPreferenceNotifications(self: *const Observation) bool {
+            return self.terminal().colorPreferenceNotifications();
+        }
+
+        /// Copies finalized primary-output retention bounds.
+        pub fn logicalOutputRange(self: *const Observation) LogicalOutputRange {
+            return self.terminal().logicalOutputRange();
+        }
+
+        /// Borrows the URI for one retained hyperlink identity.
+        pub fn hyperlinkUri(self: *const Observation, link_id: u32) ?[]const u8 {
+            return self.terminal().hyperlinkUri(link_id);
+        }
+
+        /// Copies bounded finalized logical output into caller-owned storage.
+        pub fn copyLogicalOutput(
+            self: *const Observation,
+            allocator: std.mem.Allocator,
+            cursor: u64,
+            max_lines: u16,
+            max_bytes: usize,
+        ) LogicalOutputError!LogicalOutputResult {
+            return self.terminal().copyLogicalOutput(allocator, cursor, max_lines, max_bytes);
+        }
+
+        /// Copies one semantic cell range into caller-owned UTF-8 storage.
+        pub fn copyText(
+            self: *const Observation,
+            allocator: std.mem.Allocator,
+            range: TextRange,
+            max_bytes: usize,
+        ) TextError![]const u8 {
+            return self.terminal().copyText(allocator, range, max_bytes);
+        }
     };
 
     // -------------------------------------------------------------------------
@@ -6454,6 +6640,11 @@ pub const Terminal = struct {
     // Borrowed observation
     // -------------------------------------------------------------------------
 
+    /// Lends a mechanically read-only capability over this live Terminal.
+    pub fn observation(self: *const Terminal) *const Observation {
+        return @ptrCast(self);
+    }
+
     /// Reports whether mode 19997 requests foreground termios handling for typed one-byte keys.
     pub fn termiosSignals(self: *const Terminal) bool {
         return self.modes.termios_signals;
@@ -6518,7 +6709,7 @@ pub const Terminal = struct {
         const cell = self.cellPixelSize();
         const bank: graphics_mod.Bank = if (view.is_alternate_screen) .alternate else .primary;
         return .{
-            .plane = &self.graphics,
+            .plane = @ptrCast(&self.graphics),
             .bank = bank,
             .view = view,
             .visible_row_start = if (view.is_alternate_screen)
@@ -6624,8 +6815,14 @@ pub const Terminal = struct {
     }
 
     /// Copies the latest shell-mark semantic state.
-    pub fn shellMark(self: *const Terminal) ShellMark {
-        return self.properties.shell_mark;
+    pub fn shellMark(self: *const Terminal) Terminal.ShellMark {
+        const mark = self.properties.shell_mark;
+        return .{
+            .generation = mark.generation,
+            .kind = mark.kind,
+            .status = mark.status,
+            .metadata = mark.metadata,
+        };
     }
 
     /// Borrows the oldest retained consequence across every protocol family.
