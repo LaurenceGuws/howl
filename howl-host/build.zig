@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     const host_c = host_translate.createModule();
 
     const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const sessiond = session.artifact("howl-sessiond");
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
@@ -64,6 +65,7 @@ pub fn build(b: *std.Build) void {
     });
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
+    terminal.addImport("howl_vt", vt.module("howl_vt"));
 
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

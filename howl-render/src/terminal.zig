@@ -1,4 +1,4 @@
-//! Projects immutable terminal client views through howl-text into bounded Canvas producer updates.
+//! Projects immutable terminal observations and client views through howl-text into bounded Canvas producer updates.
 //!
 //! This layer owns presentation derivation only. It neither parses `text_v1` nor
 //! retains terminal truth. Every font metric, shape, source-cluster mapping,
@@ -6,6 +6,7 @@
 //! `howl-text`. This file owns terminal-to-Canvas presentation only.
 
 const std = @import("std");
+const VT = @import("howl_vt").Terminal;
 const client = @import("howl_client");
 const text = @import("howl_text");
 const drawing = @import("terminal_frame.zig");
@@ -41,8 +42,12 @@ const OwnedSource = struct {
         return View.presentation(snapshot);
     }
 
-    fn rows(snapshot: *const Snapshot) []const Row {
-        return View.rows(snapshot);
+    fn rowCount(snapshot: *const Snapshot) usize {
+        return View.rows(snapshot).len;
+    }
+
+    fn rowAt(snapshot: *const Snapshot, index: usize) Row {
+        return View.rows(snapshot)[index];
     }
 
     fn rowCells(snapshot: *const Snapshot, row: Row) []const Cell {
@@ -53,7 +58,7 @@ const OwnedSource = struct {
         return all[first .. first + count];
     }
 
-    fn cellScalars(snapshot: *const Snapshot, cell: Cell) []const u32 {
+    fn cellScalars(snapshot: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {
         return View.cellScalars(snapshot, cell);
     }
 
@@ -69,7 +74,7 @@ const OwnedSource = struct {
         return View.rowShift(snapshot);
     }
 
-    fn lineGeometry(row: Row) View.LineGeometry {
+    fn lineGeometry(_: *const Snapshot, row: Row) View.LineGeometry {
         return View.lineGeometry(row);
     }
 
@@ -91,15 +96,19 @@ const RichSource = struct {
         return &snapshot.presentation;
     }
 
-    fn rows(snapshot: *const Snapshot) []const Row {
-        return snapshot.rows;
+    fn rowCount(snapshot: *const Snapshot) usize {
+        return snapshot.rows.len;
+    }
+
+    fn rowAt(snapshot: *const Snapshot, index: usize) Row {
+        return snapshot.rows[index];
     }
 
     fn rowCells(_: *const Snapshot, row: Row) []const Cell {
         return row.cells;
     }
 
-    fn cellScalars(_: *const Snapshot, cell: Cell) []const u32 {
+    fn cellScalars(_: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {
         return cell.scalars;
     }
 
@@ -122,12 +131,71 @@ const RichSource = struct {
         return snapshot.row_shift;
     }
 
-    fn lineGeometry(row: Row) View.LineGeometry {
+    fn lineGeometry(_: *const Snapshot, row: Row) View.LineGeometry {
         return View.lineGeometryFromValue(row.line_geometry);
     }
 
     fn cursorShape(snapshot: *const Snapshot) View.CursorShape {
         return View.cursorShapeFromValue(snapshot.begin.cursor_shape);
+    }
+};
+
+// A synchronous borrow, not a snapshot, client model, or publication envelope.
+const VtSource = struct {
+    const Snapshot = struct {
+        view: VT.SemanticView,
+        colors: VT.Presentation,
+        images: VT.Images,
+    };
+
+    fn begin(snapshot: *const Snapshot) *const VT.SemanticView {
+        return &snapshot.view;
+    }
+    fn presentation(snapshot: *const Snapshot) *const VT.Presentation {
+        return &snapshot.colors;
+    }
+    fn rowCount(snapshot: *const Snapshot) usize {
+        return snapshot.view.rows;
+    }
+    fn rowAt(_: *const Snapshot, index: usize) u16 {
+        return @intCast(index);
+    }
+    fn rowCells(snapshot: *const Snapshot, row: u16) []const VT.Cell {
+        return snapshot.view.rowCells(row);
+    }
+    fn lineGeometry(snapshot: *const Snapshot, row: u16) View.LineGeometry {
+        return switch (snapshot.view.lineGeometry(row)) {
+            .single_width => .single_width,
+            .double_width => .double_width,
+            .double_height_top => .double_height_top,
+            .double_height_bottom => .double_height_bottom,
+        };
+    }
+    fn cellScalars(snapshot: *const Snapshot, row: usize, column: usize, cell: VT.Cell, output: *[24]u32) []const u32 {
+        // VT resolves continuation coordinates to the lead; presentation must not
+        // draw that lead again. Never approximate a sidecar with inline combining.
+        if (cell.x != 0 or cell.y != 0) return &.{};
+        var scalars: [24]u21 = undefined;
+        const sequence = snapshot.view.cellScalarsAt(@intCast(row), @intCast(column), &scalars);
+        for (sequence, 0..) |scalar, index| output[index] = scalar;
+        return output[0..sequence.len];
+    }
+    fn graphics(snapshot: *const Snapshot) VT.Images {
+        return snapshot.images;
+    }
+    fn changedRows(_: *const Snapshot) ?[]const bool {
+        return null;
+    }
+    fn rowShift(_: *const Snapshot) ?u16 {
+        return null;
+    }
+    fn cursorShape(snapshot: *const Snapshot) View.CursorShape {
+        return switch (snapshot.view.cursor_shape) {
+            .block => .block,
+            .underline => .underline,
+            .bar => .bar,
+            .none => .none,
+        };
     }
 };
 
@@ -479,6 +547,26 @@ pub fn updateRichWithImageBindings(
     return updateInner(RichSource, owner, snapshot, image_bindings);
 }
 
+/// Presents the canonical VT observation synchronously. The owner must not
+/// mutate VT during this call. No observation, row, scalar, or image-pixel borrow
+/// survives it; Canvas retains only its existing presentation caches and commands.
+/// History is selected by VT. Transport-only incremental row hints are omitted.
+/// Images use the same exact host resource bindings as client sources; the host
+/// obtains pixels from observation.images(history_offset), never through Canvas.
+pub fn updateObservation(
+    owner: *Canvas,
+    observation: *const VT.Observation,
+    history_offset: u32,
+    image_bindings: []const ExternalImageBinding,
+) CanvasError!void {
+    const source: VtSource.Snapshot = .{
+        .view = observation.semanticView(history_offset),
+        .colors = observation.presentation(),
+        .images = observation.images(history_offset),
+    };
+    return updateInner(VtSource, owner, &source, image_bindings);
+}
+
 fn updateInner(
     comptime Source: type,
     owner: *Canvas,
@@ -547,14 +635,17 @@ fn updateInner(
     if (atlas_resource) |value| bindContentResource(impl.commands[0..command_count], value);
 
     const graphics = Source.graphics(snapshot);
-    if (graphics.images.len > maximum_external_images) return error.ImageLimit;
-    if (image_bindings.len != graphics.images.len) return error.InvalidImageBinding;
-    if (graphics.placements.len > impl.placement_order.len) return error.ImageLimit;
+    if (Source != VtSource and graphicsImageCount(graphics) > maximum_external_images)
+        return error.ImageLimit;
+    if (graphicsPlacementCount(graphics) > impl.placement_order.len) return error.ImageLimit;
 
     var next_published_images: [maximum_external_images]PublishedImage = undefined;
     var next_published_count: usize = 0;
     const new_resource_floor = next_resource_high_water;
-    for (graphics.images) |image| {
+    for (0..graphicsImageCount(graphics)) |image_index| {
+        const image = graphicsImage(graphics, image_index);
+        if (!graphicsImageVisible(graphics, image.image_id)) continue;
+        if (next_published_count == next_published_images.len) return error.ImageLimit;
         const binding = findExternalImageBinding(image_bindings, image.image_id, image.generation) orelse
             return error.InvalidImageBinding;
         const published = try publishedImage(image, binding);
@@ -585,6 +676,8 @@ fn updateInner(
         next_published_images[next_published_count] = published;
         next_published_count += 1;
     }
+
+    if (image_bindings.len != next_published_count) return error.InvalidImageBinding;
 
     try insertExternalPlacements(
         Source,
@@ -855,10 +948,10 @@ const ContentCellColors = struct {
     underline: canvas.Color,
 };
 
-fn contentSurfaceSize(begin: *const View.Begin, cell_size: canvas.Size) CanvasError!canvas.Size {
+fn contentSurfaceSize(begin: anytype, cell_size: canvas.Size) CanvasError!canvas.Size {
     const width = std.math.mul(
         u32,
-        @as(u32, begin.columns),
+        @as(u32, contentColumns(begin)),
         @as(u32, cell_size.width),
     ) catch return error.InvalidPresentationGeometry;
     const height = std.math.mul(
@@ -898,9 +991,52 @@ const ContentCellSizing = struct {
     offset_y: u16,
 };
 
+fn contentColumns(begin: anytype) u16 {
+    return if (@TypeOf(begin) == *const VT.SemanticView) begin.cols else begin.columns;
+}
+fn contentCursorColumn(begin: anytype) u16 {
+    return if (@TypeOf(begin) == *const VT.SemanticView) begin.cursor_col else begin.cursor_column;
+}
+fn contentStyle(cell: anytype) View.CellStyle {
+    if (@TypeOf(cell) != VT.Cell) return View.cellStyleFromBits(cell.style_bits);
+    return .{
+        .bold = cell.attrs.bold,
+        .dim = cell.attrs.dim,
+        .italic = cell.attrs.italic,
+        .blink = cell.attrs.blink,
+        .blink_fast = cell.attrs.blink_fast,
+        .reverse = cell.attrs.reverse,
+        .invisible = cell.attrs.invisible,
+        .underline = cell.attrs.underline,
+        .strikethrough = cell.attrs.strikethrough,
+    };
+}
+fn contentFont(cell: anytype) u8 {
+    return if (@TypeOf(cell) == VT.Cell) cell.attrs.font else cell.font;
+}
+fn contentBaseline(cell: anytype) u8 {
+    return if (@TypeOf(cell) == VT.Cell) @backingInt(cell.attrs.baseline) else cell.baseline;
+}
+fn contentUnderlineStyle(cell: anytype) u8 {
+    return if (@TypeOf(cell) == VT.Cell) @backingInt(cell.attrs.underline_style) else cell.underline_style;
+}
+fn contentCellColor(cell: anytype, comptime which: enum { foreground, background, underline_color }) TextColor {
+    if (@TypeOf(cell) != VT.Cell) return @field(cell, @tagName(which));
+    const color = switch (which) {
+        .foreground => cell.attrs.fg,
+        .background => cell.attrs.bg,
+        .underline_color => cell.attrs.underline_color,
+    };
+    return .{ .kind = switch (color.kind) {
+        .default => .default,
+        .indexed => .indexed,
+        .rgb => .rgb,
+    }, .value = color.value };
+}
+
 fn assertPresentationCell(comptime Cell: type) void {
-    if (Cell != View.Cell and Cell != Rich.Cell)
-        @compileError("terminal Canvas cell source must be client.view.Cell or client.rich.Cell");
+    if (Cell != View.Cell and Cell != Rich.Cell and Cell != VT.Cell)
+        @compileError("terminal Canvas cell source must be client.view.Cell, client.rich.Cell, or VT.Cell");
 }
 
 fn contentCellSizing(
@@ -1151,7 +1287,7 @@ fn contentIsContextualOperatorCell(
     if (sequence.len != 1 or cell.width != 1 or cell.height != 1 or
         cell.x != 0 or cell.y != 0 or cell.subscale_n != 0 or cell.subscale_d != 0 or
         cell.vertical_align != 0 or cell.horizontal_align != 0 or cell.semantic_width or
-        cell.font != 0 or cell.baseline != 0 or View.cellStyleFromBits(cell.style_bits).invisible)
+        contentFont(cell) != 0 or contentBaseline(cell) != 0 or contentStyle(cell).invisible)
         return false;
     const value = sequence[0];
     return value >= 0x21 and value <= 0x2f or
@@ -1163,6 +1299,7 @@ fn contentIsContextualOperatorCell(
 fn contentSameContextualRendition(left: anytype, right: anytype) bool {
     comptime assertPresentationCell(@TypeOf(left));
     comptime assertPresentationCell(@TypeOf(right));
+    if (@TypeOf(left) == VT.Cell) return std.meta.eql(left.attrs, right.attrs);
     return left.style_bits == right.style_bits and left.font == right.font and
         left.baseline == right.baseline and left.underline_style == right.underline_style and
         left.protection == right.protection and left.link_id == right.link_id and
@@ -1247,20 +1384,20 @@ fn appendContentCellSolid(
     );
 }
 
-fn richColor(value: client.rich.Rgba) canvas.Color {
+fn contentRgba(value: anytype) canvas.Color {
     return .{ .r = value.r, .g = value.g, .b = value.b, .a = value.a };
 }
 
 fn contentColor(
     value: TextColor,
-    presentation: *const View.Presentation,
+    presentation: anytype,
     foreground: bool,
 ) CanvasError!canvas.Color {
     return switch (value.kind) {
-        .default => richColor(if (foreground) presentation.foreground else presentation.background),
+        .default => contentRgba(if (foreground) presentation.foreground else presentation.background),
         .indexed => blk: {
             if (value.value >= presentation.palette.len) return error.InvalidColor;
-            break :blk richColor(presentation.palette[value.value]);
+            break :blk contentRgba(presentation.palette[value.value]);
         },
         .rgb => .{
             .r = @intCast((value.value >> 16) & 0xff),
@@ -1279,12 +1416,12 @@ fn dimContentColor(value: canvas.Color) canvas.Color {
 
 fn contentCellColors(
     cell: anytype,
-    presentation: *const View.Presentation,
+    presentation: anytype,
 ) CanvasError!ContentCellColors {
     comptime assertPresentationCell(@TypeOf(cell));
-    var foreground = try contentColor(cell.foreground, presentation, true);
-    var background = try contentColor(cell.background, presentation, false);
-    const style = View.cellStyleFromBits(cell.style_bits);
+    var foreground = try contentColor(contentCellColor(cell, .foreground), presentation, true);
+    var background = try contentColor(contentCellColor(cell, .background), presentation, false);
+    const style = contentStyle(cell);
     if (style.reverse)
         std.mem.swap(canvas.Color, &foreground, &background);
     if (presentation.reverse_screen)
@@ -1294,7 +1431,7 @@ fn contentCellColors(
     return .{
         .foreground = foreground,
         .background = background,
-        .underline = try contentColor(cell.underline_color, presentation, true),
+        .underline = try contentColor(contentCellColor(cell, .underline_color), presentation, true),
     };
 }
 
@@ -1445,18 +1582,18 @@ fn incrementalRowLayerEligible(
 ) CanvasError!bool {
     const begin = Source.begin(snapshot);
     const presentation = Source.presentation(snapshot);
-    const rows = Source.rows(snapshot);
-    if (presentation.reverse_screen or row_index >= rows.len) return false;
-    const row = rows[row_index];
+    const row_count = Source.rowCount(snapshot);
+    if (presentation.reverse_screen or row_index >= row_count) return false;
+    const row = Source.rowAt(snapshot, row_index);
     const row_cells = Source.rowCells(snapshot, row);
-    if (Source.lineGeometry(row) != .single_width or row_cells.len != begin.columns) return false;
+    if (Source.lineGeometry(snapshot, row) != .single_width or row_cells.len != contentColumns(begin)) return false;
     for (row_cells) |cell| {
-        if (!contentUsesPlainGeometry(cell, Source.lineGeometry(row)) or
+        if (!contentUsesPlainGeometry(cell, Source.lineGeometry(snapshot, row)) or
             blk: {
-                const style = View.cellStyleFromBits(cell.style_bits);
+                const style = contentStyle(cell);
                 break :blk style.reverse or style.underline or style.strikethrough;
             } or
-            cell.background.kind != .default)
+            contentCellColor(cell, .background).kind != .default)
             return false;
     }
     return true;
@@ -1468,12 +1605,12 @@ fn incrementalViewEligible(
     changed_rows: ?[]const bool,
 ) CanvasError!bool {
     const begin = Source.begin(snapshot);
-    const rows = Source.rows(snapshot);
+    const row_count = Source.rowCount(snapshot);
     const graphics = Source.graphics(snapshot);
-    if (rows.len != begin.rows or graphics.images.len != 0 or graphics.placements.len != 0)
+    if (row_count != begin.rows or graphicsImageCount(graphics) != 0 or graphicsPlacementCount(graphics) != 0)
         return false;
-    if (changed_rows) |changed| if (changed.len != rows.len) return error.InvalidView;
-    for (rows, 0..) |_, row_index| {
+    if (changed_rows) |changed| if (changed.len != row_count) return error.InvalidView;
+    for (0..row_count) |row_index| {
         if (changed_rows) |changed| if (!changed[row_index]) continue;
         if (!try incrementalRowLayerEligible(Source, snapshot, row_index)) return false;
     }
@@ -1485,6 +1622,7 @@ fn planIncrementalRows(
     content: *Canvas,
     snapshot: *const Source.Snapshot,
 ) CanvasError!?IncrementalPlan {
+    if (Source == VtSource) return null;
     const impl = canvasImpl(content);
     if (!impl.incremental_ready or impl.incremental_commands.len == 0 or
         impl.incremental_rows.len == 0)
@@ -1492,7 +1630,7 @@ fn planIncrementalRows(
     const begin = Source.begin(snapshot);
     if (begin.rows == 0 or begin.rows > impl.incremental_rows.len or
         begin.rows != impl.incremental_rows_count or
-        begin.columns != impl.incremental_columns_count or
+        contentColumns(begin) != impl.incremental_columns_count or
         begin.history_offset != impl.incremental_history_offset or
         begin.alternate_screen != impl.incremental_alternate_screen)
         return null;
@@ -1544,6 +1682,7 @@ fn rememberIncrementalCommands(
     content: *Canvas,
     snapshot: *const Source.Snapshot,
 ) void {
+    if (Source == VtSource) return;
     const impl = canvasImpl(content);
     const begin = Source.begin(snapshot);
     if (begin.rows == 0 or begin.rows > impl.incremental_rows.len) {
@@ -1571,7 +1710,7 @@ fn rememberIncrementalCommands(
     }
     const presentation = Source.presentation(snapshot);
     impl.incremental_rows_count = begin.rows;
-    impl.incremental_columns_count = begin.columns;
+    impl.incremental_columns_count = contentColumns(begin);
     impl.incremental_history_offset = begin.history_offset;
     impl.incremental_alternate_screen = begin.alternate_screen;
     impl.incremental_reverse_screen = presentation.reverse_screen;
@@ -1611,13 +1750,13 @@ fn buildContentCommands(
     const atlas_size = glyph_cache.atlasSize(atlas);
     const begin = Source.begin(snapshot);
     const presentation = Source.presentation(snapshot);
-    const rows = Source.rows(snapshot);
-    if (rows.len != begin.rows) return error.InvalidView;
-    if (row_ranges) |ranges| if (ranges.len != rows.len) return error.InvalidView;
+    const row_count = Source.rowCount(snapshot);
+    if (row_count != begin.rows) return error.InvalidView;
+    if (row_ranges) |ranges| if (ranges.len != row_count) return error.InvalidView;
 
     const metrics = fonts.metrics();
     const whole = contentSurfaceRect(surface);
-    const default_background = richColor(presentation.background);
+    const default_background = contentRgba(presentation.background);
     const line_offset = contentLineOffset(metrics, cell_size);
     var used: usize = 0;
     try appendContentSolid(output, &used, whole, whole, default_background);
@@ -1625,13 +1764,14 @@ fn buildContentCommands(
 
     // Cell backgrounds are a distinct Kitty graphics boundary: the deepest
     // image phase sits between the default background and these overrides.
-    for (rows, 0..) |row, row_index| {
+    for (0..row_count) |row_index| {
+        const row = Source.rowAt(snapshot, row_index);
         const row_cells = Source.rowCells(snapshot, row);
-        if (row_cells.len != begin.columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(begin.columns, Source.lineGeometry(row));
+        if (row_cells.len != contentColumns(begin)) return error.InvalidView;
+        const line_columns = try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row));
         for (row_cells[0..line_columns], 0..) |cell, column| {
-            const reversed = View.cellStyleFromBits(cell.style_bits).reverse != presentation.reverse_screen;
-            if (!reversed and cell.background.kind == .default) continue;
+            const reversed = contentStyle(cell).reverse != presentation.reverse_screen;
+            if (!reversed and contentCellColor(cell, .background).kind == .default) continue;
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
             if (!std.meta.eql(colors.background, default_background))
@@ -1642,7 +1782,7 @@ fn buildContentCommands(
                     physical,
                     colors.background,
                     row_index,
-                    Source.lineGeometry(row),
+                    Source.lineGeometry(snapshot, row),
                     cell_size,
                     surface,
                 );
@@ -1652,13 +1792,15 @@ fn buildContentCommands(
 
     // Decorations are foreground content. Ordinary negative-z images must sit
     // below them together with glyphs, not above them as if they were cells.
-    for (rows, 0..) |row, row_index| {
+    for (0..row_count) |row_index| {
+        const row = Source.rowAt(snapshot, row_index);
         const row_cells = Source.rowCells(snapshot, row);
-        if (row_cells.len != begin.columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(begin.columns, Source.lineGeometry(row));
+        if (row_cells.len != contentColumns(begin)) return error.InvalidView;
+        const line_columns = try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row));
         for (row_cells[0..line_columns], 0..) |cell, column| {
-            const style = View.cellStyleFromBits(cell.style_bits);
-            const sequence = Source.cellScalars(snapshot, cell);
+            const style = contentStyle(cell);
+            var scalar_scratch: [24]u32 = undefined;
+            const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
             if (sequence.len == 0 or cell.x != 0 or cell.y != 0 or
                 style.invisible or (!style.underline and !style.strikethrough))
                 continue;
@@ -1677,11 +1819,11 @@ fn buildContentCommands(
                     clip,
                     std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
                     metrics.underline_height,
-                    cell.underline_style,
+                    contentUnderlineStyle(cell),
                     colors.underline,
                     sizing,
                     row_index,
-                    Source.lineGeometry(row),
+                    Source.lineGeometry(snapshot, row),
                     cell_size,
                     surface,
                 );
@@ -1696,14 +1838,15 @@ fn buildContentCommands(
                     .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
                     .width = clip.width,
                     .height = @max(@as(u16, 1), metrics.strike_height),
-                }, colors.underline, sizing, row_index, Source.lineGeometry(row), cell_size, surface);
+                }, colors.underline, sizing, row_index, Source.lineGeometry(snapshot, row), cell_size, surface);
             }
         }
     }
 
     const placeholder_resource = placeholderContentResource();
     var has_raster = false;
-    for (rows, 0..) |row, row_index| {
+    for (0..row_count) |row_index| {
+        const row = Source.rowAt(snapshot, row_index);
         const row_start = used;
         if (incremental_plan) |plan| {
             if (!plan.repairs[row_index]) {
@@ -1729,8 +1872,8 @@ fn buildContentCommands(
             }
         }
         const all_row_cells = Source.rowCells(snapshot, row);
-        if (all_row_cells.len != begin.columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(begin.columns, Source.lineGeometry(row));
+        if (all_row_cells.len != contentColumns(begin)) return error.InvalidView;
+        const line_columns = try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row));
         const row_cells = all_row_cells[0..line_columns];
         // Evaluate only after a visible font cell reaches the original checks.
         var plain_row_clip: ?canvas.Rect = null;
@@ -1738,10 +1881,11 @@ fn buildContentCommands(
         var skip_until: usize = 0;
         for (row_cells, 0..) |cell, column| {
             if (column < skip_until) continue;
-            const sequence = Source.cellScalars(snapshot, cell);
+            var scalar_scratch: [24]u32 = undefined;
+            const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
             if (sequence.len == 0) continue;
             if (cell.x != 0 or cell.y != 0) return error.InvalidView;
-            if (View.cellStyleFromBits(cell.style_bits).invisible) continue;
+            if (contentStyle(cell).invisible) continue;
 
             if (View.isImagePlaceholder(sequence)) continue;
             const ascii_index = glyph_cache.printableAsciiIndex(sequence);
@@ -1750,7 +1894,7 @@ fn buildContentCommands(
             var run: text.Run = undefined;
             var contextual = false;
             var cluster_stride_26_6: i64 = 0;
-            if (Source.lineGeometry(row) == .single_width and
+            if (Source.lineGeometry(snapshot, row) == .single_width and
                 try contentIsContextualOperatorCell(cell, sequence))
             {
                 const run_limit = @min(
@@ -1765,7 +1909,8 @@ fn buildContentCommands(
                 var run_end = column + 1;
                 while (run_end - column < run_limit) : (run_end += 1) {
                     const next = row_cells[run_end];
-                    const next_sequence = Source.cellScalars(snapshot, next);
+                    var next_scalar_scratch: [24]u32 = undefined;
+                    const next_sequence = Source.cellScalars(snapshot, row_index, run_end, next, &next_scalar_scratch);
                     if (!contentSameContextualRendition(cell, next)) break;
                     if (!try contentIsContextualOperatorCell(next, next_sequence)) break;
                     operator_scalars[run_end - column] = next_sequence[0];
@@ -1804,7 +1949,7 @@ fn buildContentCommands(
                 }
             }
             const physical = try contentCellRect(row_index, column, cell_size);
-            const plain_geometry = contentUsesPlainGeometry(cell, Source.lineGeometry(row));
+            const plain_geometry = contentUsesPlainGeometry(cell, Source.lineGeometry(snapshot, row));
             const sizing: ?ContentCellSizing = if (plain_geometry)
                 null
             else
@@ -1815,7 +1960,7 @@ fn buildContentCommands(
                 try contentCellVisibleClip(
                     sizing.?,
                     row_index,
-                    Source.lineGeometry(row),
+                    Source.lineGeometry(snapshot, row),
                     cell_size,
                     surface,
                 ) orelse continue;
@@ -1842,7 +1987,7 @@ fn buildContentCommands(
                         try contentLineTransformRect(
                             sized_frame,
                             row_index,
-                            Source.lineGeometry(row),
+                            Source.lineGeometry(snapshot, row),
                             cell_size,
                         ),
                     .clip = allocation_clip,
@@ -1885,7 +2030,7 @@ fn buildContentCommands(
                 break :blk try contentLineClip(
                     row_clip,
                     row_index,
-                    Source.lineGeometry(row),
+                    Source.lineGeometry(snapshot, row),
                     cell_size,
                     surface,
                 ) orelse continue;
@@ -1893,7 +2038,7 @@ fn buildContentCommands(
                 cell,
                 sizing.?,
                 row_index,
-                Source.lineGeometry(row),
+                Source.lineGeometry(snapshot, row),
                 cell_size,
                 surface,
             ) orelse continue;
@@ -1959,7 +2104,7 @@ fn buildContentCommands(
                             try contentLineTransformRect(
                                 sized_destination,
                                 row_index,
-                                Source.lineGeometry(row),
+                                Source.lineGeometry(snapshot, row),
                                 cell_size,
                             ),
                         .clip = font_clip,
@@ -2108,20 +2253,64 @@ fn publishedImage(
     };
 }
 
-fn findImage(images: []const View.Image, image_id: u32) ?View.Image {
-    for (images) |image| {
+// Rich manifests already contain only referenced images. Canonical VT retains
+// images across hidden placements and screen banks; residency must not upload
+// those invisible images. This scan is bounded by VT's image/placement quotas.
+fn graphicsImageVisible(graphics: anytype, image_id: u32) bool {
+    if (@TypeOf(graphics) != VT.Images) return true;
+    for (0..graphics.placementCount()) |index| {
+        const placement = graphics.placement(index) orelse continue;
+        if (placement.image_id == image_id) return true;
+    }
+    return false;
+}
+
+fn graphicsImageCount(graphics: anytype) usize {
+    return if (@TypeOf(graphics) == VT.Images) graphics.imageCount() else graphics.images.len;
+}
+fn graphicsImage(graphics: anytype, index: usize) View.Image {
+    if (@TypeOf(graphics) != VT.Images) return graphics.images[index];
+    const image = graphics.image(index).?;
+    return .{ .image_id = image.id, .generation = image.generation, .width = image.width, .height = image.height };
+}
+fn graphicsPlacementCount(graphics: anytype) usize {
+    return if (@TypeOf(graphics) == VT.Images) graphics.placementCount() else graphics.placements.len;
+}
+fn graphicsPlacement(graphics: anytype, index: usize) ?View.ImagePlacement {
+    if (@TypeOf(graphics) != VT.Images) return graphics.placements[index];
+    const placement = graphics.placement(index) orelse return null;
+    return .{
+        .image_id = placement.image_id,
+        .generation = placement.generation,
+        .row = placement.row,
+        .column = placement.col,
+        .source_x = placement.source_x,
+        .source_y = placement.source_y,
+        .source_width = placement.source_width,
+        .source_height = placement.source_height,
+        .cell_x = placement.cell_x,
+        .cell_y = placement.cell_y,
+        .pixel_width = placement.pixel_width,
+        .pixel_height = placement.pixel_height,
+        .z = placement.z,
+    };
+}
+
+fn findImage(graphics: anytype, image_id: u32) ?View.Image {
+    for (0..graphicsImageCount(graphics)) |index| {
+        const image = graphicsImage(graphics, index);
         if (image.image_id == image_id) return image;
     }
     return null;
 }
 
 fn externalPlacementLessThan(
-    placements: []const View.ImagePlacement,
+    graphics: anytype,
     lhs_index: u16,
     rhs_index: u16,
 ) bool {
-    const lhs = placements[lhs_index];
-    const rhs = placements[rhs_index];
+    const lhs = graphicsPlacement(graphics, lhs_index).?;
+    const rhs = graphicsPlacement(graphics, rhs_index).?;
     if (lhs.z != rhs.z) return lhs.z < rhs.z;
     if (lhs.generation != rhs.generation) return lhs.generation < rhs.generation;
     return lhs_index < rhs_index;
@@ -2139,24 +2328,31 @@ fn insertExternalPlacements(
     order_storage: *[View.maximum_image_placements]u16,
 ) CanvasError!void {
     const graphics = Source.graphics(snapshot);
-    if (graphics.placements.len == 0) return;
-    if (graphics.placements.len > order_storage.len) return error.ImageLimit;
-    if (graphics.placements.len > output.len - @min(used.*, output.len))
-        return error.CommandLimit;
-
-    const order = order_storage[0..graphics.placements.len];
-    for (order, 0..) |*index, value| index.* = @intCast(value);
+    if (graphicsPlacementCount(graphics) == 0) return;
+    if (graphicsPlacementCount(graphics) > order_storage.len) return error.ImageLimit;
+    var visible_count: usize = 0;
+    for (0..graphicsPlacementCount(graphics)) |index| {
+        if (graphicsPlacement(graphics, index) == null) continue;
+        order_storage[visible_count] = @intCast(index);
+        visible_count += 1;
+    }
+    if (visible_count > output.len - @min(used.*, output.len)) return error.CommandLimit;
+    const order = order_storage[0..visible_count];
     std.sort.heap(
         u16,
         order,
-        graphics.placements,
-        externalPlacementLessThan,
+        graphics,
+        struct {
+            fn lessThan(context: @TypeOf(graphics), left: u16, right: u16) bool {
+                return externalPlacementLessThan(context, left, right);
+            }
+        }.lessThan,
     );
 
     var deep_count: usize = 0;
     var negative_count: usize = 0;
     for (order) |index| {
-        const z = graphics.placements[index].z;
+        const z = graphicsPlacement(graphics, index).?.z;
         if (z < content_image_below_background_threshold)
             deep_count += 1
         else if (z < 0)
@@ -2180,8 +2376,8 @@ fn insertExternalPlacements(
     var negative_at = projection.background_end + deep_count;
     var positive_at = old_count + foreground_shift;
     for (order) |index| {
-        const placement = graphics.placements[index];
-        const image = findImage(graphics.images, placement.image_id) orelse
+        const placement = graphicsPlacement(graphics, index).?;
+        const image = findImage(graphics, placement.image_id) orelse
             return error.InvalidView;
         const binding = findExternalImageBinding(
             bindings,
@@ -2207,11 +2403,11 @@ fn insertExternalPlacements(
             positive_at += 1;
         }
     }
-    used.* = old_count + graphics.placements.len;
+    used.* = old_count + visible_count;
 }
 
 fn projectExternalPlacement(
-    graphics: View.Graphics,
+    graphics: anytype,
     image: View.Image,
     placement: View.ImagePlacement,
     binding: ExternalImageBinding,
@@ -2315,18 +2511,17 @@ fn contentCursor(
     const begin = Source.begin(snapshot);
     const cursor_shape = Source.cursorShape(snapshot);
     if (!begin.cursor_visible or cursor_shape == .none) return null;
-    if (begin.cursor_row >= begin.rows or begin.cursor_column >= begin.columns)
+    if (begin.cursor_row >= begin.rows or contentCursorColumn(begin) >= contentColumns(begin))
         return null;
     const presentation = Source.presentation(snapshot);
-    const rows = Source.rows(snapshot);
-    const row = rows[begin.cursor_row];
-    if (begin.cursor_column >= try contentLineColumnCount(begin.columns, Source.lineGeometry(row)))
+    const row = Source.rowAt(snapshot, begin.cursor_row);
+    if (contentCursorColumn(begin) >= try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row)))
         return null;
-    const base_rect = try contentCellRect(begin.cursor_row, begin.cursor_column, cell_size);
+    const base_rect = try contentCellRect(begin.cursor_row, contentCursorColumn(begin), cell_size);
     const rect = try contentLineClip(
         base_rect,
         begin.cursor_row,
-        Source.lineGeometry(row),
+        Source.lineGeometry(snapshot, row),
         cell_size,
         surface,
     ) orelse return null;
@@ -2334,8 +2529,8 @@ fn contentCursor(
         .rect = rect,
         .clip = contentSurfaceRect(surface),
         .shape = cursor_shape,
-        .color = richColor(presentation.cursor orelse presentation.foreground),
-        .text_color = richColor(presentation.cursor_text orelse presentation.background),
+        .color = contentRgba(presentation.cursor orelse presentation.foreground),
+        .text_color = contentRgba(presentation.cursor_text orelse presentation.background),
     };
 }
 

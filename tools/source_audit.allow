@@ -39,11 +39,30 @@ howl-render/src/terminal.zig|anytype|cell: anytype,
 howl-render/src/terminal.zig|anytype|cell: anytype,
 howl-render/src/terminal.zig|anytype|cell: anytype,
 howl-render/src/terminal.zig|anytype|cell: anytype,
+howl-render/src/terminal.zig|anytype|fn contentBaseline(cell: anytype) u8 {
+howl-render/src/terminal.zig|anytype|fn contentCellColor(cell: anytype, comptime which: enum { foreground, background, underline_color }) TextColor {
+howl-render/src/terminal.zig|anytype|fn contentColumns(begin: anytype) u16 {
+howl-render/src/terminal.zig|anytype|fn contentCursorColumn(begin: anytype) u16 {
+howl-render/src/terminal.zig|anytype|fn contentFont(cell: anytype) u8 {
+howl-render/src/terminal.zig|anytype|fn contentRgba(value: anytype) canvas.Color {
 howl-render/src/terminal.zig|anytype|fn contentSameContextualRendition(left: anytype, right: anytype) bool {
 howl-render/src/terminal.zig|anytype|fn contentSameContextualRendition(left: anytype, right: anytype) bool {
+howl-render/src/terminal.zig|anytype|fn contentStyle(cell: anytype) View.CellStyle {
+howl-render/src/terminal.zig|anytype|fn contentSurfaceSize(begin: anytype, cell_size: canvas.Size) CanvasError!canvas.Size {
+howl-render/src/terminal.zig|anytype|fn contentUnderlineStyle(cell: anytype) u8 {
 howl-render/src/terminal.zig|anytype|fn contentUsesMulticellAllocation(cell: anytype) bool {
 howl-render/src/terminal.zig|anytype|fn contentUsesPlainGeometry(cell: anytype, line_geometry: View.LineGeometry) bool {
+howl-render/src/terminal.zig|anytype|fn findImage(graphics: anytype, image_id: u32) ?View.Image {
 howl-render/src/terminal.zig|anytype|fn generatedSizing(cell: anytype) generated.BoxDrawingSizing {
+howl-render/src/terminal.zig|anytype|fn graphicsImageCount(graphics: anytype) usize {
+howl-render/src/terminal.zig|anytype|fn graphicsImage(graphics: anytype, index: usize) View.Image {
+howl-render/src/terminal.zig|anytype|fn graphicsImageVisible(graphics: anytype, image_id: u32) bool {
+howl-render/src/terminal.zig|anytype|fn graphicsPlacementCount(graphics: anytype) usize {
+howl-render/src/terminal.zig|anytype|fn graphicsPlacement(graphics: anytype, index: usize) ?View.ImagePlacement {
+howl-render/src/terminal.zig|anytype|graphics: anytype,
+howl-render/src/terminal.zig|anytype|graphics: anytype,
+howl-render/src/terminal.zig|anytype|presentation: anytype,
+howl-render/src/terminal.zig|anytype|presentation: anytype,
 howl-vk/src/abi.zig|anyopaque|pub extern fn vkCmdPushConstants(commandBuffer: VkCommandBuffer, layout: VkPipelineLayout, stageFlags: VkShaderStageFlags, offset: u32, size: u32, pValues: ?*const anyopaque) void;
 howl-vk/src/terminal_cells.zig|discard|_ = try glyphAtlasExtent(limits);
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {

@@ -985,3 +985,308 @@ test "terminal Canvas construction releases every staged allocation and validate
     invalid = canvasConfig(0);
     try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, font, invalid));
 }
+
+const VT = @import("howl_vt").Terminal;
+
+// Independent test-only rich fixture. Production never constructs client rows,
+// cells, scalar banks, or a snapshot envelope for the direct observation path.
+
+fn feedCanonical(owner: *VT, bytes: []const u8) !void {
+    const result = try owner.feed(bytes);
+    try std.testing.expect(result.stateChanged());
+}
+
+fn richFixture(allocator: std.mem.Allocator, observation: *const VT.Observation, history: u32) !client.rich.Snapshot {
+    const view = observation.semanticView(history);
+    const rows = try allocator.alloc(client.rich.Row, view.rows);
+    for (rows, 0..) |*row, y| {
+        row.* = .{
+            .wrapped = view.rowWrapped(@intCast(y)),
+            .line_geometry = @backingInt(view.lineGeometry(@intCast(y))),
+            .cells = try allocator.alloc(client.rich.Cell, view.cols),
+        };
+        for (row.cells, view.rowCells(@intCast(y)), 0..) |*out, value, x| {
+            var scalar_buffer: [24]u21 = undefined;
+            const scalars = if (value.x == 0 and value.y == 0)
+                view.cellScalarsAt(@intCast(y), @intCast(x), &scalar_buffer)
+            else
+                &.{};
+            const copied = try allocator.alloc(u32, scalars.len);
+            for (copied, scalars) |*dest, scalar| dest.* = scalar;
+            out.* = cell(&.{}, value.width, value.x);
+            out.scalars = copied;
+            out.height = value.height;
+            out.y = value.y;
+            out.subscale_n = value.subscale_n;
+            out.subscale_d = value.subscale_d;
+            out.vertical_align = value.vertical_align;
+            out.horizontal_align = value.horizontal_align;
+            out.semantic_width = value.semantic_width;
+            out.font = value.attrs.font;
+            out.baseline = @backingInt(value.attrs.baseline);
+            out.underline_style = @backingInt(value.attrs.underline_style);
+            out.protection = @backingInt(value.attrs.protected);
+            out.link_id = value.attrs.link_id;
+            out.style_bits = 0;
+            inline for (.{ "bold", "dim", "italic", "blink", "blink_fast", "reverse", "invisible", "underline", "strikethrough" }, 0..) |name, bit| {
+                if (@field(value.attrs, name)) out.style_bits |= @as(u16, 1) << bit;
+            }
+            out.foreground = fixtureColor(value.attrs.fg);
+            out.background = fixtureColor(value.attrs.bg);
+            out.underline_color = fixtureColor(value.attrs.underline_color);
+        }
+    }
+    var source = sourceSnapshot(rows, view.cols);
+    source.begin.history_offset = view.history_offset;
+    source.begin.history_count = view.history_count;
+    source.begin.history_row_base = view.history_row_base;
+    source.begin.cursor_row = view.cursor_row;
+    source.begin.cursor_column = view.cursor_col;
+    source.begin.cursor_visible = view.cursor_visible;
+    source.begin.cursor_blink = view.cursor_blink;
+    source.begin.cursor_shape = @backingInt(view.cursor_shape);
+    source.begin.alternate_screen = view.is_alternate_screen;
+    const colors = observation.presentation();
+    for (&source.presentation.palette, colors.palette) |*out, color| out.* = fixtureRgba(color);
+    source.presentation.foreground = fixtureRgba(colors.foreground);
+    source.presentation.background = fixtureRgba(colors.background);
+    source.presentation.cursor = if (colors.cursor) |color| fixtureRgba(color) else null;
+    source.presentation.cursor_text = if (colors.cursor_text) |color| fixtureRgba(color) else null;
+    source.presentation.reverse_screen = colors.reverse_screen;
+    source.presentation.flags = @intFromBool(colors.reverse_screen);
+    source.presentation.presence_bits = @as(u8, @intFromBool(colors.cursor != null)) |
+        (@as(u8, @intFromBool(colors.cursor_text != null)) << 1);
+    const images = observation.images(history);
+    source.graphics.generation = images.generation;
+    source.graphics.content_generation = images.content_generation;
+    source.graphics.cell_pixel_width = images.cell_pixel_width;
+    source.graphics.cell_pixel_height = images.cell_pixel_height;
+    source.graphics.images = try allocator.alloc(client.view.Image, images.imageCount());
+    for (source.graphics.images, 0..) |*out, index| {
+        const image = images.image(index).?;
+        out.* = .{ .image_id = image.id, .generation = image.generation, .width = image.width, .height = image.height };
+    }
+    const placements = try allocator.alloc(client.view.ImagePlacement, images.placementCount());
+    var count: usize = 0;
+    for (0..images.placementCount()) |index| {
+        const place = images.placement(index) orelse continue;
+        placements[count] = .{
+            .image_id = place.image_id,
+            .generation = place.generation,
+            .row = place.row,
+            .column = place.col,
+            .source_x = place.source_x,
+            .source_y = place.source_y,
+            .source_width = place.source_width,
+            .source_height = place.source_height,
+            .cell_x = place.cell_x,
+            .cell_y = place.cell_y,
+            .pixel_width = place.pixel_width,
+            .pixel_height = place.pixel_height,
+            .z = place.z,
+        };
+        count += 1;
+    }
+    source.graphics.placements = placements[0..count];
+    var image_count: usize = 0;
+    for (source.graphics.images) |image| {
+        for (source.graphics.placements) |place| {
+            if (place.image_id == image.image_id) {
+                source.graphics.images[image_count] = image;
+                image_count += 1;
+                break;
+            }
+        }
+    }
+    source.graphics.images = source.graphics.images[0..image_count];
+    return source;
+}
+
+fn fixtureColor(color: VT.Color) client.view.TextColor {
+    return .{ .kind = @fromBackingInt(@intCast(@backingInt(color.kind))), .value = color.value };
+}
+fn fixtureRgba(color: VT.Rgb) client.rich.Rgba {
+    return .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a };
+}
+
+fn directConfig() terminal.CanvasConfig {
+    var config = canvasConfig(2048);
+    config.shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 1024, .glyph_capacity = 1024, .max_sequence_scalars = 24 };
+    config.atlas = .{ .width = 512, .height = 512, .entry_capacity = 128 };
+    config.shaped_capacity = 128;
+    return config;
+}
+
+fn expectDirectEquivalent(bytes: []const u8, history: u32) !void {
+    var owner = try VT.initWithHistory(std.testing.allocator, 4, 12, 8);
+    defer owner.deinit();
+    try owner.setCellPixelSize(10, 20);
+    try feedCanonical(&owner, bytes);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var fixture = try richFixture(arena.allocator(), owner.observation(), history);
+    const rich = fixture.view();
+    const owned = try client.view.projectView(std.testing.allocator, &rich);
+    defer client.view.deinit(owned);
+    const font = try terminalFont();
+    defer font.deinit();
+    var direct = try Harness.init(std.testing.allocator, font, directConfig());
+    defer direct.deinit();
+    var borrowed = try Harness.init(std.testing.allocator, font, directConfig());
+    defer borrowed.deinit();
+    var independent = try Harness.init(std.testing.allocator, font, directConfig());
+    defer independent.deinit();
+    var bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+    for (fixture.graphics.images, 0..) |image, index| bindings[index] = .{
+        .image_id = image.image_id,
+        .generation = image.generation,
+        .resource = .{ .resource = try terminal.ResourceId.init(index + 2), .generation = @fromBackingInt(image.generation) },
+    };
+    const bound = bindings[0..fixture.graphics.images.len];
+    for (0..2) |pass| {
+        try terminal.updateObservation(direct.canvas, owner.observation(), history, bound);
+        // On the second pass the frame is built AFTER VT mutation. This must not change the
+        // commands, scalar keys, atlas pixels, or external generation metadata.
+        if (pass == 1) try feedCanonical(&owner, "\x1bcZ");
+        const actual = try direct.finishPresent();
+        const expected = try borrowed.presentRichWithBindings(&rich, bound);
+        const owned_frame = try independent.presentWithBindings(owned, bound);
+        try std.testing.expectEqualDeep(expected, actual);
+        try std.testing.expectEqualDeep(owned_frame, actual);
+        if (pass == 1) try std.testing.expectEqual(@as(usize, 0), actual.frame.uploads.len);
+    }
+}
+
+test "terminal Canvas canonical plain and contextual text equals rich and owned final frames" {
+    try expectDirectEquivalent("Hello => !=", 0);
+}
+
+test "terminal Canvas canonical combining sidecars wide continuations and DEC geometry equal rich" {
+    try expectDirectEquivalent("a\u{301}\u{302}\u{303}\u{304}\u{305} \u{754c}\r\n\x1b#6AB\r\n\x1b#3CD\r\n\x1b#4CD", 0);
+    try expectDirectEquivalent("a\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}\u{308}\u{309}\u{30a}\u{30b}\u{30c}\u{30d}\u{30e}\u{30f}\u{310}\u{311}\u{312}\u{313}\u{314}\u{315}\u{316}", 0);
+}
+
+test "terminal Canvas canonical palette RGB reverse decorations and cursor equal rich" {
+    try expectDirectEquivalent("\x1b]4;1;#123456\x07\x1b]10;#abcdee\x07\x1b]12;#654321\x07\x1b[31;44;1;2;4;9mAB\x1b[0;38;2;90;80;70;48;2;20;30;40mC\x1b[7mD\x1b[?5h\x1b[6 q", 0);
+}
+
+test "terminal Canvas canonical projected history and alternate screen equal rich" {
+    try expectDirectEquivalent("A\r\nB\r\nC\r\nD\r\nE\r\nF", 2);
+    try expectDirectEquivalent("old\x1b[?1049hnew", 0);
+}
+
+test "terminal Canvas canonical Kitty images retain exact bindings and equal rich" {
+    try expectDirectEquivalent("A\x1b_Ga=T,f=32,s=1,v=1,i=7,c=1,r=1,z=-1;/////w==\x1b\\", 0);
+    // Retained primary placements become sparse/invisible in alternate screen.
+    try expectDirectEquivalent("\x1b_Ga=T,f=32,s=1,v=1,i=7;/////w==\x1b\\\x1b[?1049hB", 0);
+}
+
+test "terminal Canvas canonical image limit counts visible resources only" {
+    var owner = try VT.init(std.testing.allocator, 2, 12);
+    defer owner.deinit();
+    try owner.setCellPixelSize(10, 20);
+    inline for (1..9) |image_id| {
+        var sequence: [96]u8 = undefined;
+        const bytes = try std.fmt.bufPrint(
+            &sequence,
+            "\x1b_Ga=t,f=32,s=1,v=1,i={d};/////w==\x1b\\",
+            .{image_id},
+        );
+        try feedCanonical(&owner, bytes);
+    }
+    try feedCanonical(&owner, "\x1b_Ga=T,f=32,s=1,v=1,i=9;/////w==\x1b\\");
+    const images = owner.observation().images(0);
+    try std.testing.expect(images.imageCount() > terminal.maximum_external_images);
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    const visible = images.image(images.imageCount() - 1).?;
+    const binding = terminal.ExternalImageBinding{
+        .image_id = visible.id,
+        .generation = visible.generation,
+        .resource = .{
+            .resource = try terminal.ResourceId.init(2),
+            .generation = @fromBackingInt(visible.generation),
+        },
+    };
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, directConfig());
+    defer host.deinit();
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    const presented = try host.finishPresent();
+    try std.testing.expectEqual(@as(usize, 1), presented.external.len);
+    try std.testing.expectEqual(binding.resource, presented.external[0].resource);
+}
+
+test "terminal Canvas canonical stale image generations reject atomically and retry" {
+    var owner = try VT.init(std.testing.allocator, 2, 4);
+    defer owner.deinit();
+    try owner.setCellPixelSize(10, 20);
+    try feedCanonical(&owner, "A\x1b_Ga=T,f=32,s=1,v=1,i=7;/////w==\x1b\\");
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, directConfig());
+    defer host.deinit();
+    const images = owner.observation().images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    const original = images.image(0).?;
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 255, 255 }, original.pixels);
+    var binding: terminal.ExternalImageBinding = .{
+        .image_id = original.id,
+        .generation = original.generation,
+        .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(10) },
+    };
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    const first = try host.finishPresent();
+    const revision = first.frame.revision;
+    try std.testing.expectEqual(binding.resource, firstRgba(first.frame.commands).?.resource.resource);
+    try feedCanonical(&owner, "\x1b_Ga=t,f=32,s=1,v=1,i=7;AAAA/w==\x1b\\");
+    const changed = owner.observation().images(0).image(0).?;
+    try std.testing.expect(changed.generation > original.generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, changed.pixels);
+    // Stale canonical generation cannot resolve the required image.
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding}));
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+    binding.generation = changed.generation;
+    // Updating the canonical generation alone cannot reuse stale GPU residency.
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding}));
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+    binding.resource.generation = @fromBackingInt(11);
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    const retried = try host.finishPresent();
+    try std.testing.expectEqual(revision + 1, retried.frame.revision);
+    try std.testing.expectEqual(@as(usize, 1), retried.external.len);
+    try std.testing.expectEqual(binding.resource, retried.external[0].resource);
+    try std.testing.expectEqual(binding.resource, firstRgba(retried.frame.commands).?.resource.resource);
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{}));
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+}
+
+test "terminal Canvas canonical scalar bounds reject without truncation and recover" {
+    var owner = try VT.init(std.testing.allocator, 1, 4);
+    defer owner.deinit();
+    try feedCanonical(&owner, "A");
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    defer host.deinit();
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{});
+    const accepted = try host.finishPresent();
+    try std.testing.expect(accepted.frame.revision != 0);
+    try feedCanonical(&owner, "\ra\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}");
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqual(@as(usize, 9), owner.observation().semanticView(0).cellScalarsAt(0, 0, &scalars).len);
+    try std.testing.expectError(error.ShapeSequenceLimit, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{}));
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+    try feedCanonical(&owner, "\x1bcA");
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{});
+    const recovered = try host.finishPresent();
+    try std.testing.expectEqual(@as(u64, 2), recovered.frame.revision);
+}
+
+test "terminal Canvas canonical virtual placements and OSC 66 share final projection" {
+    try expectDirectEquivalent("\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++
+        "\x1b_Ga=p,i=56,c=1,r=1,U=1,q=2\x1b\\" ++
+        "\x1b[38;5;56m\u{10eeee}\u{305}\u{305}\x1b[0m", 0);
+    try expectDirectEquivalent("\x1b]66;s=2;AB\x07", 0);
+}

@@ -29,9 +29,10 @@ experimental:
     protocol; dynamic registry/control and a single multiplexed attach route are
     intentionally deferred
   howl-render: >-
-    one shared Terminal Canvas consuming either a validated borrowed
-    howl-client.rich observation or the owned howl-client.view semantic snapshot,
-    through one presentation implementation plus howl-text; it owns terminal
+    one shared Terminal Canvas consuming canonical VT Observation directly,
+    a validated borrowed howl-client.rich observation, or the owned
+    howl-client.view semantic snapshot through one presentation implementation
+    plus howl-text; it owns terminal
     pixel geometry, colors/decorations/cursor presentation,
     exact terminal-image resource projection, backend residency reconciliation,
     and final backend-neutral terminal frames; private terminal_glyph_cache owns

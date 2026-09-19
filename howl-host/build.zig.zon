@@ -5,6 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .howl_session = .{ .path = "../howl-session" },
+        .howl_vt = .{ .path = "../howl-vt" },
         .howl_vk = .{ .path = "../howl-vk" },
         .howl_wayland = .{ .path = "../howl-wayland" },
         .howl_client = .{ .path = "../howl-client" },

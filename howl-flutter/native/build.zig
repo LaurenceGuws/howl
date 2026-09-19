@@ -51,6 +51,7 @@ pub fn build(b: *std.Build) void {
     const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal.zig");
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
+    terminal.addImport("howl_vt", vt);
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),

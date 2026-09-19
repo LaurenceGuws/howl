@@ -40,10 +40,12 @@ pub fn build(b: *std.Build) void {
     module.addImport("presentation", presentation);
     test_module.addImport("presentation", presentation);
 
+    var vt: ?*std.Build.Module = null;
     var client: ?*std.Build.Module = null;
     var text: ?*std.Build.Module = null;
     var text_test_fonts: ?*std.Build.Module = null;
     if (native_enabled) {
+        vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt");
         const client_dependency = b.dependency("howl_client", .{
             .target = target,
             .optimize = optimize,
@@ -67,6 +69,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
+            vt.?,
         ));
         test_module.addImport("terminal", terminalNativeModule(
             b,
@@ -74,6 +77,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
+            vt.?,
         ));
     }
 
@@ -112,6 +116,7 @@ pub fn build(b: *std.Build) void {
         });
         terminal_test_module.addImport("howl_render", test_module);
         terminal_test_module.addImport("howl_client", client.?);
+        terminal_test_module.addImport("howl_vt", vt.?);
         terminal_test_module.addImport("howl_text", text.?);
         terminal_test_module.addImport("test_fonts", text_test_fonts.?);
         const terminal_tests = b.addTest(.{
@@ -129,7 +134,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = check;
 }
 
-fn terminalNativeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, client: *std.Build.Module, text: *std.Build.Module) *std.Build.Module {
+fn terminalNativeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, client: *std.Build.Module, text: *std.Build.Module, vt: *std.Build.Module) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -137,5 +142,6 @@ fn terminalNativeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimiz
     });
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
+    terminal.addImport("howl_vt", vt);
     return terminal;
 }
