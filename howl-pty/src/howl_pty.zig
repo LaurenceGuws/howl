@@ -944,16 +944,17 @@ const ChildProcessFds = struct {
 };
 
 fn resetChildSignalDispositions() bool {
-    var sa: posix.Sigaction = .{
-        .handler = .{ .handler = posix.SIG.DFL },
-        .mask = posix.sigemptyset(),
+    // Keep the raw syscall ABI even when the embedder links libc.
+    const sa: linux.Sigaction = .{
+        .handler = .{ .handler = linux.SIG.DFL },
+        .mask = linux.sigemptyset(),
         .flags = 0,
     };
     inline for (.{
-        posix.SIG.ABRT, posix.SIG.ALRM, posix.SIG.BUS,  posix.SIG.CHLD,
-        posix.SIG.FPE,  posix.SIG.HUP,  posix.SIG.ILL,  posix.SIG.INT,
-        posix.SIG.PIPE, posix.SIG.QUIT, posix.SIG.SEGV, posix.SIG.TERM,
-        posix.SIG.TRAP,
+        linux.SIG.ABRT, linux.SIG.ALRM, linux.SIG.BUS,  linux.SIG.CHLD,
+        linux.SIG.FPE,  linux.SIG.HUP,  linux.SIG.ILL,  linux.SIG.INT,
+        linux.SIG.PIPE, linux.SIG.QUIT, linux.SIG.SEGV, linux.SIG.TERM,
+        linux.SIG.TRAP,
     }) |signal| {
         if (linux.errno(linux.sigaction(signal, &sa, null)) != .SUCCESS) return false;
     }
