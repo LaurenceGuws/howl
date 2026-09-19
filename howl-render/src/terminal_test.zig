@@ -1199,22 +1199,82 @@ test "terminal Canvas canonical image limit counts visible resources only" {
     try std.testing.expect(images.imageCount() > terminal.maximum_external_images);
     try std.testing.expectEqual(@as(usize, 1), images.placementCount());
     const visible = images.image(images.imageCount() - 1).?;
-    const binding = terminal.ExternalImageBinding{
-        .image_id = visible.id,
-        .generation = visible.generation,
-        .resource = .{
-            .resource = try terminal.ResourceId.init(2),
-            .generation = @fromBackingInt(visible.generation),
-        },
-    };
     const font = try terminalFont();
     defer font.deinit();
     var host = try Harness.init(std.testing.allocator, font, directConfig());
     defer host.deinit();
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    var binding_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+    const bindings = try terminal.planObservationImageBindings(
+        &.{},
+        terminal.canvasUsage(host.canvas),
+        owner.observation(),
+        0,
+        &binding_storage,
+    );
+    try std.testing.expectEqual(@as(usize, 1), bindings.len);
+    const binding = bindings[0];
+    try std.testing.expectEqual(visible.id, binding.image_id);
+    try std.testing.expectEqual(visible.generation, binding.generation);
+    try std.testing.expectEqual(@as(u64, 2), try binding.resource.resource.identity());
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, bindings);
     const presented = try host.finishPresent();
     try std.testing.expectEqual(@as(usize, 1), presented.external.len);
     try std.testing.expectEqual(binding.resource, presented.external[0].resource);
+}
+
+test "terminal Canvas canonical image planner preserves identity across exact generations" {
+    var owner = try VT.init(std.testing.allocator, 2, 4);
+    defer owner.deinit();
+    try owner.setCellPixelSize(10, 20);
+    try feedCanonical(&owner, "A\x1b_Ga=T,f=32,s=1,v=1,i=7;/////w==\x1b\\");
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, directConfig());
+    defer host.deinit();
+
+    var first_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+    const first = try terminal.planObservationImageBindings(
+        &.{},
+        terminal.canvasUsage(host.canvas),
+        owner.observation(),
+        0,
+        &first_storage,
+    );
+    try std.testing.expectEqual(@as(usize, 1), first.len);
+    try std.testing.expectEqual(@as(u64, 2), try first[0].resource.resource.identity());
+    try terminal.updateObservation(host.canvas, owner.observation(), 0, first);
+    const first_presented = try host.finishPresent();
+    try std.testing.expectEqual(terminal.canvasUsage(host.canvas).revision, first_presented.frame.revision);
+
+    try feedCanonical(&owner, "\x1b_Ga=t,f=32,s=1,v=1,i=7;AAAA/w==\x1b\\");
+    const changed = owner.observation().images(0).image(0).?;
+    try std.testing.expect(changed.generation > first[0].generation);
+    var next_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
+    const next = try terminal.planObservationImageBindings(
+        first,
+        terminal.canvasUsage(host.canvas),
+        owner.observation(),
+        0,
+        &next_storage,
+    );
+    try std.testing.expectEqual(@as(usize, 1), next.len);
+    try std.testing.expectEqual(first[0].image_id, next[0].image_id);
+    try std.testing.expectEqual(first[0].resource.resource, next[0].resource.resource);
+    try std.testing.expectEqual(changed.generation, next[0].generation);
+    try std.testing.expectEqual(changed.generation, @backingInt(next[0].resource.generation));
+
+    var stale = next[0];
+    stale.generation = std.math.add(u64, next[0].generation, 1) catch unreachable;
+    try std.testing.expectError(
+        error.InvalidImageBinding,
+        terminal.planObservationImageBindings(
+            &.{stale},
+            terminal.canvasUsage(host.canvas),
+            owner.observation(),
+            0,
+            &next_storage,
+        ),
+    );
 }
 
 test "terminal Canvas canonical stale image generations reject atomically and retry" {

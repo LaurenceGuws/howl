@@ -299,38 +299,97 @@ pub fn planExternalImageBindings(
     var allocation_cursor = usage.resource_high_water;
     var first_new = true;
     for (images, 0..) |image, index| {
-        if (image.image_id == 0 or image.generation == 0) return error.InvalidImageBinding;
-        const retained: ?ExternalImageBinding = for (current) |binding| {
-            if (binding.image_id == image.image_id) break binding;
-        } else null;
-        if (retained) |prior| {
-            if (image.generation < prior.generation) return error.InvalidImageBinding;
-            var binding = prior;
-            if (image.generation > prior.generation) {
-                binding.generation = image.generation;
-                binding.resource.generation = @fromBackingInt(image.generation);
-            }
-            output[index] = binding;
-            continue;
-        }
-
-        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
-        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
-            return error.ResourceIdentityOverflow;
-        first_new = false;
-        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
-            return error.ResourceIdentityOverflow;
-        output[index] = .{
-            .image_id = image.image_id,
-            .generation = image.generation,
-            .resource = .{
-                .resource = canvas.ResourceId.init(allocation_cursor) catch
-                    return error.ResourceIdentityOverflow,
-                .generation = @fromBackingInt(image.generation),
-            },
-        };
+        output[index] = try planExternalImageBinding(
+            current,
+            usage,
+            image.image_id,
+            image.generation,
+            &allocation_cursor,
+            &first_new,
+        );
     }
     return output[0..images.len];
+}
+
+/// Plans exact resource bindings for images visible in one canonical VT view.
+///
+/// VT may retain more images than are visible in the selected history/screen
+/// projection, so this filters by canonical placements before applying the same
+/// stable image-id/resource-id rules as transported observations.
+pub fn planObservationImageBindings(
+    current: []const ExternalImageBinding,
+    usage: CanvasUsage,
+    observation: *const VT.Observation,
+    history_offset: u32,
+    output: *[maximum_external_images]ExternalImageBinding,
+) error{ ImageLimit, InvalidImageBinding, ResourceIdentityOverflow }![]const ExternalImageBinding {
+    const graphics = observation.images(history_offset);
+    var allocation_cursor = usage.resource_high_water;
+    var first_new = true;
+    var count: usize = 0;
+    var image_index: usize = 0;
+    while (image_index < graphics.imageCount()) : (image_index += 1) {
+        const image = graphics.image(image_index) orelse return error.InvalidImageBinding;
+        if (!vtImageVisible(graphics, image.id)) continue;
+        if (count == output.len) return error.ImageLimit;
+        output[count] = try planExternalImageBinding(
+            current,
+            usage,
+            image.id,
+            image.generation,
+            &allocation_cursor,
+            &first_new,
+        );
+        count += 1;
+    }
+    return output[0..count];
+}
+
+fn vtImageVisible(graphics: VT.Images, image_id: u32) bool {
+    var placement_index: usize = 0;
+    while (placement_index < graphics.placementCount()) : (placement_index += 1) {
+        const placement = graphics.placement(placement_index) orelse continue;
+        if (placement.image_id == image_id) return true;
+    }
+    return false;
+}
+
+fn planExternalImageBinding(
+    current: []const ExternalImageBinding,
+    usage: CanvasUsage,
+    image_id: u32,
+    generation: u64,
+    allocation_cursor: *u64,
+    first_new: *bool,
+) error{ InvalidImageBinding, ResourceIdentityOverflow }!ExternalImageBinding {
+    if (image_id == 0 or generation == 0) return error.InvalidImageBinding;
+    const retained: ?ExternalImageBinding = for (current) |binding| {
+        if (binding.image_id == image_id) break binding;
+    } else null;
+    if (retained) |prior| {
+        if (generation < prior.generation) return error.InvalidImageBinding;
+        var binding = prior;
+        if (generation > prior.generation) {
+            binding.generation = generation;
+            binding.resource.generation = @fromBackingInt(generation);
+        }
+        return binding;
+    }
+    const step: u64 = if (first_new.* and usage.resource_generation == 0) 2 else 1;
+    allocation_cursor.* = std.math.add(u64, allocation_cursor.*, step) catch
+        return error.ResourceIdentityOverflow;
+    first_new.* = false;
+    if (allocation_cursor.* == 0 or allocation_cursor.* > canvas.ResourceId.max_identity)
+        return error.ResourceIdentityOverflow;
+    return .{
+        .image_id = image_id,
+        .generation = generation,
+        .resource = .{
+            .resource = canvas.ResourceId.init(allocation_cursor.*) catch
+                return error.ResourceIdentityOverflow,
+            .generation = @fromBackingInt(generation),
+        },
+    };
 }
 
 const Cursor = struct {
