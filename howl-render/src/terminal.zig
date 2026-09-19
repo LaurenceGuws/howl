@@ -307,6 +307,7 @@ const CanvasImpl = struct {
     incremental_background: client.rich.Rgba = undefined,
     incremental_ready: bool = false,
     placement_order: [View.maximum_image_placements]u16 = undefined,
+    frame_ready: bool = false,
     revision: u64 = 0,
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
@@ -411,9 +412,11 @@ pub fn deinitCanvas(owner: *Canvas) void {
 }
 
 /// Explicitly forgets private shaping and raster caches. The next successful
-/// update which uses glyphs publishes a newer atlas generation.
+/// update which uses glyphs publishes a newer atlas generation. Frames and
+/// refill queries are invalid until that successful update.
 pub fn resetCanvasCaches(owner: *Canvas) AtlasError!void {
     const impl = canvasImpl(owner);
+    impl.frame_ready = false;
     impl.incremental_ready = false;
     try glyph_cache.resetAtlas(impl.atlas);
     glyph_cache.resetShapeCache(impl.shape_cache);
@@ -431,8 +434,12 @@ pub fn canvasUsage(owner: *const Canvas) CanvasUsage {
 }
 
 /// Replaces this Canvas with one immutable terminal view.
+///
+/// All update variants invalidate presentation on error: `frame` and
+/// `missingExternalResources` return InvalidView until a successful update.
+/// Private caches may retain rejected work; published revision and resource
+/// counters advance only on success. No last-good drawing is retained.
 pub fn update(owner: *Canvas, snapshot: *const View.Snapshot) CanvasError!void {
-    if (OwnedSource.graphics(snapshot).images.len != 0) return error.InvalidImageBinding;
     return updateInner(OwnedSource, owner, snapshot, &.{});
 }
 
@@ -440,7 +447,6 @@ pub fn update(owner: *Canvas, snapshot: *const View.Snapshot) CanvasError!void {
 /// observation. The caller retains every slice and must keep the view alive only
 /// for this synchronous call; RawCache and Snapshot.view() produce valid inputs.
 pub fn updateRich(owner: *Canvas, snapshot: *const Rich.View) CanvasError!void {
-    if (RichSource.graphics(snapshot).images.len != 0) return error.InvalidImageBinding;
     return updateInner(RichSource, owner, snapshot, &.{});
 }
 
@@ -480,6 +486,7 @@ fn updateInner(
     image_bindings: []const ExternalImageBinding,
 ) CanvasError!void {
     const impl = canvasImpl(owner);
+    impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
     const begin = Source.begin(snapshot);
     const surface = try contentSurfaceSize(begin, impl.config.cell_size);
@@ -595,6 +602,11 @@ fn updateInner(
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
     const next_revision = impl.revision + 1;
 
+    const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
+    const incremental_eligible = incremental_plan != null or
+        (incremental_enabled and projection.default_background_end == 1 and
+            projection.background_end == 1 and try incrementalViewEligible(Source, snapshot, null));
+
     impl.revision = next_revision;
     impl.surface = surface;
     impl.command_count = command_count;
@@ -611,14 +623,11 @@ fn updateInner(
         impl.published_atlas_generation = atlas.generation;
         impl.published_atlas_entries = atlas_entries;
     }
-    const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
-    const incremental_eligible = incremental_plan != null or
-        (incremental_enabled and projection.default_background_end == 1 and
-            projection.background_end == 1 and try incrementalViewEligible(Source, snapshot, null));
     if (incremental_eligible)
         rememberIncrementalCommands(Source, owner, snapshot)
     else
         impl.incremental_ready = false;
+    impl.frame_ready = true;
 }
 
 /// Lists Host-owned terminal image resources required by the current frame but
@@ -629,6 +638,7 @@ pub fn missingExternalResources(
     output: []canvas.FrameExternalResource,
 ) CanvasError![]const canvas.FrameExternalResource {
     const impl = constCanvasImpl(owner);
+    if (!impl.frame_ready) return error.InvalidView;
     try canvas.validateResidencies(residency);
     var needed: usize = 0;
     for (impl.published_images[0..impl.published_image_count]) |published| {
@@ -654,7 +664,7 @@ pub fn frame(
     buffers: FrameBuffers,
 ) CanvasError!Frame {
     const impl = constCanvasImpl(owner);
-    if (impl.revision == 0) return error.InvalidView;
+    if (!impl.frame_ready) return error.InvalidView;
     try canvas.validateResidencies(residency);
 
     for (impl.published_images[0..impl.published_image_count]) |published| {

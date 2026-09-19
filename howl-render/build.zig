@@ -115,12 +115,8 @@ pub fn build(b: *std.Build) void {
         terminal_test_module.addImport("howl_text", text.?);
         terminal_test_module.addImport("test_fonts", text_test_fonts.?);
         const terminal_tests = b.addTest(.{
-            .name = "howl-render-terminal-residency",
+            .name = "howl-render-terminal",
             .root_module = terminal_test_module,
-            .filters = &.{
-                "terminal Canvas owns final atlas residency and recovers after backend loss",
-                "terminal Canvas borrowed rich and owned view produce identical final frame",
-            },
             .use_llvm = false,
             .use_lld = false,
         });

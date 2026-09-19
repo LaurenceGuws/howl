@@ -290,6 +290,13 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     try std.testing.expectEqual(first_resource, replay.uploads[0].resource);
 
     try terminal.resetCanvasCaches(host.canvas);
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+    try std.testing.expectError(error.InvalidView, terminal.frame(host.canvas, &.{}, .{
+        .uploads = host.uploads,
+        .removals = host.removals,
+        .commands = host.commands,
+        .pixels = host.pixels,
+    }));
     host.residency_count = 1;
     host.residencies[0] = .{ .resource = first_resource, .format = .alpha8, .size = replay.uploads[0].size };
     const regenerated = try host.present(view);
@@ -425,7 +432,10 @@ test "terminal Canvas projects OSC 66 fraction and alignment once" {
     const frame = (try host.present(view)).frame;
     const alpha = firstAlpha(frame.commands) orelse return error.MissingAlpha;
     try std.testing.expectEqualDeep(terminal.Rect{ .x = 7, .y = 30, .width = 15, .height = 30 }, alpha.destination);
-    try std.testing.expectEqualDeep(terminal.Rect{ .x = 0, .y = 0, .width = 30, .height = 60 }, alpha.clip);
+    // The producer allocates 30x60, but final clips intersect destination,
+    // allocation and surface. The half-scale, centered/bottom-aligned 15x30
+    // destination fits entirely: the backend must not paint its unused margins.
+    try std.testing.expectEqualDeep(alpha.destination, alpha.clip);
     try std.testing.expectEqualDeep(terminal.SourceRect{ .x = 0, .y = 0, .width = 15, .height = 30 }, alpha.resource.source.?);
 }
 
@@ -655,6 +665,116 @@ test "terminal Canvas external image residency is requested once and removed whe
     try std.testing.expect(firstRgba(without.frame.commands) == null);
 }
 
+test "terminal Canvas rejected update invalidates frame until same Canvas retries" {
+    const font = try terminalFont();
+    defer font.deinit();
+    inline for (.{ false, true }) |borrowed| {
+        var a = [_]u32{'A'};
+        var b = [_]u32{'B'};
+        var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+        var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+        var images = [_]client.view.Image{.{ .image_id = 7, .generation = 9, .width = 2, .height = 2 }};
+        var placements = [_]client.view.ImagePlacement{.{
+            .image_id = 7,
+            .generation = 9,
+            .row = 0,
+            .column = 0,
+            .source_x = 0,
+            .source_y = 0,
+            .source_width = 2,
+            .source_height = 2,
+            .cell_x = 0,
+            .cell_y = 0,
+            .pixel_width = 10,
+            .pixel_height = 20,
+            .z = 0,
+        }};
+        var source = sourceSnapshot(&rows, 1);
+        source.graphics = .{
+            .generation = 1,
+            .content_generation = 1,
+            .cell_pixel_width = 10,
+            .cell_pixel_height = 20,
+            .images = &images,
+            .placements = &placements,
+        };
+        var binding = terminal.ExternalImageBinding{
+            .image_id = 7,
+            .generation = 9,
+            .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(9) },
+        };
+        var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+        defer host.deinit();
+        var rich = source.view();
+        const owned_a = try client.view.projectView(std.testing.allocator, &rich);
+        defer client.view.deinit(owned_a);
+        const first = if (borrowed)
+            try host.presentRichWithBindings(&rich, &.{binding})
+        else
+            try host.presentWithBindings(owned_a, &.{binding});
+        const first_revision = first.frame.revision;
+        const atlas_resource = first.frame.uploads[0].resource;
+        const before = terminal.canvasUsage(host.canvas);
+
+        // B changes drawing AND grows the atlas before the stale binding fails.
+        cells[0] = cell(&b, 1, 0);
+        images[0].generation = 10;
+        rich = source.view();
+        const owned_b = try client.view.projectView(std.testing.allocator, &rich);
+        defer client.view.deinit(owned_b);
+        try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
+            terminal.updateRichWithImageBindings(host.canvas, &rich, &.{binding})
+        else
+            terminal.updateWithImageBinding(host.canvas, owned_b, binding));
+        const rejected = terminal.canvasUsage(host.canvas);
+        try std.testing.expect(rejected.atlas_entries > before.atlas_entries);
+        try std.testing.expectEqual(before.revision, rejected.revision);
+        try std.testing.expectEqual(before.resource_generation, rejected.resource_generation);
+        try std.testing.expectEqual(before.resource_high_water, rejected.resource_high_water);
+        try std.testing.expectError(error.InvalidView, terminal.frame(host.canvas, host.residencies[0..host.residency_count], .{
+            .uploads = host.uploads,
+            .removals = host.removals,
+            .commands = host.commands,
+            .pixels = host.pixels,
+        }));
+        try std.testing.expectError(error.InvalidView, terminal.missingExternalResources(host.canvas, &.{}, &host.missing));
+
+        // Matching the image is insufficient: its backend generation must advance.
+        binding.generation = 10;
+        try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
+            terminal.updateRichWithImageBindings(host.canvas, &rich, &.{binding})
+        else
+            terminal.updateWithImageBindings(host.canvas, owned_b, &.{binding}));
+        binding.resource.generation = @fromBackingInt(10);
+        const retry = if (borrowed)
+            try host.presentRichWithBindings(&rich, &.{binding})
+        else
+            try host.presentWithBindings(owned_b, &.{binding});
+        try std.testing.expectEqual(first_revision + 1, retry.frame.revision);
+        try std.testing.expectEqual(@as(usize, 1), retry.external.len);
+        try std.testing.expectEqual(binding.resource, retry.external[0].resource);
+        try std.testing.expectEqual(binding.resource, firstRgba(retry.frame.commands).?.resource.resource);
+        try std.testing.expectEqual(@as(usize, 1), retry.frame.uploads.len);
+        try std.testing.expectEqual(atlas_resource.resource, retry.frame.uploads[0].resource.resource);
+        try std.testing.expectEqual(@backingInt(atlas_resource.generation) + 1, @backingInt(retry.frame.uploads[0].resource.generation));
+        try std.testing.expectEqual(@as(usize, 0), retry.frame.removals.len);
+
+        // The no-binding entrypoints obey the same invalidation contract.
+        try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
+            terminal.updateRich(host.canvas, &rich)
+        else
+            terminal.update(host.canvas, owned_b));
+        try std.testing.expectError(error.InvalidView, host.finishPresent());
+        const same = if (borrowed)
+            try host.presentRichWithBindings(&rich, &.{binding})
+        else
+            try host.presentWithBindings(owned_b, &.{binding});
+        try std.testing.expectEqual(first_revision + 2, same.frame.revision);
+        try std.testing.expectEqual(@as(usize, 0), same.frame.uploads.len);
+        try std.testing.expectEqual(@as(usize, 0), same.external.len);
+    }
+}
+
 test "terminal Canvas block cursor is final presentation not compositor topology" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
@@ -841,6 +961,18 @@ test "terminal Canvas incremental rows equal complete final commands" {
     const cached_shifted = try cached.present(shifted_view);
     const complete_shifted = try complete.present(shifted_view);
     try std.testing.expectEqualDeep(cached_shifted.frame.commands, complete_shifted.frame.commands);
+
+    // Reuse is now primed. A late failure must discard eligibility, not let a
+    // retry shift the cached rows a second time from the wrong base.
+    const unused_binding = terminal.ExternalImageBinding{
+        .image_id = 7,
+        .generation = 1,
+        .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(1) },
+    };
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateWithImageBinding(cached.canvas, shifted_view, unused_binding));
+    try std.testing.expectError(error.InvalidView, cached.finishPresent());
+    const retried = try cached.present(shifted_view);
+    try std.testing.expectEqualDeep(complete_shifted.frame.commands, retried.frame.commands);
 }
 
 test "terminal Canvas construction releases every staged allocation and validates bounds" {
