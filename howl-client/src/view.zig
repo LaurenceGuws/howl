@@ -366,24 +366,29 @@ pub fn scalars(snapshot: *const Snapshot) []const u32 {
     return constSliceAt(u32, ownerBytes(impl), impl.scalars_offset, impl.scalar_count);
 }
 
-/// Resolves validated cell rendition without exposing text_v1 style bits.
-pub fn cellStyle(cell: Cell) CellStyle {
+/// Resolves one already-validated rich/view style bitfield into semantic rendition.
+pub fn cellStyleFromBits(style_bits: u16) CellStyle {
     return .{
-        .bold = cell.style_bits & protocol.text_v1.style.bold != 0,
-        .dim = cell.style_bits & protocol.text_v1.style.dim != 0,
-        .italic = cell.style_bits & protocol.text_v1.style.italic != 0,
-        .blink = cell.style_bits & protocol.text_v1.style.blink != 0,
-        .blink_fast = cell.style_bits & protocol.text_v1.style.blink_fast != 0,
-        .reverse = cell.style_bits & protocol.text_v1.style.reverse != 0,
-        .invisible = cell.style_bits & protocol.text_v1.style.invisible != 0,
-        .underline = cell.style_bits & protocol.text_v1.style.underline != 0,
-        .strikethrough = cell.style_bits & protocol.text_v1.style.strikethrough != 0,
+        .bold = style_bits & protocol.text_v1.style.bold != 0,
+        .dim = style_bits & protocol.text_v1.style.dim != 0,
+        .italic = style_bits & protocol.text_v1.style.italic != 0,
+        .blink = style_bits & protocol.text_v1.style.blink != 0,
+        .blink_fast = style_bits & protocol.text_v1.style.blink_fast != 0,
+        .reverse = style_bits & protocol.text_v1.style.reverse != 0,
+        .invisible = style_bits & protocol.text_v1.style.invisible != 0,
+        .underline = style_bits & protocol.text_v1.style.underline != 0,
+        .strikethrough = style_bits & protocol.text_v1.style.strikethrough != 0,
     };
 }
 
-/// Resolves the validated snapshot cursor shape without exposing wire values.
-pub fn cursorShape(snapshot: *const Snapshot) CursorShape {
-    return switch (begin(snapshot).cursor_shape) {
+/// Resolves validated cell rendition without exposing text_v1 style bits.
+pub fn cellStyle(cell: Cell) CellStyle {
+    return cellStyleFromBits(cell.style_bits);
+}
+
+/// Resolves one already-validated rich/view cursor-shape value.
+pub fn cursorShapeFromValue(value: u8) CursorShape {
+    return switch (value) {
         0 => .block,
         1 => .underline,
         2 => .bar,
@@ -392,15 +397,25 @@ pub fn cursorShape(snapshot: *const Snapshot) CursorShape {
     };
 }
 
-/// Resolves validated DEC row geometry without exposing text_v1 numeric values.
-pub fn lineGeometry(row: Row) LineGeometry {
-    return switch (row.line_geometry) {
+/// Resolves the validated snapshot cursor shape without exposing wire values.
+pub fn cursorShape(snapshot: *const Snapshot) CursorShape {
+    return cursorShapeFromValue(begin(snapshot).cursor_shape);
+}
+
+/// Resolves one already-validated rich/view DEC row-geometry value.
+pub fn lineGeometryFromValue(value: u8) LineGeometry {
+    return switch (value) {
         0 => .single_width,
         1 => .double_width,
         2 => .double_height_top,
         3 => .double_height_bottom,
         else => unreachable,
     };
+}
+
+/// Resolves validated DEC row geometry without exposing text_v1 numeric values.
+pub fn lineGeometry(row: Row) LineGeometry {
+    return lineGeometryFromValue(row.line_geometry);
 }
 
 /// Borrows exactly one projected cell's scalar sequence.

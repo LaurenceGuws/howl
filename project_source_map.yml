@@ -19,7 +19,9 @@ experimental:
     mouse, one lossless rich text_v1 / revision-relative text_delta_v2
     decoder, compact semantic snapshots, and an explicit-lifetime
     one-allocation coarse semantic view which resolves cell-style, cursor-shape,
-    DEC-line-geometry, and image-placeholder wire encodings once for presenters
+    DEC-line-geometry, and image-placeholder wire encodings for consumers that
+    need owned semantic lifetime; synchronous renderers may instead borrow the
+    already-validated lossless rich observation directly
   howl-cli: >-
     native human/agent terminal CLI plus first node-local multi-terminal server
     canary; one foreground howl server process can own multiple independent
@@ -27,8 +29,10 @@ experimental:
     protocol; dynamic registry/control and a single multiplexed attach route are
     intentionally deferred
   howl-render: >-
-    one shared Terminal Canvas consuming howl-client.view and howl-text;
-    it owns terminal pixel geometry, colors/decorations/cursor presentation,
+    one shared Terminal Canvas consuming either a validated borrowed
+    howl-client.rich observation or the owned howl-client.view semantic snapshot,
+    through one presentation implementation plus howl-text; it owns terminal
+    pixel geometry, colors/decorations/cursor presentation,
     exact terminal-image resource projection, backend residency reconciliation,
     and final backend-neutral terminal frames; private terminal_glyph_cache owns
     bounded shape/alpha-atlas reuse using howl-text only; there is no generic
@@ -49,7 +53,9 @@ experimental:
     bounded tab/split topology that prevents single-terminal architecture from
     becoming implicit product policy; canonical Session revisions now stream
     through current client/text/Canvas/Vulkan boundaries with bounded explicit-sync
-    ring reuse, cancellable observation, and exact terminal-image refill into
+    ring reuse; its generic fallback borrows the validated rich observation
+    directly instead of allocating a second semantic snapshot, while cancellable
+    observation and exact terminal-image refill flow into
     transactional Vulkan residency; physical xkb keyboard facts cross a dedicated
     bounded Input owner, while Wayland pointer facts cross Render-owned pane/cell
     projection into the existing semantic mouse action with causal ordered

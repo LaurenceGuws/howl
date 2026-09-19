@@ -15,6 +15,7 @@ rules:
   - PTY owns Linux descriptors, child process groups, native resize, signals, and cleanup.
   - Attaching an observer never resizes the PTY; geometry changes are explicit serialized session mutations.
   - Rendering, UI, platform lifecycle, networking, authentication, and multiplexing presentation remain outside VT and session.
+  - A validated howl-client rich observation may be borrowed synchronously by Terminal Canvas; client.view remains the owned semantic form for consumers that need independent lifetime. Both storage forms must share one presentation implementation and prove final-frame equivalence.
   - Each core package owns its direct build identity, dependencies, native interfaces, and proofs.
   - Every concrete core artifact uses the tracked Zig compiler with self-hosted code generation and linking.
   - Tests prove behavior, failure, cleanup, bounds, and ownership rather than rejected architecture.

@@ -164,6 +164,23 @@ const Harness = struct {
         bindings: []const terminal.ExternalImageBinding,
     ) !Presented {
         try terminal.updateWithImageBindings(self.canvas, view, bindings);
+        return self.finishPresent();
+    }
+
+    fn presentRich(self: *Harness, view: *const client.rich.View) !Presented {
+        return self.presentRichWithBindings(view, &.{});
+    }
+
+    fn presentRichWithBindings(
+        self: *Harness,
+        view: *const client.rich.View,
+        bindings: []const terminal.ExternalImageBinding,
+    ) !Presented {
+        try terminal.updateRichWithImageBindings(self.canvas, view, bindings);
+        return self.finishPresent();
+    }
+
+    fn finishPresent(self: *Harness) !Presented {
         const external = try terminal.missingExternalResources(
             self.canvas,
             self.residencies[0..self.residency_count],
@@ -704,6 +721,79 @@ test "dense 40x120 terminal Canvas is bounded and recovers from command exhausti
     const frame = (try host.present(view)).frame;
     try std.testing.expectEqual(command_count, frame.commands.len);
     try std.testing.expectEqual(@as(u64, 1), frame.revision);
+}
+
+test "terminal Canvas borrowed rich and owned view produce identical final frame" {
+    var scalar_zero = [_]u32{'='};
+    var scalar_one = [_]u32{'>'};
+    var scalar_two = [_]u32{'A'};
+    var scalar_three = [_]u32{'B'};
+    var cells = [_]client.rich.Cell{
+        cell(&scalar_zero, 1, 0),
+        cell(&scalar_one, 1, 0),
+        cell(&scalar_two, 1, 0),
+        cell(&scalar_three, 1, 0),
+    };
+    var rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &cells,
+    }};
+    var images = [_]client.view.Image{.{
+        .image_id = 7,
+        .generation = 9,
+        .width = 1,
+        .height = 1,
+    }};
+    var placements = [_]client.view.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 3,
+        .row = 0,
+        .column = 0,
+        .source_x = 0,
+        .source_y = 0,
+        .source_width = 1,
+        .source_height = 1,
+        .cell_x = 0,
+        .cell_y = 0,
+        .pixel_width = 10,
+        .pixel_height = 20,
+        .z = 0,
+    }};
+    var source = sourceSnapshot(&rows, 4);
+    source.begin.revision = 41;
+    source.begin.terminal_revision = 39;
+    source.graphics = .{
+        .generation = 11,
+        .content_generation = 10,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
+        .images = &images,
+        .placements = &placements,
+    };
+    const binding = terminal.ExternalImageBinding{
+        .image_id = 7,
+        .generation = 9,
+        .resource = .{
+            .resource = try terminal.ResourceId.init(2),
+            .generation = @fromBackingInt(9),
+        },
+    };
+    const rich = source.view();
+    const owned = try client.view.projectView(std.testing.allocator, &rich);
+    defer client.view.deinit(owned);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var owned_host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    defer owned_host.deinit();
+    var rich_host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    defer rich_host.deinit();
+
+    const owned_presented = try owned_host.presentWithBindings(owned, &.{binding});
+    const rich_presented = try rich_host.presentRichWithBindings(&rich, &.{binding});
+    try std.testing.expectEqualDeep(owned_presented.external, rich_presented.external);
+    try std.testing.expectEqualDeep(owned_presented.frame, rich_presented.frame);
 }
 
 test "terminal Canvas incremental rows equal complete final commands" {

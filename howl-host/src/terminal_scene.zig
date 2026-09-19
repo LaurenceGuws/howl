@@ -311,9 +311,7 @@ pub const Scene = struct {
             } });
         }
 
-        const view = try client.view.projectView(self.allocator, rich);
-        defer client.view.deinit(view);
-        const graphics = client.view.graphics(view);
+        const graphics = rich.graphics;
         var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
         const bindings = try terminal.planExternalImageBindings(
             self.image_bindings[0..self.image_binding_count],
@@ -321,7 +319,7 @@ pub const Scene = struct {
             graphics.images,
             &candidate_bindings,
         );
-        try terminal.updateWithImageBindings(self.canvas, view, bindings);
+        try terminal.updateRichWithImageBindings(self.canvas, rich, bindings);
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
 
