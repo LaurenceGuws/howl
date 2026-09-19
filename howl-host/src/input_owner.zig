@@ -519,8 +519,8 @@ fn nativeModifiers(value: u8) session.InputModifier {
     };
 }
 
-fn nativeMouse(value: protocol.MouseInput) session.Input {
-    return .{ .mouse = .{
+fn nativeMouse(value: protocol.MouseInput) @FieldType(session.Input, "mouse") {
+    return .{
         .kind = switch (value.kind) {
             .press => .press,
             .release => .release,
@@ -541,7 +541,7 @@ fn nativeMouse(value: protocol.MouseInput) session.Input {
         .pixel_y = value.pixel_y,
         .mod = nativeModifiers(value.modifiers),
         .buttons_down = value.buttons_down,
-    } };
+    };
 }
 
 fn nativeNamedKey(value: u8) ?session.KeyName {
@@ -905,4 +905,59 @@ test "named keys preserve release identity without relying on text" {
 test "unicode encoded keysym maps to scalar for modified chords" {
     const projected = projectKey(makeKey(0x010003bb, .pressed, "λ", .{ .alt = true }));
     try std.testing.expectEqual(@as(u32, 0x03bb), projected.unicode.scalar);
+}
+
+test "local native modifiers preserve every protocol bit explicitly" {
+    const modifiers = nativeModifiers(
+        protocol.typed_input.modifiers.shift |
+            protocol.typed_input.modifiers.alt |
+            protocol.typed_input.modifiers.control |
+            protocol.typed_input.modifiers.super |
+            protocol.typed_input.modifiers.hyper |
+            protocol.typed_input.modifiers.meta |
+            protocol.typed_input.modifiers.caps_lock |
+            protocol.typed_input.modifiers.num_lock,
+    );
+    try std.testing.expect(modifiers.shift);
+    try std.testing.expect(modifiers.alt);
+    try std.testing.expect(modifiers.control);
+    try std.testing.expect(modifiers.super);
+    try std.testing.expect(modifiers.hyper);
+    try std.testing.expect(modifiers.meta);
+    try std.testing.expect(modifiers.caps_lock);
+    try std.testing.expect(modifiers.num_lock);
+}
+
+test "local named-key conversion preserves protocol identities and actions" {
+    try std.testing.expectEqual(session.KeyName.up, nativeNamedKey(5).?);
+    try std.testing.expectEqual(session.KeyName.f12, nativeNamedKey(40).?);
+    try std.testing.expectEqual(session.KeyName.keypad_enter, nativeNamedKey(58).?);
+    try std.testing.expect(nativeNamedKey(0) == null);
+    try std.testing.expectEqual(session.KeyAction.press, nativeAction(1).?);
+    try std.testing.expectEqual(session.KeyAction.repeat, nativeAction(2).?);
+    try std.testing.expectEqual(session.KeyAction.release, nativeAction(3).?);
+    try std.testing.expect(nativeAction(0) == null);
+}
+
+test "local mouse conversion preserves semantic route facts" {
+    const value = nativeMouse(.{
+        .kind = .wheel,
+        .button = .wheel_up,
+        .row = 7,
+        .column = 9,
+        .pixel_x = 13,
+        .pixel_y = 17,
+        .modifiers = protocol.typed_input.modifiers.control |
+            protocol.typed_input.modifiers.shift,
+        .buttons_down = 1,
+    });
+    try std.testing.expectEqual(session.MouseEventKind.wheel, value.kind);
+    try std.testing.expectEqual(session.MouseButton.wheel_up, value.button);
+    try std.testing.expectEqual(@as(u16, 7), value.row);
+    try std.testing.expectEqual(@as(u16, 9), value.col);
+    try std.testing.expectEqual(@as(u16, 13), value.pixel_x);
+    try std.testing.expectEqual(@as(u16, 17), value.pixel_y);
+    try std.testing.expect(value.mod.control);
+    try std.testing.expect(value.mod.shift);
+    try std.testing.expectEqual(@as(u8, 1), value.buttons_down);
 }

@@ -8,6 +8,58 @@ const std = @import("std");
 const c = @import("host_c");
 const session = @import("howl_session");
 
+const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
+
+const Publication = struct {
+    revision: u64,
+    synchronized_started_ns: ?u64 = null,
+    synchronized_pending: bool = false,
+    synchronized_timed_out: bool = false,
+
+    fn note(
+        self: *Publication,
+        current_revision: u64,
+        synchronized: bool,
+        now_ns: u64,
+    ) bool {
+        if (!synchronized) {
+            const release_pending = self.synchronized_pending;
+            self.synchronized_started_ns = null;
+            self.synchronized_pending = false;
+            self.synchronized_timed_out = false;
+            if (current_revision == self.revision and !release_pending) return false;
+            self.revision = current_revision;
+            return true;
+        }
+
+        if (self.synchronized_timed_out) {
+            if (current_revision == self.revision) return false;
+            self.revision = current_revision;
+            return true;
+        }
+
+        if (self.synchronized_started_ns == null)
+            self.synchronized_started_ns = now_ns;
+        const elapsed_ns = now_ns -| self.synchronized_started_ns.?;
+        if (elapsed_ns < synchronized_output_timeout_ns) {
+            self.synchronized_pending =
+                self.synchronized_pending or current_revision != self.revision;
+            return false;
+        }
+
+        self.synchronized_started_ns = null;
+        self.synchronized_timed_out = true;
+        const publish = self.synchronized_pending or current_revision != self.revision;
+        self.synchronized_pending = false;
+        if (publish) self.revision = current_revision;
+        return publish;
+    }
+
+    fn arm(self: *const Publication, after_revision: u64) bool {
+        return self.revision != after_revision;
+    }
+};
+
 pub const PollState = struct {
     descriptor: i32,
     stream_closed: bool,
@@ -26,6 +78,7 @@ pub const Owner = struct {
     child_exit: ?session.ChildExit = null,
     write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
+    publication: Publication,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -36,6 +89,7 @@ pub const Owner = struct {
         const value = try session.init(allocator, inherited_environment, launch);
         errdefer session.deinit(value);
         const descriptor = try session.descriptor(value);
+        const initial_revision = session.terminal(value).semanticSequence();
         const observation_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (observation_fd < 0) return error.Signal;
         return .{
@@ -44,6 +98,7 @@ pub const Owner = struct {
             .value = value,
             .descriptor = descriptor,
             .observation_fd = observation_fd,
+            .publication = .{ .revision = initial_revision },
         };
     }
 
@@ -80,6 +135,13 @@ pub const Owner = struct {
             self.mutex.unlock(self.io);
             return failure;
         };
+        const current_revision = session.terminal(self.value).semanticSequence();
+        const synchronized = session.terminal(self.value).synchronizedOutput();
+        const publish = self.publication.note(
+            current_revision,
+            synchronized,
+            timestamp_ns,
+        );
         self.mutex.unlock(self.io);
 
         const lifecycle_changed =
@@ -89,7 +151,7 @@ pub const Owner = struct {
         if (serviced.child_exit) |value| self.child_exit = value;
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
-        if (serviced.changed or lifecycle_changed) signal(self.observation_fd);
+        if (publish or lifecycle_changed) signal(self.observation_fd);
         return serviced;
     }
 
@@ -104,9 +166,9 @@ pub const Owner = struct {
     /// Ensures Render observes a semantic mutation which raced its arm operation.
     pub fn armObservation(self: *Owner, after_revision: u64) void {
         self.mutex.lockUncancelable(self.io);
-        const current = session.terminal(self.value).semanticSequence();
+        const ready = self.publication.arm(after_revision);
         self.mutex.unlock(self.io);
-        if (current != after_revision) signal(self.observation_fd);
+        if (ready) signal(self.observation_fd);
     }
 
     pub const ObservationGuard = struct {
@@ -152,6 +214,7 @@ pub const Owner = struct {
             self.mutex.unlock(self.io);
             return failure;
         };
+        self.publication.revision = session.terminal(self.value).semanticSequence();
         self.mutex.unlock(self.io);
         signal(self.observation_fd);
     }
@@ -256,4 +319,43 @@ test "local terminal owner serializes service input and observation without an e
         if (acknowledged) return;
     }
     return error.Timeout;
+}
+
+test "local publication withholds synchronized output until release or timeout" {
+    var publication = Publication{ .revision = 10 };
+    try std.testing.expect(!publication.note(11, true, 100));
+    try std.testing.expectEqual(@as(u64, 10), publication.revision);
+    try std.testing.expect(!publication.arm(10));
+    try std.testing.expect(publication.synchronized_pending);
+
+    try std.testing.expect(!publication.note(
+        12,
+        true,
+        100 + synchronized_output_timeout_ns - 1,
+    ));
+    try std.testing.expectEqual(@as(u64, 10), publication.revision);
+
+    try std.testing.expect(publication.note(
+        12,
+        false,
+        100 + synchronized_output_timeout_ns - 1,
+    ));
+    try std.testing.expectEqual(@as(u64, 12), publication.revision);
+    try std.testing.expect(!publication.synchronized_pending);
+
+    try std.testing.expect(!publication.note(13, true, 500));
+    try std.testing.expect(publication.note(
+        13,
+        true,
+        500 + synchronized_output_timeout_ns,
+    ));
+    try std.testing.expectEqual(@as(u64, 13), publication.revision);
+    try std.testing.expect(publication.synchronized_timed_out);
+
+    try std.testing.expect(publication.note(
+        14,
+        true,
+        500 + synchronized_output_timeout_ns + 1,
+    ));
+    try std.testing.expectEqual(@as(u64, 14), publication.revision);
 }

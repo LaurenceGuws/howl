@@ -287,6 +287,12 @@ pub const Boundary = struct {
         return self.input_fd;
     }
 
+    /// Wakes Input after another owner performs one serialized local Session
+    /// mutation which may have queued child-facing reply bytes.
+    pub fn wakeInput(self: *Boundary) void {
+        signal(self.input_fd);
+    }
+
     /// Drains all pending Input wakes without blocking.
     pub fn drainInputWake(self: *Boundary) error{Signal}!void {
         try drain(self.input_fd);

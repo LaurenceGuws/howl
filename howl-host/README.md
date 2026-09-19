@@ -3,15 +3,24 @@
 `howl-host` is Howl's native Linux performance canary. It is a concrete client,
 not a shared UI framework and not part of the core gate.
 
-Startup is attach-only:
+The Host has two explicit initial-terminal ownership modes:
 
+    howl-host --local FONT
     howl-host ENDPOINT FONT
     howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT
 
-The Host never creates its initial terminal. That lifetime belongs to the external
-terminal owner, normally howl server. The experimental F9/F11/F12 split/tab
-canary may still create one sibling howl-sessiond; that exception remains
-explicit until terminal creation earns a canonical server-owned control surface.
+--local owns one howl-session directly in the Host process. Input services its
+PTY/VT lifetime independently of presentation; Render borrows canonical VT
+observation only for synchronous Canvas projection. There is no Howl endpoint,
+client connection, or howl-sessiond in that route. It deliberately starts as a
+one-pane generic-Canvas proof; local split/tab creation and the retained Vulkan
+fast renderer are not implied.
+
+Endpoint startup remains the shared/remote route. Its initial terminal lifetime
+belongs to the external owner, normally howl server. The experimental
+F9/F11/F12 split/tab canary may still create one sibling howl-sessiond; that
+exception remains explicit until terminal creation earns a canonical
+server-owned control surface.
 
 Current foundation:
 
@@ -42,13 +51,13 @@ The current live loop deliberately bounds presentation backlog by compositor
 release while canonical Session progress remains observer-independent. It is a
 correctness baseline, not the final latency scheduler.
 
-Terminal wheel policy is live on the canonical one-pane path. Mouse-tracking
+Terminal wheel policy is live on the one-pane paths. Mouse-tracking
 applications receive semantic wheel reports; an ordinary primary screen owns local
 retained-history scrollback; alternate screen + DECSET 1007 emits plain Up/Down
-key cycles. History observations use the existing Render control connection while
-the live long-poll remains isolated, and returning to live replaces that observer
-with a revision-zero baseline so stale queued cuts cannot replay. Split/tab
-scrollback remains outside this first happy-path slice.
+key cycles. Attached history uses the existing Render control connection while
+the live long-poll remains isolated; local history projects the requested
+canonical VT window directly. Returning to live resets only the route-specific
+observer state. Split/tab scrollback remains outside this first local slice.
 
 Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
 cost, and memory slope before optimizing scheduling. The current physical typing

@@ -4,6 +4,7 @@ const std = @import("std");
 const c = @import("renderer_c");
 const client = @import("howl_client");
 const host_layout = @import("layout.zig");
+const local_terminal = @import("local_terminal");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 const session_process = @import("session_process.zig");
@@ -165,8 +166,44 @@ pub fn run(
         runtime_dir,
         shell,
         environ_map,
+        null,
     ) catch |failure| {
+        if (failure == error.Stopping and boundary.shouldStop()) {
+            boundary.markStopped(.render);
+            return;
+        }
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
+        boundary.requestStop(.render);
+    };
+    boundary.markStopped(.render);
+}
+
+/// Runs the same Vulkan/DRM owner against one in-process Session. The local
+/// terminal has no endpoint/client transport and currently owns one pane only.
+pub fn runLocal(
+    boundary: *shared.Boundary,
+    allocator: std.mem.Allocator,
+    owner: *local_terminal.Owner,
+    font_path: []const u8,
+    mux: host_layout.Mux,
+) void {
+    runFallible(
+        boundary,
+        allocator,
+        "",
+        null,
+        font_path,
+        mux,
+        null,
+        "",
+        null,
+        owner,
+    ) catch |failure| {
+        if (failure == error.Stopping and boundary.shouldStop()) {
+            boundary.markStopped(.render);
+            return;
+        }
+        std.debug.print("Local render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
     boundary.markStopped(.render);
@@ -181,14 +218,16 @@ fn runFallible(
     initial_mux: host_layout.Mux,
     runtime_dir: ?[]const u8,
     shell: []const u8,
-    environ_map: *const std.process.Environ.Map,
+    environ_map: ?*const std.process.Environ.Map,
+    local_owner: ?*local_terminal.Owner,
 ) !void {
+    const local_mode = local_owner != null;
     var mux = initial_mux;
     const feedback = try waitFeedback(boundary);
     var display_scale_120 = (try waitDisplayScale(boundary)).scale_120;
     var font_pixels = try scaledFontPixels(display_scale_120);
     const logical_cell_size = try terminal_scene.measureCellSize(allocator, font_path, base_font_pixels);
-    var scene_count: usize = if (endpoint_right != null) 2 else 1;
+    var scene_count: usize = if (local_mode) 1 else if (endpoint_right != null) 2 else 1;
     var spawned_session: ?session_process.SessionProcess = null;
     defer if (spawned_session) |*session| session.deinit();
     var scenes: [2]?terminal_scene.Scene = .{ null, null };
@@ -200,11 +239,16 @@ fn runFallible(
             scenes[scene_index].?.deinit();
         }
     }
-    scenes[0] = try terminal_scene.Scene.init(allocator, endpoint, font_path, font_pixels);
+    scenes[0] = if (local_owner) |owner|
+        try terminal_scene.Scene.initLocal(allocator, owner, font_path, font_pixels)
+    else
+        try terminal_scene.Scene.init(allocator, endpoint, font_path, font_pixels);
     initialized_scene_count = 1;
-    if (endpoint_right) |right| {
-        scenes[1] = try terminal_scene.Scene.init(allocator, right, font_path, font_pixels);
-        initialized_scene_count = 2;
+    if (!local_mode) {
+        if (endpoint_right) |right| {
+            scenes[1] = try terminal_scene.Scene.init(allocator, right, font_path, font_pixels);
+            initialized_scene_count = 2;
+        }
     }
     var geometry_controls: [2]?client.Connection = .{ null, null };
     var geometry_control_count: usize = 0;
@@ -215,11 +259,13 @@ fn runFallible(
             geometry_controls[control_index].?.deinit();
         }
     }
-    geometry_controls[0] = try client.Connection.connect(allocator, endpoint);
-    geometry_control_count = 1;
-    if (endpoint_right) |right| {
-        geometry_controls[1] = try client.Connection.connect(allocator, right);
-        geometry_control_count = 2;
+    if (!local_mode) {
+        geometry_controls[0] = try client.Connection.connect(allocator, endpoint);
+        geometry_control_count = 1;
+        if (endpoint_right) |right| {
+            geometry_controls[1] = try client.Connection.connect(allocator, right);
+            geometry_control_count = 2;
+        }
     }
     var prepared: [2]terminal_scene.Prepared = undefined;
     var session_revisions: [2]u64 = @splat(0);
@@ -250,20 +296,35 @@ fn runFallible(
     for (initial_panes, 0..) |placement, scene_index| scene_panes[scene_index] = placement.pane;
     var projected_layout: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
     var geometry_owned: [2]bool = @splat(false);
-    const established = try establishInitialGeometry(
-        &scenes,
-        &geometry_controls,
-        &geometry_owned,
-        scene_count,
-        mux,
-        &prepared,
-        &session_revisions,
-        workspace_rows,
-        workspace_cols,
-        surface_width,
-        surface_height,
-        &projected_layout,
-    );
+    const established = if (local_owner) |owner|
+        try establishLocalInitialGeometry(
+            boundary,
+            owner,
+            &scenes[0].?,
+            mux,
+            &prepared[0],
+            &session_revisions[0],
+            workspace_rows,
+            workspace_cols,
+            surface_width,
+            surface_height,
+            &projected_layout,
+        )
+    else
+        try establishInitialGeometry(
+            &scenes,
+            &geometry_controls,
+            &geometry_owned,
+            scene_count,
+            mux,
+            &prepared,
+            &session_revisions,
+            workspace_rows,
+            workspace_cols,
+            surface_width,
+            surface_height,
+            &projected_layout,
+        );
     if (established.surface_width != surface_width or established.surface_height != surface_height or
         established.grid_rows != workspace_rows or established.grid_cols != workspace_cols)
         return error.ResizeResultMismatch;
@@ -416,18 +477,21 @@ fn runFallible(
 
     var cancellation_registry = CancellationRegistry{ .io = boundary.runtimeIo() };
     defer cancellation_registry.deinit();
-    for (0..scene_count) |scene_index|
-        try cancellation_registry.set(scene_index, try scenes[scene_index].?.cancellation());
     var watcher_done = std.atomic.Value(bool).init(false);
-    const watcher = try std.Thread.spawn(.{}, watchStop, .{
-        boundary,
-        &cancellation_registry,
-        &watcher_done,
-    });
-    defer {
-        watcher_done.store(true, .release);
-        watcher.join();
+    var watcher: ?std.Thread = null;
+    if (!local_mode) {
+        for (0..scene_count) |scene_index|
+            try cancellation_registry.set(scene_index, try scenes[scene_index].?.cancellation());
+        watcher = try std.Thread.spawn(.{}, watchStop, .{
+            boundary,
+            &cancellation_registry,
+            &watcher_done,
+        });
     }
+    defer if (watcher) |thread| {
+        watcher_done.store(true, .release);
+        thread.join();
+    };
 
     while (!boundary.shouldStop()) {
         var wait_semaphore: ?vk.VkSemaphore = null;
@@ -726,7 +790,7 @@ fn runFallible(
                     );
                 },
                 .split_horizontal, .split_vertical => {
-                    if (scene_count != 1) continue;
+                    if (local_mode or scene_count != 1) continue;
                     if (history[0].active()) {
                         try restoreHistoryLive(
                             endpoint,
@@ -750,7 +814,7 @@ fn runFallible(
                         boundary,
                         runtime_dir orelse return error.MissingRuntimeDirectory,
                         shell,
-                        environ_map,
+                        environ_map orelse return error.MissingEnvironment,
                         font_path,
                         font_pixels,
                         axis,
@@ -777,7 +841,7 @@ fn runFallible(
                     );
                 },
                 .new_tab => {
-                    if (scene_count != 1) continue;
+                    if (local_mode or scene_count != 1) continue;
                     if (history[0].active()) {
                         try restoreHistoryLive(
                             endpoint,
@@ -797,7 +861,7 @@ fn runFallible(
                         boundary,
                         runtime_dir orelse return error.MissingRuntimeDirectory,
                         shell,
-                        environ_map,
+                        environ_map orelse return error.MissingEnvironment,
                         font_path,
                         font_pixels,
                         &spawned_session,
@@ -820,7 +884,7 @@ fn runFallible(
                     );
                 },
                 .next_tab => {
-                    if (scene_count != 2 or mux.tabCount() != 2) continue;
+                    if (local_mode or scene_count != 2 or mux.tabCount() != 2) continue;
                     try switchNextTab(
                         boundary,
                         &mux,
@@ -839,20 +903,20 @@ fn runFallible(
                         continue;
                     try applyHistoryScroll(
                         host_command.amount,
-                        endpoint,
+                        if (local_mode) null else endpoint,
                         &scenes[0].?,
-                        &geometry_controls[0].?,
+                        if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
                         &session_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
-                        &cancellation_registry,
+                        if (local_mode) null else &cancellation_registry,
                         0,
                     );
                 },
                 .close_created => {
-                    if (scene_count != 2 or spawned_session == null or host_command.pane != 1)
+                    if (local_mode or scene_count != 2 or spawned_session == null or host_command.pane != 1)
                         continue;
                     if (mux.tabCount() == 2) {
                         try removeCreatedTab(
@@ -914,15 +978,15 @@ fn runFallible(
                 if (scale.scale_120 == display_scale_120) continue;
                 if (scene_count == 1 and history[0].active()) {
                     try restoreHistoryLive(
-                        endpoint,
+                        if (local_mode) null else endpoint,
                         &scenes[0].?,
-                        &geometry_controls[0].?,
+                        if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
                         &session_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
-                        &cancellation_registry,
+                        if (local_mode) null else &cancellation_registry,
                         0,
                     );
                 }
@@ -937,46 +1001,78 @@ fn runFallible(
                 const target_cols: u16 = @max(2, next_surface_width / next_cell_size.width);
                 const target_rows: u16 = @max(1, next_surface_height / next_cell_size.height);
                 if (target_cols != workspace_cols or target_rows != workspace_rows) {
-                    const resized = try applyWindowGeometry(
-                        &mux,
-                        &scene_panes,
-                        &geometry_controls,
-                        &geometry_owned,
-                        &scenes,
-                        scene_count,
-                        &prepared,
-                        &session_revisions,
-                        &changed,
-                        &observation_armed,
-                        workspace_rows,
-                        workspace_cols,
-                        target_rows,
-                        target_cols,
-                    );
+                    const resized = if (local_owner) |owner|
+                        try applyLocalWindowGeometry(
+                            boundary,
+                            owner,
+                            &scenes[0].?,
+                            &prepared[0],
+                            &session_revisions[0],
+                            &changed[0],
+                            &observation_armed[0],
+                            target_rows,
+                            target_cols,
+                        )
+                    else
+                        try applyWindowGeometry(
+                            &mux,
+                            &scene_panes,
+                            &geometry_controls,
+                            &geometry_owned,
+                            &scenes,
+                            scene_count,
+                            &prepared,
+                            &session_revisions,
+                            &changed,
+                            &observation_armed,
+                            workspace_rows,
+                            workspace_cols,
+                            target_rows,
+                            target_cols,
+                        );
                     if (!resized) continue;
                     workspace_rows = target_rows;
                     workspace_cols = target_cols;
                 }
-                try rebuildScenesForScale(
-                    allocator,
-                    endpoint,
-                    endpoint_right,
-                    spawned_session,
-                    font_path,
-                    next_font_pixels,
-                    &scenes,
-                    scene_count,
-                    &prepared,
-                    &session_revisions,
-                    &observation_armed,
-                    &changed,
-                    &cancellation_registry,
-                    &fast_gpus,
-                    &generic_contexts,
-                    &graphics,
-                    device,
-                    &gpu_bytes,
-                );
+                if (local_owner) |owner| {
+                    try rebuildLocalSceneForScale(
+                        allocator,
+                        owner,
+                        font_path,
+                        next_font_pixels,
+                        &scenes[0].?,
+                        &prepared[0],
+                        &session_revisions[0],
+                        &observation_armed[0],
+                        &changed[0],
+                        &fast_gpus[0],
+                        &generic_contexts[0],
+                        &graphics,
+                        device,
+                        &gpu_bytes,
+                    );
+                } else {
+                    try rebuildScenesForScale(
+                        allocator,
+                        endpoint,
+                        endpoint_right,
+                        spawned_session,
+                        font_path,
+                        next_font_pixels,
+                        &scenes,
+                        scene_count,
+                        &prepared,
+                        &session_revisions,
+                        &observation_armed,
+                        &changed,
+                        &cancellation_registry,
+                        &fast_gpus,
+                        &generic_contexts,
+                        &graphics,
+                        device,
+                        &gpu_bytes,
+                    );
+                }
                 const rebuilt_cell_size = scenes[0].?.cellSize();
                 if (!std.meta.eql(rebuilt_cell_size, next_cell_size)) return error.DuetGeometry;
                 for (1..scene_count) |scene_index|
@@ -1027,15 +1123,15 @@ fn runFallible(
                 if (requested.width == surface_logical_width and requested.height == surface_logical_height) continue;
                 if (scene_count == 1 and history[0].active()) {
                     try restoreHistoryLive(
-                        endpoint,
+                        if (local_mode) null else endpoint,
                         &scenes[0].?,
-                        &geometry_controls[0].?,
+                        if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
                         &session_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
-                        &cancellation_registry,
+                        if (local_mode) null else &cancellation_registry,
                         0,
                     );
                 }
@@ -1044,22 +1140,35 @@ fn runFallible(
                 const target_cols: u16 = @max(2, requested_physical_width / cell_size.width);
                 const target_rows: u16 = @max(1, requested_physical_height / cell_size.height);
                 if (target_cols != workspace_cols or target_rows != workspace_rows) {
-                    const resized = try applyWindowGeometry(
-                        &mux,
-                        &scene_panes,
-                        &geometry_controls,
-                        &geometry_owned,
-                        &scenes,
-                        scene_count,
-                        &prepared,
-                        &session_revisions,
-                        &changed,
-                        &observation_armed,
-                        workspace_rows,
-                        workspace_cols,
-                        target_rows,
-                        target_cols,
-                    );
+                    const resized = if (local_owner) |owner|
+                        try applyLocalWindowGeometry(
+                            boundary,
+                            owner,
+                            &scenes[0].?,
+                            &prepared[0],
+                            &session_revisions[0],
+                            &changed[0],
+                            &observation_armed[0],
+                            target_rows,
+                            target_cols,
+                        )
+                    else
+                        try applyWindowGeometry(
+                            &mux,
+                            &scene_panes,
+                            &geometry_controls,
+                            &geometry_owned,
+                            &scenes,
+                            scene_count,
+                            &prepared,
+                            &session_revisions,
+                            &changed,
+                            &observation_armed,
+                            workspace_rows,
+                            workspace_cols,
+                            target_rows,
+                            target_cols,
+                        );
                     if (!resized) continue;
                     workspace_rows = target_rows;
                     workspace_cols = target_cols;
@@ -1183,16 +1292,55 @@ fn rebuildScenesForScale(
     primary_graphics.invalidateAtlases();
 }
 
-fn restoreHistoryLive(
-    endpoint: []const u8,
+fn rebuildLocalSceneForScale(
+    allocator: std.mem.Allocator,
+    owner: *local_terminal.Owner,
+    font_path: []const u8,
+    font_pixels: u16,
     scene: *terminal_scene.Scene,
-    control: *client.Connection,
+    prepared: *terminal_scene.Prepared,
+    session_revision: *u64,
+    observation_armed: *bool,
+    changed: *bool,
+    fast_gpu: *?terminal_fast.Gpu,
+    generic_context: *?surface.Context,
+    primary_graphics: *surface.Context,
+    device: vk.VkDevice,
+    gpu_bytes: *u64,
+) !void {
+    if (font_pixels == 0) return error.SceneTopologyMismatch;
+    var replacement = try terminal_scene.Scene.initLocal(
+        allocator,
+        owner,
+        font_path,
+        font_pixels,
+    );
+    errdefer replacement.deinit();
+    const next = try replacement.prepare(0);
+    if (fast_gpu.*) |*value| value.deinit(device, gpu_bytes);
+    fast_gpu.* = null;
+    if (generic_context.*) |*value| value.deinit(device, gpu_bytes);
+    generic_context.* = null;
+    scene.deinit();
+    scene.* = replacement;
+    replacement = undefined;
+    prepared.* = next;
+    session_revision.* = next.session_revision;
+    observation_armed.* = false;
+    changed.* = true;
+    primary_graphics.invalidateAtlases();
+}
+
+fn restoreHistoryLive(
+    endpoint: ?[]const u8,
+    scene: *terminal_scene.Scene,
+    control: ?*client.Connection,
     prepared: *terminal_scene.Prepared,
     live_revision: *u64,
     observation_armed: *bool,
     history: *scrollback.State,
     changed: *bool,
-    cancellations: *CancellationRegistry,
+    cancellations: ?*CancellationRegistry,
     scene_index: usize,
 ) !void {
     if (!history.active()) return;
@@ -1216,15 +1364,15 @@ fn restoreHistoryLive(
 
 fn applyHistoryScroll(
     amount: i16,
-    endpoint: []const u8,
+    endpoint: ?[]const u8,
     scene: *terminal_scene.Scene,
-    control: *client.Connection,
+    control: ?*client.Connection,
     prepared: *terminal_scene.Prepared,
     live_revision: *u64,
     observation_armed: *bool,
     history: *scrollback.State,
     changed: *bool,
-    cancellations: *CancellationRegistry,
+    cancellations: ?*CancellationRegistry,
     scene_index: usize,
 ) !void {
     if (amount == 0) return;
@@ -1292,16 +1440,26 @@ fn applyHistoryScroll(
 }
 
 fn resetLiveObserver(
-    endpoint: []const u8,
+    endpoint: ?[]const u8,
     scene: *terminal_scene.Scene,
     live_revision: *u64,
     observation_armed: *bool,
-    cancellations: *CancellationRegistry,
+    cancellations: ?*CancellationRegistry,
     scene_index: usize,
 ) !void {
-    cancellations.clear(scene_index);
-    try scene.resetObserver(endpoint);
-    try cancellations.set(scene_index, try scene.cancellation());
+    if (scene.isLocal()) {
+        try scene.resetObserver("");
+        live_revision.* = 0;
+        observation_armed.* = false;
+        try scene.arm(0);
+        observation_armed.* = true;
+        return;
+    }
+    const remote_endpoint = endpoint orelse return error.SceneEndpointMissing;
+    const remote_cancellations = cancellations orelse return error.CancellationSlot;
+    remote_cancellations.clear(scene_index);
+    try scene.resetObserver(remote_endpoint);
+    try remote_cancellations.set(scene_index, try scene.cancellation());
     live_revision.* = 0;
     observation_armed.* = false;
     try scene.arm(0);
@@ -1404,6 +1562,65 @@ const InitialGeometry = struct {
     grid_rows: u16,
     grid_cols: u16,
 };
+
+fn establishLocalInitialGeometry(
+    boundary: *shared.Boundary,
+    owner: *local_terminal.Owner,
+    scene: *terminal_scene.Scene,
+    mux: host_layout.Mux,
+    prepared: *terminal_scene.Prepared,
+    session_revision: *u64,
+    total_rows: u16,
+    total_cols: u16,
+    surface_width: u16,
+    surface_height: u16,
+    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
+) !InitialGeometry {
+    if (total_rows == 0 or total_cols == 0 or surface_width == 0 or surface_height == 0)
+        return error.DuetGeometry;
+    var grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const grid = try mux.activeLayout(
+        .{ .width = total_cols, .height = total_rows },
+        &grid_storage,
+    );
+    if (grid.len != 1) return error.DuetGeometry;
+    const target = grid[0].rect;
+    if (target.width == 0 or target.height == 0 or
+        target.width > std.math.maxInt(u16) or target.height > std.math.maxInt(u16))
+        return error.DuetGeometry;
+    const rows: u16 = @intCast(target.height);
+    const cols: u16 = @intCast(target.width);
+    const cell_size = scene.cellSize();
+    if (prepared.rows != rows or prepared.cols != cols) {
+        scene.discardPrepared(prepared.*);
+        try owner.resizeGeometry(rows, cols, cell_size.width, cell_size.height);
+        boundary.wakeInput();
+        const next = try scene.prepare(session_revision.*);
+        if (next.rows != rows or next.cols != cols) {
+            scene.discardPrepared(next);
+            return error.ResizeResultMismatch;
+        }
+        prepared.* = next;
+        session_revision.* = next.session_revision;
+    }
+    const width = std.math.mul(u32, target.width, cell_size.width) catch
+        return error.DuetGeometry;
+    const height = std.math.mul(u32, target.height, cell_size.height) catch
+        return error.DuetGeometry;
+    pixel_storage[0] = .{
+        .pane = grid[0].pane,
+        .rect = .{ .x = 0, .y = 0, .width = width, .height = height },
+        .focused = grid[0].focused,
+    };
+    if (prepared.width != width or prepared.height != height)
+        return error.ResizeResultMismatch;
+    return .{
+        .surface_width = surface_width,
+        .surface_height = surface_height,
+        .grid_rows = total_rows,
+        .grid_cols = total_cols,
+    };
+}
 
 fn establishInitialGeometry(
     scenes: *[2]?terminal_scene.Scene,
@@ -2048,6 +2265,40 @@ fn settleSceneGeometry(
         observation_armed.* = true;
     }
     return error.GeometryObservationTimeout;
+}
+
+fn applyLocalWindowGeometry(
+    boundary: *shared.Boundary,
+    owner: *local_terminal.Owner,
+    scene: *terminal_scene.Scene,
+    prepared: *terminal_scene.Prepared,
+    session_revision: *u64,
+    changed: *bool,
+    observation_armed: *bool,
+    target_rows: u16,
+    target_cols: u16,
+) !bool {
+    if (target_rows == 0 or target_cols < 2) return error.DuetGeometry;
+    if (prepared.rows == target_rows and prepared.cols == target_cols) return true;
+    const cell_size = scene.cellSize();
+    try owner.resizeGeometry(
+        target_rows,
+        target_cols,
+        cell_size.width,
+        cell_size.height,
+    );
+    boundary.wakeInput();
+    try settleSceneGeometry(
+        scene,
+        target_rows,
+        target_cols,
+        true,
+        prepared,
+        session_revision,
+        changed,
+        observation_armed,
+    );
+    return true;
 }
 
 fn applyWindowGeometry(
