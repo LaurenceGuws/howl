@@ -459,11 +459,17 @@ pub const Owned = struct {
     last_rows: u16,
 
     const Self = @This();
+    const AnchoredChild = struct {
+        pid: posix.pid_t,
+        exit: ChildExit,
+    };
     const Child = union(enum) {
         none,
         pending_session: posix.pid_t,
         live: posix.pid_t,
-        reaped: struct { pid: posix.pid_t, exit: ChildExit },
+        /// Leader exit is known but deliberately unreaped so its PID/PGID
+        /// remains reserved until this PTY owner finishes all group cleanup.
+        anchored: AnchoredChild,
     };
 
     const StartPipes = struct {
@@ -667,7 +673,7 @@ pub const Owned = struct {
             .none => null,
             .pending_session => |pid| pid,
             .live => |pid| pid,
-            .reaped => |state| state.pid,
+            .anchored => |state| state.pid,
         };
     }
 
@@ -677,24 +683,25 @@ pub const Owned = struct {
     }
 
     /// Observes child state without blocking and without closing the master.
+    ///
+    /// Once leader exit is observed, retain that exited leader unreaped as a
+    /// kernel-owned PID/PGID identity anchor until stop/deinit finishes every
+    /// process-group signal. This prevents delayed teardown from targeting a
+    /// later unrelated group after numeric PID reuse.
     pub fn observeChild(self: *Self) ObserveError!ChildObservation {
         if (!self.started) return error.NotStarted;
-        if (self.child == .reaped) return .{ .exited = self.child.reaped.exit };
-        const pid = self.childPid() orelse return error.ObserveFailed;
-        var status: c_int = 0;
-        const result = while (true) {
-            const waited = linux.waitpid(pid, &status, linux.W.NOHANG);
-            if (classifyWaitPid(waited, pid) == .interrupted) continue;
-            break waited;
-        };
-        return switch (classifyWaitPid(result, pid)) {
-            .zero => .running,
-            .expected => blk: {
-                const exit = childObservation(status);
-                self.child = .{ .reaped = .{ .pid = pid, .exit = exit.exited } };
-                break :blk exit;
+        switch (self.child) {
+            .anchored => |state| return .{ .exited = state.exit },
+            .none, .pending_session => return error.ObserveFailed,
+            .live => {},
+        }
+        const pid = self.child.live;
+        return switch (try observeLeaderExitNoReap(pid)) {
+            .running => .running,
+            .exited => |exit| blk: {
+                self.child = .{ .anchored = .{ .pid = pid, .exit = exit } };
+                break :blk .{ .exited = exit };
             },
-            .child, .interrupted, .unexpected_success, .unexpected_error => error.ObserveFailed,
         };
     }
 
@@ -718,7 +725,7 @@ pub const Owned = struct {
             .none => {},
             .pending_session => |pid| stopPendingChild(self, pid),
             .live => |pid| stopLiveChild(self, pid),
-            .reaped => |state| stopLiveChild(self, state.pid),
+            .anchored => |state| stopAnchoredChild(self, state),
         }
     }
 
@@ -737,24 +744,28 @@ pub const Owned = struct {
     fn stopLiveChild(self: *Self, pid: posix.pid_t) void {
         std.debug.assert(pid > 0);
         requireCleanupSignal(sendGroupSignal(pid, .hangup));
-        if (waitChildWithDeadline(pid, stop_hangup_grace_ns) and
-            waitProcessGroupMissing(pid, stop_hangup_grace_ns))
-        {
-            self.child = .none;
-            return;
-        }
+        waitCleanupGrace(stop_hangup_grace_ns);
         requireCleanupSignal(sendGroupSignal(pid, .terminate));
-        if (waitChildWithDeadline(pid, stop_terminate_grace_ns) and
-            waitProcessGroupMissing(pid, stop_terminate_grace_ns))
-        {
-            self.child = .none;
-            return;
-        }
+        waitCleanupGrace(stop_terminate_grace_ns);
         requireCleanupSignal(sendGroupSignal(pid, .kill));
-        waitChildBlocking(pid);
-        if (!waitProcessGroupMissing(pid, stop_terminate_grace_ns)) {
-            @panic("PTY child process group survived SIGKILL");
-        }
+        const exit = waitLeaderExit(pid, stop_terminate_grace_ns) orelse
+            @panic("PTY child leader survived SIGKILL");
+        reapExitedLeader(pid, exit);
+        self.child = .none;
+    }
+
+    fn stopAnchoredChild(
+        self: *Self,
+        state: AnchoredChild,
+    ) void {
+        std.debug.assert(state.pid > 0);
+        requireCleanupSignal(sendGroupSignal(state.pid, .hangup));
+        waitCleanupGrace(stop_hangup_grace_ns);
+        requireCleanupSignal(sendGroupSignal(state.pid, .terminate));
+        waitCleanupGrace(stop_terminate_grace_ns);
+        requireCleanupSignal(sendGroupSignal(state.pid, .kill));
+        waitCleanupGrace(stop_terminate_grace_ns);
+        reapExitedLeader(state.pid, state.exit);
         self.child = .none;
     }
 
@@ -860,6 +871,61 @@ fn childObservation(status: c_int) ChildObservation {
     const value: u32 = @intCast(status);
     if ((value & 0x7f) == 0) return .{ .exited = .{ .code = @intCast((value >> 8) & 0xff) } };
     return .{ .exited = .{ .signal = @intCast(value & 0x7f) } };
+}
+
+const LeaderExitObservation = union(enum) {
+    running,
+    exited: ChildExit,
+};
+
+fn observeLeaderExitNoReap(pid: posix.pid_t) ObserveError!LeaderExitObservation {
+    std.debug.assert(pid > 0);
+    while (true) {
+        var info = std.mem.zeroes(linux.siginfo_t);
+        const result = linux.waitid(
+            .PID,
+            pid,
+            &info,
+            linux.W.EXITED | linux.W.NOHANG | linux.W.NOWAIT,
+            null,
+        );
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                const observed_pid = info.fields.common.first.piduid.pid;
+                if (observed_pid == 0) return .running;
+                if (observed_pid != pid) return error.ObserveFailed;
+                const code: linux.CLD = @fromBackingInt(@intCast(info.code));
+                const status = info.fields.common.second.sigchld.status;
+                return switch (code) {
+                    .EXITED => .{ .exited = .{ .code = std.math.cast(u8, status) orelse
+                        return error.ObserveFailed } },
+                    .KILLED, .DUMPED => .{ .exited = .{ .signal = std.math.cast(u8, status) orelse
+                        return error.ObserveFailed } },
+                    else => error.ObserveFailed,
+                };
+            },
+            .INTR => continue,
+            else => return error.ObserveFailed,
+        }
+    }
+}
+
+fn reapExitedLeader(pid: posix.pid_t, expected: ChildExit) void {
+    std.debug.assert(pid > 0);
+    var status: c_int = 0;
+    while (true) {
+        const result = linux.waitpid(pid, &status, 0);
+        switch (classifyWaitPid(result, pid)) {
+            .expected => {
+                const observed = childObservation(status).exited;
+                if (!std.meta.eql(expected, observed))
+                    @panic("PTY anchored leader exit changed before reap");
+                return;
+            },
+            .interrupted => continue,
+            else => @panic("PTY anchored leader reap failed"),
+        }
+    }
 }
 
 fn optionalZPtr(bytes: ?[:0]u8) ?[*:0]u8 {
@@ -1059,6 +1125,30 @@ fn waitChildWithDeadline(pid: posix.pid_t, timeout_ns: u64) bool {
     };
 }
 
+fn waitLeaderExit(pid: posix.pid_t, timeout_ns: u64) ?ChildExit {
+    const wait_slices = @max(1, timeout_ns / stop_wait_slice_ns);
+    var slice_index: u64 = 0;
+    while (slice_index < wait_slices) : (slice_index += 1) {
+        switch (observeLeaderExitNoReap(pid) catch
+            @panic("PTY child exit observation failed during cleanup")) {
+            .running => sleepStopSlice(),
+            .exited => |exit| return exit,
+        }
+    }
+    return switch (observeLeaderExitNoReap(pid) catch
+        @panic("PTY final child exit observation failed during cleanup")) {
+        .running => null,
+        .exited => |exit| exit,
+    };
+}
+
+fn waitCleanupGrace(timeout_ns: u64) void {
+    const wait_slices = @max(1, timeout_ns / stop_wait_slice_ns);
+    var slice_index: u64 = 0;
+    while (slice_index < wait_slices) : (slice_index += 1)
+        sleepStopSlice();
+}
+
 fn waitChildBlocking(pid: posix.pid_t) void {
     std.debug.assert(pid > 0);
     var status: c_int = 0;
@@ -1070,21 +1160,6 @@ fn waitChildBlocking(pid: posix.pid_t) void {
             .zero, .unexpected_success, .unexpected_error => @panic("PTY child wait failed"),
         }
     }
-}
-
-fn waitProcessGroupMissing(pid: posix.pid_t, timeout_ns: u64) bool {
-    std.debug.assert(pid > 0);
-    return waitSignalTargetMissing(-pid, timeout_ns);
-}
-
-fn waitSignalTargetMissing(target: posix.pid_t, timeout_ns: u64) bool {
-    const wait_slices = @max(1, timeout_ns / stop_wait_slice_ns);
-    var slice_index: u64 = 0;
-    while (slice_index < wait_slices) : (slice_index += 1) {
-        if (!signalTargetExists(target)) return true;
-        sleepStopSlice();
-    }
-    return !signalTargetExists(target);
 }
 
 fn signalTargetExists(target: posix.pid_t) bool {
@@ -1730,4 +1805,45 @@ test "PTY pixel extents start and resize atomically without a renderer dependenc
     try std.testing.expectError(error.InvalidDimensions, owned.resizeWithPixels(80, 24, 880, 0));
     try std.testing.expect(ioctlSucceeded(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqualDeep(accepted, size);
+}
+
+test "reaped leader cleanup kills HUP and TERM resistant descendants" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const command =
+        "(trap '' HUP TERM; while :; do sleep 1; done) & " ++
+        "printf leader-ready; sleep 0.05; exit 0";
+    var owned = try Owned.init(
+        std.testing.allocator,
+        std.testing.environ,
+        "/bin/sh",
+        command,
+        null,
+        test_environment,
+    );
+    defer owned.deinit();
+    try owned.start(test_cols, test_rows);
+    const leader_pid = switch (owned.child) {
+        .live => |pid| pid,
+        else => return error.TestUnexpectedResult,
+    };
+    try expectOutput(&owned, "leader-ready");
+
+    var exited = false;
+    var attempts: usize = 0;
+    while (!exited and attempts < 500) : (attempts += 1) {
+        exited = switch (try owned.observeChild()) {
+            .running => false,
+            .exited => true,
+        };
+        if (!exited) sleepStopSlice();
+    }
+    try std.testing.expect(exited);
+    try std.testing.expect(owned.child == .anchored);
+    try std.testing.expectEqual(leader_pid, owned.child.anchored.pid);
+    try std.testing.expect(signalTargetExists(-leader_pid));
+
+    owned.stop();
+    try std.testing.expect(!owned.started);
+    try std.testing.expect(owned.child == .none);
+    try std.testing.expect(!signalTargetExists(-leader_pid));
 }
