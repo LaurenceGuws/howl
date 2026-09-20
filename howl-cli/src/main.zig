@@ -14,7 +14,9 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, operation, "server")) {
         if (argv.len < 4) return usage();
-        return server.run(init, argv[2..]);
+        switch (try server.run(init, argv[2..])) {
+            .all_terminals_failed => std.process.exit(1),
+        }
     }
     if (argv.len < 3) return usage();
     const endpoint = std.mem.span(argv[2]);

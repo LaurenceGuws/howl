@@ -7,6 +7,8 @@
 
 const std = @import("std");
 const linux = std.os.linux;
+const posix = std.posix;
+const client = @import("howl_client");
 const endpoint = @import("howl_session_endpoint");
 const session = @import("howl_session");
 
@@ -20,6 +22,10 @@ pub const Error = error{
     DuplicateTerminalName,
     TooManyTerminals,
     SocketPathTooLong,
+};
+
+pub const RunOutcome = enum {
+    all_terminals_failed,
 };
 
 const Config = struct {
@@ -46,7 +52,7 @@ const Instance = struct {
     }
 };
 
-pub fn run(init: std.process.Init, args: []const [*:0]const u8) !void {
+pub fn run(init: std.process.Init, args: []const [*:0]const u8) !RunOutcome {
     const config = try parse(init, args);
     try std.Io.Dir.createDirPath(.cwd(), init.io, config.runtime_dir);
 
@@ -56,8 +62,10 @@ pub fn run(init: std.process.Init, args: []const [*:0]const u8) !void {
         var index = count;
         while (index != 0) {
             index -= 1;
-            instances[index].?.deinit(init.gpa);
-            instances[index] = null;
+            if (instances[index]) |*instance| {
+                instance.deinit(init.gpa);
+                instances[index] = null;
+            }
         }
     }
 
@@ -99,14 +107,108 @@ pub fn run(init: std.process.Init, args: []const [*:0]const u8) !void {
     }
 
     try emitManifest(init, instances[0..count]);
+    var live_count = count;
     var blocking_index: usize = 0;
-    while (true) {
-        for (instances[0..count], 0..) |maybe_instance, index| {
-            const instance = maybe_instance orelse unreachable;
-            try instance.server.turn(if (index == blocking_index) idle_poll_ms else 0);
-        }
-        blocking_index = (blocking_index + 1) % count;
+    while (live_count != 0) {
+        const result = serviceCollectionTurn(
+            Instance,
+            std.mem.Allocator,
+            endpoint.Server.TurnError,
+            init.gpa,
+            instances[0..count],
+            live_count,
+            blocking_index,
+            turnInstance,
+            deinitInstance,
+        );
+        live_count = result.live_count;
+        blocking_index = result.next_blocking_index;
     }
+    return .all_terminals_failed;
+}
+
+const CollectionFailure = struct {
+    name: []const u8,
+    failure: []const u8,
+};
+
+const CollectionTurn = struct {
+    live_count: usize,
+    next_blocking_index: usize,
+    failed: ?CollectionFailure,
+};
+
+fn serviceCollectionTurn(
+    comptime T: type,
+    comptime Context: type,
+    comptime TurnError: type,
+    context: Context,
+    instances: []?T,
+    live_count: usize,
+    blocking_index: usize,
+    comptime turn: fn (Context, *T, i32) TurnError!void,
+    comptime deinit: fn (Context, *T) void,
+) CollectionTurn {
+    std.debug.assert(instances.len != 0);
+    std.debug.assert(live_count != 0);
+    std.debug.assert(live_count <= instances.len);
+    std.debug.assert(blocking_index < instances.len);
+
+    var index = blocking_index;
+    var visited: usize = 0;
+    var blocked = false;
+    while (visited < instances.len) : (visited += 1) {
+        if (instances[index]) |*instance| {
+            const timeout = if (!blocked) idle_poll_ms else 0;
+            blocked = true;
+            turn(context, instance, timeout) catch |failure| {
+                const name = instance.name;
+                const failure_name = @errorName(failure);
+                deinit(context, instance);
+                instances[index] = null;
+                const next = (index + 1) % instances.len;
+                return .{
+                    .live_count = live_count - 1,
+                    .next_blocking_index = nextLiveIndex(T, instances, next),
+                    .failed = .{ .name = name, .failure = failure_name },
+                };
+            };
+        }
+        index = (index + 1) % instances.len;
+    }
+
+    return .{
+        .live_count = live_count,
+        .next_blocking_index = nextLiveIndex(
+            T,
+            instances,
+            (blocking_index + 1) % instances.len,
+        ),
+        .failed = null,
+    };
+}
+
+fn nextLiveIndex(comptime T: type, instances: []?T, start: usize) usize {
+    if (instances.len == 0) return 0;
+    var index = start;
+    var visited: usize = 0;
+    while (visited < instances.len) : (visited += 1) {
+        if (instances[index] != null) return index;
+        index = (index + 1) % instances.len;
+    }
+    return start;
+}
+
+fn turnInstance(
+    _: std.mem.Allocator,
+    instance: *Instance,
+    timeout_ms: i32,
+) endpoint.Server.TurnError!void {
+    return instance.server.turn(timeout_ms);
+}
+
+fn deinitInstance(allocator: std.mem.Allocator, instance: *Instance) void {
+    instance.deinit(allocator);
 }
 
 fn parse(init: std.process.Init, args: []const [*:0]const u8) Error!Config {
@@ -211,4 +313,362 @@ test "terminal manager rejects duplicate names" {
     var config = Config{ .runtime_dir = "/tmp/howl", .shell = "/bin/sh" };
     try appendName(&config, "one");
     try std.testing.expectError(error.DuplicateTerminalName, appendName(&config, "one"));
+}
+
+const TestInstance = struct {
+    name: []const u8,
+    id: usize,
+    fail: bool = false,
+    turns: usize = 0,
+    last_timeout_ms: ?i32 = null,
+};
+
+const TestCollectionContext = struct {
+    deinit_counts: [4]usize = @splat(0),
+};
+
+fn turnTestInstance(_: *TestCollectionContext, instance: *TestInstance, timeout_ms: i32) error{InjectedFailure}!void {
+    instance.turns += 1;
+    instance.last_timeout_ms = timeout_ms;
+    if (instance.fail) return error.InjectedFailure;
+}
+
+fn deinitTestInstance(context: *TestCollectionContext, instance: *TestInstance) void {
+    context.deinit_counts[instance.id] += 1;
+}
+
+test "collection retires one failed slot and continues healthy siblings" {
+    var context: TestCollectionContext = .{};
+    var instances: [3]?TestInstance = .{
+        .{ .name = "one", .id = 0, .fail = true },
+        .{ .name = "two", .id = 1 },
+        .{ .name = "three", .id = 2 },
+    };
+
+    const first = serviceCollectionTurn(
+        TestInstance,
+        *TestCollectionContext,
+        error{InjectedFailure},
+        &context,
+        &instances,
+        3,
+        0,
+        turnTestInstance,
+        deinitTestInstance,
+    );
+    try std.testing.expectEqual(@as(usize, 2), first.live_count);
+    try std.testing.expect(first.failed != null);
+    try std.testing.expectEqualStrings("one", first.failed.?.name);
+    try std.testing.expectEqualStrings("InjectedFailure", first.failed.?.failure);
+    try std.testing.expect(instances[0] == null);
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_counts[0]);
+    try std.testing.expectEqual(@as(usize, 0), instances[1].?.turns);
+    try std.testing.expectEqual(@as(usize, 0), instances[2].?.turns);
+
+    const second = serviceCollectionTurn(
+        TestInstance,
+        *TestCollectionContext,
+        error{InjectedFailure},
+        &context,
+        &instances,
+        first.live_count,
+        first.next_blocking_index,
+        turnTestInstance,
+        deinitTestInstance,
+    );
+    try std.testing.expectEqual(@as(usize, 2), second.live_count);
+    try std.testing.expect(second.failed == null);
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_counts[0]);
+    try std.testing.expectEqual(@as(usize, 1), instances[1].?.turns);
+    try std.testing.expectEqual(@as(usize, 1), instances[2].?.turns);
+    try std.testing.expectEqual(@as(?i32, idle_poll_ms), instances[1].?.last_timeout_ms);
+    try std.testing.expectEqual(@as(?i32, 0), instances[2].?.last_timeout_ms);
+
+    const third = serviceCollectionTurn(
+        TestInstance,
+        *TestCollectionContext,
+        error{InjectedFailure},
+        &context,
+        &instances,
+        second.live_count,
+        second.next_blocking_index,
+        turnTestInstance,
+        deinitTestInstance,
+    );
+    try std.testing.expectEqual(@as(usize, 2), third.live_count);
+    try std.testing.expect(third.failed == null);
+    try std.testing.expectEqual(@as(?i32, 0), instances[1].?.last_timeout_ms);
+    try std.testing.expectEqual(@as(?i32, idle_poll_ms), instances[2].?.last_timeout_ms);
+
+    const fourth = serviceCollectionTurn(
+        TestInstance,
+        *TestCollectionContext,
+        error{InjectedFailure},
+        &context,
+        &instances,
+        third.live_count,
+        third.next_blocking_index,
+        turnTestInstance,
+        deinitTestInstance,
+    );
+    try std.testing.expectEqual(@as(usize, 2), fourth.live_count);
+    try std.testing.expect(fourth.failed == null);
+    try std.testing.expectEqual(@as(?i32, idle_poll_ms), instances[1].?.last_timeout_ms);
+    try std.testing.expectEqual(@as(?i32, 0), instances[2].?.last_timeout_ms);
+}
+
+test "collection skips holes and reports final survivor failure" {
+    var context: TestCollectionContext = .{};
+    var instances: [4]?TestInstance = .{
+        null,
+        .{ .name = "last", .id = 1, .fail = true },
+        null,
+        null,
+    };
+
+    const result = serviceCollectionTurn(
+        TestInstance,
+        *TestCollectionContext,
+        error{InjectedFailure},
+        &context,
+        &instances,
+        1,
+        3,
+        turnTestInstance,
+        deinitTestInstance,
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.live_count);
+    try std.testing.expectEqualStrings("last", result.failed.?.name);
+    try std.testing.expect(instances[1] == null);
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_counts[1]);
+}
+
+const RealCollectionTestContext = struct {
+    allocator: std.mem.Allocator,
+    fail_name: ?[]const u8,
+};
+
+const RealCollectionTurnError = endpoint.Server.TurnError || error{InjectedFailure};
+
+fn turnRealCollectionTest(
+    context: *RealCollectionTestContext,
+    instance: *Instance,
+    timeout_ms: i32,
+) RealCollectionTurnError!void {
+    if (context.fail_name) |name| {
+        if (std.mem.eql(u8, instance.name, name)) {
+            try instance.server.turn(timeout_ms);
+            return error.InjectedFailure;
+        }
+    }
+    try instance.server.turn(timeout_ms);
+}
+
+fn deinitRealCollectionTest(context: *RealCollectionTestContext, instance: *Instance) void {
+    instance.deinit(context.allocator);
+}
+
+fn initRealTestInstance(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    socket_path: []const u8,
+) !Instance {
+    std.Io.Dir.deleteFileAbsolute(std.testing.io, socket_path) catch |failure| switch (failure) {
+        error.FileNotFound => {},
+        else => return failure,
+    };
+    const owned_path = try allocator.dupe(u8, socket_path);
+    errdefer allocator.free(owned_path);
+    const owner = try allocator.create(endpoint.Server);
+    errdefer allocator.destroy(owner);
+    owner.* = try endpoint.Server.init(
+        allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = socket_path },
+        .{
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; cat",
+            .rows = 4,
+            .columns = 40,
+            .history_rows = 16,
+        },
+    );
+    return .{
+        .name = name,
+        .socket_path = owned_path,
+        .server = owner,
+    };
+}
+
+const SiblingClientProbe = struct {
+    endpoint_text: []const u8,
+    interrupt: *client.Interrupt,
+    done: std.atomic.Value(bool) = .init(false),
+    passed: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *SiblingClientProbe) void {
+        defer self.done.store(true, .release);
+        var diagnostic: client.ConnectDiagnostic = .{};
+        var connection = client.Connection.connectNativeCancelable(
+            std.heap.page_allocator,
+            std.testing.io,
+            self.endpoint_text,
+            &diagnostic,
+            self.interrupt,
+        ) catch return;
+        defer connection.deinit();
+        client.actions.committedText(&connection, "B_REAL_CANARY\n") catch return;
+        var attempts: usize = 0;
+        while (attempts < 16) : (attempts += 1) {
+            var snapshot = client.snapshot.request(
+                &connection,
+                std.heap.page_allocator,
+                0,
+                0,
+            ) catch return;
+            defer snapshot.deinit();
+            for (snapshot.lines) |line| {
+                if (std.mem.indexOf(u8, line, "B_REAL_CANARY") != null) {
+                    self.passed.store(true, .release);
+                    return;
+                }
+            }
+        }
+    }
+};
+
+fn unixSocketAccepts(path: []const u8) bool {
+    var address: linux.sockaddr.un = undefined;
+    if (path.len == 0 or path.len >= address.path.len) return false;
+    address.family = linux.AF.UNIX;
+    @memset(&address.path, 0);
+    @memcpy(address.path[0..path.len], path);
+    const length: linux.socklen_t =
+        @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
+    const raw = linux.socket(
+        linux.AF.UNIX,
+        linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK,
+        0,
+    );
+    if (linux.errno(raw) != .SUCCESS) return false;
+    const fd: posix.fd_t = @intCast(raw);
+    defer {
+        const result = linux.close(@intCast(fd));
+        switch (linux.errno(result)) {
+            .SUCCESS, .INTR => {},
+            else => @panic("test Unix probe descriptor close failed"),
+        }
+    }
+    const connected = linux.connect(fd, @ptrCast(&address), length);
+    return switch (linux.errno(connected)) {
+        .SUCCESS, .INPROGRESS, .AGAIN => true,
+        else => false,
+    };
+}
+
+test "real endpoint failure retires one instance while sibling serves client IO" {
+    var a_path_buffer: [108]u8 = undefined;
+    const a_path = try std.fmt.bufPrint(
+        &a_path_buffer,
+        "/tmp/howl-cli-server-{d}-real-a.sock",
+        .{linux.getpid()},
+    );
+    var b_path_buffer: [108]u8 = undefined;
+    const b_path = try std.fmt.bufPrint(
+        &b_path_buffer,
+        "/tmp/howl-cli-server-{d}-real-b.sock",
+        .{linux.getpid()},
+    );
+
+    var instances: [2]?Instance = @splat(null);
+    instances[0] = try initRealTestInstance(std.testing.allocator, "a", a_path);
+    errdefer {
+        if (instances[0]) |*instance| instance.deinit(std.testing.allocator);
+        instances[0] = null;
+    }
+    instances[1] = try initRealTestInstance(std.testing.allocator, "b", b_path);
+    defer {
+        for (&instances) |*maybe_instance| {
+            if (maybe_instance.*) |*instance| instance.deinit(std.testing.allocator);
+            maybe_instance.* = null;
+        }
+    }
+
+    var endpoint_buffer: [128]u8 = undefined;
+    const b_endpoint = try std.fmt.bufPrint(&endpoint_buffer, "unix:{s}", .{b_path});
+    const interrupt = try client.Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    var probe = SiblingClientProbe{
+        .endpoint_text = b_endpoint,
+        .interrupt = interrupt,
+    };
+    const worker = try std.Thread.spawn(.{}, SiblingClientProbe.run, .{&probe});
+    defer {
+        interrupt.cancel() catch {};
+        worker.join();
+    }
+
+    var context = RealCollectionTestContext{
+        .allocator = std.testing.allocator,
+        .fail_name = "a",
+    };
+    var live_count: usize = 2;
+    var blocking_index: usize = 0;
+    const failed = serviceCollectionTurn(
+        Instance,
+        *RealCollectionTestContext,
+        RealCollectionTurnError,
+        &context,
+        &instances,
+        live_count,
+        blocking_index,
+        turnRealCollectionTest,
+        deinitRealCollectionTest,
+    );
+    live_count = failed.live_count;
+    blocking_index = failed.next_blocking_index;
+    try std.testing.expectEqual(@as(usize, 1), live_count);
+    try std.testing.expectEqualStrings("a", failed.failed.?.name);
+    try std.testing.expect(instances[0] == null);
+
+    try std.testing.expect(!unixSocketAccepts(a_path));
+
+    context.fail_name = null;
+    var turns: usize = 0;
+    while (!probe.done.load(.acquire) and turns < 2000) : (turns += 1) {
+        const serviced = serviceCollectionTurn(
+            Instance,
+            *RealCollectionTestContext,
+            RealCollectionTurnError,
+            &context,
+            &instances,
+            live_count,
+            blocking_index,
+            turnRealCollectionTest,
+            deinitRealCollectionTest,
+        );
+        try std.testing.expect(serviced.failed == null);
+        live_count = serviced.live_count;
+        blocking_index = serviced.next_blocking_index;
+    }
+    try std.testing.expect(probe.done.load(.acquire));
+    try std.testing.expect(probe.passed.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 1), live_count);
+
+    context.fail_name = "b";
+    const final = serviceCollectionTurn(
+        Instance,
+        *RealCollectionTestContext,
+        RealCollectionTurnError,
+        &context,
+        &instances,
+        live_count,
+        blocking_index,
+        turnRealCollectionTest,
+        deinitRealCollectionTest,
+    );
+    try std.testing.expectEqual(@as(usize, 0), final.live_count);
+    try std.testing.expectEqualStrings("b", final.failed.?.name);
+    try std.testing.expect(instances[1] == null);
 }
