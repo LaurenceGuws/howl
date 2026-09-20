@@ -110,6 +110,7 @@ const ClipboardRequestView = consequences.ClipboardRequestView;
 const SemanticEventError = consequences.Error || properties.PropertyError || replies.AppendError;
 const ContainerSerializationError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
 const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
+const ConsequencePressureRelief = *const fn (*Terminal) TerminalFeedError!void;
 
 /// Bounds one retained consequence payload owned by this composition state.
 const consequence_payload_max_bytes: u32 = 1024;
@@ -3235,7 +3236,12 @@ fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
 }
 
 /// Apply one parser event and report whether terminal or title state changed.
-fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!EventEffect {
+fn applyParserEvent(
+    vt: *Terminal,
+    event: parser_mod.Event,
+    consequence_pressure_relief: ?ConsequencePressureRelief,
+    consequence_pressure_relieved: *bool,
+) TerminalFeedError!EventEffect {
     switch (event) {
         .invoke_charset => |slot| {
             const changed = vt.charset.selectGl(slot);
@@ -3274,7 +3280,12 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         .icon_set => |value| !optionalBytesEqual(vt.properties.current_icon, value),
         else => false,
     };
-    const changed = try applySemantic(vt, semantic);
+    const changed = try applySemanticWithPressure(
+        vt,
+        semantic,
+        consequence_pressure_relief,
+        consequence_pressure_relieved,
+    );
     var mutations = semanticMutationSet(
         semantic,
         changed,
@@ -3290,6 +3301,28 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         .mutations = mutations,
         .suppress_owner_fallback = suppressOwnerFallback(semantic),
     };
+}
+
+fn applySemanticWithPressure(
+    vt: *Terminal,
+    event: SemanticEvent,
+    consequence_pressure_relief: ?ConsequencePressureRelief,
+    consequence_pressure_relieved: *bool,
+) TerminalFeedError!bool {
+    while (true) {
+        return applySemantic(vt, event) catch |failure| switch (failure) {
+            error.ConsequencePressure => {
+                const relieve = consequence_pressure_relief orelse return failure;
+                const retained_before = vt.consequences.count();
+                try relieve(vt);
+                if (vt.consequences.count() >= retained_before)
+                    return error.ConsequencePressure;
+                consequence_pressure_relieved.* = true;
+                continue;
+            },
+            else => return failure,
+        };
+    }
 }
 
 fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
@@ -3797,6 +3830,7 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
 // Reports parser allocation or retained-state/consequence failure.
 const TerminalFeedError = error{
     ConsequenceLimit,
+    ConsequencePressure,
     OutOfMemory,
     PropertyLimit,
     ReplyLimit,
@@ -3832,6 +3866,9 @@ pub const TerminalFeedSummary = struct {
 pub const TerminalFeedProgress = struct {
     summary: TerminalFeedSummary,
     consumed: usize,
+    /// True when caller policy relieved already-retained consequence pressure
+    /// while applying this exact parsed prefix.
+    consequence_pressure_relieved: bool = false,
 };
 
 // Owns parser allocation and bounded fragmented-control capture for one terminal lifetime.
@@ -3840,10 +3877,22 @@ const TerminalStreamState = stream_state_mod.State;
 // Borrows one terminal while translating input bytes into terminal mutation.
 const TerminalStream = struct {
     terminal: *Terminal,
+    consequence_pressure_relief: ?ConsequencePressureRelief = null,
+    consequence_pressure_relieved: bool = false,
 
     /// Creates a stream borrowing the terminal until the stream is discarded.
     fn init(terminal: *Terminal) TerminalStream {
         return .{ .terminal = terminal };
+    }
+
+    fn initRelievingConsequencePressure(
+        terminal: *Terminal,
+        relief: ConsequencePressureRelief,
+    ) TerminalStream {
+        return .{
+            .terminal = terminal,
+            .consequence_pressure_relief = relief,
+        };
     }
 
     /// Feeds one byte and omits the optional mutation summary while preserving failures.
@@ -3938,6 +3987,7 @@ const TerminalStream = struct {
         bytes: []const u8,
         replies_before: u32,
         consequences_before: u16,
+        consequence_head_before: ?u64,
     ) TerminalFeedError!TerminalFeedProgress {
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
         var consumed: usize = 0;
@@ -3954,8 +4004,10 @@ const TerminalStream = struct {
             const byte_summary = try self.nextSummary(bytes[consumed]);
             summary.mutations.merge(byte_summary.mutations);
             consumed += 1;
+            const consequence_head = self.terminal.consequenceHead();
             if (self.terminal.reply_buffer.len() != replies_before or
-                self.terminal.consequences.count() != consequences_before)
+                self.terminal.consequences.count() != consequences_before or
+                (if (consequence_head) |head| head.id() else null) != consequence_head_before)
                 break;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
@@ -3963,7 +4015,11 @@ const TerminalStream = struct {
             summary.mutations.history_loss = true;
         self.terminal.completeStreamMutation(summary.stateChanged());
         completed = true;
-        return .{ .summary = summary, .consumed = consumed };
+        return .{
+            .summary = summary,
+            .consumed = consumed,
+            .consequence_pressure_relieved = self.consequence_pressure_relieved,
+        };
     }
 
     fn applyAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!EventEffect {
@@ -4092,7 +4148,12 @@ const TerminalStream = struct {
     }
 
     fn applyEvent(self: *TerminalStream, event: parser_mod.Event) TerminalFeedError!EventEffect {
-        return try applyParserEvent(self.terminal, event);
+        return try applyParserEvent(
+            self.terminal,
+            event,
+            self.consequence_pressure_relief,
+            &self.consequence_pressure_relieved,
+        );
     }
 
     fn startDcs(self: *TerminalStream, hook: parser_mod.DcsHook) TerminalFeedError!EventEffect {
@@ -4121,7 +4182,12 @@ const TerminalStream = struct {
         }
         const event = state.dcs.event();
         defer state.dcs.reset();
-        return try applyParserEvent(self.terminal, event);
+        return try applyParserEvent(
+            self.terminal,
+            event,
+            self.consequence_pressure_relief,
+            &self.consequence_pressure_relieved,
+        );
     }
 
     fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) TerminalFeedError!EventEffect {
@@ -4223,7 +4289,12 @@ const TerminalStream = struct {
         };
         defer capture.reset();
         return .{
-            .changed = try applySemantic(self.terminal, .{ .string_payload = payload }),
+            .changed = try applySemanticWithPressure(
+                self.terminal,
+                .{ .string_payload = payload },
+                self.consequence_pressure_relief,
+                &self.consequence_pressure_relieved,
+            ),
         };
     }
 
@@ -5863,16 +5934,47 @@ pub const Terminal = struct {
         bytes: []const u8,
         timestamp_ns: u64,
     ) FeedError!FeedProgress {
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, null);
+    }
+
+    /// Applies a service-boundary feed while allowing a caller-owned policy to
+    /// relieve only retained-consequence pressure and retry the exact parsed
+    /// event in place. Intrinsic consequence limits remain feed failures.
+    ///
+    /// The callback runs synchronously while the parsed event remains borrowed.
+    /// It must resolve or consume retained consequence heads without reentering
+    /// terminal feed/reset APIs. A successful callback must reduce retained
+    /// consequence count; otherwise pressure remains a feed failure.
+    pub fn feedAtServiceBoundaryRelievingConsequences(
+        self: *Terminal,
+        bytes: []const u8,
+        timestamp_ns: u64,
+        relief: ConsequencePressureRelief,
+    ) FeedError!FeedProgress {
+        return self.feedAtServiceBoundaryImpl(bytes, timestamp_ns, relief);
+    }
+
+    fn feedAtServiceBoundaryImpl(
+        self: *Terminal,
+        bytes: []const u8,
+        timestamp_ns: u64,
+        relief: ?ConsequencePressureRelief,
+    ) FeedError!FeedProgress {
         self.requireNoPreparedResize();
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
         const replies_before = self.reply_buffer.len();
         const consequences_before = self.consequences.count();
-        var stream = TerminalStream.init(self);
+        const consequence_head_before = if (self.consequenceHead()) |head| head.id() else null;
+        var stream = if (relief) |callback|
+            TerminalStream.initRelievingConsequencePressure(self, callback)
+        else
+            TerminalStream.init(self);
         var progress = try stream.nextServiceBoundarySummary(
             bytes,
             replies_before,
             consequences_before,
+            consequence_head_before,
         );
         if (self.graphics.generation() != graphics_before) {
             progress.summary.mutations.images = true;

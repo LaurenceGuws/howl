@@ -1011,3 +1011,61 @@ test "service-bounded feed consumes ordinary slices as one transaction" {
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
     try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 }
+
+fn relieveOneNonReplyConsequence(machine: *Terminal) Terminal.FeedError!void {
+    const head = machine.consequenceHead() orelse return error.ConsequencePressure;
+    machine.consumeConsequence(head.id()) catch |failure| switch (failure) {
+        error.StaleConsequence, error.ReplyRequired => unreachable,
+    };
+}
+
+test "strict service boundary exposes pressure after already-applied ordinary prefix" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    for (0..32) |_| {
+        const progress = try terminal.feedAtServiceBoundary(&.{0x07}, 1);
+        try std.testing.expectEqual(@as(usize, 1), progress.consumed);
+    }
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(
+        error.ConsequencePressure,
+        terminal.feedAtServiceBoundary(&.{ 'X', 0x07, 'Y' }, 2),
+    );
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+    try std.testing.expect(terminal.semanticSequence() > before);
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+}
+
+test "service boundary relieves one retained head and retries exact semantic event" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    for (0..32) |_| {
+        const progress = try terminal.feedAtServiceBoundary(&.{0x07}, 1);
+        try std.testing.expectEqual(@as(usize, 1), progress.consumed);
+    }
+    try std.testing.expectEqual(@as(u64, 1), terminal.consequenceHead().?.id());
+
+    const pressure = try terminal.feedAtServiceBoundaryRelievingConsequences(
+        &.{ 'X', 0x07, 'Y' },
+        2,
+        relieveOneNonReplyConsequence,
+    );
+    try std.testing.expectEqual(@as(usize, 2), pressure.consumed);
+    try std.testing.expect(pressure.consequence_pressure_relieved);
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.id());
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+
+    const tail = try terminal.feedAtServiceBoundary(&.{'Y'}, 3);
+    try std.testing.expectEqual(@as(usize, 1), tail.consumed);
+    try std.testing.expect(!tail.consequence_pressure_relieved);
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+}

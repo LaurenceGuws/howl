@@ -39,8 +39,9 @@ pub const ClipboardRequestView = struct {
     protocol: ClipboardProtocol,
 };
 
-/// Reports allocation failure or an exact family bound.
-pub const Error = error{ OutOfMemory, ConsequenceLimit };
+/// Reports allocation failure, one intrinsically invalid retained bound, or
+/// pressure caused only by already-retained caller work.
+pub const Error = error{ OutOfMemory, ConsequenceLimit, ConsequencePressure };
 /// Reports an identity that is not the current global head.
 const ConsumeError = error{StaleIdentity};
 
@@ -571,7 +572,7 @@ pub const State = struct {
         payload: []const u8,
     ) Error!void {
         try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
-        if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
+        if (self.notifications_count == notification_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.notifications_start + self.notifications_count) % notification_capacity;
         const slot = &self.notifications[index];
@@ -591,7 +592,7 @@ pub const State = struct {
         alternate_screen: bool,
     ) Error!void {
         try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
-        if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
+        if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.pointer_shapes_start + self.pointer_shapes_count) % pointer_shape_capacity;
         const slot = &self.pointer_shapes[index];
@@ -608,7 +609,7 @@ pub const State = struct {
     /// Retains one bounded opaque file-transfer packet.
     pub fn retainFileTransfer(self: *State, protocol: FileTransferProtocol, payload: []const u8) Error!void {
         try ensureRetainedBound(byteCount(payload), retained_packet_bytes_max);
-        if (self.file_transfer_count == file_transfer_capacity) return error.ConsequenceLimit;
+        if (self.file_transfer_count == file_transfer_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const owned = try self.allocator.dupe(u8, payload);
         const index = (self.file_transfer_start + self.file_transfer_count) % file_transfer_capacity;
@@ -637,13 +638,13 @@ pub const State = struct {
     /// Retains one parsed bounded Kitty drag-and-drop command.
     pub fn retainDragDrop(self: *State, command: DragDropInput) Error!void {
         try ensureRetainedBound(byteCount(command.payload), drag_drop_packet_max_bytes);
-        if (self.drag_drop_count == drag_drop_capacity) return error.ConsequenceLimit;
+        if (self.drag_drop_count == drag_drop_capacity) return error.ConsequencePressure;
         const retained = std.math.add(
             u32,
             self.drag_drop_retained_bytes,
             @intCast(command.payload.len),
-        ) catch return error.ConsequenceLimit;
-        if (retained > drag_drop_aggregate_max_bytes) return error.ConsequenceLimit;
+        ) catch return error.ConsequencePressure;
+        if (retained > drag_drop_aggregate_max_bytes) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const payload = try self.allocator.dupe(u8, command.payload);
         const index = (self.drag_drop_start + self.drag_drop_count) % drag_drop_capacity;
@@ -680,7 +681,7 @@ pub const State = struct {
 
     /// Retain one container request occurrence without executing embedder policy.
     pub fn retainContainerRequest(self: *State, request: ContainerRequest) Error!void {
-        if (self.container_requests_count == container_request_capacity) return error.ConsequenceLimit;
+        if (self.container_requests_count == container_request_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         self.commitConsequenceId(occurrence_id);
         const index = (self.container_requests_start + self.container_requests_count) % container_request_capacity;
@@ -702,7 +703,7 @@ pub const State = struct {
     /// Retains one ordered color-preference query.
     pub fn retainColorPreferenceQuery(self: *State) Error!void {
         if (self.color_preference_query_count == color_preference_query_capacity)
-            return error.ConsequenceLimit;
+            return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         self.commitConsequenceId(occurrence_id);
         const index = (self.color_preference_query_start + self.color_preference_query_count) %
@@ -725,7 +726,7 @@ pub const State = struct {
 
     /// Retains one ordered media-copy request.
     pub fn retainMediaCopy(self: *State, request: MediaCopyRequest) Error!void {
-        if (self.media_copy_count == media_copy_capacity) return error.ConsequenceLimit;
+        if (self.media_copy_count == media_copy_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         self.commitConsequenceId(occurrence_id);
         const index = (self.media_copy_start + self.media_copy_count) % media_copy_capacity;
@@ -768,7 +769,7 @@ pub const State = struct {
 
     /// Retain one BEL occurrence without choosing an audible or visual policy.
     pub fn ringBell(self: *State) Error!void {
-        if (self.bells_count == bell_capacity) return error.ConsequenceLimit;
+        if (self.bells_count == bell_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.bells_start + self.bells_count) % bell_capacity;
         self.commitConsequenceId(occurrence_id);
@@ -789,7 +790,7 @@ pub const State = struct {
 
     /// Retains one ordered legacy control transition.
     pub fn retainLegacyControl(self: *State, kind: LegacyControlKind) Error!void {
-        if (self.legacy_controls_count == legacy_control_capacity) return error.ConsequenceLimit;
+        if (self.legacy_controls_count == legacy_control_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.legacy_controls_start + self.legacy_controls_count) %
             legacy_control_capacity;
@@ -827,11 +828,13 @@ pub const State = struct {
         kind: ClipboardRequestKind,
         protocol: ClipboardProtocol,
     ) Error!void {
-        if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequenceLimit;
+        const payload_bytes = byteCount(payload);
+        if (payload_bytes > clipboard_max_bytes) return error.ConsequenceLimit;
+        if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
-        const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, byteCount(payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > clipboard_max_bytes) return error.ConsequenceLimit;
+        const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, payload_bytes) catch
+            return error.ConsequencePressure;
+        if (retained_bytes > clipboard_max_bytes) return error.ConsequencePressure;
         const owned = try self.allocator.dupe(u8, payload);
         const index = (self.clipboard_requests_start + self.clipboard_requests_count) % clipboard_capacity;
         self.commitConsequenceId(occurrence_id);
@@ -850,11 +853,11 @@ pub const State = struct {
     /// Count, byte, generation, and allocation bounds succeed before queue mutation.
     pub fn retainDcsPayload(self: *State, payload: DcsInput) Error!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
-        if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
+        if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const retained_bytes = std.math.add(u32, self.dcs_retained_bytes, byteCount(payload.payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
+            return error.ConsequencePressure;
+        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequencePressure;
         const owned = try self.allocator.dupe(u8, payload.payload);
         const index = (self.dcs_payloads_start + self.dcs_payloads_count) % dcs_payload_capacity;
         self.commitConsequenceId(occurrence_id);
@@ -886,11 +889,11 @@ pub const State = struct {
     /// Retain one generic string control after every count, byte, generation, and allocation bound succeeds.
     pub fn retainStringPayload(self: *State, payload: StringInput) Error!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
-        if (self.string_payloads_count == string_payload_capacity) return error.ConsequenceLimit;
+        if (self.string_payloads_count == string_payload_capacity) return error.ConsequencePressure;
         const occurrence_id = try self.nextConsequenceId();
         const retained_bytes = std.math.add(u32, self.string_retained_bytes, byteCount(payload.payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
+            return error.ConsequencePressure;
+        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequencePressure;
         const owned = try self.allocator.dupe(u8, payload.payload);
         const index = (self.string_payloads_start + self.string_payloads_count) % string_payload_capacity;
         self.commitConsequenceId(occurrence_id);
@@ -975,7 +978,7 @@ test "family saturation preserves the accepted FIFO" {
     var state = State.init(std.testing.allocator);
     defer state.deinit();
     for (0..bell_capacity) |_| try state.ringBell();
-    try std.testing.expectError(error.ConsequenceLimit, state.ringBell());
+    try std.testing.expectError(error.ConsequencePressure, state.ringBell());
     try std.testing.expectEqual(@as(u8, bell_capacity), state.count());
     try std.testing.expectEqual(@as(u64, 1), state.head().?.generation());
 }
@@ -985,68 +988,80 @@ test "every family rejects its exact queue saturation" {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..clipboard_capacity) |_| try state.admitClipboard("", 0, .set, .osc52);
-        try std.testing.expectError(error.ConsequenceLimit, state.admitClipboard("", 0, .set, .osc52));
+        try std.testing.expectError(error.ConsequencePressure, state.admitClipboard("", 0, .set, .osc52));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..notification_capacity) |_| try state.retainNotification(.message, 9, "");
-        try std.testing.expectError(error.ConsequenceLimit, state.retainNotification(.message, 9, ""));
+        try std.testing.expectError(error.ConsequencePressure, state.retainNotification(.message, 9, ""));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..pointer_shape_capacity) |_| try state.retainPointerShape("", false);
-        try std.testing.expectError(error.ConsequenceLimit, state.retainPointerShape("", false));
+        try std.testing.expectError(error.ConsequencePressure, state.retainPointerShape("", false));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..file_transfer_capacity) |_| try state.retainFileTransfer(.iterm2_1337, "");
-        try std.testing.expectError(error.ConsequenceLimit, state.retainFileTransfer(.iterm2_1337, ""));
+        try std.testing.expectError(error.ConsequencePressure, state.retainFileTransfer(.iterm2_1337, ""));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..drag_drop_capacity) |_| try state.retainDragDrop(.{ .kind = .query, .command = 'q', .payload = "" });
-        try std.testing.expectError(error.ConsequenceLimit, state.retainDragDrop(.{ .kind = .query, .command = 'q', .payload = "" }));
+        try std.testing.expectError(error.ConsequencePressure, state.retainDragDrop(.{ .kind = .query, .command = 'q', .payload = "" }));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..container_request_capacity) |_| try state.retainContainerRequest(.report_state);
-        try std.testing.expectError(error.ConsequenceLimit, state.retainContainerRequest(.report_state));
+        try std.testing.expectError(error.ConsequencePressure, state.retainContainerRequest(.report_state));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..color_preference_query_capacity) |_| try state.retainColorPreferenceQuery();
-        try std.testing.expectError(error.ConsequenceLimit, state.retainColorPreferenceQuery());
+        try std.testing.expectError(error.ConsequencePressure, state.retainColorPreferenceQuery());
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..media_copy_capacity) |_| try state.retainMediaCopy(.{ .private = false, .parameter = 0 });
-        try std.testing.expectError(error.ConsequenceLimit, state.retainMediaCopy(.{ .private = false, .parameter = 0 }));
+        try std.testing.expectError(error.ConsequencePressure, state.retainMediaCopy(.{ .private = false, .parameter = 0 }));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..legacy_control_capacity) |_| try state.retainLegacyControl(.tek_graph);
-        try std.testing.expectError(error.ConsequenceLimit, state.retainLegacyControl(.tek_graph));
+        try std.testing.expectError(error.ConsequencePressure, state.retainLegacyControl(.tek_graph));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..dcs_payload_capacity) |_| try state.retainDcsPayload(.{ .kind = .kitty_result, .payload = "" });
-        try std.testing.expectError(error.ConsequenceLimit, state.retainDcsPayload(.{ .kind = .kitty_result, .payload = "" }));
+        try std.testing.expectError(error.ConsequencePressure, state.retainDcsPayload(.{ .kind = .kitty_result, .payload = "" }));
     }
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
         for (0..string_payload_capacity) |_| try state.retainStringPayload(.{ .kind = .apc, .payload = "" });
-        try std.testing.expectError(error.ConsequenceLimit, state.retainStringPayload(.{ .kind = .apc, .payload = "" }));
+        try std.testing.expectError(error.ConsequencePressure, state.retainStringPayload(.{ .kind = .apc, .payload = "" }));
     }
+}
+
+test "clipboard individual retained bound is intrinsic rather than backlog pressure" {
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    const oversized = try std.testing.allocator.alloc(u8, @as(usize, clipboard_max_bytes) + 1);
+    defer std.testing.allocator.free(oversized);
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        state.admitClipboard(oversized, 0, .set, .osc52),
+    );
+    try std.testing.expectEqual(@as(u8, 0), state.count());
 }
 
 fn retainDcsAllocation(allocator: std.mem.Allocator) !void {

@@ -703,7 +703,7 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     }
     try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;Qw==\x07"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]52;c;Qw==\x07"));
     try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
 
@@ -727,7 +727,7 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).stateChanged());
     try std.testing.expectEqual(@as(u64, 11), terminal.consequenceHead().?.clipboard.generation);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;RQ==\x07"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]52;c;RQ==\x07"));
     try std.testing.expectEqual(@as(u64, 11), terminal.consequenceHead().?.clipboard.generation);
     try std.testing.expectEqual(@as(u8, 1), terminal.consequenceCount());
     try terminal.consumeConsequence(11);
@@ -815,7 +815,7 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
         @as(usize, expected_clipboard_packet_bytes),
         terminal.consequenceHead().?.clipboard.payload.len,
     );
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;QQ==\x07"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]52;c;QQ==\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
     try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
 
@@ -897,7 +897,7 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.file_transfer.generation);
     try std.testing.expectEqual(@as(usize, expected_file_transfer_bytes), terminal.consequenceHead().?.file_transfer.payload.len);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;rejected\x1b\\"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]5113;rejected\x1b\\"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.file_transfer.generation);
     try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
 
@@ -1083,7 +1083,7 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
         try std.testing.expect((try terminal.feed("\x1b]9;queued\x07")).stateChanged());
     }
     try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;rejected\x07"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]9;rejected\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.notification.generation);
     try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
 
@@ -1191,7 +1191,7 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
         expected_pointer_shape_capacity,
         terminal.consequenceCount(),
     );
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;rejected\x07"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]22;rejected\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.pointer_shape.generation);
     try std.testing.expectEqual(
         expected_pointer_shape_capacity,
@@ -1754,7 +1754,7 @@ test "OSC 72 queue saturation and aggregate allocation failure preserve exact he
         try std.testing.expect((try terminal.feed(command)).stateChanged());
     }
     const head = terminal.consequenceHead().?.drag_drop;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]72;t=q:i=99\x1b\\"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b]72;t=q:i=99\x1b\\"));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.drag_drop.generation);
     try std.testing.expectEqual(expected_drag_drop_capacity, terminal.consequenceCount());
 }
@@ -1776,7 +1776,7 @@ test "OSC 72 aggregate payload budget rejects a valid ninth chunk transactionall
     for (0..8) |_| try std.testing.expect((try terminal.feed(packet)).stateChanged());
     const head = terminal.consequenceHead().?.drag_drop;
     const sequence = terminal.semanticSequence();
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(packet));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed(packet));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.drag_drop.generation);
     try std.testing.expectEqual(@as(u8, 8), terminal.consequenceCount());
     try std.testing.expectEqual(sequence, terminal.semanticSequence());

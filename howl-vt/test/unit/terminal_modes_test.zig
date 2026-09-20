@@ -872,7 +872,7 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
     }
     try std.testing.expectEqual(expected_color_preference_query_capacity, terminal.consequenceCount());
     const head_before_full = terminal.consequenceHead().?.color_preference_query.id;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[?996n"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b[?996n"));
     try std.testing.expectEqual(head_before_full, terminal.consequenceHead().?.color_preference_query.id);
     try std.testing.expectEqual(expected_color_preference_query_capacity, terminal.consequenceCount());
 
@@ -1274,7 +1274,7 @@ test "container controls retain ordered bounded caller requests and lifetime" {
     }
     try std.testing.expectEqual(expected_container_request_capacity, terminal.consequenceCount());
     const head_before_full = terminal.consequenceHead().?.container;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[2t"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b[2t"));
     try std.testing.expectEqual(
         head_before_full.generation,
         terminal.consequenceHead().?.container.generation,
@@ -1351,7 +1351,7 @@ test "iTerm2 container operations retain exact bounded caller intent" {
     const count_before_rejection = terminal.consequenceCount();
     const head_before_rejection = terminal.consequenceHead().?.container;
     const sequence_before_rejection = terminal.semanticSequence();
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[6t"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b[6t"));
     try std.testing.expectEqual(count_before_rejection, terminal.consequenceCount());
     try std.testing.expectEqualDeep(head_before_rejection, terminal.consequenceHead().?.container);
     try std.testing.expectEqual(sequence_before_rejection, terminal.semanticSequence());
@@ -2209,7 +2209,7 @@ test "DCS consequence queue proves sixteen-entry saturation and preserves identi
     for (0..16) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).stateChanged());
     try std.testing.expectEqual(@as(u8, 16), terminal.consequenceCount());
     const head = terminal.consequenceHead().?.dcs;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bP+pB\x1b\\"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1bP+pB\x1b\\"));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.dcs.generation);
     try std.testing.expectEqualStrings("A", terminal.consequenceHead().?.dcs.payload);
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(head.generation + 1));
@@ -2287,7 +2287,7 @@ test "generic string fallback cancellation overflow and queue saturation preserv
     }
     for (0..32) |_| try std.testing.expect((try terminal.feed("\x1b^P\x1b\\")).stateChanged());
     const head = terminal.consequenceHead().?.string_control;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bXS\x1b\\"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1bXS\x1b\\"));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.string_control.generation);
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(head.generation + 1));
 }
@@ -2311,7 +2311,7 @@ test "generic string aggregate budget rolls back and is reclaimed by consumption
     try sequence.appendSlice(allocator, "\x1b^");
     try sequence.appendNTimes(allocator, 'b', 900);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed(sequence.items));
     try std.testing.expectEqual(@as(u8, 1), terminal.consequenceCount());
     try std.testing.expectEqual(first.generation, terminal.consequenceHead().?.string_control.generation);
     try std.testing.expectEqualStrings(first.payload, terminal.consequenceHead().?.string_control.payload);
@@ -2643,7 +2643,7 @@ test "media-copy commands retain bounded ordered caller intent" {
     }
     try std.testing.expectEqual(@as(u8, 8), terminal.consequenceCount());
     const head_before = terminal.consequenceHead().?.media_copy;
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[5i"));
+    try std.testing.expectError(error.ConsequencePressure, terminal.feed("\x1b[5i"));
     try std.testing.expectEqualDeep(head_before, terminal.consequenceHead().?.media_copy);
 
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(head_before.generation + 1));

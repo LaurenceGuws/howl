@@ -1322,6 +1322,11 @@ pub const Server = struct {
     }
 
     fn applyServiceResult(self: *Server, result: howl.Service, now_ns: u64, burst_eligible: bool) void {
+        if (result.retained_consequence_fallback and
+            self.consequence_authority.assign(protocol.no_client))
+        {
+            self.burst_publication.reset();
+        }
         const next_stream_closed = result.stream_closed;
         const next_child_exited = result.child_exit != null;
         const lifecycle_changed = self.stream_closed != next_stream_closed or
@@ -5117,4 +5122,53 @@ test "coherent properties wake without text and survive late attachment title st
     defer cleared.deinit();
     try std.testing.expectEqualStrings("", (try protocol.properties.decode(cleared.properties)).title.?);
     try std.testing.expectEqual(@as(u16, 0), howl.consequenceCount(server.session));
+}
+
+test "retained consequence fallback revokes only consequence authority" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-consequence-fallback.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+        },
+    );
+    defer server.deinit();
+
+    var authority = try TestPeer.connect(std.testing.allocator, path);
+    defer authority.deinit();
+    const welcome = try handshake(&authority, &server);
+    try sendAssignConsequenceLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+    try std.testing.expectEqual(welcome.client_id, server.consequence_authority.leader().?);
+    try sendAssignLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_leader, .ok);
+    try std.testing.expectEqual(welcome.client_id, server.authority.leader().?);
+
+    server.applyServiceResult(.{
+        .changed = true,
+        .viewport_changed = false,
+        .retained_consequence_fallback = true,
+        .stream_closed = false,
+        .child_exit = null,
+        .write_pending = false,
+        .animation_wait_ms = null,
+    }, 1, false);
+
+    try std.testing.expect(server.consequence_authority.leader() == null);
+    try std.testing.expectEqual(howl.ConsequencePolicy.headless, server.consequencePolicy());
+    try std.testing.expectEqual(welcome.client_id, server.authority.leader().?);
+    try std.testing.expect(server.hasClient(welcome.client_id));
 }

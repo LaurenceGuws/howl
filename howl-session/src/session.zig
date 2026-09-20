@@ -93,6 +93,9 @@ pub const Service = struct {
     changed: bool,
     /// True when this service turn changed visible-row or scroll/history state.
     viewport_changed: bool,
+    /// True when retained caller work exceeded its bounded queue and Session
+    /// applied deterministic headless policy to at least one older consequence.
+    retained_consequence_fallback: bool = false,
     stream_closed: bool,
     child_exit: ?ChildExit,
     write_pending: bool,
@@ -353,12 +356,23 @@ const State = struct {
     ) ServiceError!Service {
         const revision_before = self.terminal.semanticSequence();
         var viewport_changed = false;
+        var retained_consequence_fallback = false;
         if (consequence_policy == .headless) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
         collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
-            error.WriteQueueFull => return self.serviceResult(revision_before, timestamp_ns, viewport_changed),
+            error.WriteQueueFull => return self.serviceResult(
+                revision_before,
+                timestamp_ns,
+                viewport_changed,
+                retained_consequence_fallback,
+            ),
         };
-        try self.processBuffered(timestamp_ns, consequence_policy, &viewport_changed);
+        try self.processBuffered(
+            timestamp_ns,
+            consequence_policy,
+            &viewport_changed,
+            &retained_consequence_fallback,
+        );
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
             const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
                 error.Interrupted, error.WouldBlock => 0,
@@ -370,13 +384,23 @@ const State = struct {
             };
             self.read_start = 0;
             self.read_end = count;
-            try self.processBuffered(timestamp_ns, consequence_policy, &viewport_changed);
+            try self.processBuffered(
+                timestamp_ns,
+                consequence_policy,
+                &viewport_changed,
+                &retained_consequence_fallback,
+            );
         }
         switch (try self.transport.observeChild()) {
             .running => {},
             .exited => |value| self.child_exit = value,
         }
-        return self.serviceResult(revision_before, timestamp_ns, viewport_changed);
+        return self.serviceResult(
+            revision_before,
+            timestamp_ns,
+            viewport_changed,
+            retained_consequence_fallback,
+        );
     }
 
     fn processBuffered(
@@ -384,19 +408,29 @@ const State = struct {
         timestamp_ns: u64,
         consequence_policy: ConsequencePolicy,
         viewport_changed: *bool,
+        retained_consequence_fallback: *bool,
     ) ServiceError!void {
         while (self.read_start < self.read_end) {
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
             };
-            const progress = try self.terminal.feedAtServiceBoundary(
-                self.reads[self.read_start..self.read_end],
-                timestamp_ns,
-            );
+            const progress = if (consequence_policy == .retain)
+                try self.terminal.feedAtServiceBoundaryRelievingConsequences(
+                    self.reads[self.read_start..self.read_end],
+                    timestamp_ns,
+                    relieveConsequencePressure,
+                )
+            else
+                try self.terminal.feedAtServiceBoundary(
+                    self.reads[self.read_start..self.read_end],
+                    timestamp_ns,
+                );
             std.debug.assert(progress.consumed > 0);
             std.debug.assert(progress.consumed <= self.read_end - self.read_start);
             self.read_start += progress.consumed;
             viewport_changed.* = viewport_changed.* or progress.summary.mutations.viewport;
+            retained_consequence_fallback.* =
+                retained_consequence_fallback.* or progress.consequence_pressure_relieved;
             std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
             if (consequence_policy == .headless) try self.drainConsequences();
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
@@ -408,45 +442,8 @@ const State = struct {
     }
 
     fn drainConsequences(self: *State) ServiceError!void {
-        var remaining = self.terminal.consequenceCount();
-        while (remaining > 0) : (remaining -= 1) {
-            const current = self.terminal.consequenceHead() orelse return;
-            const identity = current.id();
-            switch (current) {
-                .clipboard => |request| if (request.kind == .query) {
-                    const replied = try self.terminal.replyClipboard(identity, "");
-                    std.debug.assert(replied);
-                    continue;
-                },
-                .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
-                    try self.terminal.replyPointerShape(identity, "default");
-                    continue;
-                },
-                .container => |occurrence| switch (occurrence.request) {
-                    .report_screen_cells => {
-                        const terminal_view = self.terminal.semanticView(0);
-                        try self.terminal.replyContainer(identity, .{ .screen_cells = .{
-                            .rows = terminal_view.rows,
-                            .cols = terminal_view.cols,
-                        } });
-                        continue;
-                    },
-                    .report_state, .report_position, .report_icon_title => {
-                        self.terminal.declineContainerQuery(identity) catch unreachable;
-                        continue;
-                    },
-                    else => {},
-                },
-                .color_preference_query => {
-                    try self.terminal.replyColorPreference(identity, .dark);
-                    continue;
-                },
-                else => {},
-            }
-            self.terminal.consumeConsequence(identity) catch |failure| switch (failure) {
-                error.StaleConsequence, error.ReplyRequired => unreachable,
-            };
-        }
+        while (self.terminal.consequenceHead() != null)
+            try relieveConsequencePressure(&self.terminal);
         std.debug.assert(self.terminal.consequenceHead() == null);
     }
 
@@ -455,11 +452,13 @@ const State = struct {
         revision_before: u64,
         timestamp_ns: u64,
         viewport_changed: bool,
+        retained_consequence_fallback: bool,
     ) Service {
         const animation = self.terminal.serviceAnimations(timestamp_ns);
         return .{
             .changed = self.terminal.semanticSequence() != revision_before,
             .viewport_changed = viewport_changed,
+            .retained_consequence_fallback = retained_consequence_fallback,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
             .write_pending = self.writes.count != 0,
@@ -467,6 +466,60 @@ const State = struct {
         };
     }
 };
+
+/// Applies one deterministic headless fallback to the global consequence head.
+/// Service-boundary VT feeds use this only when a valid new consequence cannot
+/// fit because already-retained caller work exhausted its bounded family.
+fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void {
+    const current = machine.consequenceHead() orelse return error.ConsequencePressure;
+    const identity = current.id();
+    switch (current) {
+        .clipboard => |request| if (request.kind == .query) {
+            const replied = machine.replyClipboard(identity, "") catch |failure| switch (failure) {
+                error.StaleClipboardRequest => unreachable,
+                else => |err| return err,
+            };
+            std.debug.assert(replied);
+            return;
+        },
+        .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
+            machine.replyPointerShape(identity, "default") catch |failure| switch (failure) {
+                error.StalePointerShape, error.PointerShapeReplyMismatch => unreachable,
+                else => |err| return err,
+            };
+            return;
+        },
+        .container => |occurrence| switch (occurrence.request) {
+            .report_screen_cells => {
+                const terminal_view = machine.semanticView(0);
+                machine.replyContainer(identity, .{ .screen_cells = .{
+                    .rows = terminal_view.rows,
+                    .cols = terminal_view.cols,
+                } }) catch |failure| switch (failure) {
+                    error.StaleContainerRequest, error.ContainerReplyMismatch => unreachable,
+                    else => |err| return err,
+                };
+                return;
+            },
+            .report_state, .report_position, .report_icon_title => {
+                machine.declineContainerQuery(identity) catch unreachable;
+                return;
+            },
+            else => {},
+        },
+        .color_preference_query => {
+            machine.replyColorPreference(identity, .dark) catch |failure| switch (failure) {
+                error.StaleColorPreferenceQuery => unreachable,
+                else => |err| return err,
+            };
+            return;
+        },
+        else => {},
+    }
+    machine.consumeConsequence(identity) catch |failure| switch (failure) {
+        error.StaleConsequence, error.ReplyRequired => unreachable,
+    };
+}
 
 fn stateMut(session: *Session) *State {
     return @ptrCast(@alignCast(session));
@@ -779,4 +832,68 @@ test "Session lends only the opaque VT observation capability" {
     try std.testing.expect(pointer.attrs.@"const");
     try std.testing.expect(pointer.child == Terminal.Observation);
     try std.testing.expect(@typeInfo(pointer.child) == .@"opaque");
+}
+
+test "retained consequence pressure preserves canonical progress within fixed bounds" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    var bytes: [66]u8 = undefined;
+    bytes[0] = 'X';
+    @memset(bytes[1..65], 0x07);
+    bytes[65] = 'Y';
+    @memcpy(state.reads[0..bytes.len], &bytes);
+    state.read_start = 0;
+    state.read_end = bytes.len;
+
+    const serviced = try state.service(false, false, 1, .retain);
+    try std.testing.expect(serviced.changed);
+    try std.testing.expect(serviced.retained_consequence_fallback);
+    try std.testing.expectEqual(@as(u16, 32), state.terminal.consequenceCount());
+    const view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(usize, 0), state.read_start);
+    try std.testing.expectEqual(@as(usize, 0), state.read_end);
+}
+
+test "retained reply-required pressure defaults oldest query and admits newest" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    for (0..8) |_| {
+        try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
+    }
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 1), state.terminal.consequenceHead().?.id());
+
+    const pressure = "X\x1b]52;c;?\x07Y";
+    @memcpy(state.reads[0..pressure.len], pressure);
+    state.read_start = 0;
+    state.read_end = pressure.len;
+    const serviced = try state.service(false, false, 2, .retain);
+
+    try std.testing.expect(serviced.changed);
+    try std.testing.expect(serviced.retained_consequence_fallback);
+    try std.testing.expect(serviced.write_pending);
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 2), state.terminal.consequenceHead().?.id());
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", state.writes.bytes[0..state.writes.count]);
+    const view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
 }

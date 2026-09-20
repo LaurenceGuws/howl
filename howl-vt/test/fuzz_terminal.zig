@@ -96,6 +96,7 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
 fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
     const summary = terminal.feed(bytes) catch |err| switch (err) {
         error.ConsequenceLimit,
+        error.ConsequencePressure,
         error.PropertyLimit,
         error.ReplyLimit,
         error.ParsedEventLimit,
