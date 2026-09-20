@@ -6,10 +6,14 @@
 //! lifetimes. It exists only for panes the Host itself creates.
 
 const std = @import("std");
+const linux = std.os.linux;
+const posix = std.posix;
 const client = @import("howl_client");
 
 const start_attempts: usize = 250;
 const start_retry_ms: i64 = 2;
+const shutdown_grace_ms: u64 = 750;
+const shutdown_poll_ms: u64 = 5;
 
 pub const SessionProcess = struct {
     allocator: std.mem.Allocator,
@@ -75,8 +79,7 @@ pub const SessionProcess = struct {
             error.FileNotFound => {},
             else => return failure,
         };
-        errdefer std.Io.Dir.deleteFileAbsolute(io, socket_path) catch |failure|
-            std.debug.print("Howl Session socket rollback cleanup failed: {s}\n", .{@errorName(failure)});
+        errdefer deleteSocket(io, socket_path, "rollback");
 
         const endpoint = try std.fmt.allocPrint(allocator, "unix:{s}", .{socket_path});
         errdefer allocator.free(endpoint);
@@ -84,7 +87,7 @@ pub const SessionProcess = struct {
         defer allocator.free(rows_text);
         const cols_text = try std.fmt.allocPrint(allocator, "{d}", .{cols});
         defer allocator.free(cols_text);
-        var argv_storage: [9][]const u8 = undefined;
+        var argv_storage: [10][]const u8 = undefined;
         var argv_count: usize = 5;
         argv_storage[0] = sessiond_path;
         argv_storage[1] = socket_path;
@@ -101,14 +104,16 @@ pub const SessionProcess = struct {
             argv_storage[argv_count + 1] = value;
             argv_count += 2;
         }
+        argv_storage[argv_count] = "--shutdown-stdin";
+        argv_count += 1;
         var child = try std.process.spawn(io, .{
             .argv = argv_storage[0..argv_count],
             .environ_map = environ_map,
-            .stdin = .ignore,
+            .stdin = .pipe,
             .stdout = .ignore,
             .stderr = .inherit,
         });
-        errdefer child.kill(io);
+        errdefer shutdownChild(&child, io);
 
         var attempt: usize = 0;
         while (attempt < start_attempts) : (attempt += 1) {
@@ -132,11 +137,153 @@ pub const SessionProcess = struct {
     }
 
     pub fn deinit(self: *SessionProcess) void {
-        self.child.kill(self.io);
-        std.Io.Dir.deleteFileAbsolute(self.io, self.socket_path) catch |failure|
-            std.debug.print("Howl Session socket cleanup failed: {s}\n", .{@errorName(failure)});
+        shutdownChild(&self.child, self.io);
+        deleteSocket(self.io, self.socket_path, "cleanup");
         self.allocator.free(self.endpoint);
         self.allocator.free(self.socket_path);
         self.* = undefined;
     }
 };
+
+fn deleteSocket(io: std.Io, path: []const u8, stage: []const u8) void {
+    std.Io.Dir.deleteFileAbsolute(io, path) catch |failure| switch (failure) {
+        error.FileNotFound => {},
+        else => std.debug.print(
+            "Howl Session socket {s} failed: {s}\n",
+            .{ stage, @errorName(failure) },
+        ),
+    };
+}
+
+const ChildExitState = enum {
+    running,
+    exited,
+    failed,
+};
+
+fn observeChildExitNoReap(pid: posix.pid_t) ChildExitState {
+    while (true) {
+        var info = std.mem.zeroes(linux.siginfo_t);
+        const result = linux.waitid(
+            .PID,
+            pid,
+            &info,
+            linux.W.EXITED | linux.W.NOHANG | linux.W.NOWAIT,
+            null,
+        );
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                const observed = info.fields.common.first.piduid.pid;
+                if (observed == 0) return .running;
+                return if (observed == pid) .exited else .failed;
+            },
+            .INTR => continue,
+            else => return .failed,
+        }
+    }
+}
+
+fn monotonicNs() ?u64 {
+    var now: linux.timespec = undefined;
+    if (linux.errno(linux.clock_gettime(linux.CLOCK.MONOTONIC, &now)) != .SUCCESS)
+        return null;
+    const seconds = std.math.mul(u64, @intCast(now.sec), std.time.ns_per_s) catch
+        return null;
+    return std.math.add(u64, seconds, @intCast(now.nsec)) catch null;
+}
+
+fn reapObservedChild(child: *std.process.Child, pid: posix.pid_t) bool {
+    std.debug.assert(child.id != null);
+    std.debug.assert(child.stdin == null);
+    std.debug.assert(child.stdout == null);
+    std.debug.assert(child.stderr == null);
+    var status: c_int = 0;
+    while (true) {
+        const result = linux.waitpid(pid, &status, 0);
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                if (result != @as(usize, @intCast(pid))) return false;
+                child.id = null;
+                return true;
+            },
+            .INTR => continue,
+            else => return false,
+        }
+    }
+}
+
+fn waitGracefulChild(child: *std.process.Child, timeout_ms: u64) bool {
+    const pid: posix.pid_t = @intCast(child.id orelse return true);
+    const started = monotonicNs() orelse return false;
+    const timeout_ns = std.math.mul(u64, timeout_ms, std.time.ns_per_ms) catch
+        return false;
+    const deadline = std.math.add(u64, started, timeout_ns) catch
+        return false;
+    while (true) {
+        switch (observeChildExitNoReap(pid)) {
+            .exited => return reapObservedChild(child, pid),
+            .failed => return false,
+            .running => {},
+        }
+        const now = monotonicNs() orelse return false;
+        if (now >= deadline) return false;
+        const remaining_ns = deadline - now;
+        sleepShutdownPoll(@min(
+            remaining_ns,
+            shutdown_poll_ms * std.time.ns_per_ms,
+        ));
+    }
+}
+
+fn sleepShutdownPoll(duration_ns: u64) void {
+    if (duration_ns == 0) return;
+    const request = linux.timespec{
+        .sec = @intCast(duration_ns / std.time.ns_per_s),
+        .nsec = @intCast(duration_ns % std.time.ns_per_s),
+    };
+    while (true) {
+        switch (linux.errno(linux.nanosleep(&request, null))) {
+            .SUCCESS => return,
+            // Return to the outer wait loop so child state and the absolute
+            // monotonic deadline are rechecked after every signal interruption.
+            .INTR => return,
+            else => return,
+        }
+    }
+}
+
+fn sendDaemonSignal(child: *std.process.Child, signal: linux.SIG) bool {
+    const pid: posix.pid_t = @intCast(child.id orelse return true);
+    while (true) {
+        const result = linux.kill(pid, signal);
+        switch (linux.errno(result)) {
+            .SUCCESS => return true,
+            .INTR => continue,
+            .SRCH => return observeChildExitNoReap(pid) == .exited,
+            else => return false,
+        }
+    }
+}
+
+fn shutdownChild(child: *std.process.Child, io: std.Io) void {
+    if (child.id == null) return;
+    if (child.stdin) |shutdown| {
+        shutdown.close(io);
+        child.stdin = null;
+    }
+    if (waitGracefulChild(child, shutdown_grace_ms)) return;
+
+    // A stopped sibling cannot observe stdin EOF. Resume it once and grant a
+    // second complete cleanup window before emergency containment.
+    if (sendDaemonSignal(child, linux.SIG.CONT) and
+        waitGracefulChild(child, shutdown_grace_ms))
+        return;
+
+    // Emergency containment only. SIGKILL cannot run sessiond's Session/PTy
+    // defers, so this is not described as canonical terminal cleanup. It exists
+    // solely to keep deinit from becoming an unbounded SIGTERM wait.
+    if (!sendDaemonSignal(child, linux.SIG.KILL))
+        @panic("Howl Session sibling emergency kill failed");
+    if (!waitGracefulChild(child, shutdown_grace_ms))
+        @panic("Howl Session sibling survived SIGKILL");
+}

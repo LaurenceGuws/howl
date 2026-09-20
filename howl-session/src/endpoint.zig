@@ -16,6 +16,7 @@ const protocol = howl.protocol;
 // product's eight-view ceiling without embedding one 64 KiB request buffer in
 // every empty slot; Client.input is allocated only for accepted connections.
 const maximum_clients: usize = 32;
+const maximum_accepts_per_turn: usize = maximum_clients;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
 // A delta mirror never admits more cells than could fit even as fixed text_v1
@@ -670,7 +671,8 @@ pub const Server = struct {
     // -------------------------------------------------------------------------
 
     fn acceptClients(self: *Server) !void {
-        while (true) {
+        var accepted_count: usize = 0;
+        while (accepted_count < maximum_accepts_per_turn) {
             const accepted = linux.accept4(
                 self.listener.fd,
                 null,
@@ -683,6 +685,7 @@ pub const Server = struct {
                 .INTR => continue,
                 else => return error.AcceptFailed,
             }
+            accepted_count += 1;
             const fd: posix.fd_t = @intCast(accepted);
             errdefer closeFd(fd);
             setSendBuffer(fd, client_send_buffer_bytes) catch {
@@ -2556,6 +2559,33 @@ fn announceTcpEndpoint(port: u16) !void {
     }
 }
 
+fn shutdownFdClosed(fd: posix.fd_t) error{
+    ShutdownPollFailed,
+    ShutdownReadFailed,
+}!bool {
+    var descriptors = [_]posix.pollfd{.{
+        .fd = fd,
+        .events = posix.POLL.IN | posix.POLL.HUP | posix.POLL.ERR,
+        .revents = 0,
+    }};
+    const ready = posix.poll(&descriptors, 0) catch return error.ShutdownPollFailed;
+    if (ready == 0) return false;
+    const events = descriptors[0].revents;
+    if (events & (posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL) != 0)
+        return true;
+    if (events & posix.POLL.IN == 0) return false;
+    var byte: [1]u8 = undefined;
+    while (true) {
+        const result = linux.read(fd, &byte, byte.len);
+        switch (linux.errno(result)) {
+            .SUCCESS => return result == 0,
+            .INTR => continue,
+            .AGAIN => return false,
+            else => return error.ShutdownReadFailed,
+        }
+    }
+}
+
 const SessiondLaunchArgs = struct {
     listener_spec: ListenerSpec,
     shell: []const u8,
@@ -2563,6 +2593,7 @@ const SessiondLaunchArgs = struct {
     columns: u16,
     command: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
+    shutdown_stdin: bool = false,
 };
 
 fn parseSessiondLaunchArgs(argv: []const []const u8) error{
@@ -2570,7 +2601,7 @@ fn parseSessiondLaunchArgs(argv: []const []const u8) error{
     InvalidRows,
     InvalidColumns,
 }!SessiondLaunchArgs {
-    if (argv.len < 5 or argv.len > 9) return error.InvalidArguments;
+    if (argv.len < 5 or argv.len > 10) return error.InvalidArguments;
     const listener_spec = parseListenerSpec(argv[1]) catch return error.InvalidArguments;
     const rows = std.fmt.parseInt(u16, argv[3], 10) catch return error.InvalidRows;
     const columns = std.fmt.parseInt(u16, argv[4], 10) catch return error.InvalidColumns;
@@ -2578,13 +2609,20 @@ fn parseSessiondLaunchArgs(argv: []const []const u8) error{
 
     var command: ?[]const u8 = null;
     var cwd: ?[]const u8 = null;
+    var shutdown_stdin = false;
     if (argv.len == 6 and !std.mem.startsWith(u8, argv[5], "--")) {
         command = if (argv[5].len == 0) null else argv[5];
     } else {
         var index: usize = 5;
         while (index < argv.len) {
-            if (index + 1 >= argv.len) return error.InvalidArguments;
             const name = argv[index];
+            if (std.mem.eql(u8, name, "--shutdown-stdin")) {
+                if (shutdown_stdin) return error.InvalidArguments;
+                shutdown_stdin = true;
+                index += 1;
+                continue;
+            }
+            if (index + 1 >= argv.len) return error.InvalidArguments;
             const value = argv[index + 1];
             if (std.mem.eql(u8, name, "--command")) {
                 if (command != null) return error.InvalidArguments;
@@ -2605,6 +2643,7 @@ fn parseSessiondLaunchArgs(argv: []const []const u8) error{
         .columns = columns,
         .command = command,
         .cwd = cwd,
+        .shutdown_stdin = shutdown_stdin,
     };
 }
 
@@ -2613,7 +2652,9 @@ fn parseSessiondLaunchArgs(argv: []const []const u8) error{
 /// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [--command COMMAND] [--cwd CWD]`.
 ///
 /// The one positional COMMAND spelling remains backward compatible. New launch
-/// policy uses explicit flags so cwd can exist independently of command.
+/// policy uses explicit flags so cwd can exist independently of command. The
+/// private shutdown-stdin flag is reserved for client-owned sibling processes;
+/// EOF requests normal return so Session/PTy defers run before process exit.
 /// A bare first argument retains the Unix-path transport. `tcp:PORT` binds
 /// IPv4 loopback only; `tcp:0` asks the kernel for a free port and reports it.
 pub fn main(init: std.process.Init) error{
@@ -2623,8 +2664,8 @@ pub fn main(init: std.process.Init) error{
     SessionServerFailed,
 }!void {
     const argv_raw = init.minimal.args.vector;
-    if (argv_raw.len > 9) return error.InvalidArguments;
-    var argv_storage: [9][]const u8 = undefined;
+    if (argv_raw.len > 10) return error.InvalidArguments;
+    var argv_storage: [10][]const u8 = undefined;
     for (argv_raw, 0..) |value, index| argv_storage[index] = std.mem.span(value);
     const parsed = try parseSessiondLaunchArgs(argv_storage[0..argv_raw.len]);
     var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, parsed.listener_spec, .{
@@ -2636,7 +2677,15 @@ pub fn main(init: std.process.Init) error{
     }) catch return error.SessionServerFailed;
     defer server.deinit();
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
-    while (true) server.turn(-1) catch return error.SessionServerFailed;
+    while (true) {
+        if (parsed.shutdown_stdin and
+            shutdownFdClosed(posix.STDIN_FILENO) catch return error.SessionServerFailed)
+            return;
+        server.turn(-1) catch return error.SessionServerFailed;
+        if (parsed.shutdown_stdin and
+            shutdownFdClosed(posix.STDIN_FILENO) catch return error.SessionServerFailed)
+            return;
+    }
 }
 
 test "sessiond launch args preserve legacy command and explicit cwd" {
@@ -2657,6 +2706,16 @@ test "sessiond launch args preserve legacy command and explicit cwd" {
     const explicit_parsed = try parseSessiondLaunchArgs(&explicit);
     try std.testing.expectEqualStrings("/tmp", explicit_parsed.cwd.?);
     try std.testing.expectEqualStrings("printf explicit", explicit_parsed.command.?);
+    try std.testing.expect(!explicit_parsed.shutdown_stdin);
+
+    const owned = [_][]const u8{
+        "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37",           "80",
+        "--cwd",         "/tmp",           "--command", "printf owned", "--shutdown-stdin",
+    };
+    const owned_parsed = try parseSessiondLaunchArgs(&owned);
+    try std.testing.expect(owned_parsed.shutdown_stdin);
+    try std.testing.expectEqualStrings("/tmp", owned_parsed.cwd.?);
+    try std.testing.expectEqualStrings("printf owned", owned_parsed.command.?);
 }
 
 test "sessiond launch args reject malformed optional fields" {
@@ -2669,6 +2728,11 @@ test "sessiond launch args reject malformed optional fields" {
     try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&duplicate));
     const unknown = [_][]const u8{ "howl-sessiond", "/tmp/howl.sock", "/bin/bash", "37", "80", "--nope", "value" };
     try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&unknown));
+    const duplicate_shutdown = [_][]const u8{
+        "howl-sessiond",    "/tmp/howl.sock",   "/bin/bash", "37", "80",
+        "--shutdown-stdin", "--shutdown-stdin",
+    };
+    try std.testing.expectError(error.InvalidArguments, parseSessiondLaunchArgs(&duplicate_shutdown));
 }
 
 // =============================================================================
@@ -5419,4 +5483,19 @@ test "stalled reply-bearing consequence expires to headless policy and rejects l
     try expectResult(&authority, &server, .assign_consequence_leader, .ok);
     try sendConsequenceReply(&authority, &server, generation, .clipboard, "");
     try expectResult(&authority, &server, .consequence_reply, .rejected);
+}
+
+test "sessiond shutdown fd distinguishes live pipe from parent EOF" {
+    var fds = [_]c_int{ -1, -1 };
+    if (linux.errno(linux.pipe(&fds)) != .SUCCESS) return error.TestSocketCreateFailed;
+    var write_open = true;
+    defer {
+        closeFd(@intCast(fds[0]));
+        if (write_open) closeFd(@intCast(fds[1]));
+    }
+
+    try std.testing.expect(!try shutdownFdClosed(@intCast(fds[0])));
+    closeFd(@intCast(fds[1]));
+    write_open = false;
+    try std.testing.expect(try shutdownFdClosed(@intCast(fds[0])));
 }
