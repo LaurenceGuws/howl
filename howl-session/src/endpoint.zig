@@ -28,6 +28,11 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const client_output_retain_bytes: usize = 512 * 1024;
 const listen_backlog: u32 = maximum_clients;
 const lifecycle_poll_ms: i32 = 100;
+// A connected host-consequence authority gets one bounded opportunity to answer
+// a reply-bearing terminal query. Match synchronized-output's existing one-second
+// fail-open policy: host integration may enrich behavior, but cannot indefinitely
+// hold canonical child progress.
+const consequence_reply_timeout_ns: u64 = std.time.ns_per_s;
 // Match Foot's bounded application synchronized-update hold. Canonical VT
 // progress continues during the hold; only observer publication waits. A stuck
 // application fails open rather than freezing presentation indefinitely.
@@ -93,9 +98,84 @@ const BurstPublicationGate = struct {
     }
 };
 
+fn consequenceRequiresReply(value: howl.Consequence) bool {
+    return switch (value) {
+        .clipboard => |request| request.kind == .query,
+        .pointer_shape => |request| request.payload.len != 0 and request.payload[0] == '?',
+        .container => |occurrence| switch (occurrence.request) {
+            .report_state, .report_position, .report_screen_cells, .report_icon_title => true,
+            else => false,
+        },
+        .color_preference_query => true,
+        else => false,
+    };
+}
+
+const ConsequenceExpiry = struct {
+    authority_client_id: protocol.ClientId = protocol.no_client,
+    authority_revision: u64 = 0,
+    generation: u64 = 0,
+    started_ns: ?u64 = null,
+
+    fn reset(self: *ConsequenceExpiry) void {
+        self.* = .{};
+    }
+
+    fn sync(
+        self: *ConsequenceExpiry,
+        authority_client_id: ?protocol.ClientId,
+        authority_revision: u64,
+        consequence: ?howl.Consequence,
+        now_ns: u64,
+    ) void {
+        const authority = authority_client_id orelse {
+            self.reset();
+            return;
+        };
+        const current = consequence orelse {
+            self.reset();
+            return;
+        };
+        if (!consequenceRequiresReply(current)) {
+            self.reset();
+            return;
+        }
+        if (self.started_ns != null and
+            self.authority_client_id == authority and
+            self.authority_revision == authority_revision and
+            self.generation == current.id())
+            return;
+        self.authority_client_id = authority;
+        self.authority_revision = authority_revision;
+        self.generation = current.id();
+        self.started_ns = now_ns;
+    }
+
+    fn waitMs(self: *const ConsequenceExpiry, now_ns: u64) ?u32 {
+        const started_ns = self.started_ns orelse return null;
+        const elapsed_ns = now_ns -| started_ns;
+        const remaining_ns = consequence_reply_timeout_ns -| elapsed_ns;
+        if (remaining_ns == 0) return 0;
+        return @intCast(@min(
+            (remaining_ns + std.time.ns_per_ms - 1) / std.time.ns_per_ms,
+            std.math.maxInt(u32),
+        ));
+    }
+
+    fn due(self: *const ConsequenceExpiry, now_ns: u64) bool {
+        const started_ns = self.started_ns orelse return false;
+        return now_ns -| started_ns >= consequence_reply_timeout_ns;
+    }
+};
+
 const TerminalPublication = enum { none, burst_fast, burst_scroll, immediate };
 
-fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32, publication_wait_ms: ?u32) i32 {
+fn boundedPollTimeout(
+    timeout_ms: i32,
+    animation_wait_ms: ?u32,
+    publication_wait_ms: ?u32,
+    consequence_wait_ms: ?u32,
+) i32 {
     var result = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
         lifecycle_poll_ms
     else
@@ -113,6 +193,13 @@ fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32, publication_wait
             @as(u32, @intCast(lifecycle_poll_ms)),
         ));
         result = @min(result, publication_timeout);
+    }
+    if (consequence_wait_ms) |wait_ms| {
+        const consequence_timeout: i32 = @intCast(@min(
+            wait_ms,
+            @as(u32, @intCast(lifecycle_poll_ms)),
+        ));
+        result = @min(result, consequence_timeout);
     }
     return result;
 }
@@ -373,6 +460,7 @@ pub const Server = struct {
     next_client_id: protocol.ClientId = 1,
     authority: protocol.ResizeAuthority = .{},
     consequence_authority: protocol.ConsequenceAuthority = .{},
+    consequence_expiry: ConsequenceExpiry = .{},
     // Endpoint observation, child lifecycle, and pending PTY output.
     observation_revision: u64 = 1,
     terminal_revision: u64,
@@ -486,10 +574,12 @@ pub const Server = struct {
         }
 
         const poll_now_ns = nowNs(self.io);
+        self.syncConsequenceExpiry(poll_now_ns);
         const poll_timeout = boundedPollTimeout(
             timeout_ms,
             self.animation_wait_ms,
             self.burst_publication.waitMs(poll_now_ns),
+            self.consequence_expiry.waitMs(poll_now_ns),
         );
         const ready_count = try posix.poll(&descriptors, poll_timeout);
         std.debug.assert(ready_count <= descriptors.len);
@@ -498,6 +588,7 @@ pub const Server = struct {
         const pty_present = descriptors[1].fd >= 0;
         const pty_read_ready = pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0;
         const service_now_ns = nowNs(self.io);
+        self.expireConsequenceAuthority(service_now_ns);
         const result = try howl.serviceWithConsequencePolicy(
             self.session,
             pty_read_ready,
@@ -506,6 +597,7 @@ pub const Server = struct {
             self.consequencePolicy(),
         );
         self.applyServiceResult(result, service_now_ns, pty_read_ready);
+        self.syncConsequenceExpiry(service_now_ns);
 
         if (descriptors[0].revents & posix.POLL.IN != 0) try self.acceptClients();
 
@@ -523,6 +615,7 @@ pub const Server = struct {
 
         try self.processBufferedRequests();
         try self.materializeObservers();
+        self.syncConsequenceExpiry(nowNs(self.io));
     }
 
     /// Exact failures from one endpoint service turn.
@@ -537,6 +630,39 @@ pub const Server = struct {
 
     fn consequencePolicy(self: *const Server) howl.ConsequencePolicy {
         return if (self.consequence_authority.leader() != null) .retain else .headless;
+    }
+
+    fn syncConsequenceExpiry(self: *Server, now_ns: u64) void {
+        self.consequence_expiry.sync(
+            self.consequence_authority.leader(),
+            self.consequence_authority.revision,
+            howl.consequenceHead(self.session),
+            now_ns,
+        );
+    }
+
+    fn expireConsequenceAuthority(self: *Server, now_ns: u64) void {
+        if (!self.consequence_expiry.due(now_ns)) return;
+        const authority = self.consequence_authority.leader() orelse {
+            self.consequence_expiry.reset();
+            return;
+        };
+        const current = howl.consequenceHead(self.session) orelse {
+            self.consequence_expiry.reset();
+            return;
+        };
+        if (authority != self.consequence_expiry.authority_client_id or
+            self.consequence_authority.revision != self.consequence_expiry.authority_revision or
+            current.id() != self.consequence_expiry.generation or
+            !consequenceRequiresReply(current))
+        {
+            self.syncConsequenceExpiry(now_ns);
+            return;
+        }
+        const revoked = self.consequence_authority.assign(protocol.no_client);
+        std.debug.assert(revoked);
+        self.consequence_expiry.reset();
+        self.burst_publication.reset();
     }
 
     // -------------------------------------------------------------------------
@@ -937,7 +1063,10 @@ pub const Server = struct {
 
     fn consequenceWire(value: ?howl.Consequence) !ConsequenceWire {
         const consequence = value orelse return .{};
-        var result: ConsequenceWire = .{ .generation = consequence.id() };
+        var result: ConsequenceWire = .{
+            .generation = consequence.id(),
+            .reply_required = consequenceRequiresReply(consequence),
+        };
         switch (consequence) {
             .clipboard => |request| {
                 if (request.selection.len > protocol.consequence_clipboard_selection_bytes)
@@ -948,7 +1077,6 @@ pub const Server = struct {
                 result.metadata[2] = @intCast(request.selection.len);
                 @memcpy(result.metadata[4..][0..request.selection.len], request.selection);
                 result.payload = request.payload;
-                result.reply_required = request.kind == .query;
             },
             .notification => |notification| {
                 result.kind = .notification;
@@ -965,7 +1093,6 @@ pub const Server = struct {
                 writeMetadataU64(result.metadata[0..8], request.reset_generation);
                 result.metadata[8] = @intFromBool(request.alternate_screen);
                 result.payload = request.payload;
-                result.reply_required = request.payload.len != 0 and request.payload[0] == '?';
             },
             .file_transfer => |packet| {
                 result.kind = .file_transfer;
@@ -1038,13 +1165,11 @@ pub const Server = struct {
                         writeMetadataU32(result.metadata[4..8], request.rows);
                         writeMetadataU32(result.metadata[8..12], request.cols);
                     },
-                    .report_state, .report_position, .report_screen_cells, .report_icon_title => result.reply_required = true,
                     else => {},
                 }
             },
             .color_preference_query => {
                 result.kind = .color_preference;
-                result.reply_required = true;
             },
             .media_copy => |occurrence| {
                 result.kind = .media_copy;
@@ -2787,16 +2912,64 @@ test "delta row cache rejects a mirror larger than the bounded text body" {
     try std.testing.expectEqual(@as(usize, 0), cache.entries.len);
 }
 
-test "endpoint poll timeout follows animation and publication boundaries" {
-    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null, null));
-    try std.testing.expectEqual(@as(i32, 40), boundedPollTimeout(-1, 40, null));
-    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, 500, null));
-    try std.testing.expectEqual(@as(i32, 5), boundedPollTimeout(5, 40, null));
-    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, 1, null));
-    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(0, 1, null));
-    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, null, 1));
-    try std.testing.expectEqual(@as(i32, 3), boundedPollTimeout(-1, 40, 3));
-    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(5, null, 0));
+test "endpoint poll timeout follows animation publication and consequence boundaries" {
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null, null, null));
+    try std.testing.expectEqual(@as(i32, 40), boundedPollTimeout(-1, 40, null, null));
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, 500, null, null));
+    try std.testing.expectEqual(@as(i32, 5), boundedPollTimeout(5, 40, null, null));
+    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, 1, null, null));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(0, 1, null, null));
+    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, null, 1, null));
+    try std.testing.expectEqual(@as(i32, 3), boundedPollTimeout(-1, 40, 3, null));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(5, null, 0, null));
+    try std.testing.expectEqual(@as(i32, 7), boundedPollTimeout(-1, null, null, 7));
+    try std.testing.expectEqual(@as(i32, 2), boundedPollTimeout(-1, 40, 3, 2));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(5, null, null, 0));
+}
+
+test "consequence expiry tracks exact reply-bearing authority and generation" {
+    var expiry: ConsequenceExpiry = .{};
+    const authority: protocol.ClientId = 7;
+    const bell: howl.Consequence = .{ .bell = .{ .id = 1 } };
+    expiry.sync(authority, 1, bell, 10);
+    try std.testing.expect(expiry.started_ns == null);
+
+    const clipboard: howl.Consequence = .{ .clipboard = .{
+        .generation = 2,
+        .selection = "c",
+        .payload = "?",
+        .kind = .query,
+        .protocol = .osc52,
+    } };
+    expiry.sync(authority, 1, clipboard, 20);
+    try std.testing.expectEqual(@as(?u64, 20), expiry.started_ns);
+    try std.testing.expectEqual(authority, expiry.authority_client_id);
+    try std.testing.expectEqual(@as(u64, 2), expiry.generation);
+    try std.testing.expect(!expiry.due(20 + consequence_reply_timeout_ns - 1));
+    try std.testing.expect(expiry.due(20 + consequence_reply_timeout_ns));
+    try std.testing.expectEqual(@as(?u32, 1), expiry.waitMs(20 + consequence_reply_timeout_ns - 1));
+
+    expiry.sync(authority, 1, clipboard, 500);
+    try std.testing.expectEqual(@as(?u64, 20), expiry.started_ns);
+
+    // Reassignment to the same client is still a new authority epoch.
+    expiry.sync(authority, 2, clipboard, 550);
+    try std.testing.expectEqual(@as(?u64, 550), expiry.started_ns);
+    try std.testing.expectEqual(@as(u64, 2), expiry.authority_revision);
+
+    const next_clipboard: howl.Consequence = .{ .clipboard = .{
+        .generation = 3,
+        .selection = "c",
+        .payload = "?",
+        .kind = .query,
+        .protocol = .osc52,
+    } };
+    expiry.sync(authority, 2, next_clipboard, 600);
+    try std.testing.expectEqual(@as(?u64, 600), expiry.started_ns);
+    try std.testing.expectEqual(@as(u64, 3), expiry.generation);
+
+    expiry.sync(null, 2, next_clipboard, 700);
+    try std.testing.expect(expiry.started_ns == null);
 }
 
 test "burst publication keeps fast and scrolling ceilings distinct" {
@@ -5171,4 +5344,79 @@ test "retained consequence fallback revokes only consequence authority" {
     try std.testing.expectEqual(howl.ConsequencePolicy.headless, server.consequencePolicy());
     try std.testing.expectEqual(welcome.client_id, server.authority.leader().?);
     try std.testing.expect(server.hasClient(welcome.client_id));
+}
+
+test "stalled reply-bearing consequence expires to headless policy and rejects late reply" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-consequence-expiry.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 6,
+            .columns = 64,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\033]52;c;?\\007'; " ++
+                "bytes=$(dd bs=1 count=9 2>/dev/null | od -An -tx1 -v | tr -d '[:space:]'); " ++
+                "printf 'EXPIRY-RESULT:%s\n' \"$bytes\"; cat",
+        },
+    );
+    defer server.deinit();
+
+    var authority = try TestPeer.connect(std.testing.allocator, path);
+    defer authority.deinit();
+    const welcome = try handshake(&authority, &server);
+    try sendAssignConsequenceLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+    try std.testing.expectEqual(welcome.client_id, server.consequence_authority.leader().?);
+
+    try sendInput(&authority, &server, "x");
+    try expectResult(&authority, &server, .input, .ok);
+
+    var attempts: usize = 0;
+    while (howl.consequenceHead(server.session) == null and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    const pending = howl.consequenceHead(server.session) orelse return error.TestTimeout;
+    try std.testing.expect(consequenceRequiresReply(pending));
+    const generation = pending.id();
+
+    server.syncConsequenceExpiry(nowNs(server.io));
+    const started_ns = server.consequence_expiry.started_ns orelse return error.TestTimeout;
+    try std.testing.expectEqual(welcome.client_id, server.consequence_expiry.authority_client_id);
+    try std.testing.expectEqual(generation, server.consequence_expiry.generation);
+
+    server.consequence_expiry.started_ns = started_ns -| consequence_reply_timeout_ns;
+
+    // Queue a syntactically valid reply on the authority socket before the
+    // expiry turn. Deadline arbitration is intentionally turn-ordered: once the
+    // service-time sample is due, expiry wins over socket readability.
+    try sendConsequenceReply(&authority, &server, generation, .clipboard, "");
+    try server.turn(0);
+    try std.testing.expect(server.consequence_authority.leader() == null);
+    try std.testing.expect(server.consequence_expiry.started_ns == null);
+    try std.testing.expectEqual(@as(u16, 0), howl.consequenceCount(server.session));
+    try expectResult(&authority, &server, .consequence_reply, .not_leader);
+
+    var released = try observeUntilContains(
+        &authority,
+        &server,
+        0,
+        "EXPIRY-RESULT:1b5d35323b633b1b5c",
+    );
+    released.deinit();
+
+    try sendAssignConsequenceLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+    try sendConsequenceReply(&authority, &server, generation, .clipboard, "");
+    try expectResult(&authority, &server, .consequence_reply, .rejected);
 }
