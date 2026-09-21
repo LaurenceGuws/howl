@@ -1001,40 +1001,42 @@ fn runFallible(
                 const next_surface_height = try scaledExtent(surface_logical_height, scale.scale_120);
                 const target_cols: u16 = @max(2, next_surface_width / next_cell_size.width);
                 const target_rows: u16 = @max(1, next_surface_height / next_cell_size.height);
-                if (target_cols != workspace_cols or target_rows != workspace_rows) {
-                    const resized = if (local_owner) |owner|
-                        try applyLocalWindowGeometry(
-                            boundary,
-                            owner,
-                            &scenes[0].?,
-                            &prepared[0],
-                            &session_revisions[0],
-                            &changed[0],
-                            &observation_armed[0],
-                            target_rows,
-                            target_cols,
-                        )
-                    else
-                        try applyWindowGeometry(
-                            &mux,
-                            &scene_panes,
-                            &geometry_controls,
-                            &geometry_owned,
-                            &scenes,
-                            scene_count,
-                            &prepared,
-                            &session_revisions,
-                            &changed,
-                            &observation_armed,
-                            workspace_rows,
-                            workspace_cols,
-                            target_rows,
-                            target_cols,
-                        );
-                    if (!resized) continue;
-                    workspace_rows = target_rows;
-                    workspace_cols = target_cols;
-                }
+                const resized = if (local_owner) |owner|
+                    try applyLocalWindowGeometry(
+                        boundary,
+                        owner,
+                        &scenes[0].?,
+                        &prepared[0],
+                        &session_revisions[0],
+                        &changed[0],
+                        &observation_armed[0],
+                        target_rows,
+                        target_cols,
+                        next_cell_size.width,
+                        next_cell_size.height,
+                    )
+                else
+                    try applyWindowGeometry(
+                        &mux,
+                        &scene_panes,
+                        &geometry_controls,
+                        &geometry_owned,
+                        &scenes,
+                        scene_count,
+                        &prepared,
+                        &session_revisions,
+                        &changed,
+                        &observation_armed,
+                        workspace_rows,
+                        workspace_cols,
+                        target_rows,
+                        target_cols,
+                        next_cell_size.width,
+                        next_cell_size.height,
+                    );
+                if (!resized) continue;
+                workspace_rows = target_rows;
+                workspace_cols = target_cols;
                 if (local_owner) |owner| {
                     try rebuildLocalSceneForScale(
                         allocator,
@@ -1152,6 +1154,8 @@ fn runFallible(
                             &observation_armed[0],
                             target_rows,
                             target_cols,
+                            cell_size.width,
+                            cell_size.height,
                         )
                     else
                         try applyWindowGeometry(
@@ -1169,6 +1173,8 @@ fn runFallible(
                             workspace_cols,
                             target_rows,
                             target_cols,
+                            cell_size.width,
+                            cell_size.height,
                         );
                     if (!resized) continue;
                     workspace_rows = target_rows;
@@ -1654,35 +1660,46 @@ fn establishInitialGeometry(
 
     var old_rows: [2]u16 = undefined;
     var old_cols: [2]u16 = undefined;
+    var old_cell_widths: [2]u16 = undefined;
+    var old_cell_heights: [2]u16 = undefined;
     var changed: [2]bool = @splat(false);
     for (0..scene_count) |scene_index| {
         old_rows[scene_index] = prepared[scene_index].rows;
         old_cols[scene_index] = prepared[scene_index].cols;
+        old_cell_widths[scene_index] =
+            std.math.cast(u16, prepared[scene_index].cell_pixel_width) orelse
+            return error.DuetGeometry;
+        old_cell_heights[scene_index] =
+            std.math.cast(u16, prepared[scene_index].cell_pixel_height) orelse
+            return error.DuetGeometry;
         const target = grid[scene_index].rect;
         if (target.width == 0 or target.height == 0 or
             target.width > std.math.maxInt(u16) or target.height > std.math.maxInt(u16))
             return error.DuetGeometry;
         const target_rows: u16 = @intCast(target.height);
         const target_cols: u16 = @intCast(target.width);
-        if (old_rows[scene_index] == target_rows and old_cols[scene_index] == target_cols)
-            continue;
-        scenes[scene_index].?.discardPrepared(prepared[scene_index]);
-        requestCanonicalGeometry(
+        const applied = requestCanonicalGeometry(
             &controls[scene_index].?,
             &geometry_owned[scene_index],
             prepared[scene_index],
             target_rows,
             target_cols,
+            cell_size.width,
+            cell_size.height,
         ) catch |failure| {
             rollbackInitialGeometry(
                 controls,
                 changed,
                 old_rows,
                 old_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_index,
             ) catch return error.ResizeTransactionFailed;
             return failure;
         };
+        if (!applied) continue;
+        scenes[scene_index].?.discardPrepared(prepared[scene_index]);
         changed[scene_index] = true;
     }
 
@@ -1694,17 +1711,26 @@ fn establishInitialGeometry(
                 changed,
                 old_rows,
                 old_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_count,
             ) catch return error.ResizeTransactionFailed;
             return failure;
         };
         const target = grid[scene_index].rect;
-        if (next.rows != target.height or next.cols != target.width) {
+        if (!terminal_scene.preparedMatchesGeometry(
+            next,
+            @intCast(target.height),
+            @intCast(target.width),
+            cell_size,
+        )) {
             rollbackInitialGeometry(
                 controls,
                 changed,
                 old_rows,
                 old_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_count,
             ) catch return error.ResizeTransactionFailed;
             return error.ResizeResultMismatch;
@@ -1740,19 +1766,38 @@ fn requestCanonicalGeometry(
     current: terminal_scene.Prepared,
     rows: u16,
     cols: u16,
-) !void {
-    if (rows == 0 or cols == 0) return error.DuetGeometry;
-    if (current.rows == rows and current.cols == cols) return;
+    cell_width: u16,
+    cell_height: u16,
+) !bool {
+    if (rows == 0 or cols == 0 or cell_width == 0 or cell_height == 0)
+        return error.DuetGeometry;
+    if (terminal_scene.preparedMatchesGeometry(
+        current,
+        rows,
+        cols,
+        .{ .width = cell_width, .height = cell_height },
+    )) return false;
     if (owned.*) {
-        client.actions.resizeOwned(control, rows, cols) catch |failure| {
+        client.actions.resizeGeometryOwned(control, .{
+            .rows = rows,
+            .columns = cols,
+            .cell_pixel_width = cell_width,
+            .cell_pixel_height = cell_height,
+        }) catch |failure| {
             if (failure == error.ServerRejected or failure == error.NotGeometryLeader) owned.* = false;
             return failure;
         };
-        return;
+        return true;
     }
     if (current.leader_present) return error.ResizeAuthorityUnavailable;
-    try client.actions.resize(control, rows, cols);
+    try client.actions.resizeGeometry(control, .{
+        .rows = rows,
+        .columns = cols,
+        .cell_pixel_width = cell_width,
+        .cell_pixel_height = cell_height,
+    });
     owned.* = true;
+    return true;
 }
 
 fn rollbackInitialGeometry(
@@ -1760,13 +1805,20 @@ fn rollbackInitialGeometry(
     changed: [2]bool,
     rows: [2]u16,
     cols: [2]u16,
+    cell_widths: [2]u16,
+    cell_heights: [2]u16,
     end: usize,
 ) !void {
     var index = @min(end, controls.len);
     while (index != 0) {
         index -= 1;
         if (!changed[index]) continue;
-        try client.actions.resizeOwned(&controls[index].?, rows[index], cols[index]);
+        try client.actions.resizeGeometryOwned(&controls[index].?, .{
+            .rows = rows[index],
+            .columns = cols[index],
+            .cell_pixel_width = cell_widths[index],
+            .cell_pixel_height = cell_heights[index],
+        });
     }
 }
 
@@ -2234,6 +2286,8 @@ fn settleSceneGeometry(
     scene: *terminal_scene.Scene,
     target_rows: u16,
     target_cols: u16,
+    target_cell_width: u16,
+    target_cell_height: u16,
     keep_prepared: bool,
     prepared: *terminal_scene.Prepared,
     session_revision: *u64,
@@ -2249,7 +2303,12 @@ fn settleSceneGeometry(
         const next = try scene.receivePrepared();
         observation_armed.* = false;
         session_revision.* = next.session_revision;
-        if (next.rows == target_rows and next.cols == target_cols) {
+        if (terminal_scene.preparedMatchesGeometry(
+            next,
+            target_rows,
+            target_cols,
+            .{ .width = target_cell_width, .height = target_cell_height },
+        )) {
             prepared.* = next;
             if (keep_prepared) {
                 changed.* = true;
@@ -2278,21 +2337,31 @@ fn applyLocalWindowGeometry(
     observation_armed: *bool,
     target_rows: u16,
     target_cols: u16,
+    target_cell_width: u16,
+    target_cell_height: u16,
 ) !bool {
-    if (target_rows == 0 or target_cols < 2) return error.DuetGeometry;
-    if (prepared.rows == target_rows and prepared.cols == target_cols) return true;
-    const cell_size = scene.cellSize();
+    if (target_rows == 0 or target_cols < 2 or
+        target_cell_width == 0 or target_cell_height == 0)
+        return error.DuetGeometry;
+    if (terminal_scene.preparedMatchesGeometry(
+        prepared.*,
+        target_rows,
+        target_cols,
+        .{ .width = target_cell_width, .height = target_cell_height },
+    )) return true;
     try owner.resizeGeometry(
         target_rows,
         target_cols,
-        cell_size.width,
-        cell_size.height,
+        target_cell_width,
+        target_cell_height,
     );
     boundary.wakeInput();
     try settleSceneGeometry(
         scene,
         target_rows,
         target_cols,
+        target_cell_width,
+        target_cell_height,
         true,
         prepared,
         session_revision,
@@ -2317,13 +2386,18 @@ fn applyWindowGeometry(
     old_cols: u16,
     target_rows: u16,
     target_cols: u16,
+    target_cell_width: u16,
+    target_cell_height: u16,
 ) !bool {
-    if (scene_count == 0 or scene_count > scenes.len or target_rows == 0 or target_cols < 2)
+    if (scene_count == 0 or scene_count > scenes.len or target_rows == 0 or target_cols < 2 or
+        target_cell_width == 0 or target_cell_height == 0)
         return error.DuetGeometry;
     const target_surface = host_layout.Surface{ .width = target_cols, .height = target_rows };
     const old_surface = host_layout.Surface{ .width = old_cols, .height = old_rows };
     var old_scene_rows: [2]u16 = undefined;
     var old_scene_cols: [2]u16 = undefined;
+    var old_cell_widths: [2]u16 = undefined;
+    var old_cell_heights: [2]u16 = undefined;
     var target_scene_rows: [2]u16 = undefined;
     var target_scene_cols: [2]u16 = undefined;
     var applied: [2]bool = @splat(false);
@@ -2332,22 +2406,30 @@ fn applyWindowGeometry(
         const target = try mux.paneRect(target_surface, pane);
         old_scene_rows[index] = prepared[index].rows;
         old_scene_cols[index] = prepared[index].cols;
+        old_cell_widths[index] =
+            std.math.cast(u16, prepared[index].cell_pixel_width) orelse
+            return error.DuetGeometry;
+        old_cell_heights[index] =
+            std.math.cast(u16, prepared[index].cell_pixel_height) orelse
+            return error.DuetGeometry;
         target_scene_rows[index] = @intCast(target.height);
         target_scene_cols[index] = @intCast(target.width);
-        if (old_scene_rows[index] == target_scene_rows[index] and
-            old_scene_cols[index] == target_scene_cols[index]) continue;
-        requestCanonicalGeometry(
+        const changed_geometry = requestCanonicalGeometry(
             &controls[index].?,
             &geometry_owned[index],
             prepared[index],
             target_scene_rows[index],
             target_scene_cols[index],
+            target_cell_width,
+            target_cell_height,
         ) catch |failure| {
             rollbackInitialGeometry(
                 controls,
                 applied,
                 old_scene_rows,
                 old_scene_cols,
+                old_cell_widths,
+                old_cell_heights,
                 index,
             ) catch return error.ResizeTransactionFailed;
             if (failure == error.ServerRejected or failure == error.NotGeometryLeader or failure == error.ResizeAuthorityUnavailable) {
@@ -2359,6 +2441,8 @@ fn applyWindowGeometry(
                         &scenes[rollback_index].?,
                         old_scene_rows[rollback_index],
                         old_scene_cols[rollback_index],
+                        old_cell_widths[rollback_index],
+                        old_cell_heights[rollback_index],
                         sceneIsVisible(scene_panes, scene_count, old_active, rollback_index),
                         &prepared[rollback_index],
                         &session_revisions[rollback_index],
@@ -2370,6 +2454,7 @@ fn applyWindowGeometry(
             }
             return failure;
         };
+        if (!changed_geometry) continue;
         applied[index] = true;
     }
 
@@ -2381,6 +2466,8 @@ fn applyWindowGeometry(
             &scenes[index].?,
             target_scene_rows[index],
             target_scene_cols[index],
+            target_cell_width,
+            target_cell_height,
             sceneIsVisible(scene_panes, scene_count, target_active, index),
             &prepared[index],
             &session_revisions[index],
@@ -2392,6 +2479,8 @@ fn applyWindowGeometry(
                 applied,
                 old_scene_rows,
                 old_scene_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_count,
             ) catch return error.ResizeTransactionFailed;
             return failure;
@@ -2487,30 +2576,40 @@ fn commitLiveGeometryCandidate(
 
     var old_rows: [2]u16 = undefined;
     var old_cols: [2]u16 = undefined;
+    var old_cell_widths: [2]u16 = undefined;
+    var old_cell_heights: [2]u16 = undefined;
     var applied: [2]bool = @splat(false);
     for (0..scene_count) |scene_index| {
         old_rows[scene_index] = prepared[scene_index].rows;
         old_cols[scene_index] = prepared[scene_index].cols;
+        old_cell_widths[scene_index] =
+            std.math.cast(u16, prepared[scene_index].cell_pixel_width) orelse
+            return error.DuetGeometry;
+        old_cell_heights[scene_index] =
+            std.math.cast(u16, prepared[scene_index].cell_pixel_height) orelse
+            return error.DuetGeometry;
         const target = grid[scene_index].rect;
         if (target.width == 0 or target.height == 0 or
             target.width > std.math.maxInt(u16) or target.height > std.math.maxInt(u16))
             return error.DuetGeometry;
         const target_rows: u16 = @intCast(target.height);
         const target_cols: u16 = @intCast(target.width);
-        if (target_rows == old_rows[scene_index] and target_cols == old_cols[scene_index])
-            continue;
-        requestCanonicalGeometry(
+        const changed_geometry = requestCanonicalGeometry(
             &controls[scene_index].?,
             &geometry_owned[scene_index],
             prepared[scene_index],
             target_rows,
             target_cols,
+            cell_width,
+            cell_height,
         ) catch |failure| {
             rollbackInitialGeometry(
                 controls,
                 applied,
                 old_rows,
                 old_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_index,
             ) catch return error.ResizeTransactionFailed;
             if (failure == error.ServerRejected or failure == error.NotGeometryLeader) {
@@ -2519,6 +2618,8 @@ fn commitLiveGeometryCandidate(
                     applied,
                     old_rows,
                     old_cols,
+                    old_cell_widths,
+                    old_cell_heights,
                     scene_index,
                     session_revisions,
                     prepared,
@@ -2528,6 +2629,7 @@ fn commitLiveGeometryCandidate(
             }
             return failure;
         };
+        if (!changed_geometry) continue;
         applied[scene_index] = true;
     }
 
@@ -2544,12 +2646,19 @@ fn commitLiveGeometryCandidate(
                     applied,
                     old_rows,
                     old_cols,
+                    old_cell_widths,
+                    old_cell_heights,
                     scene_count,
                 ) catch return error.ResizeTransactionFailed;
                 return failure;
             };
             session_revisions[scene_index] = next.session_revision;
-            if (next.rows == target_rows and next.cols == target_cols) {
+            if (terminal_scene.preparedMatchesGeometry(
+                next,
+                target_rows,
+                target_cols,
+                .{ .width = cell_width, .height = cell_height },
+            )) {
                 prepared[scene_index] = next;
                 changed[scene_index] = true;
                 break;
@@ -2562,6 +2671,8 @@ fn commitLiveGeometryCandidate(
                 applied,
                 old_rows,
                 old_cols,
+                old_cell_widths,
+                old_cell_heights,
                 scene_count,
             ) catch return error.ResizeTransactionFailed;
             return error.GeometryObservationTimeout;
@@ -2593,6 +2704,8 @@ fn settleRolledBackGeometry(
     applied: [2]bool,
     rows: [2]u16,
     cols: [2]u16,
+    cell_widths: [2]u16,
+    cell_heights: [2]u16,
     end: usize,
     session_revisions: *[2]u64,
     prepared: *[2]terminal_scene.Prepared,
@@ -2604,7 +2717,12 @@ fn settleRolledBackGeometry(
         while (attempts < 8) : (attempts += 1) {
             const next = try scenes[scene_index].?.receivePrepared();
             session_revisions[scene_index] = next.session_revision;
-            if (next.rows == rows[scene_index] and next.cols == cols[scene_index]) {
+            if (terminal_scene.preparedMatchesGeometry(
+                next,
+                rows[scene_index],
+                cols[scene_index],
+                .{ .width = cell_widths[scene_index], .height = cell_heights[scene_index] },
+            )) {
                 prepared[scene_index] = next;
                 changed[scene_index] = true;
                 try scenes[scene_index].?.arm(session_revisions[scene_index]);

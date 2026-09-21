@@ -63,6 +63,9 @@ pub const Prepared = struct {
     cols: u16,
     width: u16,
     height: u16,
+    /// Canonical VT cell-pixel lattice observed from the Session.
+    cell_pixel_width: u32,
+    cell_pixel_height: u32,
     session_revision: u64,
     history_offset: u32,
     history_count: u32,
@@ -75,6 +78,22 @@ pub const Prepared = struct {
         fast: FastPrepared,
     },
 };
+
+/// Reports whether one prepared observation already owns the complete requested
+/// canonical terminal geometry. Presentation width/height are deliberately not
+/// used here: they are derived from this Scene's font metrics and may differ
+/// from a stale Session/PTy pixel lattice.
+pub fn preparedMatchesGeometry(
+    prepared: Prepared,
+    rows: u16,
+    cols: u16,
+    cell_size: canvas.Size,
+) bool {
+    return prepared.rows == rows and
+        prepared.cols == cols and
+        prepared.cell_pixel_width == cell_size.width and
+        prepared.cell_pixel_height == cell_size.height;
+}
 
 pub fn measureCellSize(
     allocator: std.mem.Allocator,
@@ -408,11 +427,18 @@ pub const Scene = struct {
                 plan = try self.builder.build(&self.overlay_residency, fast.overlay_frame);
                 overlay_pending = true;
             }
-            return preparedEnvelope(begin, width, height, .{ .fast = .{
-                .terminal = fast,
-                .plan = plan,
-                .overlay_pending = overlay_pending,
-            } });
+            return preparedEnvelope(
+                begin,
+                width,
+                height,
+                rich.graphics.cell_pixel_width,
+                rich.graphics.cell_pixel_height,
+                .{ .fast = .{
+                    .terminal = fast,
+                    .plan = plan,
+                    .overlay_pending = overlay_pending,
+                } },
+            );
         }
 
         const graphics = rich.graphics;
@@ -442,7 +468,14 @@ pub const Scene = struct {
             canvas_residency_count,
             external_uploads[0..external_upload_count],
         );
-        return preparedEnvelope(begin, width, height, .{ .generic = generic });
+        return preparedEnvelope(
+            begin,
+            width,
+            height,
+            rich.graphics.cell_pixel_width,
+            rich.graphics.cell_pixel_height,
+            .{ .generic = generic },
+        );
     }
 
     fn prepareLocal(
@@ -453,6 +486,8 @@ pub const Scene = struct {
         var guard = owner.observe();
         defer guard.deinit();
         const observation = guard.value;
+        const cell_pixels = observation.cellPixelSize() orelse
+            return error.InvalidGeometry;
         const view = observation.semanticView(history_offset);
         const width = std.math.mul(u16, view.cols, self.cell_size.width) catch
             return error.InvalidGeometry;
@@ -497,6 +532,8 @@ pub const Scene = struct {
             .cols = view.cols,
             .width = width,
             .height = height,
+            .cell_pixel_width = cell_pixels.width,
+            .cell_pixel_height = cell_pixels.height,
             .session_revision = observation.semanticSequence(),
             .history_offset = view.history_offset,
             .history_count = view.history_count,
@@ -697,6 +734,8 @@ fn preparedEnvelope(
     begin: @import("howl_session").protocol.SnapshotBegin,
     width: u16,
     height: u16,
+    cell_pixel_width: u32,
+    cell_pixel_height: u32,
     mode: @FieldType(Prepared, "mode"),
 ) Prepared {
     return .{
@@ -704,6 +743,8 @@ fn preparedEnvelope(
         .cols = begin.columns,
         .width = width,
         .height = height,
+        .cell_pixel_width = cell_pixel_width,
+        .cell_pixel_height = cell_pixel_height,
         .session_revision = begin.revision,
         .history_offset = begin.history_offset,
         .history_count = begin.history_count,
@@ -1153,4 +1194,42 @@ test "local historical prepared frame cannot stale replay after output and reflo
     try std.testing.expectEqual(@as(u16, 10), live.cols);
     try std.testing.expect(live.session_revision >= current_revision);
     try std.testing.expect(live.session_revision > stale_revision);
+}
+
+test "terminal scene prepared geometry compares canonical cell pixels, not presentation extent" {
+    const prepared = Prepared{
+        .rows = 26,
+        .cols = 72,
+        .width = 1008,
+        .height = 884,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
+        .session_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .alternate_screen = false,
+        .leader_present = false,
+        .you_are_leader = true,
+        .mode = .{ .generic = .{ .plan = empty_plan } },
+    };
+
+    try std.testing.expect(preparedMatchesGeometry(
+        prepared,
+        26,
+        72,
+        .{ .width = 10, .height = 20 },
+    ));
+    try std.testing.expect(!preparedMatchesGeometry(
+        prepared,
+        26,
+        72,
+        .{ .width = 14, .height = 34 },
+    ));
+    try std.testing.expect(!preparedMatchesGeometry(
+        prepared,
+        25,
+        72,
+        .{ .width = 10, .height = 20 },
+    ));
 }
