@@ -7,6 +7,7 @@
 const std = @import("std");
 const client = @import("howl_client");
 const local_terminal = @import("local_terminal");
+const remote_target = @import("remote_target.zig");
 const presentation = @import("presentation");
 const terminal = @import("terminal");
 const canvas = terminal;
@@ -146,12 +147,12 @@ pub const Scene = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        endpoint: []const u8,
+        target: remote_target.Target,
         font: FontPaths,
         font_pixels: u16,
     ) !Scene {
         if (font_pixels == 0) return error.InvalidFontPixels;
-        var connection = try client.Connection.connect(allocator, endpoint);
+        var connection = try remote_target.connect(allocator, target);
         errdefer connection.deinit();
         var raw_cache = client.rich.RawCache.init(allocator);
         errdefer raw_cache.deinit();
@@ -326,13 +327,13 @@ pub const Scene = struct {
     /// Replaces only the live observation stream after a host-local history
     /// excursion. Render/text/backend state remains resident; any old pending
     /// long-poll dies with the retired connection and cannot replay stale pixels.
-    pub fn resetObserver(self: *Scene, endpoint: []const u8) !void {
+    pub fn resetObserver(self: *Scene, target: ?remote_target.Target) !void {
         if (self.isLocal()) {
             self.observation_pending = false;
             return;
         }
-        if (endpoint.len == 0) return error.InvalidEndpoint;
-        var replacement = try client.Connection.connect(self.allocator, endpoint);
+        const route = target orelse return error.InvalidEndpoint;
+        var replacement = try remote_target.connect(self.allocator, route);
         errdefer replacement.deinit();
         const replacement_cache = client.rich.RawCache.init(self.allocator);
 

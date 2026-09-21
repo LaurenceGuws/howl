@@ -14,6 +14,7 @@ const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
+const remote_target = @import("remote_target.zig");
 const instance = @import("howl_instance");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
@@ -42,11 +43,11 @@ pub const Command = union(enum) {
 pub fn run(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    endpoint: []const u8,
-    endpoint_right: ?[]const u8,
+    target: remote_target.Target,
+    target_right: ?remote_target.Target,
     mux: layout.Mux,
 ) void {
-    runFallible(boundary, allocator, endpoint, endpoint_right, mux) catch |failure| {
+    runFallible(boundary, allocator, target, target_right, mux) catch |failure| {
         std.debug.print("Input failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.input);
     };
@@ -56,11 +57,11 @@ pub fn run(
 fn runFallible(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    endpoint: []const u8,
-    endpoint_right: ?[]const u8,
+    target: remote_target.Target,
+    target_right: ?remote_target.Target,
     initial_mux: layout.Mux,
 ) !void {
-    var connection_count: usize = if (endpoint_right != null) 2 else 1;
+    var connection_count: usize = if (target_right != null) 2 else 1;
     var connections: [2]?client.Connection = .{ null, null };
     var initialized_count: usize = 0;
     defer {
@@ -70,10 +71,10 @@ fn runFallible(
             connections[index].?.deinit();
         }
     }
-    connections[0] = try client.Connection.connect(allocator, endpoint);
+    connections[0] = try remote_target.connect(allocator, target);
     initialized_count = 1;
-    if (endpoint_right) |right| {
-        connections[1] = try client.Connection.connect(allocator, right);
+    if (target_right) |right| {
+        connections[1] = try remote_target.connect(allocator, right);
         initialized_count = 2;
     }
 
@@ -103,9 +104,9 @@ fn runFallible(
                 &mux,
                 pane_ids[0..connection_count],
             ) orelse return error.InputTopologyMismatch;
-            const target = pane_ids[focus_index];
-            const focus_changed = mux.focusPane(target) catch return error.InputTopologyMismatch;
-            if (!focus_changed and mux.focusedPane() != target)
+            const target_pane = pane_ids[focus_index];
+            const focus_changed = mux.focusPane(target_pane) catch return error.InputTopologyMismatch;
+            if (!focus_changed and mux.focusedPane() != target_pane)
                 return error.InputTopologyMismatch;
             if (window_focused and previous != focus_index) {
                 try deliverFocus(&connections[previous].?, false);
@@ -119,18 +120,18 @@ fn runFallible(
             connections[1].?.deinit();
             connections[1] = null;
             initialized_count = 1;
-            const target = pane_ids[1];
+            const retired_pane = pane_ids[1];
             switch (created_kind) {
                 .split => {
-                    const focus_changed = mux.focusPane(target) catch return error.InputTopologyMismatch;
-                    if (!focus_changed and mux.focusedPane() != target)
+                    const focus_changed = mux.focusPane(retired_pane) catch return error.InputTopologyMismatch;
+                    if (!focus_changed and mux.focusedPane() != retired_pane)
                         return error.InputTopologyMismatch;
                     const retired = try mux.closeFocused();
-                    if (retired != target or mux.paneCount() != 1)
+                    if (retired != retired_pane or mux.paneCount() != 1)
                         return error.InputTopologyMismatch;
                 },
                 .tab => {
-                    if (mux.focusedPane() != target or mux.tabCount() != 2)
+                    if (mux.focusedPane() != retired_pane or mux.tabCount() != 2)
                         return error.InputTopologyMismatch;
                     try mux.closeActiveTab();
                     if (mux.tabCount() != 1 or mux.paneCount() != 1)
@@ -152,7 +153,7 @@ fn runFallible(
                 &mux,
                 pane_ids[0..connection_count],
             ) orelse return error.InputTopologyMismatch;
-            connections[1] = try client.Connection.connect(allocator, offered.text());
+            connections[1] = try remote_target.connect(allocator, .{ .direct = offered.text() });
             initialized_count = 2;
             const new_pane = switch (offered.kind) {
                 .split_horizontal => try mux.splitFocused(.horizontal),
@@ -204,12 +205,12 @@ fn runFallible(
                     }
                 },
                 .mouse => |mouse| {
-                    const target: usize = mouse.scene_index;
-                    if (target >= connection_count or connections[target] == null)
+                    const scene_index: usize = mouse.scene_index;
+                    if (scene_index >= connection_count or connections[scene_index] == null)
                         return error.InputTopologyMismatch;
                     try deliverMouse(
                         boundary,
-                        &connections[target].?,
+                        &connections[scene_index].?,
                         mouse,
                     );
                 },

@@ -5,6 +5,7 @@ const text = @import("howl_text");
 const input_owner = @import("input_owner.zig");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
+const remote_target = @import("remote_target.zig");
 const renderer = @import("renderer.zig");
 const shared = @import("shared.zig");
 const window = @import("window.zig");
@@ -20,6 +21,7 @@ const MainError = std.Thread.SpawnError || error{
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
     const local_mode = argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--local");
+    const server_mode = argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--server");
 
     var positional_end = argv.len;
     var scan_index: usize = 1;
@@ -31,6 +33,8 @@ pub fn main(init: std.process.Init) !void {
     }
     const positionals_valid = if (local_mode)
         positional_end == 3
+    else if (server_mode)
+        positional_end == 6
     else
         positional_end == 3 or positional_end == 4;
     if (!positionals_valid) {
@@ -59,13 +63,30 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
-    const endpoint = if (local_mode) "" else std.mem.span(argv[1]);
-    const endpoint_right: ?[]const u8 = if (!local_mode and positional_end == 4)
-        std.mem.span(argv[2])
+    const primary_target: ?remote_target.Target = if (local_mode)
+        null
+    else if (server_mode)
+        .{ .server = .{
+            .endpoint = std.mem.span(argv[2]),
+            .session_id = parseIdentity(std.mem.span(argv[3])) catch {
+                printUsage();
+                return error.InvalidArguments;
+            },
+            .instance_id = parseIdentity(std.mem.span(argv[4])) catch {
+                printUsage();
+                return error.InvalidArguments;
+            },
+        } }
+    else
+        .{ .direct = std.mem.span(argv[1]) };
+    const target_right: ?remote_target.Target = if (!local_mode and !server_mode and positional_end == 4)
+        .{ .direct = std.mem.span(argv[2]) }
     else
         null;
     const font_index: usize = if (local_mode)
         2
+    else if (server_mode)
+        5
     else if (positional_end == 4)
         3
     else
@@ -75,11 +96,11 @@ pub fn main(init: std.process.Init) !void {
         .fallbacks = fallback_storage[0..fallback_count],
     };
     var mux = layout.Mux.init();
-    if (endpoint_right != null) {
+    if (target_right != null) {
         const right_pane = try mux.splitFocused(.horizontal);
         std.debug.assert(mux.focusedPane() == right_pane);
     }
-    const expected_panes: u8 = if (endpoint_right != null) 2 else 1;
+    const expected_panes: u8 = if (target_right != null) 2 else 1;
     std.debug.assert(mux.tabCount() == 1 and mux.paneCount() == expected_panes);
     var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
     defer threaded.deinit();
@@ -113,8 +134,8 @@ pub fn main(init: std.process.Init) !void {
         std.Thread.spawn(.{}, input_owner.run, .{
             &boundary,
             std.heap.c_allocator,
-            endpoint,
-            endpoint_right,
+            primary_target.?,
+            target_right,
             mux,
         })) catch |failure| {
         boundary.requestStop(.input);
@@ -133,8 +154,8 @@ pub fn main(init: std.process.Init) !void {
         std.Thread.spawn(.{}, renderer.run, .{
             &boundary,
             std.heap.c_allocator,
-            endpoint,
-            endpoint_right,
+            primary_target.?,
+            target_right,
             font,
             mux,
         })) catch |failure| {
@@ -157,11 +178,18 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("Howl terminal frame retired cleanly\n", .{});
 }
 
+fn parseIdentity(value_text: []const u8) error{InvalidIdentity}!u64 {
+    const value = std.fmt.parseInt(u64, value_text, 10) catch return error.InvalidIdentity;
+    if (value == 0) return error.InvalidIdentity;
+    return value;
+}
+
 fn printUsage() void {
     std.debug.print(
         "usage: howl-host --local FONT [--fallback FONT ...] | " ++
             "ENDPOINT FONT [--fallback FONT ...] | " ++
-            "ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]\n",
+            "ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...] | " ++
+            "--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]\n",
         .{},
     );
 }

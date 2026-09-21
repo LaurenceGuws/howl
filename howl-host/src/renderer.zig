@@ -5,6 +5,7 @@ const c = @import("renderer_c");
 const client = @import("howl_client");
 const host_layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
+const remote_target = @import("remote_target.zig");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 const terminal_scene = @import("terminal_scene.zig");
@@ -148,16 +149,16 @@ const RenderRing = struct {
 pub fn run(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    endpoint: []const u8,
-    endpoint_right: ?[]const u8,
+    target: remote_target.Target,
+    target_right: ?remote_target.Target,
     font: terminal_scene.FontPaths,
     mux: host_layout.Mux,
 ) void {
     runFallible(
         boundary,
         allocator,
-        endpoint,
-        endpoint_right,
+        target,
+        target_right,
         font,
         mux,
         null,
@@ -184,7 +185,7 @@ pub fn runLocal(
     runFallible(
         boundary,
         allocator,
-        "",
+        null,
         null,
         font,
         mux,
@@ -203,8 +204,8 @@ pub fn runLocal(
 fn runFallible(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    endpoint: []const u8,
-    endpoint_right: ?[]const u8,
+    target: ?remote_target.Target,
+    target_right: ?remote_target.Target,
     font: terminal_scene.FontPaths,
     initial_mux: host_layout.Mux,
     local_owner: ?*local_terminal.Owner,
@@ -215,7 +216,7 @@ fn runFallible(
     var display_scale_120 = (try waitDisplayScale(boundary)).scale_120;
     var font_pixels = try scaledFontPixels(display_scale_120);
     const logical_cell_size = try terminal_scene.measureCellSize(allocator, font, base_font_pixels);
-    const scene_count: usize = if (local_mode) 1 else if (endpoint_right != null) 2 else 1;
+    const scene_count: usize = if (local_mode) 1 else if (target_right != null) 2 else 1;
     var scenes: [2]?terminal_scene.Scene = .{ null, null };
     var initialized_scene_count: usize = 0;
     defer {
@@ -228,10 +229,10 @@ fn runFallible(
     scenes[0] = if (local_owner) |owner|
         try terminal_scene.Scene.initLocal(allocator, owner, font, font_pixels)
     else
-        try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
+        try terminal_scene.Scene.init(allocator, target orelse return error.SceneTargetMissing, font, font_pixels);
     initialized_scene_count = 1;
     if (!local_mode) {
-        if (endpoint_right) |right| {
+        if (target_right) |right| {
             scenes[1] = try terminal_scene.Scene.init(allocator, right, font, font_pixels);
             initialized_scene_count = 2;
         }
@@ -246,10 +247,10 @@ fn runFallible(
         }
     }
     if (!local_mode) {
-        geometry_controls[0] = try client.Connection.connect(allocator, endpoint);
+        geometry_controls[0] = try remote_target.connect(allocator, target orelse return error.SceneTargetMissing);
         geometry_control_count = 1;
-        if (endpoint_right) |right| {
-            geometry_controls[1] = try client.Connection.connect(allocator, right);
+        if (target_right) |right| {
+            geometry_controls[1] = try remote_target.connect(allocator, right);
             geometry_control_count = 2;
         }
     }
@@ -796,7 +797,7 @@ fn runFallible(
                         continue;
                     try applyHistoryScroll(
                         host_command.amount,
-                        if (local_mode) null else endpoint,
+                        if (local_mode) null else target,
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
@@ -814,7 +815,7 @@ fn runFallible(
                 if (scale.scale_120 == display_scale_120) continue;
                 if (scene_count == 1 and history[0].active()) {
                     try restoreHistoryLive(
-                        if (local_mode) null else endpoint,
+                        if (local_mode) null else target,
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
@@ -892,8 +893,8 @@ fn runFallible(
                 } else {
                     try rebuildScenesForScale(
                         allocator,
-                        endpoint,
-                        endpoint_right,
+                        target orelse return error.SceneTargetMissing,
+                        target_right,
                         font,
                         next_font_pixels,
                         &scenes,
@@ -960,7 +961,7 @@ fn runFallible(
                 if (requested.width == surface_logical_width and requested.height == surface_logical_height) continue;
                 if (scene_count == 1 and history[0].active()) {
                     try restoreHistoryLive(
-                        if (local_mode) null else endpoint,
+                        if (local_mode) null else target,
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
@@ -1060,22 +1061,22 @@ fn runFallible(
     );
 }
 
-fn sceneEndpoint(
+fn sceneTarget(
     index: usize,
-    primary: []const u8,
-    external_right: ?[]const u8,
-) ![]const u8 {
+    primary: remote_target.Target,
+    external_right: ?remote_target.Target,
+) !remote_target.Target {
     return switch (index) {
         0 => primary,
-        1 => external_right orelse error.SceneEndpointMissing,
-        else => error.SceneEndpointMissing,
+        1 => external_right orelse error.SceneTargetMissing,
+        else => error.SceneTargetMissing,
     };
 }
 
 fn rebuildScenesForScale(
     allocator: std.mem.Allocator,
-    primary_endpoint: []const u8,
-    external_right: ?[]const u8,
+    primary_target: remote_target.Target,
+    external_right: ?remote_target.Target,
     font: terminal_scene.FontPaths,
     font_pixels: u16,
     scenes: *[2]?terminal_scene.Scene,
@@ -1105,8 +1106,8 @@ fn rebuildScenesForScale(
     var next_prepared: [2]terminal_scene.Prepared = undefined;
     var next_revisions: [2]u64 = @splat(0);
     for (0..scene_count) |index| {
-        const endpoint = try sceneEndpoint(index, primary_endpoint, external_right);
-        replacements[index] = try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
+        const scene_target = try sceneTarget(index, primary_target, external_right);
+        replacements[index] = try terminal_scene.Scene.init(allocator, scene_target, font, font_pixels);
         replacement_count = index + 1;
         next_prepared[index] = try replacements[index].?.prepare(0);
         next_revisions[index] = next_prepared[index].instance_revision;
@@ -1171,7 +1172,7 @@ fn rebuildLocalSceneForScale(
 }
 
 fn restoreHistoryLive(
-    endpoint: ?[]const u8,
+    target: ?remote_target.Target,
     scene: *terminal_scene.Scene,
     control: ?*client.Connection,
     prepared: *terminal_scene.Prepared,
@@ -1192,7 +1193,7 @@ fn restoreHistoryLive(
     history.reset();
     changed.* = true;
     try resetLiveObserver(
-        endpoint,
+        target,
         scene,
         live_revision,
         observation_armed,
@@ -1203,7 +1204,7 @@ fn restoreHistoryLive(
 
 fn applyHistoryScroll(
     amount: i16,
-    endpoint: ?[]const u8,
+    target: ?remote_target.Target,
     scene: *terminal_scene.Scene,
     control: ?*client.Connection,
     prepared: *terminal_scene.Prepared,
@@ -1241,7 +1242,7 @@ fn applyHistoryScroll(
             history.* = candidate;
             changed.* = true;
             try resetLiveObserver(
-                endpoint,
+                target,
                 scene,
                 live_revision,
                 observation_armed,
@@ -1279,7 +1280,7 @@ fn applyHistoryScroll(
 }
 
 fn resetLiveObserver(
-    endpoint: ?[]const u8,
+    target: ?remote_target.Target,
     scene: *terminal_scene.Scene,
     live_revision: *u64,
     observation_armed: *bool,
@@ -1287,17 +1288,17 @@ fn resetLiveObserver(
     scene_index: usize,
 ) !void {
     if (scene.isLocal()) {
-        try scene.resetObserver("");
+        try scene.resetObserver(null);
         live_revision.* = 0;
         observation_armed.* = false;
         try scene.arm(0);
         observation_armed.* = true;
         return;
     }
-    const remote_endpoint = endpoint orelse return error.SceneEndpointMissing;
+    const remote = target orelse return error.SceneTargetMissing;
     const remote_cancellations = cancellations orelse return error.CancellationSlot;
     remote_cancellations.clear(scene_index);
-    try scene.resetObserver(remote_endpoint);
+    try scene.resetObserver(remote);
     try remote_cancellations.set(scene_index, try scene.cancellation());
     live_revision.* = 0;
     observation_armed.* = false;

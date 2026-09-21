@@ -3,11 +3,12 @@
 `howl-host` is Howl's native Linux performance canary. It is a concrete client,
 not a shared UI framework and not part of the core gate.
 
-The Host has two explicit initial-terminal ownership modes:
+The Host has three explicit initial-Instance routes:
 
     howl-host --local FONT [--fallback FONT ...]
     howl-host ENDPOINT FONT [--fallback FONT ...]
     howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]
+    howl-host --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]
 
 Every mode may append ordered `--fallback FONT` pairs. The primary font remains
 the sole cell-metric authority; fallbacks are consulted only when the primary
@@ -21,7 +22,9 @@ observation only for synchronous Canvas projection. There is no Howl endpoint or
 one-pane generic-Canvas proof; local split/tab creation and the retained Vulkan
 fast renderer are not implied.
 
-Endpoint startup remains an attached-client route: the Host consumes explicit externally owned Instance streams. The Host does not create terminal processes for attached panes. Tabs/splits are Host presentation state; sourcing another attached pane requires another explicit Instance stream, whether supplied directly or later selected through Server -> Sessions -> Instances orchestration.
+External startup remains an attached-client route: the Host consumes externally owned Instance streams and never creates their terminal processes. A direct endpoint enters HWLS immediately. `--server` uses `server-client` to attach the exact Session+Instance identity, consumes `attach_ready`, and then input/render/geometry/history owners use ordinary `howl-client` connections on that same Instance protocol. No per-Instance listener or byte proxy is introduced.
+
+The managed route currently initializes one pane. Existing direct duet and host-created split/tab canaries remain host presentation experiments. Tabs/splits are Host state, not Session semantics; sourcing another pane still requires another explicit Instance stream. The `--local` route remains the shortest performance/dogfood path and embeds `howl-instance` directly in-process.
 
 Current foundation:
 

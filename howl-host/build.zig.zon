@@ -9,6 +9,7 @@
         .howl_vk = .{ .path = "../howl-vk" },
         .howl_wayland = .{ .path = "../howl-wayland" },
         .howl_client = .{ .path = "../howl-client" },
+        .server_client = .{ .path = "../server-client" },
         .howl_render = .{ .path = "../howl-render" },
         .howl_text = .{ .path = "../howl-text" },
     },

@@ -99,11 +99,12 @@ experimental:
     owns no PTY, VT, Instance, Session, Server, grid, discovery or supervision;
     outside the core gate
   howl-host: >-
-    native Linux Vulkan performance canary with two terminal routes: one in-process
-    howl-instance selected by --local, or explicit externally owned Instance streams
-    consumed through howl-client; host-owned terminal process creation was removed;
-    explicit attached multi-Instance presentation may still pressure layout/rendering,
-    but Server/Session orchestration is not implemented here; local/direct paths share
+    native Linux Vulkan performance canary with three Instance routes: in-process
+    howl-instance via --local, direct externally owned HWLS endpoints, or exact
+    Server Session+Instance attach through server-client followed by ordinary HWLS.
+    Input/render/geometry/history owners share one host-local target connector and do
+    not retain Server semantics after connection construction. Direct duet/split/tab
+    composition remains Host presentation state; local/direct/managed routes share
     canonical VT/text/Canvas/Vulkan semantics; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
