@@ -118,7 +118,11 @@ experimental:
     Safari/Home-Screen the WebKit/PWA canary; outside the core gate
   howl-odin: >-
     experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,
-    settings/actions, history/selection and bounded asynchronous workers. Attach
-    profiles consume explicit Instance streams. Launch profiles retain shell/command/cwd
-    configuration for a future direct local Instance embed but currently fail explicitly;
-    the rejected sibling-daemon/socket path is deleted. Outside the core gate
+    settings/actions, history/selection and bounded asynchronous workers. Direct Attach
+    profiles consume explicit HWLS Instance streams; transient `--server` startup uses
+    server-client exact Session+Instance attach and then the same observer/control/render/
+    consequence HWLS workers. Target identity includes route+endpoint+Session+Instance so
+    distinct Server-owned Instances never share consequence authority accidentally.
+    Launch profiles retain shell/command/cwd configuration for a future direct in-process
+    Instance embed and currently fail explicitly; no sibling daemon/socket path exists.
+    Outside the core gate

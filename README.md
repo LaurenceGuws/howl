@@ -90,7 +90,9 @@ semantics or move presentation policy into VT/PTY/Instance/Server.
 
 Flutter currently exercises both direct HWLS and Server-selected Instance routes. Its
 small app shell may persist explicit labelled Server endpoints, but that is application
-configuration, not Server discovery.
+configuration, not Server discovery. The Vulkan Host and Odin desktop client also expose
+explicit Server-selected Instance startup while preserving their direct/local performance
+lanes; after attach their existing render/input workers remain ordinary HWLS clients.
 
 The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
 exact Server-selected Instance through `server-client` attach and then carries unchanged

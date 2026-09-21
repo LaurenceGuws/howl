@@ -8,8 +8,11 @@ import "core:thread"
 // fetching stay on this worker; the main thread alone consumes SDL uploads.
 // The worker cannot overwrite a prepared frame before main acknowledges it.
 Render_Work :: struct {
+    route_kind: Bridge_Route_Kind,
     endpoint: [PROFILE_ENDPOINT_BYTES]u8,
     endpoint_len: int,
+    session_id: u64,
+    instance_id: u64,
     font, fallback, secondary: [1024]u8,
     font_len, fallback_len, secondary_len: int,
     pixels: u16,
@@ -31,8 +34,8 @@ render_worker :: proc(data: rawptr) {
     work := (^Render_Work)(data)
     diagnostic: [160]u8
     count: c.size_t
-    handle := render_create(desktop_io_runtime, work.interrupt,
-                            raw_data(work.endpoint[:]), c.size_t(work.endpoint_len),
+    handle := render_create(desktop_io_runtime, work.interrupt, u8(work.route_kind),
+                            raw_data(work.endpoint[:]), c.size_t(work.endpoint_len), work.session_id, work.instance_id,
                             raw_data(work.font[:]), c.size_t(work.font_len),
                             raw_data(work.fallback[:]), c.size_t(work.fallback_len),
                             raw_data(work.secondary[:]), c.size_t(work.secondary_len), work.pixels,
@@ -87,7 +90,10 @@ start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Re
         free(work)
         return nil
     }
+    work.route_kind = view.route_kind
     copy(work.endpoint[:], transmute([]u8)endpoint); work.endpoint_len = len(endpoint)
+    work.session_id = view.session_id
+    work.instance_id = view.instance_id
     copy(work.font[:], transmute([]u8)font); work.font_len = len(font)
     copy(work.fallback[:], transmute([]u8)fallback); work.fallback_len = len(fallback)
     copy(work.secondary[:], transmute([]u8)secondary); work.secondary_len = len(secondary)

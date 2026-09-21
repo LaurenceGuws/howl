@@ -7,6 +7,7 @@ import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:sync"
+import "core:strconv"
 import "core:thread"
 import "core:time"
 import SDL "vendor:sdl3"
@@ -202,8 +203,11 @@ Instance_View :: struct {
     terminal_mouse_last_column: u16,
     terminal_mouse_last_pixel_x: u32,
     terminal_mouse_last_pixel_y: u32,
+    route_kind: Bridge_Route_Kind,
     endpoint: [PROFILE_ENDPOINT_BYTES]u8,
     endpoint_len: int,
+    session_id: u64,
+    instance_id: u64,
     text: []u8,
     scratch: []u8,
     text_len: int,
@@ -1476,7 +1480,8 @@ search_instance :: proc(data: rawptr) {
     endpoint := instance_endpoint(view)
     diagnostic: [160]u8
     count: c.size_t
-    handle := create(desktop_io_runtime, view.search_interrupt, raw_data(endpoint), c.size_t(len(endpoint)),
+    handle := create(desktop_io_runtime, view.search_interrupt, u8(view.route_kind),
+                     raw_data(endpoint), c.size_t(len(endpoint)), view.session_id, view.instance_id,
                      raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     view.search = handle
     if handle == nil {
@@ -2063,15 +2068,29 @@ allocate_instance_view :: proc(ownership: Instance_Ownership) -> ^Instance_View 
     return view
 }
 
-create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) -> ^Instance_View {
+create_target_instance_view :: proc(
+    route_kind: Bridge_Route_Kind,
+    endpoint: string,
+    session_id, instance_id: u64,
+    ownership: Instance_Ownership,
+) -> ^Instance_View {
     view := allocate_instance_view(ownership)
     if view == nil do return nil
-    if len(endpoint) == 0 || len(endpoint) >= len(view.endpoint) {
-        publish_initial_error(view, "Instance endpoint is empty or too long")
+    valid_target := len(endpoint) > 0 && len(endpoint) < len(view.endpoint)
+    if route_kind == .Direct {
+        valid_target = valid_target && session_id == 0 && instance_id == 0
+    } else if route_kind == .Server {
+        valid_target = valid_target && session_id != 0 && instance_id != 0
+    }
+    if !valid_target {
+        publish_initial_error(view, "Instance target is invalid")
         return view
     }
+    view.route_kind = route_kind
     copy(view.endpoint[:len(endpoint)], transmute([]u8)endpoint)
     view.endpoint_len = len(endpoint)
+    view.session_id = session_id
+    view.instance_id = instance_id
     view.control_interrupt = interrupt_create()
     view.observer_interrupt = interrupt_create()
     if view.control_interrupt == nil || view.observer_interrupt == nil {
@@ -2082,6 +2101,18 @@ create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) ->
     view.observer_thread = thread.create_and_start_with_data(rawptr(view), observe_instance, name = "howl-odin-observe")
     if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Instance I/O worker creation failed")
     return view
+}
+
+create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) -> ^Instance_View {
+    return create_target_instance_view(.Direct, endpoint, 0, 0, ownership)
+}
+
+create_server_instance_view :: proc(
+    endpoint: string,
+    session_id, instance_id: u64,
+    ownership: Instance_Ownership = .Attached,
+) -> ^Instance_View {
+    return create_target_instance_view(.Server, endpoint, session_id, instance_id, ownership)
 }
 
 create_error_instance_view :: proc(message: string, ownership: Instance_Ownership = .Attached) -> ^Instance_View {
@@ -3919,7 +3950,21 @@ recover_active_instance :: proc(app: ^App) -> bool {
     if view == nil || !instance_recoverable(view) {
         return false
     }
-    replacement, _ := profile_view(app, view.profile_index)
+    replacement: ^Instance_View
+    if view.profile_index >= 0 {
+        replacement, _ = profile_view(app, view.profile_index)
+    } else {
+        endpoint := instance_endpoint(view)
+        if view.route_kind == .Server {
+            replacement = create_server_instance_view(endpoint, view.session_id, view.instance_id)
+        } else {
+            replacement = create_instance_view(endpoint, view.ownership)
+        }
+        if replacement != nil {
+            replacement.profile_index = -1
+            replacement.profile_font_pixels = view.profile_font_pixels
+        }
+    }
     if replacement == nil {
         return false
     }
@@ -6147,10 +6192,32 @@ draw :: proc(app: ^App) {
     _ = SDL.RenderPresent(app.renderer)
 }
 
-Startup_Intent :: enum { Run, Help, Version, Invalid }
+Startup_Intent :: enum { Run, Server, Help, Version, Invalid }
+
+Startup_Server_Target :: struct {
+    endpoint: string,
+    session_id: u64,
+    instance_id: u64,
+}
+
+startup_server_target :: proc(args: []string) -> (Startup_Server_Target, bool) {
+    if len(args) != 4 || args[0] != "--server" || len(args[1]) == 0 {
+        return {}, false
+    }
+    session_id, session_ok := strconv.parse_u64_of_base(args[2], 10)
+    instance_id, instance_ok := strconv.parse_u64_of_base(args[3], 10)
+    if !session_ok || !instance_ok || session_id == 0 || instance_id == 0 {
+        return {}, false
+    }
+    return {endpoint = args[1], session_id = session_id, instance_id = instance_id}, true
+}
 
 startup_intent :: proc(args: []string) -> Startup_Intent {
     if len(args) == 0 do return .Run
+    if len(args) == 4 && args[0] == "--server" {
+        _, ok := startup_server_target(args)
+        return ok ? .Server : .Invalid
+    }
     if len(args) != 1 do return .Invalid
     switch args[0] {
     case "--help", "-h": return .Help
@@ -6161,19 +6228,25 @@ startup_intent :: proc(args: []string) -> Startup_Intent {
 
 main :: proc() {
     // Informational calls must not create an I/O runtime, window, or Instance.
-    switch startup_intent(os.args[1:]) {
+    intent := startup_intent(os.args[1:])
+    managed_startup: Startup_Server_Target
+    switch intent {
     case .Help:
-        fmt.println("Usage: howl-odin [--help | --version]\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
+        fmt.println("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
         return
     case .Version:
         fmt.printf("%s %s\n", APP_NAME, APP_VERSION)
         return
     case .Invalid:
-        fmt.eprintln("Usage: howl-odin [--help | --version]")
+        fmt.eprintln("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID")
         os.exit(2)
+    case .Server:
+        target, ok := startup_server_target(os.args[1:])
+        assert(ok)
+        managed_startup = target
     case .Run:
     }
-    if version() != 9 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 10 { fmt.eprintln("Howl bridge version mismatch"); return }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }
@@ -6305,7 +6378,24 @@ main :: proc() {
         return
     }
     _ = apply_user_keybindings(&app, user_config.keybindings)
-    new_tab(&app)
+    if intent == .Server {
+        view := create_server_instance_view(
+            managed_startup.endpoint,
+            managed_startup.session_id,
+            managed_startup.instance_id,
+        )
+        if view == nil {
+            fmt.eprintln("Managed Instance allocation failed")
+            return
+        }
+        view.profile_index = -1
+        if !add_instance_tab(&app, view, "Server Instance", -1) {
+            fmt.eprintln("Managed Instance tab creation failed")
+            return
+        }
+    } else {
+        new_tab(&app)
+    }
     reconcile_consequence_owners(&app)
 
     draw(&app)

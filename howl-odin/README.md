@@ -12,16 +12,20 @@ not duplicate VT, PTY, Instance, text shaping, or terminal raster semantics.
 
 The current Linux proof uses Odin + SDL3 for the application/backend shell and
 the existing Howl native render owners for terminal presentation. `native/` is
-a C-shaped Zig seam over `howl-client`, `howl-render`, and the existing
-explicit Instance client transport. It exports neither wire/client backing structs nor a
+a C-shaped Zig seam over `howl-client`, `server-client`, `howl-render`, and the
+existing explicit Instance client transport. It exports neither wire/client backing structs nor a
 copied terminal renderer: Odin receives canonical Canvas resource/command facts
 and sends semantic input through `howl-client`. SDL3_ttf remains only for app
 chrome and as a fail-soft semantic-text fallback while the Canvas backend is
 being hardened.
 
-Local observation uses existing lossless raw snapshots on validated Unix sockets;
-TCP attachments retain compression, including loopback. Both paths use the same
-canonical client decoder and property/image contracts. The daily Odin build keeps
+Direct local/attached observation keeps the existing lossless raw-snapshot policy on
+validated Unix sockets; TCP attachments retain compression, including loopback. The
+transient `--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID` startup route connects to
+one Server, consumes exact attach, and then every Odin observer/control/render/
+consequence worker continues over ordinary HWLS on that selected Instance. The bridge
+keeps cancellation active through Server connect, attach, HWLS handshake, and blocked
+worker I/O. No per-Instance listener or byte proxy is introduced. The daily Odin build keeps
 debug symbols, assertions and bounds checks while explicitly selecting `-o:speed`.
 Contained texture quads share a pane clip; actual clipped/overhanging content keeps
 its exact requested clip. These are host-side cost reductions, not a new protocol,
@@ -39,10 +43,12 @@ Current canary:
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
-- the `+` action and `Ctrl+T` launch a new canonical local Instance through the
-  local Launch profiles are retained as configuration for future in-process Instance embedding; they currently report an explicit unavailable state rather than spawning a daemon. Attached tabs own observer/control clients, cancellation, and
-  teardown while **Attach Home Instance** remains a non-owning view of the
-  existing `tcp://127.0.0.1:39601` Instance;
+- local Launch profiles remain configuration for future in-process Instance embedding;
+  they currently report an explicit unavailable state rather than spawning a helper
+  daemon. Direct Attach profiles own observer/control clients, cancellation, and teardown;
+  **Attach Home Instance** remains the existing direct `tcp://127.0.0.1:39601` route.
+  Separately, `--server` opens one non-owning Server-managed Instance as the initial tab;
+  closing Odin leaves that Instance alive under Server ownership;
 - tabs use canonical terminal titles with profile-name fallback, Ctrl+Tab/reverse cycling, direct
   Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
   drag reorder through one shared ordering owner. A held chip gets an immediate
@@ -105,14 +111,10 @@ Current canary:
   ownership, shell/command/cwd, inherited-environment overrides, endpoint, and an
   optional font-size presentation default. The profile dropdown enumerates the real
   catalogue and marks the stable-id default;
-- owned profile launches stay inside the shared explicit Instance client transport. Its sibling
-  `removed standalone Instance daemon` argv now carries optional command/cwd flags, while the Odin bridge
-  applies bounded environment replacements over the inherited desktop environment.
-  A Lab Recipe canary proved command execution, `/tmp` cwd, env override, and a 12 px
-  42×160 grid against built-in Local's 15 px 34×124 grid in the same pane. The
-  Settings editor then changed that same recipe to `/var/tmp`, added
-  `EDITOR_VAR=works`, and moved it to 15 px; a fresh Instance consumed all three
-  edits, while live font-only changes resized the existing Instance without restart;
+- Launch-profile shell/command/cwd/environment fields are retained as future direct
+  local-Instance recipe state. They no longer imply or package a standalone Instance
+  daemon. The current managed Server route is intentionally separate from that future
+  local embedding work;
 - Home tab observes the existing canonical Howl Instance at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
@@ -265,16 +267,23 @@ This experiment deliberately pins both compilers used by its build:
 ./howl-odin/build.sh
 ```
 
-The script runs the native bridge tests plus Odin's retained-history unit tests,
-builds the bridge ReleaseSafe, checks
-and builds the Odin client, then
-atomically places the bridge and Instance daemon beside the executable so live
-created Instances do not make rebuilds fail with `ETXTBSY`.
+The script runs the native bridge tests plus Odin's desktop unit tests, builds the
+bridge ReleaseSafe, checks and builds the Odin client, then atomically publishes the
+executable, matching bridge library, and window icon. No Instance daemon is packaged.
 The result is:
 
 ```text
 howl-odin/zig-out/bin/howl-odin
 ```
+
+Managed Server startup is explicit and transient:
+
+```text
+howl-odin --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID
+```
+
+The normal no-argument launch still uses the configured profile catalogue. Persistent
+Server profile editing is not yet claimed by this checkpoint.
 
 
 ## Terminal-owned tab properties

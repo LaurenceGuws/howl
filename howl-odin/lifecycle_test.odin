@@ -62,7 +62,13 @@ startup_arguments_separate_information_from_window_lifecycle :: proc(t: ^testing
     testing.expect_value(t, startup_intent([]string{"--help"}), Startup_Intent.Help)
     testing.expect_value(t, startup_intent([]string{"-h"}), Startup_Intent.Help)
     testing.expect_value(t, startup_intent([]string{"--version"}), Startup_Intent.Version)
-    invalid := [4][]string{{""}, {"--unknown"}, {"file"}, {"--help", "file"}}
+    testing.expect_value(t, startup_intent([]string{"--server", "tcp://127.0.0.1:43130", "7", "3"}), Startup_Intent.Server)
+    target, ok := startup_server_target([]string{"--server", "tcp://127.0.0.1:43130", "7", "3"})
+    testing.expect(t, ok)
+    testing.expect_value(t, target.endpoint, "tcp://127.0.0.1:43130")
+    testing.expect_value(t, target.session_id, u64(7))
+    testing.expect_value(t, target.instance_id, u64(3))
+    invalid := [6][]string{{""}, {"--unknown"}, {"file"}, {"--help", "file"}, {"--server", "tcp://127.0.0.1:1", "0", "1"}, {"--server", "tcp://127.0.0.1:1", "x", "1"}}
     for args in invalid {
         testing.expect_value(t, startup_intent(args), Startup_Intent.Invalid)
     }

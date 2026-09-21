@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
+const server_client = @import("server_client");
 const protocol = @import("howl_instance").protocol;
 
 const render = @import("howl_render");
@@ -67,9 +68,73 @@ pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void
     if (value) |token| token.deinit();
 }
 
-fn connectForHost(runtime: ?*Runtime, interrupt: ?*client.Interrupt, endpoint: []const u8, diagnostic: *client.ConnectDiagnostic) client.Error!client.Connection {
+const RouteKind = enum(u8) {
+    direct = 0,
+    server = 1,
+};
+
+const ConnectTarget = struct {
+    kind: RouteKind,
+    endpoint: []const u8,
+    session_id: u64 = 0,
+    instance_id: u64 = 0,
+};
+
+fn targetFromAbi(kind_raw: u8, endpoint: []const u8, session_id: u64, instance_id: u64) !ConnectTarget {
+    const kind: RouteKind = switch (kind_raw) {
+        0 => .direct,
+        1 => .server,
+        else => return error.InvalidEndpoint,
+    };
+    if (endpoint.len == 0) return error.InvalidEndpoint;
+    return switch (kind) {
+        .direct => blk: {
+            if (session_id != 0 or instance_id != 0) return error.InvalidEndpoint;
+            break :blk .{ .kind = .direct, .endpoint = endpoint };
+        },
+        .server => blk: {
+            if (session_id == 0 or instance_id == 0) return error.InvalidEndpoint;
+            break :blk .{
+                .kind = .server,
+                .endpoint = endpoint,
+                .session_id = session_id,
+                .instance_id = instance_id,
+            };
+        },
+    };
+}
+
+fn connectForHost(
+    runtime: ?*Runtime,
+    interrupt: ?*client.Interrupt,
+    target: ConnectTarget,
+    diagnostic: *client.ConnectDiagnostic,
+) (client.Error || server_client.Error)!client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
-    return client.Connection.connectCancelable(std.heap.c_allocator, endpoint, diagnostic, interrupt);
+    return switch (target.kind) {
+        .direct => client.Connection.connectCancelable(
+            std.heap.c_allocator,
+            target.endpoint,
+            diagnostic,
+            interrupt,
+        ),
+        .server => blk: {
+            var server = try server_client.Connection.connectCancelable(
+                std.heap.c_allocator,
+                target.endpoint,
+                diagnostic,
+                interrupt,
+            );
+            var server_live = true;
+            defer if (server_live) server.deinit();
+            const attached = try server.attachInstance(.{
+                .session_id = target.session_id,
+                .instance_id = target.instance_id,
+            });
+            server_live = false;
+            break :blk try client.connectTransport(std.heap.c_allocator, attached.stream, diagnostic);
+        },
+    };
 }
 
 const RenderHandle = opaque {};
@@ -283,8 +348,11 @@ fn renderSurface(rows: u16, columns: u16, cell: canvas.Size) !canvas.Size {
 pub export fn howl_odin_bridge_render_create(
     runtime_raw: ?*RuntimeHandle,
     interrupt: ?*client.Interrupt,
+    route_kind: u8,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    session_id: u64,
+    instance_id: u64,
     font_ptr: [*]const u8,
     font_len: usize,
     fallback_ptr: [*]const u8,
@@ -297,10 +365,14 @@ pub export fn howl_odin_bridge_render_create(
     diagnostic_len: *usize,
 ) ?*RenderHandle {
     diagnostic_len.* = 0;
-    if (endpoint_len == 0 or font_len == 0 or font_pixels == 0) {
+    if (font_len == 0 or font_pixels == 0) {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_render_arguments");
         return null;
     }
+    const target = targetFromAbi(route_kind, endpoint_ptr[0..endpoint_len], session_id, instance_id) catch {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_render_target");
+        return null;
+    };
     const allocator = std.heap.c_allocator;
     const runtime = runtimeValue(runtime_raw);
     var accepted = false;
@@ -308,7 +380,7 @@ pub export fn howl_odin_bridge_render_create(
     var connection = connectForHost(
         runtime,
         interrupt,
-        endpoint_ptr[0..endpoint_len],
+        target,
         &connect_diagnostic,
     ) catch |failure| {
         writeConnectDiagnostic(
@@ -1072,23 +1144,26 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 9;
+    return 10;
 }
 
 pub export fn howl_odin_bridge_create(
     runtime_raw: ?*RuntimeHandle,
     interrupt: ?*client.Interrupt,
+    route_kind: u8,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    session_id: u64,
+    instance_id: u64,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
 ) ?*Handle {
     diagnostic_len.* = 0;
-    if (endpoint_len == 0) {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
+    const target = targetFromAbi(route_kind, endpoint_ptr[0..endpoint_len], session_id, instance_id) catch {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_target");
         return null;
-    }
+    };
 
     const allocator = std.heap.c_allocator;
     const runtime = runtimeValue(runtime_raw);
@@ -1097,7 +1172,7 @@ pub export fn howl_odin_bridge_create(
     var connection = connectForHost(
         runtime,
         interrupt,
-        endpoint_ptr[0..endpoint_len],
+        target,
         &connect_diagnostic,
     ) catch |failure| {
         writeConnectDiagnostic(
@@ -2124,17 +2199,20 @@ test "Odin search selection and interaction C records stay fixed" {
 pub export fn howl_odin_bridge_consequence_create(
     runtime_raw: ?*RuntimeHandle,
     interrupt: ?*client.Interrupt,
+    route_kind: u8,
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    session_id: u64,
+    instance_id: u64,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
 ) ?*ConsequenceHandle {
     diagnostic_len.* = 0;
-    if (endpoint_len == 0) {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
+    const target = targetFromAbi(route_kind, endpoint_ptr[0..endpoint_len], session_id, instance_id) catch {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_target");
         return null;
-    }
+    };
     const allocator = std.heap.c_allocator;
     const runtime = runtimeValue(runtime_raw);
     var accepted = false;
@@ -2147,7 +2225,7 @@ pub export fn howl_odin_bridge_consequence_create(
     bridge.* = .{
         .allocator = allocator,
         .runtime = runtime,
-        .connection = connectForHost(runtime, interrupt, endpoint_ptr[0..endpoint_len], &connect_diagnostic) catch |failure| {
+        .connection = connectForHost(runtime, interrupt, target, &connect_diagnostic) catch |failure| {
             writeConnectDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure), connect_diagnostic);
             return null;
         },
@@ -2450,4 +2528,21 @@ test "only self-contained live views may cross the observation connection bounda
     try std.testing.expect(standaloneLiveView(live));
     try std.testing.expect(!standaloneLiveView(historical));
     try std.testing.expect(!standaloneLiveView(image));
+}
+
+test "Odin bridge route ABI distinguishes direct and Server targets" {
+    const direct = try targetFromAbi(0, "unix:/tmp/howl.sock", 0, 0);
+    try std.testing.expectEqual(RouteKind.direct, direct.kind);
+    try std.testing.expectEqualStrings("unix:/tmp/howl.sock", direct.endpoint);
+    try std.testing.expectEqual(@as(u64, 0), direct.session_id);
+    try std.testing.expectEqual(@as(u64, 0), direct.instance_id);
+
+    const managed = try targetFromAbi(1, "tcp://127.0.0.1:43130", 7, 3);
+    try std.testing.expectEqual(RouteKind.server, managed.kind);
+    try std.testing.expectEqual(@as(u64, 7), managed.session_id);
+    try std.testing.expectEqual(@as(u64, 3), managed.instance_id);
+
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(0, "tcp://127.0.0.1:1", 7, 3));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(1, "tcp://127.0.0.1:1", 0, 3));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "tcp://127.0.0.1:1", 7, 3));
 }

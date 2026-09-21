@@ -5,6 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .howl_client = .{ .path = "../../howl-client" },
+        .server_client = .{ .path = "../../server-client" },
         .howl_instance = .{ .path = "../../howl-instance" },
         .howl_render = .{ .path = "../../howl-render" },
     },

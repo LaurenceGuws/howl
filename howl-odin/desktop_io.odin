@@ -37,7 +37,8 @@ connect_view_channel :: proc(view: ^Instance_View, token: rawptr) -> rawptr {
     endpoint := instance_endpoint(view)
     diagnostic: [160]u8
     count: c.size_t
-    handle := create(desktop_io_runtime, token, raw_data(endpoint), c.size_t(len(endpoint)),
+    handle := create(desktop_io_runtime, token, u8(view.route_kind),
+                     raw_data(endpoint), c.size_t(len(endpoint)), view.session_id, view.instance_id,
                      raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     if handle == nil {
         publish_initial_error(view, string(diagnostic[:int(count)]))

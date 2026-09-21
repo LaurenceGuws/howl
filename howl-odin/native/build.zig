@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
+    const server_client_dependency = b.dependency("server_client", .{ .target = target, .optimize = optimize });
     const instance_dependency = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const render_dependency = b.dependency("howl_render", .{
         .target = target,
@@ -19,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .pic = true,
     });
     root.addImport("howl_client", client_dependency.module("howl_client"));
+    root.addImport("server_client", server_client_dependency.module("server_client"));
     root.addImport("howl_instance", instance_dependency.module("howl_instance"));
     root.addImport("howl_render", render_dependency.module("howl_render"));
 

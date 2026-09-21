@@ -20,8 +20,11 @@ Desktop_Consequence_Action :: enum u8 {
 }
 
 Consequence_Owner :: struct {
+	route_kind: Bridge_Route_Kind,
 	endpoint: [CONSEQUENCE_ENDPOINT_BYTES]u8,
 	endpoint_len: int,
+	session_id: u64,
+	instance_id: u64,
 	handle: rawptr,
     interrupt: rawptr,
 	client_id: u64,
@@ -203,8 +206,8 @@ consequence_owner_worker :: proc(data: rawptr) {
     endpoint := consequence_endpoint(owner)
     diagnostic: [160]u8
     count: c.size_t
-    owner.handle = consequence_create(desktop_io_runtime, owner.interrupt,
-                                       raw_data(endpoint), c.size_t(len(endpoint)),
+    owner.handle = consequence_create(desktop_io_runtime, owner.interrupt, u8(owner.route_kind),
+                                       raw_data(endpoint), c.size_t(len(endpoint)), owner.session_id, owner.instance_id,
                                        raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     if owner.handle == nil {
         sync.mutex_lock(&owner.mutex)
@@ -228,11 +231,20 @@ consequence_owner_worker :: proc(data: rawptr) {
 	}
 }
 
-create_consequence_owner :: proc(endpoint: string, rows, columns: u16) -> ^Consequence_Owner {
+create_consequence_owner :: proc(view: ^Instance_View, rows, columns: u16) -> ^Consequence_Owner {
+    if view == nil do return nil
+    endpoint := instance_endpoint(view)
     if len(endpoint) == 0 || len(endpoint) >= CONSEQUENCE_ENDPOINT_BYTES do return nil
     owner := new(Consequence_Owner)
     if owner == nil do return nil
-    owner^ = Consequence_Owner{rows = rows, columns = columns, wake = true}
+    owner^ = Consequence_Owner{
+        route_kind = view.route_kind,
+        session_id = view.session_id,
+        instance_id = view.instance_id,
+        rows = rows,
+        columns = columns,
+        wake = true,
+    }
     copy(owner.endpoint[:len(endpoint)], transmute([]u8)endpoint)
     owner.endpoint_len = len(endpoint)
     owner.interrupt = interrupt_create()
@@ -261,11 +273,17 @@ destroy_consequence_owner :: proc(owner: ^Consequence_Owner) {
 	free(owner)
 }
 
-find_consequence_owner :: proc(app: ^App, endpoint: string) -> ^Consequence_Owner {
-	if app == nil || len(endpoint) == 0 do return nil
+find_consequence_owner :: proc(app: ^App, view: ^Instance_View) -> ^Consequence_Owner {
+	if app == nil || view == nil do return nil
+    endpoint := instance_endpoint(view)
+	if len(endpoint) == 0 do return nil
 	for index in 0..<app.consequence_owner_count {
 		owner := app.consequence_owners[index]
-		if owner != nil && consequence_endpoint(owner) == endpoint do return owner
+        if owner != nil && owner.route_kind == view.route_kind &&
+           owner.session_id == view.session_id && owner.instance_id == view.instance_id &&
+           consequence_endpoint(owner) == endpoint {
+            return owner
+        }
 	}
 	return nil
 }
@@ -293,13 +311,13 @@ reconcile_consequence_owners :: proc(app: ^App) {
 			if view == nil || view.control == nil || !instance_interactive(view) do continue
 			endpoint := instance_endpoint(view)
 			if len(endpoint) == 0 do continue
-			owner := find_consequence_owner(app, endpoint)
+			owner := find_consequence_owner(app, view)
 			if owner == nil {
 				if app.consequence_owner_count >= MAX_CONSEQUENCE_OWNERS do continue
 				sync.mutex_lock(&view.mutex)
 				rows, columns := view.rows, view.columns
 				sync.mutex_unlock(&view.mutex)
-				owner = create_consequence_owner(endpoint, rows, columns)
+				owner = create_consequence_owner(view, rows, columns)
 				if owner == nil do continue
 				app.consequence_owners[app.consequence_owner_count] = owner
 				app.consequence_owner_count += 1

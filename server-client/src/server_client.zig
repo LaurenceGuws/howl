@@ -56,6 +56,16 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
+    pub fn connectCancelable(
+        allocator: std.mem.Allocator,
+        endpoint: []const u8,
+        diagnostic: *ConnectDiagnostic,
+        interrupt: ?*Interrupt,
+    ) Error!Connection {
+        const stream = try transport.Stream.connectCancelable(endpoint, diagnostic, interrupt);
+        return connectTransport(allocator, stream, diagnostic);
+    }
+
     pub fn deinit(self: *Connection) void {
         self.stream.deinit();
         self.* = undefined;
@@ -317,4 +327,21 @@ fn resultError(code: protocol.ResultCode) Error!void {
         .unavailable => error.Unavailable,
         .internal => error.Internal,
     };
+}
+
+test "cancelable Server connect is preempted before transport creation" {
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    try interrupt.cancel();
+    var diagnostic: ConnectDiagnostic = .{};
+    try std.testing.expectError(
+        error.ConnectionCanceled,
+        Connection.connectCancelable(
+            std.testing.allocator,
+            "tcp://127.0.0.1:1",
+            &diagnostic,
+            interrupt,
+        ),
+    );
+    try std.testing.expectEqual(ConnectStage.endpoint, diagnostic.stage);
 }
