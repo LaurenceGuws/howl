@@ -1069,3 +1069,51 @@ test "service boundary relieves one retained head and retries exact semantic eve
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
 }
+
+fn consumeOneConsequenceThenFail(machine: *Terminal) Terminal.FeedError!void {
+    const head = machine.consequenceHead() orelse return error.ConsequencePressure;
+    machine.consumeConsequence(head.id()) catch |failure| switch (failure) {
+        error.StaleConsequence, error.ReplyRequired => unreachable,
+    };
+    return error.ReplyLimit;
+}
+
+test "failed relief preserves caller mutation without admitting pressure event" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    for (0..32) |_| {
+        const progress = try terminal.feedAtServiceBoundary(&.{0x07}, 1);
+        try std.testing.expectEqual(@as(usize, 1), progress.consumed);
+    }
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 1), terminal.consequenceHead().?.id());
+
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(
+        error.ReplyLimit,
+        terminal.feedAtServiceBoundaryRelievingConsequences(
+            &.{ 'X', 0x07, 'Y' },
+            2,
+            consumeOneConsequenceThenFail,
+        ),
+    );
+
+    // Caller-owned relief already retired exactly one old occurrence before its
+    // own error escaped. The pressure-causing BEL was never retried/admitted.
+    try std.testing.expectEqual(@as(u16, 31), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.id());
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+    try std.testing.expect(terminal.semanticSequence() > before);
+
+    // The caller may resume with new bytes deliberately. Nothing from the failed
+    // parsed event is replayed implicitly.
+    const resumed = try terminal.feedAtServiceBoundary(&.{'Y'}, 3);
+    try std.testing.expectEqual(@as(usize, 1), resumed.consumed);
+    try std.testing.expectEqual(@as(u16, 31), terminal.consequenceCount());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+}
