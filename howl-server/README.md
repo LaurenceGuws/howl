@@ -23,3 +23,8 @@ manager: non-reused session ids, retained exited/failed records, exact close by
 id, roster revisions, deterministic roster projection, and Session endpoint
 cleanup. The foreground CLI entrypoint still uses the earlier static loop until
 the manager listener is connected in the next slice.
+
+The nonblocking manager listener now exercises HWLM against the authoritative
+registry, including independent roster observation/control clients, dynamic
+create/close, revision wakeups and the stopping state. The public `howl server`
+entrypoint is switched to this owner in the following checkpoint.

@@ -183,6 +183,18 @@ pub const Registry = struct {
         return null;
     }
 
+    pub fn hasActiveEndpoint(self: *const Registry) bool {
+        for (self.records) |maybe_record| {
+            const record = maybe_record orelse continue;
+            if (record.server != null) return true;
+        }
+        return false;
+    }
+
+    pub fn noteManagerChange(self: *Registry) void {
+        advanceRevision(&self.roster_revision);
+    }
+
     pub fn endpointText(self: *const Registry, session_id: u64, output: []u8) ![]const u8 {
         const index = self.findId(session_id) orelse return error.SessionNotFound;
         const record = self.records[index].?;

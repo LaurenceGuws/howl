@@ -57,16 +57,31 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const manager_tests_root = b.createModule(.{
+        .root_source_file = b.path("src/manager.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    manager_tests_root.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
+    manager_tests_root.addImport("howl_server_protocol", protocol_module);
+    const manager_tests = b.addTest(.{
+        .name = "howl-server-manager",
+        .root_module = manager_tests_root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
 
     const check = b.step("check", "Compile the bounded Howl Session collection owner");
     check.dependOn(&module_tests.step);
     check.dependOn(&protocol_tests.step);
     check.dependOn(&server_tests.step);
     check.dependOn(&registry_tests.step);
+    check.dependOn(&manager_tests.step);
 
     const test_step = b.step("test", "Run Howl server collection and manager-wire proofs");
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
     test_step.dependOn(&b.addRunArtifact(server_tests).step);
     test_step.dependOn(&b.addRunArtifact(registry_tests).step);
+    test_step.dependOn(&b.addRunArtifact(manager_tests).step);
     b.default_step = check;
 }
