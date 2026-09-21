@@ -10,10 +10,15 @@ const instance_service = @import("howl_instance_service");
 pub const InstanceId = u64;
 pub const maximum_instances: usize = 16;
 
+pub const InstanceState = enum { running, exited };
+
+pub const TurnOutcome = struct { state_changed: bool = false };
+
 const InstanceRecord = struct {
     id: InstanceId,
     value: *howl_instance.Instance,
     service: instance_service.Service,
+    state: InstanceState = .running,
 
     fn deinit(self: *InstanceRecord) void {
         self.service.deinit();
@@ -91,6 +96,11 @@ pub const Session = struct {
         return true;
     }
 
+    pub fn instanceState(self: *const Session, instance_id: InstanceId) ?InstanceState {
+        const index = self.findInstanceIndex(instance_id) orelse return null;
+        return self.instances[index].?.state;
+    }
+
     pub const AdoptClientError = instance_service.Service.AdoptError || error{InstanceNotFound};
 
     pub fn adoptClient(
@@ -106,9 +116,15 @@ pub const Session = struct {
 
     pub const TurnInstanceError = instance_service.Service.TurnError || error{InstanceNotFound};
 
-    pub fn turnInstance(self: *Session, instance_id: InstanceId, timeout_ms: i32) TurnInstanceError!void {
+    pub fn turnInstance(self: *Session, instance_id: InstanceId, timeout_ms: i32) TurnInstanceError!TurnOutcome {
         const index = self.findInstanceIndex(instance_id) orelse return error.InstanceNotFound;
-        return self.instances[index].?.service.turn(timeout_ms);
+        const record = &self.instances[index].?;
+        try record.service.turn(timeout_ms);
+        if (record.state == .running and record.service.lifecycle().child_exited) {
+            record.state = .exited;
+            return .{ .state_changed = true };
+        }
+        return .{};
     }
 
     fn freeSlot(self: *const Session) ?usize {
