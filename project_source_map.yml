@@ -22,12 +22,15 @@ experimental:
     DEC-line-geometry, and image-placeholder wire encodings for consumers that
     need owned semantic lifetime; synchronous renderers may instead borrow the
     already-validated lossless rich observation directly
+  howl-server: >-
+    bounded one-process collection owner for multiple independent canonical
+    Sessions; the initial extracted cut preserves the proven static named-terminal
+    collection and per-instance failure containment outside CLI command policy;
+    dynamic registry/control and managed attach are intentionally later slices
   howl-cli: >-
-    native human/agent terminal CLI plus first node-local multi-terminal server
-    canary; one foreground howl server process can own multiple independent
-    PTY+VT terminal endpoints while existing clients attach through the current
-    protocol; dynamic registry/control and a single multiplexed attach route are
-    intentionally deferred
+    native human/agent terminal CLI and operator surface over explicit Session
+    endpoints plus the howl-server collection owner; command vocabulary and
+    machine-facing formatting live here while Session collection lifetime does not
   howl-render: >-
     one shared Terminal Canvas consuming canonical VT Observation directly,
     a validated borrowed howl-client.rich observation, or the owned

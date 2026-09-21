@@ -2,7 +2,7 @@ const std = @import("std");
 const cli = @import("howl_cli");
 const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
-const server = @import("server.zig");
+const server = @import("howl_server");
 
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;

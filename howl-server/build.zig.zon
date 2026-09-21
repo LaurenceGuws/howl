@@ -1,12 +1,11 @@
 .{
-    .name = .howl_cli,
+    .name = .howl_server,
     .version = "0.1.6-dev",
-    .fingerprint = 0x75ee688427773164,
+    .fingerprint = 0x8cc86f8f266612f9,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .howl_session = .{ .path = "../howl-session" },
         .howl_client = .{ .path = "../howl-client" },
-        .howl_server = .{ .path = "../howl-server" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "install", "src", "test" },
+    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
 }

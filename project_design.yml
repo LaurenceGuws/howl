@@ -15,10 +15,11 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 planned:
-  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; the CLI hosts the one-process shared-terminal collection while the native Vulkan host proves an in-process Session route and advanced embedders may use howl-vt directly
+  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; howl-server owns the one-process shared-terminal collection while the CLI is its operator surface, the native Vulkan host proves an in-process Session route, and advanced embedders may use howl-vt directly
 
 experimental:
   - howl-client
+  - howl-server
   - howl-cli
   - howl-render
   - howl-host
@@ -29,7 +30,7 @@ experimental:
   - howl-odin
 
 ownership:
-  - terminal lifetime ownership is explicit: a shared owner may publish Session endpoints, a local application may own Session in-process, and an advanced embedder may own its byte runtime around howl-vt directly
+  - terminal lifetime ownership is explicit: howl-server may own a bounded collection of shared Sessions, another shared owner may publish one Session endpoint, a local application may own Session in-process, and an advanced embedder may own its byte runtime around howl-vt directly
   - one Session owns exactly one authoritative PTY and VT; Session is the batteries-included Linux coupling, not a prerequisite for direct howl-vt embedding
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt

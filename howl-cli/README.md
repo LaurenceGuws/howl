@@ -1,11 +1,11 @@
 # Howl native CLI contract
 
-`howl` is the native human/agent terminal CLI and the first node-local terminal
-server owner. Client commands speak the same frozen `howl-session` attach protocol
-as graphical clients and project canonical terminal state into a form that is
-pleasant to reason about. `howl server` owns a small named collection of PTY+VT
-terminal instances in one process; it is not a renderer, remote transport, or
-compatibility wrapper around Remoter.
+`howl` is the native human/agent terminal CLI and operator surface for the
+node-local `howl-server` collection owner. Client commands speak the same frozen
+`howl-session` attach protocol as graphical clients and project canonical terminal
+state into a form that is pleasant to reason about. `howl server` currently enters
+the bounded server owner in the foreground; the CLI itself does not own PTY+VT
+collection lifetime, rendering, remote transport, or Remoter compatibility policy.
 
 The CLI is intentionally built before the durable graphical client. It should
 teach us which canonical facts deserve first-class client vocabulary. Terminal
@@ -66,8 +66,8 @@ mechanism.
 
 ## Multi-terminal server
 
-`howl server` is a foreground collection owner. All named terminals live in the
-same `howl` process; each terminal currently publishes one Unix attach socket
+`howl server` enters the foreground `howl-server` collection owner. All named
+terminals live in the same `howl` process; each terminal currently publishes one Unix attach socket
 under the supplied absolute runtime directory so existing Flutter, Web, Odin and
 CLI clients can attach without a new routing protocol.
 
