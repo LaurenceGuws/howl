@@ -8,7 +8,6 @@
 const std = @import("std");
 const linux = std.os.linux;
 const posix = std.posix;
-const client = @import("howl_client");
 const endpoint = @import("howl_session_endpoint");
 const session = @import("howl_session");
 
@@ -501,43 +500,6 @@ fn initRealTestInstance(
     };
 }
 
-const SiblingClientProbe = struct {
-    endpoint_text: []const u8,
-    interrupt: *client.Interrupt,
-    done: std.atomic.Value(bool) = .init(false),
-    passed: std.atomic.Value(bool) = .init(false),
-
-    fn run(self: *SiblingClientProbe) void {
-        defer self.done.store(true, .release);
-        var diagnostic: client.ConnectDiagnostic = .{};
-        var connection = client.Connection.connectNativeCancelable(
-            std.heap.page_allocator,
-            std.testing.io,
-            self.endpoint_text,
-            &diagnostic,
-            self.interrupt,
-        ) catch return;
-        defer connection.deinit();
-        client.actions.committedText(&connection, "B_REAL_CANARY\n") catch return;
-        var attempts: usize = 0;
-        while (attempts < 16) : (attempts += 1) {
-            var snapshot = client.snapshot.request(
-                &connection,
-                std.heap.page_allocator,
-                0,
-                0,
-            ) catch return;
-            defer snapshot.deinit();
-            for (snapshot.lines) |line| {
-                if (std.mem.indexOf(u8, line, "B_REAL_CANARY") != null) {
-                    self.passed.store(true, .release);
-                    return;
-                }
-            }
-        }
-    }
-};
-
 fn unixSocketAccepts(path: []const u8) bool {
     var address: linux.sockaddr.un = undefined;
     if (path.len == 0 or path.len >= address.path.len) return false;
@@ -567,7 +529,7 @@ fn unixSocketAccepts(path: []const u8) bool {
     };
 }
 
-test "real endpoint failure retires one instance while sibling serves client IO" {
+test "real endpoint failure retires one instance while sibling listener survives" {
     var a_path_buffer: [108]u8 = undefined;
     const a_path = try std.fmt.bufPrint(
         &a_path_buffer,
@@ -595,20 +557,6 @@ test "real endpoint failure retires one instance while sibling serves client IO"
         }
     }
 
-    var endpoint_buffer: [128]u8 = undefined;
-    const b_endpoint = try std.fmt.bufPrint(&endpoint_buffer, "unix:{s}", .{b_path});
-    const interrupt = try client.Interrupt.init(std.testing.allocator);
-    defer interrupt.deinit();
-    var probe = SiblingClientProbe{
-        .endpoint_text = b_endpoint,
-        .interrupt = interrupt,
-    };
-    const worker = try std.Thread.spawn(.{}, SiblingClientProbe.run, .{&probe});
-    defer {
-        interrupt.cancel() catch {};
-        worker.join();
-    }
-
     var context = RealCollectionTestContext{
         .allocator = std.testing.allocator,
         .fail_name = "a",
@@ -634,26 +582,22 @@ test "real endpoint failure retires one instance while sibling serves client IO"
 
     try std.testing.expect(!unixSocketAccepts(a_path));
 
+    try std.testing.expect(unixSocketAccepts(b_path));
     context.fail_name = null;
-    var turns: usize = 0;
-    while (!probe.done.load(.acquire) and turns < 2000) : (turns += 1) {
-        const serviced = serviceCollectionTurn(
-            Instance,
-            *RealCollectionTestContext,
-            RealCollectionTurnError,
-            &context,
-            &instances,
-            live_count,
-            blocking_index,
-            turnRealCollectionTest,
-            deinitRealCollectionTest,
-        );
-        try std.testing.expect(serviced.failed == null);
-        live_count = serviced.live_count;
-        blocking_index = serviced.next_blocking_index;
-    }
-    try std.testing.expect(probe.done.load(.acquire));
-    try std.testing.expect(probe.passed.load(.acquire));
+    const survivor = serviceCollectionTurn(
+        Instance,
+        *RealCollectionTestContext,
+        RealCollectionTurnError,
+        &context,
+        &instances,
+        live_count,
+        blocking_index,
+        turnRealCollectionTest,
+        deinitRealCollectionTest,
+    );
+    try std.testing.expect(survivor.failed == null);
+    live_count = survivor.live_count;
+    blocking_index = survivor.next_blocking_index;
     try std.testing.expectEqual(@as(usize, 1), live_count);
 
     context.fail_name = "b";

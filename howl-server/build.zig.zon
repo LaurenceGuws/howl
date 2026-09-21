@@ -5,7 +5,6 @@
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .howl_session = .{ .path = "../howl-session" },
-        .howl_client = .{ .path = "../howl-client" },
     },
     .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
 }

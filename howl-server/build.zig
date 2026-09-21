@@ -4,7 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
-    const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
 
     const module = b.addModule("howl_server", .{
         .root_source_file = b.path("src/howl_server.zig"),
@@ -13,7 +12,6 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("howl_session", session.module("howl_session"));
     module.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
-    module.addImport("howl_client", client.module("howl_client"));
 
     const tests = b.addTest(.{
         .name = "howl-server",
