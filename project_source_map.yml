@@ -13,6 +13,12 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  server-client: >-
+    native control client for one explicit Server stream. Depends only on
+    server_protocol plus shared client-transport; owns status/tree decoding,
+    typed Session/Instance CRUD and exact attach. Successful attach consumes the
+    control connection and returns the same stream for ordinary HWLS; no proxy,
+    listener, Server model, discovery, authentication or supervision ownership
   client-transport: >-
     protocol-neutral native Unix/numeric-IPv4 TCP ordered-stream module shared by
     the Instance client and Server control client. Owns cancellation, descriptor
