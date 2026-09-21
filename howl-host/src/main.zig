@@ -1,6 +1,7 @@
 //! Starts, joins, and retires the Window, Input, and Render lifetime owners.
 
 const std = @import("std");
+const text = @import("howl_text");
 const input_owner = @import("input_owner.zig");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
@@ -19,33 +20,61 @@ const MainError = std.Thread.SpawnError || error{
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
     const local_mode = argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--local");
-    if ((local_mode and argv.len != 3) or
-        (!local_mode and (argv.len < 3 or argv.len > 4)))
-    {
-        std.debug.print(
-            "usage: howl-host --local FONT | ENDPOINT FONT | ENDPOINT_LEFT ENDPOINT_RIGHT FONT\n",
-            .{},
-        );
+
+    var positional_end = argv.len;
+    var scan_index: usize = 1;
+    while (scan_index < argv.len) : (scan_index += 1) {
+        if (std.mem.eql(u8, std.mem.span(argv[scan_index]), "--fallback")) {
+            positional_end = scan_index;
+            break;
+        }
+    }
+    const positionals_valid = if (local_mode)
+        positional_end == 3
+    else
+        positional_end == 3 or positional_end == 4;
+    if (!positionals_valid) {
+        printUsage();
         return error.InvalidArguments;
+    }
+
+    var fallback_storage: [text.max_fallbacks][]const u8 = undefined;
+    var fallback_count: usize = 0;
+    var option_index = positional_end;
+    while (option_index < argv.len) {
+        if (!std.mem.eql(u8, std.mem.span(argv[option_index]), "--fallback") or
+            option_index + 1 >= argv.len or fallback_count == fallback_storage.len)
+        {
+            printUsage();
+            return error.InvalidArguments;
+        }
+        const path = std.mem.span(argv[option_index + 1]);
+        if (path.len == 0) {
+            printUsage();
+            return error.InvalidArguments;
+        }
+        fallback_storage[fallback_count] = path;
+        fallback_count += 1;
+        option_index += 2;
     }
 
     const runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR");
     const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
     const endpoint = if (local_mode) "" else std.mem.span(argv[1]);
-    const endpoint_right: ?[]const u8 = if (!local_mode and argv.len == 4)
+    const endpoint_right: ?[]const u8 = if (!local_mode and positional_end == 4)
         std.mem.span(argv[2])
     else
         null;
-    const font_path = if (local_mode)
-        std.mem.span(argv[2])
+    const font_index: usize = if (local_mode)
+        2
+    else if (positional_end == 4)
+        3
     else
-        std.mem.span(argv[
-            switch (argv.len) {
-                3 => 2,
-                4 => 3,
-                else => unreachable,
-            }
-        ]);
+        2;
+    const font = renderer.FontPaths{
+        .primary = std.mem.span(argv[font_index]),
+        .fallbacks = fallback_storage[0..fallback_count],
+    };
     var mux = layout.Mux.init();
     if (endpoint_right != null) {
         const right_pane = try mux.splitFocused(.horizontal);
@@ -98,7 +127,7 @@ pub fn main(init: std.process.Init) !void {
             &boundary,
             std.heap.c_allocator,
             &local_owner,
-            font_path,
+            font,
             mux,
         })
     else
@@ -107,7 +136,7 @@ pub fn main(init: std.process.Init) !void {
             std.heap.c_allocator,
             endpoint,
             endpoint_right,
-            font_path,
+            font,
             mux,
             runtime_dir,
             shell,
@@ -130,4 +159,13 @@ pub fn main(init: std.process.Init) !void {
         return error.HostFailure;
     }
     std.debug.print("Howl terminal frame retired cleanly\n", .{});
+}
+
+fn printUsage() void {
+    std.debug.print(
+        "usage: howl-host --local FONT [--fallback FONT ...] | " ++
+            "ENDPOINT FONT [--fallback FONT ...] | " ++
+            "ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]\n",
+        .{},
+    );
 }

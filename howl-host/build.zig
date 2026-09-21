@@ -215,6 +215,11 @@ pub fn build(b: *std.Build) void {
         "primary_font",
         b.root.joinString(b.allocator, "../howl-text/testdata/primary.ttf") catch @panic("OOM"),
     );
+    fast_test_fonts.addOption(
+        []const u8,
+        "symbol_font",
+        b.root.joinString(b.allocator, "../howl-text/testdata/symbols.ttf") catch @panic("OOM"),
+    );
     const test_fonts = fast_test_fonts.createModule();
     fast_test_module.addImport("test_fonts", test_fonts);
     fast_test_module.linkSystemLibrary("vulkan", .{});

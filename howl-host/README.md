@@ -5,9 +5,15 @@ not a shared UI framework and not part of the core gate.
 
 The Host has two explicit initial-terminal ownership modes:
 
-    howl-host --local FONT
-    howl-host ENDPOINT FONT
-    howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT
+    howl-host --local FONT [--fallback FONT ...]
+    howl-host ENDPOINT FONT [--fallback FONT ...]
+    howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]
+
+Every mode may append ordered `--fallback FONT` pairs. The primary font remains
+the sole cell-metric authority; fallbacks are consulted only when the primary
+does not cover the complete shaped cluster. The current native text atlas is an
+alpha-mask renderer, so these fallbacks must be ordinary outline/mono/gray faces;
+color-bitmap emoji fonts are not yet a supported fallback class.
 
 --local owns one howl-session directly in the Host process. Input services its
 PTY/VT lifetime independently of presentation; Render borrows canonical VT

@@ -52,6 +52,12 @@ const empty_plan = vk_surface.Plan{
     .atlas_changed = false,
 };
 
+/// One explicit primary font plus ordered missing-cluster fallbacks.
+pub const FontPaths = struct {
+    primary: []const u8,
+    fallbacks: []const []const u8 = &.{},
+};
+
 pub const Prepared = struct {
     rows: u16,
     cols: u16,
@@ -72,12 +78,13 @@ pub const Prepared = struct {
 
 pub fn measureCellSize(
     allocator: std.mem.Allocator,
-    font_path: []const u8,
+    font: FontPaths,
     font_pixels: u16,
 ) !canvas.Size {
     if (font_pixels == 0) return error.InvalidFontPixels;
     const fonts = try text.FontSet.init(allocator, .{
-        .primary = font_path,
+        .primary = font.primary,
+        .fallbacks = font.fallbacks,
         .size = .{ .pixels = font_pixels },
     });
     defer fonts.deinit();
@@ -121,7 +128,7 @@ pub const Scene = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         endpoint: []const u8,
-        font_path: []const u8,
+        font: FontPaths,
         font_pixels: u16,
     ) !Scene {
         if (font_pixels == 0) return error.InvalidFontPixels;
@@ -132,7 +139,7 @@ pub const Scene = struct {
         return initSource(
             allocator,
             .{ .remote = .{ .connection = connection, .raw_cache = raw_cache } },
-            font_path,
+            font,
             font_pixels,
         );
     }
@@ -140,23 +147,24 @@ pub const Scene = struct {
     pub fn initLocal(
         allocator: std.mem.Allocator,
         owner: *local_terminal.Owner,
-        font_path: []const u8,
+        font: FontPaths,
         font_pixels: u16,
     ) !Scene {
         if (font_pixels == 0) return error.InvalidFontPixels;
-        return initSource(allocator, .{ .local = owner }, font_path, font_pixels);
+        return initSource(allocator, .{ .local = owner }, font, font_pixels);
     }
 
     fn initSource(
         allocator: std.mem.Allocator,
         source: Source,
-        font_path: []const u8,
+        font: FontPaths,
         font_pixels: u16,
     ) !Scene {
         var owned_source = source;
         errdefer deinitSource(&owned_source);
         const fonts = try text.FontSet.init(allocator, .{
-            .primary = font_path,
+            .primary = font.primary,
+            .fallbacks = font.fallbacks,
             .size = .{ .pixels = font_pixels },
         });
         errdefer fonts.deinit();
@@ -994,13 +1002,21 @@ test "terminal scene projects one local Session image without client transport" 
     }
     try std.testing.expect(ready);
 
+    const fallbacks = [_][]const u8{@import("test_fonts").symbol_font};
     var scene = try Scene.initLocal(
         std.testing.allocator,
         &owner,
-        @import("test_fonts").primary_font,
+        .{
+            .primary = @import("test_fonts").primary_font,
+            .fallbacks = &fallbacks,
+        },
         16,
     );
     defer scene.deinit();
+    try std.testing.expectEqual(
+        @as(?u8, 1),
+        try scene.fonts.faceFor(&.{0xe0b0}),
+    );
     const prepared = try scene.prepareHistory(null, 0);
     defer scene.discardPrepared(prepared);
     try std.testing.expect(prepared.mode == .generic);
@@ -1068,7 +1084,7 @@ test "local historical prepared frame cannot stale replay after output and reflo
     var scene = try Scene.initLocal(
         std.testing.allocator,
         &owner,
-        @import("test_fonts").primary_font,
+        .{ .primary = @import("test_fonts").primary_font },
         16,
     );
     defer scene.deinit();

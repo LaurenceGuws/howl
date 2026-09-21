@@ -9,6 +9,7 @@ const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 const session_process = @import("session_process.zig");
 const terminal_scene = @import("terminal_scene.zig");
+pub const FontPaths = terminal_scene.FontPaths;
 const terminal_fast = @import("terminal_fast.zig");
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
@@ -150,7 +151,7 @@ pub fn run(
     allocator: std.mem.Allocator,
     endpoint: []const u8,
     endpoint_right: ?[]const u8,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     mux: host_layout.Mux,
     runtime_dir: ?[]const u8,
     shell: []const u8,
@@ -161,7 +162,7 @@ pub fn run(
         allocator,
         endpoint,
         endpoint_right,
-        font_path,
+        font,
         mux,
         runtime_dir,
         shell,
@@ -184,7 +185,7 @@ pub fn runLocal(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
     owner: *local_terminal.Owner,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     mux: host_layout.Mux,
 ) void {
     runFallible(
@@ -192,7 +193,7 @@ pub fn runLocal(
         allocator,
         "",
         null,
-        font_path,
+        font,
         mux,
         null,
         "",
@@ -214,7 +215,7 @@ fn runFallible(
     allocator: std.mem.Allocator,
     endpoint: []const u8,
     endpoint_right: ?[]const u8,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     initial_mux: host_layout.Mux,
     runtime_dir: ?[]const u8,
     shell: []const u8,
@@ -226,7 +227,7 @@ fn runFallible(
     const feedback = try waitFeedback(boundary);
     var display_scale_120 = (try waitDisplayScale(boundary)).scale_120;
     var font_pixels = try scaledFontPixels(display_scale_120);
-    const logical_cell_size = try terminal_scene.measureCellSize(allocator, font_path, base_font_pixels);
+    const logical_cell_size = try terminal_scene.measureCellSize(allocator, font, base_font_pixels);
     var scene_count: usize = if (local_mode) 1 else if (endpoint_right != null) 2 else 1;
     var spawned_session: ?session_process.SessionProcess = null;
     defer if (spawned_session) |*session| session.deinit();
@@ -240,13 +241,13 @@ fn runFallible(
         }
     }
     scenes[0] = if (local_owner) |owner|
-        try terminal_scene.Scene.initLocal(allocator, owner, font_path, font_pixels)
+        try terminal_scene.Scene.initLocal(allocator, owner, font, font_pixels)
     else
-        try terminal_scene.Scene.init(allocator, endpoint, font_path, font_pixels);
+        try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
     initialized_scene_count = 1;
     if (!local_mode) {
         if (endpoint_right) |right| {
-            scenes[1] = try terminal_scene.Scene.init(allocator, right, font_path, font_pixels);
+            scenes[1] = try terminal_scene.Scene.init(allocator, right, font, font_pixels);
             initialized_scene_count = 2;
         }
     }
@@ -815,7 +816,7 @@ fn runFallible(
                         runtime_dir orelse return error.MissingRuntimeDirectory,
                         shell,
                         environ_map orelse return error.MissingEnvironment,
-                        font_path,
+                        font,
                         font_pixels,
                         axis,
                         &spawned_session,
@@ -862,7 +863,7 @@ fn runFallible(
                         runtime_dir orelse return error.MissingRuntimeDirectory,
                         shell,
                         environ_map orelse return error.MissingEnvironment,
-                        font_path,
+                        font,
                         font_pixels,
                         &spawned_session,
                         &mux,
@@ -993,7 +994,7 @@ fn runFallible(
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
                 const next_cell_size = try terminal_scene.measureCellSize(
                     allocator,
-                    font_path,
+                    font,
                     next_font_pixels,
                 );
                 const next_surface_width = try scaledExtent(surface_logical_width, scale.scale_120);
@@ -1038,7 +1039,7 @@ fn runFallible(
                     try rebuildLocalSceneForScale(
                         allocator,
                         owner,
-                        font_path,
+                        font,
                         next_font_pixels,
                         &scenes[0].?,
                         &prepared[0],
@@ -1057,7 +1058,7 @@ fn runFallible(
                         endpoint,
                         endpoint_right,
                         spawned_session,
-                        font_path,
+                        font,
                         next_font_pixels,
                         &scenes,
                         scene_count,
@@ -1237,7 +1238,7 @@ fn rebuildScenesForScale(
     primary_endpoint: []const u8,
     external_right: ?[]const u8,
     spawned_session: ?session_process.SessionProcess,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     font_pixels: u16,
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
@@ -1267,7 +1268,7 @@ fn rebuildScenesForScale(
     var next_revisions: [2]u64 = @splat(0);
     for (0..scene_count) |index| {
         const endpoint = try sceneEndpoint(index, primary_endpoint, external_right, spawned_session);
-        replacements[index] = try terminal_scene.Scene.init(allocator, endpoint, font_path, font_pixels);
+        replacements[index] = try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
         replacement_count = index + 1;
         next_prepared[index] = try replacements[index].?.prepare(0);
         next_revisions[index] = next_prepared[index].session_revision;
@@ -1295,7 +1296,7 @@ fn rebuildScenesForScale(
 fn rebuildLocalSceneForScale(
     allocator: std.mem.Allocator,
     owner: *local_terminal.Owner,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     font_pixels: u16,
     scene: *terminal_scene.Scene,
     prepared: *terminal_scene.Prepared,
@@ -1312,7 +1313,7 @@ fn rebuildLocalSceneForScale(
     var replacement = try terminal_scene.Scene.initLocal(
         allocator,
         owner,
-        font_path,
+        font,
         font_pixels,
     );
     errdefer replacement.deinit();
@@ -1935,7 +1936,7 @@ fn createSecondSession(
     runtime_dir: []const u8,
     shell: []const u8,
     environ_map: *const std.process.Environ.Map,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     font_pixels: u16,
     spawned_session: *?session_process.SessionProcess,
     scenes: *[2]?terminal_scene.Scene,
@@ -1965,7 +1966,7 @@ fn createSecondSession(
         2,
     );
     const endpoint = spawned_session.*.?.endpoint;
-    scenes[1] = try terminal_scene.Scene.init(allocator, endpoint, font_path, font_pixels);
+    scenes[1] = try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
     initialized_scene_count.* = 2;
     controls[1] = try client.Connection.connect(allocator, endpoint);
     geometry_control_count.* = 2;
@@ -1981,7 +1982,7 @@ fn addPane(
     runtime_dir: []const u8,
     shell: []const u8,
     environ_map: *const std.process.Environ.Map,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     font_pixels: u16,
     axis: host_layout.SplitAxis,
     spawned_session: *?session_process.SessionProcess,
@@ -2017,7 +2018,7 @@ fn addPane(
         runtime_dir,
         shell,
         environ_map,
-        font_path,
+        font,
         font_pixels,
         spawned_session,
         scenes,
@@ -2074,7 +2075,7 @@ fn addTab(
     runtime_dir: []const u8,
     shell: []const u8,
     environ_map: *const std.process.Environ.Map,
-    font_path: []const u8,
+    font: terminal_scene.FontPaths,
     font_pixels: u16,
     spawned_session: *?session_process.SessionProcess,
     mux: *host_layout.Mux,
@@ -2102,7 +2103,7 @@ fn addTab(
         runtime_dir,
         shell,
         environ_map,
-        font_path,
+        font,
         font_pixels,
         spawned_session,
         scenes,
