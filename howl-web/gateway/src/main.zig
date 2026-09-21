@@ -1,6 +1,7 @@
-//! Owns Howl Web's loopback HTTP/WebSocket origin and protocol-blind byte bridge.
+//! Owns Howl Web's loopback origin, exact Server attach, then protocol-blind HWLS byte bridge.
 const std = @import("std");
 const Io = std.Io;
+const server_client = @import("server_client");
 
 const max_http_connections: u8 = 8;
 const max_websockets: u8 = 6;
@@ -14,7 +15,9 @@ const max_path_bytes: usize = 4096;
 
 const Config = struct {
     listen_port: u16,
-    instance_port: u16,
+    server_port: u16,
+    session_id: u64,
+    instance_id: u64,
     expected_host: []const u8,
     expected_origin: []const u8,
     site_dir: []const u8,
@@ -56,19 +59,21 @@ fn usage(init: std.process.Init) void {
     var buffer: [1024]u8 = undefined;
     var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);
     stderr.interface.writeAll(
-        "usage: howl-web-gateway LISTEN_PORT INSTANCE_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]\n",
+        "usage: howl-web-gateway LISTEN_PORT SERVER_PORT SESSION_ID INSTANCE_ID EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]\n",
     ) catch return;
     stderr.interface.flush() catch return;
 }
 
 fn parseArgs(argv: []const [*:0]const u8) error{InvalidArguments}!Config {
-    if (argv.len != 7 and argv.len != 8) return error.InvalidArguments;
+    if (argv.len != 9 and argv.len != 10) return error.InvalidArguments;
     const listen_port = parsePort(std.mem.span(argv[1])) catch return error.InvalidArguments;
-    const instance_port = parsePort(std.mem.span(argv[2])) catch return error.InvalidArguments;
-    const expected_host = std.mem.span(argv[3]);
-    const expected_origin = std.mem.span(argv[4]);
-    const site_dir = std.mem.span(argv[5]);
-    const wire_wasm = std.mem.span(argv[6]);
+    const server_port = parsePort(std.mem.span(argv[2])) catch return error.InvalidArguments;
+    const session_id = parseIdentity(std.mem.span(argv[3])) catch return error.InvalidArguments;
+    const instance_id = parseIdentity(std.mem.span(argv[4])) catch return error.InvalidArguments;
+    const expected_host = std.mem.span(argv[5]);
+    const expected_origin = std.mem.span(argv[6]);
+    const site_dir = std.mem.span(argv[7]);
+    const wire_wasm = std.mem.span(argv[8]);
     if (expected_host.len == 0 or expected_host.len > max_host_bytes or
         expected_origin.len == 0 or expected_origin.len > max_origin_bytes or
         site_dir.len == 0 or site_dir.len > max_path_bytes or
@@ -78,13 +83,15 @@ fn parseArgs(argv: []const [*:0]const u8) error{InvalidArguments}!Config {
     {
         return error.InvalidArguments;
     }
-    const require_access = if (argv.len == 8) blk: {
-        if (!std.mem.eql(u8, std.mem.span(argv[7]), "--require-access")) return error.InvalidArguments;
+    const require_access = if (argv.len == 10) blk: {
+        if (!std.mem.eql(u8, std.mem.span(argv[9]), "--require-access")) return error.InvalidArguments;
         break :blk true;
     } else false;
     return .{
         .listen_port = listen_port,
-        .instance_port = instance_port,
+        .server_port = server_port,
+        .session_id = session_id,
+        .instance_id = instance_id,
         .expected_host = expected_host,
         .expected_origin = expected_origin,
         .site_dir = site_dir,
@@ -97,6 +104,12 @@ fn parsePort(value: []const u8) error{InvalidPort}!u16 {
     const port = std.fmt.parseInt(u16, value, 10) catch return error.InvalidPort;
     if (port == 0) return error.InvalidPort;
     return port;
+}
+
+fn parseIdentity(value: []const u8) error{InvalidIdentity}!u64 {
+    const identity = std.fmt.parseInt(u64, value, 10) catch return error.InvalidIdentity;
+    if (identity == 0) return error.InvalidIdentity;
+    return identity;
 }
 
 fn serve(init: std.process.Init, config: Config) !void {
@@ -229,13 +242,31 @@ fn handleWebSocket(
     if (!admit(active_ws, max_websockets)) return respondText(request, .service_unavailable, "websocket capacity\n", "text/plain; charset=utf-8");
     defer release(active_ws);
 
-    // Do not connect to the terminal Instance until HTTP origin/authentication and
-    // the complete WebSocket upgrade contract have passed.
-    const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.instance_port) catch
+    // Do not connect to Server control until HTTP origin/authentication and the
+    // complete WebSocket upgrade contract have passed. After exact attach, the same
+    // fd is ordinary HWLS and this gateway returns to protocol-blind byte pumping.
+    var endpoint_storage: [64]u8 = undefined;
+    const endpoint = std.fmt.bufPrint(
+        &endpoint_storage,
+        "tcp://127.0.0.1:{d}",
+        .{config.server_port},
+    ) catch return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
+    var server = server_client.Connection.connect(init.gpa, endpoint) catch
         return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
-    var upstream = upstream_address.connect(init.io, .{ .mode = .stream, .protocol = .tcp }) catch
-        return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
-    defer upstream.close(init.io);
+    var server_live = true;
+    defer if (server_live) server.deinit();
+    var attached = server.attachInstance(.{
+        .session_id = config.session_id,
+        .instance_id = config.instance_id,
+    }) catch return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
+    server_live = false;
+    defer attached.deinit();
+
+    const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.server_port) catch unreachable;
+    var upstream = Io.net.Stream{ .socket = .{
+        .handle = attached.stream.readinessFd(),
+        .address = upstream_address,
+    } };
 
     var ws = request.respondWebSocket(.{ .key = key, .extra_headers = &.{
         .{ .name = "cache-control", .value = "no-store" },
@@ -362,15 +393,19 @@ fn release(active: *std.atomic.Value(u8)) void {
 
 test "strict CLI bounds ports host and access mode" {
     const ok = [_][*:0]const u8{
-        "gateway", "43129", "43127", "howl.example.test", "https://howl.example.test", "/tmp/site", "/tmp/wire.wasm", "--require-access",
+        "gateway", "43129", "43130", "7", "3", "howl.example.test", "https://howl.example.test", "/tmp/site", "/tmp/wire.wasm", "--require-access",
     };
     const config = try parseArgs(&ok);
     try std.testing.expectEqual(@as(u16, 43129), config.listen_port);
-    try std.testing.expectEqual(@as(u16, 43127), config.instance_port);
+    try std.testing.expectEqual(@as(u16, 43130), config.server_port);
+    try std.testing.expectEqual(@as(u64, 7), config.session_id);
+    try std.testing.expectEqual(@as(u64, 3), config.instance_id);
     try std.testing.expect(config.require_access);
-    const bad_port = [_][*:0]const u8{ "gateway", "0", "43127", "h", "https://h", "s", "w" };
+    const bad_port = [_][*:0]const u8{ "gateway", "0", "43130", "7", "3", "h", "https://h", "s", "w" };
     try std.testing.expectError(error.InvalidArguments, parseArgs(&bad_port));
-    const bad_mode = [_][*:0]const u8{ "gateway", "1", "2", "h", "https://h", "s", "w", "--open" };
+    const bad_identity = [_][*:0]const u8{ "gateway", "1", "2", "0", "3", "h", "https://h", "s", "w" };
+    try std.testing.expectError(error.InvalidArguments, parseArgs(&bad_identity));
+    const bad_mode = [_][*:0]const u8{ "gateway", "1", "2", "7", "3", "h", "https://h", "s", "w", "--open" };
     try std.testing.expectError(error.InvalidArguments, parseArgs(&bad_mode));
 }
 

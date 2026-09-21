@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Black-box fail-closed and byte-bridge proof using Python stdlib only."""
+"""Black-box fail-closed Server-attach and post-attach byte-bridge proof."""
 from __future__ import annotations
 import base64
 import hashlib
@@ -26,33 +26,99 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-class Echo:
+SESSION_ID = 7
+INSTANCE_ID = 3
+SERVER_ID = 0x123456789ABCDEF0
+TREE_REVISION = 9
+
+
+def recv_exact(conn: socket.socket, size: int) -> bytes:
+    out = bytearray()
+    while len(out) < size:
+        chunk = conn.recv(size - len(out))
+        if not chunk:
+            raise AssertionError('unexpected Server control EOF')
+        out += chunk
+    return bytes(out)
+
+
+def server_frame(kind: int, payload: bytes = b'') -> bytes:
+    assert len(payload) <= 8 * 1024
+    return b'SRVR' + bytes((1, kind, 0, 0)) + struct.pack('!I', len(payload)) + payload
+
+
+def recv_server_frame(conn: socket.socket) -> tuple[int, bytes]:
+    header = recv_exact(conn, 12)
+    assert header[:4] == b'SRVR'
+    assert header[4] == 1
+    assert header[6:8] == b'\0\0'
+    size = struct.unpack('!I', header[8:12])[0]
+    assert size <= 8 * 1024
+    return header[5], recv_exact(conn, size)
+
+
+class AttachedEchoServer:
+    """Minimal real server_protocol attach peer, then opaque byte echo."""
     def __init__(self) -> None:
         self.port = free_port()
         self.accepted = 0
+        self.attached: list[tuple[int, int]] = []
         self._stop = threading.Event()
         self._listener = socket.socket()
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._listener.bind(('127.0.0.1', self.port))
-        self._listener.listen(4)
+        self._listener.listen(8)
         self._listener.settimeout(.1)
         self._thread = threading.Thread(target=self._run, daemon=True)
-    def start(self) -> None: self._thread.start()
+
+    def start(self) -> None:
+        self._thread.start()
+
     def close(self) -> None:
-        self._stop.set(); self._listener.close(); self._thread.join(timeout=2)
+        self._stop.set()
+        self._listener.close()
+        self._thread.join(timeout=2)
+
     def _run(self) -> None:
         while not self._stop.is_set():
-            try: conn, _ = self._listener.accept()
-            except (socket.timeout, OSError): continue
-            self.accepted += 1
-            threading.Thread(target=self._echo, args=(conn,), daemon=True).start()
-    @staticmethod
-    def _echo(conn: socket.socket) -> None:
-        with conn:
-            conn.settimeout(2)
             try:
-                while data := conn.recv(65536): conn.sendall(data)
-            except OSError: pass
+                conn, _ = self._listener.accept()
+            except (socket.timeout, OSError):
+                continue
+            self.accepted += 1
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn: socket.socket) -> None:
+        with conn:
+            conn.settimeout(3)
+            try:
+                kind, payload = recv_server_frame(conn)
+                assert kind == 1 and payload == b''  # hello
+                status = struct.pack(
+                    '!QQHHHH8x',
+                    SERVER_ID,
+                    TREE_REVISION,
+                    1,
+                    1,
+                    16,
+                    16,
+                )
+                conn.sendall(server_frame(2, status))  # welcome
+
+                kind, payload = recv_server_frame(conn)
+                assert kind == 11 and len(payload) == 16  # attach_instance
+                identity = struct.unpack('!QQ', payload)
+                assert identity == (SESSION_ID, INSTANCE_ID)
+                self.attached.append(identity)
+                conn.sendall(server_frame(
+                    12,
+                    struct.pack('!QQQ', SESSION_ID, INSTANCE_ID, TREE_REVISION),
+                ))
+
+                while data := conn.recv(65536):
+                    conn.sendall(data)
+            except (AssertionError, OSError):
+                return
 
 
 def read_head(sock: socket.socket) -> tuple[int, dict[str, str], bytes]:
@@ -150,7 +216,7 @@ def wait_ready(port: int) -> None:
 
 
 def main() -> None:
-    echo = Echo(); echo.start()
+    server = AttachedEchoServer(); server.start()
     listen = free_port()
     host = f'howl.test:{listen}'
     origin = f'http://{host}'
@@ -159,8 +225,8 @@ def main() -> None:
         (root/'index.html').write_text('gateway-index\n')
         wire = root/'wire.wasm'; wire.write_bytes(b'wire')
         proc = subprocess.Popen([
-            str(GATEWAY), str(listen), str(echo.port), host, origin,
-            str(root), str(wire), '--require-access',
+            str(GATEWAY), str(listen), str(server.port), str(SESSION_ID), str(INSTANCE_ID),
+            host, origin, str(root), str(wire), '--require-access',
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             wait_ready(listen)
@@ -193,22 +259,22 @@ def main() -> None:
             assert status == 200 and body == b'export const lifecyclePolicy = true;\n'
             assert headers['content-type'].startswith('text/javascript')
             assert http_get(listen, 'wrong.test', '/', True)[0] == 403
-            assert echo.accepted == 0
+            assert server.accepted == 0
 
             sock, status, _ = ws_open(listen, host, origin, False)
-            sock.close(); assert status == 403 and echo.accepted == 0
+            sock.close(); assert status == 403 and server.accepted == 0
             sock, status, _ = ws_open(listen, host, 'http://wrong.test', True)
-            sock.close(); assert status == 403 and echo.accepted == 0
+            sock.close(); assert status == 403 and server.accepted == 0
             sock, status, _ = ws_open(listen, host, origin, True, 'YQ==')
-            sock.close(); assert status == 400 and echo.accepted == 0
+            sock.close(); assert status == 400 and server.accepted == 0
 
             one, status, head = ws_open(listen, host, origin, True)
             assert status == 101
             expected = base64.b64encode(hashlib.sha1((KEY + MAGIC).encode()).digest()).decode()
             assert head['sec-websocket-accept'] == expected
             deadline = time.monotonic()+2
-            while echo.accepted < 1 and time.monotonic() < deadline: time.sleep(.01)
-            assert echo.accepted == 1
+            while server.accepted < 1 and time.monotonic() < deadline: time.sleep(.01)
+            assert server.accepted == 1
             send_masked(one, 2, b'opaque-howl-bytes')
             assert recv_frame(one) == (2, b'opaque-howl-bytes')
 
@@ -228,10 +294,13 @@ def main() -> None:
                 assert status == 101
                 peers.append(peer)
             deadline = time.monotonic()+2
-            while echo.accepted < 6 and time.monotonic() < deadline: time.sleep(.01)
-            assert echo.accepted == 6
+            while server.accepted < 6 and time.monotonic() < deadline: time.sleep(.01)
+            assert server.accepted == 6
+            deadline = time.monotonic()+2
+            while len(server.attached) < 6 and time.monotonic() < deadline: time.sleep(.01)
+            assert server.attached == [(SESSION_ID, INSTANCE_ID)] * 6
             seventh, status, _ = ws_open(listen, host, origin, True)
-            seventh.close(); assert status == 503 and echo.accepted == 6
+            seventh.close(); assert status == 503 and server.accepted == 6
 
             send_masked(one, 1, b'text-is-rejected')
             one.settimeout(2)
@@ -241,7 +310,7 @@ def main() -> None:
             print(json.dumps({
                 'status':'pass', 'access_before_upstream':True, 'host_origin_exact':True,
                 'binary_bridge':True, 'streaming_bridge_bytes':stream_total, 'text_rejected':True, 'websocket_capacity':6,
-                'static_csp':True, 'upstream_accepts':echo.accepted,
+                'static_csp':True, 'server_attach':True, 'upstream_accepts':server.accepted,
             }))
         finally:
             proc.terminate()
@@ -251,6 +320,6 @@ def main() -> None:
             stderr = proc.stderr.read() if proc.stderr else ''
             if proc.returncode not in (-15, 0):
                 raise AssertionError(f'gateway exited {proc.returncode}: {stderr}')
-            echo.close()
+            server.close()
 
 if __name__ == '__main__': main()

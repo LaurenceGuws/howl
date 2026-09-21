@@ -1,46 +1,52 @@
 # Howl Web gateway
 
-This package owns the node-local browser transport edge for the experimental
-Howl Web client. It is deliberately protocol-blind: after a bounded HTTP/WebSocket
-upgrade it copies binary bytes between the browser and one explicit loopback Howl
-Instance endpoint. It never parses Howl frames, owns a PTY, interprets terminal
-state, discovers Server/Session identities, or chooses routes.
+This package owns the node-local browser transport edge for the experimental Howl Web
+client. It binds loopback, admits bounded HTTP/WebSocket traffic, performs one exact
+Server attach, and then becomes a protocol-blind HWLS byte bridge.
 
-The process binds **only `127.0.0.1`**. Public delivery belongs to the existing
-Cloudflare Tunnel and Access owners; do not bind this gateway to a non-loopback
-address or treat the presence of a Cloudflare header as cryptographic
-authentication by itself.
+The path is:
+
+```text
+browser WebSocket
+      ↓
+howl-web-gateway
+      ↓ server_protocol hello + attach(session_id, instance_id)
+Server control listener
+      ↓ attach_ready; same TCP fd handed to Instance
+ordinary HWLS stream
+```
+
+The gateway parses **Server control only for the attach handshake**. After `attach_ready`
+it does not parse HWLS frames, terminal state, PTY bytes, or renderer data. It owns no
+PTY, VT, Instance, Session or Server lifetime and does not discover or choose identities;
+the operator supplies the exact Server port, Session ID and Instance ID.
+
+The process binds **only `127.0.0.1`**. Public delivery belongs to an external edge such
+as Cloudflare Tunnel/Access; do not bind this gateway to a non-loopback address or treat
+the presence of a Cloudflare header as cryptographic authentication by itself.
 
 ## Admission
 
-Before opening the upstream terminal connection the gateway requires:
+Before opening any Server control connection the gateway requires:
 
 - exact `Host`;
 - exact WebSocket `Origin`;
 - HTTP/1.1 GET with no request body;
 - WebSocket version 13, one valid 16-byte nonce, and exact upgrade tokens;
-- when `--require-access` is selected, a nonempty `Cf-Access-Jwt-Assertion`
-  injected by the already-enforcing Cloudflare Access application.
+- when `--require-access` is selected, a nonempty `Cf-Access-Jwt-Assertion` injected by
+  the already-enforcing Cloudflare Access application.
 
-The last check is an origin misrouting guard. Cloudflare Access remains the
-authentication authority, matching Remoter's established tunnel boundary. The
-origin is not independently exposed on any network interface.
+The last check is an origin-misrouting guard. Cloudflare Access remains the identity
+authority. Rejected browser requests therefore create **zero Server connections**.
 
-At most six simultaneous WebSockets are admitted. One Howl Web page uses two
-steady sockets (live observation + control), lazily adds a third while terminal
-image resources are resident, and may use a fourth only while canonical history
-is active. Six therefore still permits a normal two-page/Safari-to-standalone
-handoff with image resources, while history during such a handoff remains an
-explicit bounded capacity edge rather than silently growing transport. One
-message is at most 64 KiB and upstream reads are emitted as at most 16 KiB
-binary WebSocket messages. Long-lived terminal streams have no cumulative byte
-quota: memory/backpressure safety comes from those per-message/fixed-chunk
-bounds plus bounded connection admission. Text and fragmented browser messages
-fail closed. Ordinary HTTP concurrency is bounded to eight connections.
+At most six simultaneous WebSockets are admitted. Each admitted WebSocket obtains its
+own exact attach to the configured Instance, matching the existing observer/control/
+history/image client model. One browser message is at most 64 KiB and upstream reads are
+emitted as at most 16 KiB binary WebSocket messages. Text and fragmented browser
+messages fail closed. Ordinary HTTP concurrency is bounded to eight connections.
 
-Static serving is an exact route table only. There is no filesystem path derived
-from a request target, redirect, proxy route, directory listing, or fallback SPA
-path.
+Static serving is an exact route table only. There is no request-derived filesystem
+path, proxy route, directory listing, or fallback SPA path.
 
 ## Build and prove
 
@@ -49,11 +55,12 @@ zig build check test
 zig build install -Doptimize=ReleaseSafe
 ```
 
-`test` includes a Python-standard-library black-box proof. Denied Host, Origin,
-Access and malformed WebSocket requests are verified to make zero upstream
-connections. A fully admitted binary connection echoes more than 9 MiB over one long-lived
-connection through a fake loopback upstream, text is rejected, six simultaneous
-WebSockets are admitted, and a seventh is refused.
+`test` includes a Python-standard-library black-box proof. Its upstream is a minimal
+`server_protocol` peer that validates `hello`, exact Session+Instance attach and
+`attach_ready`, then becomes an opaque echo stream. Denied Host, Origin, Access and
+malformed WebSocket requests are proven to create zero Server connections. Six admitted
+WebSockets all attach the exact configured identity, a seventh is refused, text is
+rejected, and more than 9 MiB crosses one long-lived post-attach binary stream.
 
 The executable is:
 
@@ -64,14 +71,9 @@ zig-out/bin/howl-web-gateway
 Usage:
 
 ```text
-howl-web-gateway LISTEN_PORT INSTANCE_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
+howl-web-gateway LISTEN_PORT SERVER_PORT SESSION_ID INSTANCE_ID EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
 ```
 
-`INSTANCE_PORT` is a direct HWLS Instance TCP upstream. It is retained for bounded
-compatibility/testing only: the maintained Server runtime owns one control listener and
-publishes no per-Instance TCP listener. Therefore this executable is not currently a
-complete Server-managed Web launch path. A future live integration must perform exact
-Server attach before entering this existing protocol-blind HWLS byte pump.
-
-All ports and paths are explicit. When testing this compatibility seam, use only a
-disposable echo Instance; a normal interactive shell is not an authentication test.
+`SERVER_PORT` is the loopback Howl Server control listener. `SESSION_ID` and
+`INSTANCE_ID` identify the exact terminal occurrence to expose. The gateway does not
+perform Session-name lookup, Instance selection, creation, restart or discovery.

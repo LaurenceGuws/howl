@@ -3,6 +3,8 @@
     .version = "0.1.6-dev",
     .fingerprint = 0x728da2b33afdb000,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
-    .dependencies = .{},
+    .dependencies = .{
+        .server_client = .{ .path = "../../server-client" },
+    },
     .paths = .{ "README.md", "build.zig", "build.zig.zon", "src", "tests" },
 }

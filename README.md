@@ -89,10 +89,9 @@ Flutter currently exercises both direct HWLS and Server-selected Instance routes
 small app shell may persist explicit labelled Server endpoints, but that is application
 configuration, not Server discovery.
 
-The Web wire/renderer/gateway proofs remain maintained. Its older integrated live
-gateway still expects an externally supplied direct HWLS Instance port; because the
-current Server runtime publishes no per-Instance listener, that live topology is not a
-current product route until the gateway learns Server attach.
+The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
+exact Server-selected Instance through `server-client` attach and then carries unchanged
+HWLS over WebSocket; it does not require or recreate a per-Instance listener.
 
 ## Build
 

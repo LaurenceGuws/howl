@@ -9,6 +9,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const server_client = b.dependency("server_client", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("server_client", server_client.module("server_client"));
     const exe = b.addExecutable(.{ .name = "howl-web-gateway", .root_module = module });
     b.installArtifact(exe);
 

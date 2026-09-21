@@ -162,9 +162,9 @@ or non-text updates. Private guard characters never enter the terminal. Android
 and iOS keep their existing full-value IME and backspace-runway path.
 
 The former combined Linux Flutter/Web helper was removed with the standalone
-per-Instance listener topology. Build and launch Flutter through its explicit direct or
-Server-selected routes documented below; do not recreate a private Session daemon merely
-to share an old Web gateway upstream.
+per-Instance listener topology. Flutter now uses its explicit direct or Server-selected
+routes documented below, while the Web gateway performs its own exact Server attach.
+Neither client requires a private Session daemon or per-Instance listener.
 
 Build the native host first, then the normal route-agnostic Flutter bundle:
 

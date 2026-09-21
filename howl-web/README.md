@@ -59,26 +59,31 @@ zig build text-web
 zig build gateway-install
 ```
 
-## Live route status
+## Live gateway route
 
-The older live browser gateway currently accepts a **direct HWLS Instance TCP port** as
-its upstream. `zig build live -- PORT` likewise assumes a caller has already supplied
-such a disposable direct Instance stream.
+The maintained browser gateway now follows the same Server topology as Flutter and the
+native CLI. It accepts one loopback Server port plus exact Session and Instance IDs,
+performs the bounded `server-client` attach handshake, consumes `attach_ready`, and then
+bridges ordinary HWLS bytes without further protocol interpretation.
 
-That topology is no longer produced by the maintained Server runtime: Server owns one
-control listener and deliberately publishes **no per-Instance listeners**. Therefore the
-integrated live Web route is currently an explicit compatibility/pressure seam, not a
-qualified product route and not a documented way to launch normal Howl work.
+The browser remains unaware of Server framing. Its existing observer/control/history/
+image WebSockets each become independent HWLS clients of the selected Instance through
+the gateway. Server still publishes no per-Instance listener and the gateway introduces
+no Server-side byte proxy.
 
-The next truthful live-Web integration must teach the gateway/native side to connect to
-one Server, select an exact Session+Instance identity, consume `attach_ready`, and then
-continue byte-for-byte with ordinary HWLS. Until that migration is earned, do not
-resurrect a standalone Instance daemon or per-Instance socket merely to make the browser
-path convenient.
+The gateway black-box gate proves fail-closed admission before any Server connection,
+exact identity attachment for all admitted WebSockets, bounded capacity and long-lived
+binary streaming. A real-runtime canary additionally proved:
 
-`tests/live.mjs` remains useful only when an external test harness intentionally supplies
-a disposable direct HWLS endpoint. Its echo fixture is `tests/echo.py`; it is test data,
-not a product launcher.
+```text
+real Server -> real Session -> real Instance
+           -> Web gateway -> WebSocket HWLS hello -> real HWLS welcome
+```
+
+The low-level `zig build live -- PORT` Node/Wasm check is intentionally narrower: it
+still expects a caller-supplied disposable **direct HWLS** endpoint and is retained only
+as a wire pressure tool. It is not the browser product route and must not motivate a
+per-Instance listener or standalone Instance daemon.
 
 ## Browser interaction policy
 
