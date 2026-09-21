@@ -5617,10 +5617,10 @@ pub const Terminal = struct {
 
     /// Read-only capability over one live Terminal.
     ///
-    /// A Terminal owner keeps the direct mutable embedding API. A coordinator
-    /// such as Session may instead lend this opaque capability so another
-    /// component can observe canonical VT semantics without copying the owning
-    /// Terminal value or reaching mutable retained storage.
+    /// A Terminal owner keeps the direct mutable embedding API. An embedder such
+    /// as Instance may instead lend this opaque capability so another component
+    /// can observe canonical VT semantics without copying the owning Terminal value
+    /// or reaching mutable retained storage.
     pub const Observation = opaque {
         fn terminal(self: *const Observation) *const Terminal {
             return @ptrCast(@alignCast(self));

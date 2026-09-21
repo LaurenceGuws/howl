@@ -1493,7 +1493,7 @@ pub const Service = struct {
 
     fn bumpObservation(self: *Service) void {
         self.observation_revision = std.math.add(u64, self.observation_revision, 1) catch
-            @panic("session observation revision exhausted");
+            @panic("Instance observation revision exhausted");
     }
 
     // -------------------------------------------------------------------------

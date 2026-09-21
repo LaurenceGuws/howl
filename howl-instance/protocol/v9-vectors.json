@@ -1,6 +1,6 @@
 {
-  "schema": "howl.session.wire.v9/vectors",
-  "contract": "Howl session wire v9; header version is the complete compatibility boundary. Every snapshot carries exactly one bounded complete properties packet after graphics and before end, preserving the same canonical revision.",
+  "schema": "howl.instance.wire.v9/vectors",
+  "contract": "Howl Instance wire v9; header version is the complete compatibility boundary. Every snapshot carries exactly one bounded complete properties packet after graphics and before end, preserving the same canonical revision.",
   "byte_order": "big-endian for every multi-byte integer",
   "cases": [
     {

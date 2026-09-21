@@ -1,4 +1,4 @@
-// Client-local geometry ownership policy. The session remains the authority:
+// Client-local geometry ownership policy. The Instance remains the authority:
 // Web only remembers whether its current control connection successfully claimed
 // that authority, and followers never steal it merely because their viewport differs.
 export class ResizePolicy {

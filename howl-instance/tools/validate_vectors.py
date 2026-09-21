@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v9 wire-vector decoder and validator.
+"""Independent Howl Instance v9 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -990,7 +990,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v9/vectors", "document_schema")
+    require(document.get("schema") == "howl.instance.wire.v9/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
