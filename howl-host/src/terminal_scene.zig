@@ -1023,13 +1023,12 @@ test "local historical prepared frame cannot stale replay after output and reflo
         std.testing.environ,
         .{
             .shell = "/bin/sh",
-            .command =
-                "stty -echo; " ++
-                "i=1; while [ $i -le 14 ]; do printf 'BASE-%02d-abcdefghijklmnop\n' "$i"; i=$((i+1)); done; " ++
-                "printf '\033]0;BASE-READY\007'; " ++
+            .command = "stty -echo; " ++
+                "i=1; while [ $i -le 14 ]; do printf 'BASE-%02d-abcdefghijklmnop\\n' $i; i=$((i+1)); done; " ++
+                "printf '\\033]0;BASE-READY\\007'; " ++
                 "read line; " ++
-                "i=15; while [ $i -le 28 ]; do printf 'NEXT-%02d-qrstuvwxyz012345\n' "$i"; i=$((i+1)); done; " ++
-                "printf '\033]0;NEXT-READY\007'; cat",
+                "i=15; while [ $i -le 28 ]; do printf 'NEXT-%02d-qrstuvwxyz012345\\n' $i; i=$((i+1)); done; " ++
+                "printf '\\033]0;NEXT-READY\\007'; cat",
             .rows = 4,
             .columns = 8,
             .history_rows = 64,
