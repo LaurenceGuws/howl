@@ -26,11 +26,10 @@ authentication and encryption stay outside Howl. An operator may use SSH or SSH
 port forwarding to make a remote session locally reachable without teaching
 Howl node names, Fleet topology, Mesh routes or credentials.
 
-The first server cut deliberately avoids a second management/discovery protocol.
-One foreground `howl server` process owns several named terminals and publishes a
-startup manifest containing their ordinary Unix attach endpoints. This proves the
-collection/lifetime shape without making process-per-terminal permanent or
-prematurely designing a tmux-style control plane.
+A foreground `howl server run` process owns the authoritative bounded Session
+collection behind the separate HWLM manager protocol. Direct terminal commands
+still address explicit HWLS endpoints in this checkpoint; the CLI's human/operator
+manager verbs are the next surface layered over that already-live authority.
 
 ## Commands
 
@@ -38,7 +37,7 @@ The intended first vocabulary is:
 
 ```text
 howl version
-howl server RUNTIME_DIR NAME [NAME...] [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N] [--columns N]
+howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]
 howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
 howl state ENDPOINT
 howl type ENDPOINT TEXT
@@ -52,9 +51,9 @@ howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate
 ```
 
 There is intentionally no client-side `exec`, `run`, or shell-evaluation
-operation. `howl server --command` only selects the child command at terminal
-creation time. Attached clients still interact with the running PTY by submitting
-terminal input; How the child interprets that input is not a Howl API.
+operation on a running terminal. Session creation may select one bounded child
+command through the manager launch contract; after creation, attached clients
+interact with the PTY only through terminal input and explicit Session controls.
 
 Mouse input is part of the canonical session protocol but is intentionally not
 in the first CLI mutation cut. Terminal coordinates can become semantically
@@ -66,21 +65,19 @@ mechanism.
 
 ## Multi-terminal server
 
-`howl server` enters the foreground `howl-server` collection owner. All named
-terminals live in the same `howl` process; each terminal currently publishes one Unix attach socket
-under the supplied absolute runtime directory so existing Flutter, Web, Odin and
-CLI clients can attach without a new routing protocol.
+`howl server run /run/user/1000/howl` starts with zero Sessions and publishes one
+`howl.server/v2` startup receipt naming its HWLM manager endpoint, fresh server id,
+PID and fixed capacity. The runtime lock rejects a second owner for the same
+directory. The server remains alive with an empty collection.
 
-For example, `howl server /run/user/1000/howl work logs` publishes
-`unix:/run/user/1000/howl/work.sock` and `unix:/run/user/1000/howl/logs.sock` in
-one JSON startup manifest. The process then services both PTY+VT instances until
-it exits. Names are bounded safe path components, duplicate names are rejected,
-and at most sixteen terminals are admitted in this canary.
+HWLM v1 already owns dynamic create/close, exact non-reused Session ids, coherent
+roster revisions, retained exited/failed records and bounded shutdown. One Session
+failure does not retire the manager or healthy siblings. Each Session temporarily
+continues to publish `unix:RUNTIME_DIR/NAME.sock` for ordinary HWLS attachment until
+the direct managed-attach handoff lands.
 
-This is intentionally not yet a daemon registry, reattach UI, or dynamic
-`new/list/kill` control protocol. The purpose of this slice is to establish that
-one process can directly own many independent terminals while all maintained
-clients continue using the existing attach protocol.
+The server is intentionally foreground. Daemonization, restart policy, remote
+authentication/encryption and service discovery belong to external owners.
 
 ## Compact snapshot
 

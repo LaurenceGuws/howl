@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, operation, "server")) {
         if (argv.len < 4) return usage();
         switch (try server.run(init, argv[2..])) {
-            .all_terminals_failed => std.process.exit(1),
+            .shutdown => return,
         }
     }
     if (argv.len < 3) return usage();
@@ -196,7 +196,7 @@ fn emitActionReceipt(init: std.process.Init, operation: []const u8) !void {
 fn usage() error{InvalidArguments} {
     std.debug.print(
         \\usage:
-        \\  howl server RUNTIME_DIR NAME [NAME...] [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N] [--columns N]
+        \\  howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]
         \\  howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
         \\  howl state ENDPOINT
         \\  howl type ENDPOINT TEXT|--stdin

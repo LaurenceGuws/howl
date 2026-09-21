@@ -5,26 +5,42 @@ collection/lifecycle authority beneath operator and graphical management clients
 it does not own terminal semantics, rendering, authentication, routing, or service
 supervision.
 
-The initial extracted cut intentionally preserves the existing static
-`howl server RUNTIME_DIR NAME...` behavior unchanged while moving collection
-ownership out of the CLI package. Dynamic lifecycle and the manager protocol are
-later slices and must be proven at this boundary rather than reconstructed by
-filesystem or process discovery.
+`howl server run RUNTIME_DIR` enters this owner in the foreground with zero
+Sessions. The process holds an exclusive runtime lock, publishes one HWLM manager
+endpoint, remains healthy with an empty collection, and admits at most sixteen
+retained Session records. A supervisor may restart the process; Howl does not
+daemonize itself or promise Session persistence across a server restart.
 
 ## Manager protocol
 
 `howl_server_protocol` owns the separate bounded HWLM management wire. HWLM v1
 keeps collection lifecycle distinct from the HWLS terminal Session protocol and
-defines exact server/session identity, roster, create/close/attach/shutdown and
-result vocabulary. The current runtime has not adopted those operations yet.
+defines exact server/session identity, revisioned roster observation,
+create/close/attach/shutdown and result vocabulary.
 
-`Registry` now owns the dynamic bounded collection model behind the future
-manager: non-reused session ids, retained exited/failed records, exact close by
-id, roster revisions, deterministic roster projection, and Session endpoint
-cleanup. The foreground CLI entrypoint still uses the earlier static loop until
-the manager listener is connected in the next slice.
+The nonblocking manager listener and authoritative `Registry` implement the live
+v1 collection semantics now used by `howl server run`:
 
-The nonblocking manager listener now exercises HWLM against the authoritative
-registry, including independent roster observation/control clients, dynamic
-create/close, revision wakeups and the stopping state. The public `howl server`
-entrypoint is switched to this owner in the following checkpoint.
+- a fresh nonzero `server_id` identifies each owner-process lifetime;
+- monotonically allocated nonzero `session_id` values are never reused within
+  that lifetime;
+- names are bounded unique human labels, not destructive-operation identities;
+- dynamic create and exact-id close mutate one coherent roster revision;
+- exited Sessions remain retained and attachable until explicit close;
+- endpoint failures retain a bounded failed record while releasing the failed
+  endpoint and leaving siblings alive;
+- roster observation is request-driven long polling, with no unsolicited queue;
+- a slow, malformed or disconnected manager client owns only its bounded client
+  slot and cannot pace Session service;
+- manager shutdown enters a stopping state, refuses new lifecycle mutations,
+  gives bounded time for the acknowledgement to drain, then releases Sessions in
+  reverse ownership order.
+
+Unix manager sockets are mode 0600. Explicit TCP management listeners bind only
+IPv4 loopback. Authentication, encryption, remote routing, service supervision and
+discovery remain outside Howl.
+
+Each managed Session still publishes its temporary per-session Unix HWLS endpoint
+under `RUNTIME_DIR` in this checkpoint. The next accepted slice replaces that
+intermediate discovery seam with direct HWLM `attach(session_id)` stream handoff;
+the HWLS Session protocol itself remains unchanged.

@@ -38,6 +38,7 @@ pub fn build(b: *std.Build) void {
     });
     server_tests_root.addImport("howl_session", session.module("howl_session"));
     server_tests_root.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
+    server_tests_root.addImport("howl_server_protocol", protocol_module);
     const server_tests = b.addTest(.{
         .name = "howl-server-collection",
         .root_module = server_tests_root,

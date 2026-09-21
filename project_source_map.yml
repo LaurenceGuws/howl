@@ -23,10 +23,11 @@ experimental:
     need owned semantic lifetime; synchronous renderers may instead borrow the
     already-validated lossless rich observation directly
   howl-server: >-
-    bounded one-process collection owner for multiple independent canonical
-    Sessions; the initial extracted cut preserves the proven static named-terminal
-    collection and per-instance failure containment outside CLI command policy;
-    dynamic registry/control and managed attach are intentionally later slices
+    bounded one-process authoritative collection owner for multiple independent
+    canonical Sessions; HWLM v1 provides exact server/session identity, revisioned
+    roster observation, dynamic create/close, retained exited/failed records and
+    bounded shutdown while Session data-plane endpoints remain HWLS; direct managed
+    attach is the next lifecycle slice
   howl-cli: >-
     native human/agent terminal CLI and operator surface over explicit Session
     endpoints plus the howl-server collection owner; command vocabulary and
