@@ -1,36 +1,33 @@
 #!/usr/bin/env python3
+"""End-to-end proof for the public Howl server-manager CLI."""
 
 import json
 import os
 import signal
-import socket
-import struct
 import subprocess
 import sys
 import tempfile
 import time
 
-MAGIC = b"HWLM"
-VERSION = 1
-HELLO = 1
-WELCOME = 2
-CREATE = 7
-CLOSE = 8
-SHUTDOWN = 11
-RESULT = 12
-OK = 1
 
-
-def run(*argv, input_text=None):
-    return subprocess.run(
-        argv,
+def run(cli, *args, input_text=None, check=True):
+    completed = subprocess.run(
+        [cli, *args],
         input=input_text,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        check=True,
         timeout=10,
     )
+    if check and completed.returncode != 0:
+        raise AssertionError((args, completed.returncode, completed.stdout, completed.stderr))
+    return completed
+
+
+def run_json(cli, *args):
+    completed = run(cli, *args)
+    assert not completed.stderr, (args, completed.stderr)
+    return json.loads(completed.stdout)
 
 
 def child_comms(pid):
@@ -48,86 +45,6 @@ def child_comms(pid):
     return result
 
 
-def frame(kind, payload=b""):
-    return struct.pack(">4sBB2xI", MAGIC, VERSION, kind, len(payload)) + payload
-
-
-def recv_exact(sock, count):
-    data = bytearray()
-    while len(data) < count:
-        chunk = sock.recv(count - len(data))
-        if not chunk:
-            raise AssertionError("manager connection closed")
-        data.extend(chunk)
-    return bytes(data)
-
-
-def recv_frame(sock):
-    header = recv_exact(sock, 12)
-    magic, version, kind, length = struct.unpack(">4sBB2xI", header)
-    assert magic == MAGIC
-    assert version == VERSION
-    assert length <= 16 * 1024
-    return kind, recv_exact(sock, length)
-
-
-class Manager:
-    def __init__(self, endpoint):
-        assert endpoint.startswith("unix:")
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(5)
-        self.sock.connect(endpoint[len("unix:"):])
-        self.sock.sendall(frame(HELLO))
-        kind, payload = recv_frame(self.sock)
-        assert kind == WELCOME
-        server_id, revision, pid, count, capacity, stopping = struct.unpack(
-            ">QQIHHB7x", payload
-        )
-        assert server_id != 0
-        assert revision == 1
-        assert count == 0
-        assert capacity == 16
-        assert stopping == 0
-        self.server_id = server_id
-        self.pid = pid
-
-    def close_socket(self):
-        self.sock.close()
-
-    def create(self, name):
-        encoded = name.encode("ascii")
-        assert 0 < len(encoded) <= 48
-        payload = struct.pack(">HHBHHHB", 0, 0, len(encoded), 0, 0, 0, 0) + encoded
-        self.sock.sendall(frame(CREATE, payload))
-        kind, response = recv_frame(self.sock)
-        assert kind == RESULT
-        request_kind, code, session_id, revision = struct.unpack(">BB6xQQ", response)
-        assert request_kind == CREATE
-        assert code == OK
-        assert session_id != 0
-        return session_id, revision
-
-    def close_session(self, session_id):
-        self.sock.sendall(frame(CLOSE, struct.pack(">Q", session_id)))
-        kind, response = recv_frame(self.sock)
-        assert kind == RESULT
-        request_kind, code, returned_id, revision = struct.unpack(">BB6xQQ", response)
-        assert request_kind == CLOSE
-        assert code == OK
-        assert returned_id == session_id
-        return revision
-
-    def shutdown(self):
-        self.sock.sendall(frame(SHUTDOWN))
-        kind, response = recv_frame(self.sock)
-        assert kind == RESULT
-        request_kind, code, session_id, revision = struct.unpack(">BB6xQQ", response)
-        assert request_kind == SHUTDOWN
-        assert code == OK
-        assert session_id == 0
-        return revision
-
-
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: server_multi.py HOWL")
@@ -141,23 +58,63 @@ def main():
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        manager = None
         try:
             line = proc.stdout.readline()
             if not line:
-                stderr = proc.stderr.read()
-                raise AssertionError(f"server exited before startup receipt: {stderr}")
+                raise AssertionError(f"server exited before startup receipt: {proc.stderr.read()}")
             startup = json.loads(line)
             assert startup["schema"] == "howl.server/v2"
             assert startup["sessions"] == 0
             assert startup["capacity"] == 16
-            manager = Manager(startup["manager"])
-            assert manager.pid == proc.pid
+            manager = startup["manager"]
 
-            one_id, one_revision = manager.create("one")
-            two_id, two_revision = manager.create("two")
-            assert (one_id, two_id) == (1, 2)
-            assert (one_revision, two_revision) == (2, 3)
+            status = run_json(howl, "server", "status", manager)
+            assert status["schema"] == "howl.server.status/v1"
+            assert status["server_id"] == startup["server_id"]
+            assert status["pid"] == proc.pid
+            assert status["sessions"] == 0
+            assert status["capacity"] == 16
+            assert status["stopping"] is False
+
+            empty = run_json(howl, "session", "list", manager)
+            assert empty["schema"] == "howl.server.sessions/v1"
+            assert empty["sessions"] == []
+            assert empty["roster_revision"] == "1"
+
+            one = run_json(howl, "session", "create", manager, "one")
+            two = run_json(howl, "session", "create", manager, "two")
+            assert one["operation"] == "session.create" and one["session_id"] == "1"
+            assert two["operation"] == "session.create" and two["session_id"] == "2"
+            assert one["roster_revision"] == "2" and two["roster_revision"] == "3"
+
+            duplicate = run(howl, "session", "create", manager, "one", check=False)
+            assert duplicate.returncode != 0 and not duplicate.stdout
+            duplicate_error = json.loads(duplicate.stderr)
+            assert duplicate_error["schema"] == "howl.error/v1"
+            assert duplicate_error["operation"] == "session.create"
+            assert duplicate_error["code"] == "name_exists"
+            assert "stack trace" not in duplicate.stderr and "error return context" not in duplicate.stderr
+
+            listed = run_json(howl, "session", "list", manager)
+            assert [row["name"] for row in listed["sessions"]] == ["one", "two"]
+            assert [row["session_id"] for row in listed["sessions"]] == ["1", "2"]
+            shown = run_json(howl, "session", "show", manager, "two")
+            assert shown["session"]["session_id"] == "2"
+            assert shown["session"]["state"] == "running"
+
+            stale = run(
+                howl,
+                "session",
+                "close",
+                manager,
+                "one",
+                "--expect-id",
+                "99",
+                check=False,
+            )
+            assert stale.returncode != 0 and not stale.stdout
+            stale_error = json.loads(stale.stderr)
+            assert stale_error["code"] == "stale_identity"
 
             sessions = {
                 "one": f"unix:{runtime}/one.sock",
@@ -166,25 +123,24 @@ def main():
             run(howl, "type", sessions["one"], "--stdin", input_text="echo ONE_CANARY\n")
             run(howl, "type", sessions["two"], "--stdin", input_text="echo TWO_CANARY\n")
             time.sleep(0.15)
-
-            one = run(howl, "snapshot", sessions["one"], "--text").stdout
-            two = run(howl, "snapshot", sessions["two"], "--text").stdout
-            assert "ONE_CANARY" in one
-            assert "TWO_CANARY" not in one
-            assert "TWO_CANARY" in two
-            assert "ONE_CANARY" not in two
+            one_text = run(howl, "snapshot", sessions["one"], "--text").stdout
+            two_text = run(howl, "snapshot", sessions["two"], "--text").stdout
+            assert "ONE_CANARY" in one_text and "TWO_CANARY" not in one_text
+            assert "TWO_CANARY" in two_text and "ONE_CANARY" not in two_text
 
             children = child_comms(proc.pid)
             assert children.count("sh") >= 2, children
             assert "howl-sessiond" not in children, children
 
-            close_revision = manager.close_session(one_id)
-            assert close_revision == 4
+            closed = run_json(howl, "session", "close", manager, "one", "--expect-id", "1")
+            assert closed["operation"] == "session.close" and closed["session_id"] == "1"
             assert not os.path.exists(f"{runtime}/one.sock")
             assert os.path.exists(f"{runtime}/two.sock")
+            remaining = run_json(howl, "session", "list", manager)
+            assert [row["name"] for row in remaining["sessions"]] == ["two"]
 
-            shutdown_revision = manager.shutdown()
-            assert shutdown_revision == 5
+            shutdown = run_json(howl, "server", "shutdown", manager)
+            assert shutdown["operation"] == "server.shutdown"
             proc.wait(timeout=2)
             assert proc.returncode == 0
 
@@ -192,17 +148,17 @@ def main():
                 "status": "pass",
                 "schema": startup["schema"],
                 "server_id": startup["server_id"],
-                "session_ids": [one_id, two_id],
+                "session_ids": [1, 2],
                 "owner_pid": proc.pid,
                 "children_before_close": children,
                 "sessiond_children": 0,
-                "independent_state": True,
+                "cli_manager_surface": True,
+                "structured_errors": True,
+                "aba_guard": True,
                 "dynamic_create_close": True,
                 "managed_shutdown": True,
             }))
         finally:
-            if manager is not None:
-                manager.close_socket()
             if proc.poll() is None:
                 try:
                     os.killpg(proc.pid, signal.SIGTERM)

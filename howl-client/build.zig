@@ -4,12 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const server = b.dependency("howl_server", .{ .target = target, .optimize = optimize });
     const module = b.addModule("howl_client", .{
         .root_source_file = b.path("src/howl_client.zig"),
         .target = target,
         .optimize = optimize,
     });
     module.addImport("howl_session", session.module("howl_session"));
+    module.addImport("howl_server_protocol", server.module("howl_server_protocol"));
     const tests = b.addTest(.{
         .name = "howl-client",
         .root_module = module,

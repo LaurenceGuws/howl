@@ -2,34 +2,66 @@ const std = @import("std");
 const cli = @import("howl_cli");
 const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
-const server = @import("howl_server");
+const failure = @import("failure.zig");
+const manager_commands = @import("manager_commands.zig");
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init) void {
+    var context: failure.Context = .{};
+    run(init, &context) catch |problem| {
+        context.emit(init, @errorName(problem));
+        std.process.exit(if (problem == error.InvalidArguments) 64 else 1);
+    };
+}
+
+fn run(init: std.process.Init, context: *failure.Context) !void {
     const argv = init.minimal.args.vector;
-    if (argv.len < 2) return usage();
+    if (argv.len < 2) return error.InvalidArguments;
     const operation = std.mem.span(argv[1]);
+    context.reset(operation);
+
+    if (std.mem.eql(u8, operation, "--help") or std.mem.eql(u8, operation, "-h"))
+        return printRootHelp(init);
+    if (std.mem.eql(u8, operation, "help")) {
+        if (argv.len == 2) return printRootHelp(init);
+        if (argv.len != 3) return error.InvalidArguments;
+        const topic = std.mem.span(argv[2]);
+        if (std.mem.eql(u8, topic, "server")) return printServerHelp(init);
+        if (std.mem.eql(u8, topic, "session")) return printSessionHelp(init);
+        return printTerminalHelp(init, topic);
+    }
     if (std.mem.eql(u8, operation, "version")) {
-        if (argv.len != 2) return usage();
+        context.reset("version");
+        if (argv.len != 2) return error.InvalidArguments;
         return versionCommand(init);
     }
     if (std.mem.eql(u8, operation, "server")) {
-        if (argv.len < 4) return usage();
-        switch (try server.run(init, argv[2..])) {
-            .shutdown => return,
-        }
+        if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printServerHelp(init);
+        if (argv.len >= 4 and isHelp(std.mem.span(argv[3]))) return printServerHelp(init);
+        return manager_commands.serverCommand(init, argv[2..], context);
     }
-    if (argv.len < 3) return usage();
+    if (std.mem.eql(u8, operation, "session")) {
+        if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printSessionHelp(init);
+        if (argv.len >= 4 and isHelp(std.mem.span(argv[3]))) return printSessionHelp(init);
+        return manager_commands.sessionCommand(init, argv[2..], context);
+    }
+    if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printTerminalHelp(init, operation);
+    if (argv.len < 3) return error.InvalidArguments;
     const endpoint = std.mem.span(argv[2]);
+    context.reset(operation);
 
-    if (std.mem.eql(u8, operation, "snapshot")) return snapshotCommand(init, endpoint, argv[3..]);
-    if (std.mem.eql(u8, operation, "state")) return stateCommand(init, endpoint, argv[3..]);
-    if (std.mem.eql(u8, operation, "type")) return bytesCommand(init, endpoint, argv[3..], false);
-    if (std.mem.eql(u8, operation, "paste")) return bytesCommand(init, endpoint, argv[3..], true);
-    if (std.mem.eql(u8, operation, "key")) return keyCommand(init, endpoint, argv[3..]);
-    if (std.mem.eql(u8, operation, "focus")) return focusCommand(init, endpoint, argv[3..]);
-    if (std.mem.eql(u8, operation, "resize")) return resizeCommand(init, endpoint, argv[3..]);
-    if (std.mem.eql(u8, operation, "signal")) return signalCommand(init, endpoint, argv[3..]);
-    return usage();
+    if (std.mem.eql(u8, operation, "snapshot")) return snapshotCommand(init, endpoint, argv[3..], context);
+    if (std.mem.eql(u8, operation, "state")) return stateCommand(init, endpoint, argv[3..], context);
+    if (std.mem.eql(u8, operation, "type")) return bytesCommand(init, endpoint, argv[3..], false, context);
+    if (std.mem.eql(u8, operation, "paste")) return bytesCommand(init, endpoint, argv[3..], true, context);
+    if (std.mem.eql(u8, operation, "key")) return keyCommand(init, endpoint, argv[3..], context);
+    if (std.mem.eql(u8, operation, "focus")) return focusCommand(init, endpoint, argv[3..], context);
+    if (std.mem.eql(u8, operation, "resize")) return resizeCommand(init, endpoint, argv[3..], context);
+    if (std.mem.eql(u8, operation, "signal")) return signalCommand(init, endpoint, argv[3..], context);
+    return error.InvalidArguments;
+}
+
+fn isHelp(value: []const u8) bool {
+    return std.mem.eql(u8, value, "--help") or std.mem.eql(u8, value, "-h");
 }
 
 fn versionCommand(init: std.process.Init) !void {
@@ -45,12 +77,15 @@ fn versionCommand(init: std.process.Init) !void {
     try stdout.interface.flush();
 }
 
-fn connect(init: std.process.Init, endpoint: []const u8) !client.Connection {
+fn connect(
+    init: std.process.Init,
+    endpoint: []const u8,
+    context: *failure.Context,
+) !client.Connection {
     var diagnostic: client.ConnectDiagnostic = .{};
-    return client.Connection.connectNative(init.gpa, init.io, endpoint, &diagnostic) catch |failure| {
-        if (diagnostic.route_message_len != 0)
-            std.debug.print("Howl SSH: {s}\n", .{diagnostic.route_message[0..diagnostic.route_message_len]});
-        return failure;
+    return client.Connection.connectNative(init.gpa, init.io, endpoint, &diagnostic) catch |problem| {
+        context.captureConnect(&diagnostic);
+        return problem;
     };
 }
 
@@ -58,7 +93,7 @@ fn stdoutWriter(init: std.process.Init, buffer: []u8) std.Io.File.Writer {
     return std.Io.File.stdout().writerStreaming(init.io, buffer);
 }
 
-fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     var after_revision: u64 = 0;
     var history_offset: u32 = 0;
     var format: enum { compact, text, rich } = .compact;
@@ -81,7 +116,7 @@ fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [
             history_offset = std.fmt.parseInt(u32, std.mem.span(args[index]), 10) catch return usage();
         } else return usage();
     }
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     var output_buffer: [16 * 1024]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
@@ -98,9 +133,9 @@ fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [
     try stdout.interface.flush();
 }
 
-fn stateCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn stateCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 0) return usage();
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     var output_buffer: [4096]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
@@ -108,7 +143,7 @@ fn stateCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
     try stdout.interface.flush();
 }
 
-fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, is_paste: bool) !void {
+fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, is_paste: bool, context: *failure.Context) !void {
     if (args.len != 1) return usage();
     const argument = std.mem.span(args[0]);
     var owned: ?[]u8 = null;
@@ -124,7 +159,7 @@ fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
         break :blk value;
     } else argument;
 
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     if (is_paste)
         try cli.actions.paste(&connection, bytes)
@@ -133,7 +168,7 @@ fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
     try emitActionReceipt(init, if (is_paste) "paste" else "type");
 }
 
-fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len == 0) return usage();
     const key = try cli.actions.parseKey(std.mem.span(args[0]));
     var action: protocol.InputKeyAction = .press;
@@ -151,7 +186,7 @@ fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]c
             modifiers = try cli.actions.parseModifiers(std.mem.span(args[index]));
         } else return usage();
     }
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     switch (key) {
         .named => |value| try cli.actions.namedKey(&connection, value, action, modifiers),
@@ -160,27 +195,27 @@ fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]c
     try emitActionReceipt(init, "key");
 }
 
-fn focusCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn focusCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 1) return usage();
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     try cli.actions.focus(&connection, try cli.actions.parseFocus(std.mem.span(args[0])));
     try emitActionReceipt(init, "focus");
 }
 
-fn resizeCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn resizeCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 2) return usage();
     const rows = std.fmt.parseInt(u16, std.mem.span(args[0]), 10) catch return usage();
     const columns = std.fmt.parseInt(u16, std.mem.span(args[1]), 10) catch return usage();
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     try cli.actions.resize(&connection, rows, columns);
     try emitActionReceipt(init, "resize");
 }
 
-fn signalCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8) !void {
+fn signalCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 1) return usage();
-    var connection = try connect(init, endpoint);
+    var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     try cli.actions.signal(&connection, try cli.actions.parseSignal(std.mem.span(args[0])));
     try emitActionReceipt(init, "signal");
@@ -194,18 +229,61 @@ fn emitActionReceipt(init: std.process.Init, operation: []const u8) !void {
 }
 
 fn usage() error{InvalidArguments} {
-    std.debug.print(
-        \\usage:
-        \\  howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]
-        \\  howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
-        \\  howl state ENDPOINT
-        \\  howl type ENDPOINT TEXT|--stdin
-        \\  howl paste ENDPOINT TEXT|--stdin
-        \\  howl key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]
-        \\  howl focus ENDPOINT in|out
-        \\  howl resize ENDPOINT ROWS COLUMNS
-        \\  howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate
-        \\
-    , .{});
     return error.InvalidArguments;
+}
+
+fn printRootHelp(init: std.process.Init) !void {
+    return printHelp(init, "Howl terminal and server manager\n\n" ++
+        "usage:\n" ++
+        "  howl server ...       manage the foreground Howl server\n" ++
+        "  howl session ...      manage server-owned Sessions\n" ++
+        "  howl snapshot ...     observe one explicit Session endpoint\n" ++
+        "  howl state ...        inspect terminal interaction state\n" ++
+        "  howl type|paste|key|focus|resize|signal ...\n" ++
+        "  howl version\n" ++
+        "  howl help server|session|COMMAND\n");
+}
+
+fn printServerHelp(init: std.process.Init) !void {
+    return printHelp(init, "usage:\n" ++
+        "  howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]\n" ++
+        "  howl server status SERVER [--text]\n" ++
+        "  howl server shutdown SERVER\n");
+}
+
+fn printSessionHelp(init: std.process.Init) !void {
+    return printHelp(init, "usage:\n" ++
+        "  howl session list SERVER [--text]\n" ++
+        "  howl session show SERVER NAME [--text]\n" ++
+        "  howl session create SERVER NAME [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N --columns N]\n" ++
+        "  howl session close SERVER NAME [--expect-id ID]\n");
+}
+
+fn printTerminalHelp(init: std.process.Init, operation: []const u8) !void {
+    const text = if (std.mem.eql(u8, operation, "snapshot"))
+        "usage: howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n"
+    else if (std.mem.eql(u8, operation, "state"))
+        "usage: howl state ENDPOINT\n"
+    else if (std.mem.eql(u8, operation, "type"))
+        "usage: howl type ENDPOINT TEXT|--stdin\n"
+    else if (std.mem.eql(u8, operation, "paste"))
+        "usage: howl paste ENDPOINT TEXT|--stdin\n"
+    else if (std.mem.eql(u8, operation, "key"))
+        "usage: howl key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n"
+    else if (std.mem.eql(u8, operation, "focus"))
+        "usage: howl focus ENDPOINT in|out\n"
+    else if (std.mem.eql(u8, operation, "resize"))
+        "usage: howl resize ENDPOINT ROWS COLUMNS\n"
+    else if (std.mem.eql(u8, operation, "signal"))
+        "usage: howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n"
+    else
+        return error.InvalidArguments;
+    return printHelp(init, text);
+}
+
+fn printHelp(init: std.process.Init, text: []const u8) !void {
+    var buffer: [4096]u8 = undefined;
+    var stdout = stdoutWriter(init, &buffer);
+    try stdout.interface.writeAll(text);
+    try stdout.interface.flush();
 }

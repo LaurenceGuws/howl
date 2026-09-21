@@ -25,6 +25,7 @@ pub const view = @import("view.zig");
 pub const selection = @import("selection.zig");
 pub const search = @import("search.zig");
 pub const images = @import("images.zig");
+pub const server = @import("server.zig");
 
 // Exported modules are lazy; reference them so package tests cannot be empty.
 test {

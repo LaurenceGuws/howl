@@ -27,9 +27,9 @@ port forwarding to make a remote session locally reachable without teaching
 Howl node names, Fleet topology, Mesh routes or credentials.
 
 A foreground `howl server run` process owns the authoritative bounded Session
-collection behind the separate HWLM manager protocol. Direct terminal commands
-still address explicit HWLS endpoints in this checkpoint; the CLI's human/operator
-manager verbs are the next surface layered over that already-live authority.
+collection behind the separate HWLM manager protocol. `howl server` and
+`howl session` are the operator surface over that live authority; direct terminal
+commands still address explicit HWLS endpoints until managed attach lands.
 
 ## Commands
 
@@ -38,6 +38,12 @@ The intended first vocabulary is:
 ```text
 howl version
 howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]
+howl server status SERVER [--text]
+howl server shutdown SERVER
+howl session list SERVER [--text]
+howl session show SERVER NAME [--text]
+howl session create SERVER NAME [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N --columns N]
+howl session close SERVER NAME [--expect-id ID]
 howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
 howl state ENDPOINT
 howl type ENDPOINT TEXT
@@ -226,22 +232,31 @@ CLI must not pretend leadership is durable beyond its actual connection.
 
 ## Output and errors
 
-Normal machine-facing output is bounded JSON with explicit schema/version and
-closed errors. Actions return a small receipt naming the requested operation and
-the session result code. Human `--text` output is the only intentionally
-unstructured path in the first cut.
+Normal machine-facing output is bounded JSON with explicit schema/version. Server
+status, roster/session inspection and lifecycle actions use dedicated
+`howl.server.*` schemas; 64-bit opaque/session/revision identities are serialized as
+JSON strings so JavaScript consumers do not lose precision. Human formatting is
+opt-in through `--text`.
+
+Every command failure is caught at the executable boundary and emits one bounded
+`howl.error/v1` JSON object on stderr instead of a Zig return trace. Manager
+rejections preserve the stable HWLM result code (for example `name_exists` or
+`stale_identity`), while transport failures preserve the connect stage, OS error
+when available, and bounded SSH carrier diagnostic. Usage failures exit 64; other
+failures exit nonzero. `--help`/`help` are successful stdout-only commands.
 
 Malformed endpoints, unsupported request families, invalid UTF-8/scalars,
-oversized requests/snapshots, protocol disagreement, stale future pointer
-contracts and server result failures all fail closed. A successful socket write
-is never treated as proof that the terminal operation succeeded.
+oversized requests/snapshots, protocol disagreement, stale identities and server
+result failures all fail closed. A successful socket write is never treated as
+proof that the requested operation succeeded.
 
 ## Shared client ownership
 
-The in-tree `howl-client` module already owns connection/framing, semantic actions,
-rich decoding, raw-cache lifetime, and the opaque immutable coarse projection.
-The CLI consumes it and owns command vocabulary and diagnostic formatting only;
-there is no pending client-engine extraction or separate client repository.
+The in-tree `howl-client` module owns the shared native ordered-stream transport,
+HWLS Session client, HWLM manager client, semantic actions, rich decoding,
+raw-cache lifetime, and the opaque immutable coarse projection. Protocol ownership
+stays separate even though socket/SSH/cancellation mechanics are shared. The CLI
+consumes those clients and owns command vocabulary and diagnostic formatting only.
 
 Native Flutter, Odin, and the Web decoding/rendering path reuse these boundaries.
 Application lifecycle, IME, gestures, accessibility, and presentation remain with
