@@ -954,3 +954,84 @@ test "fragmented retained clipboard pressure preserves exact text and FIFO ident
     }
     try std.testing.expectEqual(@as(u64, 10), expected_id);
 }
+
+test "write backpressure preserves reply ordering and unread PTY suffix" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 16,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    for (0..8) |_| {
+        try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
+    }
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+
+    // One older terminal reply is already waiting to enter Session's bounded
+    // child-write queue.
+    const dsr = try state.terminal.feed("\x1b[5n");
+    try std.testing.expect(dsr.stateChanged());
+    try std.testing.expectEqualStrings("\x1b[0n", state.terminal.replyBytes());
+    const older_reply_len = state.terminal.replyBytes().len;
+
+    @memset(&state.writes.bytes, 'W');
+    state.writes.count = state.writes.bytes.len;
+
+    const pressure = "X\x1b]52;c;?\x07Y";
+    @memcpy(state.reads[0..pressure.len], pressure);
+    state.read_start = 0;
+    state.read_end = pressure.len;
+
+    const blocked = try state.service(false, false, 1, .retain);
+    try std.testing.expect(!blocked.changed);
+    try std.testing.expect(blocked.write_pending);
+    try std.testing.expect(!blocked.retained_consequence_fallback);
+    try std.testing.expectEqual(@as(usize, 0), state.read_start);
+    try std.testing.expectEqual(pressure.len, state.read_end);
+    try std.testing.expectEqualStrings("\x1b[0n", state.terminal.replyBytes());
+
+    // Make room for exactly the older reply. It must transfer before PTY input
+    // advances. The pressure-causing query then defaults generation 1 and
+    // creates its own fallback reply, but that new reply remains in VT because
+    // the Session queue is full again.
+    state.writes.count -= older_reply_len;
+    const partial = try state.service(false, false, 2, .retain);
+    try std.testing.expect(partial.changed);
+    try std.testing.expect(partial.write_pending);
+    try std.testing.expect(partial.retained_consequence_fallback);
+    try std.testing.expectEqual(state.writes.bytes.len, state.writes.count);
+    try std.testing.expectEqualStrings(
+        "\x1b[0n",
+        state.writes.bytes[state.writes.count - older_reply_len .. state.writes.count],
+    );
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", state.terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 2), state.terminal.consequenceHead().?.id());
+    try std.testing.expectEqual(@as(usize, pressure.len - 1), state.read_start);
+    try std.testing.expectEqual(pressure.len, state.read_end);
+    var view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+
+    // Simulate bounded transport progress. The pending fallback reply transfers
+    // first on the next service turn, then the unread Y applies exactly once.
+    state.writes.consume(state.writes.count);
+    const resumed = try state.service(false, false, 3, .retain);
+    try std.testing.expect(resumed.changed);
+    try std.testing.expect(resumed.write_pending);
+    try std.testing.expect(!resumed.retained_consequence_fallback);
+    try std.testing.expectEqualStrings(
+        "\x1b]52;c;\x1b\\",
+        state.writes.bytes[0..state.writes.count],
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.terminal.replyBytes().len);
+    try std.testing.expectEqual(@as(usize, 0), state.read_start);
+    try std.testing.expectEqual(@as(usize, 0), state.read_end);
+    view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+}
