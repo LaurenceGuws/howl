@@ -429,3 +429,127 @@ test "destructive close follows Server Session Instance lifetime boundaries" {
     try std.testing.expectEqual(sibling_session, tree_after_instance.sessions[0].id);
     try std.testing.expectEqual(@as(usize, 0), tree_after_instance.sessions[0].instances.len);
 }
+
+const ParkedTreeObserver = struct {
+    connection: *server_client.Connection,
+    after_revision: u64,
+    session_id: u64,
+    instance_id: u64,
+    completed: *std.atomic.Value(bool),
+    failed: *std.atomic.Value(bool),
+    saw_exited: *std.atomic.Value(bool),
+
+    fn run(self: ParkedTreeObserver) void {
+        var tree = self.connection.observeTree(self.after_revision) catch {
+            self.failed.store(true, .release);
+            self.completed.store(true, .release);
+            return;
+        };
+        defer tree.deinit();
+        for (tree.sessions) |session| {
+            if (session.id != self.session_id) continue;
+            for (session.instances) |instance| {
+                if (instance.instance_id == self.instance_id and instance.state == .exited) {
+                    self.saw_exited.store(true, .release);
+                }
+            }
+        }
+        self.completed.store(true, .release);
+    }
+};
+
+fn runtimeTestSleepOneMillisecond() void {
+    const linux = std.os.linux;
+    const request = linux.timespec{ .sec = 0, .nsec = std.time.ns_per_ms };
+    switch (linux.errno(linux.nanosleep(&request, null))) {
+        .SUCCESS, .INTR => {},
+        else => @panic("runtime test nanosleep failed"),
+    }
+}
+
+test "parked control observer cannot starve dormant PTY readiness or sibling control" {
+    var runtime = try runtime_mod.Runtime.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_loopback = 0 },
+        0x10a9,
+    );
+    defer runtime.deinit();
+
+    var endpoint_storage: [64]u8 = undefined;
+    const endpoint = try runtime.endpointText(&endpoint_storage);
+    var pump = Pump{ .runtime = &runtime };
+    const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
+    defer {
+        pump.stop.store(true, .release);
+        worker.join();
+        std.debug.assert(!pump.failed.load(.acquire));
+    }
+
+    var control = try connectServer(endpoint);
+    defer control.deinit();
+    const session_id = try control.createSession("dormant");
+    const identity = try control.createInstance(.{
+        .session_id = session_id,
+        .shell = "/bin/sh",
+        .command = "sleep 0.20; printf 'DORMANT_WAKE\\n'; exit 0",
+        .rows = 6,
+        .columns = 32,
+        .history_rows = 16,
+    });
+
+    var observer = try connectServer(endpoint);
+    defer observer.deinit();
+    const parked_after = (try observer.status()).tree_revision;
+    var completed: std.atomic.Value(bool) = .init(false);
+    var failed: std.atomic.Value(bool) = .init(false);
+    var saw_exited: std.atomic.Value(bool) = .init(false);
+    const observer_worker = try std.Thread.spawn(.{}, ParkedTreeObserver.run, .{ParkedTreeObserver{
+        .connection = &observer,
+        .after_revision = parked_after,
+        .session_id = session_id,
+        .instance_id = identity.instance_id,
+        .completed = &completed,
+        .failed = &failed,
+        .saw_exited = &saw_exited,
+    }});
+
+    // The second control connection must remain responsive while the first is parked.
+    const concurrent_status = try control.status();
+    try std.testing.expectEqual(@as(u16, 1), concurrent_status.session_count);
+    try std.testing.expectEqual(@as(u16, 1), concurrent_status.instance_count);
+
+    var waited: usize = 0;
+    while (waited < 2_000 and !completed.load(.acquire)) : (waited += 1)
+        runtimeTestSleepOneMillisecond();
+    const completed_from_instance_exit = completed.load(.acquire);
+    if (!completed_from_instance_exit) {
+        // Release a failed long-poll before joining so the test itself cannot hang.
+        const release_id = try control.createSession("observer-release");
+        try std.testing.expect(release_id != 0);
+    }
+    observer_worker.join();
+    try std.testing.expect(completed_from_instance_exit);
+    try std.testing.expect(!failed.load(.acquire));
+    try std.testing.expect(saw_exited.load(.acquire));
+
+    // The clientless Instance's final PTY bytes must have been ingested before exit.
+    var retained_client = try attachInstance(endpoint, identity);
+    defer retained_client.deinit();
+    var snapshot = try howl_client.snapshot.request(
+        &retained_client,
+        std.testing.allocator,
+        0,
+        0,
+    );
+    defer snapshot.deinit();
+    var found = false;
+    for (snapshot.lines) |line| {
+        if (std.mem.indexOf(u8, line, "DORMANT_WAKE") != null) {
+            found = true;
+            break;
+        }
+    }
+    try std.testing.expect(found);
+}
