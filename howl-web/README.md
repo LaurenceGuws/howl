@@ -97,7 +97,7 @@ its newly launched standalone PWA may overlap during handoff; a seventh is refus
 
 The browser byte bridge is now maintained in `gateway/`. It binds loopback only,
 serves a closed static route table and copies admitted binary WebSocket messages
-to one explicit loopback Howl session without parsing the Howl protocol. Host,
+to one explicit loopback Howl Instance without parsing the Howl protocol. Host,
 Origin, WebSocket structure and connection/byte budgets fail closed before the
 upstream socket opens. Public authentication still belongs to Cloudflare Access;
 the optional Access-assertion check is an origin misrouting guard, not a second
@@ -136,9 +136,7 @@ unchanged; Web has its own gate just as the other experimental embedders do.
 Build and launch a **dedicated echo-only session**, not a working terminal:
 
 ```sh
-(cd howl-session && zig build install -Doptimize=ReleaseSafe)
 # From the Howl repository root, in a separate operator terminal:
-howl-session/zig-out/bin/howl-sessiond tcp:0 /bin/sh 12 72 \
   "exec python3 -u '$PWD/howl-web/tests/echo.py'"
 ```
 

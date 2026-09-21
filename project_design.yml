@@ -1,25 +1,28 @@
 project:
   name: howl
-  mission: small, correct native terminal sessions shared by humans and agents
+  mission: small, correct native terminal machinery that can be embedded directly or composed into higher-level orchestration
   shape: one repository of small native modules with explicit local dependencies and semantic ownership
 
 core:
   howl-vt:
     role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences
-  howl-session:
-    role: one canonical PTY, VT, ordered I/O lifetime, geometry, signals, and headless environment policy
-    invariant: observers never own, pace, or block canonical session progress
+  howl-instance:
+    role: optional batteries-included composition of one Linux PTY, one canonical howl-vt terminal, ordered I/O lifetime, geometry, signals, and headless environment policy
+    invariant: Instance is one concrete terminal occurrence, not a Session, Server, listener, daemon, or product identity; observers never own, pace, or block canonical progress
   howl-pty:
     role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
   howl-text:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
-planned:
-  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries, with an experimental Odin desktop shell for polished tabs/panes/profiles/settings; howl-server owns the one-process shared-terminal collection while the CLI is its operator surface, the native Vulkan host proves an in-process Session route, and advanced embedders may use howl-vt directly
+composition:
+  - howl-vt may be embedded directly without PTY, Instance, Session, or Server machinery
+  - a local shell or terminal host may compose howl-pty plus howl-vt through howl-instance without knowing that Session or Server concepts exist
+  - optional orchestration has the noun/process tree Server -> Sessions -> Instances
+  - an Instance is not a Session; Session identity/lifetime belongs to orchestration above the terminal family
+  - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
 
 experimental:
   - howl-client
-  - howl-server
   - howl-cli
   - howl-render
   - howl-host
@@ -30,18 +33,18 @@ experimental:
   - howl-odin
 
 ownership:
-  - terminal lifetime ownership is explicit: howl-server may own a bounded collection of shared Sessions, another shared owner may publish one Session endpoint, a local application may own Session in-process, and an advanced embedder may own its byte runtime around howl-vt directly
-  - one Session owns exactly one authoritative PTY and VT; Session is the batteries-included Linux coupling, not a prerequisite for direct howl-vt embedding
+  - terminal semantics belong to howl-vt and remain usable without any orchestration layer
+  - one howl-instance owns exactly one authoritative PTY and VT when an embedder chooses the batteries-included local composition
+  - Instance exposes no Session or Server identity and publishes no listener or executable
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
-  - client views resolve transported numeric/bit encodings before presentation code consumes them
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
-  - renderer and platform policy stay outside VT and session
-  - VT owns retained image/frame/animation semantics; Session supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock; renderers do not invent a second terminal-animation clock
-  - canonical graphics/resource identity crosses an attach boundary when one exists, while Terminal Canvas/backend residency stays presentation-local
+  - renderer and platform policy stay outside VT, PTY, and Instance
+  - VT owns retained image/frame/animation semantics; Instance supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock
+  - Server/Session orchestration, when present, depends downward on Instances and must never become a prerequisite for local terminal composition
 
 workspace:
-  local_root_gate: [howl-vt, howl-session, howl-pty, howl-text]
+  local_root_gate: [howl-vt, howl-instance, howl-pty, howl-text]
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module

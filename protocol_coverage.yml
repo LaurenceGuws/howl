@@ -3,7 +3,7 @@ schema: 3
 howl_schema:
   support: [full, partial, missing, unassessed]
   disposition: [none, active, delegated, deferred, excluded]
-  owner: [howl-vt, howl-session, howl-pty]
+  owner: [howl-vt, howl-instance, howl-pty]
   defaults: {full_disposition: none, incomplete_disposition: active, owner: howl-vt}
   meaning:
     support: implemented behavior relative to the pinned reference
@@ -779,18 +779,18 @@ references:
             raw: OSC 52 ; Pc ; Pd ST
             effect: clipboard set or query
             bounds: caller-provided decode buffer with set data delivered in fragments
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
       on_dcs:
         source: state.c
@@ -1282,51 +1282,51 @@ references:
           iterm2.csi.window:
             raw: CSI Pm t
             effect: dispatch window operation by first parameter
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             recognition: delegated
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.csi.decsnls:
             raw: CSI rows * |
             effect: request terminal row count
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.csi.decscpp:
             raw: CSI [cols=0] $ |
             effect: request 80 or 132 terminal columns
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {support: partial,
@@ -1655,18 +1655,18 @@ references:
           iterm2.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd (BEL|ST)
             effect: clipboard or base64 paste
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.osc.palette_reset:
             raw: "OSC 104 ; Pm (BEL|ST)"
@@ -1759,18 +1759,18 @@ references:
           iterm2.osc1337.steal_focus:
             raw: OSC 1337 ; StealFocus[=Pt] (BEL|ST)
             effect: request application focus
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.osc1337.clear_scrollback:
             raw: "OSC 1337 ; ClearScrollback (BEL|ST)"
@@ -1873,18 +1873,18 @@ references:
           iterm2.osc1337.request_attention:
             raw: OSC 1337 ; RequestAttention[=Ps] (BEL|ST)
             effect: request user attention
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.osc1337.background_image:
             raw: OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)
@@ -1893,7 +1893,7 @@ references:
             howl:
               support: missing
               disposition: excluded
-              rationale: The canonical session owns terminal work, not graphical client presentation.
+              rationale: The canonical instance owns terminal work, not graphical client presentation.
             conditions: Background-image presentation is client-local and outside the current terminal/session core.
           iterm2.osc1337.profile_property: {raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",
             effect: set profile property, relevance: host consequence, howl: *howl_missing_excluded_iterm}
@@ -1920,18 +1920,18 @@ references:
           iterm2.osc1337.notification:
             raw: OSC 1337 ; Notification=Pt (BEL|ST)
             effect: post rich notification
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.osc1337.capabilities: {raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
             effect: report host capabilities, relevance: query, howl: *howl_missing_excluded_iterm}
@@ -2411,146 +2411,146 @@ references:
           iterm2.window.deiconify:
             raw: CSI 1 t
             effect: deiconify window
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.iconify:
             raw: CSI 2 t
             effect: iconify window
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.move:
             raw: CSI 3 ; x ; y t
             effect: move window
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.resize_pixels:
             raw: CSI 4 ; height ; width t
             effect: resize window in pixels
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.raise:
             raw: CSI 5 t
             effect: raise window
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.lower:
             raw: CSI 6 t
             effect: lower window
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.resize_cells:
             raw: CSI 8 ; rows ; cols t
             effect: resize terminal in cells
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.report_state:
             raw: CSI 11 t
             effect: report iconified state
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: query
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.report_position:
             raw: CSI 13 t
             effect: report window position
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: query
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.report_pixels: {raw: "CSI 14 t", effect: report window pixel size, relevance: query,
             conditions: iTerm2 reports host window pixels while Howl reports host-supplied cell pixels times the grid,
@@ -2567,34 +2567,34 @@ references:
           iterm2.window.report_screen:
             raw: CSI 19 t
             effect: report screen dimensions
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: query
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.report_icon_title:
             raw: CSI 20 t
             effect: report icon title
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: query
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           iterm2.window.report_window_title: {raw: "CSI 21 t", effect: report window title, relevance: query,
             conditions: iTerm2 gates and sanitizes the host window title while Howl reports its bounded child title,
@@ -2913,9 +2913,9 @@ references:
           kitty.mode.synchronized_output: {raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
               residual: Howl retains exact VT mode state and withholds observer publication with a one-second fail-open timeout; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
-              source: howl-session/src/endpoint.zig, symbol: terminalObservationReady, proof: {
-                path: howl-session/src/endpoint.zig,
-                symbol: "synchronized output timeout fails observer publication open"}}}
+              source: howl-vt/src/terminal.zig, symbol: synchronizedOutput, proof: {
+                path: howl-vt/src/terminal.zig,
+                symbol: "actions: DEC private synchronized output maps enable disable"}}}
           kitty.mode.color_preference:
             raw: "CSI ? 2031 h|l"
             effect: toggle color-preference notifications
@@ -3220,29 +3220,29 @@ references:
             effect: reject application pixel resize
             recognition: rejected_known
             relevance: host consequence
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             howl:
               support: full
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
           kitty.csi.resize_cells_unsupported:
             raw: CSI 8 ; rows ; cols t
             effect: reject application cell resize
             recognition: rejected_known
             relevance: host consequence
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             howl:
               support: full
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
           kitty.csi.restore_cursor: {raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
               and baseline rendition",
@@ -3410,66 +3410,66 @@ references:
           kitty.osc.notify_9:
             raw: OSC 9 ; Pt (BEL|ST)
             effect: display notification
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core. OSC 9;4 is separately retained task progress, tested by task progress survives fragments without notification or text mutation in howl-vt/src/terminal.zig.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.notify_99:
             raw: OSC 99 ; Pt (BEL|ST)
             effect: display notification
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.notify_777:
             raw: OSC 777 ; Pt (BEL|ST)
             effect: display notification
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.notify_1337:
             raw: OSC 1337 ; Pt (BEL|ST)
             effect: display notification
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB state and exact reply but
@@ -3545,18 +3545,18 @@ references:
           kitty.osc.clipboard:
             raw: OSC 52 ; Pc ; Pd (BEL|ST)
             effect: clipboard transfer
-            conditions: VT retains the ordered terminal intent; the detached session applies deterministic headless reply,
+            conditions: VT retains the ordered terminal intent; the detached instance applies deterministic headless reply,
               decline, or no-op policy without requiring an observer. Client presentation remains outside core.
             relevance: host consequence
             howl:
               support: partial
-              source: howl-session/src/session.zig
+              source: howl-instance/src/instance.zig
               symbol: State.drainConsequences
               proof:
-                path: howl-session/src/session.zig
-                symbol: headless session drains host consequences without an observer
+                path: howl-instance/src/instance.zig
+                symbol: headless instance drains host consequences without an observer
               disposition: excluded
-              rationale: Graphical and platform presentation policy is client-local and not part of canonical session progress.
+              rationale: Graphical and platform presentation policy is client-local and not part of canonical instance progress.
               residual: Reference-specific client presentation remains outside the current Howl core.
           kitty.osc.clipboard_5522:
             raw: "OSC 5522 ; metadata ; payload ST"
@@ -3750,10 +3750,10 @@ references:
             effect: synchronized update control
             conditions: Ps 1 starts and Ps 2 stops; Kitty also expires or stops pending mode on timeout and resize
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
-              residual: Howl shares the exact DCS/CSI VT mode and uses a one-second observer-publication fail-open; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
-              source: howl-session/src/endpoint.zig, symbol: terminalObservationReady, proof: {
-              path: howl-session/src/endpoint.zig,
-              test: synchronized output withholds observer until coherent release}}
+              residual: Howl shares the exact DCS/CSI VT mode; publication coalescing is an embedder/client concern rather than Instance semantics. Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
+              source: howl-vt/src/terminal.zig, symbol: synchronizedOutput, proof: {
+              path: howl-vt/src/terminal.zig,
+              test: "actions: DEC private synchronized output maps enable disable"}}
       parse_kitty_dcs:
         source: vt-parser.c
         line: 643
@@ -3995,8 +3995,8 @@ references:
             howl: *howl_static_graphics_transmit}
           kitty.graphics.animate: {raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
             howl: {support: full,
-              source: howl-vt/src/graphics.zig, symbol: Plane.advanceAnimations, proof: {path: howl-session/src/endpoint.zig,
-                symbol: "finite Kitty animation publishes final stop and clears endpoint deadline"}}}
+              source: howl-vt/src/graphics.zig, symbol: Plane.advanceAnimations, proof: {path: howl-vt/src/terminal.zig,
+                symbol: "terminal animation lifecycle preserves finite loading stop selection and gaps"}}}
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,

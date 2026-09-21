@@ -6,8 +6,6 @@ repo_root=$(cd "$module_root/.." && pwd)
 bridge_root="$module_root/native"
 output_root="$module_root/zig-out/bin"
 bridge_lib="$bridge_root/zig-out/lib/libhowl_odin_bridge.so"
-session_root="$repo_root/howl-session"
-sessiond="$session_root/zig-out/bin/howl-sessiond"
 
 install_atomically() {
   local source=$1
@@ -36,10 +34,6 @@ actual_odin=$(odin version | awk '{print $3}')
   zig build test -Doptimize=ReleaseSafe
   zig build install -Doptimize=ReleaseSafe
 )
-(
-  cd "$session_root"
-  zig build install -Doptimize=ReleaseSafe
-)
 
 mkdir -p "$output_root"
 LD_LIBRARY_PATH="$bridge_root/zig-out/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
@@ -58,7 +52,6 @@ odin build "$module_root" \
   -debug -o:speed
 install_atomically "$candidate" "$output_root/howl-odin"
 install_atomically "$bridge_lib" "$output_root/libhowl_odin_bridge.so"
-install_atomically "$sessiond" "$output_root/howl-sessiond"
 install_atomically "$module_root/packaging/howl-window-icon.bmp" "$output_root/howl-window-icon.bmp"
 
 printf 'howl-odin: built %s\n' "$output_root/howl-odin"

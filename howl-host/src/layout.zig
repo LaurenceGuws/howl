@@ -2,7 +2,7 @@
 //!
 //! This is executable-local policy, not a shared client abstraction. It owns
 //! only stable identities, bounded split trees, active/focused selection, and
-//! deterministic rectangle projection. Session, terminal, Wayland, and GPU
+//! deterministic rectangle projection. Instance, terminal, Wayland, and GPU
 //! state stay outside this module.
 
 const std = @import("std");
@@ -474,10 +474,8 @@ test "pane rect projects inactive tab geometry from stable identity" {
     var mux = Mux.init();
     const first = mux.focusedPane();
     const created = try mux.createTab();
-    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 },
-        try mux.paneRect(.{ .width = 91, .height = 37 }, first));
-    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 },
-        try mux.paneRect(.{ .width = 91, .height = 37 }, created.pane));
+    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 }, try mux.paneRect(.{ .width = 91, .height = 37 }, first));
+    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 }, try mux.paneRect(.{ .width = 91, .height = 37 }, created.pane));
     try std.testing.expectError(error.StalePane, mux.paneRect(.{ .width = 91, .height = 37 }, paneId(999)));
 }
 

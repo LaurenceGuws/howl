@@ -5,7 +5,6 @@ const client = @import("howl_client");
 
 pub const Context = struct {
     operation: []const u8 = "unknown",
-    code_override: ?[]const u8 = null,
     connect_stage: ?client.ConnectStage = null,
     os_error: i32 = 0,
     route_message: [512]u8 = undefined,
@@ -23,10 +22,6 @@ pub const Context = struct {
         self.route_message_len = count;
     }
 
-    pub fn managerCode(self: *Context, code: client.server.ResultCode) void {
-        self.code_override = @tagName(code);
-    }
-
     pub fn emit(self: *const Context, init: std.process.Init, failure_name: []const u8) void {
         var buffer: [2048]u8 = undefined;
         var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);
@@ -34,7 +29,7 @@ pub const Context = struct {
         writer.writeAll("{\"schema\":\"howl.error/v1\",\"operation\":") catch return fallback(failure_name);
         std.json.Stringify.value(self.operation, .{}, writer) catch return fallback(failure_name);
         writer.writeAll(",\"code\":") catch return fallback(failure_name);
-        std.json.Stringify.value(self.code_override orelse failure_name, .{}, writer) catch return fallback(failure_name);
+        std.json.Stringify.value(failure_name, .{}, writer) catch return fallback(failure_name);
         writer.writeAll(",\"failure\":") catch return fallback(failure_name);
         std.json.Stringify.value(failure_name, .{}, writer) catch return fallback(failure_name);
         if (self.connect_stage) |stage| {

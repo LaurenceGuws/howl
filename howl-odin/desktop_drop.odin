@@ -47,12 +47,12 @@ quote_dropped_file :: proc(path: string, output: []u8) -> (string, bool) {
 }
 
 drop_into_active_terminal :: proc(app: ^App, data: cstring, file: bool) -> bool {
-	if app == nil || data == nil || !active_tab_is_session(app) ||
+	if app == nil || data == nil || !active_tab_is_instance(app) ||
 	   app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
 		return false
 	}
-	view := active_session_view(app)
-	if view == nil || view.control == nil || !session_interactive(view) do return false
+	view := active_instance_view(app)
+	if view == nil || view.control == nil || !instance_interactive(view) do return false
 	raw := string(data)
 	if len(raw) == 0 do return false
 

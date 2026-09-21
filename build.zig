@@ -4,7 +4,7 @@ const std = @import("std");
 
 const children = [_][]const u8{
     "howl-vt",
-    "howl-session",
+    "howl-instance",
     "howl-pty",
     "howl-text",
 };

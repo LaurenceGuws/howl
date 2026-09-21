@@ -10,8 +10,8 @@ pub fn build(b: *std.Build) void {
     });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const client_module = client.module("howl_client");
-    const session_module = client_module.import_table.get("howl_session") orelse
-        @panic("howl-client lost its session protocol import");
+    const instance_module = client_module.import_table.get("howl_instance") orelse
+        @panic("howl-client lost its Instance protocol import");
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = optimize,
@@ -59,7 +59,7 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
         .strip = true,
     });
-    live_root.addImport("howl_session", session_module);
+    live_root.addImport("howl_instance", instance_module);
     live_root.addImport("howl_client", client_module);
     live_root.addImport("howl_render", render.module("howl_render"));
     live_root.export_symbol_names = &.{

@@ -1,4 +1,4 @@
-//! Host-local owner for one in-process Howl Session.
+//! Host-local owner for one in-process Howl Instance.
 //!
 //! Main owns the lifetime. Input owns the PTY service schedule. Render may resize
 //! or borrow the opaque VT observation only while holding this owner's mutex.
@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const c = @import("host_c");
-const session = @import("howl_session");
+const instance = @import("howl_instance");
 
 const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 
@@ -70,12 +70,12 @@ pub const PollState = struct {
 pub const Owner = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    value: *session.Session,
+    value: *instance.Instance,
     mutex: std.Io.Mutex = .init,
     descriptor: i32,
     observation_fd: i32,
     stream_closed: bool = false,
-    child_exit: ?session.ChildExit = null,
+    child_exit: ?instance.ChildExit = null,
     write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
     publication: Publication,
@@ -84,12 +84,12 @@ pub const Owner = struct {
         allocator: std.mem.Allocator,
         io: std.Io,
         inherited_environment: std.process.Environ,
-        launch: session.Launch,
+        launch: instance.Launch,
     ) !Owner {
-        const value = try session.init(allocator, inherited_environment, launch);
-        errdefer session.deinit(value);
-        const descriptor = try session.descriptor(value);
-        const initial_revision = session.terminal(value).semanticSequence();
+        const value = try instance.init(allocator, inherited_environment, launch);
+        errdefer instance.deinit(value);
+        const descriptor = try instance.descriptor(value);
+        const initial_revision = instance.terminal(value).semanticSequence();
         const observation_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (observation_fd < 0) return error.Signal;
         return .{
@@ -104,7 +104,7 @@ pub const Owner = struct {
 
     pub fn deinit(self: *Owner) void {
         closeDescriptor(self.observation_fd);
-        session.deinit(self.value);
+        instance.deinit(self.value);
         self.* = undefined;
     }
 
@@ -124,9 +124,9 @@ pub const Owner = struct {
         readable: bool,
         writable: bool,
         timestamp_ns: u64,
-    ) session.ServiceError!session.Service {
+    ) instance.ServiceError!instance.Service {
         self.mutex.lockUncancelable(self.io);
-        const serviced = session.service(
+        const serviced = instance.service(
             self.value,
             readable,
             writable,
@@ -135,8 +135,8 @@ pub const Owner = struct {
             self.mutex.unlock(self.io);
             return failure;
         };
-        const current_revision = session.terminal(self.value).semanticSequence();
-        const synchronized = session.terminal(self.value).synchronizedOutput();
+        const current_revision = instance.terminal(self.value).semanticSequence();
+        const synchronized = instance.terminal(self.value).synchronizedOutput();
         const publish = self.publication.note(
             current_revision,
             synchronized,
@@ -173,7 +173,7 @@ pub const Owner = struct {
 
     pub const ObservationGuard = struct {
         owner: *Owner,
-        value: *const session.Terminal.Observation,
+        value: *const instance.Terminal.Observation,
 
         pub fn deinit(self: *ObservationGuard) void {
             self.owner.mutex.unlock(self.owner.io);
@@ -181,15 +181,15 @@ pub const Owner = struct {
         }
     };
 
-    /// Holds Session mutation serialization for one synchronous observation use.
+    /// Holds Instance mutation serialization for one synchronous observation use.
     pub fn observe(self: *Owner) ObservationGuard {
         self.mutex.lockUncancelable(self.io);
-        return .{ .owner = self, .value = session.terminal(self.value) };
+        return .{ .owner = self, .value = instance.terminal(self.value) };
     }
 
-    pub fn input(self: *Owner, event: session.Input) session.InputError!void {
+    pub fn input(self: *Owner, event: instance.Input) instance.InputError!void {
         self.mutex.lockUncancelable(self.io);
-        session.input(self.value, event) catch |failure| {
+        instance.input(self.value, event) catch |failure| {
             self.mutex.unlock(self.io);
             return failure;
         };
@@ -202,9 +202,9 @@ pub const Owner = struct {
         columns: u16,
         cell_width: u16,
         cell_height: u16,
-    ) session.ResizeError!void {
+    ) instance.ResizeError!void {
         self.mutex.lockUncancelable(self.io);
-        session.resizeGeometry(
+        instance.resizeGeometry(
             self.value,
             rows,
             columns,
@@ -214,12 +214,12 @@ pub const Owner = struct {
             self.mutex.unlock(self.io);
             return failure;
         };
-        self.publication.revision = session.terminal(self.value).semanticSequence();
+        self.publication.revision = instance.terminal(self.value).semanticSequence();
         self.mutex.unlock(self.io);
         signal(self.observation_fd);
     }
 
-    pub fn interactionState(self: *Owner) session.Terminal.InteractionState {
+    pub fn interactionState(self: *Owner) instance.Terminal.InteractionState {
         var guard = self.observe();
         defer guard.deinit();
         return guard.value.interactionState();

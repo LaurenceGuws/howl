@@ -17,9 +17,6 @@ import 'ios_network_probe.dart';
 import 'launch_config.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
-import 'server_manager.dart';
-import 'server_session_bar.dart';
-import 'server_sessions.dart';
 import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
@@ -37,30 +34,25 @@ import 'visible_viewport.dart';
 const int _nativeImageSnapshotSupersessionLimit = 8;
 
 Future<void> main(List<String> args) async {
-  const compiledServerEndpoint = String.fromEnvironment('HOWL_SERVER_ENDPOINT');
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
-  final HowlLaunchTarget target;
+  final String endpointText;
   try {
-    target = resolveHowlLaunchTarget(
+    endpointText = resolveHowlEndpoint(
       args: args,
-      compiledServerEndpoint: compiledServerEndpoint,
       compiledEndpoint: compiledEndpoint,
-      environmentServerEndpoint: Platform.environment['HOWL_SERVER_ENDPOINT'],
       environmentEndpoint: Platform.environment['HOWL_ENDPOINT'],
       environmentSocket: Platform.environment['HOWL_SOCKET'],
     );
   } on HowlLaunchException catch (error) {
     stderr.writeln(
-      'usage: howl_flutter ENDPOINT | howl_flutter --server SERVER_ENDPOINT '
-      '(or HOWL_ENDPOINT / HOWL_SERVER_ENDPOINT) [${error.code}]',
+      'usage: howl_flutter ENDPOINT   (or set HOWL_ENDPOINT) [${error.code}]',
     );
     exitCode = 64;
     return;
   }
-
   final HowlEndpoint endpoint;
   try {
-    endpoint = HowlEndpoint.parse(target.endpoint);
+    endpoint = HowlEndpoint.parse(endpointText);
   } on HowlEndpointException catch (error) {
     stderr.writeln('invalid Howl endpoint: ${error.code}');
     exitCode = 64;
@@ -72,7 +64,6 @@ Future<void> main(List<String> args) async {
   runApp(
     HowlApp(
       endpoint: endpoint,
-      managedServer: target.managed,
       geometryLeader: geometryLeaderEnabled(
         compiledValue: compiledGeometryLeader,
         environmentValue: Platform.environment['HOWL_GEOMETRY_LEADER'],
@@ -85,11 +76,9 @@ final class HowlApp extends StatelessWidget {
   const HowlApp({
     super.key,
     required this.endpoint,
-    required this.managedServer,
     required this.geometryLeader,
   });
   final HowlEndpoint endpoint;
-  final bool managedServer;
   final bool geometryLeader;
 
   @override
@@ -97,11 +86,7 @@ final class HowlApp extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     title: 'Howl',
     theme: ThemeData.dark(useMaterial3: false),
-    home: HowlTerminal(
-      endpoint: endpoint,
-      managedServer: managedServer,
-      geometryLeader: geometryLeader,
-    ),
+    home: HowlTerminal(endpoint: endpoint, geometryLeader: geometryLeader),
   );
 }
 
@@ -109,11 +94,9 @@ final class HowlTerminal extends StatefulWidget {
   const HowlTerminal({
     super.key,
     required this.endpoint,
-    required this.managedServer,
     required this.geometryLeader,
   });
   final HowlEndpoint endpoint;
-  final bool managedServer;
   final bool geometryLeader;
 
   @override
@@ -135,14 +118,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   NativeHostObserver? _nativeObserver;
   NativeHostObserver? _nativeHistoryObserver;
   NativeHostControl? _nativeControl;
-  NativeServerManager? _serverManager;
-  HowlServerRoster? _serverRoster;
-  Object? _managerFailure;
-  bool _managerBusy = false;
-  int _managerGeneration = 0;
-  int? _managedSessionId;
-  String? _managedSessionName;
-  final TransportRecovery _managerRecovery = TransportRecovery();
   NativeHostMetadata? _nativeLiveMetadata;
   NativeHostMetadata? _nativeHistoryMetadata;
   String _nativeLiveSemanticText = '';
@@ -191,7 +166,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _geometryLeader = widget.geometryLeader;
     _diagnostics.record(
       'App',
-      'start platform=${Platform.operatingSystem} mode=${widget.managedServer ? 'server' : 'session'} endpoint=${widget.endpoint} '
+      'start platform=${Platform.operatingSystem} endpoint=${widget.endpoint} '
           'backspace_runway=${_platformInput.backspaceRunway}',
     );
     _iosPhysicalArrowRepeat = HeldKeyRepeat(
@@ -250,231 +225,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
       },
     );
-    if (widget.managedServer) {
-      unawaited(_manageServer());
-    } else {
-      unawaited(_observe());
-    }
+    unawaited(_observe());
   }
 
   Future<void> _observe() => _observeNative();
 
-  Future<void> _manageServer() async {
-    while (!_stopping && widget.managedServer) {
-      final generation = ++_managerGeneration;
-      NativeServerManager? manager;
-      try {
-        _diagnostics.record('Manager', 'generation=$generation connect');
-        manager = await NativeServerManager.create(
-          endpoint: widget.endpoint.toString(),
-        );
-        if (!mounted || _stopping || generation != _managerGeneration) {
-          await manager.close();
-          return;
-        }
-        _serverManager = manager;
-        _managerRecovery.succeeded();
-        var revision = 0;
-        while (!_stopping &&
-            mounted &&
-            generation == _managerGeneration &&
-            identical(manager, _serverManager)) {
-          final roster = await manager.roster.observe(afterRevision: revision);
-          if (_stopping ||
-              !mounted ||
-              generation != _managerGeneration ||
-              !identical(manager, _serverManager)) {
-            break;
-          }
-          revision = roster.rosterRevision;
-          final previousServerId = _serverRoster?.serverId;
-          final selectedId = _managedSessionId;
-          final selected = selectedId == null ? null : roster.byId(selectedId);
-          final identityChanged =
-              previousServerId != null && previousServerId != roster.serverId;
-          setState(() {
-            _serverRoster = roster;
-            if (selected != null) _managedSessionName = selected.name;
-            _managerFailure = null;
-          });
-          if (identityChanged ||
-              (selectedId != null &&
-                  (selected == null || !selected.attachable))) {
-            _switchManagedSession(null);
-          }
-        }
-      } catch (error) {
-        if (_stopping || !mounted || generation != _managerGeneration) return;
-        _diagnostics.record(
-          'Manager',
-          'generation=$generation failure error=$error',
-        );
-        if (identical(_serverManager, manager)) _serverManager = null;
-        setState(() => _managerFailure = error);
-        final delay = _managerRecovery.failed();
-        await Future<void>.delayed(delay);
-      } finally {
-        if (identical(_serverManager, manager)) _serverManager = null;
-        if (manager != null) {
-          try {
-            await manager.close();
-          } catch (_) {}
-        }
-      }
-    }
-  }
-
-  void _switchManagedSession(HowlServerSession? session) {
-    if (!widget.managedServer || _stopping) return;
-    final nextId = session?.sessionId;
-    if (nextId == _managedSessionId &&
-        (nextId == null || _nativeObserver != null || _reconnecting)) {
-      return;
-    }
-
-    final oldGeneration = _transportGeneration;
-    final oldLive = _nativeLiveLease;
-    if (oldGeneration != 0) _dropTransport(oldGeneration);
-    _textInput.detach();
-    _pointerInput.clear();
-    _managedSessionId = nextId;
-    _managedSessionName = session?.name;
-    _proposedRows = 0;
-    _proposedColumns = 0;
-    _pendingResizeRows = null;
-    _pendingResizeColumns = null;
-    _selection = null;
-    _selectionUsesTouchChrome = false;
-    _desktopSelection.clear();
-    setState(() {
-      _nativeLiveLease = null;
-      _nativeLiveMetadata = null;
-      _nativeLiveSemanticText = '';
-      _nativeLiveSemanticTruncated = false;
-      _failure = null;
-      _reconnecting = false;
-    });
-    if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
-    if (nextId != null) unawaited(_observe());
-  }
-
-  Future<void> _createManagedSession() async {
-    final manager = _serverManager;
-    if (manager == null || _managerBusy || _stopping) return;
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create Howl session'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 48,
-          decoration: const InputDecoration(
-            labelText: 'Name',
-            hintText: 'work',
-          ),
-          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (!mounted || name == null || name.isEmpty) return;
-    if (!RegExp(r'^[A-Za-z0-9._-]{1,48}$').hasMatch(name)) {
-      await _showManagerError(
-        const NativeServerException('invalid_session_name'),
-      );
-      return;
-    }
-    setState(() => _managerBusy = true);
-    try {
-      final mutation = await manager.control.createSession(name);
-      if (!mounted || !identical(manager, _serverManager)) return;
-      _switchManagedSession(
-        HowlServerSession(
-          sessionId: mutation.sessionId,
-          createdSequence: 0,
-          state: HowlServerSessionState.running,
-          name: name,
-        ),
-      );
-    } catch (error) {
-      if (mounted) await _showManagerError(error);
-    } finally {
-      if (mounted) setState(() => _managerBusy = false);
-    }
-  }
-
-  Future<void> _closeManagedSession() async {
-    final manager = _serverManager;
-    final sessionId = _managedSessionId;
-    if (manager == null || sessionId == null || _managerBusy || _stopping) {
-      return;
-    }
-    final name = _managedSessionName ?? 'session $sessionId';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Close Howl session?'),
-        content: Text('Close $name and release its retained terminal state?'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final previous = _serverRoster?.byId(sessionId);
-    setState(() => _managerBusy = true);
-    if (_managedSessionId == sessionId) _switchManagedSession(null);
-    try {
-      await manager.control.closeSession(sessionId);
-      if (!mounted || !identical(manager, _serverManager)) return;
-    } catch (error) {
-      if (mounted) {
-        if (previous != null && previous.attachable) {
-          _switchManagedSession(previous);
-        }
-        await _showManagerError(error);
-      }
-    } finally {
-      if (mounted) setState(() => _managerBusy = false);
-    }
-  }
-
-  Future<void> _showManagerError(Object error) => showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Howl server action failed'),
-      content: Text(error.toString()),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('OK'),
-        ),
-      ],
-    ),
-  );
-
   Future<void> _observeNative() async {
     while (!_stopping) {
-      if (widget.managedServer && _managedSessionId == null) return;
       final generation = ++_transportGeneration;
       var attached = false;
       _diagnostics.record('Transport', 'generation=$generation start');
@@ -482,7 +239,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         await _observeNativeLifetime(generation, () => attached = true);
         return;
       } catch (error) {
-        if (_stopping || !mounted || generation != _transportGeneration) return;
+        if (_stopping || !mounted) return;
         _diagnostics.record(
           'Transport',
           'generation=$generation failure attached=$attached error=$error',
@@ -536,42 +293,28 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final presentation = zoomPreset.presentation;
     final rasterScale = terminalRasterScale(View.of(context).devicePixelRatio);
     final nativePresentation = presentation.rasterized(rasterScale);
-    final managedSessionId = widget.managedServer ? _managedSessionId : null;
-    if (widget.managedServer && managedSessionId == null) return;
     bool presentationChanged() =>
         zoomPreset != _zoomPreset ||
         rasterScale != terminalRasterScale(View.of(context).devicePixelRatio);
     try {
       _diagnostics.record('Control', 'create generation=$generation');
-      control = widget.managedServer
-          ? await NativeHostControl.createManaged(
-              serverEndpoint: widget.endpoint.toString(),
-              sessionId: managedSessionId!,
-            )
-          : await NativeHostControl.create(
-              endpoint: widget.endpoint.toString(),
-            );
+      control = await NativeHostControl.create(
+        endpoint: widget.endpoint.toString(),
+      );
       _diagnostics.record('Control', 'attached generation=$generation');
       if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       markAttached();
 
       _diagnostics.record('Observer', 'create generation=$generation');
-      observer = widget.managedServer
-          ? await NativeHostObserver.createManagedPlatform(
-              serverEndpoint: widget.endpoint.toString(),
-              sessionId: managedSessionId!,
-              presentation: nativePresentation,
-              useLiveDeltas: widget.endpoint.unixPath != null,
-            )
-          : await NativeHostObserver.createPlatform(
-              endpoint: widget.endpoint.toString(),
-              presentation: nativePresentation,
-              // Keep cheap local row-delta reuse on Unix. TCP uses the existing
-              // compressed complete-snapshot path; native delta prearming is part
-              // of that alternative policy, not Dart's display overlap below.
-              useLiveDeltas: widget.endpoint.unixPath != null,
-            );
+      observer = await NativeHostObserver.createPlatform(
+        endpoint: widget.endpoint.toString(),
+        presentation: nativePresentation,
+        // Keep cheap local row-delta reuse on Unix. TCP uses the existing
+        // compressed complete-snapshot path; native delta prearming is part
+        // of that alternative policy, not Dart's display overlap below.
+        useLiveDeltas: widget.endpoint.unixPath != null,
+      );
       _diagnostics.record(
         'Observer',
         'attached generation=$generation bounds=${observer.maximumRows}x${observer.maximumColumns}',
@@ -598,12 +341,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
       }
       if (presentationChanged()) throw const _PresentationRestart();
-      if (!mounted ||
-          _stopping ||
-          generation != _transportGeneration ||
-          (widget.managedServer && managedSessionId != _managedSessionId)) {
-        return;
-      }
+      if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
       _nativeControl = control;
       _interactionStateCache = null;
@@ -1574,18 +1312,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           final nativePresentation = _presentation.rasterized(
             _nativeRasterScale,
           );
-          final managedSessionId = _managedSessionId;
-          if (widget.managedServer && managedSessionId == null) return;
-          observer = widget.managedServer
-              ? await NativeHostObserver.createManagedPlatform(
-                  serverEndpoint: widget.endpoint.toString(),
-                  sessionId: managedSessionId!,
-                  presentation: nativePresentation,
-                )
-              : await NativeHostObserver.createPlatform(
-                  endpoint: widget.endpoint.toString(),
-                  presentation: nativePresentation,
-                );
+          observer = await NativeHostObserver.createPlatform(
+            endpoint: widget.endpoint.toString(),
+            presentation: nativePresentation,
+          );
           if (!mounted || _stopping || !_history.ownsRequest(request)) {
             unawaited(observer.close());
             return;
@@ -1939,15 +1669,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final nativeObserver = _nativeObserver;
     final nativeHistoryObserver = _nativeHistoryObserver;
     final nativeControl = _nativeControl;
-    final serverManager = _serverManager;
-    _serverManager = null;
-    _managerGeneration += 1;
     if (nativeObserver != null) unawaited(nativeObserver.close());
     if (nativeHistoryObserver != null) {
       unawaited(nativeHistoryObserver.close());
     }
     if (nativeControl != null) unawaited(nativeControl.close());
-    if (serverManager != null) unawaited(serverManager.close());
     disposeNativeCanvasLease(_nativeLiveLease);
     disposeNativeCanvasLease(_nativeHistoryLease);
     super.dispose();
@@ -1980,15 +1706,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       );
     } else {
       if (nativeMetadata == null || nativeLease == null) {
-        content = ColoredBox(
-          color: const Color(0xff090b0e),
-          child: Center(
-            child: TerminalStatusText(
-              widget.managedServer && _managedSessionId == null
-                  ? 'Select or create a Howl session'
-                  : 'attaching to native Howl…',
-            ),
-          ),
+        content = const ColoredBox(
+          color: Color(0xff090b0e),
+          child: Center(child: TerminalStatusText('attaching to native Howl…')),
         );
       } else {
         content = ColoredBox(
@@ -2013,7 +1733,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         );
       }
     }
-    final terminalViewport = TerminalVisibleViewport(
+    return TerminalVisibleViewport(
       child: Column(
         children: <Widget>[
           Expanded(
@@ -2119,23 +1839,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           ),
         ],
       ),
-    );
-    if (!widget.managedServer) return terminalViewport;
-    return Column(
-      children: <Widget>[
-        HowlServerSessionBar(
-          roster: _serverRoster,
-          selectedSessionId: _managedSessionId,
-          managerFailure: _managerFailure,
-          busy: _managerBusy || _serverManager == null,
-          onSelect: _switchManagedSession,
-          onCreate: () => unawaited(_createManagedSession()),
-          onClose: _managedSessionId == null
-              ? null
-              : () => unawaited(_closeManagedSession()),
-        ),
-        Expanded(child: terminalViewport),
-      ],
     );
   }
 }

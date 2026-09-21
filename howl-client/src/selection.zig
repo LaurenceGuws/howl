@@ -6,7 +6,7 @@
 //! switches, and geometry changes are detected explicitly.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 const rich = @import("rich.zig");
 const view = @import("view.zig");

@@ -12,9 +12,6 @@ foreign howl_bridge {
     interrupt_create :: proc() -> rawptr ---
     interrupt_cancel :: proc(token: rawptr) -> i32 ---
     interrupt_destroy :: proc(token: rawptr) ---
-    owned_session_create :: proc(runtime: rawptr, runtime_dir: [^]u8, runtime_dir_len: c.size_t, shell: [^]u8, shell_len: c.size_t, command: [^]u8, command_len: c.size_t, cwd: [^]u8, cwd_len: c.size_t, env: [^]Profile_Env_Info, env_count: c.size_t, rows, columns: u16, identity: u32, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
-    owned_session_destroy :: proc(handle: rawptr) ---
-    owned_session_copy_endpoint :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     create             :: proc(runtime, interrupt: rawptr, endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     destroy            :: proc(handle: rawptr) ---
     consequence_create :: proc(runtime, interrupt: rawptr, endpoint: [^]u8, endpoint_len: c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
@@ -38,7 +35,6 @@ foreign howl_bridge {
     selection_range_info_size :: proc() -> u32 ---
     interaction_state :: proc(handle: rawptr, output: ^Interaction_State_Info) -> i32 ---
     interaction_state_info_size :: proc() -> u32 ---
-    profile_env_info_size :: proc() -> u32 ---
     send_text          :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     send_paste         :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     selection_extract  :: proc(handle: rawptr, start_row: i32, start_column: u16, end_row: i32, end_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
@@ -77,7 +73,7 @@ foreign howl_bridge {
     render_maximum_rows   :: proc() -> u16 ---
     render_maximum_columns :: proc() -> u16 ---
     render_frame_revision :: proc(handle: rawptr) -> u64 ---
-    render_session_revision :: proc(handle: rawptr) -> u64 ---
+    render_instance_revision :: proc(handle: rawptr) -> u64 ---
     render_history_offset :: proc(handle: rawptr) -> u32 ---
     render_history_count :: proc(handle: rawptr) -> u32 ---
     render_history_row_base :: proc(handle: rawptr) -> u32 ---
@@ -132,13 +128,6 @@ Bridge_Consequence_Reply :: enum u8 {
     Container_Screen_Cells = 6,
     Container_Icon_Title = 7,
     Container_Decline = 8,
-}
-
-Profile_Env_Info :: struct {
-    name: [^]u8,
-    name_len: c.size_t,
-    value: [^]u8,
-    value_len: c.size_t,
 }
 
 Search_Match_Info :: struct {

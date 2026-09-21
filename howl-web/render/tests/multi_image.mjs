@@ -120,7 +120,7 @@ function encodeGraphics() {
   return result;
 }
 
-const corpus = JSON.parse(await readFile('../../howl-session/protocol/v9-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../howl-instance/protocol/v9-vectors.json', 'utf8'));
 const frozen = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(frozen?.hex);
 const originalFrames = parseFrames(Buffer.from(frozen.hex, 'hex'));

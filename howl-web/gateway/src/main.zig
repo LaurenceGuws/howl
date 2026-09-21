@@ -14,7 +14,7 @@ const max_path_bytes: usize = 4096;
 
 const Config = struct {
     listen_port: u16,
-    session_port: u16,
+    instance_port: u16,
     expected_host: []const u8,
     expected_origin: []const u8,
     site_dir: []const u8,
@@ -64,7 +64,7 @@ fn usage(init: std.process.Init) void {
 fn parseArgs(argv: []const [*:0]const u8) error{InvalidArguments}!Config {
     if (argv.len != 7 and argv.len != 8) return error.InvalidArguments;
     const listen_port = parsePort(std.mem.span(argv[1])) catch return error.InvalidArguments;
-    const session_port = parsePort(std.mem.span(argv[2])) catch return error.InvalidArguments;
+    const instance_port = parsePort(std.mem.span(argv[2])) catch return error.InvalidArguments;
     const expected_host = std.mem.span(argv[3]);
     const expected_origin = std.mem.span(argv[4]);
     const site_dir = std.mem.span(argv[5]);
@@ -84,7 +84,7 @@ fn parseArgs(argv: []const [*:0]const u8) error{InvalidArguments}!Config {
     } else false;
     return .{
         .listen_port = listen_port,
-        .session_port = session_port,
+        .instance_port = instance_port,
         .expected_host = expected_host,
         .expected_origin = expected_origin,
         .site_dir = site_dir,
@@ -229,9 +229,9 @@ fn handleWebSocket(
     if (!admit(active_ws, max_websockets)) return respondText(request, .service_unavailable, "websocket capacity\n", "text/plain; charset=utf-8");
     defer release(active_ws);
 
-    // Do not connect to the terminal session until HTTP origin/authentication and
+    // Do not connect to the terminal Instance until HTTP origin/authentication and
     // the complete WebSocket upgrade contract have passed.
-    const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.session_port) catch
+    const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.instance_port) catch
         return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
     var upstream = upstream_address.connect(init.io, .{ .mode = .stream, .protocol = .tcp }) catch
         return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
@@ -366,7 +366,7 @@ test "strict CLI bounds ports host and access mode" {
     };
     const config = try parseArgs(&ok);
     try std.testing.expectEqual(@as(u16, 43129), config.listen_port);
-    try std.testing.expectEqual(@as(u16, 43127), config.session_port);
+    try std.testing.expectEqual(@as(u16, 43127), config.instance_port);
     try std.testing.expect(config.require_access);
     const bad_port = [_][*:0]const u8{ "gateway", "0", "43127", "h", "https://h", "s", "w" };
     try std.testing.expectError(error.InvalidArguments, parseArgs(&bad_port));

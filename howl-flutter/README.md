@@ -5,7 +5,7 @@ Flutter is the platform host for the native Howl client. It owns platform UI, vi
 The live terminal path is:
 
 ```text
-howl-session / howl-vt
+howl-instance / howl-vt
         ↓
 howl-client.rich → howl-client.view
         ↓
@@ -20,46 +20,6 @@ Flutter resource lease + batched Canvas backend
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, then forwards them through `howl-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
-## Managed server mode
-
-Flutter can now attach to the authoritative `howl-server` collection instead of
-being launched against one preselected Session endpoint:
-
-```sh
-howl server run /run/user/1000/howl
-howl_flutter --server unix:/run/user/1000/howl/manager.sock
-```
-
-`HOWL_SERVER_ENDPOINT` (including `--dart-define=HOWL_SERVER_ENDPOINT=...`) is the
-non-positional equivalent. Existing positional `ENDPOINT` / `HOWL_ENDPOINT` launch
-remains the direct-HWLS canary path and is not auto-probed or reinterpreted.
-
-Managed mode owns two independent HWLM connections: one request-driven long-poll
-roster observer and one lifecycle-control connection. The top session strip shows
-the retained authoritative roster, exact Session state, create and close actions,
-and the current selection. Selecting a running or exited Session opens separate
-managed observer/control streams through `attach(session_id)`; the native manager
-transfers each accepted stream directly into the existing HWLS Session client
-table, so terminal rendering/input below the picker is unchanged and no manager
-byte proxy exists. Failed retained records stay visible but are not attachable.
-
-Manager transport loss does not tear down an already attached Session. The picker
-shows the manager as unavailable and retries its own connection with bounded
-backoff while the current terminal stream remains usable. If a reconnect reports a
-new `server_id`, or the selected exact Session disappears/becomes failed, Flutter
-retires only that terminal lifetime rather than retargeting a reused name.
-
-The live native acceptance canary builds the app-private host and drives the real
-server/manager/Session path end to end:
-
-```sh
-./test-managed-server.sh
-```
-
-It creates a managed Session through Dart FFI, attaches native observer/control
-streams, submits terminal input, observes the resulting canonical text, closes the
-Session and shuts the server down cleanly.
-
 ## Android
 
 The accepted Android client is currently **arm64 only**. Build the native host and Flutter APK through the checked-in wrapper:
@@ -73,10 +33,6 @@ JAVA_HOME=/path/to/jdk21 \
   --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127 \
   --dart-define=HOWL_GEOMETRY_LEADER=true
 ```
-
-For managed mode, replace `HOWL_ENDPOINT` with
-`HOWL_SERVER_ENDPOINT=tcp://127.0.0.1:PORT` and expose the server manager route
-according to deployment/Fleet policy.
 
 `HOWL_GEOMETRY_LEADER` accepts `1` or `true`. When enabled, viewport/font-size
 changes are explicit serialized session resizes; attaching the client still does
@@ -177,7 +133,7 @@ The Flutter host selects its existing native observation policy locally: Unix
 uses live row deltas, raw-cache reuse and native request prearming, retaining
 its display-boundary coalescing; TCP uses compressed complete snapshots. `useLiveDeltas` names that coupled native policy,
 not Dart display scheduling. History remains on compressed snapshots. No policy
-is imposed on the Web, Odin or Vulkan hosts, and canonical Session progress never
+is imposed on the Web, Odin or Vulkan hosts, and canonical Instance progress never
 waits for a client display boundary.
 
 Android accessibility is projected from the same immutable `howl-client.view`
@@ -241,7 +197,7 @@ iOS remains a client only: it does not own a PTY, shell, or Unix userland. The n
 
 ## Ownership notes
 
-- `howl-session` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
+- `howl-instance` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
 - `howl-client.rich` remains the single `text_v1` byte parser.
 - `howl-client.view` is immutable, explicitly owned native semantic state.
 - `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.

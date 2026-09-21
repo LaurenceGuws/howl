@@ -118,7 +118,7 @@ apply_consequence_action :: proc(owner: ^Consequence_Owner, info: Consequence_In
 		sync.mutex_lock(&owner.mutex)
 		owner.attention_pending = true
 		sync.mutex_unlock(&owner.mutex)
-		notify_session_update()
+		notify_instance_update()
 	case .Reply_Clipboard_Empty:
 		if !consequence_reply_empty(owner, info.generation, .Clipboard) {
 			copy_consequence_error(owner)
@@ -211,7 +211,7 @@ consequence_owner_worker :: proc(data: rawptr) {
         owner.error_len = int(count)
         copy(owner.error[:int(count)], diagnostic[:int(count)])
         sync.mutex_unlock(&owner.mutex)
-        notify_session_update()
+        notify_instance_update()
         return
     }
     owner.client_id = consequence_client_id(owner.handle)
@@ -290,8 +290,8 @@ reconcile_consequence_owners :: proc(app: ^App) {
 	}
 	for tab_index in 0..<app.tab_count {
 		for view in app.tabs[tab_index].panes {
-			if view == nil || view.control == nil || !session_interactive(view) do continue
-			endpoint := session_endpoint(view)
+			if view == nil || view.control == nil || !instance_interactive(view) do continue
+			endpoint := instance_endpoint(view)
 			if len(endpoint) == 0 do continue
 			owner := find_consequence_owner(app, endpoint)
 			if owner == nil {

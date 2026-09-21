@@ -102,13 +102,13 @@ user_profile_create_duplicate_delete_preserves_live_recipe_indices :: proc(t: ^t
 }
 
 @(test)
-profile_delete_refuses_builtin_and_live_session_recipe :: proc(t: ^testing.T) {
+profile_delete_refuses_builtin_and_live_instance_recipe :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
 	created := create_user_profile(&app)
 	testing.expect(t, !delete_user_profile(&app, 0))
-	view := new(Session_View)
+	view := new(Instance_View)
 	defer free(view)
 	view.profile_index = created
 	app.tab_count = 1

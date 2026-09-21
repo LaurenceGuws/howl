@@ -1,20 +1,10 @@
-# howl-session wire contract
+# howl-instance
 
-`howl-session` owns one node-local PTY and one canonical `howl-vt` terminal.
-The framing below is transport-neutral. `howl-sessiond` accepts either its
-established Unix stream path or an IPv4 loopback TCP listener selected with
-`tcp:PORT`; `tcp:0` asks the kernel for a free port and prints the resolved
-`tcp://127.0.0.1:PORT` endpoint. Both are local client transports. Remote
-reachability, authentication and routing remain outside Howl; the existing
-`howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
+`howl-instance` is the batteries-included local terminal composition: one PTY, one canonical `howl-vt` terminal, ordered child I/O, explicit geometry, signals, and deterministic headless consequence policy. It is a module, not a daemon, listener, Session, or Server.
 
-This document is the client contract for framing version 9. All multi-byte
-integers are unsigned big-endian unless a field is
-explicitly described as signed. Reserved bytes and reserved bits must be zero.
+An embedder may use `howl-vt` directly and omit PTY/Instance composition entirely. Higher-level Session/Server orchestration is optional and must depend on Instance; Instance never depends on it.
 
-The tracked byte corpus is `protocol/v9-vectors.json`. A clean-room Python
-decoder that does not import, execute, or inspect the Zig implementation lives
-at `tools/validate_vectors.py`.
+The HWLS framing documented below is the transport-neutral interaction vocabulary for one concrete terminal Instance. This package does not publish a socket or executable. A higher owner may attach an ordered byte stream to an Instance interaction service; clients must not infer Session or Server identity from HWLS.
 
 ## Framing
 
@@ -302,7 +292,7 @@ The presentation payload is exactly 1,060 bytes:
 | 1056 | 4 | selection-foreground RGBA slot |
 
 Cursor age uses `0xffffffffffffffff` when no absolute cursor movement timestamp
-is tracked. Otherwise it is an age observed on the session node, so it remains
+is tracked. Otherwise it is an age observed on the instance node, so it remains
 meaningful to a client with a different monotonic clock origin.
 
 Optional-color presence bits are cursor `0x01`, cursor text `0x02`, selection
@@ -405,7 +395,7 @@ The manifest header is:
 | 24 | 2 | referenced image descriptor count, `0..256` |
 | 26 | 2 | visible placement count, `0..16384` |
 
-The cell-pixel dimensions belong to the canonical session graphics lattice,
+The cell-pixel dimensions belong to the canonical Instance graphics lattice,
 not to any one attached client's font or display. Image placement pixel fields
 are expressed in that stable lattice. A graphical client scales them into its
 own presentation lattice while preserving terminal cell anchors and source
@@ -479,7 +469,7 @@ the canonical input owner. Paste is semantic input: the remaining payload is exa
 content, and the canonical VT decides whether bracketed-paste framing applies.
 
 For key, mouse, and focus events, **the client sends physical meaning, not
-terminal escape sequences**. The canonical `howl-vt` on the session node owns
+terminal escape sequences**. The canonical `howl-vt` on the instance node owns
 application cursor/keypad modes, modifyOtherKeys, Kitty keyboard flags, mouse
 protocols, focus reporting, bracketed paste, and every other mode-sensitive
 encoding decision.
@@ -642,7 +632,7 @@ from explicitly reported empty strings. Bytes are preserved exactly, including
 invalid UTF-8; a desktop must validate/sanitize its label projection instead of
 rewriting canonical state. A directory, title or remote-host report conveys no
 permission to execute a command, open a resource, change cwd, or change ownership.
-The shell mark is not the Session child-process lifecycle.
+The shell mark is not the Instance child-process lifecycle.
 
 OSC `9;4` progress is retained state, not a queued notification. Normal progress
 requires a percentage. Failure/paused updates without a percentage retain the
@@ -689,7 +679,7 @@ empty and the last canonical geometry remains unchanged.
 | 9 | kill |
 | 15 | terminate |
 
-The session translates these semantic values to the node process-group boundary;
+The instance translates these semantic values to the node process-group boundary;
 host-specific errno values never cross the wire.
 
 `result` is exactly two bytes: the original frame kind, then a result code:
@@ -711,7 +701,7 @@ are connection-level failures instead.
 ## Ownership rules for a client implementation
 
 A client owns framing, connection-local state, UI-local state, and physical input capture.
-The session node owns the PTY, canonical VT, terminal protocol modes, process
+The instance node owns the PTY, canonical VT, terminal protocol modes, process
 lifecycle, canonical geometry, and deterministic host consequences. Presentation
 code may shape and draw `text_v1`, but must not reinterpret terminal modes or
 write PTY escape bytes for typed input.
@@ -728,7 +718,7 @@ The minimal client implementation order is:
 Before connecting a new language implementation, run the independent corpus:
 
 ```sh
-cd howl-session
+cd howl-instance
 python3 tools/validate_vectors.py protocol/v9-vectors.json
 ```
 

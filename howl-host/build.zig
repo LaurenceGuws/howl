@@ -43,9 +43,8 @@ pub fn build(b: *std.Build) void {
     });
     const host_c = host_translate.createModule();
 
-    const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
-    const sessiond = session.artifact("howl-sessiond");
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
@@ -57,7 +56,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     local_terminal.addImport("host_c", host_c);
-    local_terminal.addImport("howl_session", session.module("howl_session"));
+    local_terminal.addImport("howl_instance", instance.module("howl_instance"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const text = text_dependency.module("howl_text");
     const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
@@ -84,7 +83,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("howl_client", client);
-    root.addImport("howl_session", session.module("howl_session"));
+    root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("local_terminal", local_terminal);
     root.addImport("howl_text", text);
@@ -103,13 +102,9 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     b.installArtifact(executable);
-    // The Host resolves this exact sibling artifact at runtime for Sessions it
-    // owns. Attaching to externally supplied endpoints remains unchanged.
-    b.installArtifact(sessiond);
 
     const check = b.step("check", "Compile the native Vulkan performance host");
     check.dependOn(&executable.step);
-    check.dependOn(&sessiond.step);
     const run = b.addRunArtifact(executable);
     run.addPassthruArgs();
     b.step("run", "Run the native Vulkan performance host").dependOn(&run.step);
@@ -121,7 +116,7 @@ pub fn build(b: *std.Build) void {
     });
     shared.addImport("host_c", host_c);
     shared.addImport("howl_wayland", wayland.module("howl_wayland"));
-    shared.addImport("howl_session", session.module("howl_session"));
+    shared.addImport("howl_instance", instance.module("howl_instance"));
     const test_module = b.createModule(.{
         .root_source_file = b.path("test/test.zig"),
         .target = target,
@@ -189,7 +184,7 @@ pub fn build(b: *std.Build) void {
     });
     input_test_module.addImport("howl_client", client);
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
-    input_test_module.addImport("howl_session", session.module("howl_session"));
+    input_test_module.addImport("howl_instance", instance.module("howl_instance"));
     input_test_module.addImport("local_terminal", local_terminal);
     input_test_module.addImport("host_c", host_c);
     const input_tests = b.addTest(.{
@@ -239,7 +234,7 @@ pub fn build(b: *std.Build) void {
     });
     scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
     scene_test_module.addImport("howl_client", client);
-    scene_test_module.addImport("howl_session", session.module("howl_session"));
+    scene_test_module.addImport("howl_instance", instance.module("howl_instance"));
     scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("howl_text", text);
     scene_test_module.addImport("local_terminal", local_terminal);

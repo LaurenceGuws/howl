@@ -1,7 +1,7 @@
 //! Owns native-host keyboard, mouse, focus delivery and host-local pane focus.
 //!
 //! Window copies interpreted Wayland/xkb facts into Boundary. This owner alone
-//! performs potentially blocking Session action round trips so compositor
+//! performs potentially blocking Instance action round trips so compositor
 //! dispatch never waits on endpoint I/O. In duet mode it owns one connection
 //! per pane. F6 toggles focus, F7/F8 move the focused divider, and F9 owns
 //! bounded left/right or top/bottom split canary, and F10 closes only that
@@ -9,12 +9,12 @@
 
 const std = @import("std");
 const client = @import("howl_client");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
-const session = @import("howl_session");
+const instance = @import("howl_instance");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
 
@@ -293,7 +293,7 @@ fn runFallible(
     }
 }
 
-/// Owns one-pane host input for an in-process Session. The remote multi-pane
+/// Owns one-pane host input for an in-process Instance. The remote multi-pane
 /// runner remains unchanged; unsupported local split/tab shortcuts stay
 /// reserved rather than spawning an endpoint-backed sibling.
 pub fn runLocal(
@@ -458,7 +458,7 @@ fn deliverMouseLocal(
         },
         .terminal_mouse => try owner.input(.{ .mouse = nativeMouse(mouse.value) }),
         .alternate_scroll => {
-            const key: session.KeyName = if (amount > 0) .up else .down;
+            const key: instance.KeyName = if (amount > 0) .up else .down;
             try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .press } });
             try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .release } });
         },
@@ -489,7 +489,7 @@ fn deliverKeyLocal(owner: *local_terminal.Owner, key: wayland.input.Key) !void {
             const scalar = std.math.cast(u21, unicode.scalar) orelse
                 return error.InvalidUnicodeScalar;
             try owner.input(.{ .key = .{
-                .key = try session.Key.initUnicode(scalar),
+                .key = try instance.Key.initUnicode(scalar),
                 .action = nativeAction(unicode.action) orelse return error.InvalidKey,
                 .mods = nativeModifiers(unicode.modifiers),
             } });
@@ -497,7 +497,7 @@ fn deliverKeyLocal(owner: *local_terminal.Owner, key: wayland.input.Key) !void {
     }
 }
 
-fn nativeAction(value: u8) ?session.KeyAction {
+fn nativeAction(value: u8) ?instance.KeyAction {
     return switch (value) {
         1 => .press,
         2 => .repeat,
@@ -506,7 +506,7 @@ fn nativeAction(value: u8) ?session.KeyAction {
     };
 }
 
-fn nativeModifiers(value: u8) session.InputModifier {
+fn nativeModifiers(value: u8) instance.InputModifier {
     return .{
         .shift = value & protocol.typed_input.modifiers.shift != 0,
         .alt = value & protocol.typed_input.modifiers.alt != 0,
@@ -519,7 +519,7 @@ fn nativeModifiers(value: u8) session.InputModifier {
     };
 }
 
-fn nativeMouse(value: protocol.MouseInput) @FieldType(session.Input, "mouse") {
+fn nativeMouse(value: protocol.MouseInput) @FieldType(instance.Input, "mouse") {
     return .{
         .kind = switch (value.kind) {
             .press => .press,
@@ -544,7 +544,7 @@ fn nativeMouse(value: protocol.MouseInput) @FieldType(session.Input, "mouse") {
     };
 }
 
-fn nativeNamedKey(value: u8) ?session.KeyName {
+fn nativeNamedKey(value: u8) ?instance.KeyName {
     return switch (value) {
         1 => .enter,
         2 => .tab,
@@ -929,13 +929,13 @@ test "local native modifiers preserve every protocol bit explicitly" {
 }
 
 test "local named-key conversion preserves protocol identities and actions" {
-    try std.testing.expectEqual(session.KeyName.up, nativeNamedKey(5).?);
-    try std.testing.expectEqual(session.KeyName.f12, nativeNamedKey(40).?);
-    try std.testing.expectEqual(session.KeyName.keypad_enter, nativeNamedKey(58).?);
+    try std.testing.expectEqual(instance.KeyName.up, nativeNamedKey(5).?);
+    try std.testing.expectEqual(instance.KeyName.f12, nativeNamedKey(40).?);
+    try std.testing.expectEqual(instance.KeyName.keypad_enter, nativeNamedKey(58).?);
     try std.testing.expect(nativeNamedKey(0) == null);
-    try std.testing.expectEqual(session.KeyAction.press, nativeAction(1).?);
-    try std.testing.expectEqual(session.KeyAction.repeat, nativeAction(2).?);
-    try std.testing.expectEqual(session.KeyAction.release, nativeAction(3).?);
+    try std.testing.expectEqual(instance.KeyAction.press, nativeAction(1).?);
+    try std.testing.expectEqual(instance.KeyAction.repeat, nativeAction(2).?);
+    try std.testing.expectEqual(instance.KeyAction.release, nativeAction(3).?);
     try std.testing.expect(nativeAction(0) == null);
 }
 
@@ -951,8 +951,8 @@ test "local mouse conversion preserves semantic route facts" {
             protocol.typed_input.modifiers.shift,
         .buttons_down = 1,
     });
-    try std.testing.expectEqual(session.MouseEventKind.wheel, value.kind);
-    try std.testing.expectEqual(session.MouseButton.wheel_up, value.button);
+    try std.testing.expectEqual(instance.MouseEventKind.wheel, value.kind);
+    try std.testing.expectEqual(instance.MouseButton.wheel_up, value.button);
     try std.testing.expectEqual(@as(u16, 7), value.row);
     try std.testing.expectEqual(@as(u16, 9), value.col);
     try std.testing.expectEqual(@as(u16, 13), value.pixel_x);

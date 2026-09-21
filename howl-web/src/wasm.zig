@@ -1,6 +1,6 @@
-//! Experimental browser byte pump. Session protocol and rich decoding stay shared.
+//! Experimental browser byte pump. Instance protocol and rich decoding stay shared.
 const std = @import("std");
-const p = @import("howl_session").protocol;
+const p = @import("howl_instance").protocol;
 const client = @import("howl_client");
 const rich = client.rich;
 const render = @import("howl_render");
@@ -300,7 +300,7 @@ export fn hw_release_image() u32 {
 }
 
 // Host writes committed UTF-8 bytes into input, then requests one serialized send.
-// Terminal escape encoding remains exclusively on the session/VT side.
+// Terminal escape encoding remains exclusively on the Instance/VT side.
 export fn hw_send_text(length: usize) u32 {
     return sendBytesInput(.bytes, length, true);
 }

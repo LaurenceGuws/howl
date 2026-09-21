@@ -1,4 +1,4 @@
-//! Native human/agent client for one canonical Howl session.
+//! Native human/agent client for one concrete Howl Instance.
 
 pub const version = "0.1.6-dev";
 pub const version_schema = "howl.version/v1";

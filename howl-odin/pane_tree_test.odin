@@ -4,11 +4,11 @@ import "core:testing"
 import SDL "vendor:sdl3"
 
 @(test)
-pane_tree_nests_layout_without_moving_session_slots :: proc(t: ^testing.T) {
+pane_tree_nests_layout_without_moving_instance_slots :: proc(t: ^testing.T) {
     tab: Tab
-    first_view := new(Session_View)
-    second_view := new(Session_View)
-    third_view := new(Session_View)
+    first_view := new(Instance_View)
+    second_view := new(Instance_View)
+    third_view := new(Instance_View)
     testing.expect(t, first_view != nil && second_view != nil && third_view != nil)
     if first_view == nil || second_view == nil || third_view == nil do return
     defer free(first_view)
@@ -51,9 +51,9 @@ pane_tree_nests_layout_without_moving_session_slots :: proc(t: ^testing.T) {
 @(test)
 pane_tree_close_promotes_sibling_subtree_and_keeps_survivor_identity :: proc(t: ^testing.T) {
     tab: Tab
-    views: [3]^Session_View
+    views: [3]^Instance_View
     for index in 0..<3 {
-        views[index] = new(Session_View)
+        views[index] = new(Instance_View)
         testing.expect(t, views[index] != nil)
         if views[index] == nil do return
         defer free(views[index])
@@ -72,7 +72,7 @@ pane_tree_close_promotes_sibling_subtree_and_keeps_survivor_identity :: proc(t: 
     testing.expect(t, ok)
     testing.expect_value(t, tab.pane_count, 3)
 
-    removed: ^Session_View
+    removed: ^Instance_View
     removed, ok = remove_pane_slot(&tab, second)
     testing.expect(t, ok)
     testing.expect(t, removed == views[1])
@@ -94,9 +94,9 @@ pane_tree_close_promotes_sibling_subtree_and_keeps_survivor_identity :: proc(t: 
 @(test)
 pane_tree_directional_focus_resize_zoom_and_swap_are_geometry_owned :: proc(t: ^testing.T) {
     tab: Tab
-    views: [3]^Session_View
+    views: [3]^Instance_View
     for index in 0..<3 {
-        views[index] = new(Session_View)
+        views[index] = new(Instance_View)
         testing.expect(t, views[index] != nil)
         if views[index] == nil do return
         defer free(views[index])

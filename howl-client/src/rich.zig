@@ -4,7 +4,7 @@
 //! renderer, CLI schema, JSON representation, font, or platform presentation.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
@@ -126,7 +126,7 @@ pub const Snapshot = struct {
 /// Borrows one complete decoded rich snapshot from a reusable raw-observation cache.
 ///
 /// Every slice remains valid only until the owning `RawCache` receives again or
-/// is deinitialized. Session remains canonical; `changed_rows` reports only
+/// is deinitialized. Instance remains canonical; `changed_rows` reports only
 /// exact encoded-row record inequality against the cache's previous accepted cut.
 pub const View = struct {
     begin: protocol.SnapshotBegin,

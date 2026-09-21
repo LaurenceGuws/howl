@@ -4,9 +4,8 @@
     .fingerprint = 0x75ee688427773164,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
-        .howl_session = .{ .path = "../howl-session" },
+        .howl_instance = .{ .path = "../howl-instance" },
         .howl_client = .{ .path = "../howl-client" },
-        .howl_server = .{ .path = "../howl-server" },
     },
     .paths = .{ "README.md", "build.zig", "build.zig.zon", "install", "src", "test" },
 }

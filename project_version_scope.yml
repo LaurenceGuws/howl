@@ -2,28 +2,28 @@ schema: 1
 version: 0.1.6-dev
 
 objective: >-
-  Keep one observer-independent canonical PTY/VT session while pressure-proving
+  Keep one observer-independent canonical PTY/VT instance while pressure-proving
   shared text and graphics presentation across native and browser canaries.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
   pty: caller-polled Linux PTY and child-process lifecycle
-  session: opaque owner of one PTY and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
+  instance: opaque owner of one PTY and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
   text: tracked bounded native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and natural alpha rasterization
 
 invariants:
-  - one node-local session has one authoritative PTY and VT
-  - observers cannot mutate VT directly and cannot pace session progress
+  - one local Instance has one authoritative PTY and VT
+  - observers cannot mutate VT directly and cannot pace Instance progress
   - attaching an observer never changes canonical geometry
   - text shaping and rasterization expose no renderer, window, session, or client authority
   - renderer and platform code are not core dependencies
-  - VT owns terminal animation state and Session owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
-  - canonical graphics identity/resource generations cross Session; Canvas/backend residency does not
+  - VT owns terminal animation state and Instance owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
+  - canonical graphics identity/resource generations cross an Instance interaction boundary; Canvas/backend residency does not
   - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical session
+  - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
   - pressure the same session/client/text/Canvas owners through both maintained visual canaries: Flutter over the native TCP/client path and Web over WebSocket/Wasm/browser presentation
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership

@@ -15,12 +15,9 @@ def main():
     for args in [
         ("--help",),
         ("help",),
-        ("server", "--help"),
-        ("server", "run", "--help"),
-        ("session", "--help"),
-        ("session", "create", "--help"),
-        ("snapshot", "--help"),
-        ("key", "--help"),
+        ("instance", "--help"),
+        ("instance", "snapshot", "--help"),
+        ("instance", "key", "--help"),
     ]:
         result = invoke(cli, *args)
         assert result.returncode == 0, (args, result)
@@ -29,8 +26,8 @@ def main():
 
     for args, operation in [
         (("nonsense",), "nonsense"),
-        (("session", "create"), "session.create"),
-        (("server", "status"), "server.status"),
+        (("instance",), "instance"),
+        (("instance", "snapshot"), "instance.snapshot"),
     ]:
         result = invoke(cli, *args)
         assert result.returncode == 64, (args, result)

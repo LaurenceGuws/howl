@@ -1,11 +1,11 @@
 //! Live browser renderer: framed Howl snapshot bytes -> shared view/text/Canvas state.
 const std = @import("std");
-const session = @import("howl_session");
+const instance = @import("howl_instance");
 const client = @import("howl_client");
 const render = @import("howl_render");
 const canvas = render.terminal;
 const text = render.text;
-const p = session.protocol;
+const p = instance.protocol;
 
 pub const panic = std.debug.FullPanic(trapPanic);
 fn trapPanic(_: []const u8, _: ?usize) noreturn {

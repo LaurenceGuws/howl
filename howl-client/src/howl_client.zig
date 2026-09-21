@@ -1,10 +1,9 @@
-//! Reusable native client for one existing Howl session endpoint.
+//! Reusable native client for one existing Howl Instance endpoint.
 //!
 //! This package owns client-side endpoint parsing, the frozen framed connection,
 //! handshake, bounded frame I/O, and request-result mechanics. It owns no PTY,
-//! VT, session lifecycle, discovery, renderer, CLI presentation, or platform UI.
-//! Native hosts may explicitly opt into the installed-OpenSSH carrier; SSH owns
-//! its authentication and encryption. Byte-entry consumers need no subprocess.
+//! VT, Instance lifecycle, discovery, renderer, CLI presentation, or platform UI.
+//! Native hosts use explicit Unix or numeric-IPv4 TCP streams. Byte-entry consumers need no subprocess.
 
 const impl = @import("client.zig");
 
@@ -25,7 +24,6 @@ pub const view = @import("view.zig");
 pub const selection = @import("selection.zig");
 pub const search = @import("search.zig");
 pub const images = @import("images.zig");
-pub const server = @import("server.zig");
 
 // Exported modules are lazy; reference them so package tests cannot be empty.
 test {

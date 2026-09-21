@@ -3,7 +3,7 @@
 This package owns the node-local browser transport edge for the experimental
 Howl Web client. It is deliberately protocol-blind: after a bounded HTTP/WebSocket
 upgrade it copies binary bytes between the browser and one explicit loopback Howl
-session endpoint. It never parses Howl frames, owns a PTY, interprets terminal
+Instance endpoint. It never parses Howl frames, owns a PTY, interprets terminal
 state, discovers sessions, or chooses routes.
 
 The process binds **only `127.0.0.1`**. Public delivery belongs to the existing
@@ -68,4 +68,4 @@ howl-web-gateway LISTEN_PORT SESSION_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR
 ```
 
 All ports and paths are explicit. The public canary uses a dedicated echo-only
-Howl session first; a normal interactive shell is not an authentication test.
+Howl Instance first; a normal interactive shell is not an authentication test.

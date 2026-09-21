@@ -232,7 +232,7 @@ payload = output().subarray(12); assert.equal(output()[5], 3);
 assert.equal(payload.readBigUInt64BE(0), 0n); assert.equal(payload.readUInt32BE(8), 37);
 assert.equal(w.hw_observe(1, 0), 0); // at most one outstanding operation
 assert.equal(w.hw_send_text(1), 0);
-const vectorCorpus = JSON.parse(await readFile('../howl-session/protocol/v9-vectors.json', 'utf8'));
+const vectorCorpus = JSON.parse(await readFile('../howl-instance/protocol/v9-vectors.json', 'utf8'));
 const graphicsVector = vectorCorpus.cases.find(test => test.id === 'snapshot_graphics_manifest');
 assert.ok(graphicsVector?.hex);
 const graphicsSnapshot = Buffer.from(graphicsVector.hex, 'hex');

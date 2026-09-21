@@ -30,7 +30,6 @@ esac
 bundle_files=(
   "$bundle_dir/howl-odin"
   "$bundle_dir/libhowl_odin_bridge.so"
-  "$bundle_dir/howl-sessiond"
   "$bundle_dir/howl-window-icon.bmp"
   "$bin_dir/howl-odin"
   "$applications_dir/$app_id.desktop"
@@ -39,7 +38,6 @@ bundle_files=(
 relative_files=(
   "libexec/howl-odin/howl-odin"
   "libexec/howl-odin/libhowl_odin_bridge.so"
-  "libexec/howl-odin/howl-sessiond"
   "libexec/howl-odin/howl-window-icon.bmp"
   "bin/howl-odin"
   "xdg-data/applications/$app_id.desktop"
@@ -147,14 +145,13 @@ launcher_source="$module_root/packaging/howl-odin-launcher"
 for candidate in \
   "$output_root/howl-odin" \
   "$output_root/libhowl_odin_bridge.so" \
-  "$output_root/howl-sessiond" \
   "$output_root/howl-window-icon.bmp" \
   "$desktop_source" \
   "$icon_source" \
   "$launcher_source"; do
   [[ -s $candidate ]] || { printf 'howl-odin install: missing candidate: %s\n' "$candidate" >&2; exit 1; }
 done
-[[ -x $output_root/howl-odin && -x $output_root/howl-sessiond && -x $launcher_source ]] || {
+[[ -x $output_root/howl-odin && -x $launcher_source ]] || {
   printf 'howl-odin install: executable candidate missing execute permission\n' >&2
   exit 1
 }
@@ -177,7 +174,6 @@ fi
 mkdir -p "$bundle_dir" "$bin_dir" "$applications_dir" "$icons_dir"
 atomic_install "$output_root/howl-odin" "$bundle_dir/howl-odin" 0755
 atomic_install "$output_root/libhowl_odin_bridge.so" "$bundle_dir/libhowl_odin_bridge.so" 0755
-atomic_install "$output_root/howl-sessiond" "$bundle_dir/howl-sessiond" 0755
 atomic_install "$output_root/howl-window-icon.bmp" "$bundle_dir/howl-window-icon.bmp" 0644
 atomic_install "$launcher_source" "$bin_dir/howl-odin" 0755
 atomic_install "$desktop_source" "$applications_dir/$app_id.desktop" 0644

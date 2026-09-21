@@ -5,7 +5,7 @@
 //! it owns no terminal state, renderer resource cache, or residency policy.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{

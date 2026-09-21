@@ -4,7 +4,7 @@
 //! that already-decoded native model for explicit `howl snapshot --rich` output.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("howl_client");
 
 const Rgba = client.rich.Rgba;

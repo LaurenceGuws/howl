@@ -1,11 +1,11 @@
 //! Bounded client-side host-consequence authority and snapshot operations.
 //!
-//! The frozen Session wire carries consequence snapshots as begin/data/end
+//! The frozen Instance wire carries consequence snapshots as begin/data/end
 //! frames. This module owns that framing and exposes one immutable caller-owned
 //! payload plus typed protocol metadata. Host policy remains outside the client.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 
 pub const Kind = protocol.ConsequenceKind;

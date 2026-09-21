@@ -3,7 +3,7 @@ import "core:testing"
 
 @(test)
 control_queue_is_fifo_bounded_and_does_not_replay_after_stop :: proc(t: ^testing.T) {
-    view: Session_View
+    view: Instance_View
     for i in 0..<CONTROL_QUEUE_ITEMS {
         testing.expect(t, control_queue_push_locked(&view, {kind = .Unicode, scalar = u32(i)}))
     }
@@ -22,7 +22,7 @@ control_queue_is_fifo_bounded_and_does_not_replay_after_stop :: proc(t: ^testing
 
 @(test)
 control_queue_bytes_are_bounded_separately_from_event_count :: proc(t: ^testing.T) {
-    view: Session_View
+    view: Instance_View
     payload: [65535]u8
     testing.expect(t, control_queue_push_locked(&view, {kind = .Paste, payload = payload[:]}))
     testing.expect(t, control_queue_push_locked(&view, {kind = .Paste, payload = payload[:]}))
@@ -67,7 +67,7 @@ completed_query_decline_preserves_input_but_transport_failure_does_not :: proc(t
 
 @(test)
 selection_motion_after_copy_does_not_erase_newer_range :: proc(t: ^testing.T) {
-    view := Session_View{selection_generation = 10, selection_focus_row = 3, selection_focus_column = 8}
+    view := Instance_View{selection_generation = 10, selection_focus_row = 3, selection_focus_column = 8}
     issued := view.selection_generation
     testing.expect(t, !extend_selection_focus_locked(&view, 3, 8))
     testing.expect_value(t, view.selection_generation, issued)
@@ -82,7 +82,7 @@ selection_motion_after_copy_does_not_erase_newer_range :: proc(t: ^testing.T) {
 immutable_live_view_moves_only_into_an_available_render_request :: proc(t: ^testing.T) {
     byte: u8
     owned := rawptr(&byte)
-    view := Session_View{reusable_view = owned}
+    view := Instance_View{reusable_view = owned}
     work: Render_Work
     request_render(&work, &view, 7, 0, 0)
     testing.expect(t, work.pending)
@@ -98,7 +98,7 @@ immutable_live_view_moves_only_into_an_available_render_request :: proc(t: ^test
 history_and_closed_render_jobs_do_not_consume_the_live_view :: proc(t: ^testing.T) {
     byte: u8
     owned := rawptr(&byte)
-    view := Session_View{reusable_view = owned}
+    view := Instance_View{reusable_view = owned}
     work: Render_Work
     request_render(&work, &view, 7, 4, 2)
     testing.expect(t, work.pending)

@@ -1,6 +1,6 @@
 const std = @import("std");
 const client = @import("howl_client");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const text = @import("howl_text");
 const terminal = @import("terminal");
 const canvas = terminal;
@@ -74,13 +74,6 @@ const HostPacketError = error{
 const HostHandle = opaque {};
 const CancellationHandle = opaque {};
 const ControlHandle = opaque {};
-const ManagerHandle = opaque {};
-const manager_output_bytes: usize = 8192;
-
-const ServerManager = struct {
-    allocator: std.mem.Allocator,
-    connection: client.server.Connection,
-};
 
 const Control = struct {
     allocator: std.mem.Allocator,
@@ -157,7 +150,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 5;
+    return 4;
 }
 
 /// Reports the shared maintained-client row envelope.
@@ -170,7 +163,7 @@ pub export fn howl_native_host_maximum_columns() u32 {
     return presentation.maximum_columns;
 }
 
-/// Creates an independently owned duplicate of the Host session socket. The
+/// Creates an independently owned duplicate of the Host Instance socket. The
 /// returned private handle may be used from another Dart isolate to wake a
 /// blocking observation, and must be destroyed exactly once by its caller.
 pub export fn howl_native_host_cancellation_create(raw: ?*HostHandle) ?*CancellationHandle {
@@ -198,152 +191,6 @@ pub export fn howl_native_host_cancellation_destroy(raw: ?*CancellationHandle) v
     const allocator = std.heap.c_allocator;
     cancellation.deinit();
     allocator.destroy(cancellation);
-}
-
-fn managerFromRaw(raw: ?*ManagerHandle) ?*ServerManager {
-    const value = raw orelse return null;
-    return @ptrCast(@alignCast(value));
-}
-
-pub export fn howl_native_manager_output_maximum_bytes() usize {
-    return manager_output_bytes;
-}
-
-pub export fn howl_native_manager_create(
-    endpoint_ptr: [*]const u8,
-    endpoint_len: usize,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*ManagerHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    if (endpoint_len == 0) {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
-        return null;
-    }
-    const allocator = std.heap.c_allocator;
-    var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.server.Connection.connect(
-        allocator,
-        endpoint_ptr[0..endpoint_len],
-        &connect_diagnostic,
-    ) catch |failure| {
-        writeConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            @errorName(failure),
-            connect_diagnostic,
-        );
-        return null;
-    };
-    errdefer connection.deinit();
-    const manager = allocator.create(ServerManager) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "manager_alloc", @errorName(failure));
-        return null;
-    };
-    manager.* = .{ .allocator = allocator, .connection = connection };
-    return @ptrCast(manager);
-}
-
-pub export fn howl_native_manager_destroy(raw: ?*ManagerHandle) void {
-    const manager = managerFromRaw(raw) orelse return;
-    const allocator = manager.allocator;
-    manager.connection.deinit();
-    manager.* = undefined;
-    allocator.destroy(manager);
-}
-
-pub export fn howl_native_manager_cancellation_create(raw: ?*ManagerHandle) ?*CancellationHandle {
-    const manager = managerFromRaw(raw) orelse return null;
-    const allocator = manager.allocator;
-    const cancellation = allocator.create(client.Cancellation) catch return null;
-    cancellation.* = manager.connection.cancellation() catch {
-        allocator.destroy(cancellation);
-        return null;
-    };
-    return @ptrCast(cancellation);
-}
-
-pub export fn howl_native_manager_observe(
-    raw: ?*ManagerHandle,
-    after_revision: u64,
-    output_ptr: [*]u8,
-    output_capacity: usize,
-    output_len: *usize,
-) i32 {
-    output_len.* = 0;
-    const manager = managerFromRaw(raw) orelse return 2;
-    if (output_capacity < manager_output_bytes) return 1;
-    var roster = manager.connection.observeRoster(after_revision) catch return 3;
-    defer roster.deinit();
-    const written = writeManagerRosterJson(&roster, output_ptr[0..output_capacity]) catch return 4;
-    output_len.* = written;
-    return 0;
-}
-
-pub export fn howl_native_manager_create_session(
-    raw: ?*ManagerHandle,
-    name_ptr: [*]const u8,
-    name_len: usize,
-    session_id: *u64,
-    roster_revision: *u64,
-) i32 {
-    session_id.* = 0;
-    roster_revision.* = 0;
-    const manager = managerFromRaw(raw) orelse return 2;
-    if (name_len == 0) return 4;
-    const result = manager.connection.create(.{ .name = name_ptr[0..name_len] }) catch return 3;
-    if (result.code != .ok) return managerResultCode(result.code);
-    session_id.* = result.session_id;
-    roster_revision.* = result.roster_revision;
-    return 0;
-}
-
-pub export fn howl_native_manager_close_session(
-    raw: ?*ManagerHandle,
-    session_id: u64,
-    roster_revision: *u64,
-) i32 {
-    roster_revision.* = 0;
-    const manager = managerFromRaw(raw) orelse return 2;
-    if (session_id == 0) return 4;
-    const result = manager.connection.close(session_id) catch return 3;
-    if (result.code != .ok) return managerResultCode(result.code);
-    roster_revision.* = result.roster_revision;
-    return 0;
-}
-
-fn managerResultCode(code: client.server.ResultCode) i32 {
-    return 100 + @as(i32, @intCast(@backingInt(code)));
-}
-
-fn writeManagerRosterJson(roster: *const client.server.Roster, output: []u8) !usize {
-    var writer = std.Io.Writer.fixed(output);
-    try writer.writeAll("{\"schema\":\"howl.flutter.server/v1\",\"server_id\":");
-    try writer.print("\"{x}\",\"roster_revision\":\"{d}\",\"capacity\":{d},\"stopping\":{s},\"sessions\":[", .{
-        roster.header.server_id,
-        roster.header.roster_revision,
-        roster.header.capacity,
-        if (roster.header.stopping) "true" else "false",
-    });
-    for (roster.items(), 0..) |record, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.print("{{\"session_id\":\"{d}\",\"created_sequence\":\"{d}\",\"state\":", .{
-            record.session_id,
-            record.created_sequence,
-        });
-        try std.json.Stringify.value(@tagName(record.state), .{}, &writer);
-        try writer.writeAll(",\"name\":");
-        try std.json.Stringify.value(record.name, .{}, &writer);
-        if (record.failure.len != 0) {
-            try writer.writeAll(",\"failure\":");
-            try std.json.Stringify.value(record.failure, .{}, &writer);
-        }
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}");
-    return writer.end;
 }
 
 pub export fn howl_native_host_output_minimum_bytes() usize {
@@ -458,48 +305,6 @@ fn writeConnectDiagnostic(
     output_len.* = rendered.len;
 }
 
-fn managedSessionConnection(
-    endpoint: []const u8,
-    session_id: u64,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?client.Connection {
-    if (endpoint.len == 0 or session_id == 0) {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_managed_target");
-        return null;
-    }
-    var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const outcome = client.server.attach(
-        std.heap.c_allocator,
-        endpoint,
-        session_id,
-        &connect_diagnostic,
-    ) catch |failure| {
-        writeConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            @errorName(failure),
-            connect_diagnostic,
-        );
-        return null;
-    };
-    return switch (outcome) {
-        .session => |connection| connection,
-        .rejected => |result| blk: {
-            writeCreateStageFailure(
-                diagnostic_ptr,
-                diagnostic_capacity,
-                diagnostic_len,
-                "manager_attach",
-                @tagName(result.code),
-            );
-            break :blk null;
-        },
-    };
-}
-
 pub export fn howl_native_host_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -533,7 +338,7 @@ pub export fn howl_native_host_create(
     };
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectDiagnosed(
+    var connection = client.Connection.connectDiagnosed(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
@@ -547,99 +352,6 @@ pub export fn howl_native_host_create(
         );
         return null;
     };
-    return createHostWithConnection(
-        connection,
-        primary_ptr,
-        primary_len,
-        fallback_ptr,
-        fallback_len,
-        secondary_fallback_ptr,
-        secondary_fallback_len,
-        font_pixels,
-        cell_width,
-        cell_height,
-        atlas_extent,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    );
-}
-
-pub export fn howl_native_host_create_managed(
-    manager_endpoint_ptr: [*]const u8,
-    manager_endpoint_len: usize,
-    session_id: u64,
-    primary_ptr: [*]const u8,
-    primary_len: usize,
-    fallback_ptr: [*]const u8,
-    fallback_len: usize,
-    secondary_fallback_ptr: ?[*]const u8,
-    secondary_fallback_len: usize,
-    font_pixels: u16,
-    cell_width: u16,
-    cell_height: u16,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*HostHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    if (manager_endpoint_len == 0 or session_id == 0 or primary_len == 0 or
-        font_pixels == 0 or cell_width == 0 or cell_height == 0)
-    {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
-        return null;
-    }
-    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
-        return null;
-    };
-    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", @errorName(failure));
-        return null;
-    };
-    const connection = managedSessionConnection(
-        manager_endpoint_ptr[0..manager_endpoint_len],
-        session_id,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    ) orelse return null;
-    return createHostWithConnection(
-        connection,
-        primary_ptr,
-        primary_len,
-        fallback_ptr,
-        fallback_len,
-        secondary_fallback_ptr,
-        secondary_fallback_len,
-        font_pixels,
-        cell_width,
-        cell_height,
-        atlas_extent,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    );
-}
-
-fn createHostWithConnection(
-    connection_value: client.Connection,
-    primary_ptr: [*]const u8,
-    primary_len: usize,
-    fallback_ptr: [*]const u8,
-    fallback_len: usize,
-    secondary_fallback_ptr: ?[*]const u8,
-    secondary_fallback_len: usize,
-    font_pixels: u16,
-    cell_width: u16,
-    cell_height: u16,
-    atlas_extent: u16,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*HostHandle {
-    const allocator = std.heap.c_allocator;
-    var connection = connection_value;
     errdefer connection.deinit();
     var raw_cache = client.rich.RawCache.init(allocator);
     errdefer raw_cache.deinit();
@@ -658,6 +370,7 @@ fn createHostWithConnection(
         fallback_count += 1;
     }
     const fallbacks = fallback_storage[0..fallback_count];
+    // `FontSet.init` copies every path during this call.
     const fonts = text.FontSet.init(allocator, .{
         .primary = primary_ptr[0..primary_len],
         .fallbacks = fallbacks,
@@ -711,7 +424,7 @@ pub export fn howl_native_control_create(
     }
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectDiagnosed(
+    var connection = client.Connection.connectDiagnosed(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
@@ -725,41 +438,6 @@ pub export fn howl_native_control_create(
         );
         return null;
     };
-    return createControlWithConnection(
-        connection,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    );
-}
-
-pub export fn howl_native_control_create_managed(
-    manager_endpoint_ptr: [*]const u8,
-    manager_endpoint_len: usize,
-    session_id: u64,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*ControlHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    const connection = managedSessionConnection(
-        manager_endpoint_ptr[0..manager_endpoint_len],
-        session_id,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    ) orelse return null;
-    return createControlWithConnection(connection, diagnostic_ptr, diagnostic_capacity, diagnostic_len);
-}
-
-fn createControlWithConnection(
-    connection_value: client.Connection,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*ControlHandle {
-    const allocator = std.heap.c_allocator;
-    var connection = connection_value;
     errdefer connection.deinit();
     const control = allocator.create(Control) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", @errorName(failure));
@@ -1710,48 +1388,4 @@ fn checkedMul(left: usize, right: usize) HostPacketError!usize {
 
 fn checkedAdd(left: usize, right: usize) HostPacketError!usize {
     return std.math.add(usize, left, right) catch error.IntegerOverflow;
-}
-
-test "native manager roster projection keeps exact ids as strings" {
-    const allocator = std.testing.allocator;
-    const payload = try allocator.alloc(u8, 0);
-    var roster = client.server.Roster{
-        .allocator = allocator,
-        .payload = payload,
-        .header = .{
-            .server_id = 0xfedcba9876543210,
-            .roster_revision = 99,
-            .session_count = 2,
-            .capacity = 16,
-            .stopping = false,
-        },
-        .count = 2,
-    };
-    defer roster.deinit();
-    roster.records[0] = .{
-        .session_id = 17,
-        .created_sequence = 3,
-        .state = .running,
-        .name = "work",
-    };
-    roster.records[1] = .{
-        .session_id = 18,
-        .created_sequence = 4,
-        .state = .failed,
-        .name = "logs",
-        .failure = "AcceptFailed",
-    };
-    var output: [manager_output_bytes]u8 = undefined;
-    const written = try writeManagerRosterJson(&roster, &output);
-    const text_value = output[0..written];
-    try std.testing.expect(std.mem.indexOf(u8, text_value, "\"server_id\":\"fedcba9876543210\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_value, "\"session_id\":\"17\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_value, "\"state\":\"failed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_value, "\"failure\":\"AcceptFailed\"") != null);
-}
-
-test "native manager rejection codes preserve HWLM result identity" {
-    try std.testing.expectEqual(@as(i32, 105), managerResultCode(.name_exists));
-    try std.testing.expectEqual(@as(i32, 108), managerResultCode(.stale_identity));
-    try std.testing.expectEqual(@as(i32, 111), managerResultCode(.unavailable));
 }

@@ -168,7 +168,7 @@ initialize_builtin_profiles :: proc(app: ^App) -> bool {
 	if home == nil do return false
 	home^ = Profile{built_in = true, mode = .Attach}
 	if !profile_set_text(home.id[:], &home.id_len, "home") ||
-	   !profile_set_text(home.name[:], &home.name_len, "Home Session") ||
+	   !profile_set_text(home.name[:], &home.name_len, "Home Instance") ||
 	   !profile_set_text(home.endpoint[:], &home.endpoint_len, HOME_ENDPOINT) {
 		free(home)
 		return false

@@ -33,20 +33,20 @@ Control_Result :: struct {
     code: i32,
 }
 
-connect_view_channel :: proc(view: ^Session_View, token: rawptr) -> rawptr {
-    endpoint := session_endpoint(view)
+connect_view_channel :: proc(view: ^Instance_View, token: rawptr) -> rawptr {
+    endpoint := instance_endpoint(view)
     diagnostic: [160]u8
     count: c.size_t
     handle := create(desktop_io_runtime, token, raw_data(endpoint), c.size_t(len(endpoint)),
                      raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     if handle == nil {
         publish_initial_error(view, string(diagnostic[:int(count)]))
-        notify_session_update()
+        notify_instance_update()
     }
     return handle
 }
 
-control_queue_push_locked :: proc(view: ^Session_View, task: Control_Task) -> bool {
+control_queue_push_locked :: proc(view: ^Instance_View, task: Control_Task) -> bool {
     if view.worker_stop || view.control_failed || view.io_failed || view.control_count >= CONTROL_QUEUE_ITEMS ||
        len(task.payload) > CONTROL_PAYLOAD_BYTES || view.control_bytes + len(task.payload) > CONTROL_QUEUE_BYTES {
         return false
@@ -62,7 +62,7 @@ control_queue_push_locked :: proc(view: ^Session_View, task: Control_Task) -> bo
     return true
 }
 
-control_queue_pop_locked :: proc(view: ^Session_View) -> (Control_Task, bool) {
+control_queue_pop_locked :: proc(view: ^Instance_View) -> (Control_Task, bool) {
     if view.control_count == 0 do return {}, false
     task := view.control_tasks[view.control_head]
     view.control_tasks[view.control_head] = {}
@@ -72,7 +72,7 @@ control_queue_pop_locked :: proc(view: ^Session_View) -> (Control_Task, bool) {
     return task, true
 }
 
-queue_control :: proc(view: ^Session_View, task: Control_Task) -> i32 {
+queue_control :: proc(view: ^Instance_View, task: Control_Task) -> i32 {
     if view == nil || view.control == nil do return 1
     sync.mutex_lock(&view.mutex)
     accepted := control_queue_push_locked(view, task)
@@ -89,7 +89,7 @@ queue_control :: proc(view: ^Session_View, task: Control_Task) -> i32 {
     return 0
 }
 
-queue_text :: proc(view: ^Session_View, data: [^]u8, length: c.size_t, paste: bool = false) -> i32 {
+queue_text :: proc(view: ^Instance_View, data: [^]u8, length: c.size_t, paste: bool = false) -> i32 {
     if length == 0 || length > CONTROL_PAYLOAD_BYTES do return 1
     bytes := make([]u8, int(length))
     if bytes == nil do return 2
@@ -99,17 +99,17 @@ queue_text :: proc(view: ^Session_View, data: [^]u8, length: c.size_t, paste: bo
     return result
 }
 
-queue_named_key :: proc(view: ^Session_View, key, action, modifiers: u8) -> i32 {
+queue_named_key :: proc(view: ^Instance_View, key, action, modifiers: u8) -> i32 {
     return queue_control(view, {kind = .Named, key = key, action = action, modifiers = modifiers})
 }
-queue_unicode_key :: proc(view: ^Session_View, scalar: u32, action, modifiers: u8) -> i32 {
+queue_unicode_key :: proc(view: ^Instance_View, scalar: u32, action, modifiers: u8) -> i32 {
     return queue_control(view, {kind = .Unicode, scalar = scalar, action = action, modifiers = modifiers})
 }
-queue_mouse :: proc(view: ^Session_View, kind, button, modifiers, buttons: u8, row: i32, column: u16, pixels: u8, x, y: u32) -> i32 {
+queue_mouse :: proc(view: ^Instance_View, kind, button, modifiers, buttons: u8, row: i32, column: u16, pixels: u8, x, y: u32) -> i32 {
     return queue_control(view, {kind = .Mouse, action = kind, button = button, modifiers = modifiers,
                                buttons = buttons, row = row, column = column, alternate = pixels, pixel_x = x, pixel_y = y})
 }
-queue_focus :: proc(view: ^Session_View, focus: u8) -> i32 {
+queue_focus :: proc(view: ^Instance_View, focus: u8) -> i32 {
     return queue_control(view, {kind = .Focus, action = focus})
 }
 
@@ -145,15 +145,15 @@ execute_control :: proc(handle: rawptr, task: Control_Task, result: ^Control_Res
     return 1
 }
 
-control_session :: proc(data: rawptr) {
-    view := (^Session_View)(data)
+control_instance :: proc(data: rawptr) {
+    view := (^Instance_View)(data)
     handle := connect_view_channel(view, view.control_interrupt)
     sync.mutex_lock(&view.mutex)
     view.control_pending_handle = handle
     view.control_connect_done = true
     view.control_failed = handle == nil
     sync.mutex_unlock(&view.mutex)
-    notify_session_update()
+    notify_instance_update()
     if handle == nil do return
     // Handle remains owned by this pane until main cancels and joins the worker.
     for {
@@ -173,7 +173,7 @@ control_session :: proc(data: rawptr) {
                 view.ui_dirty = true // A newer Take may now schedule its one task.
             }
             sync.mutex_unlock(&view.mutex)
-            if !current { notify_session_update(); continue }
+            if !current { notify_instance_update(); continue }
         }
         result := Control_Result{kind = task.kind, generation = task.generation, request = task.request}
         clipboard_failed := false
@@ -184,7 +184,7 @@ control_session :: proc(data: rawptr) {
             view.control_result = result
             view.control_result_ready = true
             sync.mutex_unlock(&view.mutex)
-            notify_session_update()
+            notify_instance_update()
             sync.mutex_lock(&view.mutex)
             for !view.worker_stop && view.control_result_ready do sync.cond_wait(&view.control_cond, &view.mutex)
             reply := view.clipboard_reply
@@ -213,9 +213,9 @@ control_session :: proc(data: rawptr) {
             view.ui_dirty = true
             sync.mutex_unlock(&view.mutex)
             if accepted && task.action == 1 && view.ownership == .Attached {
-                publish_control_notice(view, "Size control acquired; this pane now resizes the Session")
+                publish_control_notice(view, "Size control acquired; this pane now resizes the Instance")
             }
-            notify_session_update()
+            notify_instance_update()
         }
         fatal := control_failure_is_fatal(task.kind, result.code)
         if result.code != 0 && !fatal && !clipboard_failed && size_result_current {
@@ -223,8 +223,8 @@ control_session :: proc(data: rawptr) {
             count: c.size_t
             copy_error(handle, raw_data(message[:]), c.size_t(len(message)), &count)
             if task.kind == .Resize {
-                message := "Session rejected the size; auto-sizing stopped here"
-                if result.code == BRIDGE_SIZE_NOT_LEADER do message = "Size control changed; use Take Session size control to resize again"
+                message := "Instance rejected the size; auto-sizing stopped here"
+                if result.code == BRIDGE_SIZE_NOT_LEADER do message = "Size control changed; use Take Instance size control to resize again"
                 publish_control_notice(view, message)
             } else {
                 publish_control_notice(view, string(message[:int(count)]))
@@ -252,9 +252,9 @@ control_session :: proc(data: rawptr) {
             view.control_result = result
             view.control_result_ready = true
             sync.mutex_unlock(&view.mutex)
-            notify_session_update()
+            notify_instance_update()
         }
-        if fatal { notify_session_update(); break }
+        if fatal { notify_instance_update(); break }
     }
 }
 
@@ -271,7 +271,7 @@ apply_control_completions :: proc(app: ^App) {
             }
             ready := view.control_result_ready
             result := view.control_result
-            current := control_result_current(result.code, result.generation, view.selection_generation, active_session_view(app) == view)
+            current := control_result_current(result.code, result.generation, view.selection_generation, active_instance_view(app) == view)
             copy_current := result.code == 0 && view.copy_pending &&
                             clipboard_request_current(result.request, app.clipboard_request, view.copy_pending_request)
             copied := view.copy_completed && clipboard_request_current(result.request, app.clipboard_request, view.copy_completed_request)
@@ -343,12 +343,12 @@ service_desktop_io :: proc(app: ^App) -> bool {
         for i in 0..<layout.entry_count {
             view := tab_pane_view(tab, layout.entries[i].pane_index)
             if view == nil do continue
-            before := view.canvas_session_revision
+            before := view.canvas_instance_revision
             old_history := view.canvas_history_offset
             old_error := view.canvas_error_len
             had_canvas := view.canvas != nil
             _ = update_canvas(app, view)
-            changed = changed || before != view.canvas_session_revision || old_history != view.canvas_history_offset ||
+            changed = changed || before != view.canvas_instance_revision || old_history != view.canvas_history_offset ||
                       old_error != view.canvas_error_len || had_canvas != (view.canvas != nil)
         }
     }
@@ -378,16 +378,16 @@ control_failure_is_fatal :: proc(kind: Control_Kind, code: i32) -> bool {
     return !(query && code == BRIDGE_QUERY_DECLINED)
 }
 
-publish_control_notice :: proc(view: ^Session_View, message: string) {
+publish_control_notice :: proc(view: ^Instance_View, message: string) {
     sync.mutex_lock(&view.mutex)
     view.control_notice_len = min(len(message), len(view.control_notice))
     copy(view.control_notice[:view.control_notice_len], transmute([]u8)message[:view.control_notice_len])
     view.ui_dirty = true
     sync.mutex_unlock(&view.mutex)
-    notify_session_update()
+    notify_instance_update()
 }
 
-draw_control_notice :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+draw_control_notice :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     sync.mutex_lock(&view.mutex)
     bytes := view.control_notice
     count := view.control_notice_len

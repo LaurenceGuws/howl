@@ -50,7 +50,7 @@ User_Config :: struct {
 }
 
 Tab_Kind :: enum {
-    Session,
+    Instance,
 }
 
 Search_State :: enum u8 {
@@ -75,12 +75,12 @@ Desktop_Wheel_Route :: enum u8 {
     Interaction_State,
 }
 
-Session_Ownership :: enum u8 {
+Instance_Ownership :: enum u8 {
     Attached,
     Owned,
 }
 
-Session_Lifecycle_State :: enum u8 {
+Instance_Lifecycle_State :: enum u8 {
     Connecting,
     Active,
     Closed,
@@ -118,7 +118,7 @@ Tab :: struct {
     kind: Tab_Kind,
     title: string,
     profile: int,
-    panes: [MAX_PANES_PER_TAB]^Session_View,
+    panes: [MAX_PANES_PER_TAB]^Instance_View,
     pane_count: int,
     root: ^Pane_Node,
     active_pane: int,
@@ -143,9 +143,8 @@ History_Scrollbar_Geometry :: struct {
     visible_rows: u32,
 }
 
-Session_View :: struct {
-    ownership: Session_Ownership,
-    owned_process: rawptr,
+Instance_View :: struct {
+    ownership: Instance_Ownership,
     profile_index: int,
     profile_font_pixels: u16,
     control: rawptr,
@@ -251,7 +250,7 @@ Session_View :: struct {
     render_work: ^Render_Work,
     canvas_font_pixels: u16,
     canvas_scale: f32,
-    canvas_session_revision: u64,
+    canvas_instance_revision: u64,
     canvas_history_offset: u32,
     canvas_frame_revision: u64,
     canvas_surface_width: u16,
@@ -261,7 +260,7 @@ Session_View :: struct {
     canvas_commands: []Canvas_Command_Info,
     canvas_error: [160]u8,
     canvas_error_len: int,
-    size_control: Session_Size_Control,
+    size_control: Instance_Size_Control,
 }
 
 App_Action :: enum {
@@ -273,7 +272,7 @@ App_Action :: enum {
     Toggle_Pane_Zoom,
     Open_Local,
     Attach_Home,
-    Recover_Session,
+    Recover_Instance,
     Open_Settings,
     Open_Command_Palette,
     Open_Profile_Menu,
@@ -312,8 +311,8 @@ ACTION_DEFINITIONS :: [21]Action_Definition{
     {.Split_Horizontal, "split_down", "Split pane down", "Alt+Shift+-", .Pane},
     {.Toggle_Pane_Zoom, "toggle_pane_zoom", "Toggle pane zoom", "Ctrl+Shift+Z", .Pane},
     {.Open_Local, "open_local", "Open Local shell", "", .Profile},
-    {.Attach_Home, "attach_home", "Attach Home Session", "", .Profile},
-    {.Recover_Session, "recover_session", "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
+    {.Attach_Home, "attach_home", "Attach Home Instance", "", .Profile},
+    {.Recover_Instance, "recover_instance", "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
     {.Open_Settings, "open_settings", "Open settings", "Ctrl+,", .Application},
     {.Open_Command_Palette, "command_palette", "Command Palette", "Ctrl+Shift+P", .Application},
     {.Open_Profile_Menu, "profile_menu", "Profile menu", "Ctrl+Shift+Space", .Application},
@@ -324,8 +323,8 @@ ACTION_DEFINITIONS :: [21]Action_Definition{
     {.Close_Tab, "close_tab", "Close entire tab", "", .Tab},
     {.Move_Tab_Left, "move_tab_left", "Move tab left", "Ctrl+Shift+PageUp", .Tab},
     {.Move_Tab_Right, "move_tab_right", "Move tab right", "Ctrl+Shift+PageDown", .Tab},
-    {.Take_Size_Control, "take_size_control", "Take Session size control", "", .Pane},
-    {.Stop_Resizing, "stop_resizing", "Stop resizing Session", "", .Pane},
+    {.Take_Size_Control, "take_size_control", "Take Instance size control", "", .Pane},
+    {.Stop_Resizing, "stop_resizing", "Stop resizing Instance", "", .Pane},
 }
 
 PALETTE_ACTIONS :: [19]App_Action{
@@ -337,7 +336,7 @@ PALETTE_ACTIONS :: [19]App_Action{
     .Toggle_Pane_Zoom,
     .Open_Local,
     .Attach_Home,
-    .Recover_Session,
+    .Recover_Instance,
     .Take_Size_Control,
     .Stop_Resizing,
     .Open_Settings,
@@ -381,9 +380,9 @@ action_enabled :: proc(app: ^App, action: App_Action) -> bool {
         return app != nil && app.active_tab >= 0 && app.active_tab < app.tab_count &&
                app.tabs[app.active_tab].pane_count > 1
     case .Take_Size_Control, .Stop_Resizing:
-        return app != nil && size_action_enabled(active_session_view(app), action)
-    case .Recover_Session:
-        return app != nil && session_recoverable(active_session_view(app))
+        return app != nil && size_action_enabled(active_instance_view(app), action)
+    case .Recover_Instance:
+        return app != nil && instance_recoverable(active_instance_view(app))
     case .Close_Pane, .Close_Tab:
         return app != nil && app.tab_count > 0 && app.active_tab >= 0 && app.active_tab < app.tab_count
     case .Next_Tab, .Previous_Tab:
@@ -451,14 +450,14 @@ palette := Palette{
 }
 
 desktop_io_runtime: rawptr
-session_update_event_type: u32
+instance_update_event_type: u32
 
-notify_session_update :: proc() {
-    if session_update_event_type == 0 {
+notify_instance_update :: proc() {
+    if instance_update_event_type == 0 {
         return
     }
     event := SDL.Event{}
-    event.type = SDL.EventType(session_update_event_type)
+    event.type = SDL.EventType(instance_update_event_type)
     _ = SDL.PushEvent(&event)
 }
 
@@ -493,7 +492,6 @@ App :: struct {
     ime_preedit_len: int,
     ime_preedit_start: i32,
     ime_preedit_length: i32,
-    next_session_identity: u32,
     profiles: [MAX_PROFILES]^Profile,
     profile_count: int,
     startup_profile: int,
@@ -697,7 +695,7 @@ startup_action_label :: proc(app: ^App, value: int) -> string {
     if profile == nil {
         return "Unavailable"
     }
-    return profile.mode == .Launch ? "Create owned Session" : "Attach existing Session"
+    return profile.mode == .Launch ? "Create owned Instance" : "Attach existing Instance"
 }
 
 adjust_startup_profile :: proc(app: ^App, delta: int) {
@@ -832,18 +830,18 @@ update_text_display_scale :: proc(app: ^App) -> bool {
     return true
 }
 
-canvas_scale_value :: proc(view: ^Session_View) -> f32 {
+canvas_scale_value :: proc(view: ^Instance_View) -> f32 {
     if view != nil && valid_canvas_scale(view.canvas_scale) {
         return view.canvas_scale
     }
     return 1
 }
 
-canvas_logical_extent :: proc(view: ^Session_View, physical: u16) -> f32 {
+canvas_logical_extent :: proc(view: ^Instance_View, physical: u16) -> f32 {
     return f32(physical) / canvas_scale_value(view)
 }
 
-set_canvas_error :: proc(view: ^Session_View, message: string) {
+set_canvas_error :: proc(view: ^Instance_View, message: string) {
     if view == nil {
         return
     }
@@ -854,7 +852,7 @@ set_canvas_error :: proc(view: ^Session_View, message: string) {
     view.canvas_error_len = count
 }
 
-copy_canvas_bridge_error :: proc(view: ^Session_View) {
+copy_canvas_bridge_error :: proc(view: ^Instance_View) {
     if view == nil || view.canvas == nil {
         return
     }
@@ -868,7 +866,7 @@ copy_canvas_bridge_error :: proc(view: ^Session_View) {
     view.canvas_error_len = int(count)
 }
 
-remove_canvas_resource_at :: proc(view: ^Session_View, index: int) {
+remove_canvas_resource_at :: proc(view: ^Instance_View, index: int) {
     if index < 0 || index >= view.canvas_resource_count {
         return
     }
@@ -883,13 +881,13 @@ remove_canvas_resource_at :: proc(view: ^Session_View, index: int) {
     view.canvas_resources[view.canvas_resource_count] = {}
 }
 
-clear_canvas_resources :: proc(view: ^Session_View) {
+clear_canvas_resources :: proc(view: ^Instance_View) {
     for view.canvas_resource_count > 0 {
         remove_canvas_resource_at(view, view.canvas_resource_count - 1)
     }
 }
 
-reset_canvas :: proc(view: ^Session_View) {
+reset_canvas :: proc(view: ^Instance_View) {
     if view == nil {
         return
     }
@@ -906,7 +904,7 @@ reset_canvas :: proc(view: ^Session_View) {
     }
     view.canvas_font_pixels = 0
     view.canvas_scale = 0
-    view.canvas_session_revision = 0
+    view.canvas_instance_revision = 0
     view.canvas_history_offset = 0
     view.canvas_frame_revision = 0
     view.canvas_surface_width = 0
@@ -918,7 +916,7 @@ reset_canvas :: proc(view: ^Session_View) {
 }
 
 
-find_canvas_resource :: proc(view: ^Session_View, resource, generation: u64) -> ^Canvas_Texture {
+find_canvas_resource :: proc(view: ^Instance_View, resource, generation: u64) -> ^Canvas_Texture {
     for index in 0..<view.canvas_resource_count {
         value := &view.canvas_resources[index]
         if value.resource == resource && value.generation == generation {
@@ -928,7 +926,7 @@ find_canvas_resource :: proc(view: ^Session_View, resource, generation: u64) -> 
     return nil
 }
 
-remove_canvas_resource_key :: proc(view: ^Session_View, resource, generation: u64, exact_generation: bool) {
+remove_canvas_resource_key :: proc(view: ^Instance_View, resource, generation: u64, exact_generation: bool) {
     index := 0
     for index < view.canvas_resource_count {
         value := view.canvas_resources[index]
@@ -943,7 +941,7 @@ remove_canvas_resource_key :: proc(view: ^Session_View, resource, generation: u6
     }
 }
 
-create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> bool {
+create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bool {
     info: Canvas_Resource_Info
     if render_upload_info(view.canvas, index, &info) != 0 || info.width == 0 || info.height == 0 {
         set_canvas_error(view, "invalid Canvas upload metadata")
@@ -1038,7 +1036,7 @@ create_canvas_texture :: proc(app: ^App, view: ^Session_View, index: u32) -> boo
     return true
 }
 
-ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
+ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if app == nil || app.window == nil || view == nil do return false
     logical_pixels := view.profile_font_pixels
     if logical_pixels == 0 do logical_pixels = font_pixels_for_preset(app.terminal_font_preset)
@@ -1047,7 +1045,7 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
     if view.render_work != nil && view.canvas_font_pixels != pixels do reset_canvas(view)
     if view.render_work == nil {
-        if len(session_endpoint(view)) == 0 do return false
+        if len(instance_endpoint(view)) == 0 do return false
         view.render_work = start_render_worker(app, view, pixels)
         if view.render_work == nil { set_canvas_error(view, "render worker creation failed"); return false }
         view.canvas_font_pixels = pixels
@@ -1066,7 +1064,7 @@ ensure_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     return view.canvas != nil
 }
 
-update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
+update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if !ensure_canvas(app, view) {
         return false
     }
@@ -1083,7 +1081,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     prepared_history_generation := work.history_generation
     sync.mutex_unlock(&work.mutex)
     if !ready {
-        if view.canvas_session_revision < target_revision || view.canvas_history_offset != requested_history_offset || len(view.canvas_commands) == 0 {
+        if view.canvas_instance_revision < target_revision || view.canvas_history_offset != requested_history_offset || len(view.canvas_commands) == 0 {
             request_render(work, view, target_revision, requested_history_offset, requested_history_generation)
         }
         return len(view.canvas_commands) != 0
@@ -1131,7 +1129,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     view.canvas_surface_width = render_surface_width(view.canvas)
     view.canvas_surface_height = render_surface_height(view.canvas)
     view.canvas_frame_revision = render_frame_revision(view.canvas)
-    view.canvas_session_revision = render_session_revision(view.canvas)
+    view.canvas_instance_revision = render_instance_revision(view.canvas)
     view.canvas_history_offset = render_history_offset(view.canvas)
     accept_history_snapshot(
         view,
@@ -1150,7 +1148,7 @@ update_canvas :: proc(app: ^App, view: ^Session_View) -> bool {
     latest_history := view.history_target_offset
     latest_generation := view.history_generation
     sync.mutex_unlock(&view.mutex)
-    if view.canvas_session_revision < latest_revision || view.canvas_history_offset != latest_history {
+    if view.canvas_instance_revision < latest_revision || view.canvas_history_offset != latest_history {
         request_render(work, view, latest_revision, latest_history, latest_generation)
     }
     return true
@@ -1160,7 +1158,7 @@ rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
     return u8((bits >> shift) & 0xff)
 }
 
-draw_canvas_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect, origin_x, origin_y: f32) -> bool {
+draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect, origin_x, origin_y: f32) -> bool {
     if !update_canvas(app, view) {
         return false
     }
@@ -1284,7 +1282,7 @@ draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SD
     _ = SDL.RenderTexture(app.renderer, texture, nil, &destination)
 }
 
-publish_bridge_error :: proc(view: ^Session_View, handle: rawptr) {
+publish_bridge_error :: proc(view: ^Instance_View, handle: rawptr) {
     if view == nil || handle == nil {
         return
     }
@@ -1304,8 +1302,8 @@ publish_bridge_error :: proc(view: ^Session_View, handle: rawptr) {
     sync.mutex_unlock(&view.mutex)
 }
 
-observe_session :: proc(data: rawptr) {
-    view := (^Session_View)(data)
+observe_instance :: proc(data: rawptr) {
+    view := (^Instance_View)(data)
     observer := connect_view_channel(view, view.observer_interrupt)
     if observer == nil do return
     view.observer = observer
@@ -1335,14 +1333,14 @@ observe_session :: proc(data: rawptr) {
                 break
             }
             publish_bridge_error(view, observer)
-            notify_session_update()
+            notify_instance_update()
             break // Explicit reconnect owns a fresh channel, never replay old input.
         }
 
         fresh_interaction: Interaction_State_Info
         if interaction_state(observer, &fresh_interaction) != 0 {
             publish_bridge_error(view, observer)
-            notify_session_update()
+            notify_instance_update()
             break
         }
         snapshot_revision := revision(observer)
@@ -1412,11 +1410,11 @@ observe_session :: proc(data: rawptr) {
         validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
         if displaced != nil do view_destroy(displaced)
-        notify_session_update()
+        notify_instance_update()
     }
 }
 
-search_result_retained_locked :: proc(view: ^Session_View, result: Search_Match_Info) -> bool {
+search_result_retained_locked :: proc(view: ^Instance_View, result: Search_Match_Info) -> bool {
     if result.found == 0 || result.columns != view.columns ||
        (result.alternate_screen != 0) != view.alternate_screen {
         return false
@@ -1430,14 +1428,14 @@ search_result_retained_locked :: proc(view: ^Session_View, result: Search_Match_
     return row >= first && row <= last
 }
 
-validate_search_result_locked :: proc(view: ^Session_View) {
+validate_search_result_locked :: proc(view: ^Instance_View) {
     if view.search_result_active && !search_result_retained_locked(view, view.search_result) {
         view.search_result_active = false
         view.search_state = .Stale
     }
 }
 
-apply_search_result_locked :: proc(view: ^Session_View, result: Search_Match_Info) -> bool {
+apply_search_result_locked :: proc(view: ^Instance_View, result: Search_Match_Info) -> bool {
     if !search_result_retained_locked(view, result) {
         return false
     }
@@ -1467,15 +1465,15 @@ apply_search_result_locked :: proc(view: ^Session_View, result: Search_Match_Inf
     return true
 }
 
-copy_search_error :: proc(view: ^Session_View, handle: rawptr, destination: ^[160]u8, destination_len: ^int) {
+copy_search_error :: proc(view: ^Instance_View, handle: rawptr, destination: ^[160]u8, destination_len: ^int) {
     count: c.size_t
     copy_error(handle, raw_data(destination[:]), c.size_t(len(destination)), &count)
     destination_len^ = int(count)
 }
 
-search_session :: proc(data: rawptr) {
-    view := (^Session_View)(data)
-    endpoint := session_endpoint(view)
+search_instance :: proc(data: rawptr) {
+    view := (^Instance_View)(data)
+    endpoint := instance_endpoint(view)
     diagnostic: [160]u8
     count: c.size_t
     handle := create(desktop_io_runtime, view.search_interrupt, raw_data(endpoint), c.size_t(len(endpoint)),
@@ -1490,7 +1488,7 @@ search_session :: proc(data: rawptr) {
         view.search_error_len = int(count)
         copy(view.search_error[:int(count)], diagnostic[:int(count)])
         sync.mutex_unlock(&view.mutex)
-        notify_session_update()
+        notify_instance_update()
         return
     }
     local_query: [SEARCH_QUERY_BYTES]u8
@@ -1558,12 +1556,12 @@ search_session :: proc(data: rawptr) {
             }
         }
         sync.mutex_unlock(&view.mutex)
-        notify_session_update()
+        notify_instance_update()
         if rc != 0 do break
     }
 }
 
-clear_search_result :: proc(view: ^Session_View) {
+clear_search_result :: proc(view: ^Instance_View) {
     if view == nil {
         return
     }
@@ -1577,17 +1575,17 @@ clear_search_result :: proc(view: ^Session_View) {
     sync.mutex_unlock(&view.mutex)
 }
 
-ensure_search_worker :: proc(view: ^Session_View) -> bool {
+ensure_search_worker :: proc(view: ^Instance_View) -> bool {
     if view == nil || view.control == nil do return false
     sync.mutex_lock(&view.mutex)
     failed := view.search_failed
     sync.mutex_unlock(&view.mutex)
     if failed do return false
     if view.search_thread != nil do return true
-    if len(session_endpoint(view)) == 0 do return false
+    if len(instance_endpoint(view)) == 0 do return false
     view.search_interrupt = interrupt_create()
     if view.search_interrupt == nil do return false
-    view.search_thread = thread.create_and_start_with_data(rawptr(view), search_session, name = "howl-odin-search")
+    view.search_thread = thread.create_and_start_with_data(rawptr(view), search_instance, name = "howl-odin-search")
     if view.search_thread == nil {
         interrupt_destroy(view.search_interrupt)
         view.search_interrupt = nil
@@ -1596,7 +1594,7 @@ ensure_search_worker :: proc(view: ^Session_View) -> bool {
     return true
 }
 
-queue_search :: proc(view: ^Session_View, query: []u8, reverse: bool) -> bool {
+queue_search :: proc(view: ^Instance_View, query: []u8, reverse: bool) -> bool {
     if view == nil || len(query) == 0 || len(query) > SEARCH_QUERY_BYTES ||
        !ensure_search_worker(view) {
         return false
@@ -1622,12 +1620,12 @@ queue_search :: proc(view: ^Session_View, query: []u8, reverse: bool) -> bool {
     return true
 }
 
-publish_initial_error :: proc(view: ^Session_View, message: string) {
+publish_initial_error :: proc(view: ^Instance_View, message: string) {
     if view == nil {
         return
     }
     sync.mutex_lock(&view.mutex)
-    text := len(message) != 0 ? message : "Session I/O failed without a diagnostic"
+    text := len(message) != 0 ? message : "Instance I/O failed without a diagnostic"
     count := min(len(text), len(view.error))
     for byte, index in text[:count] {
         view.error[index] = u8(byte)
@@ -1638,11 +1636,11 @@ publish_initial_error :: proc(view: ^Session_View, message: string) {
     sync.mutex_unlock(&view.mutex)
 }
 
-session_lifecycle_state_values :: proc(
+instance_lifecycle_state_values :: proc(
     revision: u64,
     error_len: int,
     control_present, stream_is_closed, child_has_exited: bool,
-) -> Session_Lifecycle_State {
+) -> Instance_Lifecycle_State {
     if stream_is_closed || child_has_exited {
         return .Closed
     }
@@ -1655,7 +1653,7 @@ session_lifecycle_state_values :: proc(
     return .Active
 }
 
-session_lifecycle_state :: proc(view: ^Session_View) -> Session_Lifecycle_State {
+instance_lifecycle_state :: proc(view: ^Instance_View) -> Instance_Lifecycle_State {
     if view == nil {
         return .Unavailable
     }
@@ -1664,7 +1662,7 @@ session_lifecycle_state :: proc(view: ^Session_View) -> Session_Lifecycle_State 
         sync.mutex_unlock(&view.mutex)
         return .Connecting
     }
-    state := session_lifecycle_state_values(
+    state := instance_lifecycle_state_values(
         view.revision,
         view.error_len,
         view.control != nil,
@@ -1675,24 +1673,24 @@ session_lifecycle_state :: proc(view: ^Session_View) -> Session_Lifecycle_State 
     return state
 }
 
-session_is_owned :: proc(view: ^Session_View) -> bool {
+instance_is_owned :: proc(view: ^Instance_View) -> bool {
     return view != nil && view.ownership == .Owned
 }
 
-session_interactive :: proc(view: ^Session_View) -> bool {
-    return session_lifecycle_state(view) == .Active
+instance_interactive :: proc(view: ^Instance_View) -> bool {
+    return instance_lifecycle_state(view) == .Active
 }
 
-session_recoverable :: proc(view: ^Session_View) -> bool {
-    state := session_lifecycle_state(view)
+instance_recoverable :: proc(view: ^Instance_View) -> bool {
+    state := instance_lifecycle_state(view)
     return state == .Closed || state == .Unavailable
 }
 
-session_attached :: proc(view: ^Session_View) -> bool {
-    return session_interactive(view)
+instance_attached :: proc(view: ^Instance_View) -> bool {
+    return instance_interactive(view)
 }
 
-copy_bridge_error :: proc(view: ^Session_View) {
+copy_bridge_error :: proc(view: ^Instance_View) {
     if view == nil do return
     sync.mutex_lock(&view.mutex)
     if view.error_len == 0 {
@@ -1704,7 +1702,7 @@ copy_bridge_error :: proc(view: ^Session_View) {
     sync.mutex_unlock(&view.mutex)
 }
 
-clear_selection_locked :: proc(view: ^Session_View) {
+clear_selection_locked :: proc(view: ^Instance_View) {
     view.selection_generation += 1
     view.selection_active = false
     view.selection_dragging = false
@@ -1719,7 +1717,7 @@ clear_selection_locked :: proc(view: ^Session_View) {
     view.selection_alternate_screen = false
 }
 
-clear_selection :: proc(view: ^Session_View) {
+clear_selection :: proc(view: ^Instance_View) {
     if view == nil {
         return
     }
@@ -1747,7 +1745,7 @@ selection_point_retained :: proc(
 }
 
 validate_selection_context_locked :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     columns, rows: u16,
     history_count, history_row_base: u32,
     alternate_screen: bool,
@@ -1779,7 +1777,7 @@ validate_selection_context_locked :: proc(
     }
 }
 
-reset_history_locked :: proc(view: ^Session_View) {
+reset_history_locked :: proc(view: ^Instance_View) {
     view.history_generation += 1
     view.history_target_offset = 0
     view.history_anchor_top_row = 0
@@ -1788,7 +1786,7 @@ reset_history_locked :: proc(view: ^Session_View) {
 }
 
 follow_history_locked :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     history_count: u32,
     history_row_base: u32,
     alternate_screen: bool,
@@ -1818,7 +1816,7 @@ follow_history_locked :: proc(
     }
 }
 
-apply_history_geometry_locked :: proc(view: ^Session_View, columns: u16) {
+apply_history_geometry_locked :: proc(view: ^Instance_View, columns: u16) {
     if history_columns_changed(view.columns, columns) {
         reset_history_locked(view)
     }
@@ -1829,7 +1827,7 @@ history_columns_changed :: proc(current_columns, next_columns: u16) -> bool {
 }
 
 accept_history_snapshot :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -1856,7 +1854,7 @@ accept_history_snapshot :: proc(
     view.history_anchor_valid = true
 }
 
-scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
+scroll_history_rows :: proc(view: ^Instance_View, rows_delta: int) -> bool {
     if view == nil || rows_delta == 0 {
         return false
     }
@@ -1884,7 +1882,7 @@ scroll_history_rows :: proc(view: ^Session_View, rows_delta: int) -> bool {
     return true
 }
 
-set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
+set_history_offset :: proc(view: ^Instance_View, requested_offset: u32) -> bool {
     if view == nil {
         return false
     }
@@ -1911,7 +1909,7 @@ set_history_offset :: proc(view: ^Session_View, requested_offset: u32) -> bool {
     return true
 }
 
-scroll_history_wheel :: proc(view: ^Session_View, wheel_rows: f32) -> bool {
+scroll_history_wheel :: proc(view: ^Instance_View, wheel_rows: f32) -> bool {
     if view == nil || wheel_rows == 0 {
         return false
     }
@@ -1953,7 +1951,7 @@ scroll_history_wheel :: proc(view: ^Session_View, wheel_rows: f32) -> bool {
     return true
 }
 
-scroll_history_oldest :: proc(view: ^Session_View) -> bool {
+scroll_history_oldest :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -1966,7 +1964,7 @@ scroll_history_oldest :: proc(view: ^Session_View) -> bool {
     return scroll_history_rows(view, int(count))
 }
 
-return_history_live_with_selection_policy :: proc(view: ^Session_View, clear_selection_state: bool) -> bool {
+return_history_live_with_selection_policy :: proc(view: ^Instance_View, clear_selection_state: bool) -> bool {
     if view == nil {
         return false
     }
@@ -1980,15 +1978,15 @@ return_history_live_with_selection_policy :: proc(view: ^Session_View, clear_sel
     return changed
 }
 
-return_history_live :: proc(view: ^Session_View) -> bool {
+return_history_live :: proc(view: ^Instance_View) -> bool {
     return return_history_live_with_selection_policy(view, true)
 }
 
-return_history_live_navigation :: proc(view: ^Session_View) -> bool {
+return_history_live_navigation :: proc(view: ^Instance_View) -> bool {
     return return_history_live_with_selection_policy(view, false)
 }
 
-displayed_alternate_screen :: proc(view: ^Session_View) -> bool {
+displayed_alternate_screen :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -2001,7 +1999,7 @@ displayed_alternate_screen :: proc(view: ^Session_View) -> bool {
     return value
 }
 
-history_active :: proc(view: ^Session_View) -> bool {
+history_active :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -2047,13 +2045,12 @@ history_offset_for_scrollbar_thumb :: proc(
     return u32(clamp(requested, 0, int(history_count_value)))
 }
 
-allocate_session_view :: proc(owned_process: rawptr, ownership: Session_Ownership) -> ^Session_View {
-    view := new(Session_View)
+allocate_instance_view :: proc(ownership: Instance_Ownership) -> ^Instance_View {
+    view := new(Instance_View)
     if view == nil {
         return nil
     }
     view.ownership = ownership
-    view.owned_process = owned_process
     if ownership == .Owned do view.size_control.mode = .Taking
     view.text = make([]u8, SESSION_TEXT_BYTES)
     view.scratch = make([]u8, SESSION_TEXT_BYTES)
@@ -2066,11 +2063,11 @@ allocate_session_view :: proc(owned_process: rawptr, ownership: Session_Ownershi
     return view
 }
 
-create_session_view :: proc(endpoint: string, owned_process: rawptr, ownership: Session_Ownership) -> ^Session_View {
-    view := allocate_session_view(owned_process, ownership)
+create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) -> ^Instance_View {
+    view := allocate_instance_view(ownership)
     if view == nil do return nil
     if len(endpoint) == 0 || len(endpoint) >= len(view.endpoint) {
-        publish_initial_error(view, "Session endpoint is empty or too long")
+        publish_initial_error(view, "Instance endpoint is empty or too long")
         return view
     }
     copy(view.endpoint[:len(endpoint)], transmute([]u8)endpoint)
@@ -2078,24 +2075,24 @@ create_session_view :: proc(endpoint: string, owned_process: rawptr, ownership: 
     view.control_interrupt = interrupt_create()
     view.observer_interrupt = interrupt_create()
     if view.control_interrupt == nil || view.observer_interrupt == nil {
-        publish_initial_error(view, "Session I/O cancellation allocation failed")
+        publish_initial_error(view, "Instance I/O cancellation allocation failed")
         return view
     }
-    view.control_thread = thread.create_and_start_with_data(rawptr(view), control_session, name = "howl-odin-control")
-    view.observer_thread = thread.create_and_start_with_data(rawptr(view), observe_session, name = "howl-odin-observe")
-    if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Session I/O worker creation failed")
+    view.control_thread = thread.create_and_start_with_data(rawptr(view), control_instance, name = "howl-odin-control")
+    view.observer_thread = thread.create_and_start_with_data(rawptr(view), observe_instance, name = "howl-odin-observe")
+    if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Instance I/O worker creation failed")
     return view
 }
 
-create_error_session_view :: proc(message: string, ownership: Session_Ownership = .Attached) -> ^Session_View {
-    view := allocate_session_view(rawptr(nil), ownership)
+create_error_instance_view :: proc(message: string, ownership: Instance_Ownership = .Attached) -> ^Instance_View {
+    view := allocate_instance_view(ownership)
     if view != nil {
         publish_initial_error(view, message)
     }
     return view
 }
 
-destroy_session_view :: proc(view: ^Session_View) {
+destroy_instance_view :: proc(view: ^Instance_View) {
     if view == nil {
         return
     }
@@ -2137,23 +2134,20 @@ destroy_session_view :: proc(view: ^Session_View) {
     }
     if view.control_result.bytes != nil do delete(view.control_result.bytes)
     if view.clipboard_reply != nil do delete(view.clipboard_reply)
-    if view.owned_process != nil {
-        owned_session_destroy(view.owned_process)
-    }
     if view.reusable_view != nil do view_destroy(view.reusable_view)
     delete(view.scratch)
     delete(view.text)
     free(view)
 }
 
-tab_pane_view :: proc(tab: ^Tab, pane_index: int) -> ^Session_View {
+tab_pane_view :: proc(tab: ^Tab, pane_index: int) -> ^Instance_View {
     if tab == nil || pane_index < 0 || pane_index >= len(tab.panes) {
         return nil
     }
     return tab.panes[pane_index]
 }
 
-active_session_view :: proc(app: ^App) -> ^Session_View {
+active_instance_view :: proc(app: ^App) -> ^Instance_View {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return nil
     }
@@ -2177,7 +2171,7 @@ open_search :: proc(app: ^App) {
     app.search_open = true
     app.search_query_len = 0
     clear_all_search_results(app)
-    clear_selection(active_session_view(app))
+    clear_selection(active_instance_view(app))
 }
 
 close_search :: proc(app: ^App) {
@@ -2199,7 +2193,7 @@ append_search_query :: proc(app: ^App, text: string) -> bool {
         transmute([]u8)text,
     )
     app.search_query_len += len(text)
-    clear_search_result(active_session_view(app))
+    clear_search_result(active_instance_view(app))
     return true
 }
 
@@ -2212,7 +2206,7 @@ backspace_search_query :: proc(app: ^App) -> bool {
         next -= 1
     }
     app.search_query_len = next
-    clear_search_result(active_session_view(app))
+    clear_search_result(active_instance_view(app))
     return true
 }
 
@@ -2220,108 +2214,34 @@ request_search :: proc(app: ^App, reverse: bool) -> bool {
     if !app.search_open || app.search_query_len == 0 {
         return false
     }
-    view := active_session_view(app)
+    view := active_instance_view(app)
     if view == nil {
         return false
     }
     return queue_search(view, app.search_query[:app.search_query_len], reverse)
 }
 
-session_endpoint :: proc(view: ^Session_View) -> string {
+instance_endpoint :: proc(view: ^Instance_View) -> string {
     if view == nil || view.endpoint_len <= 0 {
         return ""
     }
     return string(view.endpoint[:view.endpoint_len])
 }
 
-create_owned_profile_session_view :: proc(app: ^App, profile: ^Profile, profile_index: int) -> ^Session_View {
+create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile_index: int) -> ^Instance_View {
     if app == nil || profile == nil || profile.mode != .Launch {
-        return create_error_session_view("Invalid launch profile", .Owned)
+        return create_error_instance_view("Invalid local Instance profile", .Owned)
     }
-    runtime_dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
-    if len(runtime_dir) == 0 {
-        view := create_error_session_view("Missing XDG_RUNTIME_DIR", .Owned)
-        if view != nil do view.profile_index = profile_index
-        return view
+    view := create_error_instance_view("Local Instance embedding is not wired yet", .Owned)
+    if view != nil {
+        view.profile_index = profile_index
+        view.profile_font_pixels = profile.font_pixels
     }
-    shell := profile_shell(profile)
-    if len(shell) == 0 {
-        shell = os.get_env("SHELL", context.temp_allocator)
-    }
-    if len(shell) == 0 {
-        shell = "/bin/sh"
-    }
-    command := profile_command(profile)
-    cwd := profile_cwd(profile)
-    env_entries: [MAX_PROFILE_ENV]Profile_Env_Info
-    for index in 0..<profile.env_count {
-        source := &profile.env[index]
-        name := profile_env_name(source)
-        value := profile_env_value(source)
-        env_entries[index] = Profile_Env_Info{
-            name = raw_data(name),
-            name_len = c.size_t(len(name)),
-            value = raw_data(value),
-            value_len = c.size_t(len(value)),
-        }
-    }
-    identity := app.next_session_identity
-    app.next_session_identity += 1
-    diagnostic: [160]u8
-    diagnostic_len: c.size_t
-    owned := owned_session_create(
-        desktop_io_runtime,
-        raw_data(runtime_dir),
-        c.size_t(len(runtime_dir)),
-        raw_data(shell),
-        c.size_t(len(shell)),
-        raw_data(command),
-        c.size_t(len(command)),
-        raw_data(cwd),
-        c.size_t(len(cwd)),
-        raw_data(env_entries[:]),
-        c.size_t(profile.env_count),
-        OWNED_SESSION_ROWS,
-        OWNED_SESSION_COLUMNS,
-        identity,
-        raw_data(diagnostic[:]),
-        c.size_t(len(diagnostic)),
-        &diagnostic_len,
-    )
-    if owned == nil {
-        view := create_error_session_view(string(diagnostic[:int(diagnostic_len)]), .Owned)
-        if view != nil {
-            view.profile_index = profile_index
-            view.profile_font_pixels = profile.font_pixels
-        }
-        return view
-    }
-    endpoint_storage: [160]u8
-    endpoint_len: c.size_t
-    if owned_session_copy_endpoint(
-        owned,
-        raw_data(endpoint_storage[:]),
-        c.size_t(len(endpoint_storage)),
-        &endpoint_len,
-    ) != 0 {
-        owned_session_destroy(owned)
-        view := create_error_session_view("owned_session_endpoint_failed", .Owned)
-        if view != nil do view.profile_index = profile_index
-        return view
-    }
-    endpoint := string(endpoint_storage[:int(endpoint_len)])
-    view := create_session_view(endpoint, owned, .Owned)
-    if view == nil {
-        owned_session_destroy(owned)
-        return nil
-    }
-    view.profile_index = profile_index
-    view.profile_font_pixels = profile.font_pixels
     return view
 }
 
-create_owned_session_view :: proc(app: ^App) -> ^Session_View {
-    return create_owned_profile_session_view(app, profile_at(app, 1), 1)
+create_owned_instance_view :: proc(app: ^App) -> ^Instance_View {
+    return create_owned_profile_instance_view(app, profile_at(app, 1), 1)
 }
 
 interaction_mouse_tracking_enabled :: proc(state: Interaction_State_Info) -> bool {
@@ -2367,7 +2287,7 @@ route_desktop_wheel :: proc(
     return alternate_scroll ? .Alternate_Scroll : .Ignore
 }
 
-current_interaction_state :: proc(view: ^Session_View) -> (state: Interaction_State_Info, ok: bool) {
+current_interaction_state :: proc(view: ^Instance_View) -> (state: Interaction_State_Info, ok: bool) {
     if view == nil || view.control == nil do return {}, false
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
@@ -2375,7 +2295,7 @@ current_interaction_state :: proc(view: ^Session_View) -> (state: Interaction_St
 }
 
 terminal_pointer_location :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     clamp_to_surface := false,
@@ -2431,7 +2351,7 @@ sdl_mouse_buttons_down :: proc(state: SDL.MouseButtonFlags) -> u8 {
 }
 
 send_terminal_mouse :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     kind: Bridge_Mouse_Kind,
     button: Bridge_Mouse_Button,
     modifiers, buttons_down: u8,
@@ -2461,7 +2381,7 @@ send_terminal_mouse :: proc(
 }
 
 terminal_mouse_press :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     button: u8,
@@ -2494,7 +2414,7 @@ terminal_mouse_press :: proc(
 }
 
 terminal_mouse_release :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     button: u8,
@@ -2535,7 +2455,7 @@ terminal_mouse_release :: proc(
 }
 
 terminal_mouse_move :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     modifiers: u8,
@@ -2563,7 +2483,7 @@ terminal_mouse_move :: proc(
     return true
 }
 
-finish_terminal_mouse_capture :: proc(view: ^Session_View, modifiers: u8 = 0) -> bool {
+finish_terminal_mouse_capture :: proc(view: ^Instance_View, modifiers: u8 = 0) -> bool {
     if view == nil {
         return false
     }
@@ -2596,7 +2516,7 @@ finish_terminal_mouse_capture :: proc(view: ^Session_View, modifiers: u8 = 0) ->
     return true
 }
 
-send_semantic_focus :: proc(view: ^Session_View, focused: bool) -> bool {
+send_semantic_focus :: proc(view: ^Instance_View, focused: bool) -> bool {
     if view == nil || view.control == nil {
         return false
     }
@@ -2607,7 +2527,7 @@ send_semantic_focus :: proc(view: ^Session_View, focused: bool) -> bool {
     return true
 }
 
-send_named_key_cycle :: proc(view: ^Session_View, key: Bridge_Key) -> bool {
+send_named_key_cycle :: proc(view: ^Instance_View, key: Bridge_Key) -> bool {
     if view == nil || view.control == nil {
         return false
     }
@@ -2686,15 +2606,15 @@ named_bridge_key :: proc(key: SDL.Keycode) -> (Bridge_Key, bool) {
 }
 
 send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
-    view := active_session_view(app)
-    if view == nil || !active_tab_is_session(app) || app.profile_menu_open || app.palette_open || app.settings_open {
+    view := active_instance_view(app)
+    if view == nil || !active_tab_is_instance(app) || app.profile_menu_open || app.palette_open || app.settings_open {
         return false
     }
     key, ok := named_bridge_key(event.key.key)
     if !ok {
         return false
     }
-    if view.control == nil || !session_interactive(view) {
+    if view.control == nil || !instance_interactive(view) {
         return true
     }
     if event.type == .KEY_DOWN {
@@ -2718,7 +2638,7 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     return true
 }
 
-history_page_rows :: proc(view: ^Session_View) -> int {
+history_page_rows :: proc(view: ^Instance_View) -> int {
     if view == nil {
         return 1
     }
@@ -3080,7 +3000,7 @@ begin_pane_resize_drag :: proc(app: ^App, x, y, width, height: f32) -> bool {
 split_pane_slot :: proc(
     tab: ^Tab,
     pane_index: int,
-    view: ^Session_View,
+    view: ^Instance_View,
     orientation: Pane_Split_Orientation,
 ) -> (new_index: int, ok: bool) {
     if tab == nil || view == nil || tab.pane_count >= MAX_PANES_PER_TAB {
@@ -3118,7 +3038,7 @@ split_pane_slot :: proc(
     return slot, true
 }
 
-remove_pane_slot :: proc(tab: ^Tab, pane_index: int) -> (removed: ^Session_View, ok: bool) {
+remove_pane_slot :: proc(tab: ^Tab, pane_index: int) -> (removed: ^Instance_View, ok: bool) {
     if tab == nil || tab.pane_count <= 1 || pane_index < 0 || pane_index >= len(tab.panes) {
         return nil, false
     }
@@ -3149,10 +3069,10 @@ remove_pane_slot :: proc(tab: ^Tab, pane_index: int) -> (removed: ^Session_View,
     return removed, true
 }
 
-session_view_at :: proc(
+instance_view_at :: proc(
     app: ^App,
     x, y, width, height: f32,
-) -> (view: ^Session_View, pane_index: int, ok: bool) {
+) -> (view: ^Instance_View, pane_index: int, ok: bool) {
     if app.active_tab < 0 || app.active_tab >= app.tab_count {
         return nil, 0, false
     }
@@ -3186,7 +3106,7 @@ pane_rect_for_index :: proc(
 
 selection_cell_at :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     clamp_to_surface := false,
@@ -3244,7 +3164,7 @@ selection_stable_row :: proc(
 
 selection_stable_point_at :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     clamp_to_surface := false,
@@ -3282,7 +3202,7 @@ selection_stable_point_at :: proc(
     return stable_row, viewport_column, columns, alternate, true
 }
 
-apply_selection_range :: proc(view: ^Session_View, info: Selection_Range_Info) -> bool {
+apply_selection_range :: proc(view: ^Instance_View, info: Selection_Range_Info) -> bool {
     if view == nil {
         return false
     }
@@ -3306,7 +3226,7 @@ apply_selection_range :: proc(view: ^Session_View, info: Selection_Range_Info) -
 
 expand_selection_at :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
     kind: u8,
@@ -3337,7 +3257,7 @@ expand_selection_at :: proc(
 
 begin_selection :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
 ) -> bool {
@@ -3371,7 +3291,7 @@ begin_selection :: proc(
 
 extend_selection :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
 ) -> bool {
@@ -3410,7 +3330,7 @@ extend_selection :: proc(
 
 // Moving the selected endpoint retires the old visual intent, but not an explicit
 // Copy request already issued for that earlier range.
-extend_selection_focus_locked :: proc(view: ^Session_View, row: i32, column: u16) -> bool {
+extend_selection_focus_locked :: proc(view: ^Instance_View, row: i32, column: u16) -> bool {
     if view.selection_focus_row == row && view.selection_focus_column == column do return false
     view.selection_generation += 1
     view.selection_focus_row = row
@@ -3436,7 +3356,7 @@ selection_edge_scroll_direction :: proc(
 }
 
 update_selection_edge_scroll_intent :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     pointer_x, pointer_y: f32,
 ) -> bool {
@@ -3478,7 +3398,7 @@ update_selection_edge_scroll_intent :: proc(
 }
 
 selection_edge_scroll_active :: proc(app: ^App) -> bool {
-    view := active_session_view(app)
+    view := active_instance_view(app)
     if view == nil {
         return false
     }
@@ -3489,7 +3409,7 @@ selection_edge_scroll_active :: proc(app: ^App) -> bool {
 }
 
 selection_edge_scroll_tick :: proc(app: ^App) -> bool {
-    view := active_session_view(app)
+    view := active_instance_view(app)
     if view == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return false
     }
@@ -3526,7 +3446,7 @@ selection_edge_scroll_tick :: proc(app: ^App) -> bool {
     return true
 }
 
-finish_selection :: proc(view: ^Session_View) {
+finish_selection :: proc(view: ^Instance_View) {
     if view == nil {
         return
     }
@@ -3547,7 +3467,7 @@ finish_selection :: proc(view: ^Session_View) {
     }
 }
 
-copy_selection_to_clipboard :: proc(app: ^App, view: ^Session_View) -> bool {
+copy_selection_to_clipboard :: proc(app: ^App, view: ^Instance_View) -> bool {
     if view == nil || view.control == nil {
         return false
     }
@@ -3579,8 +3499,8 @@ copy_selection_to_clipboard :: proc(app: ^App, view: ^Session_View) -> bool {
     return result == 0
 }
 
-paste_clipboard :: proc(view: ^Session_View) -> bool {
-    if view == nil || view.control == nil || !session_interactive(view) {
+paste_clipboard :: proc(view: ^Instance_View) -> bool {
+    if view == nil || view.control == nil || !instance_interactive(view) {
         return false
     }
     sync.mutex_lock(&view.mutex)
@@ -3611,7 +3531,7 @@ paste_clipboard :: proc(view: ^Session_View) -> bool {
     return true
 }
 
-draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+draw_selection :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     if view == nil || view.canvas == nil {
         return
     }
@@ -3667,7 +3587,7 @@ draw_selection :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     }
 }
 
-draw_search_highlight :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+draw_search_highlight :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     if view == nil || view.canvas == nil {
         return
     }
@@ -3900,7 +3820,7 @@ destroy_tab_contents :: proc(tab: ^Tab) {
     }
     for view, index in tab.panes {
         if view != nil {
-            destroy_session_view(view)
+            destroy_instance_view(view)
             tab.panes[index] = nil
         }
     }
@@ -3910,11 +3830,11 @@ destroy_tab_contents :: proc(tab: ^Tab) {
     tab.active_pane = 0
 }
 
-add_session_tab :: proc(app: ^App, view: ^Session_View, title: string, profile: int) -> bool {
+add_instance_tab :: proc(app: ^App, view: ^Instance_View, title: string, profile: int) -> bool {
     _ = finish_tab_drag(app)
     _ = finish_pane_resize_drag(app)
     if app.tab_count >= MAX_TABS {
-        if view != nil do destroy_session_view(view)
+        if view != nil do destroy_instance_view(view)
         return false
     }
     if view == nil {
@@ -3922,11 +3842,11 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string, profile: 
     }
     root := new_pane_leaf(0)
     if root == nil {
-        destroy_session_view(view)
+        destroy_instance_view(view)
         return false
     }
     tab := &app.tabs[app.tab_count]
-    tab^ = Tab{kind = .Session, title = title, profile = profile, pane_count = 1, root = root, active_pane = 0}
+    tab^ = Tab{kind = .Instance, title = title, profile = profile, pane_count = 1, root = root, active_pane = 0}
     tab.panes[0] = view
     app.tab_count += 1
     clear_ime_preedit(app)
@@ -3937,17 +3857,17 @@ add_session_tab :: proc(app: ^App, view: ^Session_View, title: string, profile: 
     return true
 }
 
-profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Session_View, title: string) {
+profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Instance_View, title: string) {
     profile := profile_at(app, profile_index)
     if profile == nil {
-        return create_error_session_view("Unknown profile", .Attached), "Unknown profile"
+        return create_error_instance_view("Unknown profile", .Attached), "Unknown profile"
     }
     title = profile_name(profile)
     if profile.mode == .Launch {
-        return create_owned_profile_session_view(app, profile, profile_index), title
+        return create_owned_profile_instance_view(app, profile, profile_index), title
     }
     endpoint := profile_endpoint(profile)
-    view = create_session_view(endpoint, rawptr(nil), .Attached)
+    view = create_instance_view(endpoint, .Attached)
     if view != nil {
         view.profile_index = profile_index
         view.profile_font_pixels = profile.font_pixels
@@ -3957,7 +3877,7 @@ profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Session_View, tit
 
 open_profile_tab :: proc(app: ^App, profile: int) {
     view, title := profile_view(app, profile)
-    _ = add_session_tab(app, view, title, profile)
+    _ = add_instance_tab(app, view, title, profile)
 }
 
 new_tab :: proc(app: ^App) {
@@ -3972,7 +3892,7 @@ attach_home_tab :: proc(app: ^App) {
     open_profile_tab(app, 0)
 }
 
-replace_active_session_view :: proc(app: ^App, replacement: ^Session_View) -> bool {
+replace_active_instance_view :: proc(app: ^App, replacement: ^Instance_View) -> bool {
     _ = finish_pane_resize_drag(app)
     if app == nil || replacement == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return false
@@ -3989,21 +3909,21 @@ replace_active_session_view :: proc(app: ^App, replacement: ^Session_View) -> bo
     tab.panes[tab.active_pane] = replacement
     if old != nil {
         _ = finish_terminal_mouse_capture(old, 0)
-        destroy_session_view(old)
+        destroy_instance_view(old)
     }
     return true
 }
 
-recover_active_session :: proc(app: ^App) -> bool {
-    view := active_session_view(app)
-    if view == nil || !session_recoverable(view) {
+recover_active_instance :: proc(app: ^App) -> bool {
+    view := active_instance_view(app)
+    if view == nil || !instance_recoverable(view) {
         return false
     }
     replacement, _ := profile_view(app, view.profile_index)
     if replacement == nil {
         return false
     }
-    return replace_active_session_view(app, replacement)
+    return replace_active_instance_view(app, replacement)
 }
 
 close_tab :: proc(app: ^App, index: int) {
@@ -4046,7 +3966,7 @@ split_active_pane :: proc(
         return
     }
     if _, ok := split_pane_slot(tab, tab.active_pane, view, orientation); !ok {
-        destroy_session_view(view)
+        destroy_instance_view(view)
         return
     }
     app.profile_menu_open = false
@@ -4076,7 +3996,7 @@ close_active_pane :: proc(app: ^App) {
     if tab.pane_count <= 1 {
         tab.zoomed = false
     }
-    destroy_session_view(removed)
+    destroy_instance_view(removed)
 }
 
 pane_direction_for_key :: proc(key: SDL.Keycode) -> (Pane_Direction, bool) {
@@ -4126,8 +4046,8 @@ swap_active_pane_direction_app :: proc(app: ^App, direction: Pane_Direction) -> 
     return swap_active_pane_direction(&app.tabs[app.active_tab], inset, direction)
 }
 
-active_tab_is_session :: proc(app: ^App) -> bool {
-    return app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].kind == .Session
+active_tab_is_instance :: proc(app: ^App) -> bool {
+    return app.active_tab >= 0 && app.active_tab < app.tab_count && app.tabs[app.active_tab].kind == .Instance
 }
 
 reap_child_window :: proc(process: os.Process) {
@@ -4177,7 +4097,7 @@ execute_action :: proc(app: ^App, action: App_Action) {
         app.palette_open = false
         if app.tab_count == 1 {
             // Normal application teardown retires every owned pane, not just
-            // the active split. Externally attached Sessions remain untouched.
+            // the active split. Externally attached Instances remain untouched.
             app.running = false
         } else {
             if app.search_open do close_search(app)
@@ -4207,18 +4127,18 @@ execute_action :: proc(app: ^App, action: App_Action) {
         attach_home_tab(app)
     case .Take_Size_Control, .Stop_Resizing:
         app.palette_open = false
-        view := active_session_view(app)
+        view := active_instance_view(app)
         sync.mutex_lock(&view.mutex)
         set_size_intent(&view.size_control, action == .Take_Size_Control)
         view.ui_dirty = true
         sync.mutex_unlock(&view.mutex)
         if action == .Stop_Resizing {
-            publish_control_notice(view, "Auto-sizing stopped here; the last Session size is kept")
+            publish_control_notice(view, "Auto-sizing stopped here; the last Instance size is kept")
         } else {
-            publish_control_notice(view, "Taking Session size control...")
+            publish_control_notice(view, "Taking Instance size control...")
         }
-    case .Recover_Session:
-        _ = recover_active_session(app)
+    case .Recover_Instance:
+        _ = recover_active_instance(app)
     case .Open_Settings:
         next := !app.settings_open
         if app.search_open do close_search(app)
@@ -4626,7 +4546,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     if consume_owned_action_key(app, event) {
         return
     }
-    if event != nil && u32(event.type) == session_update_event_type {
+    if event != nil && u32(event.type) == instance_update_event_type {
         reconcile_consequence_owners(app)
         wake_consequence_owners(app)
         _ = apply_desktop_attention(app)
@@ -4639,7 +4559,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
-        _ = send_semantic_focus(active_session_view(app), false)
+        _ = send_semantic_focus(active_instance_view(app), false)
         app.running = false
     case .WINDOW_FOCUS_LOST:
         app.chrome_pressed = .None
@@ -4650,9 +4570,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = finish_all_terminal_mouse_captures(app)
         _ = finish_all_history_scrollbar_drags(app)
         _ = finish_all_selections(app)
-        _ = send_semantic_focus(active_session_view(app), false)
+        _ = send_semantic_focus(active_instance_view(app), false)
     case .WINDOW_FOCUS_GAINED:
-        _ = send_semantic_focus(active_session_view(app), true)
+        _ = send_semantic_focus(active_instance_view(app), true)
         wake_consequence_owners(app)
     case .WINDOW_DISPLAY_SCALE_CHANGED:
         if !update_text_display_scale(app) {
@@ -4726,24 +4646,24 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
             adjust_terminal_font(app, 1)
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_C {
-            _ = copy_selection_to_clipboard(app, active_session_view(app))
+            _ = copy_selection_to_clipboard(app, active_instance_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
-            _ = paste_clipboard(active_session_view(app))
+            _ = paste_clipboard(active_instance_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            _ = scroll_history_oldest(active_session_view(app))
+            _ = scroll_history_oldest(active_instance_view(app))
         } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_END &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            _ = return_history_live_navigation(active_session_view(app))
+            _ = return_history_live_navigation(active_instance_view(app))
         } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            view := active_session_view(app)
+            view := active_instance_view(app)
             if view != nil {
                 _ = scroll_history_rows(view, history_page_rows(view))
             }
         } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEDOWN &&
                   !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            view := active_session_view(app)
+            view := active_instance_view(app)
             if view != nil {
                 _ = scroll_history_rows(view, -history_page_rows(view))
             }
@@ -4758,10 +4678,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if handle_overlay_key(app, event) {
             // Overlay-owned navigation never reaches the terminal.
         } else if send_bridge_key(app, event) {
-            // The active real Session consumed this named physical key.
-        } else if event.type == .KEY_DOWN && active_session_view(app) != nil && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
-            view := active_session_view(app)
-            if !session_interactive(view) {
+            // The active real Instance consumed this named physical key.
+        } else if event.type == .KEY_DOWN && active_instance_view(app) != nil && active_tab_is_instance(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && (ctrl || alt) {
+            view := active_instance_view(app)
+            if !instance_interactive(view) {
                 return
             }
             scalar := u32(event.key.key)
@@ -4819,8 +4739,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
             return
         }
-        view := active_session_view(app)
-        if view != nil && view.control != nil && session_interactive(view) && active_tab_is_session(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
+        view := active_instance_view(app)
+        if view != nil && view.control != nil && instance_interactive(view) && active_tab_is_instance(app) && !app.profile_menu_open && !app.palette_open && !app.settings_open && event.text.text != nil {
             text := string(event.text.text)
             if len(text) != 0 {
                 _ = return_history_live(view)
@@ -4848,7 +4768,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         }
         if app.active_tab >= 0 && app.active_tab < app.tab_count {
             tab := &app.tabs[app.active_tab]
-            view := active_session_view(app)
+            view := active_instance_view(app)
             w, h: c.int
             if view != nil && SDL.GetWindowSize(app.window, &w, &h) {
                 if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
@@ -4883,7 +4803,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         )
                         return
                     }
-                    if session_interactive(view) && !history_active(view) {
+                    if instance_interactive(view) && !history_active(view) {
                         if state, state_ok := current_interaction_state(view); state_ok &&
                            interaction_mouse_tracking_enabled(state) {
                             _ = terminal_mouse_move(
@@ -4916,7 +4836,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
             if event.type == .MOUSE_BUTTON_UP {
-                view := active_session_view(app)
+                view := active_instance_view(app)
                 if view != nil && app.active_tab >= 0 && app.active_tab < app.tab_count {
                     tab := &app.tabs[app.active_tab]
                     if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok {
@@ -4933,9 +4853,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     }
                     if event.button.button == SDL.BUTTON_LEFT {
                         if pane, ok := pane_rect_for_index(app, tab.active_pane, f32(w), f32(h)); ok &&
-                           session_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
-                            if session_lifecycle_recovery_hit(view, pane, event.button.x, event.button.y) {
-                                _ = recover_active_session(app)
+                           instance_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
+                            if instance_lifecycle_recovery_hit(view, pane, event.button.x, event.button.y) {
+                                _ = recover_active_instance(app)
                             }
                             return
                         }
@@ -4974,7 +4894,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                begin_pane_resize_drag(app, event.button.x, event.button.y, f32(w), f32(h)) {
                 return
             }
-            view, pane_index, ok := session_view_at(
+            view, pane_index, ok := instance_view_at(
                 app,
                 event.button.x,
                 event.button.y,
@@ -4994,7 +4914,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
             if event.button.button == SDL.BUTTON_LEFT &&
-               session_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
+               instance_lifecycle_chrome_hit(view, pane, event.button.x, event.button.y) {
                 return
             }
             if event.button.button == SDL.BUTTON_LEFT &&
@@ -5021,7 +4941,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                         return
                     }
                 }
-                route := session_interactive(view) ? route_desktop_primary_pointer(
+                route := instance_interactive(view) ? route_desktop_primary_pointer(
                     history_is_active,
                     shift,
                     false,
@@ -5063,7 +4983,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 return
             }
 
-            if session_interactive(view) && !history_is_active {
+            if instance_interactive(view) && !history_is_active {
                 if state, state_ok := current_interaction_state(view); state_ok &&
                    interaction_mouse_tracking_enabled(state) {
                     _ = terminal_mouse_press(
@@ -5097,7 +5017,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
-            view, pane_index, ok := session_view_at(
+            view, pane_index, ok := instance_view_at(
                 app,
                 event.wheel.mouse_x,
                 event.wheel.mouse_y,
@@ -5113,7 +5033,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     return
                 }
                 mods := SDL.GetModState()
-                interactive := session_interactive(view)
+                interactive := instance_interactive(view)
                 force_history := .LSHIFT in mods || .RSHIFT in mods || !interactive
                 history_is_active := history_active(view)
                 state: Interaction_State_Info
@@ -5233,7 +5153,7 @@ draw_tab_chip :: proc(app: ^App, i: int, rect: SDL.FRect, width: f32) {
         draw_text(app, app.ui_font, title, rect.x + 10, 14, active ? palette.text : palette.text_muted)
     }
     _ = SDL.SetRenderClipRect(app.renderer, nil)
-    if !compact && app.tabs[i].kind == .Session && session_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
+    if !compact && app.tabs[i].kind == .Instance && instance_attached(tab_pane_view(&app.tabs[i], app.tabs[i].active_pane)) {
         indicator_x := rect.x + rect.w - (close_rect.w > 0 ? 38 : 12)
         draw_fill(app.renderer, {indicator_x, 20, 5, 5}, palette.accent)
     }
@@ -5278,7 +5198,7 @@ draw_profile_menu :: proc(app: ^App) {
             draw_fill(app.renderer, row, palette.tab_active)
         }
         draw_text(app, app.ui_font, profile_name(profile), row.x + 10, row.y + 5, palette.text)
-        detail := profile.mode == .Launch ? "Create Session" : "Attach Session"
+        detail := profile.mode == .Launch ? "Create Instance" : "Attach Instance"
         draw_text(app, app.ui_font, detail, row.x + 10, row.y + 23, palette.text_muted)
         if app.startup_profile == profile_index {
             draw_text(app, app.ui_font, "default", row.x + row.w - 72, row.y + 13, palette.accent)
@@ -5296,7 +5216,7 @@ draw_profile_menu :: proc(app: ^App) {
 }
 
 history_scrollbar_geometry :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
 ) -> (geometry: History_Scrollbar_Geometry, ok: bool) {
     if view == nil {
@@ -5358,7 +5278,7 @@ history_scrollbar_geometry :: proc(
     }, true
 }
 
-history_scrollbar_drag_active :: proc(view: ^Session_View) -> bool {
+history_scrollbar_drag_active :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -5367,7 +5287,7 @@ history_scrollbar_drag_active :: proc(view: ^Session_View) -> bool {
     return view.history_scrollbar_dragging
 }
 
-finish_selection_if_dragging :: proc(view: ^Session_View) -> bool {
+finish_selection_if_dragging :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -5418,7 +5338,7 @@ finish_all_history_scrollbar_drags :: proc(app: ^App) -> bool {
 }
 
 update_history_scrollbar_drag :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     pointer_y: f32,
 ) -> bool {
@@ -5454,7 +5374,7 @@ update_history_scrollbar_drag :: proc(
 }
 
 begin_history_scrollbar_drag :: proc(
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
 ) -> bool {
@@ -5479,7 +5399,7 @@ begin_history_scrollbar_drag :: proc(
     return true
 }
 
-finish_history_scrollbar_drag :: proc(view: ^Session_View) -> bool {
+finish_history_scrollbar_drag :: proc(view: ^Instance_View) -> bool {
     if view == nil {
         return false
     }
@@ -5494,7 +5414,7 @@ finish_history_scrollbar_drag :: proc(view: ^Session_View) -> bool {
     return was_dragging
 }
 
-draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+draw_history_scrollbar :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     geometry, ok := history_scrollbar_geometry(view, pane)
     if !ok {
         return
@@ -5508,76 +5428,76 @@ draw_history_scrollbar :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) 
     draw_fill(app.renderer, geometry.thumb, thumb_color)
 }
 
-Session_Lifecycle_Presentation :: struct {
+Instance_Lifecycle_Presentation :: struct {
     message: string,
     action: string,
     visible: bool,
     recoverable: bool,
 }
 
-session_lifecycle_presentation :: proc(
-    state: Session_Lifecycle_State,
-    ownership: Session_Ownership,
-) -> Session_Lifecycle_Presentation {
+instance_lifecycle_presentation :: proc(
+    state: Instance_Lifecycle_State,
+    ownership: Instance_Ownership,
+) -> Instance_Lifecycle_Presentation {
     switch state {
     case .Active:
         return {}
     case .Connecting:
-        return {message = ownership == .Owned ? "Starting Local Session..." : "Connecting to Session...", visible = true}
+        return {message = ownership == .Owned ? "Starting Local Instance..." : "Connecting to Instance...", visible = true}
     case .Closed:
         if ownership == .Owned {
             return {message = "Process exited", action = "Restart", visible = true, recoverable = true}
         }
-        return {message = "Attached Session closed", action = "Reconnect", visible = true, recoverable = true}
+        return {message = "Attached Instance closed", action = "Reconnect", visible = true, recoverable = true}
     case .Unavailable:
         if ownership == .Owned {
-            return {message = "Local Session unavailable", action = "Restart", visible = true, recoverable = true}
+            return {message = "Local Instance unavailable", action = "Restart", visible = true, recoverable = true}
         }
-        return {message = "Attached Session unavailable", action = "Reconnect", visible = true, recoverable = true}
+        return {message = "Attached Instance unavailable", action = "Reconnect", visible = true, recoverable = true}
     }
     return {}
 }
 
-session_lifecycle_bar_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
+instance_lifecycle_bar_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
     return {pane.x + 8, pane.y + pane.h - 42, max(f32(0), pane.w - 24), 34}
 }
 
-session_lifecycle_action_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
-    bar := session_lifecycle_bar_rect(pane)
+instance_lifecycle_action_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
+    bar := instance_lifecycle_bar_rect(pane)
     width := min(f32(224), max(f32(140), bar.w * 0.44))
     return {bar.x + bar.w - width - 5, bar.y + 4, width, bar.h - 8}
 }
 
-session_lifecycle_chrome_hit :: proc(view: ^Session_View, pane: SDL.FRect, x, y: f32) -> bool {
+instance_lifecycle_chrome_hit :: proc(view: ^Instance_View, pane: SDL.FRect, x, y: f32) -> bool {
     if view == nil {
         return false
     }
-    presentation := session_lifecycle_presentation(session_lifecycle_state(view), view.ownership)
-    return presentation.visible && inside(x, y, session_lifecycle_bar_rect(pane))
+    presentation := instance_lifecycle_presentation(instance_lifecycle_state(view), view.ownership)
+    return presentation.visible && inside(x, y, instance_lifecycle_bar_rect(pane))
 }
 
-session_lifecycle_recovery_hit :: proc(view: ^Session_View, pane: SDL.FRect, x, y: f32) -> bool {
+instance_lifecycle_recovery_hit :: proc(view: ^Instance_View, pane: SDL.FRect, x, y: f32) -> bool {
     if view == nil {
         return false
     }
-    presentation := session_lifecycle_presentation(session_lifecycle_state(view), view.ownership)
-    return presentation.recoverable && inside(x, y, session_lifecycle_action_rect(pane))
+    presentation := instance_lifecycle_presentation(instance_lifecycle_state(view), view.ownership)
+    return presentation.recoverable && inside(x, y, instance_lifecycle_action_rect(pane))
 }
 
-draw_session_lifecycle :: proc(
+draw_instance_lifecycle :: proc(
     app: ^App,
-    view: ^Session_View,
+    view: ^Instance_View,
     pane: SDL.FRect,
-    state: Session_Lifecycle_State,
+    state: Instance_Lifecycle_State,
 ) {
     if view == nil {
         return
     }
-    presentation := session_lifecycle_presentation(state, view.ownership)
+    presentation := instance_lifecycle_presentation(state, view.ownership)
     if !presentation.visible {
         return
     }
-    bar := session_lifecycle_bar_rect(pane)
+    bar := instance_lifecycle_bar_rect(pane)
     if bar.w <= 0 || bar.h <= 0 {
         return
     }
@@ -5587,10 +5507,10 @@ draw_session_lifecycle :: proc(
     draw_outline(app.renderer, bar, palette.border)
     draw_text(app, app.ui_font, presentation.message, bar.x + 10, bar.y + 8, palette.text)
     if presentation.recoverable {
-        action := session_lifecycle_action_rect(pane)
+        action := instance_lifecycle_action_rect(pane)
         draw_fill(app.renderer, action, palette.tab_active)
         draw_outline(app.renderer, action, palette.accent)
-        shortcut := action_binding_text(app, .Recover_Session)
+        shortcut := action_binding_text(app, .Recover_Instance)
         label_storage: [128]u8
         label := presentation.action
         if len(shortcut) != 0 {
@@ -5600,16 +5520,16 @@ draw_session_lifecycle :: proc(
     }
 }
 
-draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
+draw_real_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     if view == nil {
         return
     }
-    lifecycle_state := session_lifecycle_state(view)
+    lifecycle_state := instance_lifecycle_state(view)
     origin_x := terminal_content_rect(pane).x
     origin_y := terminal_content_rect(pane).y
     content := terminal_content_rect(pane)
-    resize_session_to_pane(app, view, content.w, content.h)
-    if draw_canvas_session(app, view, pane, origin_x, origin_y) {
+    resize_instance_to_pane(app, view, content.w, content.h)
+    if draw_canvas_instance(app, view, pane, origin_x, origin_y) {
         draw_search_highlight(app, view, pane)
         draw_selection(app, view, pane)
         draw_history_scrollbar(app, view, pane)
@@ -5620,7 +5540,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
             draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
         }
         draw_control_notice(app, view, pane)
-        draw_session_lifecycle(app, view, pane, lifecycle_state)
+        draw_instance_lifecycle(app, view, pane, lifecycle_state)
         return
     }
 
@@ -5646,7 +5566,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
     if error_count != 0 {
         draw_text(app, app.ui_font, string(error_text[:error_count]), origin_x, origin_y, palette.accent)
         draw_control_notice(app, view, pane)
-        draw_session_lifecycle(app, view, pane, lifecycle_state)
+        draw_instance_lifecycle(app, view, pane, lifecycle_state)
         return
     }
     if len(text) != 0 {
@@ -5683,7 +5603,7 @@ draw_real_session :: proc(app: ^App, view: ^Session_View, pane: SDL.FRect) {
         draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
     }
     draw_control_notice(app, view, pane)
-        draw_session_lifecycle(app, view, pane, lifecycle_state)
+        draw_instance_lifecycle(app, view, pane, lifecycle_state)
 }
 
 clear_ime_preedit :: proc(app: ^App) {
@@ -5757,7 +5677,7 @@ active_terminal_cursor_rect :: proc(
     app: ^App,
     width, height: f32,
 ) -> (pane: SDL.FRect, cursor: SDL.Rect, ok: bool) {
-    view := active_session_view(app)
+    view := active_instance_view(app)
     if view == nil || view.canvas == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return {}, {}, false
     }
@@ -5948,7 +5868,7 @@ draw_search_bar :: proc(app: ^App, width: f32) {
 
     status := "Enter older  Shift+Enter newer"
     status_color := palette.text_muted
-    view := active_session_view(app)
+    view := active_instance_view(app)
     if view != nil {
         sync.mutex_lock(&view.mutex)
         running := view.search_pending ||
@@ -5984,17 +5904,17 @@ draw_search_bar :: proc(app: ^App, width: f32) {
     draw_text(app, app.ui_font, status, field.x + field.w + 14, box.y + 13, status_color)
 }
 
-draw_placeholder_session :: proc(app: ^App) {
+draw_placeholder_instance :: proc(app: ^App) {
     draw_text(app, app.terminal_font, "Profile shell placeholder", 34, 86, palette.text_muted)
-    draw_text(app, app.terminal_font, "The Home tab is the real canonical Howl Session.", 34, 116, palette.text)
+    draw_text(app, app.terminal_font, "The Home tab is the real canonical Howl Instance.", 34, 116, palette.text)
 }
 
 draw_terminal :: proc(app: ^App, width, height: f32) {
     inset := terminal_inset(width, height)
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
-    if !active_tab_is_session(app) {
-        draw_placeholder_session(app)
+    if !active_tab_is_instance(app) {
+        draw_placeholder_instance(app)
         return
     }
     tab := &app.tabs[app.active_tab]
@@ -6009,7 +5929,7 @@ draw_terminal :: proc(app: ^App, width, height: f32) {
             continue
         }
         draw_fill(app.renderer, entry.rect, palette.terminal_panel)
-        draw_real_session(app, view, entry.rect)
+        draw_real_instance(app, view, entry.rect)
         if tab.pane_count > 1 && entry.pane_index == tab.active_pane {
             draw_outline(app.renderer, entry.rect, palette.accent)
         }
@@ -6104,14 +6024,14 @@ draw_settings :: proc(app: ^App, width, height: f32) {
         draw_text(app, app.ui_font, "Default profile", content_x, content_y + 48, palette.text_muted)
         settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0),
                               startup_profile_label(app, app.startup_profile), app.startup_profile > 0, app.startup_profile + 1 < app.profile_count)
-        draw_setting_field(app, "Session ownership", startup_action_label(app, app.startup_profile), content_x, content_y + 126, available)
+        draw_setting_field(app, "Instance ownership", startup_action_label(app, app.startup_profile), content_x, content_y + 126, available)
         startup := profile_at(app, app.startup_profile)
         if startup != nil && startup.mode == .Launch {
             detail := profile_command(startup)
             if len(detail) == 0 do detail = "Your interactive shell"
             draw_setting_field(app, "Launch", detail, content_x, content_y + 204, available)
         } else {
-            draw_setting_field(app, "Existing Session endpoint", profile_endpoint(startup), content_x, content_y + 204, available)
+            draw_setting_field(app, "Existing Instance endpoint", profile_endpoint(startup), content_x, content_y + 204, available)
         }
     case .Interaction:
         draw_setting_field(app, "Input path", "howl-client semantic actions", content_x, content_y + 48, available)
@@ -6240,7 +6160,7 @@ startup_intent :: proc(args: []string) -> Startup_Intent {
 }
 
 main :: proc() {
-    // Informational calls must not create an I/O runtime, window, or Session.
+    // Informational calls must not create an I/O runtime, window, or Instance.
     switch startup_intent(os.args[1:]) {
     case .Help:
         fmt.println("Usage: howl-odin [--help | --version]\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
@@ -6253,7 +6173,7 @@ main :: proc() {
         os.exit(2)
     case .Run:
     }
-    if version() != 8 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 9 { fmt.eprintln("Howl bridge version mismatch"); return }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }
@@ -6263,8 +6183,7 @@ main :: proc() {
     assert(size_of(Search_Match_Info) == int(search_match_info_size()))
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
-    assert(size_of(Profile_Env_Info) == int(profile_env_info_size()))
-    assert(size_of(Consequence_Info) == int(consequence_info_size()))
+        assert(size_of(Consequence_Info) == int(consequence_info_size()))
     if !SDL.SetAppMetadata(APP_NAME, APP_VERSION, APP_IDENTIFIER) {
         sdl_error("SDL_SetAppMetadata failed")
         return
@@ -6275,8 +6194,8 @@ main :: proc() {
     }
     defer SDL.Quit()
 
-    session_update_event_type = SDL.RegisterEvents(1)
-    if session_update_event_type == 0 {
+    instance_update_event_type = SDL.RegisterEvents(1)
+    if instance_update_event_type == 0 {
         sdl_error("SDL_RegisterEvents failed")
         return
     }
@@ -6363,7 +6282,6 @@ main :: proc() {
         active_tab = -1,
         tab_drag_index = -1,
         pane_resize_tab = -1,
-        next_session_identity = 1,
         startup_profile = 0,
     }
     _ = SDL.SetWindowMinimumSize(window, 640, 320)
@@ -6403,10 +6321,10 @@ main :: proc() {
         } else if !SDL.WaitEvent(&event) {
             continue
         }
-        input_dirty := u32(event.type) != session_update_event_type
+        input_dirty := u32(event.type) != instance_update_event_type
         handle_event(&app, &event)
         for SDL.PollEvent(&event) {
-            input_dirty = input_dirty || u32(event.type) != session_update_event_type
+            input_dirty = input_dirty || u32(event.type) != instance_update_event_type
             handle_event(&app, &event)
         }
         if app.running {

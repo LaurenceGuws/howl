@@ -3,11 +3,11 @@
 const std = @import("std");
 const c = @import("host_c");
 const wayland = @import("howl_wayland");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
-/// Bounds copied keyboard/focus occurrences awaiting Session delivery.
+/// Bounds copied keyboard/focus occurrences awaiting Instance delivery.
 pub const input_capacity: usize = 128;
 /// Bounds host-local control requests awaiting Render ownership.
 pub const host_command_capacity: usize = 16;
@@ -287,7 +287,7 @@ pub const Boundary = struct {
         return self.input_fd;
     }
 
-    /// Wakes Input after another owner performs one serialized local Session
+    /// Wakes Input after another owner performs one serialized local Instance
     /// mutation which may have queued child-facing reply bytes.
     pub fn wakeInput(self: *Boundary) void {
         signal(self.input_fd);
@@ -506,7 +506,7 @@ pub const Boundary = struct {
         return result;
     }
 
-    /// Publishes one Render-committed Session-slot focus for Input mirroring.
+    /// Publishes one Render-committed Instance-slot focus for Input mirroring.
     pub fn publishPaneFocus(self: *Boundary, scene_index: u8) error{Stopping}!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {

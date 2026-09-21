@@ -2,17 +2,6 @@ name: Howl iOS smoke
 
 on:
   workflow_dispatch:
-    inputs:
-      endpoint:
-        description: Explicit numeric IPv4 direct Session peer for the built client
-        required: true
-        default: tcp://127.0.0.1:43127
-        type: string
-      server_endpoint:
-        description: Optional numeric IPv4 Howl server manager peer; when set, build managed mode
-        required: false
-        default: ''
-        type: string
 
 permissions:
   contents: read
@@ -52,21 +41,9 @@ jobs:
 
       - name: Build unsigned iOS smoke app
         working-directory: howl-flutter
-        env:
-          HOWL_ENDPOINT: ${{ inputs.endpoint }}
-          HOWL_SERVER_ENDPOINT: ${{ inputs.server_endpoint }}
-        run: |
-          set -euo pipefail
-          args=(
-            flutter build ios --release --no-codesign
-            --dart-define=HOWL_GEOMETRY_LEADER=1
-          )
-          if [[ -n "$HOWL_SERVER_ENDPOINT" ]]; then
-            args+=(--dart-define=HOWL_SERVER_ENDPOINT="$HOWL_SERVER_ENDPOINT")
-          else
-            args+=(--dart-define=HOWL_ENDPOINT="$HOWL_ENDPOINT")
-          fi
-          "${args[@]}"
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=HOWL_GEOMETRY_LEADER=1
 
       - name: Verify final Runner native-host exports
         run: |

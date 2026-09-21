@@ -1,10 +1,10 @@
-//! Owns one canonical PTY and VT session independently of attached observers.
+//! Owns one canonical PTY and VT instance independently of attached observers.
 
 const std = @import("std");
 const pty = @import("howl_pty");
 const vt = @import("howl_vt");
 
-/// Shared-session wire and geometry-authority contract.
+/// Shared-instance wire and geometry-authority contract.
 pub const protocol = @import("protocol.zig");
 
 const write_queue_bytes: usize = 64 * 1024;
@@ -13,8 +13,8 @@ const write_bytes_per_turn: usize = 64 * 1024;
 const write_calls_per_turn: usize = 4;
 
 /// Opaque handle to one canonical PTY + VT lifetime owner.
-pub const Session = opaque {};
-/// Canonical terminal engine type owned by one Session.
+pub const Instance = opaque {};
+/// Canonical terminal engine type owned by one Instance.
 pub const Terminal = vt.Terminal;
 /// Host-neutral input accepted by the canonical VT owner.
 pub const Input = vt.Terminal.InputEvent;
@@ -76,7 +76,7 @@ pub const Launch = struct {
     colorterm: ?[]const u8 = "truecolor",
 };
 
-/// Reports construction failure before a session becomes observable.
+/// Reports construction failure before a instance becomes observable.
 pub const InitError = pty.InitError || pty.StartError || vt.Terminal.InitError;
 /// Reports terminal input encoding, signal, or bounded write admission failure.
 pub const InputError = vt.Terminal.InputError || pty.TermiosSignalError || error{WriteQueueFull};
@@ -93,7 +93,7 @@ pub const Service = struct {
     changed: bool,
     /// True when this service turn changed visible-row or scroll/history state.
     viewport_changed: bool,
-    /// True when retained caller work exceeded its bounded queue and Session
+    /// True when retained caller work exceeded its bounded queue and Instance
     /// applied deterministic headless policy to at least one older consequence.
     retained_consequence_fallback: bool = false,
     stream_closed: bool,
@@ -108,7 +108,7 @@ pub fn init(
     allocator: std.mem.Allocator,
     inherited_environment: std.process.Environ,
     launch: Launch,
-) InitError!*Session {
+) InitError!*Instance {
     const state = try allocator.create(State);
     errdefer allocator.destroy(state);
     try state.initInto(allocator, inherited_environment, launch);
@@ -116,87 +116,87 @@ pub fn init(
 }
 
 /// Stops the child, releases VT state, and destroys the opaque owner.
-pub fn deinit(session: *Session) void {
-    const state = stateMut(session);
+pub fn deinit(instance: *Instance) void {
+    const state = stateMut(instance);
     const allocator = state.allocator;
     state.deinit();
     allocator.destroy(state);
 }
 
 /// Returns the PTY descriptor for caller-owned poll integration.
-pub fn descriptor(session: *const Session) error{NotStarted}!std.posix.fd_t {
-    return stateConst(session).transport.masterFd();
+pub fn descriptor(instance: *const Instance) error{NotStarted}!std.posix.fd_t {
+    return stateConst(instance).transport.masterFd();
 }
 
-/// Borrows the canonical VT observation capability until the next Session mutation.
+/// Borrows the canonical VT observation capability until the next Instance mutation.
 ///
-/// Mutation remains Session-owned so PTY writes, replies, resize and child
+/// Mutation remains Instance-owned so PTY writes, replies, resize and child
 /// lifetime cannot be bypassed through this embedder observation seam.
-pub fn terminal(session: *const Session) *const Terminal.Observation {
-    return stateConst(session).terminal.observation();
+pub fn terminal(instance: *const Instance) *const Terminal.Observation {
+    return stateConst(instance).terminal.observation();
 }
 
 /// Borrows the oldest retained host consequence until canonical terminal mutation.
-pub fn consequenceHead(session: *const Session) ?Consequence {
-    return terminal(session).consequenceHead();
+pub fn consequenceHead(instance: *const Instance) ?Consequence {
+    return terminal(instance).consequenceHead();
 }
 
 /// Returns the bounded count of retained host consequences.
-pub fn consequenceCount(session: *const Session) u16 {
-    return terminal(session).consequenceCount();
+pub fn consequenceCount(instance: *const Instance) u16 {
+    return terminal(instance).consequenceCount();
 }
 
 /// Consumes one non-reply consequence by exact global FIFO identity.
-pub fn consumeConsequence(session: *Session, id: u64) ConsumeConsequenceError!void {
-    return stateMut(session).terminal.consumeConsequence(id);
+pub fn consumeConsequence(instance: *Instance, id: u64) ConsumeConsequenceError!void {
+    return stateMut(instance).terminal.consumeConsequence(id);
 }
 
 /// Replies to one exact pending OSC 52 clipboard query.
-pub fn replyClipboard(session: *Session, id: u64, bytes: []const u8) ClipboardReplyError!bool {
-    return stateMut(session).terminal.replyClipboard(id, bytes);
+pub fn replyClipboard(instance: *Instance, id: u64, bytes: []const u8) ClipboardReplyError!bool {
+    return stateMut(instance).terminal.replyClipboard(id, bytes);
 }
 
 /// Replies to one exact pending OSC 22 pointer-shape query.
-pub fn replyPointerShape(session: *Session, id: u64, payload: []const u8) PointerShapeReplyError!void {
-    return stateMut(session).terminal.replyPointerShape(id, payload);
+pub fn replyPointerShape(instance: *Instance, id: u64, payload: []const u8) PointerShapeReplyError!void {
+    return stateMut(instance).terminal.replyPointerShape(id, payload);
 }
 
 /// Replies to one exact pending color-preference query.
 pub fn replyColorPreference(
-    session: *Session,
+    instance: *Instance,
     id: u64,
     preference: ColorSchemePreference,
 ) ColorPreferenceReplyError!void {
-    return stateMut(session).terminal.replyColorPreference(id, preference);
+    return stateMut(instance).terminal.replyColorPreference(id, preference);
 }
 
 /// Replies to one exact pending container query.
-pub fn replyContainer(session: *Session, id: u64, reply: ContainerReply) ContainerReplyError!void {
-    return stateMut(session).terminal.replyContainer(id, reply);
+pub fn replyContainer(instance: *Instance, id: u64, reply: ContainerReply) ContainerReplyError!void {
+    return stateMut(instance).terminal.replyContainer(id, reply);
 }
 
 /// Declines one exact pending container query without fabricating host state.
 pub fn declineContainerQuery(
-    session: *Session,
+    instance: *Instance,
     id: u64,
 ) error{ StaleContainerRequest, ContainerReplyMismatch }!void {
-    return stateMut(session).terminal.declineContainerQuery(id);
+    return stateMut(instance).terminal.declineContainerQuery(id);
 }
 
-/// Encodes and admits one input event in canonical session order.
-pub fn input(session: *Session, event: Input) InputError!void {
-    return stateMut(session).input(event);
+/// Encodes and admits one input event in canonical instance order.
+pub fn input(instance: *Instance, event: Input) InputError!void {
+    return stateMut(instance).input(event);
 }
 
 /// Atomically applies one explicit canonical PTY and VT geometry.
-pub fn resize(session: *Session, rows: u16, columns: u16) ResizeError!void {
-    return stateMut(session).resize(rows, columns);
+pub fn resize(instance: *Instance, rows: u16, columns: u16) ResizeError!void {
+    return stateMut(instance).resize(rows, columns);
 }
 
 /// Applies explicit cell-pixel metrics with canonical rows/columns and PTY size.
 /// A zero pair preserves the previously accepted pixel lattice.
-pub fn resizeGeometry(session: *Session, rows: u16, columns: u16, cell_width: u16, cell_height: u16) ResizeError!void {
-    const state = stateMut(session);
+pub fn resizeGeometry(instance: *Instance, rows: u16, columns: u16, cell_width: u16, cell_height: u16) ResizeError!void {
+    const state = stateMut(instance);
     if ((cell_width == 0) != (cell_height == 0)) return error.InvalidDimensions;
     const cell = if (cell_width == 0) state.terminal.cellPixelSize().? else vt.Terminal.CellPixelSize{ .width = cell_width, .height = cell_height };
     return state.resizeGeometry(rows, columns, cell);
@@ -208,34 +208,34 @@ fn ptyPixelExtent(cells: u16, pixels: u32) error{InvalidDimensions}!u16 {
 }
 
 /// Delivers one fixed signal to the canonical child process group.
-pub fn signal(session: *Session, requested: Signal) SignalResult {
-    return stateMut(session).transport.signal(requested);
+pub fn signal(instance: *Instance, requested: Signal) SignalResult {
+    return stateMut(instance).transport.signal(requested);
 }
 
 /// Services bounded PTY read/write progress and canonical VT consequences.
 pub fn service(
-    session: *Session,
+    instance: *Instance,
     readable: bool,
     writable: bool,
     timestamp_ns: u64,
 ) ServiceError!Service {
-    return serviceWithConsequencePolicy(session, readable, writable, timestamp_ns, .headless);
+    return serviceWithConsequencePolicy(instance, readable, writable, timestamp_ns, .headless);
 }
 
 /// Services one turn while explicitly selecting host-consequence policy.
 ///
 /// `.retain` leaves canonical VT consequences queued for an external authority;
 /// `.headless` applies the existing deterministic fallback policy. Switching a
-/// retained session back to `.headless` drains already-pending consequences on
+/// retained instance back to `.headless` drains already-pending consequences on
 /// that same service turn, so authority loss cannot strand a terminal query.
 pub fn serviceWithConsequencePolicy(
-    session: *Session,
+    instance: *Instance,
     readable: bool,
     writable: bool,
     timestamp_ns: u64,
     policy: ConsequencePolicy,
 ) ServiceError!Service {
-    return stateMut(session).service(readable, writable, timestamp_ns, policy);
+    return stateMut(instance).service(readable, writable, timestamp_ns, policy);
 }
 
 const WriteQueue = struct {
@@ -521,12 +521,12 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
     };
 }
 
-fn stateMut(session: *Session) *State {
-    return @ptrCast(@alignCast(session));
+fn stateMut(instance: *Instance) *State {
+    return @ptrCast(@alignCast(instance));
 }
 
-fn stateConst(session: *const Session) *const State {
-    return @ptrCast(@alignCast(session));
+fn stateConst(instance: *const Instance) *const State {
+    return @ptrCast(@alignCast(instance));
 }
 
 fn collectReplies(machine: *vt.Terminal, queue: *WriteQueue) error{WriteQueueFull}!void {
@@ -561,8 +561,8 @@ fn inputAdmissionBytes(event: Input) error{WriteQueueFull}!usize {
     };
 }
 
-fn snapshotAscii(session: *const Session, output: []u8) error{SnapshotLimit}![]const u8 {
-    const current = terminal(session).semanticView(0);
+fn snapshotAscii(instance: *const Instance, output: []u8) error{SnapshotLimit}![]const u8 {
+    const current = terminal(instance).semanticView(0);
     if (current.cols > 512) return error.SnapshotLimit;
     var offset: usize = 0;
     var row: u16 = 0;
@@ -602,30 +602,30 @@ fn sleepOneMillisecond() void {
     }
 }
 
-fn serviceUntilContains(session: *Session, needle: []const u8) !void {
+fn serviceUntilContains(instance: *Instance, needle: []const u8) !void {
     var text: [4096]u8 = undefined;
     var attempts: u16 = 0;
     while (attempts < 2000) : (attempts += 1) {
-        const serviced = try service(session, true, true, 0);
+        const serviced = try service(instance, true, true, 0);
         if (serviced.stream_closed and serviced.child_exit != null) return error.ChildExited;
-        if (std.mem.indexOf(u8, try snapshotAscii(session, &text), needle) != null) return;
+        if (std.mem.indexOf(u8, try snapshotAscii(instance, &text), needle) != null) return;
         sleepOneMillisecond();
     }
     return error.Timeout;
 }
 
-test "headless session drains host consequences without an observer" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+test "headless instance drains host consequences without an observer" {
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "cat",
         .rows = 4,
         .columns = 20,
         .history_rows = 16,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
-    const before = terminal(session).semanticView(0);
+    const before = terminal(instance).semanticView(0);
     const prepared = try state.terminal.feed(
         "\x1b]22;?__current__\x1b\\" ++
             "\x1b]52;c;?\x07" ++
@@ -635,7 +635,7 @@ test "headless session drains host consequences without an observer" {
     );
     try std.testing.expect(prepared.stateChanged());
     try state.drainConsequences();
-    const after = terminal(session).semanticView(0);
+    const after = terminal(instance).semanticView(0);
     try std.testing.expectEqual(before.rows, after.rows);
     try std.testing.expectEqual(before.cols, after.cols);
     try std.testing.expect(state.terminal.consequenceHead() == null);
@@ -643,15 +643,15 @@ test "headless session drains host consequences without an observer" {
 }
 
 test "service separates in-place text from viewport mutation" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 2,
         .columns = 4,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     state.reads[0] = 'A';
     state.read_start = 0;
@@ -668,16 +668,16 @@ test "service separates in-place text from viewport mutation" {
     try std.testing.expect(scroll.viewport_changed);
 }
 
-test "session services terminal animation without PTY readiness" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+test "instance services terminal animation without PTY readiness" {
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "cat",
         .rows = 3,
         .columns = 8,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     try std.testing.expect((try state.terminal.feed(
         "\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1,q=2;/wAA/w==\x1b\\",
@@ -689,31 +689,31 @@ test "session services terminal animation without PTY readiness" {
         "\x1b_Ga=a,i=20,s=3,r=1,z=40,q=2\x1b\\",
     )).stateChanged());
 
-    var initial_images = terminal(session).images(0);
+    var initial_images = terminal(instance).images(0);
     const initial = initial_images.image(0) orelse return error.MissingImage;
     const image_id = initial.id;
     const initial_generation = initial.generation;
-    const started_revision = terminal(session).semanticSequence();
+    const started_revision = terminal(instance).semanticSequence();
 
-    const started = try service(session, false, false, 100 * std.time.ns_per_ms);
+    const started = try service(instance, false, false, 100 * std.time.ns_per_ms);
     try std.testing.expect(!started.changed);
     try std.testing.expectEqual(@as(?u32, 40), started.animation_wait_ms);
-    try std.testing.expectEqual(started_revision, terminal(session).semanticSequence());
+    try std.testing.expectEqual(started_revision, terminal(instance).semanticSequence());
 
-    const advanced = try service(session, false, false, 140 * std.time.ns_per_ms);
+    const advanced = try service(instance, false, false, 140 * std.time.ns_per_ms);
     try std.testing.expect(advanced.changed);
     try std.testing.expectEqual(@as(?u32, 50), advanced.animation_wait_ms);
-    try std.testing.expectEqual(started_revision + 1, terminal(session).semanticSequence());
-    var advanced_images = terminal(session).images(0);
+    try std.testing.expectEqual(started_revision + 1, terminal(instance).semanticSequence());
+    var advanced_images = terminal(instance).images(0);
     const current = advanced_images.image(0) orelse return error.MissingImage;
     try std.testing.expect(current.generation > initial_generation);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
-    try std.testing.expect(testTerminalImage(terminal(session), image_id, initial_generation) == null);
-    try std.testing.expect(testTerminalImage(terminal(session), image_id, current.generation) != null);
+    try std.testing.expect(testTerminalImage(terminal(instance), image_id, initial_generation) == null);
+    try std.testing.expect(testTerminalImage(terminal(instance), image_id, current.generation) != null);
 }
 
 test "retained host query falls back headlessly when external authority disappears" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; " ++
             "printf '\\033]52;c;?\\007'; " ++
@@ -723,110 +723,110 @@ test "retained host query falls back headlessly when external authority disappea
         .columns = 40,
         .history_rows = 16,
     });
-    defer deinit(session);
+    defer deinit(instance);
 
     var attempts: u16 = 0;
-    while (consequenceHead(session) == null and attempts < 2000) : (attempts += 1) {
-        const serviced = try serviceWithConsequencePolicy(session, true, true, 0, .retain);
+    while (consequenceHead(instance) == null and attempts < 2000) : (attempts += 1) {
+        const serviced = try serviceWithConsequencePolicy(instance, true, true, 0, .retain);
         try std.testing.expect(!serviced.stream_closed);
         sleepOneMillisecond();
     }
-    const pending = consequenceHead(session) orelse return error.Timeout;
-    try std.testing.expectEqual(@as(u16, 1), consequenceCount(session));
+    const pending = consequenceHead(instance) orelse return error.Timeout;
+    try std.testing.expectEqual(@as(u16, 1), consequenceCount(instance));
     try std.testing.expect(std.meta.activeTag(pending) == .clipboard);
     try std.testing.expectEqualStrings("c", pending.clipboard.selection);
     try std.testing.expect(pending.clipboard.kind == .query);
 
     var text: [4096]u8 = undefined;
-    try std.testing.expect(std.mem.indexOf(u8, try snapshotAscii(session, &text), "RESULT:") == null);
+    try std.testing.expect(std.mem.indexOf(u8, try snapshotAscii(instance, &text), "RESULT:") == null);
 
     // Losing explicit external authority restores today's deterministic
     // headless reply policy on the next turn, without waiting for new PTY bytes.
-    const fallback = try serviceWithConsequencePolicy(session, false, true, 0, .headless);
+    const fallback = try serviceWithConsequencePolicy(instance, false, true, 0, .headless);
     try std.testing.expect(fallback.write_pending);
-    try std.testing.expect(consequenceHead(session) == null);
-    try serviceUntilContains(session, "RESULT:1b5d35323b633b1b5c");
+    try std.testing.expect(consequenceHead(instance) == null);
+    try serviceUntilContains(instance, "RESULT:1b5d35323b633b1b5c");
 }
 
 test "one PTY and VT remain canonical for independent observers" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf 'READY\\n'; cat",
         .rows = 8,
         .columns = 40,
         .history_rows = 64,
     });
-    defer deinit(session);
-    try serviceUntilContains(session, "READY");
+    defer deinit(instance);
+    try serviceUntilContains(instance, "READY");
 
-    const before = terminal(session).semanticSequence();
-    try input(session, .{ .bytes = "SHARED-LINE\n" });
-    try serviceUntilContains(session, "SHARED-LINE");
-    try std.testing.expect(terminal(session).semanticSequence() > before);
+    const before = terminal(instance).semanticSequence();
+    try input(instance, .{ .bytes = "SHARED-LINE\n" });
+    try serviceUntilContains(instance, "SHARED-LINE");
+    try std.testing.expect(terminal(instance).semanticSequence() > before);
 
     var first: [4096]u8 = undefined;
     var second: [4096]u8 = undefined;
-    const first_view = try snapshotAscii(session, &first);
-    const second_view = try snapshotAscii(session, &second);
+    const first_view = try snapshotAscii(instance, &first);
+    const second_view = try snapshotAscii(instance, &second);
     try std.testing.expectEqualSlices(u8, first_view, second_view);
 }
 
 test "headless service drains consequence bursts at VT service boundaries" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "i=0; while [ $i -lt 64 ]; do printf '\\007'; i=$((i+1)); done; printf 'BOUNDARY-DONE\\n'; cat",
         .rows = 4,
         .columns = 32,
         .history_rows = 16,
     });
-    defer deinit(session);
+    defer deinit(instance);
 
-    try serviceUntilContains(session, "BOUNDARY-DONE");
-    try std.testing.expectEqual(@as(u16, 0), consequenceCount(session));
+    try serviceUntilContains(instance, "BOUNDARY-DONE");
+    try std.testing.expectEqual(@as(u16, 0), consequenceCount(instance));
 }
 
-test "Session pixel geometry agrees with PTY reports and rejects overflow transactionally" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+test "Instance pixel geometry agrees with PTY reports and rejects overflow transactionally" {
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 3,
         .columns = 8,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
-    const fd = try descriptor(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
+    const fd = try descriptor(instance);
     var size: std.posix.winsize = undefined;
     const linux = std.os.linux;
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqual(@as(u16, 80), size.xpixel);
     try std.testing.expectEqual(@as(u16, 60), size.ypixel);
-    const before = terminal(session).semanticSequence();
-    try resizeGeometry(session, 3, 8, 11, 24);
-    try std.testing.expect(terminal(session).semanticSequence() > before);
+    const before = terminal(instance).semanticSequence();
+    try resizeGeometry(instance, 3, 8, 11, 24);
+    try std.testing.expect(terminal(instance).semanticSequence() > before);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqual(@as(u16, 88), size.xpixel);
     try std.testing.expectEqual(@as(u16, 72), size.ypixel);
     const queried = try state.terminal.feed("\x1b[14t\x1b[16t");
     try std.testing.expect(queried.stateChanged());
     try std.testing.expectEqualStrings("\x1b[4;72;88t\x1b[6;24;11t", state.terminal.replyBytes());
-    try resize(session, 4, 9);
+    try resize(instance, 4, 9);
     try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
-    const accepted = terminal(session).semanticView(0);
+    const accepted = terminal(instance).semanticView(0);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     const accepted_pty = size;
-    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 11, 0));
-    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(session, 4, 9, 65535, 24));
-    try std.testing.expectEqualDeep(accepted, terminal(session).semanticView(0));
+    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(instance, 4, 9, 11, 0));
+    try std.testing.expectError(error.InvalidDimensions, resizeGeometry(instance, 4, 9, 65535, 24));
+    try std.testing.expectEqualDeep(accepted, terminal(instance).semanticView(0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.ioctl(fd, linux.T.IOCGWINSZ, @intFromPtr(&size))));
     try std.testing.expectEqualDeep(accepted_pty, size);
     state.transport.stop();
-    try std.testing.expectError(error.NotStarted, resizeGeometry(session, 5, 10, 12, 26));
-    try std.testing.expectEqualDeep(accepted, terminal(session).semanticView(0));
+    try std.testing.expectError(error.NotStarted, resizeGeometry(instance, 5, 10, 12, 26));
+    try std.testing.expectEqualDeep(accepted, terminal(instance).semanticView(0));
     try std.testing.expectEqual(@as(u32, 11), state.terminal.cellPixelSize().?.width);
 }
 
-test "Session lends only the opaque VT observation capability" {
+test "Instance lends only the opaque VT observation capability" {
     const return_type = @typeInfo(@TypeOf(terminal)).@"fn".return_type.?;
     const pointer = @typeInfo(return_type).pointer;
     try std.testing.expect(pointer.attrs.@"const");
@@ -835,15 +835,15 @@ test "Session lends only the opaque VT observation capability" {
 }
 
 test "retained consequence pressure preserves canonical progress within fixed bounds" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 2,
         .columns = 8,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     var bytes: [66]u8 = undefined;
     bytes[0] = 'X';
@@ -865,15 +865,15 @@ test "retained consequence pressure preserves canonical progress within fixed bo
 }
 
 test "retained reply-required pressure defaults oldest query and admits newest" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 2,
         .columns = 8,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     for (0..8) |_| {
         try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
@@ -899,15 +899,15 @@ test "retained reply-required pressure defaults oldest query and admits newest" 
 }
 
 test "fragmented retained clipboard pressure preserves exact text and FIFO identity" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 2,
         .columns = 16,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     for (0..8) |_| {
         try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
@@ -956,22 +956,22 @@ test "fragmented retained clipboard pressure preserves exact text and FIFO ident
 }
 
 test "write backpressure preserves reply ordering and unread PTY suffix" {
-    const session = try init(std.testing.allocator, std.testing.environ, .{
+    const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",
         .rows = 2,
         .columns = 16,
         .history_rows = 8,
     });
-    defer deinit(session);
-    const state = stateMut(session);
+    defer deinit(instance);
+    const state = stateMut(instance);
 
     for (0..8) |_| {
         try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
     }
     try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
 
-    // One older terminal reply is already waiting to enter Session's bounded
+    // One older terminal reply is already waiting to enter Instance's bounded
     // child-write queue.
     const dsr = try state.terminal.feed("\x1b[5n");
     try std.testing.expect(dsr.stateChanged());
@@ -997,7 +997,7 @@ test "write backpressure preserves reply ordering and unread PTY suffix" {
     // Make room for exactly the older reply. It must transfer before PTY input
     // advances. The pressure-causing query then defaults generation 1 and
     // creates its own fallback reply, but that new reply remains in VT because
-    // the Session queue is full again.
+    // the Instance queue is full again.
     state.writes.count -= older_reply_len;
     const partial = try state.service(false, false, 2, .retain);
     try std.testing.expect(partial.changed);

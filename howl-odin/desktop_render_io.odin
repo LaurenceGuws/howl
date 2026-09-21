@@ -44,7 +44,7 @@ render_worker :: proc(data: rawptr) {
     work.error_len = int(count)
     copy(work.error[:int(count)], diagnostic[:int(count)])
     sync.mutex_unlock(&work.mutex)
-    notify_session_update()
+    notify_instance_update()
     if handle == nil do return
     for {
         sync.mutex_lock(&work.mutex)
@@ -70,15 +70,15 @@ render_worker :: proc(data: rawptr) {
         work.code = code
         work.failed = code != 0
         sync.mutex_unlock(&work.mutex)
-        notify_session_update()
+        notify_instance_update()
         if code != 0 do break
     }
 }
 
-start_render_worker :: proc(app: ^App, view: ^Session_View, pixels: u16) -> ^Render_Work {
+start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Render_Work {
     work := new(Render_Work)
     if work == nil do return nil
-    endpoint := session_endpoint(view)
+    endpoint := instance_endpoint(view)
     font := terminal_primary_font(&app.terminal_fonts)
     fallback := terminal_fallback_font(&app.terminal_fonts)
     secondary := terminal_secondary_fallback_font(&app.terminal_fonts)
@@ -113,7 +113,7 @@ stop_render_worker :: proc(work: ^Render_Work) {
     free(work)
 }
 
-request_render :: proc(work: ^Render_Work, view: ^Session_View, revision: u64, history: u32, history_generation: u64) {
+request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, history: u32, history_generation: u64) {
     if work == nil || revision == 0 do return
     sync.mutex_lock(&work.mutex)
     if !work.stop && !work.failed && !work.ready && !work.busy && !work.pending {

@@ -6,8 +6,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
-const protocol = @import("howl_session").protocol;
-const session_process = @import("session_process");
+const protocol = @import("howl_instance").protocol;
 
 const render = @import("howl_render");
 const terminal_render = render.terminal;
@@ -69,16 +68,14 @@ pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void
 }
 
 fn connectForHost(runtime: ?*Runtime, interrupt: ?*client.Interrupt, endpoint: []const u8, diagnostic: *client.ConnectDiagnostic) client.Error!client.Connection {
-    if (runtime) |value|
-        return client.Connection.connectNativeCancelable(std.heap.c_allocator, value.threaded.io(), endpoint, diagnostic, interrupt);
-    // Retained socket-only diagnostic seam, not a hidden default runtime.
-    return client.Connection.connectDiagnosed(std.heap.c_allocator, endpoint, diagnostic);
+    if (runtime == null and interrupt != null) return error.InvalidEndpoint;
+    return client.Connection.connectCancelable(std.heap.c_allocator, endpoint, diagnostic, interrupt);
 }
 
 const RenderHandle = opaque {};
 
 // Existing full-observation encoding preference, after endpoint validation.
-// TCP/SSH retain compression; Unix retains its measured raw-snapshot default.
+// TCP retains compression; Unix retains its measured raw-snapshot default.
 // View reuse below is independent of this heuristic and sends no extra bytes.
 fn rawObservationEndpoint(endpoint: []const u8) bool {
     return std.mem.startsWith(u8, endpoint, "unix:");
@@ -186,13 +183,6 @@ pub const InteractionStateInfo = extern struct {
     mouse_protocol: u8 = 0,
     pointer_mode: u8 = 0,
     _reserved: u8 = 0,
-};
-
-const ProfileEnvInfo = extern struct {
-    name_ptr: [*]const u8,
-    name_len: usize,
-    value_ptr: [*]const u8,
-    value_len: usize,
 };
 
 const interaction_info_flags = struct {
@@ -718,7 +708,7 @@ pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {
     return renderer.front.frame_revision;
 }
 
-pub export fn howl_odin_bridge_render_session_revision(raw: ?*RenderHandle) u64 {
+pub export fn howl_odin_bridge_render_instance_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
@@ -753,7 +743,7 @@ pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     return @intFromBool(begin.alternate_screen);
 }
 
-/// Projects selection against this renderer's accepted frame only. No Session
+/// Projects selection against this renderer's accepted frame only. No Instance
 /// request, allocation, text parsing, or endpoint mutation occurs while dragging.
 pub export fn howl_odin_bridge_render_selection_span(
     raw: ?*RenderHandle,
@@ -998,12 +988,7 @@ pub export fn howl_odin_bridge_interaction_state_info_size() u32 {
     return @sizeOf(InteractionStateInfo);
 }
 
-pub export fn howl_odin_bridge_profile_env_info_size() u32 {
-    return @sizeOf(ProfileEnvInfo);
-}
-
 const Handle = opaque {};
-const OwnedSessionHandle = opaque {};
 const ConsequenceHandle = opaque {};
 
 pub const ConsequenceInfo = extern struct {
@@ -1045,12 +1030,6 @@ const ConsequenceBridge = struct {
     }
 };
 
-const OwnedSession = struct {
-    allocator: std.mem.Allocator,
-    runtime: *Runtime,
-    process: ?session_process.SessionProcess = null,
-};
-
 fn currentProcessEnviron() std.process.Environ {
     const c_environ = std.c.environ;
     var count: usize = 0;
@@ -1067,7 +1046,6 @@ const Bridge = struct {
     connection: client.Connection,
     raw_observation: bool,
     last_begin: ?protocol.SnapshotBegin = null,
-    // At most one self-contained live view, transferred or discarded by caller.
     reusable_view: ?*client.view.Snapshot = null,
     text_truncated: bool = false,
     display_title: [protocol.properties.maximum_field_bytes]u8 = undefined,
@@ -1094,144 +1072,7 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 8;
-}
-
-/// Launches one client-owned canonical Session using the existing native
-/// SessionProcess owner. The matching `howl-sessiond` must be packaged beside
-/// the Odin executable. A null environment map deliberately inherits the
-/// desktop client's current environment.
-pub export fn howl_odin_bridge_owned_session_create(
-    runtime_raw: ?*RuntimeHandle,
-    runtime_dir_ptr: [*]const u8,
-    runtime_dir_len: usize,
-    shell_ptr: [*]const u8,
-    shell_len: usize,
-    command_ptr: [*]const u8,
-    command_len: usize,
-    cwd_ptr: [*]const u8,
-    cwd_len: usize,
-    env_ptr: [*]const ProfileEnvInfo,
-    env_count: usize,
-    rows: u16,
-    columns: u16,
-    identity: u32,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*OwnedSessionHandle {
-    diagnostic_len.* = 0;
-    const runtime = runtimeValue(runtime_raw) orelse {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "missing_host_runtime");
-        return null;
-    };
-    var accepted = false;
-    if (runtime_dir_len == 0 or shell_len == 0 or rows == 0 or columns == 0 or identity == 0 or
-        env_count > 32 or command_len > 16384 or cwd_len > 4096)
-    {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_launch");
-        return null;
-    }
-    const shell = shell_ptr[0..shell_len];
-    const command: ?[]const u8 = if (command_len == 0) null else command_ptr[0..command_len];
-    const cwd: ?[]const u8 = if (cwd_len == 0) null else cwd_ptr[0..cwd_len];
-    if (std.mem.indexOfScalar(u8, shell, 0) != null or
-        (command != null and std.mem.indexOfScalar(u8, command.?, 0) != null) or
-        (cwd != null and std.mem.indexOfScalar(u8, cwd.?, 0) != null))
-    {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_session_launch_text");
-        return null;
-    }
-
-    const allocator = std.heap.c_allocator;
-    var environment_map = std.process.Environ.Map.init(allocator);
-    var use_environment_map = false;
-    defer if (use_environment_map) environment_map.deinit();
-    if (env_count != 0) {
-        use_environment_map = true;
-        environment_map.putPosixBlock(currentProcessEnviron().block.view()) catch {
-            writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_copy_failed");
-            return null;
-        };
-        var total_bytes: usize = 0;
-        for (env_ptr[0..env_count]) |entry| {
-            if (entry.name_len == 0 or entry.name_len > 255 or entry.value_len > 4096) {
-                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_environment_entry");
-                return null;
-            }
-            const name = entry.name_ptr[0..entry.name_len];
-            const value = entry.value_ptr[0..entry.value_len];
-            if (!std.process.Environ.Map.validateKeyForPut(name) or std.mem.indexOfScalar(u8, value, 0) != null) {
-                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_environment_entry");
-                return null;
-            }
-            total_bytes = std.math.add(usize, total_bytes, name.len + value.len) catch {
-                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_limit");
-                return null;
-            };
-            if (total_bytes > 64 * 1024) {
-                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_limit");
-                return null;
-            }
-            environment_map.put(name, value) catch {
-                writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "environment_copy_failed");
-                return null;
-            };
-        }
-    }
-
-    const owned = allocator.create(OwnedSession) catch {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
-        return null;
-    };
-    owned.* = .{
-        .allocator = allocator,
-        .runtime = runtime,
-    };
-    defer if (!accepted) allocator.destroy(owned);
-    owned.process = session_process.SessionProcess.launchSibling(
-        allocator,
-        runtime.threaded.io(),
-        runtime_dir_ptr[0..runtime_dir_len],
-        shell,
-        command,
-        cwd,
-        if (use_environment_map) &environment_map else null,
-        rows,
-        columns,
-        identity,
-    ) catch |failure| {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
-        return null;
-    };
-    retainRuntime(runtime);
-    accepted = true;
-    return @ptrCast(owned);
-}
-
-pub export fn howl_odin_bridge_owned_session_destroy(raw: ?*OwnedSessionHandle) void {
-    const value = raw orelse return;
-    const owned: *OwnedSession = @ptrCast(@alignCast(value));
-    const allocator = owned.allocator;
-    if (owned.process) |*process| process.deinit();
-    releaseRuntime(owned.runtime);
-    allocator.destroy(owned);
-}
-
-pub export fn howl_odin_bridge_owned_session_copy_endpoint(
-    raw: ?*OwnedSessionHandle,
-    output_ptr: [*]u8,
-    output_capacity: usize,
-    output_len: *usize,
-) i32 {
-    output_len.* = 0;
-    const value = raw orelse return 1;
-    const owned: *OwnedSession = @ptrCast(@alignCast(value));
-    const process = owned.process orelse return 2;
-    if (output_capacity < process.endpoint.len) return 3;
-    @memcpy(output_ptr[0..process.endpoint.len], process.endpoint);
-    output_len.* = process.endpoint.len;
-    return 0;
+    return 9;
 }
 
 pub export fn howl_odin_bridge_create(
@@ -2276,7 +2117,7 @@ test "Odin search selection and interaction C records stay fixed" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(InteractionStateInfo));
 }
 
-/// Opens one consequence-policy connection without claiming Session authority.
+/// Opens one consequence-policy connection without claiming Instance authority.
 /// Callers can observe the current authority first and acquire only when policy
 /// permits; this keeps independent desktop windows from stealing host policy
 /// merely by attaching later.
@@ -2520,7 +2361,7 @@ test "render headers publish metadata and selection only on acceptance" {
         }
         const raw = if (stage == 0) null else handle;
         const expected = if (stage < 3) std.mem.zeroes(protocol.SnapshotBegin) else if (stage == 5) next_begin else first_begin;
-        try std.testing.expectEqual(expected.revision, howl_odin_bridge_render_session_revision(raw));
+        try std.testing.expectEqual(expected.revision, howl_odin_bridge_render_instance_revision(raw));
         try std.testing.expectEqual(expected.history_offset, howl_odin_bridge_render_history_offset(raw));
         try std.testing.expectEqual(expected.history_count, howl_odin_bridge_render_history_count(raw));
         try std.testing.expectEqual(expected.history_row_base, howl_odin_bridge_render_history_row_base(raw));

@@ -7,7 +7,6 @@ const host_layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
-const session_process = @import("session_process.zig");
 const terminal_scene = @import("terminal_scene.zig");
 pub const FontPaths = terminal_scene.FontPaths;
 const terminal_fast = @import("terminal_fast.zig");
@@ -153,9 +152,6 @@ pub fn run(
     endpoint_right: ?[]const u8,
     font: terminal_scene.FontPaths,
     mux: host_layout.Mux,
-    runtime_dir: ?[]const u8,
-    shell: []const u8,
-    environ_map: *const std.process.Environ.Map,
 ) void {
     runFallible(
         boundary,
@@ -164,9 +160,6 @@ pub fn run(
         endpoint_right,
         font,
         mux,
-        runtime_dir,
-        shell,
-        environ_map,
         null,
     ) catch |failure| {
         if (failure == error.Stopping and boundary.shouldStop()) {
@@ -179,7 +172,7 @@ pub fn run(
     boundary.markStopped(.render);
 }
 
-/// Runs the same Vulkan/DRM owner against one in-process Session. The local
+/// Runs the same Vulkan/DRM owner against one in-process Instance. The local
 /// terminal has no endpoint/client transport and currently owns one pane only.
 pub fn runLocal(
     boundary: *shared.Boundary,
@@ -195,9 +188,6 @@ pub fn runLocal(
         null,
         font,
         mux,
-        null,
-        "",
-        null,
         owner,
     ) catch |failure| {
         if (failure == error.Stopping and boundary.shouldStop()) {
@@ -217,9 +207,6 @@ fn runFallible(
     endpoint_right: ?[]const u8,
     font: terminal_scene.FontPaths,
     initial_mux: host_layout.Mux,
-    runtime_dir: ?[]const u8,
-    shell: []const u8,
-    environ_map: ?*const std.process.Environ.Map,
     local_owner: ?*local_terminal.Owner,
 ) !void {
     const local_mode = local_owner != null;
@@ -228,9 +215,7 @@ fn runFallible(
     var display_scale_120 = (try waitDisplayScale(boundary)).scale_120;
     var font_pixels = try scaledFontPixels(display_scale_120);
     const logical_cell_size = try terminal_scene.measureCellSize(allocator, font, base_font_pixels);
-    var scene_count: usize = if (local_mode) 1 else if (endpoint_right != null) 2 else 1;
-    var spawned_session: ?session_process.SessionProcess = null;
-    defer if (spawned_session) |*session| session.deinit();
+    const scene_count: usize = if (local_mode) 1 else if (endpoint_right != null) 2 else 1;
     var scenes: [2]?terminal_scene.Scene = .{ null, null };
     var initialized_scene_count: usize = 0;
     defer {
@@ -269,11 +254,11 @@ fn runFallible(
         }
     }
     var prepared: [2]terminal_scene.Prepared = undefined;
-    var session_revisions: [2]u64 = @splat(0);
+    var instance_revisions: [2]u64 = @splat(0);
     var history: [2]scrollback.State = @splat(.{});
     for (0..scene_count) |scene_index| {
         prepared[scene_index] = try scenes[scene_index].?.prepare(0);
-        session_revisions[scene_index] = prepared[scene_index].session_revision;
+        instance_revisions[scene_index] = prepared[scene_index].instance_revision;
     }
     const initial_logical_width = std.math.mul(u16, prepared[0].cols, logical_cell_size.width) catch
         return error.DuetGeometry;
@@ -304,7 +289,7 @@ fn runFallible(
             &scenes[0].?,
             mux,
             &prepared[0],
-            &session_revisions[0],
+            &instance_revisions[0],
             workspace_rows,
             workspace_cols,
             surface_width,
@@ -319,7 +304,7 @@ fn runFallible(
             scene_count,
             mux,
             &prepared,
-            &session_revisions,
+            &instance_revisions,
             workspace_rows,
             workspace_cols,
             surface_width,
@@ -701,8 +686,8 @@ fn runFallible(
         }
 
         // Publishing the next slot lets KWin retire the previous one. Waiting
-        // here bounds presentation backlog without pacing canonical Session
-        // progress: Session continues independently while this observer waits.
+        // here bounds presentation backlog without pacing canonical Instance
+        // progress: Instance continues independently while this observer waits.
         if (ring.previous_slot) |prior| {
             try waitTimeline(drm_fd, ring.slots[prior].release_handle, ring.slots[prior].release_point);
         }
@@ -719,7 +704,7 @@ fn runFallible(
             if (!observation_armed[scene_index] and
                 sceneIsVisible(&scene_panes, scene_count, active_grid, scene_index))
             {
-                try scenes[scene_index].?.arm(session_revisions[scene_index]);
+                try scenes[scene_index].?.arm(instance_revisions[scene_index]);
                 observation_armed[scene_index] = true;
             }
         }
@@ -755,7 +740,7 @@ fn runFallible(
                 if (next.width != prepared[ready_index].width or
                     next.height != prepared[ready_index].height)
                     return error.GeometryChanged;
-                session_revisions[ready_index] = next.session_revision;
+                instance_revisions[ready_index] = next.instance_revision;
                 var current_grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
                 const current_grid = try mux.activeLayout(
                     .{ .width = workspace_cols, .height = workspace_rows },
@@ -764,7 +749,7 @@ fn runFallible(
                 if (sceneIsVisible(&scene_panes, scene_count, current_grid, ready_index)) {
                     prepared[ready_index] = next;
                     changed[ready_index] = true;
-                    try scenes[ready_index].?.arm(session_revisions[ready_index]);
+                    try scenes[ready_index].?.arm(instance_revisions[ready_index]);
                     observation_armed[ready_index] = true;
                 } else {
                     scenes[ready_index].?.discardPrepared(next);
@@ -781,7 +766,7 @@ fn runFallible(
                         &scenes,
                         scene_count,
                         &prepared,
-                        &session_revisions,
+                        &instance_revisions,
                         &changed,
                         workspace_rows,
                         workspace_cols,
@@ -790,100 +775,7 @@ fn runFallible(
                         &projected_layout,
                     );
                 },
-                .split_horizontal, .split_vertical => {
-                    if (local_mode or scene_count != 1) continue;
-                    if (history[0].active()) {
-                        try restoreHistoryLive(
-                            endpoint,
-                            &scenes[0].?,
-                            &geometry_controls[0].?,
-                            &prepared[0],
-                            &session_revisions[0],
-                            &observation_armed[0],
-                            &history[0],
-                            &changed[0],
-                            &cancellation_registry,
-                            0,
-                        );
-                    }
-                    const axis: host_layout.SplitAxis = if (host_command.kind == .split_horizontal)
-                        .horizontal
-                    else
-                        .vertical;
-                    try addPane(
-                        allocator,
-                        boundary,
-                        runtime_dir orelse return error.MissingRuntimeDirectory,
-                        shell,
-                        environ_map orelse return error.MissingEnvironment,
-                        font,
-                        font_pixels,
-                        axis,
-                        &spawned_session,
-                        &mux,
-                        &scene_panes,
-                        &scenes,
-                        &initialized_scene_count,
-                        &geometry_controls,
-                        &geometry_control_count,
-                        &geometry_owned,
-                        &prepared,
-                        &session_revisions,
-                        &changed,
-                        &observation_armed,
-                        &cancellation_registry,
-                        &scene_count,
-                        &next_ready_start,
-                        workspace_rows,
-                        workspace_cols,
-                        cell_size.width,
-                        cell_size.height,
-                        &projected_layout,
-                    );
-                },
-                .new_tab => {
-                    if (local_mode or scene_count != 1) continue;
-                    if (history[0].active()) {
-                        try restoreHistoryLive(
-                            endpoint,
-                            &scenes[0].?,
-                            &geometry_controls[0].?,
-                            &prepared[0],
-                            &session_revisions[0],
-                            &observation_armed[0],
-                            &history[0],
-                            &changed[0],
-                            &cancellation_registry,
-                            0,
-                        );
-                    }
-                    try addTab(
-                        allocator,
-                        boundary,
-                        runtime_dir orelse return error.MissingRuntimeDirectory,
-                        shell,
-                        environ_map orelse return error.MissingEnvironment,
-                        font,
-                        font_pixels,
-                        &spawned_session,
-                        &mux,
-                        &scene_panes,
-                        &scenes,
-                        &initialized_scene_count,
-                        &geometry_controls,
-                        &geometry_control_count,
-                        &prepared,
-                        &session_revisions,
-                        &changed,
-                        &observation_armed,
-                        &cancellation_registry,
-                        &scene_count,
-                        &next_ready_start,
-                        &graphics,
-                        workspace_rows,
-                        workspace_cols,
-                    );
-                },
+                .split_horizontal, .split_vertical, .new_tab => continue,
                 .next_tab => {
                     if (local_mode or scene_count != 2 or mux.tabCount() != 2) continue;
                     try switchNextTab(
@@ -893,7 +785,7 @@ fn runFallible(
                         &scenes,
                         scene_count,
                         &prepared,
-                        &session_revisions,
+                        &instance_revisions,
                         &changed,
                         &observation_armed,
                         &graphics,
@@ -908,7 +800,7 @@ fn runFallible(
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
-                        &session_revisions[0],
+                        &instance_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
@@ -916,64 +808,7 @@ fn runFallible(
                         0,
                     );
                 },
-                .close_created => {
-                    if (local_mode or scene_count != 2 or spawned_session == null or host_command.pane != 1)
-                        continue;
-                    if (mux.tabCount() == 2) {
-                        try removeCreatedTab(
-                            boundary,
-                            &spawned_session,
-                            &mux,
-                            &scene_panes,
-                            &scenes,
-                            &initialized_scene_count,
-                            &geometry_controls,
-                            &geometry_control_count,
-                            &geometry_owned,
-                            &prepared,
-                            &session_revisions,
-                            &changed,
-                            &observation_armed,
-                            &fast_gpus,
-                            &generic_contexts,
-                            &graphics,
-                            &cancellation_registry,
-                            &scene_count,
-                            &next_ready_start,
-                            device,
-                            &gpu_bytes,
-                        );
-                    } else {
-                        try removeCreatedPane(
-                            boundary,
-                            &spawned_session,
-                            &mux,
-                            &scene_panes,
-                            &scenes,
-                            &initialized_scene_count,
-                            &geometry_controls,
-                            &geometry_control_count,
-                            &geometry_owned,
-                            &prepared,
-                            &session_revisions,
-                            &changed,
-                            &observation_armed,
-                            &fast_gpus,
-                            &generic_contexts,
-                            &graphics,
-                            &cancellation_registry,
-                            &scene_count,
-                            &next_ready_start,
-                            device,
-                            &gpu_bytes,
-                            workspace_rows,
-                            workspace_cols,
-                            cell_size.width,
-                            cell_size.height,
-                            &projected_layout,
-                        );
-                    }
-                },
+                .close_created => continue,
             },
             .display_scale => |scale| {
                 if (scale.scale_120 == display_scale_120) continue;
@@ -983,7 +818,7 @@ fn runFallible(
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
-                        &session_revisions[0],
+                        &instance_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
@@ -1007,7 +842,7 @@ fn runFallible(
                         owner,
                         &scenes[0].?,
                         &prepared[0],
-                        &session_revisions[0],
+                        &instance_revisions[0],
                         &changed[0],
                         &observation_armed[0],
                         target_rows,
@@ -1024,7 +859,7 @@ fn runFallible(
                         &scenes,
                         scene_count,
                         &prepared,
-                        &session_revisions,
+                        &instance_revisions,
                         &changed,
                         &observation_armed,
                         workspace_rows,
@@ -1045,7 +880,7 @@ fn runFallible(
                         next_font_pixels,
                         &scenes[0].?,
                         &prepared[0],
-                        &session_revisions[0],
+                        &instance_revisions[0],
                         &observation_armed[0],
                         &changed[0],
                         &fast_gpus[0],
@@ -1059,13 +894,12 @@ fn runFallible(
                         allocator,
                         endpoint,
                         endpoint_right,
-                        spawned_session,
                         font,
                         next_font_pixels,
                         &scenes,
                         scene_count,
                         &prepared,
-                        &session_revisions,
+                        &instance_revisions,
                         &observation_armed,
                         &changed,
                         &cancellation_registry,
@@ -1130,7 +964,7 @@ fn runFallible(
                         &scenes[0].?,
                         if (local_mode) null else &geometry_controls[0].?,
                         &prepared[0],
-                        &session_revisions[0],
+                        &instance_revisions[0],
                         &observation_armed[0],
                         &history[0],
                         &changed[0],
@@ -1149,7 +983,7 @@ fn runFallible(
                             owner,
                             &scenes[0].?,
                             &prepared[0],
-                            &session_revisions[0],
+                            &instance_revisions[0],
                             &changed[0],
                             &observation_armed[0],
                             target_rows,
@@ -1166,7 +1000,7 @@ fn runFallible(
                             &scenes,
                             scene_count,
                             &prepared,
-                            &session_revisions,
+                            &instance_revisions,
                             &changed,
                             &observation_armed,
                             workspace_rows,
@@ -1215,11 +1049,11 @@ fn runFallible(
     queue_active = false;
     try waitWindowStopped(boundary);
     std.debug.print(
-        "Render live loop retired at present={d} sessions={d}/{d} retained_draws={d} generic_draws={d}\n",
+        "Render live loop retired at present={d} instances={d}/{d} retained_draws={d} generic_draws={d}\n",
         .{
             present_revision,
-            session_revisions[0],
-            if (scene_count == 2) session_revisions[1] else 0,
+            instance_revisions[0],
+            if (scene_count == 2) instance_revisions[1] else 0,
             retained_draw_count,
             generic_draw_count_total,
         },
@@ -1230,11 +1064,10 @@ fn sceneEndpoint(
     index: usize,
     primary: []const u8,
     external_right: ?[]const u8,
-    spawned: ?session_process.SessionProcess,
 ) ![]const u8 {
     return switch (index) {
         0 => primary,
-        1 => if (spawned) |session| session.endpoint else external_right orelse error.SceneEndpointMissing,
+        1 => external_right orelse error.SceneEndpointMissing,
         else => error.SceneEndpointMissing,
     };
 }
@@ -1243,13 +1076,12 @@ fn rebuildScenesForScale(
     allocator: std.mem.Allocator,
     primary_endpoint: []const u8,
     external_right: ?[]const u8,
-    spawned_session: ?session_process.SessionProcess,
     font: terminal_scene.FontPaths,
     font_pixels: u16,
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     observation_armed: *[2]bool,
     changed: *[2]bool,
     cancellations: *CancellationRegistry,
@@ -1273,11 +1105,11 @@ fn rebuildScenesForScale(
     var next_prepared: [2]terminal_scene.Prepared = undefined;
     var next_revisions: [2]u64 = @splat(0);
     for (0..scene_count) |index| {
-        const endpoint = try sceneEndpoint(index, primary_endpoint, external_right, spawned_session);
+        const endpoint = try sceneEndpoint(index, primary_endpoint, external_right);
         replacements[index] = try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
         replacement_count = index + 1;
         next_prepared[index] = try replacements[index].?.prepare(0);
-        next_revisions[index] = next_prepared[index].session_revision;
+        next_revisions[index] = next_prepared[index].instance_revision;
     }
 
     for (0..scene_count) |index| {
@@ -1290,7 +1122,7 @@ fn rebuildScenesForScale(
         scenes[index] = replacements[index];
         replacements[index] = null;
         prepared[index] = next_prepared[index];
-        session_revisions[index] = next_revisions[index];
+        instance_revisions[index] = next_revisions[index];
         observation_armed[index] = false;
         changed[index] = true;
         try cancellations.set(index, try scenes[index].?.cancellation());
@@ -1306,7 +1138,7 @@ fn rebuildLocalSceneForScale(
     font_pixels: u16,
     scene: *terminal_scene.Scene,
     prepared: *terminal_scene.Prepared,
-    session_revision: *u64,
+    instance_revision: *u64,
     observation_armed: *bool,
     changed: *bool,
     fast_gpu: *?terminal_fast.Gpu,
@@ -1332,7 +1164,7 @@ fn rebuildLocalSceneForScale(
     scene.* = replacement;
     replacement = undefined;
     prepared.* = next;
-    session_revision.* = next.session_revision;
+    instance_revision.* = next.instance_revision;
     observation_armed.* = false;
     changed.* = true;
     primary_graphics.invalidateAtlases();
@@ -1576,7 +1408,7 @@ fn establishLocalInitialGeometry(
     scene: *terminal_scene.Scene,
     mux: host_layout.Mux,
     prepared: *terminal_scene.Prepared,
-    session_revision: *u64,
+    instance_revision: *u64,
     total_rows: u16,
     total_cols: u16,
     surface_width: u16,
@@ -1602,13 +1434,13 @@ fn establishLocalInitialGeometry(
         scene.discardPrepared(prepared.*);
         try owner.resizeGeometry(rows, cols, cell_size.width, cell_size.height);
         boundary.wakeInput();
-        const next = try scene.prepare(session_revision.*);
+        const next = try scene.prepare(instance_revision.*);
         if (next.rows != rows or next.cols != cols) {
             scene.discardPrepared(next);
             return error.ResizeResultMismatch;
         }
         prepared.* = next;
-        session_revision.* = next.session_revision;
+        instance_revision.* = next.instance_revision;
     }
     const width = std.math.mul(u32, target.width, cell_size.width) catch
         return error.DuetGeometry;
@@ -1636,7 +1468,7 @@ fn establishInitialGeometry(
     scene_count: usize,
     mux: host_layout.Mux,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     total_rows: u16,
     total_cols: u16,
     surface_width: u16,
@@ -1705,7 +1537,7 @@ fn establishInitialGeometry(
 
     for (0..scene_count) |scene_index| {
         if (!changed[scene_index]) continue;
-        const next = scenes[scene_index].?.prepare(session_revisions[scene_index]) catch |failure| {
+        const next = scenes[scene_index].?.prepare(instance_revisions[scene_index]) catch |failure| {
             rollbackInitialGeometry(
                 controls,
                 changed,
@@ -1736,7 +1568,7 @@ fn establishInitialGeometry(
             return error.ResizeResultMismatch;
         }
         prepared[scene_index] = next;
-        session_revisions[scene_index] = next.session_revision;
+        instance_revisions[scene_index] = next.instance_revision;
     }
 
     for (grid, pixel_storage[0..grid.len], 0..) |placed, *pixel, scene_index| {
@@ -1890,299 +1722,6 @@ fn surfacePlacement(value: host_layout.Placement) surface.Placement {
     };
 }
 
-fn removeCreatedPane(
-    boundary: *shared.Boundary,
-    spawned_session: *?session_process.SessionProcess,
-    mux: *host_layout.Mux,
-    scene_panes: *[2]?host_layout.PaneId,
-    scenes: *[2]?terminal_scene.Scene,
-    initialized_scene_count: *usize,
-    controls: *[2]?client.Connection,
-    geometry_control_count: *usize,
-    geometry_owned: *[2]bool,
-    prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
-    changed: *[2]bool,
-    observation_armed: *[2]bool,
-    fast_gpus: *[2]?terminal_fast.Gpu,
-    generic_contexts: *[2]?surface.Context,
-    primary_graphics: *surface.Context,
-    cancellations: *CancellationRegistry,
-    scene_count: *usize,
-    next_ready_start: *usize,
-    device: vk.VkDevice,
-    gpu_bytes: *u64,
-    workspace_rows: u16,
-    workspace_cols: u16,
-    cell_width: u16,
-    cell_height: u16,
-    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
-) !void {
-    if (scene_count.* != 2 or spawned_session.* == null or
-        initialized_scene_count.* != 2 or geometry_control_count.* != 2)
-        return error.CloseStateMismatch;
-
-    var candidate = mux.*;
-    var placement_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-    const current = try candidate.activeLayout(
-        .{ .width = workspace_cols, .height = workspace_rows },
-        &placement_storage,
-    );
-    if (current.len != 2) return error.CloseStateMismatch;
-    const target = current[1].pane;
-    const focus_changed = candidate.focusPane(target) catch return error.CloseStateMismatch;
-    if (!focus_changed and candidate.focusedPane() != target)
-        return error.CloseStateMismatch;
-    const retired = try candidate.closeFocused();
-    if (retired != target or candidate.paneCount() != 1)
-        return error.CloseStateMismatch;
-
-    const committed = try commitLiveGeometryCandidate(
-        candidate,
-        mux,
-        controls,
-        geometry_owned,
-        scenes,
-        1,
-        prepared,
-        session_revisions,
-        changed,
-        workspace_rows,
-        workspace_cols,
-        cell_width,
-        cell_height,
-        pixel_storage,
-    );
-    if (!committed) return;
-
-    if (fast_gpus[1]) |*value| value.deinit(device, gpu_bytes);
-    fast_gpus[1] = null;
-    for (generic_contexts) |*slot| {
-        if (slot.*) |*value| value.deinit(device, gpu_bytes);
-        slot.* = null;
-    }
-    primary_graphics.invalidateAtlases();
-    cancellations.clear(1);
-    controls[1].?.deinit();
-    controls[1] = null;
-    geometry_control_count.* = 1;
-    geometry_owned[1] = false;
-    scenes[1].?.deinit();
-    scenes[1] = null;
-    initialized_scene_count.* = 1;
-    session_revisions[1] = 0;
-    changed[1] = false;
-    observation_armed[1] = false;
-    observation_armed[0] = true;
-    scene_panes[1] = null;
-    spawned_session.*.?.deinit();
-    spawned_session.* = null;
-    scene_count.* = 1;
-    next_ready_start.* = 0;
-    try boundary.publishPaneRetired();
-}
-
-fn createSecondSession(
-    allocator: std.mem.Allocator,
-    boundary: *shared.Boundary,
-    runtime_dir: []const u8,
-    shell: []const u8,
-    environ_map: *const std.process.Environ.Map,
-    font: terminal_scene.FontPaths,
-    font_pixels: u16,
-    spawned_session: *?session_process.SessionProcess,
-    scenes: *[2]?terminal_scene.Scene,
-    initialized_scene_count: *usize,
-    controls: *[2]?client.Connection,
-    geometry_control_count: *usize,
-    prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
-    cancellations: *CancellationRegistry,
-    workspace_rows: u16,
-    workspace_cols: u16,
-) ![]const u8 {
-    if (spawned_session.* != null or initialized_scene_count.* != 1 or
-        geometry_control_count.* != 1 or runtime_dir.len == 0 or shell.len == 0 or
-        workspace_rows == 0 or workspace_cols == 0)
-        return error.CreatedSessionStateMismatch;
-    spawned_session.* = try session_process.SessionProcess.launchSibling(
-        allocator,
-        boundary.runtimeIo(),
-        runtime_dir,
-        shell,
-        null,
-        null,
-        environ_map,
-        workspace_rows,
-        workspace_cols,
-        2,
-    );
-    const endpoint = spawned_session.*.?.endpoint;
-    scenes[1] = try terminal_scene.Scene.init(allocator, endpoint, font, font_pixels);
-    initialized_scene_count.* = 2;
-    controls[1] = try client.Connection.connect(allocator, endpoint);
-    geometry_control_count.* = 2;
-    prepared[1] = try scenes[1].?.prepare(0);
-    session_revisions[1] = prepared[1].session_revision;
-    try cancellations.set(1, try scenes[1].?.cancellation());
-    return endpoint;
-}
-
-fn addPane(
-    allocator: std.mem.Allocator,
-    boundary: *shared.Boundary,
-    runtime_dir: []const u8,
-    shell: []const u8,
-    environ_map: *const std.process.Environ.Map,
-    font: terminal_scene.FontPaths,
-    font_pixels: u16,
-    axis: host_layout.SplitAxis,
-    spawned_session: *?session_process.SessionProcess,
-    mux: *host_layout.Mux,
-    scene_panes: *[2]?host_layout.PaneId,
-    scenes: *[2]?terminal_scene.Scene,
-    initialized_scene_count: *usize,
-    controls: *[2]?client.Connection,
-    geometry_control_count: *usize,
-    geometry_owned: *[2]bool,
-    prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
-    changed: *[2]bool,
-    observation_armed: *[2]bool,
-    cancellation_registry: *CancellationRegistry,
-    scene_count: *usize,
-    next_ready_start: *usize,
-    workspace_rows: u16,
-    workspace_cols: u16,
-    cell_width: u16,
-    cell_height: u16,
-    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
-) !void {
-    if (scene_count.* != 1 or spawned_session.* != null or
-        initialized_scene_count.* != 1 or geometry_control_count.* != 1)
-        return error.SplitStateMismatch;
-    if (runtime_dir.len == 0 or shell.len == 0 or workspace_rows == 0 or workspace_cols < 2)
-        return error.SplitStateMismatch;
-
-    const endpoint = try createSecondSession(
-        allocator,
-        boundary,
-        runtime_dir,
-        shell,
-        environ_map,
-        font,
-        font_pixels,
-        spawned_session,
-        scenes,
-        initialized_scene_count,
-        controls,
-        geometry_control_count,
-        prepared,
-        session_revisions,
-        cancellation_registry,
-        workspace_rows,
-        workspace_cols,
-    );
-    scenes[1].?.discardPrepared(prepared[1]);
-    try scenes[1].?.arm(session_revisions[1]);
-    observation_armed[1] = true;
-
-    var candidate = mux.*;
-    const new_pane = try candidate.splitFocused(axis);
-    if (candidate.focusedPane() != new_pane or candidate.paneCount() != 2)
-        return error.SplitStateMismatch;
-
-    const committed = try commitLiveGeometryCandidate(
-        candidate,
-        mux,
-        controls,
-        geometry_owned,
-        scenes,
-        2,
-        prepared,
-        session_revisions,
-        changed,
-        workspace_rows,
-        workspace_cols,
-        cell_width,
-        cell_height,
-        pixel_storage,
-    );
-    if (!committed) return error.SplitGeometryRejected;
-
-    scene_panes[1] = new_pane;
-    observation_armed[0] = true;
-    observation_armed[1] = true;
-    scene_count.* = 2;
-    next_ready_start.* = 0;
-    try boundary.publishPaneEndpoint(endpoint, switch (axis) {
-        .horizontal => .split_horizontal,
-        .vertical => .split_vertical,
-    });
-}
-
-fn addTab(
-    allocator: std.mem.Allocator,
-    boundary: *shared.Boundary,
-    runtime_dir: []const u8,
-    shell: []const u8,
-    environ_map: *const std.process.Environ.Map,
-    font: terminal_scene.FontPaths,
-    font_pixels: u16,
-    spawned_session: *?session_process.SessionProcess,
-    mux: *host_layout.Mux,
-    scene_panes: *[2]?host_layout.PaneId,
-    scenes: *[2]?terminal_scene.Scene,
-    initialized_scene_count: *usize,
-    controls: *[2]?client.Connection,
-    geometry_control_count: *usize,
-    prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
-    changed: *[2]bool,
-    observation_armed: *[2]bool,
-    cancellations: *CancellationRegistry,
-    scene_count: *usize,
-    next_ready_start: *usize,
-    primary_graphics: *surface.Context,
-    workspace_rows: u16,
-    workspace_cols: u16,
-) !void {
-    if (scene_count.* != 1 or mux.tabCount() != 1 or mux.paneCount() != 1)
-        return error.TabStateMismatch;
-    const endpoint = try createSecondSession(
-        allocator,
-        boundary,
-        runtime_dir,
-        shell,
-        environ_map,
-        font,
-        font_pixels,
-        spawned_session,
-        scenes,
-        initialized_scene_count,
-        controls,
-        geometry_control_count,
-        prepared,
-        session_revisions,
-        cancellations,
-        workspace_rows,
-        workspace_cols,
-    );
-    var candidate = mux.*;
-    const created = try candidate.createTab();
-    if (candidate.tabCount() != 2 or candidate.paneCount() != 2 or
-        candidate.focusedPane() != created.pane) return error.TabStateMismatch;
-    scene_panes[1] = created.pane;
-    mux.* = candidate;
-    changed[1] = true;
-    try scenes[1].?.arm(session_revisions[1]);
-    observation_armed[1] = true;
-    scene_count.* = 2;
-    next_ready_start.* = 0;
-    primary_graphics.invalidateAtlases();
-    try boundary.publishPaneEndpoint(endpoint, .tab);
-}
-
 fn switchNextTab(
     boundary: *shared.Boundary,
     mux: *host_layout.Mux,
@@ -2190,7 +1729,7 @@ fn switchNextTab(
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     changed: *[2]bool,
     observation_armed: *[2]bool,
     primary_graphics: *surface.Context,
@@ -2203,9 +1742,9 @@ fn switchNextTab(
     if (!observation_armed[target]) {
         const next = try scenes[target].?.prepare(0);
         prepared[target] = next;
-        session_revisions[target] = next.session_revision;
+        instance_revisions[target] = next.instance_revision;
         changed[target] = true;
-        try scenes[target].?.arm(session_revisions[target]);
+        try scenes[target].?.arm(instance_revisions[target]);
         observation_armed[target] = true;
     } else {
         changed[target] = false;
@@ -2213,73 +1752,6 @@ fn switchNextTab(
     mux.* = candidate;
     primary_graphics.invalidateAtlases();
     try boundary.publishTabSwitched();
-}
-
-fn removeCreatedTab(
-    boundary: *shared.Boundary,
-    spawned_session: *?session_process.SessionProcess,
-    mux: *host_layout.Mux,
-    scene_panes: *[2]?host_layout.PaneId,
-    scenes: *[2]?terminal_scene.Scene,
-    initialized_scene_count: *usize,
-    controls: *[2]?client.Connection,
-    geometry_control_count: *usize,
-    geometry_owned: *[2]bool,
-    prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
-    changed: *[2]bool,
-    observation_armed: *[2]bool,
-    fast_gpus: *[2]?terminal_fast.Gpu,
-    generic_contexts: *[2]?surface.Context,
-    primary_graphics: *surface.Context,
-    cancellations: *CancellationRegistry,
-    scene_count: *usize,
-    next_ready_start: *usize,
-    device: vk.VkDevice,
-    gpu_bytes: *u64,
-) !void {
-    if (scene_count.* != 2 or spawned_session.* == null or mux.tabCount() != 2 or
-        mux.paneCount() != 2 or mux.focusedPane() != scene_panes[1].?)
-        return error.CloseStateMismatch;
-    var candidate = mux.*;
-    try candidate.closeActiveTab();
-    if (candidate.tabCount() != 1 or candidate.paneCount() != 1)
-        return error.CloseStateMismatch;
-    mux.* = candidate;
-    if (fast_gpus[1]) |*value| value.deinit(device, gpu_bytes);
-    fast_gpus[1] = null;
-    for (generic_contexts) |*slot| {
-        if (slot.*) |*value| value.deinit(device, gpu_bytes);
-        slot.* = null;
-    }
-    primary_graphics.invalidateAtlases();
-    cancellations.clear(1);
-    controls[1].?.deinit();
-    controls[1] = null;
-    geometry_control_count.* = 1;
-    geometry_owned[1] = false;
-    scenes[1].?.deinit();
-    scenes[1] = null;
-    initialized_scene_count.* = 1;
-    session_revisions[1] = 0;
-    if (!observation_armed[0]) {
-        const next = try scenes[0].?.prepare(0);
-        prepared[0] = next;
-        session_revisions[0] = next.session_revision;
-        changed[0] = true;
-        try scenes[0].?.arm(session_revisions[0]);
-        observation_armed[0] = true;
-    } else {
-        changed[0] = false;
-    }
-    changed[1] = false;
-    observation_armed[1] = false;
-    scene_panes[1] = null;
-    spawned_session.*.?.deinit();
-    spawned_session.* = null;
-    scene_count.* = 1;
-    next_ready_start.* = 0;
-    try boundary.publishPaneRetired();
 }
 
 fn settleSceneGeometry(
@@ -2290,19 +1762,19 @@ fn settleSceneGeometry(
     target_cell_height: u16,
     keep_prepared: bool,
     prepared: *terminal_scene.Prepared,
-    session_revision: *u64,
+    instance_revision: *u64,
     changed: *bool,
     observation_armed: *bool,
 ) !void {
     if (!observation_armed.*) {
-        try scene.arm(session_revision.*);
+        try scene.arm(instance_revision.*);
         observation_armed.* = true;
     }
     var attempts: u8 = 0;
     while (attempts < 8) : (attempts += 1) {
         const next = try scene.receivePrepared();
         observation_armed.* = false;
-        session_revision.* = next.session_revision;
+        instance_revision.* = next.instance_revision;
         if (terminal_scene.preparedMatchesGeometry(
             next,
             target_rows,
@@ -2312,7 +1784,7 @@ fn settleSceneGeometry(
             prepared.* = next;
             if (keep_prepared) {
                 changed.* = true;
-                try scene.arm(session_revision.*);
+                try scene.arm(instance_revision.*);
                 observation_armed.* = true;
             } else {
                 scene.discardPrepared(next);
@@ -2321,7 +1793,7 @@ fn settleSceneGeometry(
             return;
         }
         scene.discardPrepared(next);
-        try scene.arm(session_revision.*);
+        try scene.arm(instance_revision.*);
         observation_armed.* = true;
     }
     return error.GeometryObservationTimeout;
@@ -2332,7 +1804,7 @@ fn applyLocalWindowGeometry(
     owner: *local_terminal.Owner,
     scene: *terminal_scene.Scene,
     prepared: *terminal_scene.Prepared,
-    session_revision: *u64,
+    instance_revision: *u64,
     changed: *bool,
     observation_armed: *bool,
     target_rows: u16,
@@ -2364,7 +1836,7 @@ fn applyLocalWindowGeometry(
         target_cell_height,
         true,
         prepared,
-        session_revision,
+        instance_revision,
         changed,
         observation_armed,
     );
@@ -2379,7 +1851,7 @@ fn applyWindowGeometry(
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     changed: *[2]bool,
     observation_armed: *[2]bool,
     old_rows: u16,
@@ -2445,7 +1917,7 @@ fn applyWindowGeometry(
                         old_cell_heights[rollback_index],
                         sceneIsVisible(scene_panes, scene_count, old_active, rollback_index),
                         &prepared[rollback_index],
-                        &session_revisions[rollback_index],
+                        &instance_revisions[rollback_index],
                         &changed[rollback_index],
                         &observation_armed[rollback_index],
                     );
@@ -2470,7 +1942,7 @@ fn applyWindowGeometry(
             target_cell_height,
             sceneIsVisible(scene_panes, scene_count, target_active, index),
             &prepared[index],
-            &session_revisions[index],
+            &instance_revisions[index],
             &changed[index],
             &observation_armed[index],
         ) catch |failure| {
@@ -2497,7 +1969,7 @@ fn applyDuetGeometryCommand(
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     changed: *[2]bool,
     workspace_rows: u16,
     workspace_cols: u16,
@@ -2537,7 +2009,7 @@ fn applyDuetGeometryCommand(
         scenes,
         scene_count,
         prepared,
-        session_revisions,
+        instance_revisions,
         changed,
         workspace_rows,
         workspace_cols,
@@ -2556,7 +2028,7 @@ fn commitLiveGeometryCandidate(
     scenes: *[2]?terminal_scene.Scene,
     scene_count: usize,
     prepared: *[2]terminal_scene.Prepared,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     changed: *[2]bool,
     workspace_rows: u16,
     workspace_cols: u16,
@@ -2621,7 +2093,7 @@ fn commitLiveGeometryCandidate(
                     old_cell_widths,
                     old_cell_heights,
                     scene_index,
-                    session_revisions,
+                    instance_revisions,
                     prepared,
                     changed,
                 );
@@ -2652,7 +2124,7 @@ fn commitLiveGeometryCandidate(
                 ) catch return error.ResizeTransactionFailed;
                 return failure;
             };
-            session_revisions[scene_index] = next.session_revision;
+            instance_revisions[scene_index] = next.instance_revision;
             if (terminal_scene.preparedMatchesGeometry(
                 next,
                 target_rows,
@@ -2664,7 +2136,7 @@ fn commitLiveGeometryCandidate(
                 break;
             }
             scenes[scene_index].?.discardPrepared(next);
-            try scenes[scene_index].?.arm(session_revisions[scene_index]);
+            try scenes[scene_index].?.arm(instance_revisions[scene_index]);
         } else {
             rollbackInitialGeometry(
                 controls,
@@ -2677,7 +2149,7 @@ fn commitLiveGeometryCandidate(
             ) catch return error.ResizeTransactionFailed;
             return error.GeometryObservationTimeout;
         }
-        try scenes[scene_index].?.arm(session_revisions[scene_index]);
+        try scenes[scene_index].?.arm(instance_revisions[scene_index]);
     }
 
     var candidate_pixels: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
@@ -2707,7 +2179,7 @@ fn settleRolledBackGeometry(
     cell_widths: [2]u16,
     cell_heights: [2]u16,
     end: usize,
-    session_revisions: *[2]u64,
+    instance_revisions: *[2]u64,
     prepared: *[2]terminal_scene.Prepared,
     changed: *[2]bool,
 ) !void {
@@ -2716,7 +2188,7 @@ fn settleRolledBackGeometry(
         var attempts: u8 = 0;
         while (attempts < 8) : (attempts += 1) {
             const next = try scenes[scene_index].?.receivePrepared();
-            session_revisions[scene_index] = next.session_revision;
+            instance_revisions[scene_index] = next.instance_revision;
             if (terminal_scene.preparedMatchesGeometry(
                 next,
                 rows[scene_index],
@@ -2725,11 +2197,11 @@ fn settleRolledBackGeometry(
             )) {
                 prepared[scene_index] = next;
                 changed[scene_index] = true;
-                try scenes[scene_index].?.arm(session_revisions[scene_index]);
+                try scenes[scene_index].?.arm(instance_revisions[scene_index]);
                 break;
             }
             scenes[scene_index].?.discardPrepared(next);
-            try scenes[scene_index].?.arm(session_revisions[scene_index]);
+            try scenes[scene_index].?.arm(instance_revisions[scene_index]);
         } else return error.GeometryObservationTimeout;
     }
 }

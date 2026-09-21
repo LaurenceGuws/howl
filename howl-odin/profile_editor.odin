@@ -339,7 +339,7 @@ adjust_profile_mode :: proc(app: ^App, delta: int) -> bool {
 	}
 	app.settings_profile_env_selection = 0
 	save_user_config(app)
-	set_settings_notice(app, "Profile mode saved · affects future/restarted Sessions")
+	set_settings_notice(app, "Profile mode saved · affects future/restarted Instances")
 	return true
 }
 
@@ -578,7 +578,7 @@ draw_profiles_settings :: proc(app: ^App, body: SDL.FRect) {
 		draw_outline(app.renderer, row, selected ? palette.accent : palette.border)
 		settings_clipped_text(app, {row.x + 10, row.y + 3, max(f32(0), row.w - 94), 20}, profile_name(profile), palette.text)
 		kind := profile.built_in ? "Template" : "Custom"
-		mode := profile.mode == .Launch ? "Owned session" : "Attach only"
+		mode := profile.mode == .Launch ? "Owned instance" : "Attach only"
 		detail_storage: [96]u8
 		detail := fmt.bprintf(detail_storage[:], "%s · %s%s", kind, mode, app.startup_profile == index ? " · Default" : "")
 		settings_clipped_text(app, {row.x + 10, row.y + 22, max(f32(0), row.w - 94), 18}, detail, palette.text_muted)

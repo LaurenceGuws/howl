@@ -1,12 +1,12 @@
 //! Client-local exact search over one immutable projected terminal snapshot.
 //!
-//! Search is presentation/navigation policy. Session remains canonical and this
+//! Search is presentation/navigation policy. Instance remains canonical and this
 //! helper never mutates terminal state. Matches are returned as stable canonical
 //! selection points so callers can navigate or extract text without retaining a
 //! second terminal model.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const rich = @import("rich.zig");
 const view = @import("view.zig");
 const selection = @import("selection.zig");

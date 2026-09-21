@@ -1,6 +1,6 @@
 //! Single-pane dense terminal-cell fast lane for the native Vulkan canary.
 //!
-//! Rich Session state remains canonical. This adapter admits only cells whose
+//! Rich Instance state remains canonical. This adapter admits only cells whose
 //! current generic presentation can be reproduced exactly by howl-vk's retained
 //! terminal-cell backend. Rare glyph overhang is preserved through generic
 //! alpha overlays in the same Vulkan render pass. Unsupported snapshots fall

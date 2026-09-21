@@ -3,7 +3,7 @@ accepted:
   build.zig: development-only curator for local core checks and tests
   build.zig.zon: local core workspace source boundary including tracked howl-text
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  howl-session: batteries-included Linux PTY/VT lifetime owner; mutation stays Session-owned while embedders borrow VT-owned Terminal.Observation instead of receiving the mutable Terminal owner or a mirrored observation facade
+  howl-instance: batteries-included Linux PTY/VT lifetime owner for one concrete terminal occurrence; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
   howl-pty: Linux PTY and child-process lifecycle
   howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
   protocol_coverage.yml: pinned terminal-protocol census
@@ -14,26 +14,15 @@ accepted:
 
 experimental:
   howl-client: >-
-    reusable UI-agnostic native client engine with one shared explicit native
-    Unix/TCP/SSH stream transport beneath separate HWLS Session and HWLM server
-    manager clients; Session ownership still includes interaction state, canonical
-    semantic actions including mouse, one lossless rich text_v1 / revision-relative
-    text_delta_v2 decoder, compact semantic snapshots, and an explicit-lifetime
-    one-allocation coarse semantic view which resolves cell-style, cursor-shape,
-    DEC-line-geometry, and image-placeholder wire encodings for consumers that
-    need owned semantic lifetime; synchronous renderers may instead borrow the
-    already-validated lossless rich observation directly
-  howl-server: >-
-    bounded one-process authoritative collection owner for multiple independent
-    canonical Sessions; HWLM v1 provides exact server/session identity, revisioned
-    roster observation, dynamic create/close, retained exited/failed records,
-    bounded shutdown and exact-id managed attach that transfers the accepted stream
-    directly into unchanged HWLS Session service without a byte proxy; explicit
-    per-Session Unix endpoints remain a useful local/debug access route
+    reusable UI-agnostic client engine for one explicit Howl Instance interaction
+    stream. Owns Unix/numeric-IPv4 TCP carriage, cancellation, bounded framed I/O,
+    snapshots/state/actions/search/selection/images/consequences and owned semantic
+    views. It owns no PTY, VT, Instance, Session, Server, SSH subprocess, discovery,
+    routing, authentication or supervision policy
   howl-cli: >-
-    native human/agent terminal CLI and operator surface over explicit Session
-    endpoints plus the howl-server collection owner; command vocabulary and
-    machine-facing formatting live here while Session collection lifetime does not
+    boring native headless client for one explicit Howl Instance interaction stream;
+    snapshot/state/input/resize/signal vocabulary and machine-facing formatting live here;
+    it owns no PTY, VT, Instance, Session, Server, discovery, or supervision
   howl-render: >-
     one shared Terminal Canvas consuming canonical VT Observation directly,
     a validated borrowed howl-client.rich observation, or the owned
@@ -45,59 +34,32 @@ experimental:
     bounded shape/alpha-atlas reuse using howl-text only; there is no generic
     multi-source Canvas compositor or stable mobile ABI
   howl-flutter: >-
-    maintained native visual canary for the Howl client: platform
-    input/viewport/history/selection/native-size UX plus an app-private
-    version-locked native observer/control binding, exact external-image
-    refill/residency, out-of-band observer cancellation, and batched final-Canvas
-    backend; managed mode adds a separate two-connection HWLM roster/lifecycle
-    owner, authoritative session picker/create/close UI and exact-id direct
-    manager-to-HWLS stream handoff while preserving the direct-endpoint canary;
-    manager loss does not tear down an already attached Session; its native
-    TCP/client path deliberately coexists with the WebSocket/Wasm browser canary
-    so both pressure the same canonical session semantics and consume Session-owned
-    animation; Android physical path accepted, Linux bundled host proven, iOS
-    native-host semantics pressure-proven; iOS owns no PTY/userland; not part of
-    the core gate
+    maintained native graphical client canary for one explicit Howl Instance
+    interaction stream: platform input/viewport/history/selection/native-size UX
+    plus an app-private version-locked native observer/control binding, exact
+    external-image refill/residency, out-of-band observer cancellation and batched
+    final-Canvas backend; Unix/TCP endpoint choice belongs to launch/runtime policy;
+    Flutter owns no PTY, VT, Instance, Session, Server, discovery or supervision;
+    Android physical path accepted, Linux bundled host proven, iOS native-host
+    semantics pressure-proven; outside the core gate
   howl-host: >-
-    native Linux Vulkan performance canary with two explicit initial-terminal
-    ownership routes: attached external endpoints, or one in-process
-    howl-session selected by --local with no endpoint/client/sessiond round trip;
-    concrete Wayland window and explicit-sync DMA-BUF presentation, plus a deliberately small host-local
-    bounded tab/split topology that prevents single-terminal architecture from
-    becoming implicit product policy; canonical Session revisions now stream
-    through either client/text/Canvas/Vulkan or direct VT/text/Canvas/Vulkan
-    boundaries with bounded explicit-sync ring reuse; the attached generic
-    fallback borrows the validated rich observation directly, while local generic
-    presentation borrows opaque VT Observation synchronously; exact terminal-image
-    refill in both routes flows into transactional Vulkan residency; physical xkb keyboard facts cross a dedicated
-    bounded Input owner, while Wayland pointer facts cross Render-owned pane/cell
-    projection into the existing semantic mouse action with causal ordered
-    button/wheel and coalesced motion; the one-pane paths also own
-    mode-aware wheel policy for local retained-history scrollback and DECSET 1007
-    alternate-scroll; attached history remains isolated from the live long-poll,
-    while in-process history projects the requested VT window directly. Local
-    mode deliberately uses generic Canvas and one pane first; the retained Vulkan
-    fast path and split/tab creation remain attached-route experiments. Not part
-    of the core gate
+    native Linux Vulkan performance canary with two terminal routes: one in-process
+    howl-instance selected by --local, or explicit externally owned Instance streams
+    consumed through howl-client; host-owned terminal process creation was removed;
+    explicit attached multi-Instance presentation may still pressure layout/rendering,
+    but Server/Session orchestration is not implemented here; local/direct paths share
+    canonical VT/text/Canvas/Vulkan semantics; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-
-    maintained WebAssembly visual canary alongside Flutter; zero-import bounded
-    wire state with semantic text/paste/key/focus/resize/mouse control, native
-    presentation-size UX, client-local anchored history and desktop selection
-    backed by canonical text extraction, target-built real text/shared terminal
-    rendering, exact external-image refill/residency, Session-owned animation
-    consumption with no browser frame clock, a loopback-only protocol-blind Zig
-    WebSocket gateway with fail-closed admission, an offline-capable PWA shell,
-    and an Access-protected Home tunnel edge; Chromium is the primary fast
-    acceptance lane while Safari/Home-Screen is the WebKit/PWA platform canary;
-    outside the root core gate
+    maintained WebAssembly graphical client canary for explicit Howl Instance
+    interaction streams; owns browser presentation/input/history/selection and the
+    protocol-blind WebSocket carrier gateway, never PTY/VT/Instance/Session/Server
+    lifetime; Chromium is the primary fast lane and Safari/Home-Screen the WebKit/PWA
+    canary; outside the core gate
   howl-odin: >-
-    experimental desktop application in Odin over SDL3 and SDL3_ttf; owns
-    native window chrome, tabs/splits, profiles, settings/actions, history and
-    selection UI, plus bounded asynchronous client workers. Terminal pixels
-    come from shared howl-client views, howl-text and Canvas. Its app-private C
-    ABI supports both explicit Unix/TCP/SSH attachment and an owned-process
-    convenience route that launches a matching sibling howl-sessiond and then
-    attaches through the same client path; it does not embed VT or Session in
-    Odin's process today. Daily desktop canary; outside the root core gate
+    experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,
+    settings/actions, history/selection and bounded asynchronous workers. Attach
+    profiles consume explicit Instance streams. Launch profiles retain shell/command/cwd
+    configuration for a future direct local Instance embed but currently fail explicitly;
+    the rejected sibling-daemon/socket path is deleted. Outside the core gate

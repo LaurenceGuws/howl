@@ -2,7 +2,7 @@ package main
 
 import "core:testing"
 
-stable_test_selection :: proc() -> Session_View {
+stable_test_selection :: proc() -> Instance_View {
     return {
         rows = 20,
         columns = 80,

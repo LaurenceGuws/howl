@@ -33,7 +33,7 @@ open_platform_browser_uri :: proc(uri: string) -> bool {
 
 open_hyperlink_at :: proc(
 	app: ^App,
-	view: ^Session_View,
+	view: ^Instance_View,
 	pane: SDL.FRect,
 	x, y: f32,
 ) -> (handled: bool, opened: bool) {

@@ -1,18 +1,18 @@
-//! Owns one explicit connection to the frozen Howl Session byte stream.
+//! Owns one explicit connection to the frozen Howl Instance byte stream.
 //!
 //! Endpoint selection is supplied by the caller. Ordered-stream mechanics are
-//! shared with other Howl protocols while HWLS framing stays Session-specific.
+//! shared with other Howl protocols while HWLS framing stays Instance-specific.
 
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const transport = @import("transport.zig");
 
 pub const ConnectStage = transport.ConnectStage;
 pub const ConnectDiagnostic = transport.ConnectDiagnostic;
 pub const Cancellation = transport.Cancellation;
 pub const Interrupt = transport.Interrupt;
-pub const Error = transport.Error || protocol.HeaderError || protocol.PayloadError || error{
+pub const Error = std.mem.Allocator.Error || transport.Error || protocol.HeaderError || protocol.PayloadError || error{
     UnexpectedHandshakeFrame,
 };
 
@@ -46,29 +46,13 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
-    pub fn connectNative(
+    pub fn connectCancelable(
         allocator: std.mem.Allocator,
-        io: std.Io,
-        endpoint: []const u8,
-        diagnostic: *ConnectDiagnostic,
-    ) Error!Connection {
-        return connectNativeCancelable(allocator, io, endpoint, diagnostic, null);
-    }
-
-    pub fn connectNativeCancelable(
-        allocator: std.mem.Allocator,
-        io: std.Io,
         endpoint: []const u8,
         diagnostic: *ConnectDiagnostic,
         interrupt: ?*Interrupt,
     ) Error!Connection {
-        const stream = try transport.Stream.connectNativeCancelable(
-            allocator,
-            io,
-            endpoint,
-            diagnostic,
-            interrupt,
-        );
+        const stream = try transport.Stream.connectCancelable(endpoint, diagnostic, interrupt);
         return connectTransport(allocator, stream, diagnostic);
     }
 
@@ -126,7 +110,7 @@ pub fn connectTransport(
     diagnostic: *ConnectDiagnostic,
 ) Error!Connection {
     var stream = stream_value;
-    errdefer stream.deinitDiagnosed(diagnostic);
+    errdefer stream.deinit();
     diagnostic.stage = .hello_write;
     var hello: [protocol.header_bytes]u8 = undefined;
     try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
@@ -158,11 +142,11 @@ test "diagnosed connect retains the failing endpoint stage" {
     try std.testing.expectEqual(@as(i32, 0), diagnostic.os_error);
 }
 
-test "socket-only entrypoint never implicitly launches SSH" {
+test "unsupported route schemes are rejected" {
     var diagnostic: ConnectDiagnostic = .{};
     try std.testing.expectError(
         error.InvalidEndpoint,
-        Connection.connectDiagnosed(std.testing.allocator, "ssh://alias/a", &diagnostic),
+        Connection.connectDiagnosed(std.testing.allocator, "https://example.invalid/a", &diagnostic),
     );
     try std.testing.expectEqual(ConnectStage.endpoint, diagnostic.stage);
 }
@@ -265,7 +249,7 @@ test "handshake establishes client identity over shared transport" {
     try std.testing.expectEqual(ConnectStage.ready, diagnostic.stage);
 }
 
-test "connection cancellation wakes blocked Session receive while owner retains close" {
+test "connection cancellation wakes blocked Instance receive while owner retains close" {
     const pair = testSocketPair();
     const peer = try std.Thread.spawn(.{}, testHandshakePeerUntilClosed, .{pair[1]});
     var diagnostic: ConnectDiagnostic = .{};

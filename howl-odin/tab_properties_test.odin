@@ -4,7 +4,7 @@ import "core:testing"
 
 @(test)
 canonical_title_follows_active_pane_without_overwriting_profile :: proc(t: ^testing.T) {
-    a, b: Session_View
+    a, b: Instance_View
     copy(a.display_title[:], "compile A"); a.display_title_len = 9; a.task_progress = (1 << 8) | 63
     copy(b.display_title[:], "other B"); b.display_title_len = 7; b.task_progress = (4 << 8) | 25
     tab := Tab{title = "Local shell", pane_count = 2}

@@ -22,7 +22,7 @@ toggle_window_fullscreen :: proc(app: ^App) -> bool {
 
 window_presentation_allowed :: proc(flags: SDL.WindowFlags) -> bool {
     // Unfocused is not invisible. An exposed background terminal still paints.
-    // Observers and canonical Sessions continue while this window is minimized;
+    // Observers and canonical Instances continue while this window is minimized;
     // the restored/exposed event presents their newest state without replay.
     return .MINIMIZED not_in flags && .HIDDEN not_in flags
 }

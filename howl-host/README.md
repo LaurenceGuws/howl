@@ -15,18 +15,13 @@ does not cover the complete shaped cluster. The current native text atlas is an
 alpha-mask renderer, so these fallbacks must be ordinary outline/mono/gray faces;
 color-bitmap emoji fonts are not yet a supported fallback class.
 
---local owns one howl-session directly in the Host process. Input services its
+--local owns one howl-instance directly in the Host process. Input services its
 PTY/VT lifetime independently of presentation; Render borrows canonical VT
-observation only for synchronous Canvas projection. There is no Howl endpoint,
-client connection, or howl-sessiond in that route. It deliberately starts as a
+observation only for synchronous Canvas projection. There is no Howl endpoint or client connection in that route. It deliberately starts as a
 one-pane generic-Canvas proof; local split/tab creation and the retained Vulkan
 fast renderer are not implied.
 
-Endpoint startup remains the shared/remote route. Its initial terminal lifetime
-belongs to the external owner, normally howl server. The experimental
-F9/F11/F12 split/tab canary may still create one sibling howl-sessiond; that
-exception remains explicit until terminal creation earns a canonical
-server-owned control surface.
+Endpoint startup remains an attached-client route: the Host consumes explicit externally owned Instance streams. The Host does not create terminal processes for attached panes. Split/tab creation is intentionally disabled until higher-level Server -> Instances -> Instances orchestration has a truthful owner.
 
 Current foundation:
 
@@ -35,12 +30,12 @@ Current foundation:
 - triple-buffered DMA-BUF presentation with explicit sync;
 - current `howl-vk.surface` and `howl-wayland` packages;
 - host-local fixed-capacity tabs and tiled splits;
-- canonical Session revisions projected live through current howl-client,
+- canonical Instance revisions projected live through current howl-client,
   howl-text, terminal Canvas, and howl-vk.surface into the physical window;
 - three explicit-sync DMA-BUF slots rotated with exact compositor-release
-  ownership before reuse; closing Window cancels a blocked Session observation;
+  ownership before reuse; closing Window cancels a blocked Instance observation;
 - physical Wayland/xkb keyboard input delivered by a dedicated bounded Input
-  owner so compositor dispatch never waits on Session action acknowledgements;
+  owner so compositor dispatch never waits on Instance action acknowledgements;
   Window owns compositor-advertised key repeat timing and re-resolves repeated
   keys through current xkb modifiers without catch-up bursts;
 - terminal mouse tracking from Wayland motion/button/wheel facts: Window preserves
@@ -48,13 +43,13 @@ Current foundation:
   Input forwards the existing canonical mouse action. Motion is latest-wins while
   buttons and wheel remain ordered with one causal pointer sequence.
 
-The multiplexer is intentionally small. Its job is to keep multi-session
-presentation an architectural invariant while Session, VT, PTY, text, and the
+The multiplexer is intentionally small. Its job is to keep multi-Instance
+presentation an architectural invariant while Instance, VT, PTY, text, and the
 native presentation path are measured and optimized. Flutter and Web retain
 their own client UI policy.
 
 The current live loop deliberately bounds presentation backlog by compositor
-release while canonical Session progress remains observer-independent. It is a
+release while canonical Instance progress remains observer-independent. It is a
 correctness baseline, not the final latency scheduler.
 
 Terminal wheel policy is live on the one-pane paths. Mouse-tracking
@@ -67,5 +62,5 @@ observer state. Split/tab scrollback remains outside this first local slice.
 
 Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
 cost, and memory slope before optimizing scheduling. The current physical typing
-proof also makes per-keystroke Session publication/presentation churn directly
+proof also makes per-keystroke Instance publication/presentation churn directly
 measurable.

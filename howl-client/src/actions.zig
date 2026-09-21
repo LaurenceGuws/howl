@@ -1,10 +1,10 @@
-//! Canonical client-side session operations.
+//! Canonical client-side Instance operations.
 //!
-//! These functions serialize existing howl-session requests only. Terminal input
-//! encoding remains owned by howl-vt on the session side.
+//! These functions serialize existing Howl Instance requests only. Terminal input
+//! encoding remains owned by howl-vt on the Instance side.
 
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{

@@ -1,6 +1,6 @@
 //! Coherent terminal interaction state for mode-aware native clients.
 
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const client = @import("client.zig");
 
 pub const Error = client.Error || protocol.PayloadError || error{

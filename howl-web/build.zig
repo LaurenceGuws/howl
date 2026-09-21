@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = .ReleaseSafe });
     const client_module = client.module("howl_client");
-    const session_module = client_module.import_table.get("howl_session") orelse
+    const instance_module = client_module.import_table.get("howl_instance") orelse
         @panic("howl-client lost its owned session protocol dependency");
     const render = b.dependency("howl_render", .{
         .target = target,
@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseSafe,
     });
     root.addImport("howl_client", client_module);
-    root.addImport("howl_session", session_module);
+    root.addImport("howl_instance", instance_module);
     root.addImport("howl_render", render.module("howl_render"));
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;

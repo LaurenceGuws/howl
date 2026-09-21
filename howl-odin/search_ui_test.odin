@@ -4,7 +4,7 @@ import "core:testing"
 
 @(test)
 search_result_centers_canonical_row_in_history :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         rows = 20,
         columns = 80,
         history_count = 100,
@@ -26,7 +26,7 @@ search_result_centers_canonical_row_in_history :: proc(t: ^testing.T) {
 
 @(test)
 search_result_expires_when_retained_row_is_evicted :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         rows = 20,
         columns = 80,
         history_count = 100,
@@ -49,7 +49,7 @@ search_result_expires_when_retained_row_is_evicted :: proc(t: ^testing.T) {
 
 @(test)
 search_result_expires_on_column_reflow :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         rows = 20,
         columns = 79,
         history_count = 100,
@@ -82,7 +82,7 @@ search_backspace_removes_one_utf8_scalar :: proc(t: ^testing.T) {
 
 @(test)
 obsolete_running_search_is_not_currently_running :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         search_running = true,
         search_running_generation = 4,
         search_generation = 5,

@@ -1,19 +1,17 @@
 //! Native ordered-byte-stream transport shared by Howl protocols.
 //!
-//! Owns explicit Unix/TCP connection mechanics, optional installed-OpenSSH
-//! carriage, cancellation and descriptor lifetime. It knows no HWLS/HWLM framing.
+//! Owns explicit Unix/TCP connection mechanics, cancellation and descriptor lifetime.
+//! It knows no Instance framing or higher-level orchestration protocol.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const system = posix.system;
-const ssh = @import("ssh.zig");
 
 const tcp_prefix = "tcp://";
 const unix_prefix = "unix:";
 
-pub const Error = ssh.Error || error{
-    RouteUnavailable,
+pub const Error = error{
     ConnectionCanceled,
     InvalidEndpoint,
     SocketCreateFailed,
@@ -45,14 +43,13 @@ pub const ConnectStage = enum(u8) {
     welcome_kind,
     welcome_payload,
     ready,
-    ssh_launch,
 };
 
 pub const ConnectDiagnostic = struct {
     stage: ConnectStage = .start,
     os_error: i32 = 0,
     poll_interrupts: u16 = 0,
-    route_message: [ssh.diagnostic_bytes]u8 = undefined,
+    route_message: [512]u8 = undefined,
     route_message_len: usize = 0,
 };
 
@@ -76,7 +73,7 @@ pub const Cancellation = struct {
 // Its private wake stream can interrupt a partial handshake, a full write buffer
 // or an idle observation without a periodic polling timer or FD-reuse race.
 pub const Interrupt = opaque {
-    pub fn init(allocator: std.mem.Allocator) Error!*Interrupt {
+    pub fn init(allocator: std.mem.Allocator) (std.mem.Allocator.Error || error{ SocketCreateFailed, SocketOptionFailed })!*Interrupt {
         var pair: [2]posix.fd_t = undefined;
         if (posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)) != .SUCCESS)
             return error.SocketCreateFailed;
@@ -120,7 +117,6 @@ fn checkInterrupted(interrupt: ?*Interrupt) error{ConnectionCanceled}!void {
 
 pub const Stream = struct {
     fd: posix.fd_t,
-    ssh_process: ?*ssh.Process = null,
     interrupt: ?*Interrupt = null,
     handshake_deadline_ms: ?i64 = null,
     original_flags: usize = 0,
@@ -137,18 +133,7 @@ pub const Stream = struct {
         return initOwnedFd(fd, diagnostic, null, null);
     }
 
-    pub fn connectNative(
-        allocator: std.mem.Allocator,
-        io: std.Io,
-        endpoint: []const u8,
-        diagnostic: *ConnectDiagnostic,
-    ) Error!Stream {
-        return connectNativeCancelable(allocator, io, endpoint, diagnostic, null);
-    }
-
-    pub fn connectNativeCancelable(
-        allocator: std.mem.Allocator,
-        io: std.Io,
+    pub fn connectCancelable(
         endpoint: []const u8,
         diagnostic: *ConnectDiagnostic,
         interrupt: ?*Interrupt,
@@ -156,45 +141,17 @@ pub const Stream = struct {
         diagnostic.* = .{ .stage = .endpoint };
         try checkInterrupted(interrupt);
         const deadline = (try monotonicMilliseconds()) + tcp_connect_timeout_ms;
-        if (!std.mem.startsWith(u8, endpoint, "ssh://")) {
-            const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-                try connectTcp(try tcpEndpoint(endpoint), diagnostic, interrupt)
-            else if (std.mem.startsWith(u8, endpoint, unix_prefix))
-                try connectUnix(endpoint[unix_prefix.len..], interrupt)
-            else
-                return error.InvalidEndpoint;
-            return initOwnedFd(fd, diagnostic, deadline, interrupt);
-        }
-        if (comptime !ssh.supported) return error.RouteUnavailable;
-        const route = try ssh.parse(endpoint);
-        diagnostic.stage = .ssh_launch;
-        const opened = try ssh.Process.open(allocator, io, route);
-        errdefer diagnostic.route_message_len = opened.process.deinit(&diagnostic.route_message);
-        var value = try initOwnedFd(opened.fd, diagnostic, deadline, interrupt);
-        value.ssh_process = opened.process;
-        return value;
+        const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
+            try connectTcp(try tcpEndpoint(endpoint), diagnostic, interrupt)
+        else if (std.mem.startsWith(u8, endpoint, unix_prefix))
+            try connectUnix(endpoint[unix_prefix.len..], interrupt)
+        else
+            return error.InvalidEndpoint;
+        return initOwnedFd(fd, diagnostic, deadline, interrupt);
     }
 
     pub fn deinit(self: *Stream) void {
         closeFd(self.fd);
-        if (comptime ssh.supported) {
-            if (self.ssh_process) |process| {
-                var ignored: [ssh.diagnostic_bytes]u8 = undefined;
-                const ignored_len = process.deinit(&ignored);
-                std.debug.assert(ignored_len <= ignored.len);
-            }
-        }
-        self.* = undefined;
-    }
-
-    /// Releases the stream while preserving bounded SSH carrier diagnostics.
-    pub fn deinitDiagnosed(self: *Stream, diagnostic: *ConnectDiagnostic) void {
-        closeFd(self.fd);
-        if (comptime ssh.supported) {
-            if (self.ssh_process) |process| {
-                diagnostic.route_message_len = process.deinit(&diagnostic.route_message);
-            }
-        }
         self.* = undefined;
     }
 
@@ -546,8 +503,8 @@ fn setTcpNoDelay(fd: posix.fd_t) error{SocketOptionFailed}!void {
 fn writeAll(fd: posix.fd_t, bytes: []const u8) error{ SocketWriteFailed, ConnectionClosed }!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
-        // A disconnected SSH channel (or ordinary socket) is an I/O result,
-        // never permission to terminate the embedder through process SIGPIPE.
+        // A disconnected stream is an I/O result, never permission to terminate
+        // the embedder through process SIGPIPE.
         const result = if (builtin.os.tag == .linux)
             system.sendto(fd, bytes[offset..].ptr, bytes.len - offset, posix.MSG.NOSIGNAL, null, 0)
         else
@@ -643,7 +600,7 @@ test "endpoint parser accepts explicit numeric IPv4 and refuses ambiguous TCP" {
     }) |bad| try std.testing.expectError(error.InvalidEndpoint, tcpEndpoint(bad));
 }
 
-test "native handshake deadline is bounded and preserves caller close" {
+test "handshake deadline is bounded and preserves caller close" {
     const pair = testSocketPair();
     defer closeFd(pair[0]);
     defer closeFd(pair[1]);
@@ -664,7 +621,7 @@ test "closed stream write reports failure without process-wide SIGPIPE policy" {
     try std.testing.expectError(error.ConnectionClosed, writeAll(pair[0], "not replayable"));
 }
 
-test "native cancellation is single use and preempts connection creation" {
+test "cancellation is single use and preempts connection creation" {
     const interrupt = try Interrupt.init(std.testing.allocator);
     defer interrupt.deinit();
     try interrupt.cancel();
@@ -672,10 +629,8 @@ test "native cancellation is single use and preempts connection creation" {
     var diagnostic: ConnectDiagnostic = .{};
     try std.testing.expectError(
         error.ConnectionCanceled,
-        Stream.connectNativeCancelable(
-            std.testing.allocator,
-            std.testing.io,
-            "ssh://unused.invalid/a",
+        Stream.connectCancelable(
+            "tcp://127.0.0.1:1",
             &diagnostic,
             interrupt,
         ),
@@ -683,7 +638,7 @@ test "native cancellation is single use and preempts connection creation" {
     try std.testing.expectEqual(ConnectStage.endpoint, diagnostic.stage);
 }
 
-test "native cancellation wakes idle read without closing unrelated descriptors" {
+test "cancellation wakes idle read without closing unrelated descriptors" {
     const pair = testSocketPair();
     defer closeFd(pair[0]);
     defer closeFd(pair[1]);
@@ -702,7 +657,7 @@ test "native cancellation wakes idle read without closing unrelated descriptors"
     try std.testing.expectEqual(@as(u8, 'z'), byte[0]);
 }
 
-test "native cancellation wakes backpressured write without consuming peer data" {
+test "cancellation wakes backpressured write without consuming peer data" {
     const pair = testSocketPair();
     defer closeFd(pair[0]);
     defer closeFd(pair[1]);
@@ -729,7 +684,7 @@ test "native cancellation wakes backpressured write without consuming peer data"
     try std.testing.expectEqual(@as(u8, 'q'), byte[0]);
 }
 
-test "native cancellation wins over already-readable buffered bytes" {
+test "cancellation wins over already-readable buffered bytes" {
     const pair = testSocketPair();
     defer closeFd(pair[0]);
     defer closeFd(pair[1]);

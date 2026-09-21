@@ -5,7 +5,7 @@ import SDL "vendor:sdl3"
 
 @(test)
 history_scroll_rows_clamps_and_tracks_anchor :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 100,
         history_row_base = 50,
     }
@@ -31,7 +31,7 @@ history_scroll_rows_clamps_and_tracks_anchor :: proc(t: ^testing.T) {
 
 @(test)
 history_follow_live_preserves_absolute_top_row :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 100,
         history_row_base = 50,
         history_target_offset = 20,
@@ -47,7 +47,7 @@ history_follow_live_preserves_absolute_top_row :: proc(t: ^testing.T) {
 
 @(test)
 history_follow_live_clamps_to_oldest_retained_row_after_eviction :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 100,
         history_row_base = 50,
         history_target_offset = 20,
@@ -63,7 +63,7 @@ history_follow_live_clamps_to_oldest_retained_row_after_eviction :: proc(t: ^tes
 
 @(test)
 history_follow_live_resets_for_alternate_screen :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 100,
         history_row_base = 50,
         history_target_offset = 20,
@@ -79,7 +79,7 @@ history_follow_live_resets_for_alternate_screen :: proc(t: ^testing.T) {
 
 @(test)
 history_accept_snapshot_uses_server_clamp :: proc(t: ^testing.T) {
-    view: Session_View
+    view: Instance_View
     accept_history_snapshot(&view, 150, 100, 40, false, view.history_generation)
     testing.expect_value(t, view.history_target_offset, u32(100))
     testing.expect_value(t, view.history_anchor_top_row, u64(40))
@@ -114,7 +114,7 @@ history_scrollbar_geometry_maps_oldest_middle_and_live :: proc(t: ^testing.T) {
 
 @(test)
 history_reset_does_not_steal_pointer_drag_lifecycle :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_target_offset = 12,
         history_anchor_top_row = 88,
         history_anchor_valid = true,
@@ -130,7 +130,7 @@ history_reset_does_not_steal_pointer_drag_lifecycle :: proc(t: ^testing.T) {
 
 @(test)
 history_horizontal_geometry_change_returns_to_live :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         columns = 120,
         history_count = 300,
         history_target_offset = 140,
@@ -146,7 +146,7 @@ history_horizontal_geometry_change_returns_to_live :: proc(t: ^testing.T) {
 
 @(test)
 history_same_columns_preserve_anchor :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         columns = 120,
         history_target_offset = 140,
         history_anchor_top_row = 160,
@@ -167,7 +167,7 @@ history_column_change_detection_ignores_unknown_and_same_geometry :: proc(t: ^te
 
 @(test)
 history_fractional_wheel_accumulates_whole_rows :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 100,
         history_row_base = 50,
     }
@@ -186,7 +186,7 @@ history_fractional_wheel_accumulates_whole_rows :: proc(t: ^testing.T) {
 
 @(test)
 history_wheel_clamp_and_discrete_navigation_clear_fraction :: proc(t: ^testing.T) {
-    view := Session_View{
+    view := Instance_View{
         history_count = 4,
         history_row_base = 10,
         history_target_offset = 3,
@@ -214,7 +214,7 @@ history_wheel_clamp_and_discrete_navigation_clear_fraction :: proc(t: ^testing.T
 history_thumb_drag_does_not_require_explicit_mouse_capture :: proc(t: ^testing.T) {
     // No SDL window exists in this test, so explicit capture cannot succeed.
     // The delivered pointer gesture still owns history until release/cancel.
-    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
     geometry, ok := history_scrollbar_geometry(&view, pane)
     testing.expect(t, ok)
@@ -237,7 +237,7 @@ history_thumb_drag_does_not_require_explicit_mouse_capture :: proc(t: ^testing.T
 
 @(test)
 history_track_seek_continues_dragging_and_clamps_outside_the_pane :: proc(t: ^testing.T) {
-    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{200, 100, 500, 400}
     geometry, ok := history_scrollbar_geometry(&view, pane)
     testing.expect(t, ok)
@@ -256,8 +256,8 @@ history_track_seek_continues_dragging_and_clamps_outside_the_pane :: proc(t: ^te
 
 @(test)
 history_drag_is_pane_local_and_focus_loss_cancels_without_changing_offsets :: proc(t: ^testing.T) {
-    first := Session_View{rows = 25, columns = 40, history_count = 500}
-    second := Session_View{rows = 25, columns = 40, history_count = 900}
+    first := Instance_View{rows = 25, columns = 40, history_count = 500}
+    second := Instance_View{rows = 25, columns = 40, history_count = 900}
     pane := SDL.FRect{0, HEADER_HEIGHT, 500, 700}
     geometry, ok := history_scrollbar_geometry(&first, pane)
     testing.expect(t, ok)
@@ -284,7 +284,7 @@ history_drag_is_pane_local_and_focus_loss_cancels_without_changing_offsets :: pr
 
 @(test)
 history_drag_refuses_terminal_cells_empty_history_and_alternate_screen :: proc(t: ^testing.T) {
-    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
     testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 6, 100))
     testing.expect(t, !history_scrollbar_drag_active(&view))
@@ -300,7 +300,7 @@ history_drag_refuses_terminal_cells_empty_history_and_alternate_screen :: proc(t
 
 @(test)
 late_history_frame_cannot_overwrite_newer_navigation_or_live_intent :: proc(t: ^testing.T) {
-    view := Session_View{history_count = 200, rows = 20, columns = 40}
+    view := Instance_View{history_count = 200, rows = 20, columns = 40}
     testing.expect(t, set_history_offset(&view, 30))
     issued := view.history_generation
     testing.expect(t, set_history_offset(&view, 70))

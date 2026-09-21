@@ -8,12 +8,12 @@ can actually prove.
 
 The client owns desktop application policy only: windows, tabs, pane layout,
 profiles, settings, command palette, keybindings, and OS integration. It must
-not duplicate VT, PTY, Session, text shaping, or terminal raster semantics.
+not duplicate VT, PTY, Instance, text shaping, or terminal raster semantics.
 
 The current Linux proof uses Odin + SDL3 for the application/backend shell and
 the existing Howl native render owners for terminal presentation. `native/` is
 a C-shaped Zig seam over `howl-client`, `howl-render`, and the existing
-`SessionProcess` owner. It exports neither wire/client backing structs nor a
+explicit Instance client transport. It exports neither wire/client backing structs nor a
 copied terminal renderer: Odin receives canonical Canvas resource/command facts
 and sends semantic input through `howl-client`. SDL3_ttf remains only for app
 chrome and as a fail-soft semantic-text fallback while the Canvas backend is
@@ -39,11 +39,10 @@ Current canary:
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
-- the `+` action and `Ctrl+T` launch a new canonical local Session through the
-  same `SessionProcess` owner used by the native Howl host; each created tab
-  owns its own `howl-sessiond`, PTY, observer/control clients, cancellation, and
-  teardown while **Attach Home Session** remains a non-owning view of the
-  existing `tcp://127.0.0.1:39601` Session;
+- the `+` action and `Ctrl+T` launch a new canonical local Instance through the
+  local Launch profiles are retained as configuration for future in-process Instance embedding; they currently report an explicit unavailable state rather than spawning a daemon. Attached tabs own observer/control clients, cancellation, and
+  teardown while **Attach Home Instance** remains a non-owning view of the
+  existing `tcp://127.0.0.1:39601` Instance;
 - tabs use canonical terminal titles with profile-name fallback, Ctrl+Tab/reverse cycling, direct
   Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
   drag reorder through one shared ordering owner. A held chip gets an immediate
@@ -52,19 +51,19 @@ Current canary:
   Keyboard interruption retires local tab/scrollbar dragging and consumes only
   that canceled gesture's pending left release before tab/overlay routing. TUI
   mouse-reporting captures keep their own release path. `Ctrl+Shift+D` duplicates the
-  active profile recipe into a fresh Session/view; closing a created tab retires
-  only that tab's owned child Session, and closing the final single-pane tab closes
+  active profile recipe into a fresh Instance/view; closing a created tab retires
+  only that tab's owned child Instance, and closing the final single-pane tab closes
   the window;
 - `Ctrl+Shift+N` / Command Palette opens a new independent Odin OS window through
   the same executable and inherited config. The parent uses a self-cleaning process
-  reaper only; live tab tear-out/cross-window Session transfer is deliberately not
+  reaper only; live tab tear-out/cross-window Instance transfer is deliberately not
   implemented until UI state has an explicit transfer owner;
 - tabs use a bounded recursive pane tree rather than a fixed primary/secondary
   pair. Side-by-side and top/bottom actions may nest up to eight pane slots;
   `Alt+Arrow` performs spatial four-way focus, `Alt+Shift+Arrow` resizes the nearest
   matching divider, pointer drag owns a forgiving divider hit lane, `Ctrl+Shift+Z`
   zooms/unzooms the active pane without destroying topology, `Ctrl+Alt+Arrow` swaps
-  neighboring Session views without restart, and `Ctrl+Shift+W` collapses only the
+  neighboring Instance views without restart, and `Ctrl+Shift+W` collapses only the
   active leaf while promoting the sibling subtree;
 - Canvas commands are pane-clipped even during the brief resize transition, so
   an old wider frame can never paint across the split into its sibling;
@@ -85,7 +84,7 @@ Current canary:
   navigates to typed destinations; outside Settings the same chord remains terminal input;
 - Appearance owns the first live presentation setting: terminal font size has
   12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
-  and changing it never mutates canonical Session geometry; the accepted
+  and changing it never mutates canonical Instance geometry; the accepted
   preset persists across app restarts in a small schema-versioned
   `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file + rename rather
   than in-place truncation;
@@ -95,7 +94,7 @@ Current canary:
   Howl output. A managed-KWin A/B kept sampled terminal pixels identical across all
   three themes, and High Contrast survived a full process restart;
 - Startup owns the second persisted setting: the default profile can be Home
-  Session (attach) or Local shell (create owned Session). Schema 2 also persists
+  Instance (attach) or Local shell (future local Instance embed). Schema 2 also persists
   custom shortcuts by stable action id; schema-1 files remain readable and upgrade
   only on save. Missing/invalid independent fields retain their accepted defaults,
   and later saves update the existing config directory instead of treating its
@@ -106,15 +105,15 @@ Current canary:
   ownership, shell/command/cwd, inherited-environment overrides, endpoint, and an
   optional font-size presentation default. The profile dropdown enumerates the real
   catalogue and marks the stable-id default;
-- owned profile launches stay inside the shared `SessionProcess` owner. Its sibling
-  `howl-sessiond` argv now carries optional command/cwd flags, while the Odin bridge
+- owned profile launches stay inside the shared explicit Instance client transport. Its sibling
+  `removed standalone Instance daemon` argv now carries optional command/cwd flags, while the Odin bridge
   applies bounded environment replacements over the inherited desktop environment.
   A Lab Recipe canary proved command execution, `/tmp` cwd, env override, and a 12 px
   42×160 grid against built-in Local's 15 px 34×124 grid in the same pane. The
   Settings editor then changed that same recipe to `/var/tmp`, added
-  `EDITOR_VAR=works`, and moved it to 15 px; a fresh Session consumed all three
-  edits, while live font-only changes resized the existing Session without restart;
-- Home tab observes the existing canonical Howl Session at
+  `EDITOR_VAR=works`, and moved it to 15 px; a fresh Instance consumed all three
+  edits, while live font-only changes resized the existing Instance without restart;
+- Home tab observes the existing canonical Howl Instance at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;
 - desktop pointer routing now consults Howl's coherent interaction state instead of
@@ -155,12 +154,12 @@ Current canary:
   produced one press (`ESC[15~`), four repeat events (`ESC[15;1:2~`), and one release
   (`ESC[15;1:3~`). SDL produced the physical lifecycle, Odin sent semantic actions, and
   VT alone chose the terminal encoding;
-- managed-KWin interaction dogfood now includes real Neovim, btop, tmux, and less paths: Neovim accepted click/wheel while Shift+drag stayed local, btop's actual menu and process-list wheel worked, a mouse-enabled two-pane tmux session changed pane focus from a click and accepted input only in that pane, and less correctly ignored wheel with tracking/alternate-scroll off while PageDown navigated normally;
+- managed-KWin interaction dogfood now includes real Neovim, btop, tmux, and less paths: Neovim accepted click/wheel while Shift+drag stayed local, btop's actual menu and process-list wheel worked, a mouse-enabled two-pane tmux instance changed pane focus from a click and accepted input only in that pane, and less correctly ignored wheel with tracking/alternate-scroll off while PageDown navigated normally;
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
   `howl-client`'s duplicate-socket cancellation primitive;
-- Session publication wakes the SDL main thread through one registered user
+- Instance publication wakes the SDL main thread through one registered user
   event. The desktop loop blocks in `SDL_WaitEvent` between invalidations and
   paints once per drained event burst instead of repainting the complete app at
   compositor cadence when nothing changed;
@@ -203,7 +202,7 @@ Current canary:
   visible intersection of that stable range; wheel/PageUp/scrollbar navigation
   and live output may move the viewport without destroying the selection, and
   an offscreen range can still be copied exactly through `howl-client.selection`
-  plus Session `text_extract`. Holding a selection drag in the top/bottom two-row
+  plus Instance `text_extract`. Holding a selection drag in the top/bottom two-row
   edge band autoscrolls one retained row every 100 ms and updates the same stable
   focus endpoint; the SDL loop gains that timeout only while the edge gesture is
   armed and returns to indefinite sleep on release or at oldest/LIVE. `Ctrl+Shift+V`
@@ -222,7 +221,7 @@ Current canary:
   alpha-mask, and RGBA commands without parsing terminal cells itself;
 - Canvas residency survives unchanged revisions, so the first frame uploads only
   missing presentation resources. Terminal images now use Canvas external-resource
-  residency too: exact Session image generations are demand-fetched through
+  residency too: exact Instance image generations are demand-fetched through
   `howl-client.images`, exposed to SDL through the same RGBA upload API, and then
   reused without further transfer. Kitty replacement preserves logical Canvas
   resource identity while advancing generation; crop/z-order and exact removal are
@@ -235,21 +234,21 @@ Current canary:
   fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
   truecolor, and final-column wide-cell clipping. Color emoji remains explicit debt:
   the current `howl-text` raster contract accepts mono/gray masks, not BGRA glyphs;
-- created Local-shell tabs acquire Session size control once, then submit only
+- created Local-shell tabs acquire Instance size control once, then submit only
   owned resizes from actual Canvas cell metrics and pane extent. Attached views
-  preserve the Session size until the user chooses Take Session size control;
+  preserve the Instance size until the user chooses Take Instance size control;
   merely attaching, focusing, or opening a larger window never claims it;
-- pane lifecycle is explicit and ownership-aware. Canonical Session `stream_closed` /
+- pane lifecycle is explicit and ownership-aware. Canonical Instance `stream_closed` /
   `child_exited` facts preserve the final frame behind a small recovery bar; an owned
   Local shell becomes `Process exited` with Restart, while an unavailable/closed attached
   view offers Reconnect to the same endpoint. Restart replaces only that pane with a new
-  owned Session identity; Reconnect never launches a shell. `Ctrl+Shift+R` invokes the
+  owned Instance identity; Reconnect never launches a shell. `Ctrl+Shift+R` invokes the
   appropriate recovery, and dead panes remain locally scrollable/selectable but stop
   forwarding terminal input;
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;
-- the current created-session profile inherits the desktop client's process
+- the current created-instance profile inherits the desktop client's process
   environment and launches the configured shell; richer profile persistence and
   environment editing remain deliberately deferred rather than faked.
 
@@ -267,10 +266,10 @@ This experiment deliberately pins both compilers used by its build:
 ```
 
 The script runs the native bridge tests plus Odin's retained-history unit tests,
-builds the bridge ReleaseSafe, builds the exact matching `howl-sessiond`, checks
+builds the bridge ReleaseSafe, checks
 and builds the Odin client, then
-atomically places the bridge and Session daemon beside the executable so live
-created Sessions do not make rebuilds fail with `ETXTBSY`.
+atomically places the bridge and Instance daemon beside the executable so live
+created Instances do not make rebuilds fail with `ETXTBSY`.
 The result is:
 
 ```text
@@ -288,12 +287,12 @@ with spaces in desktop labels only. The native window title remains Howl.
 
 A thin tab progress strip displays normal, failure, paused and indeterminate
 states. Indeterminate is a stationary segment rather than a timer-driven pulse;
-all changes use existing Session observer wakeups. Clearing the canonical state
+all changes use existing Instance observer wakeups. Clearing the canonical state
 removes the strip. Directory/remote-host/shell-mark properties also survive the
 shared transport but have no automatic desktop execution behavior or new UI yet.
 
-This uses the matching framing-v9 client/Session bundle. Rebuilding source does
-not update an independently running remote, mobile or browser Session service.
+This uses the matching framing-v9 client/Instance bundle. Rebuilding source does
+not update an independently running remote, mobile or browser Instance service.
 
 
 ## Compact desktop frame
@@ -301,7 +300,7 @@ not update an independently running remote, mobile or browser Session service.
 The tab strip and window controls share one 46-logical-pixel header. The spare
 header region delegates window movement to SDL's native hit-test API; the outer
 four-pixel rim delegates resizing. Minimize, maximize/restore and close use SDL
-window operations; close follows the existing Session/gesture cleanup path.
+window operations; close follows the existing Instance/gesture cleanup path.
 Right-clicking spare header space requests the native system window menu. Do not
 assume native titlebar double-click behavior is available on every SDL backend.
 If hit testing or border removal is unavailable, the host reports that failure
@@ -324,73 +323,26 @@ by rebuilding the development bundle.
 
 Private KWin qualification also exercises header drag, rim resize, native
 maximize/restore, minimize/restore, F11 fullscreen, the system menu, and caption
-close with exact teardown of three owned Sessions. These are scoped native
+close with exact teardown of three owned Instances. These are scoped native
 controls proofs, not double-click-titlebar or mixed-monitor/hotplug acceptance.
 
 
-## Native SSH attachment and asynchronous host I/O
+## Asynchronous Instance I/O
 
-An Attach profile can use the shared native route:
+One application-owned I/O runtime outlives all attached Instance workers. Connection setup, protocol requests/acknowledgements, search, selection/clipboard/link queries, image fetching, and host-policy I/O execute on workers. SDL windowing, drawing, resource submission, clipboard and browser opening remain on the graphical thread. Native transport is explicit Unix or numeric-IPv4 TCP; Odin owns no SSH subprocess, bridge executable, PTY, Session or Server.
 
-```text
-ssh://[user@]host[:port]/absolute/session.sock[?bridge=/absolute/howl-session-bridge]
-```
-
-Prepared OpenSSH authentication and known-host trust are required. The remote
-Session and matching bridge must already exist. The GUI never installs software,
-creates a remote shell, changes network routes, or converts existing Launch
-profiles behind the user. A Launch profile running `ssh host` still feeds a local
-Session; an SSH Attach profile observes the independently owned remote Session.
-Closing the attachment does not terminate that remote PTY. Attached geometry
-stays unchanged until Take Session size control; attachment alone never resizes it.
-
-One application-owned I/O runtime outlives all pane workers and local Session
-processes. Connection setup, protocol requests/acknowledgements, search,
-selection/clipboard/link queries, image fetching, and host-policy I/O execute on
-workers. SDL windowing, drawing, resource submission, clipboard and browser
-opening remain on the graphical thread. The existing bounded local Session
-spawn/readiness path is separate from network setup.
-
-Each native channel borrows one sticky cancellation scope created before opening.
-Closing a pending tab can interrupt a partial SSH handshake; closing an attached
-tab also wakes an idle receive or backpressured write before joining its worker.
-Explicit Reconnect replaces the old pane/channel lifetime. Failed or uncertain
-input is reported and never replayed automatically.
-
-The input queue admits at most128 items and128KiB of queued byte payload, with
-one in-flight task and one bounded query result. Admission is not a server ACK.
-A full queue explicitly rejects input and retires the blocked channel. A completed
-stale-selection/link refusal is instead nonfatal: it shows a notice without
-turning a healthy connection into a reconnect requirement. Copy requests carry
-application-wide ordering separate from visual selection; immediate Copy/Paste
-waits for the corresponding clipboard result instead of pasting old contents.
-
-The renderer owns at most one pending/prepared frame. It cannot overwrite that
-frame while the GUI installs SDL resources. Selection/geometry/background getters
-stay at the accepted frame until all resources are installed. An older history
-response cannot overwrite a newer wheel/drag/return-to-LIVE intent. Scheduling
-wakeups do not repaint the old frame before the newly prepared one; there is no
-new repaint timer or loss of the measured local raw-snapshot optimization.
-
-This private native bridge is ABI8 and must ship with its matching Odin executable.
-The Session protocol stays framing-v9. Mobile SSH library integration, interactive
-authentication UI, remote provisioning, shared SSH
-masters, and sustained slow-link performance qualification remain separate work.
-See `../howl-client/README.md` for native route and cancellation ownership.
-
-
-## Session size control
+## Instance size control
 
 Command Palette (`Ctrl+Shift+P`) and Settings > Actions expose two rebindable,
 initially unbound actions:
 
-- **Take Session size control** fits the active pane once, then follows that
+- **Take Instance size control** fits the active pane once, then follows that
   pane's window/split/zoom/font changes while its control connection remains
-  the Session's geometry leader. This is an explicit takeover, not discovery.
-- **Stop resizing Session** disables this pane's future automatic size requests.
+  the Instance's geometry leader. This is an explicit takeover, not discovery.
+- **Stop resizing Instance** disables this pane's future automatic size requests.
   The last accepted size stays in place unless another client changes it.
 
-Local launches acquire once automatically as part of owning their new Session.
+Local launches acquire once automatically as part of owning their new Instance.
 Attachments, duplicates of attachment recipes, and reconnects begin fixed; they
 never inherit another pane's authority or silently claim it on focus. Subsequent
 automatic resizes use only the existing resize request, not assign-leader. A
@@ -406,7 +358,7 @@ already transmitted may still complete after Stop; Stop is not an unsend promise
 Stop deliberately does not send the protocol's unconditional clear-leader
 operation: a delayed clear could evict a different client's newer ownership.
 Another client may explicitly take control at any time; closing the owning
-connection releases its leadership naturally. No new wire operation, Session
+connection releases its leadership naturally. No new wire operation, Instance
 service update, route policy, profile conversion, or default shortcut is needed.
 
 

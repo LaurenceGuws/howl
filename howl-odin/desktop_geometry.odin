@@ -5,19 +5,19 @@ import "core:sync"
 
 BRIDGE_SIZE_NOT_LEADER :: i32(7)
 BRIDGE_SIZE_REJECTED :: i32(8)
-Session_Size_Mode :: enum u8 { Fixed, Taking, Following }
+Instance_Size_Mode :: enum u8 { Fixed, Taking, Following }
 Pane_Geometry :: struct { rows, columns, cell_width, cell_height: u16 }
 
-// Presentation intent, not a second geometry authority. Only the Session may
+// Presentation intent, not a second geometry authority. Only the Instance may
 // accept a resize. One pending task bounds drag traffic; only ACKed sizes count.
-Session_Size_Control :: struct {
-    mode: Session_Size_Mode,
+Instance_Size_Control :: struct {
+    mode: Instance_Size_Mode,
     generation: u64,
     pending: bool,
     applied: Pane_Geometry,
 }
 
-set_size_intent :: proc(state: ^Session_Size_Control, take: bool) {
+set_size_intent :: proc(state: ^Instance_Size_Control, take: bool) {
     state.generation += 1
     state.mode = take ? .Taking : .Fixed
     state.applied = {}
@@ -25,11 +25,11 @@ set_size_intent :: proc(state: ^Session_Size_Control, take: bool) {
     // retires pending, but never re-enables an intent changed after admission.
 }
 
-size_task_current :: proc(state: ^Session_Size_Control, task: Control_Task) -> bool {
+size_task_current :: proc(state: ^Instance_Size_Control, task: Control_Task) -> bool {
     return state.mode != .Fixed && state.generation == task.generation
 }
 
-next_size_task :: proc(state: ^Session_Size_Control, geometry: Pane_Geometry) -> (Control_Task, bool) {
+next_size_task :: proc(state: ^Instance_Size_Control, geometry: Pane_Geometry) -> (Control_Task, bool) {
     if state.mode == .Fixed || state.pending || geometry == state.applied ||
        geometry.rows == 0 || geometry.columns == 0 || geometry.cell_width == 0 || geometry.cell_height == 0 {
         return {}, false
@@ -41,7 +41,7 @@ next_size_task :: proc(state: ^Session_Size_Control, geometry: Pane_Geometry) ->
             generation = state.generation}, true
 }
 
-finish_size_task :: proc(state: ^Session_Size_Control, task: Control_Task, code: i32) -> bool {
+finish_size_task :: proc(state: ^Instance_Size_Control, task: Control_Task, code: i32) -> bool {
     state.pending = false
     if !size_task_current(state, task) do return false
     if code != 0 {
@@ -53,8 +53,8 @@ finish_size_task :: proc(state: ^Session_Size_Control, task: Control_Task, code:
     return true
 }
 
-size_action_enabled :: proc(view: ^Session_View, action: App_Action) -> bool {
-    if view == nil || !session_interactive(view) do return false
+size_action_enabled :: proc(view: ^Instance_View, action: App_Action) -> bool {
+    if view == nil || !instance_interactive(view) do return false
     sync.mutex_lock(&view.mutex)
     defer sync.mutex_unlock(&view.mutex)
     if action == .Take_Size_Control do return view.size_control.mode != .Taking
@@ -73,8 +73,8 @@ pane_geometry :: proc(width, height, scale: f32, cell_width, cell_height: u16) -
             u16(clamp(columns, 1, f32(render_maximum_columns()))), cell_width, cell_height}, true
 }
 
-resize_session_to_pane :: proc(app: ^App, view: ^Session_View, width, height: f32) {
-    if view == nil || view.control == nil || !session_interactive(view) do return
+resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: f32) {
+    if view == nil || view.control == nil || !instance_interactive(view) do return
     sync.mutex_lock(&view.mutex)
     enabled := view.size_control.mode != .Fixed
     sync.mutex_unlock(&view.mutex)

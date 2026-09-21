@@ -1,9 +1,8 @@
 const std = @import("std");
 const cli = @import("howl_cli");
 const client = @import("howl_client");
-const protocol = @import("howl_session").protocol;
+const protocol = @import("howl_instance").protocol;
 const failure = @import("failure.zig");
-const manager_commands = @import("manager_commands.zig");
 
 pub fn main(init: std.process.Init) void {
     var context: failure.Context = .{};
@@ -25,39 +24,46 @@ fn run(init: std.process.Init, context: *failure.Context) !void {
         if (argv.len == 2) return printRootHelp(init);
         if (argv.len != 3) return error.InvalidArguments;
         const topic = std.mem.span(argv[2]);
-        if (std.mem.eql(u8, topic, "server")) return printServerHelp(init);
-        if (std.mem.eql(u8, topic, "session")) return printSessionHelp(init);
-        return printTerminalHelp(init, topic);
+        if (std.mem.eql(u8, topic, "instance")) return printInstanceHelp(init);
+        return error.InvalidArguments;
     }
     if (std.mem.eql(u8, operation, "version")) {
         context.reset("version");
         if (argv.len != 2) return error.InvalidArguments;
         return versionCommand(init);
     }
-    if (std.mem.eql(u8, operation, "server")) {
-        if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printServerHelp(init);
-        if (argv.len >= 4 and isHelp(std.mem.span(argv[3]))) return printServerHelp(init);
-        return manager_commands.serverCommand(init, argv[2..], context);
-    }
-    if (std.mem.eql(u8, operation, "session")) {
-        if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printSessionHelp(init);
-        if (argv.len >= 4 and isHelp(std.mem.span(argv[3]))) return printSessionHelp(init);
-        return manager_commands.sessionCommand(init, argv[2..], context);
-    }
-    if (argv.len >= 3 and isHelp(std.mem.span(argv[2]))) return printTerminalHelp(init, operation);
+    if (!std.mem.eql(u8, operation, "instance")) return error.InvalidArguments;
     if (argv.len < 3) return error.InvalidArguments;
-    const endpoint = std.mem.span(argv[2]);
-    context.reset(operation);
+    if (isHelp(std.mem.span(argv[2]))) return printInstanceHelp(init);
 
-    if (std.mem.eql(u8, operation, "snapshot")) return snapshotCommand(init, endpoint, argv[3..], context);
-    if (std.mem.eql(u8, operation, "state")) return stateCommand(init, endpoint, argv[3..], context);
-    if (std.mem.eql(u8, operation, "type")) return bytesCommand(init, endpoint, argv[3..], false, context);
-    if (std.mem.eql(u8, operation, "paste")) return bytesCommand(init, endpoint, argv[3..], true, context);
-    if (std.mem.eql(u8, operation, "key")) return keyCommand(init, endpoint, argv[3..], context);
-    if (std.mem.eql(u8, operation, "focus")) return focusCommand(init, endpoint, argv[3..], context);
-    if (std.mem.eql(u8, operation, "resize")) return resizeCommand(init, endpoint, argv[3..], context);
-    if (std.mem.eql(u8, operation, "signal")) return signalCommand(init, endpoint, argv[3..], context);
+    const action = std.mem.span(argv[2]);
+    context.reset(instanceOperation(action) orelse return error.InvalidArguments);
+    if (argv.len >= 4 and isHelp(std.mem.span(argv[3])))
+        return printInstanceOperationHelp(init, action);
+    if (argv.len < 4) return error.InvalidArguments;
+    const endpoint = std.mem.span(argv[3]);
+
+    if (std.mem.eql(u8, action, "snapshot")) return snapshotCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "state")) return stateCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "type")) return bytesCommand(init, endpoint, argv[4..], false, context);
+    if (std.mem.eql(u8, action, "paste")) return bytesCommand(init, endpoint, argv[4..], true, context);
+    if (std.mem.eql(u8, action, "key")) return keyCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "focus")) return focusCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "resize")) return resizeCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "signal")) return signalCommand(init, endpoint, argv[4..], context);
     return error.InvalidArguments;
+}
+
+fn instanceOperation(action: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, action, "snapshot")) return "instance.snapshot";
+    if (std.mem.eql(u8, action, "state")) return "instance.state";
+    if (std.mem.eql(u8, action, "type")) return "instance.type";
+    if (std.mem.eql(u8, action, "paste")) return "instance.paste";
+    if (std.mem.eql(u8, action, "key")) return "instance.key";
+    if (std.mem.eql(u8, action, "focus")) return "instance.focus";
+    if (std.mem.eql(u8, action, "resize")) return "instance.resize";
+    if (std.mem.eql(u8, action, "signal")) return "instance.signal";
+    return null;
 }
 
 fn isHelp(value: []const u8) bool {
@@ -83,7 +89,7 @@ fn connect(
     context: *failure.Context,
 ) !client.Connection {
     var diagnostic: client.ConnectDiagnostic = .{};
-    return client.Connection.connectNative(init.gpa, init.io, endpoint, &diagnostic) catch |problem| {
+    return client.Connection.connectDiagnosed(init.gpa, endpoint, &diagnostic) catch |problem| {
         context.captureConnect(&diagnostic);
         return problem;
     };
@@ -233,49 +239,42 @@ fn usage() error{InvalidArguments} {
 }
 
 fn printRootHelp(init: std.process.Init) !void {
-    return printHelp(init, "Howl terminal and server manager\n\n" ++
+    return printHelp(init, "Howl headless Instance client\n\n" ++
         "usage:\n" ++
-        "  howl server ...       manage the foreground Howl server\n" ++
-        "  howl session ...      manage server-owned Sessions\n" ++
-        "  howl snapshot ...     observe one explicit Session endpoint\n" ++
-        "  howl state ...        inspect terminal interaction state\n" ++
-        "  howl type|paste|key|focus|resize|signal ...\n" ++
+        "  howl instance COMMAND ...\n" ++
         "  howl version\n" ++
-        "  howl help server|session|COMMAND\n");
+        "  howl help instance\n");
 }
 
-fn printServerHelp(init: std.process.Init) !void {
+fn printInstanceHelp(init: std.process.Init) !void {
     return printHelp(init, "usage:\n" ++
-        "  howl server run RUNTIME_DIR [--listen unix|tcp:PORT] [--shell PATH] [--cwd PATH] [--rows N] [--columns N]\n" ++
-        "  howl server status SERVER [--text]\n" ++
-        "  howl server shutdown SERVER\n");
+        "  howl instance snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n" ++
+        "  howl instance state ENDPOINT\n" ++
+        "  howl instance type ENDPOINT TEXT|--stdin\n" ++
+        "  howl instance paste ENDPOINT TEXT|--stdin\n" ++
+        "  howl instance key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n" ++
+        "  howl instance focus ENDPOINT in|out\n" ++
+        "  howl instance resize ENDPOINT ROWS COLUMNS\n" ++
+        "  howl instance signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n");
 }
 
-fn printSessionHelp(init: std.process.Init) !void {
-    return printHelp(init, "usage:\n" ++
-        "  howl session list SERVER [--text]\n" ++
-        "  howl session show SERVER NAME [--text]\n" ++
-        "  howl session create SERVER NAME [--shell PATH] [--command TEXT] [--cwd PATH] [--rows N --columns N]\n" ++
-        "  howl session close SERVER NAME [--expect-id ID]\n");
-}
-
-fn printTerminalHelp(init: std.process.Init, operation: []const u8) !void {
+fn printInstanceOperationHelp(init: std.process.Init, operation: []const u8) !void {
     const text = if (std.mem.eql(u8, operation, "snapshot"))
-        "usage: howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n"
+        "usage: howl instance snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n"
     else if (std.mem.eql(u8, operation, "state"))
-        "usage: howl state ENDPOINT\n"
+        "usage: howl instance state ENDPOINT\n"
     else if (std.mem.eql(u8, operation, "type"))
-        "usage: howl type ENDPOINT TEXT|--stdin\n"
+        "usage: howl instance type ENDPOINT TEXT|--stdin\n"
     else if (std.mem.eql(u8, operation, "paste"))
-        "usage: howl paste ENDPOINT TEXT|--stdin\n"
+        "usage: howl instance paste ENDPOINT TEXT|--stdin\n"
     else if (std.mem.eql(u8, operation, "key"))
-        "usage: howl key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n"
+        "usage: howl instance key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n"
     else if (std.mem.eql(u8, operation, "focus"))
-        "usage: howl focus ENDPOINT in|out\n"
+        "usage: howl instance focus ENDPOINT in|out\n"
     else if (std.mem.eql(u8, operation, "resize"))
-        "usage: howl resize ENDPOINT ROWS COLUMNS\n"
+        "usage: howl instance resize ENDPOINT ROWS COLUMNS\n"
     else if (std.mem.eql(u8, operation, "signal"))
-        "usage: howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n"
+        "usage: howl instance signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n"
     else
         return error.InvalidArguments;
     return printHelp(init, text);

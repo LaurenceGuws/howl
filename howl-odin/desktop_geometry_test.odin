@@ -5,7 +5,7 @@ import "core:math"
 
 @(test)
 attached_size_stays_fixed_until_explicit_take :: proc(t: ^testing.T) {
-    state: Session_Size_Control
+    state: Instance_Size_Control
     shape := Pane_Geometry{30, 106, 11, 24}
     _, automatic := next_size_task(&state, shape)
     testing.expect(t, !automatic)
@@ -17,7 +17,7 @@ attached_size_stays_fixed_until_explicit_take :: proc(t: ^testing.T) {
     _, duplicate := next_size_task(&state, {40, 120, 11, 24})
     testing.expect(t, !duplicate)
     testing.expect(t, finish_size_task(&state, first, 0))
-    testing.expect_value(t, state.mode, Session_Size_Mode.Following)
+    testing.expect_value(t, state.mode, Instance_Size_Mode.Following)
     testing.expect_value(t, state.applied, shape)
     _, unchanged := next_size_task(&state, shape)
     testing.expect(t, !unchanged)
@@ -28,7 +28,7 @@ attached_size_stays_fixed_until_explicit_take :: proc(t: ^testing.T) {
 
 @(test)
 size_authority_loss_is_nonfatal_and_never_reclaims_automatically :: proc(t: ^testing.T) {
-    state := Session_Size_Control{mode = .Following}
+    state := Instance_Size_Control{mode = .Following}
     task, ok := next_size_task(&state, {40, 120, 11, 24})
     testing.expect(t, ok)
     testing.expect_value(t, task.action, u8(0))
@@ -47,13 +47,13 @@ size_authority_loss_is_nonfatal_and_never_reclaims_automatically :: proc(t: ^tes
 
 @(test)
 stopped_size_intent_survives_queued_and_inflight_old_completions :: proc(t: ^testing.T) {
-    state := Session_Size_Control{mode = .Taking}
+    state := Instance_Size_Control{mode = .Taking}
     task, ok := next_size_task(&state, {30, 106, 11, 24})
     testing.expect(t, ok)
     set_size_intent(&state, false)
     testing.expect(t, !size_task_current(&state, task))
     testing.expect(t, !finish_size_task(&state, task, 0))
-    testing.expect_value(t, state.mode, Session_Size_Mode.Fixed)
+    testing.expect_value(t, state.mode, Instance_Size_Mode.Fixed)
     testing.expect(t, !state.pending)
     testing.expect_value(t, state.applied, Pane_Geometry{})
     set_size_intent(&state, true)
@@ -69,7 +69,7 @@ stopped_size_intent_survives_queued_and_inflight_old_completions :: proc(t: ^tes
 
 @(test)
 size_reset_for_new_font_does_not_reacquire_or_forget_pending_owner :: proc(t: ^testing.T) {
-    state := Session_Size_Control{mode = .Following, applied = {30, 106, 11, 24}}
+    state := Instance_Size_Control{mode = .Following, applied = {30, 106, 11, 24}}
     task, ok := next_size_task(&state, {30, 106, 12, 26})
     testing.expect(t, ok)
     state.applied = {}

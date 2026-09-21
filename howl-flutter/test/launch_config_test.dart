@@ -2,44 +2,59 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/launch_config.dart';
 
 void main() {
-  test('explicit managed argument wins and requires one endpoint', () {
-    final target = resolveHowlLaunchTarget(
-      args: const <String>['--server', 'unix:/run/howl/manager.sock'],
-      compiledServerEndpoint: '',
-      compiledEndpoint: 'unix:/old.sock',
-    );
-    expect(target.managed, isTrue);
-    expect(target.endpoint, 'unix:/run/howl/manager.sock');
-
+  test('runtime endpoint argument wins without a compiled route', () {
     expect(
-      () => resolveHowlLaunchTarget(
-        args: const <String>['--server'],
-        compiledServerEndpoint: '',
+      resolveHowlEndpoint(
+        args: const ['tcp://127.0.0.1:41001'],
         compiledEndpoint: '',
+        environmentEndpoint: 'tcp://127.0.0.1:41002',
       ),
+      'tcp://127.0.0.1:41001',
+    );
+  });
+
+  test('runtime environment supplies an uncompiled endpoint', () {
+    expect(
+      resolveHowlEndpoint(
+        args: const [],
+        compiledEndpoint: '',
+        environmentEndpoint: 'tcp://127.0.0.1:41002',
+      ),
+      'tcp://127.0.0.1:41002',
+    );
+    expect(
+      () => resolveHowlEndpoint(args: const [], compiledEndpoint: ''),
       throwsA(isA<HowlLaunchException>()),
     );
   });
 
-  test('legacy positional endpoint remains direct Session mode', () {
-    final target = resolveHowlLaunchTarget(
-      args: const <String>['unix:/run/howl/session.sock'],
-      compiledServerEndpoint: 'unix:/compiled-manager.sock',
-      compiledEndpoint: '',
+  test('compiled geometry authority is usable on mobile builds', () {
+    expect(
+      geometryLeaderEnabled(compiledValue: '1', environmentValue: null),
+      isTrue,
     );
-    expect(target.mode, HowlLaunchMode.directSession);
-    expect(target.endpoint, 'unix:/run/howl/session.sock');
+    expect(
+      geometryLeaderEnabled(compiledValue: 'true', environmentValue: null),
+      isTrue,
+    );
+    expect(
+      geometryLeaderEnabled(compiledValue: '0', environmentValue: '1'),
+      isFalse,
+    );
   });
 
-  test('managed environment wins before legacy direct environment', () {
-    final target = resolveHowlLaunchTarget(
-      args: const <String>[],
-      compiledServerEndpoint: '',
-      compiledEndpoint: '',
-      environmentServerEndpoint: 'tcp://127.0.0.1:44000',
-      environmentEndpoint: 'tcp://127.0.0.1:43000',
+  test('desktop environment remains a fallback when no define is compiled', () {
+    expect(
+      geometryLeaderEnabled(compiledValue: '', environmentValue: '1'),
+      isTrue,
     );
-    expect(target.mode, HowlLaunchMode.managedServer);
-    expect(target.endpoint, 'tcp://127.0.0.1:44000');
+    expect(
+      geometryLeaderEnabled(compiledValue: '', environmentValue: '0'),
+      isFalse,
+    );
+    expect(
+      geometryLeaderEnabled(compiledValue: '', environmentValue: null),
+      isFalse,
+    );
   });
 }

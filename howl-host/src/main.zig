@@ -58,7 +58,6 @@ pub fn main(init: std.process.Init) !void {
         option_index += 2;
     }
 
-    const runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR");
     const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
     const endpoint = if (local_mode) "" else std.mem.span(argv[1]);
     const endpoint_right: ?[]const u8 = if (!local_mode and positional_end == 4)
@@ -138,9 +137,6 @@ pub fn main(init: std.process.Init) !void {
             endpoint_right,
             font,
             mux,
-            runtime_dir,
-            shell,
-            init.environ_map,
         })) catch |failure| {
         boundary.requestStop(.render);
         input_thread.join();

@@ -1,6 +1,6 @@
-//! Bridges one canonical Session snapshot into the native Vulkan surface model.
+//! Bridges one canonical Instance snapshot into the native Vulkan surface model.
 //!
-//! This owner is intentionally host-local. Session remains canonical terminal
+//! This owner is intentionally host-local. Instance remains canonical terminal
 //! truth, Render owns terminal/Canvas projection, and howl-vk owns backend
 //! residency and geometry. This file only composes those existing contracts.
 
@@ -63,10 +63,10 @@ pub const Prepared = struct {
     cols: u16,
     width: u16,
     height: u16,
-    /// Canonical VT cell-pixel lattice observed from the Session.
+    /// Canonical VT cell-pixel lattice observed from the Instance.
     cell_pixel_width: u32,
     cell_pixel_height: u32,
-    session_revision: u64,
+    instance_revision: u64,
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -82,7 +82,7 @@ pub const Prepared = struct {
 /// Reports whether one prepared observation already owns the complete requested
 /// canonical terminal geometry. Presentation width/height are deliberately not
 /// used here: they are derived from this Scene's font metrics and may differ
-/// from a stale Session/PTy pixel lattice.
+/// from a stale Instance/PTy pixel lattice.
 pub fn preparedMatchesGeometry(
     prepared: Prepared,
     rows: u16,
@@ -534,7 +534,7 @@ pub const Scene = struct {
             .height = height,
             .cell_pixel_width = cell_pixels.width,
             .cell_pixel_height = cell_pixels.height,
-            .session_revision = observation.semanticSequence(),
+            .instance_revision = observation.semanticSequence(),
             .history_offset = view.history_offset,
             .history_count = view.history_count,
             .history_row_base = view.history_row_base,
@@ -731,7 +731,7 @@ pub const Scene = struct {
 };
 
 fn preparedEnvelope(
-    begin: @import("howl_session").protocol.SnapshotBegin,
+    begin: @import("howl_instance").protocol.SnapshotBegin,
     width: u16,
     height: u16,
     cell_pixel_width: u32,
@@ -745,7 +745,7 @@ fn preparedEnvelope(
         .height = height,
         .cell_pixel_width = cell_pixel_width,
         .cell_pixel_height = cell_pixel_height,
-        .session_revision = begin.revision,
+        .instance_revision = begin.revision,
         .history_offset = begin.history_offset,
         .history_count = begin.history_count,
         .history_row_base = begin.history_row_base,
@@ -1001,7 +1001,7 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, upload.pixels);
 }
 
-test "terminal scene projects one local Session image without client transport" {
+test "terminal scene projects one local Instance image without client transport" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     var owner = try local_terminal.Owner.init(
@@ -1134,7 +1134,7 @@ test "local historical prepared frame cannot stale replay after output and reflo
     try std.testing.expectEqual(@as(u32, 3), stale_history.history_offset);
     try std.testing.expectEqual(@as(u16, 4), stale_history.rows);
     try std.testing.expectEqual(@as(u16, 8), stale_history.cols);
-    const stale_revision = stale_history.session_revision;
+    const stale_revision = stale_history.instance_revision;
 
     // Keep stale_history outstanding while canonical state advances.
     try owner.input(.{ .bytes = "go\n" });
@@ -1180,8 +1180,8 @@ test "local historical prepared frame cannot stale replay after output and reflo
     scene.discardPrepared(stale_history);
 
     const fresh_history = try scene.prepareHistory(null, 3);
-    try std.testing.expect(fresh_history.session_revision >= current_revision);
-    try std.testing.expect(fresh_history.session_revision > stale_revision);
+    try std.testing.expect(fresh_history.instance_revision >= current_revision);
+    try std.testing.expect(fresh_history.instance_revision > stale_revision);
     try std.testing.expectEqual(@as(u32, 3), fresh_history.history_offset);
     try std.testing.expectEqual(@as(u16, 6), fresh_history.rows);
     try std.testing.expectEqual(@as(u16, 10), fresh_history.cols);
@@ -1192,8 +1192,8 @@ test "local historical prepared frame cannot stale replay after output and reflo
     try std.testing.expectEqual(@as(u32, 0), live.history_offset);
     try std.testing.expectEqual(@as(u16, 6), live.rows);
     try std.testing.expectEqual(@as(u16, 10), live.cols);
-    try std.testing.expect(live.session_revision >= current_revision);
-    try std.testing.expect(live.session_revision > stale_revision);
+    try std.testing.expect(live.instance_revision >= current_revision);
+    try std.testing.expect(live.instance_revision > stale_revision);
 }
 
 test "terminal scene prepared geometry compares canonical cell pixels, not presentation extent" {
@@ -1204,7 +1204,7 @@ test "terminal scene prepared geometry compares canonical cell pixels, not prese
         .height = 884,
         .cell_pixel_width = 10,
         .cell_pixel_height = 20,
-        .session_revision = 1,
+        .instance_revision = 1,
         .history_offset = 0,
         .history_count = 0,
         .history_row_base = 0,

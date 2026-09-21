@@ -1,4 +1,4 @@
-//! Small transport-neutral contract for attaching to one shared Howl session.
+//! Small transport-neutral contract for attaching to one shared Howl instance.
 //!
 //! The wire is request-driven. A client has at most one outstanding observation
 //! request (`observe`, `observe_raw`, or `observe_delta`). The endpoint answers
@@ -31,7 +31,7 @@ pub const properties = @import("properties.zig");
 // Wire framing, attach, and observation vocabulary
 // =============================================================================
 
-/// Exact version of the complete Howl session wire carried in every frame header.
+/// Exact version of the complete Howl instance wire carried in every frame header.
 ///
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
@@ -315,7 +315,7 @@ pub const typed_input = struct {
     };
 };
 
-/// Signals accepted by the session process-group boundary.
+/// Signals accepted by the Instance process-group boundary.
 pub const Signal = enum(u8) {
     hangup = 1,
     interrupt = 2,
@@ -1446,7 +1446,7 @@ fn validateScalar(value: u32) PayloadError!void {
         return error.InvalidPayload;
 }
 
-// -- Session control codecs ---------------------------------------------------
+// -- Instance control codecs ---------------------------------------------------
 
 /// Encodes one completed snapshot revision.
 pub fn encodeSnapshotEnd(output: *[payload_bytes.snapshot_end]u8, value: SnapshotEnd) void {

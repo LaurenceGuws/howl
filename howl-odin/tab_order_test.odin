@@ -79,7 +79,7 @@ tab_drag_follows_grab_before_crossing_a_reorder_threshold :: proc(t: ^testing.T)
     app.active_tab = 0
     app.tabs[0].title = "A"
     app.tabs[1].title = "B"
-    first, second: Session_View
+    first, second: Instance_View
     app.tabs[0].panes[0] = &first
     app.tabs[1].panes[0] = &second
     testing.expect(t, begin_tab_drag(&app, 0, TAB_X + 10))
@@ -134,8 +134,8 @@ dragged_chip_stays_inside_tab_slots_at_all_supported_widths :: proc(t: ^testing.
 keyboard_tab_and_overlay_interruption_retire_old_pointer_intent :: proc(t: ^testing.T) {
     keys := [2]SDL.Keycode{SDL.K_TAB, SDL.K_COMMA}
     for key in keys {
-        first := Session_View{rows = 25, columns = 40, history_count = 500}
-        second: Session_View
+        first := Instance_View{rows = 25, columns = 40, history_count = 500}
+        second: Instance_View
         app: App
         app.running = true
         app.tab_count = 2
@@ -179,7 +179,7 @@ keyboard_tab_and_overlay_interruption_retire_old_pointer_intent :: proc(t: ^test
 
 @(test)
 interrupted_local_drag_consumes_only_its_old_left_release :: proc(t: ^testing.T) {
-    view := Session_View{rows = 25, columns = 80, history_count = 500}
+    view := Instance_View{rows = 25, columns = 80, history_count = 500}
     app: App
     app.tab_count = 1
     app.active_tab = 0
@@ -213,7 +213,7 @@ interrupted_drag_does_not_claim_a_fresh_click_or_terminal_mouse_release :: proc(
     testing.expect(t, !app.discard_local_drag_release)
     event.type = .MOUSE_BUTTON_UP
     testing.expect(t, !handle_local_drag_interruption(&app, &event))
-    view := Session_View{terminal_mouse_captured = true}
+    view := Instance_View{terminal_mouse_captured = true}
     app.tab_count = 1
     app.active_tab = 0
     app.tabs[0].panes[0] = &view

@@ -124,7 +124,7 @@ perform_window_button :: proc(app: ^App, button: Window_Button) {
             if !SDL.MaximizeWindow(app.window) do sdl_error("Window maximize failed")
         }
     case .Close:
-        // Reuse normal close cleanup, including gesture/focus and owned Sessions.
+        // Reuse normal close cleanup, including gesture/focus and owned Instances.
         event: SDL.Event
         event.type = .WINDOW_CLOSE_REQUESTED
         handle_event(app, &event)
@@ -134,7 +134,7 @@ perform_window_button :: proc(app: ^App, button: Window_Button) {
 // Only delivered button cycles are tracked. SDL has already consumed native
 // drag/resize starts, while an application drag must retain its final release
 // even after crossing the outer resize rim. This main-thread state avoids taking
-// a Session mutex or reading worker-owned selection state inside SDL hit tests.
+// a Instance mutex or reading worker-owned selection state inside SDL hit tests.
 track_window_pointer_cycle :: proc(app: ^App, event: ^SDL.Event) {
     if app == nil || event == nil do return
     #partial switch event.type {

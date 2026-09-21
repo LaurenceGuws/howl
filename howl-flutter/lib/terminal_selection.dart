@@ -45,7 +45,7 @@ final class TerminalSelectionRowShape {
 }
 
 /// Presentation copy of the canonical snapshot coordinates needed to place a
-/// client-local selection. Selected UTF-8 is still extracted by the session.
+/// client-local selection. Selected UTF-8 is still extracted by the Instance.
 final class TerminalSelectionViewport {
   const TerminalSelectionViewport({
     required this.historyOffset,

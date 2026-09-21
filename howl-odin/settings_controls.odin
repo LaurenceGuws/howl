@@ -150,7 +150,7 @@ settings_footer_note :: proc(app: ^App) -> string {
     case .Startup: return "Used for new windows, tabs, and split panes."
     case .Color_Schemes: return "Application chrome only; terminal colors are unchanged."
     case .Actions: return "Tab to edit; Enter records; Del unbinds; R resets."
-    case .Interaction: return "Terminal behavior belongs to the canonical Session."
+    case .Interaction: return "Terminal behavior belongs to the canonical Instance."
     }
     return ""
 }

@@ -27,7 +27,7 @@ Settings_Search_Page_Definition :: struct {
 }
 
 SETTINGS_SEARCH_PAGES :: [7]Settings_Search_Page_Definition{
-	{.Startup, "Startup", "default profile session launch attach startup"},
+	{.Startup, "Startup", "default profile instance launch attach startup"},
 	{.Interaction, "Interaction", "mouse pointer focus scrollback selection paste interaction"},
 	{.Appearance, "Appearance", "font size appearance presentation"},
 	{.Color_Schemes, "Color schemes", "color colours theme scheme palette"},
