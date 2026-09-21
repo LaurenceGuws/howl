@@ -13,6 +13,12 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  server-protocol: >-
+    experimental pure module `server_protocol` under server. It encodes bounded
+    orchestration vocabulary that preserves Server -> Sessions -> Instances:
+    Session create carries only logical name, Instance create carries launch policy
+    under an exact Session id, and attach identifies exact Session+Instance ids.
+    It owns no listener, address, process, authentication or supervision policy
   howl-instance-service: >-
     optional module `howl_instance_service` inside the howl-instance package. It
     borrows one existing Instance and owns only bounded adopted HWLS client streams,

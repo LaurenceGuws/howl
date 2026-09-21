@@ -5,6 +5,18 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
 
+    const protocol_module = b.addModule("server_protocol", .{
+        .root_source_file = b.path("src/protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const protocol_tests = b.addTest(.{
+        .name = "server-protocol",
+        .root_module = protocol_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const module = b.addModule("server", .{
         .root_source_file = b.path("src/server.zig"),
         .target = target,
@@ -22,7 +34,9 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
     check.dependOn(&tests.step);
+    check.dependOn(&protocol_tests.step);
     const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
     b.default_step = check;
 }
