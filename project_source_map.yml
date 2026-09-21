@@ -13,6 +13,12 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  howl-instance-service: >-
+    optional module `howl_instance_service` inside the howl-instance package. It
+    borrows one existing Instance and owns only bounded adopted HWLS client streams,
+    request decoding, publication scratch and client-local backpressure. It has no
+    listener, executable, address, Instance lifetime, Session/Server identity,
+    routing, authentication or supervision policy
   server: >-
     optional orchestration module above the Howl terminal family. The exact owner
     tree is Server -> Sessions -> Instances. Session creation never launches a

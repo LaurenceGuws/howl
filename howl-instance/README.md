@@ -6,6 +6,8 @@ An embedder may use `howl-vt` directly and omit PTY/Instance composition entirel
 
 The HWLS framing documented below is the transport-neutral interaction vocabulary for one concrete terminal Instance. This package does not publish a socket or executable. A higher owner may attach an ordered byte stream to an Instance interaction service; clients must not infer Session or Server identity from HWLS.
 
+`howl_instance_service` is an optional interaction module in this package. It borrows one already-created Instance and owns only bounded adopted HWLS streams, request decoding, publication scratch, and client-local backpressure. It creates no listener and owns no Instance, Session, Server, address, routing, authentication, or supervision lifetime. Embedders that use `howl_instance` directly do not import this service.
+
 ## Framing
 
 Every message is one 12-byte header followed immediately by `payload_len`

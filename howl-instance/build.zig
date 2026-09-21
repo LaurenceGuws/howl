@@ -21,6 +21,19 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    const service_module = b.addModule("howl_instance_service", .{
+        .root_source_file = b.path("src/service.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    service_module.addImport("howl_instance", module);
+    const service_tests = b.addTest(.{
+        .name = "howl-instance-service",
+        .root_module = service_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const wire_command = b.addSystemCommand(&.{
         "python3",
         "tools/validate_vectors.py",
@@ -34,11 +47,13 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile one canonical PTY and VT instance");
     check.dependOn(wire);
     check.dependOn(&tests.step);
+    check.dependOn(&service_tests.step);
 
     const run_tests = b.addRunArtifact(tests);
     run_tests.addPassthruArgs();
     const test_step = b.step("test", "Run canonical instance ownership proofs");
     test_step.dependOn(wire);
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&b.addRunArtifact(service_tests).step);
     b.default_step = check;
 }
