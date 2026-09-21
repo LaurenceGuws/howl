@@ -407,6 +407,24 @@ final class NativeHostObserver {
     );
   }
 
+  static Future<NativeHostObserver> createManagedPlatform({
+    required String serverEndpoint,
+    required int sessionId,
+    required TerminalPresentation presentation,
+    bool useLiveDeltas = false,
+  }) async {
+    final fonts = await _nativeHostFonts();
+    return createManaged(
+      serverEndpoint: serverEndpoint,
+      sessionId: sessionId,
+      primaryFontPath: fonts.primary,
+      fallbackFontPath: fonts.fallback,
+      secondaryFallbackFontPath: fonts.secondaryFallback,
+      presentation: presentation,
+      useLiveDeltas: useLiveDeltas,
+    );
+  }
+
   static Future<NativeHostObserver> create({
     required String endpoint,
     required String primaryFontPath,
@@ -414,6 +432,47 @@ final class NativeHostObserver {
     required String secondaryFallbackFontPath,
     required TerminalPresentation presentation,
     bool useLiveDeltas = false,
+  }) => _createInternal(
+    endpoint: endpoint,
+    managedSessionId: null,
+    primaryFontPath: primaryFontPath,
+    fallbackFontPath: fallbackFontPath,
+    secondaryFallbackFontPath: secondaryFallbackFontPath,
+    presentation: presentation,
+    useLiveDeltas: useLiveDeltas,
+  );
+
+  static Future<NativeHostObserver> createManaged({
+    required String serverEndpoint,
+    required int sessionId,
+    required String primaryFontPath,
+    required String fallbackFontPath,
+    required String secondaryFallbackFontPath,
+    required TerminalPresentation presentation,
+    bool useLiveDeltas = false,
+  }) {
+    if (sessionId <= 0) {
+      throw const NativeHostException('managed_session_id');
+    }
+    return _createInternal(
+      endpoint: serverEndpoint,
+      managedSessionId: sessionId,
+      primaryFontPath: primaryFontPath,
+      fallbackFontPath: fallbackFontPath,
+      secondaryFallbackFontPath: secondaryFallbackFontPath,
+      presentation: presentation,
+      useLiveDeltas: useLiveDeltas,
+    );
+  }
+
+  static Future<NativeHostObserver> _createInternal({
+    required String endpoint,
+    required int? managedSessionId,
+    required String primaryFontPath,
+    required String fallbackFontPath,
+    required String secondaryFallbackFontPath,
+    required TerminalPresentation presentation,
+    required bool useLiveDeltas,
   }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
@@ -441,6 +500,7 @@ final class NativeHostObserver {
         presentation.fontPixels,
         presentation.cellWidth,
         presentation.lineHeight,
+        managedSessionId,
       ],
       debugName: 'Howl native observer',
       onError: errors.sendPort,
@@ -684,6 +744,40 @@ typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _CreateManagedDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _CancellationCreateNative = ffi.Pointer<ffi.Void> Function(
@@ -763,12 +857,17 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final fontPixels = init[7]! as int;
   final cellWidth = init[8]! as int;
   final lineHeight = init[9]! as int;
+  final managedSessionId = init[10] as int?;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_CreateNative, _CreateDart>(
     'howl_native_host_create',
   );
+  final createManaged = dylib
+      .lookupFunction<_CreateManagedNative, _CreateManagedDart>(
+        'howl_native_host_create_managed',
+      );
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
@@ -839,22 +938,40 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       : copyString(secondaryFallback);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final host = create(
-    endpointPointer,
-    endpointBytes.length,
-    primaryPointer,
-    primaryBytes.length,
-    fallbackPointer,
-    fallbackBytes.length,
-    secondaryFallbackPointer,
-    secondaryFallbackBytes.length,
-    fontPixels,
-    cellWidth,
-    lineHeight,
-    diagnosticPointer,
-    _nativeCreateDiagnosticBytes,
-    diagnosticLength,
-  );
+  final host = managedSessionId == null
+      ? create(
+          endpointPointer,
+          endpointBytes.length,
+          primaryPointer,
+          primaryBytes.length,
+          fallbackPointer,
+          fallbackBytes.length,
+          secondaryFallbackPointer,
+          secondaryFallbackBytes.length,
+          fontPixels,
+          cellWidth,
+          lineHeight,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        )
+      : createManaged(
+          endpointPointer,
+          endpointBytes.length,
+          managedSessionId,
+          primaryPointer,
+          primaryBytes.length,
+          fallbackPointer,
+          fallbackBytes.length,
+          secondaryFallbackPointer,
+          secondaryFallbackBytes.length,
+          fontPixels,
+          cellWidth,
+          lineHeight,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        );
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);
   calloc.free(fallbackPointer);
@@ -1017,14 +1134,33 @@ final class NativeHostControl {
   int _nextId = 1;
   bool _closed = false;
 
-  static Future<NativeHostControl> create({required String endpoint}) async {
+  static Future<NativeHostControl> create({required String endpoint}) =>
+      _createInternal(endpoint: endpoint, managedSessionId: null);
+
+  static Future<NativeHostControl> createManaged({
+    required String serverEndpoint,
+    required int sessionId,
+  }) {
+    if (sessionId <= 0) {
+      throw const NativeHostException('managed_session_id');
+    }
+    return _createInternal(
+      endpoint: serverEndpoint,
+      managedSessionId: sessionId,
+    );
+  }
+
+  static Future<NativeHostControl> _createInternal({
+    required String endpoint,
+    required int? managedSessionId,
+  }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeControlWorker,
-      <Object?>[ready.sendPort, responses.sendPort, endpoint],
+      <Object?>[ready.sendPort, responses.sendPort, endpoint, managedSessionId],
       debugName: 'Howl native control',
       onError: errors.sendPort,
       onExit: exits.sendPort,
@@ -1224,6 +1360,22 @@ typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _ControlCreateManagedNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlCreateManagedDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlTextNative = ffi.Int32 Function(
@@ -1334,11 +1486,16 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
+  final managedSessionId = init[3] as int?;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
     'howl_native_control_create',
   );
+  final createManaged = dylib
+      .lookupFunction<_ControlCreateManagedNative, _ControlCreateManagedDart>(
+        'howl_native_control_create_managed',
+      );
   final destroy = dylib
       .lookupFunction<_ControlDestroyNative, _ControlDestroyDart>(
         'howl_native_control_destroy',
@@ -1383,13 +1540,22 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   endpointPointer.asTypedList(endpointBytes.length).setAll(0, endpointBytes);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final control = create(
-    endpointPointer,
-    endpointBytes.length,
-    diagnosticPointer,
-    _nativeCreateDiagnosticBytes,
-    diagnosticLength,
-  );
+  final control = managedSessionId == null
+      ? create(
+          endpointPointer,
+          endpointBytes.length,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        )
+      : createManaged(
+          endpointPointer,
+          endpointBytes.length,
+          managedSessionId,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        );
   calloc.free(endpointPointer);
   if (control == ffi.nullptr) {
     final diagnostic = _nativeCreateDiagnostic(

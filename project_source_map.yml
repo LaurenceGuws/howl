@@ -48,12 +48,16 @@ experimental:
     maintained native visual canary for the Howl client: platform
     input/viewport/history/selection/native-size UX plus an app-private
     version-locked native observer/control binding, exact external-image
-    refill/residency, out-of-band observer cancellation, and batched
-    final-Canvas backend; its native TCP/client path deliberately coexists with
-    the WebSocket/Wasm browser canary so both pressure the same canonical
-    session semantics and consume Session-owned animation; Android physical
-    path accepted, Linux bundled host proven, iOS native-host semantics
-    pressure-proven; iOS owns no PTY/userland; not part of the core gate
+    refill/residency, out-of-band observer cancellation, and batched final-Canvas
+    backend; managed mode adds a separate two-connection HWLM roster/lifecycle
+    owner, authoritative session picker/create/close UI and exact-id direct
+    manager-to-HWLS stream handoff while preserving the direct-endpoint canary;
+    manager loss does not tear down an already attached Session; its native
+    TCP/client path deliberately coexists with the WebSocket/Wasm browser canary
+    so both pressure the same canonical session semantics and consume Session-owned
+    animation; Android physical path accepted, Linux bundled host proven, iOS
+    native-host semantics pressure-proven; iOS owns no PTY/userland; not part of
+    the core gate
   howl-host: >-
     native Linux Vulkan performance canary with two explicit initial-terminal
     ownership routes: attached external endpoints, or one in-process
