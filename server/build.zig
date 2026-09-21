@@ -47,13 +47,29 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    const runtime_module = b.addModule("server_runtime", .{
+        .root_source_file = b.path("src/runtime.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_module.addImport("server_model", module);
+    runtime_module.addImport("server_service", service_module);
+    const runtime_tests = b.addTest(.{
+        .name = "server-runtime",
+        .root_module = runtime_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
     check.dependOn(&tests.step);
     check.dependOn(&protocol_tests.step);
     check.dependOn(&service_tests.step);
+    check.dependOn(&runtime_tests.step);
     const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
     test_step.dependOn(&b.addRunArtifact(service_tests).step);
+    test_step.dependOn(&b.addRunArtifact(runtime_tests).step);
     b.default_step = check;
 }

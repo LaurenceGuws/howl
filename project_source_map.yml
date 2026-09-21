@@ -13,6 +13,13 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  server-runtime: >-
+    foreground `server_runtime` module owning exactly one Server control listener,
+    one Server model/control service and bounded cooperative scheduling across all
+    Instance services in the process. Exact attach transfers the same fd downward
+    into HWLS; no per-Instance listener/proxy exists. Runtime owns no terminal grid,
+    geometry, pane/split layout, renderer, authentication, discovery, persistence or
+    service-supervision policy
   server-client: >-
     native control client for one explicit Server stream. Depends only on
     server_protocol plus shared client-transport; owns status/tree decoding,
@@ -49,8 +56,8 @@ experimental:
     terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
     Instance identity is scoped by its owning Session and Session identity by Server.
     Exact Session+Instance routing may hand an already-connected stream into the
-    Instance-owned HWLS service; Server still owns no listener, address, discovery,
-    authentication or supervision policy
+    Instance-owned HWLS service. The Server model owns no listener or geometry;
+    optional server-runtime owns the single control listener/scheduler only
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction
     stream. Owns Unix/numeric-IPv4 TCP carriage, cancellation, bounded framed I/O,

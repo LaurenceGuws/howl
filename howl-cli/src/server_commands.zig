@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const server_client = @import("server_client");
+const server_runtime = @import("server_runtime");
 const failure = @import("failure.zig");
 
 pub fn run(
@@ -13,6 +14,12 @@ pub fn run(
     const action = std.mem.span(args[0]);
     if (isHelp(action)) return printHelp(init);
 
+    if (std.mem.eql(u8, action, "run")) {
+        context.reset("server.run");
+        if (args.len >= 2 and isHelp(std.mem.span(args[1]))) return printRunHelp(init);
+        if (args.len != 2) return error.InvalidArguments;
+        return runServer(init, std.mem.span(args[1]));
+    }
     if (std.mem.eql(u8, action, "status")) {
         context.reset("server.status");
         if (args.len >= 2 and isHelp(std.mem.span(args[1]))) return printStatusHelp(init);
@@ -91,6 +98,31 @@ fn instanceCommand(
     }
     context.reset("server.instance");
     return error.InvalidArguments;
+}
+
+fn runServer(init: std.process.Init, listen: []const u8) !void {
+    const spec = try server_runtime.parseListener(listen);
+    var runtime = try server_runtime.Runtime.initFresh(
+        init.gpa,
+        init.io,
+        init.minimal.environ,
+        spec,
+    );
+    defer runtime.deinit();
+
+    var endpoint_buffer: [256]u8 = undefined;
+    const endpoint = try runtime.endpointText(&endpoint_buffer);
+    var output_buffer: [1024]u8 = undefined;
+    var stdout = stdoutWriter(init, &output_buffer);
+    const writer = &stdout.interface;
+    try writer.writeAll("{\"schema\":\"howl.server.run/v1\",\"server_id\":");
+    try writeIdentity(writer, runtime.serverId());
+    try writer.writeAll(",\"endpoint\":");
+    try std.json.Stringify.value(endpoint, .{}, writer);
+    try writer.writeAll("}\n");
+    try writer.flush();
+
+    return runtime.run();
 }
 
 fn connect(
@@ -331,6 +363,10 @@ fn printInstanceHelp(init: std.process.Init) !void {
     return printText(init, "usage:\n" ++
         "  howl server instance create ENDPOINT SESSION_ID --shell PATH [--command TEXT] [--cwd PATH] [--rows N] [--columns N] [--history-rows N]\n" ++
         "  howl server instance close ENDPOINT SESSION_ID INSTANCE_ID\n");
+}
+
+fn printRunHelp(init: std.process.Init) !void {
+    return printText(init, "usage: howl server run unix:/ABSOLUTE/PATH.sock|tcp:PORT\n");
 }
 
 fn printStatusHelp(init: std.process.Init) !void {

@@ -19,6 +19,7 @@ def main():
         ("instance", "snapshot", "--help"),
         ("instance", "key", "--help"),
         ("server", "--help"),
+        ("server", "run", "--help"),
         ("server", "status", "--help"),
         ("server", "session", "--help"),
         ("server", "instance", "--help"),
@@ -33,6 +34,7 @@ def main():
         (("instance",), "instance"),
         (("instance", "snapshot"), "instance.snapshot"),
         (("server",), "server"),
+        (("server", "run"), "server.run"),
         (("server", "session"), "server.session"),
         (("server", "instance", "create"), "server.instance.create"),
     ]:

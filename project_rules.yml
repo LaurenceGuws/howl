@@ -23,3 +23,6 @@ rules:
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.
   - Session and Server are optional orchestration nouns above the terminal family. The required hierarchy is Server -> Sessions -> Instances; an Instance is never a Session.
   - A local VT, PTY, or Instance embedder must not import or know about Session/Server machinery.
+  - Server owns orchestration and one control-listener runtime when hosted; it owns no terminal grid, rows/columns, cell-pixel lattice, pane/split layout, renderer state, or surface composition.
+  - Session is lifecycle identity/labeling above Instances; it owns no PTY, VT, HWLS service, geometry, renderer, pane, or surface state.
+  - Each Instance owns one singular canonical PTY/VT geometry. A client may compose multiple Instances on one surface, but any shared app layout remains presentation state and only results in explicit per-Instance geometry mutations.

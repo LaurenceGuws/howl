@@ -20,6 +20,9 @@ composition:
   - optional orchestration has the noun/process tree Server -> Sessions -> Instances
   - an Instance is not a Session; Session identity/lifetime belongs to orchestration above the terminal family
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
+  - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
+  - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
+  - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:
   - server-client

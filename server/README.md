@@ -17,7 +17,9 @@ it is a logical orchestration lifetime that may contain zero or more Instances. 
 a Session never launches a shell. Shell, command, cwd and terminal geometry belong only
 to explicit Instance creation.
 
-The module remains listener-free. A server-managed Instance owns an optional `howl_instance_service` interaction service beside its concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service. Transport acceptance, addresses, discovery, authentication and service supervision remain outside this ownership layer.
+The Server model and control service remain listener-free. A server-managed Instance owns an optional `howl_instance_service` interaction service beside its concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service.
+
+`server_runtime` is the optional foreground host around those modules. It owns exactly one Server control listener and cooperative scheduling across control plus all Instance services. It owns no terminal grid, pane/split layout, renderer state, authentication, discovery, persistence or service-supervision policy.
 
 ## Control protocol
 
@@ -47,3 +49,20 @@ listener, endpoint address, daemon, child process, authentication policy, route,
 or supervision policy. On failed stream adoption the caller retains the fd; on
 successful Instance attach the fd changes ownership directly from control service
 to Instance service with no byte proxy.
+
+## Runtime
+
+`server_runtime` owns one listener, one Server model, one control service, and the
+bounded scheduling loop for every Instance interaction service in that process.
+The listener accepts only Server control connections. Exact Instance attach transfers
+the accepted stream directly into that Instance's HWLS service; no per-Instance
+listener or byte proxy exists.
+
+The scheduler first drains all ready owners with zero-timeout turns, then blocks for
+at most one bounded slice on one rotating control/Instance owner. This is intentionally
+a replaceable scheduling policy, not Session or Instance semantics.
+
+The runtime owns no terminal geometry. Each Instance keeps one canonical rows/columns
+and cell-pixel lattice in its VT/PTy lifetime. A graphical client may compose multiple
+Instances onto one surface and choose their individual geometries, but that pane/layout
+composition remains entirely client-side.

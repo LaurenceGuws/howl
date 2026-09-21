@@ -14,6 +14,7 @@ pub const Frame = impl.Frame;
 pub const Cancellation = impl.Cancellation;
 pub const Interrupt = impl.Interrupt;
 pub const Connection = impl.Connection;
+pub const connectTransport = impl.connectTransport;
 
 pub const actions = @import("actions.zig");
 pub const consequences = @import("consequences.zig");

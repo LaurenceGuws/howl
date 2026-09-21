@@ -7,6 +7,7 @@
         .howl_instance = .{ .path = "../howl-instance" },
         .howl_client = .{ .path = "../howl-client" },
         .server_client = .{ .path = "../server-client" },
+        .server = .{ .path = "../server" },
     },
     .paths = .{ "README.md", "build.zig", "build.zig.zon", "install", "src", "test" },
 }
