@@ -1013,3 +1013,129 @@ test "terminal scene projects one local Session image without client transport" 
         scene.builder.rgba_pixels[image_start .. image_start + 4],
     );
 }
+
+test "local historical prepared frame cannot stale replay after output and reflow" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(
+        std.testing.allocator,
+        threaded.io(),
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command =
+                "stty -echo; " ++
+                "i=1; while [ $i -le 14 ]; do printf 'BASE-%02d-abcdefghijklmnop\n' "$i"; i=$((i+1)); done; " ++
+                "printf '\033]0;BASE-READY\007'; " ++
+                "read line; " ++
+                "i=15; while [ $i -le 28 ]; do printf 'NEXT-%02d-qrstuvwxyz012345\n' "$i"; i=$((i+1)); done; " ++
+                "printf '\033]0;NEXT-READY\007'; cat",
+            .rows = 4,
+            .columns = 8,
+            .history_rows = 64,
+        },
+    );
+    defer owner.deinit();
+
+    var attempts: u16 = 0;
+    while (attempts < 4000) : (attempts += 1) {
+        const state = owner.pollState();
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = state.descriptor,
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP |
+                (if (state.write_pending) std.posix.POLL.OUT else 0),
+            .revents = 0,
+        }};
+        const count = try std.posix.poll(&descriptors, 1);
+        const events = if (count == 0) 0 else descriptors[0].revents;
+        const serviced = try owner.service(
+            events & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+            state.write_pending or events & std.posix.POLL.OUT != 0,
+            try local_terminal.monotonicNs(),
+        );
+        try std.testing.expectEqual(
+            serviced.write_pending,
+            owner.pollState().write_pending,
+        );
+        var guard = owner.observe();
+        const ready = if (guard.value.title()) |title|
+            std.mem.eql(u8, title, "BASE-READY")
+        else
+            false;
+        guard.deinit();
+        if (ready) break;
+    } else return error.Timeout;
+
+    var scene = try Scene.initLocal(
+        std.testing.allocator,
+        &owner,
+        @import("test_fonts").primary_font,
+        16,
+    );
+    defer scene.deinit();
+
+    const stale_history = try scene.prepareHistory(null, 3);
+    try std.testing.expectEqual(@as(u32, 3), stale_history.history_offset);
+    try std.testing.expectEqual(@as(u16, 4), stale_history.rows);
+    try std.testing.expectEqual(@as(u16, 8), stale_history.cols);
+    const stale_revision = stale_history.session_revision;
+
+    // Keep stale_history outstanding while canonical state advances.
+    try owner.input(.{ .bytes = "go\n" });
+    attempts = 0;
+    while (attempts < 4000) : (attempts += 1) {
+        const state = owner.pollState();
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = state.descriptor,
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP |
+                (if (state.write_pending) std.posix.POLL.OUT else 0),
+            .revents = 0,
+        }};
+        const count = try std.posix.poll(&descriptors, 1);
+        const events = if (count == 0) 0 else descriptors[0].revents;
+        const serviced = try owner.service(
+            events & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+            state.write_pending or events & std.posix.POLL.OUT != 0,
+            try local_terminal.monotonicNs(),
+        );
+        try std.testing.expectEqual(
+            serviced.write_pending,
+            owner.pollState().write_pending,
+        );
+        var guard = owner.observe();
+        const ready = if (guard.value.title()) |title|
+            std.mem.eql(u8, title, "NEXT-READY")
+        else
+            false;
+        guard.deinit();
+        if (ready) break;
+    } else return error.Timeout;
+
+    const cell = scene.cellSize();
+    try owner.resizeGeometry(6, 10, cell.width, cell.height);
+
+    const current_revision = current: {
+        var guard = owner.observe();
+        defer guard.deinit();
+        break :current guard.value.semanticSequence();
+    };
+    try std.testing.expect(current_revision > stale_revision);
+
+    scene.discardPrepared(stale_history);
+
+    const fresh_history = try scene.prepareHistory(null, 3);
+    try std.testing.expect(fresh_history.session_revision >= current_revision);
+    try std.testing.expect(fresh_history.session_revision > stale_revision);
+    try std.testing.expectEqual(@as(u32, 3), fresh_history.history_offset);
+    try std.testing.expectEqual(@as(u16, 6), fresh_history.rows);
+    try std.testing.expectEqual(@as(u16, 10), fresh_history.cols);
+    scene.discardPrepared(fresh_history);
+
+    const live = try scene.prepareHistory(null, 0);
+    defer scene.discardPrepared(live);
+    try std.testing.expectEqual(@as(u32, 0), live.history_offset);
+    try std.testing.expectEqual(@as(u16, 6), live.rows);
+    try std.testing.expectEqual(@as(u16, 10), live.cols);
+    try std.testing.expect(live.session_revision >= current_revision);
+    try std.testing.expect(live.session_revision > stale_revision);
+}
