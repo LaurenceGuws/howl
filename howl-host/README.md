@@ -21,7 +21,7 @@ observation only for synchronous Canvas projection. There is no Howl endpoint or
 one-pane generic-Canvas proof; local split/tab creation and the retained Vulkan
 fast renderer are not implied.
 
-Endpoint startup remains an attached-client route: the Host consumes explicit externally owned Instance streams. The Host does not create terminal processes for attached panes. Split/tab creation is intentionally disabled until higher-level Server -> Instances -> Instances orchestration has a truthful owner.
+Endpoint startup remains an attached-client route: the Host consumes explicit externally owned Instance streams. The Host does not create terminal processes for attached panes. Tabs/splits are Host presentation state; sourcing another attached pane requires another explicit Instance stream, whether supplied directly or later selected through Server -> Sessions -> Instances orchestration.
 
 Current foundation:
 

@@ -2,8 +2,9 @@ schema: 1
 version: 0.1.6-dev
 
 objective: >-
-  Keep one observer-independent canonical PTY/VT instance while pressure-proving
-  shared text and graphics presentation across native and browser canaries.
+  Keep one observer-independent canonical PTY/VT Instance while pressure-proving
+  optional Server -> Sessions -> Instances orchestration plus shared text and graphics
+  presentation across native and browser canaries.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
@@ -15,7 +16,7 @@ invariants:
   - one local Instance has one authoritative PTY and VT
   - observers cannot mutate VT directly and cannot pace Instance progress
   - attaching an observer never changes canonical geometry
-  - text shaping and rasterization expose no renderer, window, session, or client authority
+  - text shaping and rasterization expose no renderer, window, Instance, Session, Server, or client authority
   - renderer and platform code are not core dependencies
   - VT owns terminal animation state and Instance owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
   - canonical graphics identity/resource generations cross an Instance interaction boundary; Canvas/backend residency does not
@@ -24,7 +25,7 @@ invariants:
 
 active:
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
-  - pressure the same session/client/text/Canvas owners through both maintained visual canaries: Flutter over the native TCP/client path and Web over WebSocket/Wasm/browser presentation
+  - pressure the same Instance/client/text/Canvas owners through both maintained visual canaries: Flutter over direct or Server-selected native streams and Web over its Wasm/browser presentation gates
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
@@ -32,7 +33,7 @@ active:
 
 deferred:
   - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior
-  - durable Android visual client and app lifecycle integration
+  - further Android visual/app-lifecycle polish beyond the accepted Note10 route-less shell, persistence, managed attach, and rotation canaries
   - authenticated/public remote Howl transport policy
   - renderer backend selection and presentation polish
 

@@ -105,10 +105,13 @@ experimental:
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-
-    maintained WebAssembly graphical client canary for explicit Howl Instance
+    maintained WebAssembly wire/text/render/browser canary for explicit Howl Instance
     interaction streams; owns browser presentation/input/history/selection and the
     protocol-blind WebSocket carrier gateway, never PTY/VT/Instance/Session/Server
-    lifetime; Chromium is the primary fast lane and Safari/Home-Screen the WebKit/PWA
+    lifetime. The gateway's current live upstream still expects a caller-supplied
+    direct HWLS Instance TCP port; because server-runtime publishes no per-Instance
+    listener, integrated live Web is unqualified until the gateway learns exact Server
+    attach. Chromium remains the primary fast lane and Safari/Home-Screen the WebKit/PWA
     canary; outside the core gate
   howl-odin: >-
     experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,

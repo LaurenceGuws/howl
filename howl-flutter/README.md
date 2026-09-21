@@ -99,7 +99,7 @@ clipboard content is a client-local no-op rather than a terminal attach failure.
 Copy is likewise presentation-local. With no active selection it writes the
 current live or scrolled viewport's bounded `howl-client.view.writeVisibleText`
 projection. With an active selection, Flutter retains only stable canonical
-cell endpoints and asks the session to extract the exact UTF-8 range. Viewport
+cell endpoints and asks the Instance client to extract the exact UTF-8 range. Viewport
 scrolling therefore does not retarget selected text, and eviction, bank or
 geometry changes invalidate rather than guess. Physical Note10 acceptance has
 proved Material handles, floating toolbar, canonical selected-text Copy, and
@@ -161,16 +161,10 @@ until its final transition, including commits normalized by Flutter into inserti
 or non-text updates. Private guard characters never enter the terminal. Android
 and iOS keep their existing full-value IME and backspace-runway path.
 
-For an interactive Home/Linux comparison against the same local PTY as the Web
-client, run from the repository root:
-
-```sh
-./tools/run-linux-canary.sh both
-```
-
-`flutter` and `web` are also accepted as single-client modes. The helper uses
-Flutter 3.47.2, starts only loopback listeners, and stops its session/gateway
-and Flutter process on Ctrl-C.
+The former combined Linux Flutter/Web helper was removed with the standalone
+per-Instance listener topology. Build and launch Flutter through its explicit direct or
+Server-selected routes documented below; do not recreate a private Session daemon merely
+to share an old Web gateway upstream.
 
 Build the native host first, then the normal route-agnostic Flutter bundle:
 

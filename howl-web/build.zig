@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const client = b.dependency("howl_client", .{ .target = target, .optimize = .ReleaseSafe });
     const client_module = client.module("howl_client");
     const instance_module = client_module.import_table.get("howl_instance") orelse
-        @panic("howl-client lost its owned session protocol dependency");
+        @panic("howl-client lost its owned Instance protocol dependency");
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = .ReleaseSafe,
@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     test_command.setCwd(b.path("."));
     test_command.addFileArg(wasm.getEmittedBin());
     check.dependOn(&test_command.step);
-    const live = b.step("live", "Test this Wasm client against a caller-supplied disposable Howl endpoint");
+    const live = b.step("live", "Test this Wasm client against a caller-supplied disposable direct HWLS Instance endpoint");
     const live_command = b.addSystemCommand(&.{ "node", "tests/live.mjs" });
     live_command.setCwd(b.path("."));
     live_command.addFileArg(wasm.getEmittedBin());

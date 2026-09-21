@@ -56,7 +56,7 @@ fn usage(init: std.process.Init) void {
     var buffer: [1024]u8 = undefined;
     var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);
     stderr.interface.writeAll(
-        "usage: howl-web-gateway LISTEN_PORT SESSION_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]\n",
+        "usage: howl-web-gateway LISTEN_PORT INSTANCE_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]\n",
     ) catch return;
     stderr.interface.flush() catch return;
 }

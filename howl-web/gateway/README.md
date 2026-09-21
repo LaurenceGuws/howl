@@ -4,7 +4,7 @@ This package owns the node-local browser transport edge for the experimental
 Howl Web client. It is deliberately protocol-blind: after a bounded HTTP/WebSocket
 upgrade it copies binary bytes between the browser and one explicit loopback Howl
 Instance endpoint. It never parses Howl frames, owns a PTY, interprets terminal
-state, discovers sessions, or chooses routes.
+state, discovers Server/Session identities, or chooses routes.
 
 The process binds **only `127.0.0.1`**. Public delivery belongs to the existing
 Cloudflare Tunnel and Access owners; do not bind this gateway to a non-loopback
@@ -64,8 +64,14 @@ zig-out/bin/howl-web-gateway
 Usage:
 
 ```text
-howl-web-gateway LISTEN_PORT SESSION_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
+howl-web-gateway LISTEN_PORT INSTANCE_PORT EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
 ```
 
-All ports and paths are explicit. The public canary uses a dedicated echo-only
-Howl Instance first; a normal interactive shell is not an authentication test.
+`INSTANCE_PORT` is a direct HWLS Instance TCP upstream. It is retained for bounded
+compatibility/testing only: the maintained Server runtime owns one control listener and
+publishes no per-Instance TCP listener. Therefore this executable is not currently a
+complete Server-managed Web launch path. A future live integration must perform exact
+Server attach before entering this existing protocol-blind HWLS byte pump.
+
+All ports and paths are explicit. When testing this compatibility seam, use only a
+disposable echo Instance; a normal interactive shell is not an authentication test.
