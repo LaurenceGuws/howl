@@ -22,7 +22,8 @@ void main() {
       MaterialApp(
         home: HowlServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
-          fetchTree: (_) async => tree,
+          fetchTree: (_) =>
+              HowlServerTreeRequest.fromFuture(Future.value(tree)),
           onOpenTarget: (target) => selected = target,
         ),
       ),
@@ -43,8 +44,8 @@ void main() {
     expect(selected, isNotNull);
     expect(selected!.serverId, '18446744073709551615');
     expect(selected!.nativeServerId, -1);
-    expect(selected!.sessionId, 7);
-    expect(selected!.instanceId, 2);
+    expect(selected!.sessionId, '7');
+    expect(selected!.instanceId, '2');
   });
 
   testWidgets(
@@ -62,9 +63,11 @@ void main() {
         MaterialApp(
           home: HowlServerBrowser(
             endpoint: HowlEndpoint.parse('tcp://127.0.0.1:1'),
-            fetchTree: (_) => calls++ == 0
-                ? Future.value(tree('91', 'OLD_OCCURRENCE'))
-                : refresh.future,
+            fetchTree: (_) => HowlServerTreeRequest.fromFuture(
+              calls++ == 0
+                  ? Future.value(tree('91', 'OLD_OCCURRENCE'))
+                  : refresh.future,
+            ),
             onOpenTarget: (target) => selected = target,
           ),
         ),
@@ -83,8 +86,8 @@ void main() {
       await tester.tap(find.text('Instance 3'));
       expect(selected, isNotNull);
       expect(selected!.serverId, '91');
-      expect(selected!.sessionId, 7);
-      expect(selected!.instanceId, 3);
+      expect(selected!.sessionId, '7');
+      expect(selected!.instanceId, '3');
 
       selected = null;
       await tester.pumpAndSettle();
@@ -93,9 +96,49 @@ void main() {
       await tester.tap(find.text('Instance 3'));
       expect(selected, isNotNull);
       expect(selected!.serverId, '92');
-      expect(selected!.sessionId, 7);
-      expect(selected!.instanceId, 3);
+      expect(selected!.sessionId, '7');
+      expect(selected!.instanceId, '3');
       await tester.pumpAndSettle();
     },
   );
+
+  testWidgets('disposing browser cancels its pending tree request once', (
+    tester,
+  ) async {
+    final pending = Completer<HowlServerTree>();
+    var cancels = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlServerBrowser(
+          endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
+          fetchTree: (_) => HowlServerTreeRequest(
+            pending.future,
+            onCancel: () {
+              cancels += 1;
+              if (!pending.isCompleted) {
+                pending.completeError(StateError('fixture canceled'));
+              }
+            },
+          ),
+          onOpenTarget: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(cancels, 1);
+  });
+
+  test('tree request cancellation is idempotent', () async {
+    final completer = Completer<HowlServerTree>();
+    var cancels = 0;
+    final request = HowlServerTreeRequest(
+      completer.future,
+      onCancel: () => cancels += 1,
+    );
+    request.cancel();
+    request.cancel();
+    expect(cancels, 1);
+  });
 }

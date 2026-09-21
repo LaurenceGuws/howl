@@ -4,7 +4,7 @@ import 'howl_endpoint.dart';
 import 'instance_target.dart';
 import 'server_tree.dart';
 
-typedef HowlServerTreeFetcher = Future<HowlServerTree> Function(
+typedef HowlServerTreeFetcher = HowlServerTreeRequest Function(
   HowlEndpoint endpoint,
 );
 
@@ -17,11 +17,12 @@ final class HowlServerBrowser extends StatefulWidget {
     super.key,
     required this.endpoint,
     required this.onOpenTarget,
-    this.fetchTree = NativeServerTree.fetch,
+    this.fetchTree = NativeServerTree.request,
   });
 
   final HowlEndpoint endpoint;
   final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
+
   final HowlServerTreeFetcher fetchTree;
 
   @override
@@ -32,6 +33,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
   HowlServerTree? _tree;
   Object? _failure;
   bool _loading = true;
+  HowlServerTreeRequest? _request;
 
   @override
   void initState() {
@@ -40,26 +42,53 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
   }
 
   Future<void> _refresh() async {
+    final prior = _request;
+    if (prior != null) {
+      try {
+        prior.cancel();
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _failure = error;
+            _loading = false;
+          });
+        }
+        return;
+      }
+    }
     if (mounted) {
       setState(() {
         _loading = true;
         _failure = null;
       });
     }
+    final request = widget.fetchTree(widget.endpoint);
+    _request = request;
     try {
-      final tree = await widget.fetchTree(widget.endpoint);
-      if (!mounted) return;
+      final tree = await request.future;
+      if (!mounted || !identical(_request, request)) return;
       setState(() {
         _tree = tree;
         _loading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || !identical(_request, request)) return;
       setState(() {
         _failure = error;
         _loading = false;
       });
+    } finally {
+      if (identical(_request, request)) _request = null;
     }
+  }
+
+  @override
+  void dispose() {
+    try {
+      _request?.cancel();
+    } catch (_) {}
+    _request = null;
+    super.dispose();
   }
 
   void _open(

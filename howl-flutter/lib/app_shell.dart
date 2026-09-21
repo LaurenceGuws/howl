@@ -11,6 +11,7 @@ import 'server_tree.dart';
 typedef HowlTerminalBuilder = Widget Function(
   BuildContext context,
   HowlInstanceTarget target,
+  VoidCallback onStaleTarget,
 );
 
 /// Minimal app shell around the terminal canary.
@@ -24,7 +25,7 @@ final class HowlAppShell extends StatefulWidget {
     this.initialServerEndpoint,
     this.initialInstanceTarget,
     this.connections,
-    this.fetchTree = NativeServerTree.fetch,
+    this.fetchTree = NativeServerTree.request,
   });
 
   final HowlTerminalBuilder terminalBuilder;
@@ -45,6 +46,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   HowlInstanceTarget? _activeInstance;
   bool _followSavedServer = false;
   bool _initialized = false;
+  int _navigation = 0;
 
   @override
   void initState() {
@@ -61,6 +63,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
           ManagedHowlInstanceTarget target => target.serverEndpoint,
           _ => null,
         };
+    _initialized = _activeServer != null || _activeInstance != null;
     unawaited(_initialize());
   }
 
@@ -106,9 +109,22 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   }
 
   Future<void> _selectServer(HowlServerConnection server) async {
+    final navigation = ++_navigation;
+    try {
+      await _connections.select(server.endpoint);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$error')));
+      return;
+    }
+    if (!mounted ||
+        navigation != _navigation ||
+        _connections.selectedEndpoint != server.endpoint ||
+        _connections.find(server.endpoint) == null) {
+      return;
+    }
     final endpoint = HowlEndpoint.parse(server.endpoint);
-    await _connections.select(server.endpoint);
-    if (!mounted) return;
     setState(() {
       _activeServer = endpoint;
       _activeInstance = null;
@@ -118,6 +134,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   }
 
   void _openManaged(ManagedHowlInstanceTarget target) {
+    _navigation++;
     setState(() {
       _activeServer = target.serverEndpoint;
       _activeInstance = target;
@@ -125,9 +142,20 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   }
 
   void _backToServer() {
+    _navigation++;
     if (_activeServer == null) return;
     setState(() => _activeInstance = null);
     _closeDrawer();
+  }
+
+  void _staleTarget() {
+    final target = _activeInstance;
+    if (target is! ManagedHowlInstanceTarget) return;
+    _navigation++;
+    setState(() {
+      _activeServer = target.serverEndpoint;
+      _activeInstance = null;
+    });
   }
 
   void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
@@ -140,7 +168,9 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   Widget _buildBody(BuildContext context) {
     if (!_initialized) return const _ShellLoading();
     final instance = _activeInstance;
-    if (instance != null) return widget.terminalBuilder(context, instance);
+    if (instance != null) {
+      return widget.terminalBuilder(context, instance, _staleTarget);
+    }
     final server = _activeServer;
     if (server != null) {
       return HowlServerBrowser(
@@ -357,6 +387,11 @@ final class _ServerDrawer extends StatelessWidget {
                   error,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
+              ),
+            if (connections.loadError != null)
+              TextButton(
+                onPressed: () => connections.retryLoad(),
+                child: const Text('Retry loading saved Servers'),
               ),
             Expanded(
               child: servers.isEmpty

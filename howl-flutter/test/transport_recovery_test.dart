@@ -17,56 +17,42 @@ void main() {
     expect(recovery.failed(), const Duration(milliseconds: 250));
   });
 
-  test('only endpoint and established transport envelopes are retriable', () {
-    expect(
-      retriableTransportFailure(
-        const NativeHostException('worker_host_create'),
-        attached: false,
-      ),
-      true,
-    );
-    expect(
-      retriableTransportFailure(
-        const NativeHostException('control_host_create'),
-        attached: false,
-      ),
-      true,
-    );
+  test('only machine-classified transport availability is retriable', () {
+    for (final attached in <bool>[false, true]) {
+      expect(
+        retriableTransportFailure(
+          const NativeHostException(
+            'connect',
+            kind: NativeFailureKind.transport,
+          ),
+          attached: attached,
+        ),
+        true,
+      );
+      for (final kind in <NativeFailureKind>[
+        NativeFailureKind.canceled,
+        NativeFailureKind.stale,
+        NativeFailureKind.permanent,
+      ]) {
+        expect(
+          retriableTransportFailure(
+            NativeHostException('fixture', kind: kind),
+            attached: attached,
+          ),
+          false,
+          reason: '${kind.name} attached=$attached',
+        );
+      }
+    }
+    // Human text cannot accidentally opt a permanent failure into retry.
     expect(
       retriableTransportFailure(
         const NativeHostException(
-          'control_host_create:SocketConnectFailed stage=socket_verify os_error=65',
+          'worker_host_create:SocketConnectFailed stage=socket_verify',
         ),
-        attached: false,
-      ),
-      true,
-    );
-    expect(
-      retriableTransportFailure(
-        const NativeHostException('observe_4'),
-        attached: true,
-      ),
-      true,
-    );
-    expect(
-      retriableTransportFailure(
-        const NativeHostException('observe_4'),
         attached: false,
       ),
       false,
     );
-    for (final code in <String>[
-      'primary_font_missing',
-      'packet_version',
-      'observe_3',
-      'control_3',
-      'worker_isolate_error',
-    ]) {
-      expect(
-        retriableTransportFailure(NativeHostException(code), attached: true),
-        false,
-        reason: code,
-      );
-    }
   });
 }

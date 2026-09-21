@@ -13,19 +13,13 @@ sealed class HowlInstanceTarget {
   bool get managed;
   String get serverId;
 
-  /// Dart native ints carry unsigned FFI arguments as their signed 64-bit bits.
-  int get nativeServerId {
-    final value = BigInt.parse(serverId);
-    if (value < BigInt.zero ||
-        value >= (BigInt.one << 64) ||
-        (managed && value == BigInt.zero)) {
-      throw const FormatException('Invalid Server incarnation');
-    }
-    return value.toSigned(64).toInt();
-  }
+  // Convert exact decimal identities only at the private Uint64 FFI seam.
+  int get nativeServerId => BigInt.parse(serverId).toSigned(64).toInt();
+  int get nativeSessionId => BigInt.parse(sessionId).toSigned(64).toInt();
+  int get nativeInstanceId => BigInt.parse(instanceId).toSigned(64).toInt();
 
-  int get sessionId;
-  int get instanceId;
+  String get sessionId;
+  String get instanceId;
 
   String get diagnosticLabel => managed
       ? 'server=$endpointText incarnation=$serverId session=$sessionId instance=$instanceId'
@@ -47,20 +41,21 @@ final class DirectHowlInstanceTarget extends HowlInstanceTarget {
   String get serverId => '0';
 
   @override
-  int get sessionId => 0;
+  String get sessionId => '0';
 
   @override
-  int get instanceId => 0;
+  String get instanceId => '0';
 }
 
 final class ManagedHowlInstanceTarget extends HowlInstanceTarget {
-  const ManagedHowlInstanceTarget({
+  ManagedHowlInstanceTarget({
     required this.serverEndpoint,
-    required this.serverId,
-    required this.sessionId,
-    required this.instanceId,
-  }) : assert(sessionId > 0),
-       assert(instanceId > 0);
+    required String serverId,
+    required String sessionId,
+    required String instanceId,
+  }) : serverId = exactHowlIdentity(serverId),
+       sessionId = exactHowlIdentity(sessionId),
+       instanceId = exactHowlIdentity(instanceId);
 
   final HowlEndpoint serverEndpoint;
 
@@ -68,14 +63,28 @@ final class ManagedHowlInstanceTarget extends HowlInstanceTarget {
   final String serverId;
 
   @override
-  final int sessionId;
+  final String sessionId;
 
   @override
-  final int instanceId;
+  final String instanceId;
 
   @override
   HowlEndpoint get transportEndpoint => serverEndpoint;
 
   @override
   bool get managed => true;
+}
+
+/// Nonzero native u64 identity, retained canonically as decimal text in Dart.
+String exactHowlIdentity(String value) {
+  if (value.isEmpty ||
+      value.length > 20 ||
+      !RegExp(r'^[0-9]+$').hasMatch(value)) {
+    throw const FormatException('Invalid Howl identity');
+  }
+  final parsed = BigInt.parse(value);
+  if (parsed <= BigInt.zero || parsed.bitLength > 64) {
+    throw const FormatException('Invalid Howl identity');
+  }
+  return parsed.toString();
 }

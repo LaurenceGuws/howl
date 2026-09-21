@@ -25,12 +25,19 @@ const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 24;
 const int _nativeCreateDiagnosticBytes = 256;
 
+enum NativeFailureKind { permanent, transport, canceled, stale }
+
 final class NativeHostException implements Exception {
-  const NativeHostException(this.code);
+  const NativeHostException(
+    this.code, {
+    this.kind = NativeFailureKind.permanent,
+  });
+
   final String code;
+  final NativeFailureKind kind;
 
   @override
-  String toString() => 'NativeHostException($code)';
+  String toString() => 'NativeHostException(${kind.name}:$code)';
 }
 
 final class NativeHostMetadata {
@@ -366,10 +373,7 @@ final class NativeHostObserver {
   NativeHostObserver._(
     this._commands,
     this._responses,
-    this._isolate,
-    this._cancellation,
-    this._cancelCancellation,
-    this._destroyCancellation,
+    this._interrupt,
     this.maximumRows,
     this.maximumColumns,
   ) {
@@ -378,16 +382,14 @@ final class NativeHostObserver {
 
   final SendPort _commands;
   final ReceivePort _responses;
-  final Isolate _isolate;
-  final ffi.Pointer<ffi.Void> _cancellation;
-  final _CancellationCancelDart _cancelCancellation;
-  final _CancellationDestroyDart _destroyCancellation;
+  final NativeInterruptScope _interrupt;
   final int maximumRows;
   final int maximumColumns;
   final Map<int, Completer<NativeHostObservation>> _pending =
       <int, Completer<NativeHostObservation>>{};
   int _nextId = 1;
   bool _closed = false;
+  Future<void>? _closeFuture;
 
   /// Selects the native delta/raw-cache policy for live observations, including
   /// one prearmed delta request. False uses compressed complete snapshots.
@@ -395,15 +397,29 @@ final class NativeHostObserver {
   static Future<NativeHostObserver> createPlatform({
     required HowlInstanceTarget target,
     required TerminalPresentation presentation,
+    required NativeInterruptScope interrupt,
     bool useLiveDeltas = false,
   }) async {
+    if (interrupt.canceled) {
+      throw const NativeHostException(
+        'worker_canceled_before_fonts',
+        kind: NativeFailureKind.canceled,
+      );
+    }
     final fonts = await _nativeHostFonts();
+    if (interrupt.canceled) {
+      throw const NativeHostException(
+        'worker_canceled_after_fonts',
+        kind: NativeFailureKind.canceled,
+      );
+    }
     return create(
       target: target,
       primaryFontPath: fonts.primary,
       fallbackFontPath: fonts.fallback,
       secondaryFallbackFontPath: fonts.secondaryFallback,
       presentation: presentation,
+      interrupt: interrupt,
       useLiveDeltas: useLiveDeltas,
     );
   }
@@ -414,21 +430,19 @@ final class NativeHostObserver {
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
     required TerminalPresentation presentation,
+    required NativeInterruptScope interrupt,
     bool useLiveDeltas = false,
   }) async {
+    if (interrupt.canceled) {
+      throw const NativeHostException(
+        'worker_canceled_before_spawn',
+        kind: NativeFailureKind.canceled,
+      );
+    }
     final ready = ReceivePort();
     final responses = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
-    final dylib = _nativeHostLibrary();
-    final cancelCancellation = dylib
-        .lookupFunction<_CancellationCancelNative, _CancellationCancelDart>(
-          'howl_native_host_cancellation_cancel',
-        );
-    final destroyCancellation = dylib
-        .lookupFunction<_CancellationDestroyNative, _CancellationDestroyDart>(
-          'howl_native_host_cancellation_destroy',
-        );
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeHostWorker,
       <Object?>[
@@ -445,6 +459,7 @@ final class NativeHostObserver {
         presentation.fontPixels,
         presentation.cellWidth,
         presentation.lineHeight,
+        interrupt.address,
       ],
       debugName: 'Howl native observer',
       onError: errors.sendPort,
@@ -458,28 +473,22 @@ final class NativeHostObserver {
       exitCode: 'worker_isolate_exit',
     );
     if (first is! List<Object?> ||
-        first.length != 4 ||
+        first.length != 3 ||
         first[0] is! SendPort ||
         first[1] is! int ||
         first[2] is! int ||
-        first[3] is! int ||
-        (first[1]! as int) == 0 ||
-        (first[2]! as int) <= 0 ||
-        (first[3]! as int) <= 0) {
+        (first[1]! as int) <= 0 ||
+        (first[2]! as int) <= 0) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
-      throw NativeHostException(first is String ? first : 'worker_start');
+      throw _workerStartupFailure(first, 'worker_start');
     }
-    final cancellation = ffi.Pointer<ffi.Void>.fromAddress(first[1]! as int);
     return NativeHostObserver._(
       first[0]! as SendPort,
       responses,
-      isolate,
-      cancellation,
-      cancelCancellation,
-      destroyCancellation,
+      interrupt,
+      first[1]! as int,
       first[2]! as int,
-      first[3]! as int,
     );
   }
 
@@ -502,24 +511,22 @@ final class NativeHostObserver {
     return completer.future;
   }
 
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
-    final cancelCode = _cancelCancellation(_cancellation);
-    if (cancelCode != 0) {
-      _closed = false;
-      throw NativeHostException('worker_cancel_$cancelCode');
-    }
+    _interrupt.cancel();
     final id = _nextId++;
     final completer = Completer<NativeHostObservation>();
     _pending[id] = completer;
     _commands.send(<Object?>[1, id]);
     try {
+      // The worker acknowledges only after native Host destruction and all
+      // worker-owned allocations are released. Completion therefore means the
+      // borrowed Interrupt is no longer reachable by this worker.
       await completer.future;
     } finally {
-      _destroyCancellation(_cancellation);
       _responses.close();
-      _isolate.kill(priority: Isolate.beforeNextEvent);
       for (final pending in _pending.values) {
         if (!pending.isCompleted) {
           pending.completeError(const NativeHostException('worker_closed'));
@@ -541,7 +548,13 @@ final class NativeHostObserver {
       return;
     }
     if (code != 0 && code != 6) {
-      completer.completeError(NativeHostException('observe_$code'));
+      final kind = switch (code) {
+        7 => NativeFailureKind.transport,
+        9 => NativeFailureKind.canceled,
+        10 => NativeFailureKind.stale,
+        _ => NativeFailureKind.permanent,
+      };
+      completer.completeError(NativeHostException('observe_$code', kind: kind));
       return;
     }
     final transfer = message[2];
@@ -668,6 +681,7 @@ typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
   ffi.Uint16,
   ffi.Uint16,
   ffi.Uint16,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
@@ -684,6 +698,7 @@ typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
   int,
   int,
   int,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Size>,
@@ -703,6 +718,7 @@ typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Uint16,
   ffi.Uint16,
   ffi.Uint16,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
@@ -722,22 +738,21 @@ typedef _CreateManagedDart = ffi.Pointer<ffi.Void> Function(
   int,
   int,
   int,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Size>,
 );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationCreateNative = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Void>,
-);
-typedef _CancellationCreateDart = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Void>,
-);
-typedef _CancellationCancelNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationCancelDart = int Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
-typedef _CancellationDestroyDart = void Function(ffi.Pointer<ffi.Void>);
+typedef _HostVersionNative = ffi.Uint32 Function();
+typedef _HostVersionDart = int Function();
+typedef _InterruptCreateNative = ffi.Pointer<ffi.Void> Function();
+typedef _InterruptCreateDart = ffi.Pointer<ffi.Void> Function();
+typedef _InterruptCancelNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
+typedef _InterruptCancelDart = int Function(ffi.Pointer<ffi.Void>);
+typedef _InterruptDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
+typedef _InterruptDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _OutputMinimumBytesNative = ffi.Size Function();
 typedef _OutputMinimumBytesDart = int Function();
 typedef _ImageRefillSizeNative = ffi.Size Function(ffi.Pointer<ffi.Void>);
@@ -782,16 +797,107 @@ typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
 typedef _PresentationBoundNative = ffi.Uint32 Function();
 typedef _PresentationBoundDart = int Function();
 
-ffi.DynamicLibrary _nativeHostLibrary() => Platform.isIOS
-    ? ffi.DynamicLibrary.process()
-    : ffi.DynamicLibrary.open('libhowl_native_host.so');
+ffi.DynamicLibrary _nativeHostLibrary() {
+  final library = Platform.isIOS
+      ? ffi.DynamicLibrary.process()
+      : ffi.DynamicLibrary.open('libhowl_native_host.so');
+  final version = library.lookupFunction<_HostVersionNative, _HostVersionDart>(
+    'howl_native_host_version',
+  )();
+  if (version != 5) {
+    throw NativeHostException('native_host_version_$version');
+  }
+  return library;
+}
 
-String _nativeCreateDiagnostic(ffi.Pointer<ffi.Uint8> bytes, int length) {
-  if (length <= 0 || length > _nativeCreateDiagnosticBytes) return '';
-  return utf8
-      .decode(bytes.asTypedList(length), allowMalformed: true)
-      .replaceAll(RegExp(r'[\r\n]+'), ' ')
-      .trim();
+final class NativeInterruptScope {
+  NativeInterruptScope._(this._raw, this._cancelNative, this._destroyNative);
+
+  factory NativeInterruptScope.create() {
+    final dylib = _nativeHostLibrary();
+    final create = dylib
+        .lookupFunction<_InterruptCreateNative, _InterruptCreateDart>(
+          'howl_native_interrupt_create',
+        );
+    final cancel = dylib
+        .lookupFunction<_InterruptCancelNative, _InterruptCancelDart>(
+          'howl_native_interrupt_cancel',
+        );
+    final destroy = dylib
+        .lookupFunction<_InterruptDestroyNative, _InterruptDestroyDart>(
+          'howl_native_interrupt_destroy',
+        );
+    final raw = create();
+    if (raw == ffi.nullptr) {
+      throw const NativeHostException('interrupt_create');
+    }
+    return NativeInterruptScope._(raw, cancel, destroy);
+  }
+
+  final ffi.Pointer<ffi.Void> _raw;
+  final _InterruptCancelDart _cancelNative;
+  final _InterruptDestroyDart _destroyNative;
+  bool _canceled = false;
+  bool _destroyed = false;
+
+  int get address {
+    if (_destroyed) throw const NativeHostException('interrupt_destroyed');
+    return _raw.address;
+  }
+
+  bool get canceled => _canceled;
+
+  void cancel() {
+    if (_destroyed || _canceled) return;
+    final code = _cancelNative(_raw);
+    if (code != 0) {
+      throw NativeHostException('interrupt_cancel_$code');
+    }
+    _canceled = true;
+  }
+
+  void destroy() {
+    if (_destroyed) return;
+    _destroyed = true;
+    _destroyNative(_raw);
+  }
+}
+
+({NativeFailureKind kind, String message}) _nativeCreateFailure(
+  ffi.Pointer<ffi.Uint8> bytes,
+  int length,
+) {
+  if (length <= 0 || length > _nativeCreateDiagnosticBytes) {
+    return (kind: NativeFailureKind.permanent, message: '');
+  }
+  final raw = bytes.asTypedList(length);
+  final kind = switch (raw[0]) {
+    2 => NativeFailureKind.transport,
+    3 => NativeFailureKind.canceled,
+    4 => NativeFailureKind.stale,
+    _ => NativeFailureKind.permanent,
+  };
+  final message = length == 1
+      ? ''
+      : utf8
+            .decode(raw.sublist(1), allowMalformed: true)
+            .replaceAll(RegExp(r'[\r\n]+'), ' ')
+            .trim();
+  return (kind: kind, message: message);
+}
+
+NativeHostException _workerStartupFailure(Object? value, String fallback) {
+  if (value is List<Object?> &&
+      value.length == 2 &&
+      value[0] is String &&
+      value[1] is int) {
+    final index = value[1]! as int;
+    final kind = index >= 0 && index < NativeFailureKind.values.length
+        ? NativeFailureKind.values[index]
+        : NativeFailureKind.permanent;
+    return NativeHostException(value[0]! as String, kind: kind);
+  }
+  return NativeHostException(value is String ? value : fallback);
 }
 
 Future<void> _nativeHostWorker(List<Object?> init) async {
@@ -799,8 +905,8 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
   final serverId = init[3]! as int;
-  final sessionId = init[4]! as int;
-  final instanceId = init[5]! as int;
+  final sessionId = BigInt.parse(init[4]! as String).toSigned(64).toInt();
+  final instanceId = BigInt.parse(init[5]! as String).toSigned(64).toInt();
   final primary = init[6]! as String;
   final fallback = init[7]! as String;
   final secondaryFallback = init[8]! as String;
@@ -808,6 +914,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final fontPixels = init[10]! as int;
   final cellWidth = init[11]! as int;
   final lineHeight = init[12]! as int;
+  final interrupt = ffi.Pointer<ffi.Void>.fromAddress(init[13]! as int);
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
@@ -821,10 +928,6 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
-  final createCancellation = dylib
-      .lookupFunction<_CancellationCreateNative, _CancellationCreateDart>(
-        'howl_native_host_cancellation_create',
-      );
   final maximumRows = dylib
       .lookupFunction<_PresentationBoundNative, _PresentationBoundDart>(
         'howl_native_host_maximum_rows',
@@ -901,6 +1004,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
           fontPixels,
           cellWidth,
           lineHeight,
+          interrupt,
           diagnosticPointer,
           _nativeCreateDiagnosticBytes,
           diagnosticLength,
@@ -920,6 +1024,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
           fontPixels,
           cellWidth,
           lineHeight,
+          interrupt,
           diagnosticPointer,
           _nativeCreateDiagnosticBytes,
           diagnosticLength,
@@ -931,17 +1036,18 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     calloc.free(secondaryFallbackPointer);
   }
   if (host == ffi.nullptr) {
-    final diagnostic = _nativeCreateDiagnostic(
+    final failure = _nativeCreateFailure(
       diagnosticPointer,
       diagnosticLength.value,
     );
     calloc.free(diagnosticPointer);
     calloc.free(diagnosticLength);
-    ready.send(
-      diagnostic.isEmpty
+    ready.send(<Object?>[
+      failure.message.isEmpty
           ? 'worker_host_create'
-          : 'worker_host_create:$diagnostic',
-    );
+          : 'worker_host_create:${failure.message}',
+      failure.kind.index,
+    ]);
     commands.close();
     return;
   }
@@ -958,36 +1064,16 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final output = calloc<ffi.Uint8>(outputMinimumBytes);
   final outputLength = calloc<ffi.Size>();
   final residency = calloc<ffi.Uint8>(8 * _residencyRecordBytes);
-  final cancellation = createCancellation(host);
-  if (cancellation == ffi.nullptr) {
-    destroy(host);
-    calloc.free(output);
-    calloc.free(outputLength);
-    calloc.free(residency);
-    ready.send('worker_cancellation_create');
-    commands.close();
-    return;
-  }
-  // Ownership of this independently allocated duplicate-socket handle moves to
-  // the creating isolate. The worker remains the sole owner of `host` itself.
-  ready.send(<Object?>[
-    commands.sendPort,
-    cancellation.address,
-    maximumRows,
-    maximumColumns,
-  ]);
+  ready.send(<Object?>[commands.sendPort, maximumRows, maximumColumns]);
 
+  int? closeId;
   try {
     await for (final message in commands) {
       if (message is! List<Object?> || message.isEmpty) continue;
       final kind = message[0];
       if (kind == 1) {
         if (message.length > 1 && message[1] is int) {
-          responses.send(<Object?>[
-            message[1],
-            0,
-            TransferableTypedData.fromList(<Uint8List>[Uint8List(0)]),
-          ]);
+          closeId = message[1]! as int;
         }
         break;
       }
@@ -1037,7 +1123,13 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
             continue;
           }
           if (refillCode != 0 || refillLength.value != refillSize) {
-            responses.send(<Object?>[id, 7, null]);
+            final responseCode = switch (refillCode) {
+              6 => 7,
+              7 => 9,
+              8 => 10,
+              _ => 4,
+            };
+            responses.send(<Object?>[id, responseCode, null]);
             continue;
           }
           responses.send(<Object?>[
@@ -1072,23 +1164,38 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     calloc.free(residency);
     commands.close();
   }
+  if (closeId != null) {
+    responses.send(<Object?>[
+      closeId,
+      0,
+      TransferableTypedData.fromList(<Uint8List>[Uint8List(0)]),
+    ]);
+  }
 }
 
 final class NativeHostControl {
-  NativeHostControl._(this._commands, this._responses, this._isolate) {
+  NativeHostControl._(this._commands, this._responses, this._interrupt) {
     _responses.listen(_onResponse);
   }
 
   final SendPort _commands;
   final ReceivePort _responses;
-  final Isolate _isolate;
+  final NativeInterruptScope _interrupt;
   final Map<int, Completer<Object?>> _pending = <int, Completer<Object?>>{};
   int _nextId = 1;
   bool _closed = false;
+  Future<void>? _closeFuture;
 
   static Future<NativeHostControl> create({
     required HowlInstanceTarget target,
+    required NativeInterruptScope interrupt,
   }) async {
+    if (interrupt.canceled) {
+      throw const NativeHostException(
+        'control_canceled_before_spawn',
+        kind: NativeFailureKind.canceled,
+      );
+    }
     final ready = ReceivePort();
     final responses = ReceivePort();
     final errors = ReceivePort();
@@ -1102,6 +1209,7 @@ final class NativeHostControl {
         target.nativeServerId,
         target.sessionId,
         target.instanceId,
+        interrupt.address,
       ],
       debugName: 'Howl native control',
       onError: errors.sendPort,
@@ -1117,11 +1225,9 @@ final class NativeHostControl {
     if (first is! SendPort) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
-      throw NativeHostException(
-        first is String ? first : 'control_worker_start',
-      );
+      throw _workerStartupFailure(first, 'control_worker_start');
     }
-    return NativeHostControl._(first, responses, isolate);
+    return NativeHostControl._(first, responses, interrupt);
   }
 
   Future<void> committedText(String text) =>
@@ -1224,6 +1330,9 @@ final class NativeHostControl {
 
   Future<Object?> _request(List<Object?> action) {
     if (_closed) throw const NativeHostException('control_worker_closed');
+    if (_pending.length >= 64) {
+      throw const NativeHostException('control_queue_full');
+    }
     final id = _nextId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;
@@ -1231,18 +1340,22 @@ final class NativeHostControl {
     return completer.future;
   }
 
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
+    _interrupt.cancel();
     final id = _nextId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;
     _commands.send(<Object?>[_NativeControlOperation.close, id]);
     try {
+      // Close acknowledgement is emitted only after native Control destruction
+      // and worker allocation cleanup, so every caller observes the same real
+      // lifetime boundary before the shared Interrupt owner can destroy it.
       await completer.future;
     } finally {
       _responses.close();
-      _isolate.kill(priority: Isolate.beforeNextEvent);
       for (final pending in _pending.values) {
         if (!pending.isCompleted) {
           pending.completeError(
@@ -1264,7 +1377,13 @@ final class NativeHostControl {
     if (code == 0) {
       completer.complete(message.length > 2 ? message[2] : null);
     } else {
-      completer.completeError(NativeHostException('control_$code'));
+      final kind = switch (code) {
+        5 => NativeFailureKind.transport,
+        6 => NativeFailureKind.canceled,
+        7 => NativeFailureKind.stale,
+        _ => NativeFailureKind.permanent,
+      };
+      completer.completeError(NativeHostException('control_$code', kind: kind));
     }
   }
 }
@@ -1291,6 +1410,7 @@ enum _NativeControlOperation {
 typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
@@ -1298,6 +1418,7 @@ typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
 typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
   int,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Size>,
@@ -1308,6 +1429,7 @@ typedef _ControlCreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Uint64,
   ffi.Uint64,
   ffi.Uint64,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
@@ -1318,6 +1440,7 @@ typedef _ControlCreateManagedDart = ffi.Pointer<ffi.Void> Function(
   int,
   int,
   int,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Size>,
@@ -1433,8 +1556,9 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
   final serverId = init[3]! as int;
-  final sessionId = init[4]! as int;
-  final instanceId = init[5]! as int;
+  final sessionId = BigInt.parse(init[4]! as String).toSigned(64).toInt();
+  final instanceId = BigInt.parse(init[5]! as String).toSigned(64).toInt();
+  final interrupt = ffi.Pointer<ffi.Void>.fromAddress(init[6]! as int);
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
@@ -1492,6 +1616,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       ? create(
           endpointPointer,
           endpointBytes.length,
+          interrupt,
           diagnosticPointer,
           _nativeCreateDiagnosticBytes,
           diagnosticLength,
@@ -1502,23 +1627,25 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
           serverId,
           sessionId,
           instanceId,
+          interrupt,
           diagnosticPointer,
           _nativeCreateDiagnosticBytes,
           diagnosticLength,
         );
   calloc.free(endpointPointer);
   if (control == ffi.nullptr) {
-    final diagnostic = _nativeCreateDiagnostic(
+    final failure = _nativeCreateFailure(
       diagnosticPointer,
       diagnosticLength.value,
     );
     calloc.free(diagnosticPointer);
     calloc.free(diagnosticLength);
-    ready.send(
-      diagnostic.isEmpty
+    ready.send(<Object?>[
+      failure.message.isEmpty
           ? 'control_host_create'
-          : 'control_host_create:$diagnostic',
-    );
+          : 'control_host_create:${failure.message}',
+      failure.kind.index,
+    ]);
     commands.close();
     return;
   }
@@ -1541,6 +1668,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
     }
   }
 
+  int? closeId;
   try {
     await for (final message in commands) {
       if (message is! List<Object?> || message.length < 2) continue;
@@ -1548,7 +1676,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       final id = message[1];
       if (kind is! _NativeControlOperation || id is! int) continue;
       if (kind == _NativeControlOperation.close) {
-        responses.send(<Object?>[id, 0]);
+        closeId = id;
         break;
       }
       int code;
@@ -1644,4 +1772,5 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
     calloc.free(interactionOutput);
     commands.close();
   }
+  if (closeId != null) responses.send(<Object?>[closeId, 0]);
 }

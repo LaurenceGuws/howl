@@ -85,6 +85,10 @@ final class HowlServerConnections extends ChangeNotifier {
   String? _selectedEndpoint;
   String? _loadError;
   bool _initialized = false;
+  bool _disposed = false;
+  bool _readFailed = false;
+  Future<void>? _initialization;
+  Future<void> _transactions = Future<void>.value();
 
   bool get initialized => _initialized;
   UnmodifiableListView<HowlServerConnection> get servers =>
@@ -99,27 +103,60 @@ final class HowlServerConnections extends ChangeNotifier {
     return null;
   }
 
-  Future<void> initialize() async {
-    if (_initialized) return;
-    final encoded = await _store.read();
-    if (encoded != null) {
+  Future<void> initialize() => _initialization ??= _initialize();
+
+  Future<void> _initialize() async {
+    try {
+      final encoded = await _store.read();
+      if (_disposed) return;
+      _readFailed = false;
       try {
-        _load(encoded);
+        if (encoded != null) _load(encoded);
         _loadError = null;
       } catch (_) {
-        _servers = const <HowlServerConnection>[];
-        _selectedEndpoint = null;
-        _loadError = 'Saved Server connections could not be loaded';
+        _loadError = 'Saved Server connections could not be decoded';
       }
+    } catch (_) {
+      if (_disposed) return;
+      _readFailed = true;
+      _loadError = 'Saved Server connections could not be read. Retry loading before editing.';
     }
+    if (_disposed) return;
     _initialized = true;
     notifyListeners();
+  }
+
+  /// A failed read must never authorize overwriting configuration we did not see.
+  Future<void> retryLoad() => _transaction(() async {
+    if (!_readFailed) return;
+    _initialization = _initialize();
+    await _initialization;
+  });
+
+  Future<void> _transaction(Future<void> Function() mutation) {
+    final result = _transactions.then((_) async {
+      if (_disposed) throw StateError('Server connections disposed');
+      await mutation();
+    });
+    // Failure belongs to this caller, not to the next transaction.
+    _transactions = result.catchError((Object _) {});
+    return result;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _publish() {
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> upsert(
     HowlServerConnection server, {
     String? replacingEndpoint,
-  }) async {
+  }) => _transaction(() async {
     _requireInitialized();
     final next = List<HowlServerConnection>.of(_servers);
     var index = replacingEndpoint == null
@@ -148,10 +185,10 @@ final class HowlServerConnections extends ChangeNotifier {
     _servers = List.unmodifiable(next);
     _selectedEndpoint = selected;
     _loadError = null;
-    notifyListeners();
-  }
+    _publish();
+  });
 
-  Future<void> remove(String endpoint) async {
+  Future<void> remove(String endpoint) => _transaction(() async {
     _requireInitialized();
     final next = _servers
         .where((server) => server.endpoint != endpoint)
@@ -162,10 +199,10 @@ final class HowlServerConnections extends ChangeNotifier {
     _servers = List.unmodifiable(next);
     _selectedEndpoint = selected;
     _loadError = null;
-    notifyListeners();
-  }
+    _publish();
+  });
 
-  Future<void> select(String? endpoint) async {
+  Future<void> select(String? endpoint) => _transaction(() async {
     _requireInitialized();
     if (endpoint != null && find(endpoint) == null) {
       throw StateError('Server endpoint is not configured');
@@ -173,8 +210,8 @@ final class HowlServerConnections extends ChangeNotifier {
     if (_selectedEndpoint == endpoint) return;
     await _persist(selectedEndpoint: endpoint);
     _selectedEndpoint = endpoint;
-    notifyListeners();
-  }
+    _publish();
+  });
 
   void _load(String encoded) {
     if (utf8.encode(encoded).length > maximumEncodedBytes) {
@@ -239,6 +276,9 @@ final class HowlServerConnections extends ChangeNotifier {
 
   void _requireInitialized() {
     if (!_initialized) throw StateError('Server connections not initialized');
+    if (_readFailed) {
+      throw StateError('Retry reading saved Server connections before editing');
+    }
   }
 
   static int _compareServers(

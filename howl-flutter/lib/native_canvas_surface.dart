@@ -445,6 +445,24 @@ Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
   }
 }
 
+/// Transfer a prepared candidate only while its requesting lifetime still owns
+/// the result. The caller checks lifetime before any context-dependent validation.
+/// A thrown validation also abandons only newly introduced images.
+Future<NativeCanvasLeaseUpdate?> currentNativeCanvasCandidate(
+  Future<NativeCanvasLeaseUpdate> preparation,
+  bool Function() isCurrent,
+) async {
+  final candidate = await preparation;
+  var transferred = false;
+  try {
+    if (!isCurrent()) return null;
+    transferred = true;
+    return candidate;
+  } finally {
+    if (!transferred) disposeNativeCanvasLeaseCandidate(candidate);
+  }
+}
+
 /// Disposes only images created by an unadopted candidate.
 ///
 /// Images in `retired` still belong to `previous` until the candidate is

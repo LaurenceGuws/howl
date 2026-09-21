@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:isolate';
@@ -6,23 +7,29 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 
 import 'howl_endpoint.dart';
+import 'instance_target.dart';
+import 'native_host.dart';
 
 const int _serverTreeOutputBytes = 64 * 1024;
 const int _serverTreeDiagnosticBytes = 256;
 
 final class HowlServerTreeException implements Exception {
-  const HowlServerTreeException(this.code);
+  const HowlServerTreeException(
+    this.code, {
+    this.kind = NativeFailureKind.permanent,
+  });
   final String code;
+  final NativeFailureKind kind;
 
   @override
-  String toString() => 'HowlServerTreeException($code)';
+  String toString() => 'HowlServerTreeException(${kind.name}:$code)';
 }
 
 enum HowlServerInstanceState { running, exited }
 
 final class HowlServerInstance {
   const HowlServerInstance({required this.id, required this.state});
-  final int id;
+  final String id;
   final HowlServerInstanceState state;
 }
 
@@ -32,7 +39,7 @@ final class HowlServerSession {
     required this.name,
     required this.instances,
   });
-  final int id;
+  final String id;
   final String name;
   final List<HowlServerInstance> instances;
 }
@@ -66,32 +73,35 @@ final class HowlServerTree {
       throw const HowlServerTreeException('sessions');
     }
     final sessions = <HowlServerSession>[];
-    var previousSessionId = 0;
+    var previousSessionId = BigInt.zero;
     for (final rawSession in rawSessions) {
       if (rawSession is! Map<String, Object?>) {
         throw const HowlServerTreeException('session');
       }
-      final id = _identity(rawSession['session_id'], 'session_id');
-      if (id <= previousSessionId) {
+      final id = _opaqueIdentity(rawSession['session_id'], 'session_id');
+      if (BigInt.parse(id) <= previousSessionId) {
         throw const HowlServerTreeException('session_order');
       }
-      previousSessionId = id;
+      previousSessionId = BigInt.parse(id);
       final name = rawSession['name'];
       final rawInstances = rawSession['instances'];
       if (name is! String || name.isEmpty || rawInstances is! List<Object?>) {
         throw const HowlServerTreeException('session_shape');
       }
       final instances = <HowlServerInstance>[];
-      var previousInstanceId = 0;
+      var previousInstanceId = BigInt.zero;
       for (final rawInstance in rawInstances) {
         if (rawInstance is! Map<String, Object?>) {
           throw const HowlServerTreeException('instance');
         }
-        final instanceId = _identity(rawInstance['instance_id'], 'instance_id');
-        if (instanceId <= previousInstanceId) {
+        final instanceId = _opaqueIdentity(
+          rawInstance['instance_id'],
+          'instance_id',
+        );
+        if (BigInt.parse(instanceId) <= previousInstanceId) {
           throw const HowlServerTreeException('instance_order');
         }
-        previousInstanceId = instanceId;
+        previousInstanceId = BigInt.parse(instanceId);
         final state = switch (rawInstance['state']) {
           'running' => HowlServerInstanceState.running,
           'exited' => HowlServerInstanceState.exited,
@@ -116,30 +126,18 @@ final class HowlServerTree {
 }
 
 String _opaqueIdentity(Object? value, String field) {
-  if (value is! String ||
-      value.isEmpty ||
-      !RegExp(r'^[0-9]+$').hasMatch(value)) {
+  if (value is! String) throw HowlServerTreeException(field);
+  try {
+    return exactHowlIdentity(value);
+  } on FormatException {
     throw HowlServerTreeException(field);
   }
-  final parsed = BigInt.tryParse(value);
-  if (parsed == null || parsed <= BigInt.zero || parsed.bitLength > 64) {
-    throw HowlServerTreeException(field);
-  }
-  return value;
-}
-
-int _identity(Object? value, String field) {
-  if (value is! String || value.isEmpty) {
-    throw HowlServerTreeException(field);
-  }
-  final parsed = int.tryParse(value);
-  if (parsed == null || parsed <= 0) throw HowlServerTreeException(field);
-  return parsed;
 }
 
 typedef _ServerTreeNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
@@ -150,6 +148,7 @@ typedef _ServerTreeNative = ffi.Int32 Function(
 typedef _ServerTreeDart = int Function(
   ffi.Pointer<ffi.Uint8>,
   int,
+  ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Size>,
@@ -158,16 +157,75 @@ typedef _ServerTreeDart = int Function(
   ffi.Pointer<ffi.Size>,
 );
 
+final class HowlServerTreeRequest {
+  HowlServerTreeRequest(this.future, {this.onCancel});
+
+  final Future<HowlServerTree> future;
+  final void Function()? onCancel;
+  bool _canceled = false;
+
+  void cancel() {
+    if (_canceled) return;
+    _canceled = true;
+    onCancel?.call();
+  }
+
+  static HowlServerTreeRequest fromFuture(Future<HowlServerTree> future) =>
+      HowlServerTreeRequest(future);
+}
+
 final class NativeServerTree {
   const NativeServerTree._();
 
-  static Future<HowlServerTree> fetch(HowlEndpoint endpoint) async {
-    final json = await Isolate.run(() => _fetchJson(endpoint.toString()));
-    return HowlServerTree.parse(json);
+  static const Duration responseTimeout = Duration(seconds: 15);
+
+  static HowlServerTreeRequest request(
+    HowlEndpoint endpoint, {
+    Duration timeout = responseTimeout,
+  }) {
+    if (timeout <= Duration.zero) {
+      throw ArgumentError.value(timeout, 'timeout', 'must be positive');
+    }
+    final interrupt = NativeInterruptScope.create();
+    final address = interrupt.address;
+    var deadlineExpired = false;
+    final worker = Isolate.run(() => _fetchJson(endpoint.toString(), address));
+    late final Timer deadline;
+    deadline = Timer(timeout, () {
+      deadlineExpired = true;
+      interrupt.cancel();
+    });
+    final future = worker
+        .then(HowlServerTree.parse)
+        .catchError((Object error, StackTrace stackTrace) {
+          if (deadlineExpired &&
+              error is HowlServerTreeException &&
+              error.kind == NativeFailureKind.canceled) {
+            throw const HowlServerTreeException(
+              'server_tree_timeout',
+              kind: NativeFailureKind.transport,
+            );
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        })
+        .whenComplete(() {
+          deadline.cancel();
+          interrupt.destroy();
+        });
+    return HowlServerTreeRequest(
+      future,
+      onCancel: () {
+        // Explicit owner cancellation wins if the response deadline has not
+        // fired yet. Cancel the timer first so it cannot later relabel this
+        // same native cancellation as a transport timeout.
+        deadline.cancel();
+        interrupt.cancel();
+      },
+    );
   }
 }
 
-String _fetchJson(String endpoint) {
+String _fetchJson(String endpoint, int interruptAddress) {
   final library = Platform.isIOS
       ? ffi.DynamicLibrary.process()
       : ffi.DynamicLibrary.open('libhowl_native_host.so');
@@ -185,6 +243,7 @@ String _fetchJson(String endpoint) {
     final code = fetch(
       endpointPointer,
       endpointBytes.length,
+      ffi.Pointer<ffi.Void>.fromAddress(interruptAddress),
       output,
       _serverTreeOutputBytes,
       outputLength,
@@ -193,17 +252,24 @@ String _fetchJson(String endpoint) {
       diagnosticLength,
     );
     if (code != 0 || outputLength.value > _serverTreeOutputBytes) {
-      final message = diagnosticLength.value == 0
+      final raw = diagnostic.asTypedList(diagnosticLength.value);
+      final kind = raw.isEmpty
+          ? NativeFailureKind.permanent
+          : switch (raw[0]) {
+              2 => NativeFailureKind.transport,
+              3 => NativeFailureKind.canceled,
+              4 => NativeFailureKind.stale,
+              _ => NativeFailureKind.permanent,
+            };
+      final message = raw.length <= 1
           ? ''
           : utf8
-                .decode(
-                  diagnostic.asTypedList(diagnosticLength.value),
-                  allowMalformed: true,
-                )
+                .decode(raw.sublist(1), allowMalformed: true)
                 .replaceAll(RegExp(r'[\r\n]+'), ' ')
                 .trim();
       throw HowlServerTreeException(
         message.isEmpty ? 'native_$code' : 'native_$code:$message',
+        kind: kind,
       );
     }
     return utf8.decode(output.asTypedList(outputLength.value));

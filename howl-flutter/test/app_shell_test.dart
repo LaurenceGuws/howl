@@ -16,6 +16,15 @@ final class _MemoryStore implements HowlServerConnectionStore {
   Future<void> write(String encoded) async => value = encoded;
 }
 
+final class _ThrowingReadStore implements HowlServerConnectionStore {
+  @override
+  Future<String?> read() async => throw StateError('read failed');
+
+  @override
+  Future<void> write(String encoded) async =>
+      throw StateError('write forbidden');
+}
+
 HowlServerTree _tree() => HowlServerTree.parse(
   '{"schema":"howl.server.tree/v1","server_id":"18446744073709551615",'
   '"tree_revision":"4","sessions":['
@@ -35,8 +44,9 @@ void main() {
           theme: ThemeData.dark(useMaterial3: false),
           home: HowlAppShell(
             connections: connections,
-            fetchTree: (_) async => _tree(),
-            terminalBuilder: (context, target) {
+            fetchTree: (_) =>
+                HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+            terminalBuilder: (context, target, _) {
               builtTargets.add(target);
               return Text(
                 'terminal ${target.sessionId}/${target.instanceId}',
@@ -116,8 +126,9 @@ void main() {
         MaterialApp(
           home: HowlAppShell(
             connections: connections,
-            fetchTree: (_) async => _tree(),
-            terminalBuilder: (_, target) => const SizedBox.shrink(),
+            fetchTree: (_) =>
+                HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+            terminalBuilder: (_, target, _) => const SizedBox.shrink(),
           ),
         ),
       );
@@ -137,7 +148,7 @@ void main() {
           home: HowlAppShell(
             connections: HowlServerConnections(_MemoryStore()),
             initialInstanceTarget: target,
-            terminalBuilder: (_, value) =>
+            terminalBuilder: (_, value, _) =>
                 Text(value.endpointText, key: const Key('direct-terminal')),
           ),
         ),
@@ -166,11 +177,11 @@ void main() {
         MaterialApp(
           home: HowlAppShell(
             connections: connections,
-            fetchTree: (endpoint) async {
+            fetchTree: (endpoint) {
               fetched.add(endpoint.toString());
-              return _tree();
+              return HowlServerTreeRequest.fromFuture(Future.value(_tree()));
             },
-            terminalBuilder: (_, _) => const SizedBox.shrink(),
+            terminalBuilder: (_, _, _) => const SizedBox.shrink(),
           ),
         ),
       );
@@ -207,8 +218,9 @@ void main() {
       MaterialApp(
         home: HowlAppShell(
           connections: connections,
-          fetchTree: (_) async => _tree(),
-          terminalBuilder: (_, target) => Text(
+          fetchTree: (_) =>
+              HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+          terminalBuilder: (_, target, _) => Text(
             'terminal ${target.sessionId}/${target.instanceId}',
             key: const Key('managed-terminal-under-removal'),
           ),
@@ -260,11 +272,11 @@ void main() {
         home: HowlAppShell(
           connections: connections,
           initialServerEndpoint: transient,
-          fetchTree: (endpoint) async {
+          fetchTree: (endpoint) {
             fetched.add(endpoint.toString());
-            return _tree();
+            return HowlServerTreeRequest.fromFuture(Future.value(_tree()));
           },
-          terminalBuilder: (_, _) => const SizedBox.shrink(),
+          terminalBuilder: (_, _, _) => const SizedBox.shrink(),
         ),
       ),
     );
@@ -277,5 +289,72 @@ void main() {
     expect(connections.selectedEndpoint, other.endpoint);
     expect(fetched.last, transient.toString());
     expect(find.text('work'), findsOneWidget);
+  });
+
+  testWidgets('stale managed terminal returns to its Server browser', (
+    tester,
+  ) async {
+    final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43130');
+    final target = ManagedHowlInstanceTarget(
+      serverEndpoint: endpoint,
+      serverId: '91',
+      sessionId: '7',
+      instanceId: '2',
+    );
+    VoidCallback? stale;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlAppShell(
+          connections: HowlServerConnections(_MemoryStore()),
+          initialInstanceTarget: target,
+          fetchTree: (_) =>
+              HowlServerTreeRequest.fromFuture(Future.value(_tree())),
+          terminalBuilder: (_, value, onStaleTarget) {
+            stale = onStaleTarget;
+            return Text(
+              'terminal ${value.sessionId}/${value.instanceId}',
+              key: const Key('stale-terminal'),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stale-terminal')), findsOneWidget);
+    expect(stale, isNotNull);
+
+    stale!();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stale-terminal')), findsNothing);
+    expect(find.text('work'), findsOneWidget);
+    expect(find.text('Instance 2'), findsOneWidget);
+  });
+
+  testWidgets('explicit launch route is visible while saved-route read fails', (
+    tester,
+  ) async {
+    final target = DirectHowlInstanceTarget(
+      HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+    );
+    final connections = HowlServerConnections(_ThrowingReadStore());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlAppShell(
+          connections: connections,
+          initialInstanceTarget: target,
+          terminalBuilder: (_, value, _) => Text(
+            value.endpointText,
+            key: const Key('explicit-terminal-read-failure'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('explicit-terminal-read-failure')),
+      findsOneWidget,
+    );
+    expect(connections.initialized, isTrue);
+    expect(connections.loadError, isNotNull);
   });
 }

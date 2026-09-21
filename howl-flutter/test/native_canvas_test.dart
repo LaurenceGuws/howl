@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -306,6 +307,91 @@ Uint8List _externalRgbaCanvas() {
 }
 
 void main() {
+  test(
+    'replacement Canvas 1/gen1 cannot inherit old glyph residency',
+    () async {
+      final oldBytes = _oneFrameCanvas()..last = 0x40;
+      final newBytes = _oneFrameCanvas()..last = 0xc0;
+      final previous = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(oldBytes),
+      );
+      // Same logical namespace counters and extents, different glyph coverage.
+      final oldResidency = encodeNativeHostResidency(previous.lease);
+      expect(oldResidency, isNotEmpty);
+      final replacementResidency = encodeNativeHostResidency(null);
+      expect(replacementResidency, isEmpty);
+      final replacement = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(newBytes),
+      );
+      try {
+        expect(
+          replacement.lease.images.keys.single,
+          previous.lease.images.keys.single,
+        );
+        expect(replacement.introduced.length, 1);
+        expect(
+          replacement.lease.images.values.single,
+          isNot(same(previous.lease.images.values.single)),
+        );
+        final oldPixels = await previous.lease.images.values.single
+            .toByteData();
+        final newPixels = await replacement.lease.images.values.single
+            .toByteData();
+        expect(oldPixels!.getUint8(3), 0x40);
+        expect(newPixels!.getUint8(3), 0xc0);
+      } finally {
+        disposeNativeCanvasLease(previous.lease);
+        disposeNativeCanvasLease(replacement.lease);
+      }
+    },
+  );
+
+  for (final throws in [false, true]) {
+    test(
+      'delayed candidate ${throws ? 'exception' : 'route abandonment'} releases introduced images only',
+      () async {
+        final previous = await prepareNativeCanvasFrame(
+          null,
+          NativeCanvasFrame.parse(_oneFrameCanvas()),
+        );
+        final candidate = await prepareNativeCanvasFrame(
+          previous.lease,
+          NativeCanvasFrame.parse(_oneFrameCanvas()),
+        );
+        final gate = Completer<NativeCanvasLeaseUpdate>();
+        var current = true;
+        var disposals = 0;
+        final introduced = candidate.introduced.single;
+        final previousImage = previous.lease.images.values.single;
+        final onDispose = ui.Image.onDispose;
+        ui.Image.onDispose = (image) {
+          if (identical(image, introduced)) disposals++;
+          onDispose?.call(image);
+        };
+        try {
+          final pending = currentNativeCanvasCandidate(gate.future, () {
+            if (throws) throw StateError('context validation failure');
+            return current;
+          });
+          final check = throws
+              ? expectLater(pending, throwsStateError)
+              : expectLater(pending, completion(isNull));
+          current = false; // leave route while decoding/preparation is paused
+          gate.complete(candidate);
+          await check;
+          expect(disposals, 1);
+          expect(previousImage.debugDisposed, isFalse);
+          expect(introduced.debugDisposed, isTrue);
+        } finally {
+          ui.Image.onDispose = onDispose;
+          disposeNativeCanvasLease(previous.lease);
+        }
+      },
+    );
+  }
+
   test('interaction state parser exposes canonical mouse routing modes', () {
     final bytes = Uint8List.fromList(<int>[
       0x01,

@@ -111,8 +111,11 @@ final class HowlApp extends StatelessWidget {
       home: HowlAppShell(
         initialServerEndpoint: initialServer,
         initialInstanceTarget: initialInstance,
-        terminalBuilder: (context, target) =>
-            HowlTerminal(target: target, geometryLeader: geometryLeader),
+        terminalBuilder: (context, target, onStaleTarget) => HowlTerminal(
+          target: target,
+          geometryLeader: geometryLeader,
+          onStaleTarget: onStaleTarget,
+        ),
       ),
     );
   }
@@ -123,9 +126,11 @@ final class HowlTerminal extends StatefulWidget {
     super.key,
     required this.target,
     required this.geometryLeader,
+    this.onStaleTarget,
   });
   final HowlInstanceTarget target;
   final bool geometryLeader;
+  final VoidCallback? onStaleTarget;
 
   @override
   State<HowlTerminal> createState() => _HowlTerminalState();
@@ -146,6 +151,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   NativeHostObserver? _nativeObserver;
   NativeHostObserver? _nativeHistoryObserver;
   NativeHostControl? _nativeControl;
+  NativeInterruptScope? _nativeInterrupt;
+  NativeInterruptScope? _nativeHistoryInterrupt;
   NativeHostMetadata? _nativeLiveMetadata;
   NativeHostMetadata? _nativeHistoryMetadata;
   String _nativeLiveSemanticText = '';
@@ -185,6 +192,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool _selectionUsesTouchChrome = false;
   int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
+  int _controlQueueDepth = 0;
+  static const int _maximumControlQueueDepth = 64;
   late final TerminalKeyRepeatDrainer _softwareBackspaceRepeat;
   late final HeldKeyRepeat _iosPhysicalArrowRepeat;
 
@@ -261,10 +270,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   Future<void> _observeNative() async {
     while (!_stopping) {
       final generation = ++_transportGeneration;
+      // A new native Host owns a new Canvas namespace, even when its first
+      // resource/generation numbers collide with the previous Host's atlas.
+      final oldLive = _nativeLiveLease;
+      setState(() {
+        _nativeLiveLease = null;
+        _nativeLiveMetadata = null;
+        _nativeLiveSemanticText = '';
+        _nativeLiveSemanticTruncated = false;
+      });
+      if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
       var attached = false;
+      NativeInterruptScope? interrupt;
       _diagnostics.record('Transport', 'generation=$generation start');
       try {
-        await _observeNativeLifetime(generation, () => attached = true);
+        interrupt = NativeInterruptScope.create();
+        _nativeInterrupt = interrupt;
+        await _observeNativeLifetime(
+          generation,
+          interrupt,
+          () => attached = true,
+        );
         return;
       } catch (error) {
         if (_stopping || !mounted) return;
@@ -273,21 +299,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           'generation=$generation failure attached=$attached error=$error',
         );
         _dropTransport(generation);
-        if (error is _PresentationRestart) {
+        if (error is NativeHostException &&
+            error.kind == NativeFailureKind.stale &&
+            widget.onStaleTarget != null) {
+          _diagnostics.record('Transport', 'stale target; returning to Server');
+          widget.onStaleTarget!();
+          return;
+        }
+        final presentationRestart =
+            error is _PresentationRestart ||
+            (error is NativeHostException &&
+                error.kind == NativeFailureKind.canceled &&
+                _restoreImeAfterPresentationRestart != null);
+        if (presentationRestart) {
           _diagnostics.record('Transport', 'presentation restart');
           _transportRecovery.succeeded();
-          final oldLive = _nativeLiveLease;
           _proposedRows = 0;
           _proposedColumns = 0;
           setState(() {
-            _nativeLiveLease = null;
-            _nativeLiveMetadata = null;
-            _nativeLiveSemanticText = '';
-            _nativeLiveSemanticTruncated = false;
             _failure = null;
             _reconnecting = false;
           });
-          if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
           continue;
         }
         if (!retriableTransportFailure(error, attached: attached)) {
@@ -307,12 +339,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           _reconnecting = true;
         });
         await Future<void>.delayed(delay);
+      } finally {
+        if (interrupt != null) {
+          if (identical(_nativeInterrupt, interrupt)) _nativeInterrupt = null;
+          interrupt.destroy();
+        }
       }
     }
   }
 
   Future<void> _observeNativeLifetime(
     int generation,
+    NativeInterruptScope interrupt,
     void Function() markAttached,
   ) async {
     NativeHostObserver? observer;
@@ -321,12 +359,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final presentation = zoomPreset.presentation;
     final rasterScale = terminalRasterScale(View.of(context).devicePixelRatio);
     final nativePresentation = presentation.rasterized(rasterScale);
+    bool abandoned() =>
+        !mounted || _stopping || generation != _transportGeneration;
     bool presentationChanged() =>
-        zoomPreset != _zoomPreset ||
-        rasterScale != terminalRasterScale(View.of(context).devicePixelRatio);
+        !abandoned() &&
+        (zoomPreset != _zoomPreset ||
+            rasterScale !=
+                terminalRasterScale(View.of(context).devicePixelRatio));
     try {
       _diagnostics.record('Control', 'create generation=$generation');
-      control = await NativeHostControl.create(target: widget.target);
+      control = await NativeHostControl.create(
+        target: widget.target,
+        interrupt: interrupt,
+      );
+      if (abandoned()) return;
       _diagnostics.record('Control', 'attached generation=$generation');
       if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
@@ -336,11 +382,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       observer = await NativeHostObserver.createPlatform(
         target: widget.target,
         presentation: nativePresentation,
+        interrupt: interrupt,
         // Keep cheap local row-delta reuse on Unix. TCP uses the existing
         // compressed complete-snapshot path; native delta prearming is part
         // of that alternative policy, not Dart's display overlap below.
         useLiveDeltas: widget.target.transportEndpoint.unixPath != null,
       );
+      if (abandoned()) return;
       _diagnostics.record(
         'Observer',
         'attached generation=$generation bounds=${observer.maximumRows}x${observer.maximumColumns}',
@@ -354,6 +402,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (_geometryLeader) {
         if (_terminalViewportSize == null) {
           await WidgetsBinding.instance.endOfFrame;
+          if (abandoned()) return;
         }
         if (presentationChanged()) throw const _PresentationRestart();
         final viewport = _terminalViewportSize;
@@ -362,6 +411,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             : _geometryFor(viewport, presentation);
         if (geometry != null) {
           await control.resize(geometry.rows, geometry.columns);
+          if (abandoned()) return;
           _proposedRows = geometry.rows;
           _proposedColumns = geometry.columns;
         }
@@ -398,91 +448,100 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           prefetched: prefetched,
         );
         prefetched = null;
-        if (presentationChanged()) {
-          disposeNativeCanvasPreloadedResources(observed.preloaded);
-          throw const _PresentationRestart();
-        }
-        if (!mounted || _stopping || generation != _transportGeneration) {
-          disposeNativeCanvasPreloadedResources(observed.preloaded);
-          break;
-        }
-        final NativeHostFrame packet;
+        late final NativeHostFrame packet;
+        var preloadsTransferred = false;
+        final NativeCanvasLeaseUpdate? prepared;
         try {
+          if (abandoned()) break;
+          if (presentationChanged()) throw const _PresentationRestart();
           packet = parseNativeHostPacket(observed.bytes, nativePresentation);
-        } catch (_) {
-          disposeNativeCanvasPreloadedResources(observed.preloaded);
-          rethrow;
-        }
-        final prepared = await prepareNativeCanvasFrame(
-          _nativeLiveLease,
-          packet.canvas,
-          preloaded: observed.preloaded,
-        );
-        revision = packet.metadata.revision;
-        if (!loggedFirstFrame) {
-          loggedFirstFrame = true;
-          _diagnostics.record(
-            'Observer',
-            'first_frame revision=$revision geometry=${packet.metadata.rows}x${packet.metadata.columns}',
-          );
-        }
-        if (presentationChanged()) {
-          disposeNativeCanvasLeaseCandidate(prepared);
-          throw const _PresentationRestart();
-        }
-        if (!mounted || _stopping || generation != _transportGeneration) {
-          disposeNativeCanvasLeaseCandidate(prepared);
-          break;
-        }
-        _nativeLiveMetadata = packet.metadata;
-        _validateSelection(packet.metadata);
-        _nativeLiveSemanticText = packet.semanticText;
-        _nativeLiveSemanticTruncated = packet.semanticTruncated;
-        _nativeLiveLease = prepared.lease;
-        _transportRecovery.succeeded();
-        _failure = null;
-        _reconnecting = false;
-        final wasHistoryActive = _history.active;
-        _history.followLive(
-          rows: packet.metadata.rows,
-          columns: packet.metadata.columns,
-          historyCount: packet.metadata.historyCount,
-          historyRowBase: packet.metadata.historyRowBase,
-          alternateScreen: packet.metadata.alternateScreen,
-        );
-        if (_history.active) {
-          _scheduleHistorySnapshot();
-          setState(() {});
-        } else if (wasHistoryActive) {
-          _leaveHistory();
-        } else {
-          setState(() {});
-        }
-        // TCP receive can overlap display pacing. Unix retains its existing
-        // display-boundary coalescing instead of importing network policy.
-        if (widget.target.transportEndpoint.tcpPort != null) {
-          prefetched = Future<NativeHostObservation>.sync(
-            () => observer!.observe(
-              afterRevision: revision,
-              historyOffset: 0,
-              residency: encodeNativeHostResidency(_nativeLiveLease),
+          preloadsTransferred = true;
+          prepared = await currentNativeCanvasCandidate(
+            prepareNativeCanvasFrame(
+              _nativeLiveLease,
+              packet.canvas,
+              preloaded: observed.preloaded,
             ),
+            () => !abandoned(),
           );
-          // Failure may arrive before the next await. Keep that failure for
-          // the consumer, but handle it if restart/dispose abandons the bytes.
-          prefetched.ignore();
+        } finally {
+          if (!preloadsTransferred) {
+            disposeNativeCanvasPreloadedResources(observed.preloaded);
+          }
         }
-        await WidgetsBinding.instance.endOfFrame;
-        for (final image in prepared.retired) {
-          image.dispose();
+        if (prepared == null) break;
+        var adopted = false;
+        try {
+          if (abandoned()) break;
+          if (presentationChanged()) throw const _PresentationRestart();
+          revision = packet.metadata.revision;
+          if (!loggedFirstFrame) {
+            loggedFirstFrame = true;
+            _diagnostics.record(
+              'Observer',
+              'first_frame revision=$revision geometry=${packet.metadata.rows}x${packet.metadata.columns}',
+            );
+          }
+          _nativeLiveMetadata = packet.metadata;
+          _validateSelection(packet.metadata);
+          _nativeLiveSemanticText = packet.semanticText;
+          _nativeLiveSemanticTruncated = packet.semanticTruncated;
+          _nativeLiveLease = prepared.lease;
+          adopted = true;
+          _transportRecovery.succeeded();
+          _failure = null;
+          _reconnecting = false;
+          final wasHistoryActive = _history.active;
+          _history.followLive(
+            rows: packet.metadata.rows,
+            columns: packet.metadata.columns,
+            historyCount: packet.metadata.historyCount,
+            historyRowBase: packet.metadata.historyRowBase,
+            alternateScreen: packet.metadata.alternateScreen,
+          );
+          if (_history.active) {
+            _scheduleHistorySnapshot();
+            setState(() {});
+          } else if (wasHistoryActive) {
+            _leaveHistory();
+          } else {
+            setState(() {});
+          }
+          // TCP receive can overlap display pacing. Unix retains its existing
+          // display-boundary coalescing instead of importing network policy.
+          if (widget.target.transportEndpoint.tcpPort != null) {
+            prefetched = Future<NativeHostObservation>.sync(
+              () => observer!.observe(
+                afterRevision: revision,
+                historyOffset: 0,
+                residency: encodeNativeHostResidency(_nativeLiveLease),
+              ),
+            );
+            // Failure may arrive before the next await. Keep that failure for
+            // the consumer, but handle it if restart/dispose abandons the bytes.
+            prefetched.ignore();
+          }
+          await WidgetsBinding.instance.endOfFrame;
+        } finally {
+          if (adopted) {
+            for (final image in prepared.retired) {
+              image.dispose();
+            }
+          } else {
+            disposeNativeCanvasLeaseCandidate(prepared);
+          }
         }
       }
     } finally {
       if (identical(_nativeObserver, observer)) _nativeObserver = null;
       if (identical(_nativeControl, control)) _nativeControl = null;
       if (generation == _transportGeneration) _transportFault = null;
-      if (observer != null) unawaited(observer.close().catchError((_) {}));
-      if (control != null) unawaited(control.close().catchError((_) {}));
+      if (observer != null) {
+        await observer.close().catchError((_) {});
+      }
+      if (control != null) {
+        await control.close().catchError((_) {});
+      }
     }
   }
 
@@ -522,6 +581,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         final observation = transportGeneration == null
             ? await future
             : await _observeOrTransportFault(future, transportGeneration);
+        if (!mounted ||
+            _stopping ||
+            (transportGeneration != null &&
+                transportGeneration != _transportGeneration)) {
+          throw const _PresentationRestart();
+        }
         if (observation is NativeHostFrameObservation) {
           return (
             bytes: observation.bytes,
@@ -543,6 +608,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         final decoded = await prepareNativeCanvasExternalUpload(
           observation.upload,
         );
+        if (!mounted ||
+            _stopping ||
+            (transportGeneration != null &&
+                transportGeneration != _transportGeneration)) {
+          decoded.image.dispose();
+          throw const _PresentationRestart();
+        }
         final logical = decoded.resource.key.resource;
         final replaced = preloaded[logical];
         if (replaced != null && replaced.image != decoded.image) {
@@ -558,20 +630,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _dropTransport(int generation) {
     if (generation != _transportGeneration) return;
+    try {
+      _nativeInterrupt?.cancel();
+    } catch (_) {}
     _diagnostics.record('Transport', 'drop generation=$generation');
     _leaveHistory();
     _iosPhysicalArrowRepeat.cancel();
     _softwareBackspaceRepeat.cancelPending();
     _transportGeneration += 1;
-    final observer = _nativeObserver;
-    final control = _nativeControl;
     _nativeObserver = null;
     _nativeControl = null;
     _interactionStateCache = null;
     _interactionStateCachedAt = null;
     _transportFault = null;
-    if (observer != null) unawaited(observer.close().catchError((_) {}));
-    if (control != null) unawaited(control.close().catchError((_) {}));
   }
 
   void _signalTransportFault(Object error, int generation) {
@@ -599,25 +670,37 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (_stopping) return Future<void>.value();
     final control = _nativeControl;
     if (control == null) return Future<void>.value();
+    if (_controlQueueDepth >= _maximumControlQueueDepth) {
+      _reportFailure(const NativeHostException('control_queue_capacity'));
+      return Future<void>.value();
+    }
+    _controlQueueDepth += 1;
     final generation = _transportGeneration;
-    _controlTail = _controlTail.then((_) async {
-      if (_stopping ||
-          generation != _transportGeneration ||
-          !identical(control, _nativeControl)) {
-        return;
-      }
-      try {
-        await action(control);
-      } catch (error) {
-        if (retriableTransportFailure(error, attached: true)) {
-          _signalTransportFault(error, generation);
-        } else {
-          _reportFailure(error);
-        }
-        rethrow;
-      }
-    });
-    _controlTail = _controlTail.catchError((Object _) {});
+    final task = _controlTail
+        .then((_) async {
+          if (_stopping ||
+              generation != _transportGeneration ||
+              !identical(control, _nativeControl)) {
+            return;
+          }
+          try {
+            await action(control);
+          } catch (error) {
+            if (error is NativeHostException &&
+                (error.kind == NativeFailureKind.transport ||
+                    error.kind == NativeFailureKind.stale)) {
+              _signalTransportFault(error, generation);
+            } else if (error is! NativeHostException ||
+                error.kind != NativeFailureKind.canceled) {
+              _reportFailure(error);
+            }
+            rethrow;
+          }
+        })
+        .whenComplete(() {
+          _controlQueueDepth -= 1;
+        });
+    _controlTail = task.catchError((Object _) {});
     return _controlTail;
   }
 
@@ -627,24 +710,36 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (_stopping) return Future<T?>.value();
     final control = _nativeControl;
     if (control == null) return Future<T?>.value();
+    if (_controlQueueDepth >= _maximumControlQueueDepth) {
+      _reportFailure(const NativeHostException('control_queue_capacity'));
+      return Future<T?>.value();
+    }
+    _controlQueueDepth += 1;
     final generation = _transportGeneration;
-    final task = _controlTail.then<T?>((_) async {
-      if (_stopping ||
-          generation != _transportGeneration ||
-          !identical(control, _nativeControl)) {
-        return null;
-      }
-      try {
-        return await action(control);
-      } catch (error) {
-        if (retriableTransportFailure(error, attached: true)) {
-          _signalTransportFault(error, generation);
-        } else {
-          _reportFailure(error);
-        }
-        rethrow;
-      }
-    });
+    final task = _controlTail
+        .then<T?>((_) async {
+          if (_stopping ||
+              generation != _transportGeneration ||
+              !identical(control, _nativeControl)) {
+            return null;
+          }
+          try {
+            return await action(control);
+          } catch (error) {
+            if (error is NativeHostException &&
+                (error.kind == NativeFailureKind.transport ||
+                    error.kind == NativeFailureKind.stale)) {
+              _signalTransportFault(error, generation);
+            } else if (error is! NativeHostException ||
+                error.kind != NativeFailureKind.canceled) {
+              _reportFailure(error);
+            }
+            rethrow;
+          }
+        })
+        .whenComplete(() {
+          _controlQueueDepth -= 1;
+        });
     _controlTail = task.then<void>((_) {}).catchError((Object _) {});
     return task;
   }
@@ -1340,12 +1435,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           final nativePresentation = _presentation.rasterized(
             _nativeRasterScale,
           );
-          observer = await NativeHostObserver.createPlatform(
-            target: widget.target,
-            presentation: nativePresentation,
-          );
-          if (!mounted || _stopping || !_history.ownsRequest(request)) {
-            unawaited(observer.close());
+          final interrupt = NativeInterruptScope.create();
+          _nativeHistoryInterrupt = interrupt;
+          try {
+            observer = await NativeHostObserver.createPlatform(
+              target: widget.target,
+              presentation: nativePresentation,
+              interrupt: interrupt,
+            );
+          } catch (_) {
+            if (identical(_nativeHistoryInterrupt, interrupt)) {
+              _nativeHistoryInterrupt = null;
+            }
+            interrupt.destroy();
+            rethrow;
+          }
+          if (!mounted ||
+              _stopping ||
+              !_history.ownsRequest(request) ||
+              !identical(_nativeHistoryInterrupt, interrupt)) {
+            await observer.close().catchError((_) {});
+            interrupt.destroy();
             return;
           }
           _nativeHistoryObserver = observer;
@@ -1545,9 +1655,16 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _history.reset();
     _historyRequestPending = false;
     final nativeHistoryObserver = _nativeHistoryObserver;
+    final nativeHistoryInterrupt = _nativeHistoryInterrupt;
     _nativeHistoryObserver = null;
-    if (nativeHistoryObserver != null) {
-      unawaited(nativeHistoryObserver.close());
+    _nativeHistoryInterrupt = null;
+    try {
+      nativeHistoryInterrupt?.cancel();
+    } catch (_) {}
+    if (nativeHistoryObserver != null && nativeHistoryInterrupt != null) {
+      unawaited(
+        _retireHistoryLifetime(nativeHistoryObserver, nativeHistoryInterrupt),
+      );
     }
     final oldNativeHistory = _nativeHistoryLease;
     _nativeHistoryLease = null;
@@ -1559,6 +1676,17 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (oldNativeHistory != null) {
         unawaited(_disposeLeaseAfterFrame(oldNativeHistory));
       }
+    }
+  }
+
+  Future<void> _retireHistoryLifetime(
+    NativeHostObserver observer,
+    NativeInterruptScope interrupt,
+  ) async {
+    try {
+      await observer.close().catchError((_) {});
+    } finally {
+      interrupt.destroy();
     }
   }
 
@@ -1593,6 +1721,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (fault != null && !fault.isCompleted) {
       fault.complete(const _PresentationRestart());
     }
+    try {
+      _nativeInterrupt?.cancel();
+    } catch (_) {}
   }
 
   void _onFocusChange(bool focused) {
@@ -1637,6 +1768,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (fault != null && !fault.isCompleted) {
         fault.complete(const _PresentationRestart());
       }
+      try {
+        _nativeInterrupt?.cancel();
+      } catch (_) {}
     });
   }
 
@@ -1688,20 +1822,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    try {
+      _nativeInterrupt?.cancel();
+    } catch (_) {}
     _iosPhysicalArrowRepeat.close();
     _softwareBackspaceRepeat.close();
     _historyWheelTimer?.cancel();
     _historyWheelTimer = null;
     _textInput.detach();
     _focusNode.dispose();
-    final nativeObserver = _nativeObserver;
-    final nativeHistoryObserver = _nativeHistoryObserver;
-    final nativeControl = _nativeControl;
-    if (nativeObserver != null) unawaited(nativeObserver.close());
-    if (nativeHistoryObserver != null) {
-      unawaited(nativeHistoryObserver.close());
-    }
-    if (nativeControl != null) unawaited(nativeControl.close());
+    try {
+      _nativeInterrupt?.cancel();
+    } catch (_) {}
+    _leaveHistory();
     disposeNativeCanvasLease(_nativeLiveLease);
     disposeNativeCanvasLease(_nativeHistoryLease);
     super.dispose();

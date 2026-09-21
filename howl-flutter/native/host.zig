@@ -72,8 +72,26 @@ const HostPacketError = error{
     ImageRefillRequired,
 };
 
+/// Complete private failure surface admitted by the Flutter FFI classifier.
+/// Every constituent set is owned by an existing maintained module; adding a
+/// new owner failure must update this union rather than widening to anyerror.
+const ClassifiedFailure = client.Error ||
+    server_client.Error ||
+    client.actions.Error ||
+    client.images.Error ||
+    client.state.Error ||
+    client.selection.Error ||
+    client.rich.Error ||
+    client.view.Error ||
+    text.InitError ||
+    terminal.CanvasInitError ||
+    terminal.CanvasError ||
+    std.mem.Allocator.Error ||
+    HostPacketError ||
+    error{ Overflow, InvalidHost };
+
 const HostHandle = opaque {};
-const CancellationHandle = opaque {};
+const InterruptHandle = opaque {};
 const ControlHandle = opaque {};
 
 const Control = struct {
@@ -151,7 +169,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 4;
+    return 5;
 }
 
 /// Reports the shared maintained-client row envelope.
@@ -164,34 +182,31 @@ pub export fn howl_native_host_maximum_columns() u32 {
     return presentation.maximum_columns;
 }
 
-/// Creates an independently owned duplicate of the Host Instance socket. The
-/// returned private handle may be used from another Dart isolate to wake a
-/// blocking observation, and must be destroyed exactly once by its caller.
-pub export fn howl_native_host_cancellation_create(raw: ?*HostHandle) ?*CancellationHandle {
-    const raw_host = raw orelse return null;
-    const host: *Host = @ptrCast(@alignCast(raw_host));
+/// Caller-owned cancellation exists before connection setup and is borrowed by
+/// every native worker in one Flutter transport lifetime. The caller cancels
+/// first, waits for all borrowers to exit, then destroys this handle exactly once.
+pub export fn howl_native_interrupt_create() ?*InterruptHandle {
     const allocator = std.heap.c_allocator;
-    const cancellation = allocator.create(client.Cancellation) catch return null;
-    cancellation.* = host.connection.cancellation() catch {
-        allocator.destroy(cancellation);
-        return null;
-    };
-    return @ptrCast(cancellation);
+    const value = client.Interrupt.init(allocator) catch return null;
+    return @ptrCast(value);
 }
 
-pub export fn howl_native_host_cancellation_cancel(raw: ?*CancellationHandle) i32 {
+pub export fn howl_native_interrupt_cancel(raw: ?*InterruptHandle) i32 {
     const value = raw orelse return 1;
-    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
-    cancellation.cancel() catch return 2;
+    const interrupt: *client.Interrupt = @ptrCast(@alignCast(value));
+    interrupt.cancel() catch return 2;
     return 0;
 }
 
-pub export fn howl_native_host_cancellation_destroy(raw: ?*CancellationHandle) void {
+pub export fn howl_native_interrupt_destroy(raw: ?*InterruptHandle) void {
     const value = raw orelse return;
-    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
-    const allocator = std.heap.c_allocator;
-    cancellation.deinit();
-    allocator.destroy(cancellation);
+    const interrupt: *client.Interrupt = @ptrCast(@alignCast(value));
+    interrupt.deinit();
+}
+
+fn interruptFromRaw(raw: ?*InterruptHandle) ?*client.Interrupt {
+    const value = raw orelse return null;
+    return @ptrCast(@alignCast(value));
 }
 
 pub export fn howl_native_host_output_minimum_bytes() usize {
@@ -249,12 +264,57 @@ fn imageRefillFetchFailureCode(failure: client.images.Error) i32 {
     // The Host only asks for exact ids/generations that came from one accepted
     // immutable graphics snapshot. A normal endpoint rejection therefore means
     // canonical graphics moved before this serial refill reached its resource.
-    // Every transport, framing, allocation, and payload failure remains hard.
-    return if (failure == error.ServerRejected) 5 else 4;
+    if (failure == error.ServerRejected) return 5;
+    return switch (classifyFailure(failure)) {
+        .transport => 6,
+        .canceled => 7,
+        .stale => 8,
+        .permanent => 4,
+    };
+}
+
+const FailureClass = enum(u8) {
+    permanent = 1,
+    transport = 2,
+    canceled = 3,
+    stale = 4,
+};
+
+fn classifyFailure(failure: ClassifiedFailure) FailureClass {
+    return switch (failure) {
+        error.ConnectionCanceled => .canceled,
+        error.StaleServerIncarnation,
+        error.SessionNotFound,
+        error.InstanceNotFound,
+        error.Unavailable,
+        => .stale,
+        error.SocketConnectFailed,
+        error.SocketConnectTimedOut,
+        error.SocketReadFailed,
+        error.SocketWriteFailed,
+        error.SocketShutdownFailed,
+        error.ConnectionClosed,
+        => .transport,
+        else => .permanent,
+    };
 }
 
 fn resetCreateDiagnostic(output_len: *usize) void {
     output_len.* = 0;
+}
+
+fn writeFailureText(
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    class: FailureClass,
+    message: []const u8,
+) void {
+    if (output_capacity == 0) return;
+    output_ptr[0] = @backingInt(class);
+    const length = @min(output_capacity - 1, message.len);
+    if (length != 0) @memcpy(output_ptr[1 .. 1 + length], message[0..length]);
+    output_len.* = 1 + length;
 }
 
 fn writeCreateDiagnostic(
@@ -263,10 +323,7 @@ fn writeCreateDiagnostic(
     output_len: *usize,
     message: []const u8,
 ) void {
-    if (output_capacity == 0) return;
-    const length = @min(output_capacity, message.len);
-    @memcpy(output_ptr[0..length], message[0..length]);
-    output_len.* = length;
+    writeFailureText(output_ptr, output_capacity, output_len, .permanent, message);
 }
 
 fn writeCreateStageFailure(
@@ -274,36 +331,31 @@ fn writeCreateStageFailure(
     output_capacity: usize,
     output_len: *usize,
     stage: []const u8,
-    failure_name: []const u8,
+    failure: ClassifiedFailure,
 ) void {
-    if (output_capacity == 0) return;
-    const rendered = std.fmt.bufPrint(
-        output_ptr[0..output_capacity],
-        "{s}:{s}",
-        .{ stage, failure_name },
-    ) catch return;
-    output_len.* = rendered.len;
+    if (output_capacity <= 1) {
+        writeFailureText(output_ptr, output_capacity, output_len, classifyFailure(failure), &.{});
+        return;
+    }
+    var buffer: [255]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buffer, "{s}:{s}", .{ stage, @errorName(failure) }) catch &.{};
+    writeFailureText(output_ptr, output_capacity, output_len, classifyFailure(failure), rendered);
 }
 
 fn writeConnectDiagnostic(
     output_ptr: [*]u8,
     output_capacity: usize,
     output_len: *usize,
-    failure_name: []const u8,
+    failure: ClassifiedFailure,
     diagnostic: client.ConnectDiagnostic,
 ) void {
-    if (output_capacity == 0) return;
+    var buffer: [255]u8 = undefined;
     const rendered = std.fmt.bufPrint(
-        output_ptr[0..output_capacity],
+        &buffer,
         "{s} stage={s} os_error={d} poll_interrupts={d}",
-        .{
-            failure_name,
-            @tagName(diagnostic.stage),
-            diagnostic.os_error,
-            diagnostic.poll_interrupts,
-        },
-    ) catch return;
-    output_len.* = rendered.len;
+        .{ @errorName(failure), @tagName(diagnostic.stage), diagnostic.os_error, diagnostic.poll_interrupts },
+    ) catch &.{};
+    writeFailureText(output_ptr, output_capacity, output_len, classifyFailure(failure), rendered);
 }
 
 fn writeManagedConnectDiagnostic(
@@ -311,22 +363,34 @@ fn writeManagedConnectDiagnostic(
     output_capacity: usize,
     output_len: *usize,
     owner_stage: []const u8,
-    failure_name: []const u8,
+    failure: ClassifiedFailure,
     diagnostic: client.ConnectDiagnostic,
 ) void {
-    if (output_capacity == 0) return;
+    var buffer: [255]u8 = undefined;
     const rendered = std.fmt.bufPrint(
-        output_ptr[0..output_capacity],
+        &buffer,
         "{s}:{s} stage={s} os_error={d} poll_interrupts={d}",
-        .{
-            owner_stage,
-            failure_name,
-            @tagName(diagnostic.stage),
-            diagnostic.os_error,
-            diagnostic.poll_interrupts,
-        },
-    ) catch return;
-    output_len.* = rendered.len;
+        .{ owner_stage, @errorName(failure), @tagName(diagnostic.stage), diagnostic.os_error, diagnostic.poll_interrupts },
+    ) catch &.{};
+    writeFailureText(output_ptr, output_capacity, output_len, classifyFailure(failure), rendered);
+}
+
+fn controlFailureCode(failure: ClassifiedFailure) i32 {
+    return switch (classifyFailure(failure)) {
+        .transport => 5,
+        .canceled => 6,
+        .stale => 7,
+        .permanent => 2,
+    };
+}
+
+fn observeFailureCode(failure: ClassifiedFailure) i32 {
+    return switch (classifyFailure(failure)) {
+        .transport => 7,
+        .canceled => 9,
+        .stale => 10,
+        .permanent => 4,
+    };
 }
 
 fn connectManagedInstance(
@@ -335,6 +399,7 @@ fn connectManagedInstance(
     server_id: u64,
     session_id: u64,
     instance_id: u64,
+    interrupt: ?*client.Interrupt,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
@@ -345,23 +410,26 @@ fn connectManagedInstance(
         .server_id = server_id,
         .session_id = session_id,
         .instance_id = instance_id,
-    }, &server_diagnostic, null) catch |failure| {
-        writeManagedConnectDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "server_attach", @errorName(failure), server_diagnostic);
+    }, &server_diagnostic, interrupt) catch |failure| {
+        writeManagedConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "server_attach",
+            failure,
+            server_diagnostic,
+        );
         return null;
     };
 
     var instance_diagnostic: client.ConnectDiagnostic = .{};
-    return client.connectTransport(
-        allocator,
-        attached.stream,
-        &instance_diagnostic,
-    ) catch |failure| {
+    return client.connectTransport(allocator, attached.stream, &instance_diagnostic) catch |failure| {
         writeManagedConnectDiagnostic(
             diagnostic_ptr,
             diagnostic_capacity,
             diagnostic_len,
             "instance_handshake",
-            @errorName(failure),
+            failure,
             instance_diagnostic,
         );
         return null;
@@ -390,7 +458,7 @@ fn createHostFromConnection(
         return null;
     };
     const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", failure);
         var connection = connection_value;
         connection.deinit();
         return null;
@@ -424,7 +492,7 @@ fn createHostFromConnection(
         .fallbacks = fallbacks,
         .size = .{ .pixels = font_pixels },
     }) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "font_set", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "font_set", failure);
         return null;
     };
     var fonts_live = true;
@@ -435,21 +503,21 @@ fn createHostFromConnection(
         fonts,
         contentConfig(cell_width, cell_height, atlas_extent),
     ) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", failure);
         return null;
     };
     var canvas_live = true;
     defer if (canvas_live) terminal.deinitCanvas(terminal_canvas);
 
     const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", failure);
         return null;
     };
     var scratch_live = true;
     defer if (scratch_live) allocator.free(observation_scratch);
 
     const host = allocator.create(Host) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "host_alloc", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "host_alloc", failure);
         return null;
     };
     host.* = .{
@@ -481,6 +549,7 @@ pub export fn howl_native_host_create(
     font_pixels: u16,
     cell_width: u16,
     cell_height: u16,
+    interrupt_raw: ?*InterruptHandle,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
@@ -494,16 +563,17 @@ pub export fn howl_native_host_create(
     }
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectDiagnosed(
+    const connection = client.Connection.connectCancelable(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
+        interruptFromRaw(interrupt_raw),
     ) catch |failure| {
         writeConnectDiagnostic(
             diagnostic_ptr,
             diagnostic_capacity,
             diagnostic_len,
-            @errorName(failure),
+            failure,
             connect_diagnostic,
         );
         return null;
@@ -540,6 +610,7 @@ pub export fn howl_native_host_create_managed(
     font_pixels: u16,
     cell_width: u16,
     cell_height: u16,
+    interrupt_raw: ?*InterruptHandle,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
@@ -558,6 +629,7 @@ pub export fn howl_native_host_create_managed(
         server_id,
         session_id,
         instance_id,
+        interruptFromRaw(interrupt_raw),
         diagnostic_ptr,
         diagnostic_capacity,
         diagnostic_len,
@@ -590,7 +662,7 @@ fn createControlFromConnection(
     var connection_live = true;
     defer if (connection_live) connection.deinit();
     const control = allocator.create(Control) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", @errorName(failure));
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", failure);
         return null;
     };
     control.* = .{ .allocator = allocator, .connection = connection };
@@ -601,6 +673,7 @@ fn createControlFromConnection(
 pub export fn howl_native_control_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    interrupt_raw: ?*InterruptHandle,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
@@ -612,16 +685,17 @@ pub export fn howl_native_control_create(
     }
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectDiagnosed(
+    const connection = client.Connection.connectCancelable(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
+        interruptFromRaw(interrupt_raw),
     ) catch |failure| {
         writeConnectDiagnostic(
             diagnostic_ptr,
             diagnostic_capacity,
             diagnostic_len,
-            @errorName(failure),
+            failure,
             connect_diagnostic,
         );
         return null;
@@ -640,6 +714,7 @@ pub export fn howl_native_control_create_managed(
     server_id: u64,
     session_id: u64,
     instance_id: u64,
+    interrupt_raw: ?*InterruptHandle,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
@@ -656,6 +731,7 @@ pub export fn howl_native_control_create_managed(
         server_id,
         session_id,
         instance_id,
+        interruptFromRaw(interrupt_raw),
         diagnostic_ptr,
         diagnostic_capacity,
         diagnostic_len,
@@ -677,6 +753,7 @@ fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
 pub export fn howl_native_server_tree(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
+    interrupt_raw: ?*InterruptHandle,
     output_ptr: [*]u8,
     output_capacity: usize,
     output_len: *usize,
@@ -693,17 +770,18 @@ pub export fn howl_native_server_tree(
 
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: server_client.ConnectDiagnostic = .{};
-    var connection = server_client.Connection.connectDiagnosed(
+    var connection = server_client.Connection.connectCancelable(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
+        interruptFromRaw(interrupt_raw),
     ) catch |failure| {
         writeManagedConnectDiagnostic(
             diagnostic_ptr,
             diagnostic_capacity,
             diagnostic_len,
             "server_tree_connect",
-            @errorName(failure),
+            failure,
             connect_diagnostic,
         );
         return 2;
@@ -716,7 +794,7 @@ pub export fn howl_native_server_tree(
             diagnostic_capacity,
             diagnostic_len,
             "server_tree",
-            @errorName(failure),
+            failure,
         );
         return 3;
     };
@@ -765,7 +843,7 @@ pub export fn howl_native_control_committed_text(
     bytes_len: usize,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.committedText(&control.connection, bytes_ptr[0..bytes_len]) catch return 2;
+    client.actions.committedText(&control.connection, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -775,7 +853,7 @@ pub export fn howl_native_control_paste(
     bytes_len: usize,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.paste(&control.connection, bytes_ptr[0..bytes_len]) catch return 2;
+    client.actions.paste(&control.connection, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -792,7 +870,7 @@ pub export fn howl_native_control_named_key(
         @fromBackingInt(@intCast(key_value)),
         @fromBackingInt(@intCast(action_value)),
         modifiers,
-    ) catch return 2;
+    ) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -809,14 +887,14 @@ pub export fn howl_native_control_unicode_key(
         scalar,
         @fromBackingInt(@intCast(action_value)),
         modifiers,
-    ) catch return 2;
+    ) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
 pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (focus_value < 1 or focus_value > 2) return 3;
-    client.actions.focus(&control.connection, @fromBackingInt(@intCast(focus_value))) catch return 2;
+    client.actions.focus(&control.connection, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -826,7 +904,7 @@ pub export fn howl_native_control_resize(
     columns: u16,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.resize(&control.connection, rows, columns) catch return 2;
+    client.actions.resize(&control.connection, rows, columns) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -840,7 +918,7 @@ pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8)
         15 => .terminate,
         else => return 3,
     };
-    client.actions.signal(&control.connection, signal) catch return 2;
+    client.actions.signal(&control.connection, signal) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -851,7 +929,7 @@ pub export fn howl_native_control_interaction_state(
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (output_capacity < protocol.payload_bytes.interaction_state_snapshot) return 3;
-    const state = client.state.get(&control.connection) catch return 2;
+    const state = client.state.get(&control.connection) catch |failure| return controlFailureCode(failure);
     var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
     protocol.encodeInteractionStateSnapshot(&encoded, state);
     @memcpy(output_ptr[0..encoded.len], &encoded);
@@ -882,7 +960,7 @@ pub export fn howl_native_control_mouse(
         .column = column,
         .pixel_x = if (pixels_present != 0) pixel_x else null,
         .pixel_y = if (pixels_present != 0) pixel_y else null,
-    }) catch return 2;
+    }) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -910,7 +988,7 @@ pub export fn howl_native_control_text_extract(
             .columns = columns,
             .alternate_screen = alternate_screen == 1,
         },
-    ) catch return 2;
+    ) catch |failure| return controlFailureCode(failure);
     defer control.allocator.free(selected);
     if (selected.len > output_capacity) return 4;
     @memcpy(output_ptr[0..selected.len], selected);
@@ -984,7 +1062,7 @@ pub export fn howl_native_host_observe(
             error.BufferTooSmall => 1,
             error.InvalidResidency => 3,
             error.ImageRefillRequired => 5,
-            else => 4,
+            else => |value| observeFailureCode(value),
         };
     };
     output_len.* = written;
@@ -1037,7 +1115,7 @@ fn observe(
     history_offset: u32,
     residency_bytes: []const u8,
     output: []u8,
-) !usize {
+) ClassifiedFailure!usize {
     if (output.len < output_minimum_bytes) return error.BufferTooSmall;
     const residency = try decodeResidencies(host, residency_bytes);
     var scratch = std.heap.FixedBufferAllocator.init(host.observation_scratch);
@@ -1272,10 +1350,19 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
 }
 
-test "native host distinguishes superseded image generation from refill failure" {
+test "native host distinguishes superseded image generation and failure classes" {
     try std.testing.expectEqual(@as(i32, 5), imageRefillFetchFailureCode(error.ServerRejected));
     try std.testing.expectEqual(@as(i32, 4), imageRefillFetchFailureCode(error.UnexpectedFrame));
-    try std.testing.expectEqual(@as(i32, 4), imageRefillFetchFailureCode(error.ConnectionClosed));
+    try std.testing.expectEqual(@as(i32, 6), imageRefillFetchFailureCode(error.ConnectionClosed));
+    try std.testing.expectEqual(@as(i32, 7), imageRefillFetchFailureCode(error.ConnectionCanceled));
+    try std.testing.expectEqual(@as(i32, 5), controlFailureCode(error.ConnectionClosed));
+    try std.testing.expectEqual(@as(i32, 6), controlFailureCode(error.ConnectionCanceled));
+    try std.testing.expectEqual(@as(i32, 7), controlFailureCode(error.StaleServerIncarnation));
+    try std.testing.expectEqual(@as(i32, 2), controlFailureCode(error.UnexpectedFrame));
+    try std.testing.expectEqual(@as(i32, 7), observeFailureCode(error.ConnectionClosed));
+    try std.testing.expectEqual(@as(i32, 9), observeFailureCode(error.ConnectionCanceled));
+    try std.testing.expectEqual(@as(i32, 10), observeFailureCode(error.SessionNotFound));
+    try std.testing.expectEqual(@as(i32, 4), observeFailureCode(error.UnexpectedFrame));
 }
 
 test "native host selects one exact refill from multiple missing images" {

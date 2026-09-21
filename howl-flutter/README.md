@@ -106,23 +106,29 @@ proved Material handles, floating toolbar, canonical selected-text Copy, and
 two-row edge autoscroll across offscreen history.
 
 The long-lived native observer/control pair also owns bounded transport
-recovery. Endpoint attach failures and failures on an already-established
-transport retry at 250 ms, 500 ms, 1 s, 2 s and then at most every 5 s. A
-successful canonical frame resets that cadence. Each transport lifetime has a
-generation, so queued control work from a dead connection is discarded rather
-than replayed into its replacement. Platform/font/packet validation failures
-remain hard failures. Physical Note10 qualification cut a localhost relay out
-from under the running app until the canonical Instance had zero clients, then
-restored it; the same Flutter process reattached, reclaimed 32x51 geometry and
-rendered the surviving Bash Instance without an app restart.
+recovery. The private **v5** host ABI reports a machine failure class separately
+from its human diagnostic. Only actual transport availability failures retry at
+250 ms, 500 ms, 1 s, 2 s and then at most every 5 s. Cancellation stops the
+retired lifetime, stale Server/Session/Instance identity returns managed
+navigation to the Server browser, and font/data/resource/protocol failures remain
+hard failures. A successful canonical frame resets the cadence. Each transport
+lifetime has a generation, so queued control work from a dead connection is
+discarded rather than replayed into its replacement. Physical Note10
+qualification cut a localhost relay out from under the running app until the
+canonical Instance had zero clients, then restored it; the same Flutter process
+reattached, reclaimed 32x51 geometry and rendered the surviving Bash Instance
+without an app restart.
 
-Observer cancellation is out-of-band from the blocking observation request.
-The private native host gives Flutter an independently owned duplicate of the
-observer socket; superseding a presentation shuts down that duplicate to wake
-the blocked receive, then the observer worker processes its ordinary close and
-remains the sole owner which destroys the native Host. This prevents idle
-presentation restarts from accumulating stale Instance clients without closing
-the same fd from two owners.
+Cancellation is owned before native construction begins. One app-owned native
+Interrupt is shared by the live control and observer workers for that transport
+generation; route/presentation teardown cancels it first, workers unwind and
+close, and only then is the Interrupt destroyed. History and one-shot Server-tree
+requests own separate Interrupt lifetimes, so abandoning scrollback or browsing
+cannot cancel the live terminal. Control close is out-of-band from its serialized
+command queue and therefore wakes an unanswered blocking request instead of
+waiting behind it. The v5 ABI replaces the former host-derived cancellation
+handle exports with `howl_native_interrupt_create/cancel/destroy`; Dart checks
+`howl_native_host_version == 5` before using the binding.
 
 TCP live presentation permits one pending native observation while Flutter waits for
 `endOfFrame`. That pending result owns only copied bytes, including any refill
