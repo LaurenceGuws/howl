@@ -69,5 +69,10 @@ pub fn build(b: *std.Build) void {
     managed_test.addArtifactArg(executable);
     managed_test.setName("Howl managed CLI interaction");
     test_step.dependOn(&managed_test.step);
+    const lifecycle_test = b.addSystemCommand(&.{"python3"});
+    lifecycle_test.addFileArg(b.path("test/server_lifecycle.py"));
+    lifecycle_test.addArtifactArg(executable);
+    lifecycle_test.setName("Howl Server lifetime boundaries");
+    test_step.dependOn(&lifecycle_test.step);
     b.default_step = check;
 }

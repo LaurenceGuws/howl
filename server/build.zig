@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    module.addImport("server_protocol", protocol_module);
     module.addImport("howl_instance", instance.module("howl_instance"));
     module.addImport("howl_instance_service", instance.module("howl_instance_service"));
 
@@ -53,6 +54,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     runtime_module.addImport("server_model", module);
+    runtime_module.addImport("howl_instance", instance.module("howl_instance"));
     runtime_module.addImport("server_service", service_module);
     const runtime_tests = b.addTest(.{
         .name = "server-runtime",
@@ -71,5 +73,19 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
     test_step.dependOn(&b.addRunArtifact(service_tests).step);
     test_step.dependOn(&b.addRunArtifact(runtime_tests).step);
+    const boundary_root = b.createModule(.{
+        .root_source_file = b.path("test/owner.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    boundary_root.addImport("server", module);
+    const boundary = b.addTest(.{
+        .name = "server-owner-api",
+        .root_module = boundary_root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&boundary.step);
+    test_step.dependOn(&b.addRunArtifact(boundary).step);
     b.default_step = check;
 }

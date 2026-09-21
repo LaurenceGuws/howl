@@ -169,7 +169,7 @@ pub const Service = struct {
         while (index < self.clients.len) : (index += 1) {
             if (self.clients[index] == null) continue;
             const events = descriptors[index].revents;
-            if (events & (posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL) != 0) {
+            if (events & (posix.POLL.HUP | poll_rdhup | posix.POLL.ERR | posix.POLL.NVAL) != 0) {
                 self.closeClient(index);
                 continue;
             }
@@ -457,7 +457,7 @@ pub const Service = struct {
 
     fn status(self: *const Service) protocol.Status {
         return .{
-            .server_id = self.server.id,
+            .server_id = self.server.identity(),
             .tree_revision = self.server.treeRevision(),
             .session_count = self.server.sessionCount(),
             .instance_count = self.server.instanceCountTotal(),
@@ -522,8 +522,12 @@ pub const Service = struct {
     }
 };
 
+// Linux POLLRDHUP is not yet named by the pinned stdlib. Unlike POLLHUP,
+// it observes a TCP FIN even while our write half remains open.
+const poll_rdhup: i16 = 0x2000;
+
 fn clientPollEvents(client: Client) i16 {
-    var events: i16 = posix.POLL.HUP | posix.POLL.ERR;
+    var events: i16 = posix.POLL.HUP | poll_rdhup | posix.POLL.ERR;
     if (client.outputPending()) {
         events |= posix.POLL.OUT;
     } else if (client.observe_after == null) {
@@ -682,9 +686,9 @@ fn handshakeControl(peer: *TestPeer, service: *Service) !protocol.Status {
 }
 
 test "control service creates empty Session before explicit Instance creation" {
-    var server = try model.Server.init(std.testing.allocator, 0x51);
+    const server = try model.Server.init(std.testing.allocator, 0x51);
     defer server.deinit();
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
@@ -720,15 +724,15 @@ test "control service creates empty Session before explicit Instance creation" {
 }
 
 test "tree observer wakes on explicit Instance creation under its Session" {
-    var server = try model.Server.init(std.testing.allocator, 0x52);
+    const server = try model.Server.init(std.testing.allocator, 0x52);
     defer server.deinit();
     const work = try server.createSession("work");
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var observer = try TestPeer.adopt(std.testing.allocator, &service);
     defer observer.deinit();
     const observer_welcome = try handshakeControl(&observer, &service);
-    try std.testing.expectEqual(server.id, observer_welcome.server_id);
+    try std.testing.expectEqual(server.identity(), observer_welcome.server_id);
 
     var observe: [protocol.payload_bytes.observe_tree]u8 = undefined;
     protocol.encodeObserveTree(&observe, .{ .after_revision = server.treeRevision() });
@@ -741,7 +745,7 @@ test "tree observer wakes on explicit Instance creation under its Session" {
     var control = try TestPeer.adopt(std.testing.allocator, &service);
     defer control.deinit();
     const control_welcome = try handshakeControl(&control, &service);
-    try std.testing.expectEqual(server.id, control_welcome.server_id);
+    try std.testing.expectEqual(server.identity(), control_welcome.server_id);
     var create_storage: [protocol.maximum_request_payload_bytes]u8 = undefined;
     const create = try protocol.encodeCreateInstance(&create_storage, .{
         .session_id = work,
@@ -773,7 +777,7 @@ test "tree observer wakes on explicit Instance creation under its Session" {
 }
 
 test "exact attach transfers one control stream into unchanged HWLS" {
-    var server = try model.Server.init(std.testing.allocator, 0x53);
+    const server = try model.Server.init(std.testing.allocator, 0x53);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -783,12 +787,12 @@ test "exact attach transfers one control stream into unchanged HWLS" {
         .columns = 20,
         .history_rows = 32,
     });
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
     const peer_welcome = try handshakeControl(&peer, &service);
-    try std.testing.expectEqual(server.id, peer_welcome.server_id);
+    try std.testing.expectEqual(server.identity(), peer_welcome.server_id);
 
     var identity: [protocol.payload_bytes.instance_identity]u8 = undefined;
     try protocol.encodeInstanceIdentity(&identity, .{ .session_id = work, .instance_id = instance_id });
@@ -830,17 +834,19 @@ test "exact attach transfers one control stream into unchanged HWLS" {
     const header = welcome_header orelse return error.TestTimeout;
     try std.testing.expectEqual(instance_protocol.Kind.welcome, header.kind);
     try std.testing.expectEqual(@as(u32, instance_protocol.payload_bytes.welcome), header.payload_len);
-    while (peer.incoming.items.len < header.payload_len) {
+    turns = 0;
+    while (peer.incoming.items.len < header.payload_len and turns < 10_000) : (turns += 1) {
         try server.turnInstance(work, instance_id, 1);
         try peer.readAvailable();
     }
+    if (peer.incoming.items.len < header.payload_len) return error.TestTimeout;
     const hwls_welcome = try instance_protocol.decodeWelcome(peer.incoming.items[0..header.payload_len]);
     try std.testing.expect(hwls_welcome.client_id != instance_protocol.no_client);
     peer.consume(header.payload_len);
 }
 
 test "attach identity failure stays on control stream with distinct error" {
-    var server = try model.Server.init(std.testing.allocator, 0x54);
+    const server = try model.Server.init(std.testing.allocator, 0x54);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -849,12 +855,12 @@ test "attach identity failure stays on control stream with distinct error" {
         .rows = 2,
         .columns = 8,
     });
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
     const peer_welcome = try handshakeControl(&peer, &service);
-    try std.testing.expectEqual(server.id, peer_welcome.server_id);
+    try std.testing.expectEqual(server.identity(), peer_welcome.server_id);
 
     var identity: [protocol.payload_bytes.instance_identity]u8 = undefined;
     try protocol.encodeInstanceIdentity(&identity, .{ .session_id = work, .instance_id = instance_id + 100 });
@@ -871,9 +877,9 @@ test "attach identity failure stays on control stream with distinct error" {
 }
 
 test "failed control adoption retains caller fd ownership" {
-    var server = try model.Server.init(std.testing.allocator, 0x55);
+    const server = try model.Server.init(std.testing.allocator, 0x55);
     defer server.deinit();
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var pair: [2]posix.fd_t = undefined;
     const socket_result = posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
@@ -887,15 +893,15 @@ test "failed control adoption retains caller fd ownership" {
 }
 
 test "malformed control client closes alone" {
-    var server = try model.Server.init(std.testing.allocator, 0x56);
+    const server = try model.Server.init(std.testing.allocator, 0x56);
     defer server.deinit();
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
 
     var good = try TestPeer.adopt(std.testing.allocator, &service);
     defer good.deinit();
     const good_welcome = try handshakeControl(&good, &service);
-    try std.testing.expectEqual(server.id, good_welcome.server_id);
+    try std.testing.expectEqual(server.identity(), good_welcome.server_id);
 
     var bad = try TestPeer.adopt(std.testing.allocator, &service);
     defer bad.deinit();
@@ -914,7 +920,7 @@ test "malformed control client closes alone" {
 }
 
 test "unserviced control client cannot pace Instance lifecycle" {
-    var server = try model.Server.init(std.testing.allocator, 0x57);
+    const server = try model.Server.init(std.testing.allocator, 0x57);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -923,12 +929,12 @@ test "unserviced control client cannot pace Instance lifecycle" {
         .rows = 2,
         .columns = 8,
     });
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
     const welcome = try handshakeControl(&peer, &service);
-    try std.testing.expectEqual(server.id, welcome.server_id);
+    try std.testing.expectEqual(server.identity(), welcome.server_id);
 
     // Leave a valid control request unread/unserviced while the Instance advances.
     try peer.sendFrame(.status, &.{});
@@ -941,14 +947,14 @@ test "unserviced control client cannot pace Instance lifecycle" {
 }
 
 test "control Service deinit leaves borrowed Server usable" {
-    var server = try model.Server.init(std.testing.allocator, 0x58);
+    const server = try model.Server.init(std.testing.allocator, 0x58);
     defer server.deinit();
     const first = try server.createSession("first");
     {
-        var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+        var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
         var peer = try TestPeer.adopt(std.testing.allocator, &service);
         const welcome = try handshakeControl(&peer, &service);
-        try std.testing.expectEqual(server.id, welcome.server_id);
+        try std.testing.expectEqual(server.identity(), welcome.server_id);
         peer.deinit();
         service.deinit();
     }
@@ -959,9 +965,9 @@ test "control Service deinit leaves borrowed Server usable" {
 }
 
 test "control wait descriptors distinguish input output and parked tree observers" {
-    var server = try model.Server.init(std.testing.allocator, 0x59);
+    const server = try model.Server.init(std.testing.allocator, 0x59);
     defer server.deinit();
-    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, server);
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
@@ -993,6 +999,7 @@ test "control wait descriptors distinguish input output and parked tree observer
     try std.testing.expectEqual(@as(usize, 1), waits.len);
     try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.IN);
     try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.OUT);
+    try std.testing.expect(waits[0].events & poll_rdhup != 0);
     try std.testing.expect(waits[0].events & posix.POLL.HUP != 0);
     try std.testing.expect(waits[0].events & posix.POLL.ERR != 0);
 }

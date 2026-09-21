@@ -50,19 +50,13 @@ const Listener = struct {
     unix_path: [108]u8 = @splat(0),
     unix_path_len: u8 = 0,
     tcp_port: ?u16 = null,
+    unix_identity: ?PathIdentity = null,
 
-    fn init(io: std.Io, spec: ListenerSpec) !Listener {
+    fn init(spec: ListenerSpec) !Listener {
         return switch (spec) {
             .unix => |path| blk: {
                 if (path.len == 0 or path.len >= 108) return error.SocketPathTooLong;
-                std.Io.Dir.deleteFileAbsolute(io, path) catch |failure| switch (failure) {
-                    error.FileNotFound => {},
-                    else => return failure,
-                };
-                const fd = try listenUnix(path);
-                var value = Listener{ .fd = fd, .unix_path_len = @intCast(path.len) };
-                @memcpy(value.unix_path[0..path.len], path);
-                break :blk value;
+                break :blk try listenUnix(path);
             },
             .tcp_loopback => |port| blk: {
                 const bound = try listenTcpLoopback(port);
@@ -72,8 +66,8 @@ const Listener = struct {
     }
 
     fn deinit(self: *Listener) void {
+        if (self.unix_identity) |identity| identity.unlinkIfOwned(self.unix_path[0..self.unix_path_len]);
         closeFd(self.fd);
-        if (self.unix_path_len != 0) unlinkPath(self.unix_path[0..self.unix_path_len]);
         self.* = undefined;
     }
 
@@ -85,12 +79,12 @@ const Listener = struct {
 };
 
 pub const Runtime = struct {
-    allocator: std.mem.Allocator,
     io: std.Io,
     listener: Listener,
     server: *model.Server,
     service: control.Service,
     wait_cursor: usize = 0,
+    next_reconcile_ns: i96 = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -99,14 +93,11 @@ pub const Runtime = struct {
         listener_spec: ListenerSpec,
         server_id: u64,
     ) !Runtime {
-        const server = try allocator.create(model.Server);
-        errdefer allocator.destroy(server);
-        server.* = try model.Server.init(allocator, server_id);
+        const server = try model.Server.init(allocator, server_id);
         errdefer server.deinit();
-        var listener = try Listener.init(io, listener_spec);
+        var listener = try Listener.init(listener_spec);
         errdefer listener.deinit();
         return .{
-            .allocator = allocator,
             .io = io,
             .listener = listener,
             .server = server,
@@ -127,12 +118,11 @@ pub const Runtime = struct {
         self.service.deinit();
         self.listener.deinit();
         self.server.deinit();
-        self.allocator.destroy(self.server);
         self.* = undefined;
     }
 
     pub fn serverId(self: *const Runtime) u64 {
-        return self.server.id;
+        return self.server.identity();
     }
 
     pub fn endpointText(self: *const Runtime, output: []u8) ![]const u8 {
@@ -142,7 +132,10 @@ pub const Runtime = struct {
     /// One bounded cooperative turn. Socket/PTy readiness shares one aggregate poll;
     /// only Instance-internal timer/client/write work receives direct rotating turns.
     pub fn turn(self: *Runtime) !void {
-        try self.serviceAggregateReadiness(0);
+        self.serviceAggregateReadiness(0) catch |err| switch (err) {
+            error.SignalInterrupt => return,
+            else => return err,
+        };
 
         const revision_before_drain = self.server.treeRevision();
         try self.turnActiveInstances(0);
@@ -152,7 +145,10 @@ pub const Runtime = struct {
 
         const instance_count: usize = self.server.turnInstanceCount();
         if (instance_count == 0) {
-            try self.serviceAggregateReadiness(idle_wait_ms);
+            self.serviceAggregateReadiness(idle_wait_ms) catch |err| switch (err) {
+                error.SignalInterrupt => return,
+                else => return err,
+            };
             return;
         }
 
@@ -225,7 +221,19 @@ pub const Runtime = struct {
             }
         }
 
-        const ready = try posix.poll(descriptors[0..descriptor_count], timeout_ms);
+        const before_poll = std.Io.Clock.awake.now(self.io).toNanoseconds();
+        const remaining_ms = std.math.divCeil(i96, @max(0, self.next_reconcile_ns - before_poll), std.time.ns_per_ms) catch unreachable;
+        const wait_ms: i32 = @intCast(@min(timeout_ms, remaining_ms));
+        const timeout: posix.timespec = .{
+            .sec = @divTrunc(wait_ms, 1000),
+            .nsec = @rem(wait_ms, 1000) * std.time.ns_per_ms,
+        };
+        // Unlike poll's EINTR retry loop, ppoll lets the host observe termination
+        // intent immediately. Repeated signals must not restart the idle wait.
+        const ready = try posix.ppoll(descriptors[0..descriptor_count], &timeout, null);
+        const now = std.Io.Clock.awake.now(self.io).toNanoseconds();
+        const reconcile = now >= self.next_reconcile_ns;
+        if (reconcile) self.next_reconcile_ns = now + idle_wait_ms * std.time.ns_per_ms;
         std.debug.assert(ready <= descriptor_count);
         if (descriptors[0].revents & posix.POLL.NVAL != 0) unreachable;
 
@@ -244,7 +252,9 @@ pub const Runtime = struct {
         const instance_base = 1 + control_descriptor_count;
         for (owners[0..owner_count], 0..) |owner, index| {
             const events = descriptors[instance_base + index].revents;
-            if (events == 0) continue;
+            // Leader exit need not make the PTY readable: a descendant may
+            // retain the slave. Reconcile the bounded live set at housekeeping.
+            if (events == 0 and !reconcile) continue;
             std.debug.assert(events & posix.POLL.NVAL == 0);
             try self.server.turnInstance(owner.session_id, owner.instance_id, 0);
         }
@@ -347,7 +357,11 @@ fn listenTcpLoopback(requested_port: u16) !TcpListener {
     return .{ .fd = fd, .port = port };
 }
 
-fn listenUnix(path: []const u8) !posix.fd_t {
+fn listenUnix(path: []const u8) !Listener {
+    return completeUnix(try bindUnix(path));
+}
+
+fn bindUnix(path: []const u8) !Listener {
     const raw = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
@@ -356,11 +370,22 @@ fn listenUnix(path: []const u8) !posix.fd_t {
     var address: linux.sockaddr.un = undefined;
     const length = try unixAddress(path, &address);
     if (linux.errno(linux.bind(fd, @ptrCast(&address), length)) != .SUCCESS) return error.SocketBindFailed;
-    var path_buffer: [109]u8 = @splat(0);
-    @memcpy(path_buffer[0..path.len], path);
-    if (linux.errno(linux.chmod(@ptrCast(&path_buffer), 0o600)) != .SUCCESS) return error.SocketModeFailed;
-    if (linux.errno(linux.listen(fd, maximum_accepts_per_turn)) != .SUCCESS) return error.SocketListenFailed;
-    return fd;
+    // If identity cannot be established, fail closed rather than unlinking an
+    // entry we cannot prove is ours. The directory must be owner-controlled.
+    const identity = try PathIdentity.read(path);
+    var value = Listener{ .fd = fd, .unix_path_len = @intCast(path.len), .unix_identity = identity };
+    @memcpy(value.unix_path[0..path.len], path);
+    return value;
+}
+
+// Bound construction already owns both resources, including on chmod/listen
+// failure. Completion and ordinary teardown use the same exact ownership test.
+fn completeUnix(bound: Listener) !Listener {
+    var value = bound;
+    errdefer value.deinit();
+    if (linux.errno(linux.chmod(@ptrCast(&value.unix_path), 0o600)) != .SUCCESS) return error.SocketModeFailed;
+    if (linux.errno(linux.listen(value.fd, maximum_accepts_per_turn)) != .SUCCESS) return error.SocketListenFailed;
+    return value;
 }
 
 fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTooLong}!linux.socklen_t {
@@ -397,14 +422,33 @@ fn closeFd(fd: posix.fd_t) void {
     std.debug.assert(errno == .SUCCESS or errno == .INTR);
 }
 
-fn unlinkPath(path: []const u8) void {
-    if (path.len == 0 or path.len >= 108) return;
-    var buffer: [109]u8 = @splat(0);
-    @memcpy(buffer[0..path.len], path);
-    const result = linux.unlink(@ptrCast(&buffer));
-    const errno = linux.errno(result);
-    std.debug.assert(errno == .SUCCESS or errno == .NOENT);
-}
+// The endpoint's containing directory must be owner-controlled. Identity checks
+// protect replacement owners, not hostile rename races in a shared directory.
+const PathIdentity = struct {
+    device_major: u32,
+    device_minor: u32,
+    inode: u64,
+
+    fn read(path: []const u8) !PathIdentity {
+        var buffer: [109]u8 = @splat(0);
+        @memcpy(buffer[0..path.len], path);
+        var stat: linux.Statx = undefined;
+        if (linux.errno(linux.statx(linux.AT.FDCWD, @ptrCast(&buffer), linux.AT.SYMLINK_NOFOLLOW, .{ .INO = true, .TYPE = true }, &stat)) != .SUCCESS or
+            !stat.mask.INO or !stat.mask.TYPE or stat.mode & linux.S.IFMT != linux.S.IFSOCK)
+            return error.SocketIdentityFailed;
+        return .{ .device_major = stat.dev_major, .device_minor = stat.dev_minor, .inode = stat.ino };
+    }
+
+    fn unlinkIfOwned(self: PathIdentity, path: []const u8) void {
+        const current = read(path) catch return;
+        if (!std.meta.eql(self, current)) return;
+        var buffer: [109]u8 = @splat(0);
+        @memcpy(buffer[0..path.len], path);
+        const result = linux.unlink(@ptrCast(&buffer));
+        const errno = linux.errno(result);
+        std.debug.assert(errno == .SUCCESS or errno == .NOENT);
+    }
+};
 
 test "listener grammar has no terminal launch vocabulary" {
     try std.testing.expectEqualDeep(ListenerSpec{ .tcp_loopback = 0 }, try parseListener("tcp:0"));
@@ -429,4 +473,102 @@ test "runtime owns one TCP listener and reports its resolved endpoint" {
     try std.testing.expect(std.mem.startsWith(u8, endpoint, "tcp://127.0.0.1:"));
     try std.testing.expectEqual(@as(u64, 0x1234), runtime.serverId());
     try std.testing.expectEqual(@as(u16, 0), runtime.server.sessionCount());
+}
+
+test "one HWLS welcome allocation failure cannot escape the multi-Instance runtime" {
+    const protocol = @import("howl_instance").protocol;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var runtime = try Runtime.init(failing.allocator(), std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, 42);
+    defer runtime.deinit();
+    const sid = try runtime.server.createSession("oom");
+    const first = try runtime.server.createInstance(sid, std.testing.io, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 2,
+    });
+    const second = try runtime.server.createInstance(sid, std.testing.io, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 2,
+    });
+    var bad: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.NONBLOCK, 0, &bad)));
+    defer closeFd(bad[1]);
+    var adopted = false;
+    defer if (!adopted) closeFd(bad[0]);
+    var hello: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
+    try runtime.server.adoptClient(sid, first, bad[0], &hello, &.{});
+    adopted = true;
+    failing.fail_index = failing.alloc_index;
+    try runtime.turn();
+    try std.testing.expect(failing.has_induced_failure);
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(@as(u16, 2), runtime.server.instanceCountTotal());
+    var byte: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linux.read(bad[1], &byte, 1));
+
+    var good: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.NONBLOCK, 0, &good)));
+    defer closeFd(good[1]);
+    var good_adopted = false;
+    defer if (!good_adopted) closeFd(good[0]);
+    try runtime.server.adoptClient(sid, second, good[0], &hello, &.{});
+    good_adopted = true;
+    var frame: [protocol.header_bytes + protocol.payload_bytes.welcome]u8 = undefined;
+    var received: usize = 0;
+    var turns: usize = 0;
+    while (received < frame.len and turns < 100) : (turns += 1) {
+        try runtime.turn();
+        const raw = linux.read(good[1], frame[received..].ptr, frame.len - received);
+        switch (linux.errno(raw)) {
+            .SUCCESS => {
+                try std.testing.expect(raw > 0 and raw <= frame.len - received);
+                received += raw;
+            },
+            .AGAIN, .INTR => {},
+            else => return error.TestReadFailed,
+        }
+    }
+    try std.testing.expectEqual(frame.len, received);
+    try std.testing.expectEqual(protocol.Kind.welcome, (try protocol.decodeHeader(frame[0..protocol.header_bytes])).kind);
+}
+
+test "post-bind listen failure rolls back only its constructed Unix path" {
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+    var root_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try directory.dir.realPath(std.testing.io, &root_buffer);
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "{s}/u", .{root_buffer[0..root_len]});
+    var peer_buffer: [108]u8 = undefined;
+    const peer_path = try std.fmt.bufPrint(&peer_buffer, "{s}/p", .{root_buffer[0..root_len]});
+    var peer = try listenUnix(peer_path);
+    defer peer.deinit();
+    var bound = try bindUnix(path);
+    var owned = true;
+    defer if (owned) bound.deinit();
+    // A connected stream cannot become a listener. This forces a real listen
+    // failure after successful bind/identity acquisition without a syscall mock.
+    var address: linux.sockaddr.un = undefined;
+    const length = try unixAddress(peer_path, &address);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.connect(bound.fd, @ptrCast(&address), length)));
+    owned = false; // completeUnix consumes construction, on success or failure.
+    try std.testing.expectError(error.SocketListenFailed, completeUnix(bound));
+    try std.testing.expectError(error.SocketIdentityFailed, PathIdentity.read(path));
+    try std.testing.expectEqual(peer.unix_identity.?, try PathIdentity.read(peer_path));
+}
+
+test "Runtime owns one Server allocation with no wrapper allocation" {
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var runtime = try Runtime.init(counting.allocator(), std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, 42);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), counting.alloc_index);
+    const view: *const model.Server = runtime.server;
+    try std.testing.expectEqual(@as(u64, 42), view.identity());
+    try std.testing.expectEqual(@as(u16, 0), view.sessionCount());
 }

@@ -50,17 +50,17 @@ fn adoptedPair(service: *server_service.Service) !transport.Stream {
 }
 
 test "Server client preserves Session Instance hierarchy and exact attach stream" {
-    var server = try model.Server.init(std.testing.allocator, 0x91);
+    const server = try model.Server.init(std.testing.allocator, 0x91);
     defer server.deinit();
     var service = server_service.Service.init(
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        &server,
+        server,
     );
     defer service.deinit();
 
-    var pump = Pump{ .service = &service, .server = &server };
+    var pump = Pump{ .service = &service, .server = server };
     const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
     defer {
         pump.stop.store(true, .release);
@@ -111,16 +111,16 @@ test "Server client preserves Session Instance hierarchy and exact attach stream
 }
 
 test "typed Server client errors leave control connection usable" {
-    var server = try model.Server.init(std.testing.allocator, 0x92);
+    const server = try model.Server.init(std.testing.allocator, 0x92);
     defer server.deinit();
     var service = server_service.Service.init(
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        &server,
+        server,
     );
     defer service.deinit();
-    var pump = Pump{ .service = &service, .server = &server };
+    var pump = Pump{ .service = &service, .server = server };
     const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
     defer {
         pump.stop.store(true, .release);

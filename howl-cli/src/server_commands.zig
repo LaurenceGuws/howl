@@ -102,6 +102,8 @@ fn instanceCommand(
 
 fn runServer(init: std.process.Init, listen: []const u8) !void {
     const spec = try server_runtime.parseListener(listen);
+    var termination = try Termination.init();
+    defer termination.deinit();
     var runtime = try server_runtime.Runtime.initFresh(
         init.gpa,
         init.io,
@@ -122,8 +124,50 @@ fn runServer(init: std.process.Init, listen: []const u8) !void {
     try writer.writeAll("}\n");
     try writer.flush();
 
-    return runtime.run();
+    while (!termination_requested.load(.acquire)) try runtime.turn();
 }
+
+// Foreground host policy only. The handler publishes intent; ordinary control
+// flow performs all allocator, descriptor and process teardown. A runtime turn
+// returns on an interrupted aggregate wait, rather than restarting its timeout.
+var termination_requested = std.atomic.Value(bool).init(false);
+
+fn requestTermination(_: std.os.linux.SIG) callconv(.c) void {
+    termination_requested.store(true, .release);
+}
+
+const Termination = struct {
+    interrupt: std.os.linux.Sigaction,
+    terminate: std.os.linux.Sigaction,
+
+    fn init() !Termination {
+        const linux = std.os.linux;
+        termination_requested.store(false, .release);
+        const action: linux.Sigaction = .{
+            .handler = .{ .handler = requestTermination },
+            .mask = linux.sigemptyset(),
+            .flags = 0,
+        };
+        var value: Termination = undefined;
+        if (linux.errno(linux.sigaction(linux.SIG.INT, &action, &value.interrupt)) != .SUCCESS)
+            return error.SignalSetupFailed;
+        errdefer restore(linux.SIG.INT, &value.interrupt);
+        if (linux.errno(linux.sigaction(linux.SIG.TERM, &action, &value.terminate)) != .SUCCESS)
+            return error.SignalSetupFailed;
+        return value;
+    }
+
+    fn restore(signal: std.os.linux.SIG, action: *const std.os.linux.Sigaction) void {
+        const linux = std.os.linux;
+        const result = linux.sigaction(signal, action, null);
+        std.debug.assert(linux.errno(result) == .SUCCESS);
+    }
+
+    fn deinit(self: *Termination) void {
+        restore(std.os.linux.SIG.TERM, &self.terminate);
+        restore(std.os.linux.SIG.INT, &self.interrupt);
+    }
+};
 
 fn connect(
     init: std.process.Init,

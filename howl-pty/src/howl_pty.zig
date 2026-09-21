@@ -1807,7 +1807,7 @@ test "PTY pixel extents start and resize atomically without a renderer dependenc
     try std.testing.expectEqualDeep(accepted, size);
 }
 
-test "reaped leader cleanup kills HUP and TERM resistant descendants" {
+test "anchored unreaped leader cleanup kills HUP and TERM resistant descendants" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     const command =
         "(trap '' HUP TERM; while :; do sleep 1; done) & " ++

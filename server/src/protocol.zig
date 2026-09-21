@@ -475,7 +475,8 @@ fn validateStatus(value: Status) PayloadError!void {
         return error.InvalidPayload;
 }
 
-fn validateSessionName(name: []const u8) PayloadError!void {
+/// Model and wire share this exact bounded ASCII name contract.
+pub fn validateSessionName(name: []const u8) PayloadError!void {
     if (name.len == 0 or name.len > maximum_session_name_bytes) return error.InvalidPayload;
     for (name) |byte| if (!((byte >= 'a' and byte <= 'z') or
         (byte >= 'A' and byte <= 'Z') or

@@ -4,6 +4,7 @@
 //! Instance; concrete terminal launch belongs to explicit Instance creation.
 
 const std = @import("std");
+const server_protocol = @import("server_protocol");
 const session_mod = @import("session.zig");
 const howl_instance = @import("howl_instance");
 
@@ -18,15 +19,6 @@ pub const SessionView = struct {
     instance_count: u16,
 };
 
-const SessionRecord = struct {
-    value: session_mod.Session,
-
-    fn deinit(self: *SessionRecord) void {
-        self.value.deinit();
-        self.* = undefined;
-    }
-};
-
 pub const CreateSessionError = std.mem.Allocator.Error || error{
     InvalidName,
     NameExists,
@@ -34,53 +26,70 @@ pub const CreateSessionError = std.mem.Allocator.Error || error{
     IdentityExhausted,
 };
 
-pub const Server = struct {
+// Only this file can recover the owning records; public handles carry no typed
+// path to mutable nested Session/Instance storage.
+const Storage = struct {
     allocator: std.mem.Allocator,
     id: u64,
     next_session_id: SessionId = 1,
     revision: u64 = 1,
-    sessions: [maximum_sessions]?SessionRecord = @splat(null),
+    sessions: [maximum_sessions]?*session_mod.Session = @splat(null),
     count: u16 = 0,
+};
+pub const Server = opaque {
+    fn stateMut(self: *Server) *Storage {
+        return @ptrCast(@alignCast(self));
+    }
 
-    pub fn init(allocator: std.mem.Allocator, id: u64) error{InvalidServerIdentity}!Server {
+    fn stateConst(self: *const Server) *const Storage {
+        return @ptrCast(@alignCast(self));
+    }
+
+    pub fn init(allocator: std.mem.Allocator, id: u64) (std.mem.Allocator.Error || error{InvalidServerIdentity})!*Server {
         if (id == 0) return error.InvalidServerIdentity;
-        return .{ .allocator = allocator, .id = id };
+        const storage = try allocator.create(Storage);
+        storage.* = .{ .allocator = allocator, .id = id };
+        return @ptrCast(storage);
+    }
+
+    pub fn identity(self: *const Server) u64 {
+        return self.stateConst().id;
     }
 
     pub fn deinit(self: *Server) void {
-        var index = self.sessions.len;
+        var index = self.stateMut().sessions.len;
         while (index != 0) {
             index -= 1;
-            if (self.sessions[index]) |*record| {
+            if (self.stateMut().sessions[index]) |record| {
                 record.deinit();
-                self.sessions[index] = null;
+                self.stateMut().sessions[index] = null;
             }
         }
-        self.count = 0;
+        self.stateMut().allocator.destroy(self.stateMut());
     }
 
     pub fn sessionCount(self: *const Server) u16 {
-        return self.count;
+        return self.stateConst().count;
     }
 
     pub fn treeRevision(self: *const Server) u64 {
-        return self.revision;
+        return self.stateConst().revision;
     }
 
     pub fn instanceCountTotal(self: *const Server) u16 {
         var total: u16 = 0;
-        for (self.sessions) |maybe_record| {
+        for (self.stateConst().sessions) |maybe_record| {
             const record = maybe_record orelse continue;
-            total += record.value.instanceCount();
+            total += record.instanceCount();
         }
         return total;
     }
 
     pub fn turnInstanceCount(self: *const Server) u16 {
         var total: u16 = 0;
-        for (self.sessions) |maybe_record| {
+        for (self.stateConst().sessions) |maybe_record| {
             const record = maybe_record orelse continue;
-            total += record.value.turnInstanceCount();
+            total += record.turnInstanceCount();
         }
         return total;
     }
@@ -91,7 +100,7 @@ pub const Server = struct {
         instance_id: session_mod.InstanceId,
     ) ?bool {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return self.sessions[index].?.value.instanceRequiresTurn(instance_id);
+        return self.stateConst().sessions[index].?.instanceRequiresTurn(instance_id);
     }
 
     pub fn instanceWaitDescriptor(
@@ -100,25 +109,25 @@ pub const Server = struct {
         instance_id: session_mod.InstanceId,
     ) error{NotStarted}!?std.posix.fd_t {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return try self.sessions[index].?.value.instanceWaitDescriptor(instance_id);
+        return try self.stateConst().sessions[index].?.instanceWaitDescriptor(instance_id);
     }
 
     /// Borrows Session names until the next Server mutation; scalar fields are copied.
     pub fn snapshotSessions(self: *const Server, output: *[maximum_sessions]SessionView) []const SessionView {
         var count: usize = 0;
-        for (self.sessions) |maybe_record| {
+        for (self.stateConst().sessions) |maybe_record| {
             const record = maybe_record orelse continue;
             var insert = count;
-            while (insert != 0 and output[insert - 1].id > record.value.id) : (insert -= 1)
+            while (insert != 0 and output[insert - 1].id > record.id) : (insert -= 1)
                 output[insert] = output[insert - 1];
             output[insert] = .{
-                .id = record.value.id,
-                .name = record.value.name,
-                .instance_count = record.value.instanceCount(),
+                .id = record.id,
+                .name = record.name,
+                .instance_count = record.instanceCount(),
             };
             count += 1;
         }
-        std.debug.assert(count == self.count);
+        std.debug.assert(count == self.stateConst().count);
         return output[0..count];
     }
 
@@ -128,33 +137,33 @@ pub const Server = struct {
         output: *[session_mod.maximum_instances]session_mod.InstanceView,
     ) ?[]const session_mod.InstanceView {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return self.sessions[index].?.value.snapshotInstances(output);
+        return self.stateConst().sessions[index].?.snapshotInstances(output);
     }
 
     pub fn createSession(self: *Server, name: []const u8) CreateSessionError!SessionId {
-        if (name.len == 0 or name.len > 64) return error.InvalidName;
+        server_protocol.validateSessionName(name) catch return error.InvalidName;
         if (self.findSessionByName(name) != null) return error.NameExists;
-        if (self.count == self.sessions.len) return error.Capacity;
-        if (self.next_session_id == 0) return error.IdentityExhausted;
+        if (self.stateMut().count == self.stateMut().sessions.len) return error.Capacity;
+        if (self.stateMut().next_session_id == 0) return error.IdentityExhausted;
         const slot = self.freeSlot() orelse unreachable;
-        const id = self.next_session_id;
-        var value = session_mod.Session.init(self.allocator, id, name) catch |failure| switch (failure) {
+        const id = self.stateMut().next_session_id;
+        const value = session_mod.Session.init(self.stateMut().allocator, id, name) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             error.InvalidName => return error.InvalidName,
         };
         errdefer value.deinit();
-        self.next_session_id = advanceIdentity(id) catch return error.IdentityExhausted;
-        self.sessions[slot] = .{ .value = value };
-        self.count += 1;
+        self.stateMut().next_session_id = advanceIdentity(id) catch return error.IdentityExhausted;
+        self.stateMut().sessions[slot] = value;
+        self.stateMut().count += 1;
         self.bumpRevision();
         return id;
     }
 
     pub fn closeSession(self: *Server, id: SessionId) bool {
         const index = self.findSessionIndex(id) orelse return false;
-        if (self.sessions[index]) |*record| record.deinit();
-        self.sessions[index] = null;
-        self.count -= 1;
+        if (self.stateMut().sessions[index]) |record| record.deinit();
+        self.stateMut().sessions[index] = null;
+        self.stateMut().count -= 1;
         self.bumpRevision();
         return true;
     }
@@ -169,26 +178,26 @@ pub const Server = struct {
         launch: howl_instance.Launch,
     ) CreateInstanceError!session_mod.InstanceId {
         const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
-        const instance_id = try self.sessions[index].?.value.createInstance(io, inherited_environment, launch);
+        const instance_id = try self.stateMut().sessions[index].?.createInstance(io, inherited_environment, launch);
         self.bumpRevision();
         return instance_id;
     }
 
     pub fn closeInstance(self: *Server, session_id: SessionId, instance_id: session_mod.InstanceId) bool {
         const index = self.findSessionIndex(session_id) orelse return false;
-        const closed = self.sessions[index].?.value.closeInstance(instance_id);
+        const closed = self.stateMut().sessions[index].?.closeInstance(instance_id);
         if (closed) self.bumpRevision();
         return closed;
     }
 
     pub fn instanceCount(self: *const Server, session_id: SessionId) ?u16 {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return self.sessions[index].?.value.instanceCount();
+        return self.stateConst().sessions[index].?.instanceCount();
     }
 
     pub fn instanceState(self: *const Server, session_id: SessionId, instance_id: session_mod.InstanceId) ?session_mod.InstanceState {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return self.sessions[index].?.value.instanceState(instance_id);
+        return self.stateConst().sessions[index].?.instanceState(instance_id);
     }
 
     pub const AdoptClientError = session_mod.Session.AdoptClientError || error{SessionNotFound};
@@ -202,7 +211,7 @@ pub const Server = struct {
         preface_output: []const u8,
     ) AdoptClientError!void {
         const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
-        return self.sessions[index].?.value.adoptClient(instance_id, fd, initial_input, preface_output);
+        return self.stateMut().sessions[index].?.adoptClient(instance_id, fd, initial_input, preface_output);
     }
 
     pub const TurnInstanceError = session_mod.Session.TurnInstanceError || error{SessionNotFound};
@@ -214,32 +223,32 @@ pub const Server = struct {
         timeout_ms: i32,
     ) TurnInstanceError!void {
         const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
-        const outcome = try self.sessions[index].?.value.turnInstance(instance_id, timeout_ms);
+        const outcome = try self.stateMut().sessions[index].?.turnInstance(instance_id, timeout_ms);
         if (outcome.state_changed) self.bumpRevision();
     }
 
     pub fn findSessionByName(self: *const Server, name: []const u8) ?SessionId {
-        for (self.sessions) |maybe_record| {
+        for (self.stateConst().sessions) |maybe_record| {
             const record = maybe_record orelse continue;
-            if (std.mem.eql(u8, record.value.name, name)) return record.value.id;
+            if (std.mem.eql(u8, record.name, name)) return record.id;
         }
         return null;
     }
 
     fn bumpRevision(self: *Server) void {
-        self.revision +%= 1;
-        if (self.revision == 0) self.revision = 1;
+        self.stateMut().revision +%= 1;
+        if (self.stateMut().revision == 0) self.stateMut().revision = 1;
     }
 
     fn freeSlot(self: *const Server) ?usize {
-        for (self.sessions, 0..) |record, index| if (record == null) return index;
+        for (self.stateConst().sessions, 0..) |record, index| if (record == null) return index;
         return null;
     }
 
     fn findSessionIndex(self: *const Server, id: SessionId) ?usize {
-        for (self.sessions, 0..) |maybe_record, index| {
+        for (self.stateConst().sessions, 0..) |maybe_record, index| {
             const record = maybe_record orelse continue;
-            if (record.value.id == id) return index;
+            if (record.id == id) return index;
         }
         return null;
     }
@@ -247,13 +256,13 @@ pub const Server = struct {
 
 test "Server identity is explicit and nonzero" {
     try std.testing.expectError(error.InvalidServerIdentity, Server.init(std.testing.allocator, 0));
-    var server = try Server.init(std.testing.allocator, 99);
+    const server = try Server.init(std.testing.allocator, 99);
     defer server.deinit();
-    try std.testing.expectEqual(@as(u64, 99), server.id);
+    try std.testing.expectEqual(@as(u64, 99), server.identity());
 }
 
-test "Server observations are sorted after slot reuse and expose no mutable Session" {
-    var server = try Server.init(std.testing.allocator, 42);
+test "Server observations are sorted after slot reuse" {
+    const server = try Server.init(std.testing.allocator, 42);
     defer server.deinit();
     const first = try server.createSession("first");
     const second = try server.createSession("second");
@@ -271,7 +280,7 @@ test "Server observations are sorted after slot reuse and expose no mutable Sess
 }
 
 test "Server routes Instance creation through the selected Session" {
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const other = try server.createSession("other");
@@ -297,7 +306,7 @@ fn advanceIdentity(current: u64) error{IdentityExhausted}!u64 {
 }
 
 test "Server creates empty Sessions without constructing Instances" {
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
 
     const work = try server.createSession("work");
@@ -307,7 +316,7 @@ test "Server creates empty Sessions without constructing Instances" {
 }
 
 test "Session identity survives Instance-independent CRUD" {
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const first = try server.createSession("first");
     const second = try server.createSession("second");
@@ -360,7 +369,7 @@ fn testReadExact(
 
 test "Server routes an adopted HWLS stream by exact Session and Instance identity" {
     const protocol = howl_instance.protocol;
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -384,19 +393,19 @@ test "Server routes an adopted HWLS stream by exact Session and Instance identit
     service_owns = true;
 
     var header_bytes: [protocol.header_bytes]u8 = undefined;
-    try testReadExact(&server, work, instance_id, pair[1], &header_bytes);
+    try testReadExact(server, work, instance_id, pair[1], &header_bytes);
     const header = try protocol.decodeHeader(&header_bytes);
     try std.testing.expectEqual(protocol.Kind.welcome, header.kind);
     try std.testing.expectEqual(@as(u32, protocol.payload_bytes.welcome), header.payload_len);
     var welcome_bytes: [protocol.payload_bytes.welcome]u8 = undefined;
-    try testReadExact(&server, work, instance_id, pair[1], &welcome_bytes);
+    try testReadExact(server, work, instance_id, pair[1], &welcome_bytes);
     const welcome = try protocol.decodeWelcome(&welcome_bytes);
     try std.testing.expect(welcome.client_id != protocol.no_client);
 }
 
 test "identity routing failure retains caller stream ownership" {
     const linux = std.os.linux;
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -428,7 +437,7 @@ test "identity routing failure retains caller stream ownership" {
 }
 
 test "Instance exit advances tree revision without ending its Session" {
-    var server = try Server.init(std.testing.allocator, 41);
+    const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     try std.testing.expectEqual(@as(u64, 1), server.treeRevision());
 
@@ -459,4 +468,58 @@ test "Instance exit advances tree revision without ending its Session" {
     try std.testing.expectEqual(@as(u16, 0), server.turnInstanceCount());
     try std.testing.expectEqual(@as(u64, 4), server.treeRevision());
     try std.testing.expectEqual(work, server.findSessionByName("work").?);
+}
+
+test "Session names accepted by the model are closed under wire publication" {
+    const server = try Server.init(std.testing.allocator, 42);
+    defer server.deinit();
+    const maximum_name: [server_protocol.maximum_session_name_bytes]u8 = @splat('a');
+    for ([_][]const u8{ "a", "AZaz09._-", &maximum_name }) |name| {
+        const sid = try server.createSession(name);
+        var views: [maximum_sessions]SessionView = undefined;
+        const view = server.snapshotSessions(&views)[0];
+        var output: [server_protocol.maximum_payload_bytes]u8 = undefined;
+        const wire = try server_protocol.encodeTreeSnapshot(&output, .{
+            .server_id = server.identity(),
+            .tree_revision = server.treeRevision(),
+            .session_count = 1,
+            .instance_count = 0,
+        }, &.{.{ .session_id = sid, .name = view.name, .instances = &.{} }});
+        var iterator = try server_protocol.TreeDecoder.init(wire);
+        const decoded = (try iterator.nextSession()).?;
+        try std.testing.expectEqualStrings(name, decoded.name);
+        try std.testing.expect(server.closeSession(sid));
+    }
+}
+
+test "invalid Session names reject transactionally with one model and wire contract" {
+    const server = try Server.init(std.testing.allocator, 42);
+    defer server.deinit();
+    const oversized: [server_protocol.maximum_session_name_bytes + 1]u8 = @splat('a');
+    for ([_][]const u8{ "", "has space", "slash/name", "nul\x00", "line\n", "é", &oversized }) |name| {
+        try std.testing.expectError(error.InvalidName, server.createSession(name));
+        try std.testing.expectError(error.InvalidPayload, server_protocol.validateSessionName(name));
+        try std.testing.expectEqual(@as(u16, 0), server.sessionCount());
+        try std.testing.expectEqual(@as(u64, 1), server.treeRevision());
+    }
+    try std.testing.expectEqual(@as(u64, 1), try server.createSession("valid"));
+}
+
+test "Server storage recovery preserves owner constness" {
+    try std.testing.expectEqual(*Storage, @typeInfo(@TypeOf(Server.stateMut)).@"fn".return_type.?);
+    try std.testing.expectEqual(*const Storage, @typeInfo(@TypeOf(Server.stateConst)).@"fn".return_type.?);
+}
+
+test "Session storage and name allocation failures do not publish model state" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const server = try Server.init(failing.allocator(), 42);
+    defer server.deinit();
+    for (0..2) |offset| {
+        failing.fail_index = failing.alloc_index + offset;
+        try std.testing.expectError(error.OutOfMemory, server.createSession("work"));
+        try std.testing.expectEqual(@as(u16, 0), server.sessionCount());
+        try std.testing.expectEqual(@as(u64, 1), server.treeRevision());
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(@as(u64, 1), try server.createSession("work"));
 }

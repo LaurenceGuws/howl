@@ -37,6 +37,7 @@ pub const CreateInstanceError = std.mem.Allocator.Error || howl_instance.InitErr
     IdentityExhausted,
 };
 
+// Internal typed owner, reachable only through Server's private records.
 pub const Session = struct {
     allocator: std.mem.Allocator,
     id: u64,
@@ -45,14 +46,17 @@ pub const Session = struct {
     instances: [maximum_instances]?InstanceRecord = @splat(null),
     count: u16 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, id: u64, name: []const u8) !Session {
+    pub fn init(allocator: std.mem.Allocator, id: u64, name: []const u8) !*Session {
         std.debug.assert(id != 0);
-        if (name.len == 0) return error.InvalidName;
-        return .{
+        @import("server_protocol").validateSessionName(name) catch return error.InvalidName;
+        const storage = try allocator.create(Session);
+        errdefer allocator.destroy(storage);
+        storage.* = .{
             .allocator = allocator,
             .id = id,
             .name = try allocator.dupe(u8, name),
         };
+        return storage;
     }
 
     pub fn deinit(self: *Session) void {
@@ -65,7 +69,7 @@ pub const Session = struct {
             }
         }
         self.allocator.free(self.name);
-        self.* = undefined;
+        self.allocator.destroy(self);
     }
 
     pub fn instanceCount(self: *const Session) u16 {
@@ -192,7 +196,7 @@ pub const Session = struct {
 };
 
 test "Instance removal leaves its Session alive and empty" {
-    var session = try Session.init(std.testing.allocator, 11, "work");
+    const session = try Session.init(std.testing.allocator, 11, "work");
     defer session.deinit();
 
     const first = try session.createInstance(std.testing.io, std.testing.environ, .{
@@ -218,7 +222,7 @@ test "Instance removal leaves its Session alive and empty" {
 }
 
 test "failed Instance construction mutates no Session identity or count" {
-    var session = try Session.init(std.testing.allocator, 13, "work");
+    const session = try Session.init(std.testing.allocator, 13, "work");
     defer session.deinit();
     try std.testing.expectError(
         error.InvalidDimensions,
@@ -247,7 +251,7 @@ fn advanceIdentity(current: u64) error{IdentityExhausted}!u64 {
 }
 
 test "Session creation has zero Instances and no launch policy" {
-    var session = try Session.init(std.testing.allocator, 7, "work");
+    const session = try Session.init(std.testing.allocator, 7, "work");
     defer session.deinit();
     try std.testing.expectEqual(@as(u16, 0), session.instanceCount());
     try std.testing.expectEqualStrings("work", session.name);

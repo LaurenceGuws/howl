@@ -784,7 +784,13 @@ pub const Service = struct {
                 const remaining = client.input_len - frame_len;
                 std.mem.copyForwards(u8, client.input[0..remaining], client.input[frame_len..client.input_len]);
                 client.input_len = remaining;
-                try self.handleFrame(index, header.kind, payload[0..header.payload_len]);
+                self.handleFrame(index, header.kind, payload[0..header.payload_len]) catch |err| {
+                    // Only response construction is tagged client-local. Canonical
+                    // PTY/VT service failures retain their outward error channel.
+                    if (err != error.ClientResponseOutOfMemory) return err;
+                    self.closeClient(index);
+                    break;
+                };
             }
         }
     }
@@ -968,7 +974,10 @@ pub const Service = struct {
                 .end = .{ .row = request.end.row, .col = request.end.column },
             },
             protocol.maximum_payload_bytes,
-        ) catch return self.queueResult(client, .text_extract, .rejected);
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.ClientResponseOutOfMemory,
+            else => return self.queueResult(client, .text_extract, .rejected),
+        };
         defer self.allocator.free(text);
         try self.queueFrame(client, .text_extract_data, text);
     }
@@ -997,7 +1006,7 @@ pub const Service = struct {
 
         client.resetOutput(self.allocator);
         errdefer client.resetOutput(self.allocator);
-        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+        client.output.ensureTotalCapacity(self.allocator, total_bound) catch return error.ClientResponseOutOfMemory;
         var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
         protocol.encodeImageBegin(&begin, .{
             .image_id = image.id,
@@ -1242,7 +1251,7 @@ pub const Service = struct {
             protocol.header_bytes + protocol.payload_bytes.consequence_end;
         client.resetOutput(self.allocator);
         errdefer client.resetOutput(self.allocator);
-        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+        client.output.ensureTotalCapacity(self.allocator, total_bound) catch return error.ClientResponseOutOfMemory;
         var begin: [protocol.payload_bytes.consequence_begin]u8 = undefined;
         try protocol.encodeConsequenceBegin(&begin, .{
             .terminal_revision = howl.terminal(self.instance).semanticSequence(),
@@ -1509,7 +1518,12 @@ pub const Service = struct {
             if (request.after_revision != 0 and request.after_revision >= self.observation_revision) continue;
             const mode = client.observe_mode;
             self.queueSnapshot(client, request, mode) catch |err| {
-                if (err != error.SnapshotTooLarge) return err;
+                // Materialization borrows const canonical state; its failures
+                // belong to this observer, never the PTY/VT owner.
+                if (err != error.SnapshotTooLarge) {
+                    self.closeClient(index);
+                    continue;
+                }
                 client.observe = null;
                 client.observe_mode = .compressed;
                 const request_kind: protocol.Kind = switch (mode) {
@@ -1517,7 +1531,10 @@ pub const Service = struct {
                     .raw => .observe_raw,
                     .delta => .observe_delta,
                 };
-                try self.queueResult(client, request_kind, .rejected);
+                self.queueResult(client, request_kind, .rejected) catch |failure| {
+                    if (failure != error.ClientResponseOutOfMemory) return failure;
+                    self.closeClient(index);
+                };
                 continue;
             };
             client.observe = null;
@@ -1744,7 +1761,7 @@ pub const Service = struct {
         errdefer snapshot_images.deinit(self.allocator);
         client.resetOutput(self.allocator);
         errdefer client.resetOutput(self.allocator);
-        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+        client.output.ensureTotalCapacity(self.allocator, total_bound) catch return error.ClientResponseOutOfMemory;
 
         var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
         protocol.encodeSnapshotBegin(&begin_payload, .{
@@ -1989,8 +2006,8 @@ pub const Service = struct {
         if (payload.len > protocol.maximum_payload_bytes) return error.PayloadTooLarge;
         var header: [protocol.header_bytes]u8 = undefined;
         try protocol.encodeHeader(&header, .{ .kind = kind, .payload_len = @intCast(payload.len) });
-        try output.appendSlice(self.allocator, &header);
-        try output.appendSlice(self.allocator, payload);
+        output.appendSlice(self.allocator, &header) catch return error.ClientResponseOutOfMemory;
+        output.appendSlice(self.allocator, payload) catch return error.ClientResponseOutOfMemory;
     }
 };
 
@@ -2672,4 +2689,114 @@ test "quiescent exited Instance sleeps until a client attaches" {
     while (turns < 10_000 and service.hasRetainedWork()) : (turns += 1)
         try service.turn(1);
     try std.testing.expect(!service.hasRetainedWork());
+}
+
+test "response and snapshot allocation failures retire only the affected HWLS client" {
+    // The canonical owner uses its own allocator here, so every injected failure
+    // is provably response/materialization-local rather than a PTY/VT failure.
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 4,
+        .columns = 24,
+        .history_rows = 16,
+    });
+    defer howl.deinit(instance);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var service = try Service.init(failing.allocator(), std.testing.io, instance);
+    defer service.deinit();
+    var good = try TestPeer.adopt(std.testing.allocator, &service);
+    defer good.deinit();
+    try good.sendFrame(&service, .hello, &.{});
+    var welcome = try awaitTestFrame(&good, &service);
+    defer welcome.deinit(std.testing.allocator);
+    const good_id = (try protocol.decodeWelcome(welcome.payload)).client_id;
+
+    // Fresh clients exercise both first response allocation and each observation
+    // materializer, with a healthy client retained throughout.
+    for ([_]?ObserveMode{ null, .raw, .compressed, .delta }) |mode| {
+        var bad = try TestPeer.adopt(std.testing.allocator, &service);
+        defer bad.deinit();
+        try bad.sendFrame(&service, .hello, &.{});
+        if (mode) |encoding| {
+            var bad_welcome = try awaitTestFrame(&bad, &service);
+            defer bad_welcome.deinit(std.testing.allocator);
+            var request: [protocol.payload_bytes.observe]u8 = undefined;
+            protocol.encodeObserve(&request, .{ .after_revision = 0, .history_offset = 0 });
+            try bad.sendFrame(&service, switch (encoding) {
+                .raw => .observe_raw,
+                .compressed => .observe,
+                .delta => .observe_delta,
+            }, &request);
+            // Force a fresh materialization allocation even after a previous mode
+            // retained scratch capacity. No canonical storage is touched.
+            service.snapshot_body.clearAndFree(failing.allocator());
+        }
+        failing.has_induced_failure = false;
+        failing.fail_index = failing.alloc_index;
+        try service.turn(0);
+        try std.testing.expect(failing.has_induced_failure);
+        failing.fail_index = std.math.maxInt(usize);
+        try std.testing.expectEqual(@as(usize, 1), service.clientCount());
+        try std.testing.expect(service.hasClient(good_id));
+        try std.testing.expectError(error.TestPeerClosed, bad.readAvailable());
+    }
+
+    var observe: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
+    try good.sendFrame(&service, .observe_raw, &observe);
+    var snapshot_complete = false;
+    for (0..64) |_| {
+        var frame = try awaitTestFrame(&good, &service);
+        defer frame.deinit(std.testing.allocator);
+        if (frame.kind == .snapshot_end) {
+            snapshot_complete = true;
+            break;
+        }
+    }
+    try std.testing.expect(snapshot_complete);
+
+    const text = "OOM_SURVIVOR\n";
+    try good.sendFrame(&service, .input, &([_]u8{@backingInt(protocol.InputKind.bytes)} ++ text.*));
+    var result = try awaitTestFrame(&good, &service);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(protocol.ResultCode.ok, (try protocol.decodeResult(result.payload)).code);
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "OOM_SURVIVOR")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(semanticViewContains(howl.terminal(instance).semanticView(0), "OOM_SURVIVOR"));
+}
+
+test "canonical VT allocation failure still escapes the client containment boundary" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const instance = try howl.init(failing.allocator(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "read line; printf '\x1b]2;owner-allocation\x07'; exec cat",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(std.testing.allocator, &service);
+    defer peer.deinit();
+    try peer.sendFrame(&service, .hello, &.{});
+    var welcome = try awaitTestFrame(&peer, &service);
+    defer welcome.deinit(std.testing.allocator);
+
+    failing.fail_index = failing.alloc_index;
+    try howl.input(instance, .{ .bytes = "go\n" });
+    var escaped = false;
+    var turns: usize = 0;
+    while (turns < 2_000) : (turns += 1) {
+        service.turn(1) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            escaped = true;
+            break;
+        };
+    }
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expect(escaped);
+    try std.testing.expectEqual(@as(u16, 1), service.clientCount());
 }
