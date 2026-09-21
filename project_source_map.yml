@@ -81,12 +81,12 @@ experimental:
     bounded shape/alpha-atlas reuse using howl-text only; there is no generic
     multi-source Canvas compositor or stable mobile ABI
   howl-flutter: >-
-    maintained native graphical client canary for one explicit Howl Instance
-    interaction stream: platform input/viewport/history/selection/native-size UX
-    plus an app-private version-locked native observer/control binding, exact
-    external-image refill/residency, out-of-band observer cancellation and batched
-    final-Canvas backend; Unix/TCP endpoint choice belongs to launch/runtime policy;
-    Flutter owns no PTY, VT, Instance, Session, Server, discovery or supervision;
+    maintained native graphical client canary for one Howl Instance interaction
+    stream: direct HWLS construction remains available, while the app-private native
+    seam can also connect a Server, attach exact Session+Instance identity, then
+    transition the same fd into ordinary HWLS with no proxy. Presentation/input/
+    viewport/history/selection/native-size UX stays Instance-only after handoff;
+    Flutter owns no PTY, VT, Instance, Session, Server, grid, discovery or supervision;
     Android physical path accepted, Linux bundled host proven, iOS native-host
     semantics pressure-proven; outside the core gate
   howl-host: >-

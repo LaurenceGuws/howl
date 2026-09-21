@@ -39,8 +39,15 @@ pub fn build(b: *std.Build) void {
     instance.addImport("howl_pty", pty);
     instance.addImport("howl_vt", vt);
 
+    const client_transport = localModule(b, target, optimize, repo, "client-transport/src/transport.zig");
     const client = localModule(b, target, optimize, repo, "howl-client/src/howl_client.zig");
     client.addImport("howl_instance", instance);
+    client.addImport("client_transport", client_transport);
+
+    const server_protocol = localModule(b, target, optimize, repo, "server/src/protocol.zig");
+    const server_client = localModule(b, target, optimize, repo, "server-client/src/server_client.zig");
+    server_client.addImport("server_protocol", server_protocol);
+    server_client.addImport("client_transport", client_transport);
 
     const text = localModule(b, target, optimize, repo, "howl-text/src/text.zig");
     text.link_libc = true;
@@ -61,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .pic = true,
     });
     root.addImport("howl_client", client);
+    root.addImport("server_client", server_client);
     root.addImport("howl_instance", instance);
     root.addImport("howl_text", text);
     root.addImport("terminal", terminal);

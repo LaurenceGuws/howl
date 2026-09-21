@@ -206,3 +206,18 @@ iOS remains a client only: it does not own a PTY, shell, or Unix userland. The n
 - The app-private host packet and FFI symbols are version-locked implementation details, not compatibility surfaces.
 
 The measurement and migration evidence is recorded in `../docs/2026-08-30-native-client-flutter-seam.md`.
+
+## Server-managed Instance construction
+
+The app-private native host now has two connection constructors with one common
+presentation/control implementation:
+
+- direct mode connects an explicit HWLS Instance endpoint exactly as before;
+- managed mode connects one explicit Server endpoint, requests an exact
+  `(session_id, instance_id)`, receives `attach_ready`, and hands that same stream
+  into the ordinary HWLS client handshake.
+
+After that handoff, observer/control/rendering code is identical to direct mode.
+The native seam does not proxy bytes and does not import Server layout or geometry
+state. Server routing chooses an Instance; that Instance remains the sole owner of
+its canonical terminal geometry.

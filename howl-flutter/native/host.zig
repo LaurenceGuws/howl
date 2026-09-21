@@ -1,5 +1,6 @@
 const std = @import("std");
 const client = @import("howl_client");
+const server_client = @import("server_client");
 const protocol = @import("howl_instance").protocol;
 const text = @import("howl_text");
 const terminal = @import("terminal");
@@ -305,6 +306,191 @@ fn writeConnectDiagnostic(
     output_len.* = rendered.len;
 }
 
+fn writeManagedConnectDiagnostic(
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    owner_stage: []const u8,
+    failure_name: []const u8,
+    diagnostic: client.ConnectDiagnostic,
+) void {
+    if (output_capacity == 0) return;
+    const rendered = std.fmt.bufPrint(
+        output_ptr[0..output_capacity],
+        "{s}:{s} stage={s} os_error={d} poll_interrupts={d}",
+        .{
+            owner_stage,
+            failure_name,
+            @tagName(diagnostic.stage),
+            diagnostic.os_error,
+            diagnostic.poll_interrupts,
+        },
+    ) catch return;
+    output_len.* = rendered.len;
+}
+
+fn connectManagedInstance(
+    allocator: std.mem.Allocator,
+    server_endpoint: []const u8,
+    session_id: u64,
+    instance_id: u64,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?client.Connection {
+    var server_diagnostic: server_client.ConnectDiagnostic = .{};
+    var server = server_client.Connection.connectDiagnosed(
+        allocator,
+        server_endpoint,
+        &server_diagnostic,
+    ) catch |failure| {
+        writeManagedConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "server_connect",
+            @errorName(failure),
+            server_diagnostic,
+        );
+        return null;
+    };
+    var server_live = true;
+    defer if (server_live) server.deinit();
+
+    const attached = server.attachInstance(.{
+        .session_id = session_id,
+        .instance_id = instance_id,
+    }) catch |failure| {
+        writeCreateStageFailure(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "server_attach",
+            @errorName(failure),
+        );
+        return null;
+    };
+    server_live = false;
+
+    var instance_diagnostic: client.ConnectDiagnostic = .{};
+    return client.connectTransport(
+        allocator,
+        attached.stream,
+        &instance_diagnostic,
+    ) catch |failure| {
+        writeManagedConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "instance_handshake",
+            @errorName(failure),
+            instance_diagnostic,
+        );
+        return null;
+    };
+}
+
+fn createHostFromConnection(
+    connection_value: client.Connection,
+    primary_ptr: [*]const u8,
+    primary_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: ?[*]const u8,
+    secondary_fallback_len: usize,
+    font_pixels: u16,
+    cell_width: u16,
+    cell_height: u16,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*HostHandle {
+    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
+        var connection = connection_value;
+        connection.deinit();
+        return null;
+    };
+    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", @errorName(failure));
+        var connection = connection_value;
+        connection.deinit();
+        return null;
+    };
+    const allocator = std.heap.c_allocator;
+    var connection = connection_value;
+    var connection_live = true;
+    defer if (connection_live) connection.deinit();
+
+    var raw_cache = client.rich.RawCache.init(allocator);
+    var raw_cache_live = true;
+    defer if (raw_cache_live) raw_cache.deinit();
+
+    var fallback_storage: [2][]const u8 = undefined;
+    var fallback_count: usize = 0;
+    if (fallback_len != 0) {
+        fallback_storage[fallback_count] = fallback_ptr[0..fallback_len];
+        fallback_count += 1;
+    }
+    if (secondary_fallback_len != 0) {
+        const pointer = secondary_fallback_ptr orelse {
+            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "secondary_fallback_pointer");
+            return null;
+        };
+        fallback_storage[fallback_count] = pointer[0..secondary_fallback_len];
+        fallback_count += 1;
+    }
+    const fallbacks = fallback_storage[0..fallback_count];
+    const fonts = text.FontSet.init(allocator, .{
+        .primary = primary_ptr[0..primary_len],
+        .fallbacks = fallbacks,
+        .size = .{ .pixels = font_pixels },
+    }) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "font_set", @errorName(failure));
+        return null;
+    };
+    var fonts_live = true;
+    defer if (fonts_live) fonts.deinit();
+
+    const terminal_canvas = terminal.initCanvas(
+        allocator,
+        fonts,
+        contentConfig(cell_width, cell_height, atlas_extent),
+    ) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", @errorName(failure));
+        return null;
+    };
+    var canvas_live = true;
+    defer if (canvas_live) terminal.deinitCanvas(terminal_canvas);
+
+    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", @errorName(failure));
+        return null;
+    };
+    var scratch_live = true;
+    defer if (scratch_live) allocator.free(observation_scratch);
+
+    const host = allocator.create(Host) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "host_alloc", @errorName(failure));
+        return null;
+    };
+    host.* = .{
+        .allocator = allocator,
+        .connection = connection,
+        .raw_cache = raw_cache,
+        .cell_size = .{ .width = cell_width, .height = cell_height },
+        .fonts = fonts,
+        .canvas = terminal_canvas,
+        .observation_scratch = observation_scratch,
+    };
+    connection_live = false;
+    raw_cache_live = false;
+    fonts_live = false;
+    canvas_live = false;
+    scratch_live = false;
+    return @ptrCast(host);
+}
+
 pub export fn howl_native_host_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -328,17 +514,9 @@ pub export fn howl_native_host_create(
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
     }
-    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
-        return null;
-    };
-    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", @errorName(failure));
-        return null;
-    };
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    var connection = client.Connection.connectDiagnosed(
+    const connection = client.Connection.connectDiagnosed(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
@@ -352,62 +530,92 @@ pub export fn howl_native_host_create(
         );
         return null;
     };
-    errdefer connection.deinit();
-    var raw_cache = client.rich.RawCache.init(allocator);
-    errdefer raw_cache.deinit();
-    var fallback_storage: [2][]const u8 = undefined;
-    var fallback_count: usize = 0;
-    if (fallback_len != 0) {
-        fallback_storage[fallback_count] = fallback_ptr[0..fallback_len];
-        fallback_count += 1;
-    }
-    if (secondary_fallback_len != 0) {
-        const pointer = secondary_fallback_ptr orelse {
-            writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "secondary_fallback_pointer");
-            return null;
-        };
-        fallback_storage[fallback_count] = pointer[0..secondary_fallback_len];
-        fallback_count += 1;
-    }
-    const fallbacks = fallback_storage[0..fallback_count];
-    // `FontSet.init` copies every path during this call.
-    const fonts = text.FontSet.init(allocator, .{
-        .primary = primary_ptr[0..primary_len],
-        .fallbacks = fallbacks,
-        .size = .{ .pixels = font_pixels },
-    }) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "font_set", @errorName(failure));
+    return createHostFromConnection(
+        connection,
+        primary_ptr,
+        primary_len,
+        fallback_ptr,
+        fallback_len,
+        secondary_fallback_ptr,
+        secondary_fallback_len,
+        font_pixels,
+        cell_width,
+        cell_height,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    );
+}
+
+pub export fn howl_native_host_create_managed(
+    server_endpoint_ptr: [*]const u8,
+    server_endpoint_len: usize,
+    session_id: u64,
+    instance_id: u64,
+    primary_ptr: [*]const u8,
+    primary_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: ?[*]const u8,
+    secondary_fallback_len: usize,
+    font_pixels: u16,
+    cell_width: u16,
+    cell_height: u16,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*HostHandle {
+    resetCreateDiagnostic(diagnostic_len);
+    if (server_endpoint_len == 0 or session_id == 0 or instance_id == 0 or primary_len == 0 or
+        font_pixels == 0 or cell_width == 0 or cell_height == 0)
+    {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
-    };
-    errdefer fonts.deinit();
-    const terminal_canvas = terminal.initCanvas(
+    }
+    const allocator = std.heap.c_allocator;
+    const connection = connectManagedInstance(
         allocator,
-        fonts,
-        contentConfig(cell_width, cell_height, atlas_extent),
-    ) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", @errorName(failure));
+        server_endpoint_ptr[0..server_endpoint_len],
+        session_id,
+        instance_id,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    return createHostFromConnection(
+        connection,
+        primary_ptr,
+        primary_len,
+        fallback_ptr,
+        fallback_len,
+        secondary_fallback_ptr,
+        secondary_fallback_len,
+        font_pixels,
+        cell_width,
+        cell_height,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    );
+}
+
+fn createControlFromConnection(
+    connection_value: client.Connection,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*ControlHandle {
+    const allocator = std.heap.c_allocator;
+    var connection = connection_value;
+    var connection_live = true;
+    defer if (connection_live) connection.deinit();
+    const control = allocator.create(Control) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", @errorName(failure));
         return null;
     };
-    errdefer terminal.deinitCanvas(terminal_canvas);
-    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", @errorName(failure));
-        return null;
-    };
-    errdefer allocator.free(observation_scratch);
-    const host = allocator.create(Host) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "host_alloc", @errorName(failure));
-        return null;
-    };
-    host.* = .{
-        .allocator = allocator,
-        .connection = connection,
-        .raw_cache = raw_cache,
-        .cell_size = .{ .width = cell_width, .height = cell_height },
-        .fonts = fonts,
-        .canvas = terminal_canvas,
-        .observation_scratch = observation_scratch,
-    };
-    return @ptrCast(host);
+    control.* = .{ .allocator = allocator, .connection = connection };
+    connection_live = false;
+    return @ptrCast(control);
 }
 
 pub export fn howl_native_control_create(
@@ -424,7 +632,7 @@ pub export fn howl_native_control_create(
     }
     const allocator = std.heap.c_allocator;
     var connect_diagnostic: client.ConnectDiagnostic = .{};
-    var connection = client.Connection.connectDiagnosed(
+    const connection = client.Connection.connectDiagnosed(
         allocator,
         endpoint_ptr[0..endpoint_len],
         &connect_diagnostic,
@@ -438,13 +646,44 @@ pub export fn howl_native_control_create(
         );
         return null;
     };
-    errdefer connection.deinit();
-    const control = allocator.create(Control) catch |failure| {
-        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", @errorName(failure));
+    return createControlFromConnection(
+        connection,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    );
+}
+
+pub export fn howl_native_control_create_managed(
+    server_endpoint_ptr: [*]const u8,
+    server_endpoint_len: usize,
+    session_id: u64,
+    instance_id: u64,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*ControlHandle {
+    resetCreateDiagnostic(diagnostic_len);
+    if (server_endpoint_len == 0 or session_id == 0 or instance_id == 0) {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
-    };
-    control.* = .{ .allocator = allocator, .connection = connection };
-    return @ptrCast(control);
+    }
+    const allocator = std.heap.c_allocator;
+    const connection = connectManagedInstance(
+        allocator,
+        server_endpoint_ptr[0..server_endpoint_len],
+        session_id,
+        instance_id,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    return createControlFromConnection(
+        connection,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    );
 }
 
 pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
