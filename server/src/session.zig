@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const howl_instance = @import("howl_instance");
+const instance_service = @import("howl_instance_service");
 
 pub const InstanceId = u64;
 pub const maximum_instances: usize = 16;
@@ -12,14 +13,16 @@ pub const maximum_instances: usize = 16;
 const InstanceRecord = struct {
     id: InstanceId,
     value: *howl_instance.Instance,
+    service: instance_service.Service,
 
     fn deinit(self: *InstanceRecord) void {
+        self.service.deinit();
         howl_instance.deinit(self.value);
         self.* = undefined;
     }
 };
 
-pub const CreateInstanceError = std.mem.Allocator.Error || howl_instance.InitError || error{
+pub const CreateInstanceError = std.mem.Allocator.Error || howl_instance.InitError || instance_service.Service.InitError || error{
     Capacity,
     IdentityExhausted,
 };
@@ -61,6 +64,7 @@ pub const Session = struct {
 
     pub fn createInstance(
         self: *Session,
+        io: std.Io,
         inherited_environment: std.process.Environ,
         launch: howl_instance.Launch,
     ) CreateInstanceError!InstanceId {
@@ -69,10 +73,12 @@ pub const Session = struct {
         const slot = self.freeSlot() orelse unreachable;
         const owned = try howl_instance.init(self.allocator, inherited_environment, launch);
         errdefer howl_instance.deinit(owned);
+        var service = try instance_service.Service.init(self.allocator, io, owned);
+        errdefer service.deinit();
 
         const id = self.next_instance_id;
         self.next_instance_id = advanceIdentity(id) catch return error.IdentityExhausted;
-        self.instances[slot] = .{ .id = id, .value = owned };
+        self.instances[slot] = .{ .id = id, .value = owned, .service = service };
         self.count += 1;
         return id;
     }
@@ -83,6 +89,26 @@ pub const Session = struct {
         self.instances[index] = null;
         self.count -= 1;
         return true;
+    }
+
+    pub const AdoptClientError = instance_service.Service.AdoptError || error{InstanceNotFound};
+
+    pub fn adoptClient(
+        self: *Session,
+        instance_id: InstanceId,
+        fd: std.posix.fd_t,
+        initial_input: []const u8,
+        preface_output: []const u8,
+    ) AdoptClientError!void {
+        const index = self.findInstanceIndex(instance_id) orelse return error.InstanceNotFound;
+        return self.instances[index].?.service.adoptClient(fd, initial_input, preface_output);
+    }
+
+    pub const TurnInstanceError = instance_service.Service.TurnError || error{InstanceNotFound};
+
+    pub fn turnInstance(self: *Session, instance_id: InstanceId, timeout_ms: i32) TurnInstanceError!void {
+        const index = self.findInstanceIndex(instance_id) orelse return error.InstanceNotFound;
+        return self.instances[index].?.service.turn(timeout_ms);
     }
 
     fn freeSlot(self: *const Session) ?usize {
@@ -103,7 +129,7 @@ test "Instance removal leaves its Session alive and empty" {
     var session = try Session.init(std.testing.allocator, 11, "work");
     defer session.deinit();
 
-    const first = try session.createInstance(std.testing.environ, .{
+    const first = try session.createInstance(std.testing.io, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "exit 0",
         .rows = 4,
@@ -116,7 +142,7 @@ test "Instance removal leaves its Session alive and empty" {
     try std.testing.expectEqual(@as(u64, 11), session.id);
     try std.testing.expectEqualStrings("work", session.name);
 
-    const second = try session.createInstance(std.testing.environ, .{
+    const second = try session.createInstance(std.testing.io, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "exit 0",
         .rows = 4,
@@ -130,7 +156,7 @@ test "failed Instance construction mutates no Session identity or count" {
     defer session.deinit();
     try std.testing.expectError(
         error.InvalidDimensions,
-        session.createInstance(std.testing.environ, .{
+        session.createInstance(std.testing.io, std.testing.environ, .{
             .shell = "/bin/sh",
             .command = "exit 0",
             .rows = 0,
@@ -138,7 +164,7 @@ test "failed Instance construction mutates no Session identity or count" {
         }),
     );
     try std.testing.expectEqual(@as(u16, 0), session.instanceCount());
-    const first = try session.createInstance(std.testing.environ, .{
+    const first = try session.createInstance(std.testing.io, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "exit 0",
         .rows = 4,

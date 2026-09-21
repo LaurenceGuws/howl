@@ -24,7 +24,8 @@ experimental:
     tree is Server -> Sessions -> Instances. Session creation never launches a
     terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
     Instance identity is scoped by its owning Session and Session identity by Server.
-    This first cut is module-only and owns no listener, daemon, protocol, discovery,
+    Exact Session+Instance routing may hand an already-connected stream into the
+    Instance-owned HWLS service; Server still owns no listener, address, discovery,
     authentication or supervision policy
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction

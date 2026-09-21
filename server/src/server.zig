@@ -83,11 +83,12 @@ pub const Server = struct {
     pub fn createInstance(
         self: *Server,
         session_id: SessionId,
+        io: std.Io,
         inherited_environment: std.process.Environ,
         launch: howl_instance.Launch,
     ) CreateInstanceError!session_mod.InstanceId {
         const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
-        return self.sessions[index].?.value.createInstance(inherited_environment, launch);
+        return self.sessions[index].?.value.createInstance(io, inherited_environment, launch);
     }
 
     pub fn closeInstance(self: *Server, session_id: SessionId, instance_id: session_mod.InstanceId) bool {
@@ -98,6 +99,32 @@ pub const Server = struct {
     pub fn instanceCount(self: *const Server, session_id: SessionId) ?u16 {
         const index = self.findSessionIndex(session_id) orelse return null;
         return self.sessions[index].?.value.instanceCount();
+    }
+
+    pub const AdoptClientError = session_mod.Session.AdoptClientError || error{SessionNotFound};
+
+    pub fn adoptClient(
+        self: *Server,
+        session_id: SessionId,
+        instance_id: session_mod.InstanceId,
+        fd: std.posix.fd_t,
+        initial_input: []const u8,
+        preface_output: []const u8,
+    ) AdoptClientError!void {
+        const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
+        return self.sessions[index].?.value.adoptClient(instance_id, fd, initial_input, preface_output);
+    }
+
+    pub const TurnInstanceError = session_mod.Session.TurnInstanceError || error{SessionNotFound};
+
+    pub fn turnInstance(
+        self: *Server,
+        session_id: SessionId,
+        instance_id: session_mod.InstanceId,
+        timeout_ms: i32,
+    ) TurnInstanceError!void {
+        const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
+        return self.sessions[index].?.value.turnInstance(instance_id, timeout_ms);
     }
 
     pub fn findSessionByName(self: *const Server, name: []const u8) ?SessionId {
@@ -127,7 +154,7 @@ test "Server routes Instance creation through the selected Session" {
     defer server.deinit();
     const work = try server.createSession("work");
     const other = try server.createSession("other");
-    const instance_id = try server.createInstance(work, std.testing.environ, .{
+    const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "exit 0",
         .rows = 4,
@@ -167,4 +194,114 @@ test "Session identity survives Instance-independent CRUD" {
     try std.testing.expect(server.closeSession(first));
     try std.testing.expectEqual(second, server.findSessionByName("second").?);
     try std.testing.expectEqual(@as(u16, 1), server.sessionCount());
+}
+
+fn testSetNonblocking(fd: std.posix.fd_t) !void {
+    const linux = std.os.linux;
+    const current = linux.fcntl(fd, linux.F.GETFL, @as(usize, 0));
+    if (linux.errno(current) != .SUCCESS) return error.TestSocketConfigureFailed;
+    const nonblocking: usize = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
+    const updated = linux.fcntl(fd, linux.F.SETFL, @as(usize, @intCast(current)) | nonblocking);
+    if (linux.errno(updated) != .SUCCESS) return error.TestSocketConfigureFailed;
+}
+
+fn testCloseFd(fd: std.posix.fd_t) void {
+    const linux = std.os.linux;
+    const result = linux.close(fd);
+    const errno = linux.errno(result);
+    std.debug.assert(errno == .SUCCESS or errno == .INTR);
+}
+
+fn testReadExact(
+    server: *Server,
+    session_id: SessionId,
+    instance_id: session_mod.InstanceId,
+    fd: std.posix.fd_t,
+    output: []u8,
+) !void {
+    const linux = std.os.linux;
+    var offset: usize = 0;
+    var turns: usize = 0;
+    while (offset < output.len and turns < 10_000) : (turns += 1) {
+        const result = linux.read(fd, output[offset..].ptr, output.len - offset);
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > output.len - offset) return error.TestSocketReadFailed;
+                offset += result;
+            },
+            .INTR => continue,
+            .AGAIN => try server.turnInstance(session_id, instance_id, 1),
+            else => return error.TestSocketReadFailed,
+        }
+    }
+    if (offset != output.len) return error.TestTimeout;
+}
+
+test "Server routes an adopted HWLS stream by exact Session and Instance identity" {
+    const protocol = howl_instance.protocol;
+    var server = Server.init(std.testing.allocator);
+    defer server.deinit();
+    const work = try server.createSession("work");
+    const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 4,
+        .columns = 20,
+    });
+
+    var pair: [2]std.posix.fd_t = undefined;
+    const socket_result = std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair);
+    try std.testing.expectEqual(std.posix.E.SUCCESS, std.posix.errno(socket_result));
+    var service_owns = false;
+    defer if (!service_owns) testCloseFd(pair[0]);
+    defer testCloseFd(pair[1]);
+    try testSetNonblocking(pair[1]);
+
+    var hello: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
+    try server.adoptClient(work, instance_id, pair[0], &hello, &.{});
+    service_owns = true;
+
+    var header_bytes: [protocol.header_bytes]u8 = undefined;
+    try testReadExact(&server, work, instance_id, pair[1], &header_bytes);
+    const header = try protocol.decodeHeader(&header_bytes);
+    try std.testing.expectEqual(protocol.Kind.welcome, header.kind);
+    try std.testing.expectEqual(@as(u32, protocol.payload_bytes.welcome), header.payload_len);
+    var welcome_bytes: [protocol.payload_bytes.welcome]u8 = undefined;
+    try testReadExact(&server, work, instance_id, pair[1], &welcome_bytes);
+    const welcome = try protocol.decodeWelcome(&welcome_bytes);
+    try std.testing.expect(welcome.client_id != protocol.no_client);
+}
+
+test "identity routing failure retains caller stream ownership" {
+    const linux = std.os.linux;
+    var server = Server.init(std.testing.allocator);
+    defer server.deinit();
+    const work = try server.createSession("work");
+    const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 2,
+        .columns = 8,
+    });
+
+    var pair: [2]std.posix.fd_t = undefined;
+    const socket_result = std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair);
+    try std.testing.expectEqual(std.posix.E.SUCCESS, std.posix.errno(socket_result));
+    defer testCloseFd(pair[0]);
+    defer testCloseFd(pair[1]);
+
+    try std.testing.expectError(
+        error.SessionNotFound,
+        server.adoptClient(work + 100, instance_id, pair[0], &.{}, &.{}),
+    );
+    const session_flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(session_flags));
+
+    try std.testing.expectError(
+        error.InstanceNotFound,
+        server.adoptClient(work, instance_id + 100, pair[0], &.{}, &.{}),
+    );
+    const instance_flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(instance_flags));
 }

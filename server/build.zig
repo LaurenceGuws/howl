@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addImport("howl_instance", instance.module("howl_instance"));
+    module.addImport("howl_instance_service", instance.module("howl_instance_service"));
 
     const tests = b.addTest(.{
         .name = "server",

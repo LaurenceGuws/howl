@@ -17,6 +17,4 @@ it is a logical orchestration lifetime that may contain zero or more Instances. 
 a Session never launches a shell. Shell, command, cwd and terminal geometry belong only
 to explicit Instance creation.
 
-This first cut is deliberately module-only. It owns no listener, daemon, discovery,
-authentication, client protocol or service-supervision policy. Those layers must be
-earned on top of this ownership model rather than smuggled into an Instance.
+The module remains listener-free. A server-managed Instance owns an optional `howl_instance_service` interaction service beside its concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service. Transport acceptance, addresses, discovery, authentication and service supervision remain outside this ownership layer.
