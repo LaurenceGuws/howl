@@ -6,6 +6,7 @@
     .dependencies = .{
         .howl_instance = .{ .path = "../howl-instance" },
         .howl_client = .{ .path = "../howl-client" },
+        .server_client = .{ .path = "../server-client" },
     },
     .paths = .{ "README.md", "build.zig", "build.zig.zon", "install", "src", "test" },
 }

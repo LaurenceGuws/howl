@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
+    const server_client = b.dependency("server_client", .{ .target = target, .optimize = optimize });
 
     const module = b.addModule("howl_cli", .{
         .root_source_file = b.path("src/howl_cli.zig"),
@@ -22,6 +23,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_cli", module);
     root.addImport("howl_client", client.module("howl_client"));
     root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("server_client", server_client.module("server_client"));
     const executable = b.addExecutable(.{ .name = "howl", .root_module = root });
     b.installArtifact(executable);
 
@@ -31,7 +33,7 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
-    const check = b.step("check", "Compile the native Howl session client");
+    const check = b.step("check", "Compile the native Howl CLI");
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run native Howl CLI proofs");

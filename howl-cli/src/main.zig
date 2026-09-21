@@ -3,6 +3,7 @@ const cli = @import("howl_cli");
 const client = @import("howl_client");
 const protocol = @import("howl_instance").protocol;
 const failure = @import("failure.zig");
+const server_commands = @import("server_commands.zig");
 
 pub fn main(init: std.process.Init) void {
     var context: failure.Context = .{};
@@ -25,12 +26,17 @@ fn run(init: std.process.Init, context: *failure.Context) !void {
         if (argv.len != 3) return error.InvalidArguments;
         const topic = std.mem.span(argv[2]);
         if (std.mem.eql(u8, topic, "instance")) return printInstanceHelp(init);
+        if (std.mem.eql(u8, topic, "server")) return server_commands.printHelp(init);
         return error.InvalidArguments;
     }
     if (std.mem.eql(u8, operation, "version")) {
         context.reset("version");
         if (argv.len != 2) return error.InvalidArguments;
         return versionCommand(init);
+    }
+    if (std.mem.eql(u8, operation, "server")) {
+        context.reset("server");
+        return server_commands.run(init, argv[2..], context);
     }
     if (!std.mem.eql(u8, operation, "instance")) return error.InvalidArguments;
     if (argv.len < 3) return error.InvalidArguments;
@@ -239,11 +245,13 @@ fn usage() error{InvalidArguments} {
 }
 
 fn printRootHelp(init: std.process.Init) !void {
-    return printHelp(init, "Howl headless Instance client\n\n" ++
+    return printHelp(init, "Howl native terminal client\n\n" ++
         "usage:\n" ++
         "  howl instance COMMAND ...\n" ++
+        "  howl server COMMAND ...\n" ++
         "  howl version\n" ++
-        "  howl help instance\n");
+        "  howl help instance\n" ++
+        "  howl help server\n");
 }
 
 fn printInstanceHelp(init: std.process.Init) !void {

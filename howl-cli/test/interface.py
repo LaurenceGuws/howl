@@ -18,6 +18,10 @@ def main():
         ("instance", "--help"),
         ("instance", "snapshot", "--help"),
         ("instance", "key", "--help"),
+        ("server", "--help"),
+        ("server", "status", "--help"),
+        ("server", "session", "--help"),
+        ("server", "instance", "--help"),
     ]:
         result = invoke(cli, *args)
         assert result.returncode == 0, (args, result)
@@ -28,6 +32,9 @@ def main():
         (("nonsense",), "nonsense"),
         (("instance",), "instance"),
         (("instance", "snapshot"), "instance.snapshot"),
+        (("server",), "server"),
+        (("server", "session"), "server.session"),
+        (("server", "instance", "create"), "server.instance.create"),
     ]:
         result = invoke(cli, *args)
         assert result.returncode == 64, (args, result)

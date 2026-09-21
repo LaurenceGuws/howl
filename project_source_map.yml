@@ -58,9 +58,11 @@ experimental:
     views. It owns no PTY, VT, Instance, Session, Server, SSH subprocess, discovery,
     routing, authentication or supervision policy
   howl-cli: >-
-    boring native headless client for one explicit Howl Instance interaction stream;
-    snapshot/state/input/resize/signal vocabulary and machine-facing formatting live here;
-    it owns no PTY, VT, Instance, Session, Server, discovery, or supervision
+    machine-friendly native CLI with two explicit lanes: direct HWLS Instance
+    interaction under `howl instance ...`, and Server orchestration under
+    `howl server ...` through server-client. Session create carries no launch policy;
+    Instance create owns shell/command/cwd/geometry inputs. The CLI owns no PTY, VT,
+    Instance, Session, Server, listener, discovery, authentication or supervision
   howl-render: >-
     one shared Terminal Canvas consuming canonical VT Observation directly,
     a validated borrowed howl-client.rich observation, or the owned

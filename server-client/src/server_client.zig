@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const transport = @import("client_transport");
-const protocol = @import("server_protocol");
+pub const protocol = @import("server_protocol");
 
 pub const ConnectStage = transport.ConnectStage;
 pub const ConnectDiagnostic = transport.ConnectDiagnostic;
