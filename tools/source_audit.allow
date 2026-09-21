@@ -1,4 +1,3 @@
-howl-client/src/client.zig|discard|if (self.ssh_process) |process| _ = process.deinit(&.{});
 howl-client/src/consequences.zig|anytype|fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
 howl-client/src/images.zig|anytype|connection: anytype,
 howl-client/src/rich.zig|anytype|fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {

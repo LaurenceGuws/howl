@@ -254,9 +254,9 @@ test "truncated real image body frees final pixels and owned begin frame" {
     var pair: [2]posix.fd_t = undefined;
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
     var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var receiver = client.Connection{ .allocator = count.allocator(), .fd = pair[0], .client_id = 1 };
+    var receiver = client.Connection{ .allocator = count.allocator(), .stream = .{ .fd = pair[0] }, .client_id = 1 };
     defer receiver.deinit();
-    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .fd = pair[1], .client_id = 2 };
+    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .stream = .{ .fd = pair[1] }, .client_id = 2 };
     defer sender.deinit();
     var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
     protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
@@ -292,9 +292,9 @@ test "canceling real image receive releases owned frames and pixels" {
     var pair: [2]posix.fd_t = undefined;
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
     var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var receiver = client.Connection{ .allocator = count.allocator(), .fd = pair[0], .client_id = 1 };
+    var receiver = client.Connection{ .allocator = count.allocator(), .stream = .{ .fd = pair[0] }, .client_id = 1 };
     defer receiver.deinit();
-    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .fd = pair[1], .client_id = 2 };
+    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .stream = .{ .fd = pair[1] }, .client_id = 2 };
     defer sender.deinit();
     var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
     protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
