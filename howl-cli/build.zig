@@ -57,5 +57,17 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run native Howl CLI proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(runtime_tests).step);
+
+    const interface_test = b.addSystemCommand(&.{"python3"});
+    interface_test.addFileArg(b.path("test/interface.py"));
+    interface_test.addArtifactArg(executable);
+    interface_test.setName("Howl CLI interface");
+    test_step.dependOn(&interface_test.step);
+
+    const managed_test = b.addSystemCommand(&.{"python3"});
+    managed_test.addFileArg(b.path("test/managed_instance.py"));
+    managed_test.addArtifactArg(executable);
+    managed_test.setName("Howl managed CLI interaction");
+    test_step.dependOn(&managed_test.step);
     b.default_step = check;
 }

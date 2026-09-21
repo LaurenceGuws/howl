@@ -2,6 +2,7 @@ const std = @import("std");
 const cli = @import("howl_cli");
 const client = @import("howl_client");
 const protocol = @import("howl_instance").protocol;
+const server_client = @import("server_client");
 const failure = @import("failure.zig");
 const server_commands = @import("server_commands.zig");
 
@@ -47,16 +48,16 @@ fn run(init: std.process.Init, context: *failure.Context) !void {
     if (argv.len >= 4 and isHelp(std.mem.span(argv[3])))
         return printInstanceOperationHelp(init, action);
     if (argv.len < 4) return error.InvalidArguments;
-    const endpoint = std.mem.span(argv[3]);
+    const parsed = try parseInstanceTarget(argv[3..]);
 
-    if (std.mem.eql(u8, action, "snapshot")) return snapshotCommand(init, endpoint, argv[4..], context);
-    if (std.mem.eql(u8, action, "state")) return stateCommand(init, endpoint, argv[4..], context);
-    if (std.mem.eql(u8, action, "type")) return bytesCommand(init, endpoint, argv[4..], false, context);
-    if (std.mem.eql(u8, action, "paste")) return bytesCommand(init, endpoint, argv[4..], true, context);
-    if (std.mem.eql(u8, action, "key")) return keyCommand(init, endpoint, argv[4..], context);
-    if (std.mem.eql(u8, action, "focus")) return focusCommand(init, endpoint, argv[4..], context);
-    if (std.mem.eql(u8, action, "resize")) return resizeCommand(init, endpoint, argv[4..], context);
-    if (std.mem.eql(u8, action, "signal")) return signalCommand(init, endpoint, argv[4..], context);
+    if (std.mem.eql(u8, action, "snapshot")) return snapshotCommand(init, parsed.target, parsed.args, context);
+    if (std.mem.eql(u8, action, "state")) return stateCommand(init, parsed.target, parsed.args, context);
+    if (std.mem.eql(u8, action, "type")) return bytesCommand(init, parsed.target, parsed.args, false, context);
+    if (std.mem.eql(u8, action, "paste")) return bytesCommand(init, parsed.target, parsed.args, true, context);
+    if (std.mem.eql(u8, action, "key")) return keyCommand(init, parsed.target, parsed.args, context);
+    if (std.mem.eql(u8, action, "focus")) return focusCommand(init, parsed.target, parsed.args, context);
+    if (std.mem.eql(u8, action, "resize")) return resizeCommand(init, parsed.target, parsed.args, context);
+    if (std.mem.eql(u8, action, "signal")) return signalCommand(init, parsed.target, parsed.args, context);
     return error.InvalidArguments;
 }
 
@@ -89,23 +90,108 @@ fn versionCommand(init: std.process.Init) !void {
     try stdout.interface.flush();
 }
 
+const InstanceTarget = union(enum) {
+    direct: []const u8,
+    server: struct {
+        endpoint: []const u8,
+        session_id: u64,
+        instance_id: u64,
+    },
+};
+
+const ParsedInstanceTarget = struct {
+    target: InstanceTarget,
+    args: []const [*:0]const u8,
+};
+
+fn parseInstanceTarget(args: []const [*:0]const u8) error{InvalidArguments}!ParsedInstanceTarget {
+    if (args.len == 0) return error.InvalidArguments;
+    if (!std.mem.eql(u8, std.mem.span(args[0]), "--server")) {
+        return .{
+            .target = .{ .direct = std.mem.span(args[0]) },
+            .args = args[1..],
+        };
+    }
+    if (args.len < 4) return error.InvalidArguments;
+    const session_id = parseNonzeroIdentity(std.mem.span(args[2])) catch return error.InvalidArguments;
+    const instance_id = parseNonzeroIdentity(std.mem.span(args[3])) catch return error.InvalidArguments;
+    return .{
+        .target = .{ .server = .{
+            .endpoint = std.mem.span(args[1]),
+            .session_id = session_id,
+            .instance_id = instance_id,
+        } },
+        .args = args[4..],
+    };
+}
+
+fn parseNonzeroIdentity(text: []const u8) error{InvalidIdentity}!u64 {
+    const value = std.fmt.parseInt(u64, text, 10) catch return error.InvalidIdentity;
+    if (value == 0) return error.InvalidIdentity;
+    return value;
+}
+
 fn connect(
     init: std.process.Init,
-    endpoint: []const u8,
+    target: InstanceTarget,
     context: *failure.Context,
 ) !client.Connection {
-    var diagnostic: client.ConnectDiagnostic = .{};
-    return client.Connection.connectDiagnosed(init.gpa, endpoint, &diagnostic) catch |problem| {
-        context.captureConnect(&diagnostic);
-        return problem;
-    };
+    switch (target) {
+        .direct => |endpoint| {
+            var diagnostic: client.ConnectDiagnostic = .{};
+            return client.Connection.connectDiagnosed(init.gpa, endpoint, &diagnostic) catch |problem| {
+                context.captureConnect(&diagnostic);
+                return problem;
+            };
+        },
+        .server => |managed| {
+            var server_diagnostic: server_client.ConnectDiagnostic = .{};
+            var server = server_client.Connection.connectDiagnosed(
+                init.gpa,
+                managed.endpoint,
+                &server_diagnostic,
+            ) catch |problem| {
+                captureServerConnect(context, &server_diagnostic);
+                return problem;
+            };
+            var server_live = true;
+            defer if (server_live) server.deinit();
+            const attached = server.attachInstance(.{
+                .session_id = managed.session_id,
+                .instance_id = managed.instance_id,
+            }) catch |problem| return problem;
+            server_live = false;
+
+            var instance_diagnostic: client.ConnectDiagnostic = .{};
+            return client.connectTransport(
+                init.gpa,
+                attached.stream,
+                &instance_diagnostic,
+            ) catch |problem| {
+                context.captureConnect(&instance_diagnostic);
+                return problem;
+            };
+        },
+    }
+}
+
+fn captureServerConnect(
+    context: *failure.Context,
+    diagnostic: *const server_client.ConnectDiagnostic,
+) void {
+    context.connect_stage = std.meta.stringToEnum(client.ConnectStage, @tagName(diagnostic.stage));
+    context.os_error = diagnostic.os_error;
+    const count = @min(diagnostic.route_message_len, context.route_message.len);
+    if (count != 0)
+        @memcpy(context.route_message[0..count], diagnostic.route_message[0..count]);
+    context.route_message_len = count;
 }
 
 fn stdoutWriter(init: std.process.Init, buffer: []u8) std.Io.File.Writer {
     return std.Io.File.stdout().writerStreaming(init.io, buffer);
 }
 
-fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn snapshotCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     var after_revision: u64 = 0;
     var history_offset: u32 = 0;
     var format: enum { compact, text, rich } = .compact;
@@ -128,7 +214,7 @@ fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [
             history_offset = std.fmt.parseInt(u32, std.mem.span(args[index]), 10) catch return usage();
         } else return usage();
     }
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     var output_buffer: [16 * 1024]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
@@ -145,9 +231,9 @@ fn snapshotCommand(init: std.process.Init, endpoint: []const u8, args: []const [
     try stdout.interface.flush();
 }
 
-fn stateCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn stateCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 0) return usage();
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     var output_buffer: [4096]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
@@ -155,7 +241,7 @@ fn stateCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
     try stdout.interface.flush();
 }
 
-fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, is_paste: bool, context: *failure.Context) !void {
+fn bytesCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, is_paste: bool, context: *failure.Context) !void {
     if (args.len != 1) return usage();
     const argument = std.mem.span(args[0]);
     var owned: ?[]u8 = null;
@@ -171,7 +257,7 @@ fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
         break :blk value;
     } else argument;
 
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     if (is_paste)
         try cli.actions.paste(&connection, bytes)
@@ -180,7 +266,7 @@ fn bytesCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0
     try emitActionReceipt(init, if (is_paste) "paste" else "type");
 }
 
-fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn keyCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len == 0) return usage();
     const key = try cli.actions.parseKey(std.mem.span(args[0]));
     var action: protocol.InputKeyAction = .press;
@@ -198,7 +284,7 @@ fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]c
             modifiers = try cli.actions.parseModifiers(std.mem.span(args[index]));
         } else return usage();
     }
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     switch (key) {
         .named => |value| try cli.actions.namedKey(&connection, value, action, modifiers),
@@ -207,27 +293,27 @@ fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]c
     try emitActionReceipt(init, "key");
 }
 
-fn focusCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn focusCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 1) return usage();
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     try cli.actions.focus(&connection, try cli.actions.parseFocus(std.mem.span(args[0])));
     try emitActionReceipt(init, "focus");
 }
 
-fn resizeCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn resizeCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 2) return usage();
     const rows = std.fmt.parseInt(u16, std.mem.span(args[0]), 10) catch return usage();
     const columns = std.fmt.parseInt(u16, std.mem.span(args[1]), 10) catch return usage();
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     try cli.actions.resize(&connection, rows, columns);
     try emitActionReceipt(init, "resize");
 }
 
-fn signalCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]const u8, context: *failure.Context) !void {
+fn signalCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0]const u8, context: *failure.Context) !void {
     if (args.len != 1) return usage();
-    var connection = try connect(init, endpoint, context);
+    var connection = try connect(init, target, context);
     defer connection.deinit();
     try cli.actions.signal(&connection, try cli.actions.parseSignal(std.mem.span(args[0])));
     try emitActionReceipt(init, "signal");
@@ -256,36 +342,41 @@ fn printRootHelp(init: std.process.Init) !void {
 
 fn printInstanceHelp(init: std.process.Init) !void {
     return printHelp(init, "usage:\n" ++
-        "  howl instance snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n" ++
-        "  howl instance state ENDPOINT\n" ++
-        "  howl instance type ENDPOINT TEXT|--stdin\n" ++
-        "  howl instance paste ENDPOINT TEXT|--stdin\n" ++
-        "  howl instance key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n" ++
-        "  howl instance focus ENDPOINT in|out\n" ++
-        "  howl instance resize ENDPOINT ROWS COLUMNS\n" ++
-        "  howl instance signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n");
+        "  howl instance snapshot TARGET [--after REVISION] [--history-offset ROWS] [--text|--rich]\n" ++
+        "  howl instance state TARGET\n" ++
+        "  howl instance type TARGET TEXT|--stdin\n" ++
+        "  howl instance paste TARGET TEXT|--stdin\n" ++
+        "  howl instance key TARGET KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n" ++
+        "  howl instance focus TARGET in|out\n" ++
+        "  howl instance resize TARGET ROWS COLUMNS\n" ++
+        "  howl instance signal TARGET hangup|interrupt|resize-notify|kill|terminate\n" ++
+        "\n" ++
+        "TARGET:\n" ++
+        "  ENDPOINT\n" ++
+        "  --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\n");
 }
 
 fn printInstanceOperationHelp(init: std.process.Init, operation: []const u8) !void {
     const text = if (std.mem.eql(u8, operation, "snapshot"))
-        "usage: howl instance snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]\n"
+        "usage: howl instance snapshot TARGET [--after REVISION] [--history-offset ROWS] [--text|--rich]\n"
     else if (std.mem.eql(u8, operation, "state"))
-        "usage: howl instance state ENDPOINT\n"
+        "usage: howl instance state TARGET\n"
     else if (std.mem.eql(u8, operation, "type"))
-        "usage: howl instance type ENDPOINT TEXT|--stdin\n"
+        "usage: howl instance type TARGET TEXT|--stdin\n"
     else if (std.mem.eql(u8, operation, "paste"))
-        "usage: howl instance paste ENDPOINT TEXT|--stdin\n"
+        "usage: howl instance paste TARGET TEXT|--stdin\n"
     else if (std.mem.eql(u8, operation, "key"))
-        "usage: howl instance key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n"
+        "usage: howl instance key TARGET KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]\n"
     else if (std.mem.eql(u8, operation, "focus"))
-        "usage: howl instance focus ENDPOINT in|out\n"
+        "usage: howl instance focus TARGET in|out\n"
     else if (std.mem.eql(u8, operation, "resize"))
-        "usage: howl instance resize ENDPOINT ROWS COLUMNS\n"
+        "usage: howl instance resize TARGET ROWS COLUMNS\n"
     else if (std.mem.eql(u8, operation, "signal"))
-        "usage: howl instance signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate\n"
+        "usage: howl instance signal TARGET hangup|interrupt|resize-notify|kill|terminate\n"
     else
         return error.InvalidArguments;
-    return printHelp(init, text);
+    try printHelp(init, text);
+    return printHelp(init, "TARGET: ENDPOINT | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\n");
 }
 
 fn printHelp(init: std.process.Init, text: []const u8) !void {

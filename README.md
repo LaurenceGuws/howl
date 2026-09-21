@@ -70,12 +70,15 @@ Instance attach.
 command families:
 
 ```text
-howl instance ...   # direct HWLS interaction with one Instance
+howl instance ...   # interaction with one Instance, direct or exact Server-routed
 howl server ...     # Server tree / Session / Instance orchestration
 ```
 
-The CLI is a frontend/composition root, not an architectural owner. In particular,
-`howl server session create` creates only logical Session identity, while
+The CLI is a frontend/composition root, not an architectural owner. Instance commands
+share one target grammar: a direct HWLS endpoint or
+`--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID`. The latter performs exact Server
+attach only to obtain the Instance stream; snapshot/input/resize semantics remain
+Instance-owned. In particular, `howl server session create` creates only logical Session identity, while
 `howl server instance create` is the only orchestration command that accepts
 shell/command/cwd/geometry.
 
