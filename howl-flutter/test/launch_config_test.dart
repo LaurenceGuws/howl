@@ -2,6 +2,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/launch_config.dart';
 
 void main() {
+  test(
+    'server argument selects managed launch without changing direct syntax',
+    () {
+      final managed = resolveHowlLaunch(
+        args: const ['--server', 'tcp://127.0.0.1:43130'],
+        compiledEndpoint: '',
+        compiledServerEndpoint: '',
+      );
+      expect(managed.mode, HowlLaunchMode.managedServer);
+      expect(managed.endpoint, 'tcp://127.0.0.1:43130');
+
+      final direct = resolveHowlLaunch(
+        args: const ['tcp://127.0.0.1:43131'],
+        compiledEndpoint: '',
+        compiledServerEndpoint: '',
+      );
+      expect(direct.mode, HowlLaunchMode.directInstance);
+    },
+  );
+
+  test('runtime Server environment outranks direct endpoint fallback', () {
+    final target = resolveHowlLaunch(
+      args: const [],
+      compiledEndpoint: '',
+      compiledServerEndpoint: '',
+      environmentEndpoint: 'tcp://127.0.0.1:41001',
+      environmentServerEndpoint: 'tcp://127.0.0.1:41002',
+    );
+    expect(target.mode, HowlLaunchMode.managedServer);
+    expect(target.endpoint, 'tcp://127.0.0.1:41002');
+  });
+
   test('runtime endpoint argument wins without a compiled route', () {
     expect(
       resolveHowlEndpoint(

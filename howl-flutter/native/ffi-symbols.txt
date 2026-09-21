@@ -14,6 +14,7 @@ howl_native_host_observe
 howl_native_host_set_live_observe_pipeline
 howl_native_control_create
 howl_native_control_create_managed
+howl_native_server_tree
 howl_native_control_destroy
 howl_native_control_committed_text
 howl_native_control_paste

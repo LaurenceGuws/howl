@@ -13,8 +13,10 @@ import 'history_viewport.dart';
 import 'held_key_repeat.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
+import 'instance_target.dart';
 import 'ios_network_probe.dart';
 import 'launch_config.dart';
+import 'server_browser.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
 import 'pointer_input.dart';
@@ -35,24 +37,28 @@ const int _nativeImageSnapshotSupersessionLimit = 8;
 
 Future<void> main(List<String> args) async {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
-  final String endpointText;
+  const compiledServerEndpoint = String.fromEnvironment('HOWL_SERVER_ENDPOINT');
+  final HowlLaunchTarget launch;
   try {
-    endpointText = resolveHowlEndpoint(
+    launch = resolveHowlLaunch(
       args: args,
       compiledEndpoint: compiledEndpoint,
+      compiledServerEndpoint: compiledServerEndpoint,
       environmentEndpoint: Platform.environment['HOWL_ENDPOINT'],
       environmentSocket: Platform.environment['HOWL_SOCKET'],
+      environmentServerEndpoint: Platform.environment['HOWL_SERVER_ENDPOINT'],
     );
   } on HowlLaunchException catch (error) {
     stderr.writeln(
-      'usage: howl_flutter ENDPOINT   (or set HOWL_ENDPOINT) [${error.code}]',
+      'usage: howl_flutter ENDPOINT | howl_flutter --server ENDPOINT '
+      '[${error.code}]',
     );
     exitCode = 64;
     return;
   }
   final HowlEndpoint endpoint;
   try {
-    endpoint = HowlEndpoint.parse(endpointText);
+    endpoint = HowlEndpoint.parse(launch.endpoint);
   } on HowlEndpointException catch (error) {
     stderr.writeln('invalid Howl endpoint: ${error.code}');
     exitCode = 64;
@@ -63,6 +69,7 @@ Future<void> main(List<String> args) async {
   const compiledGeometryLeader = String.fromEnvironment('HOWL_GEOMETRY_LEADER');
   runApp(
     HowlApp(
+      launch: launch,
       endpoint: endpoint,
       geometryLeader: geometryLeaderEnabled(
         compiledValue: compiledGeometryLeader,
@@ -75,9 +82,11 @@ Future<void> main(List<String> args) async {
 final class HowlApp extends StatelessWidget {
   const HowlApp({
     super.key,
+    required this.launch,
     required this.endpoint,
     required this.geometryLeader,
   });
+  final HowlLaunchTarget launch;
   final HowlEndpoint endpoint;
   final bool geometryLeader;
 
@@ -86,17 +95,26 @@ final class HowlApp extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     title: 'Howl',
     theme: ThemeData.dark(useMaterial3: false),
-    home: HowlTerminal(endpoint: endpoint, geometryLeader: geometryLeader),
+    home: launch.managed
+        ? HowlServerBrowser(
+            endpoint: endpoint,
+            terminalBuilder: (context, target) =>
+                HowlTerminal(target: target, geometryLeader: geometryLeader),
+          )
+        : HowlTerminal(
+            target: DirectHowlInstanceTarget(endpoint),
+            geometryLeader: geometryLeader,
+          ),
   );
 }
 
 final class HowlTerminal extends StatefulWidget {
   const HowlTerminal({
     super.key,
-    required this.endpoint,
+    required this.target,
     required this.geometryLeader,
   });
-  final HowlEndpoint endpoint;
+  final HowlInstanceTarget target;
   final bool geometryLeader;
 
   @override
@@ -166,7 +184,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _geometryLeader = widget.geometryLeader;
     _diagnostics.record(
       'App',
-      'start platform=${Platform.operatingSystem} endpoint=${widget.endpoint} '
+      'start platform=${Platform.operatingSystem} target=${widget.target.diagnosticLabel} '
           'backspace_runway=${_platformInput.backspaceRunway}',
     );
     _iosPhysicalArrowRepeat = HeldKeyRepeat(
@@ -298,9 +316,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         rasterScale != terminalRasterScale(View.of(context).devicePixelRatio);
     try {
       _diagnostics.record('Control', 'create generation=$generation');
-      control = await NativeHostControl.create(
-        endpoint: widget.endpoint.toString(),
-      );
+      control = await NativeHostControl.create(target: widget.target);
       _diagnostics.record('Control', 'attached generation=$generation');
       if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
@@ -308,12 +324,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
       _diagnostics.record('Observer', 'create generation=$generation');
       observer = await NativeHostObserver.createPlatform(
-        endpoint: widget.endpoint.toString(),
+        target: widget.target,
         presentation: nativePresentation,
         // Keep cheap local row-delta reuse on Unix. TCP uses the existing
         // compressed complete-snapshot path; native delta prearming is part
         // of that alternative policy, not Dart's display overlap below.
-        useLiveDeltas: widget.endpoint.unixPath != null,
+        useLiveDeltas: widget.target.transportEndpoint.unixPath != null,
       );
       _diagnostics.record(
         'Observer',
@@ -434,7 +450,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
         // TCP receive can overlap display pacing. Unix retains its existing
         // display-boundary coalescing instead of importing network policy.
-        if (widget.endpoint.tcpPort != null) {
+        if (widget.target.transportEndpoint.tcpPort != null) {
           prefetched = Future<NativeHostObservation>.sync(
             () => observer!.observe(
               afterRevision: revision,
@@ -748,7 +764,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   Future<void> _copyDiagnostics() async {
-    final networkProbe = await _iosNetworkProbe.probe(widget.endpoint);
+    final networkProbe = await _iosNetworkProbe.probe(
+      widget.target.transportEndpoint,
+    );
     if (networkProbe != null) {
       _diagnostics.record('iOS Network', networkProbe);
     }
@@ -1313,7 +1331,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             _nativeRasterScale,
           );
           observer = await NativeHostObserver.createPlatform(
-            endpoint: widget.endpoint.toString(),
+            target: widget.target,
             presentation: nativePresentation,
           );
           if (!mounted || _stopping || !_history.ownsRequest(request)) {

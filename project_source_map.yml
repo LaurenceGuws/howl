@@ -82,13 +82,15 @@ experimental:
     multi-source Canvas compositor or stable mobile ABI
   howl-flutter: >-
     maintained native graphical client canary for one Howl Instance interaction
-    stream: direct HWLS construction remains available, while the app-private native
-    seam can also connect a Server, attach exact Session+Instance identity, then
-    transition the same fd into ordinary HWLS with no proxy. Presentation/input/
-    viewport/history/selection/native-size UX stays Instance-only after handoff;
-    Flutter owns no PTY, VT, Instance, Session, Server, grid, discovery or supervision;
-    Android physical path accepted, Linux bundled host proven, iOS native-host
-    semantics pressure-proven; outside the core gate
+    stream. Direct HWLS remains available; Server mode performs one validated native
+    tree query, presents Session labels + Instance lineage, and on running-Instance
+    selection attaches exact Session+Instance identity then transitions the same fd
+    into ordinary HWLS with no proxy. Dart never parses server_protocol bytes and
+    keeps no authoritative Server mirror; presentation/input/viewport/history/
+    selection/native-size UX remains Instance-only after handoff. Flutter owns no
+    PTY, VT, Instance, Session, Server, grid, discovery or supervision; Android
+    physical path accepted, Linux bundled host proven, iOS native-host semantics
+    pressure-proven; outside the core gate
   howl-host: >-
     native Linux Vulkan performance canary with two terminal routes: one in-process
     howl-instance selected by --local, or explicit externally owned Instance streams

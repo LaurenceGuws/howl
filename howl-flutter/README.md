@@ -35,7 +35,7 @@ JAVA_HOME=/path/to/jdk21 \
 ```
 
 `HOWL_GEOMETRY_LEADER` accepts `1` or `true`. When enabled, viewport/font-size
-changes are explicit serialized session resizes; attaching the client still does
+changes are explicit serialized Instance resizes; attaching the client still does
 not otherwise mutate canonical geometry.
 
 The wrapper always performs a clean Flutter build with `--target-platform android-arm64`, verifies that no other ABI entered the APK, and requires `libhowl_native_host.so`. Gradle independently refuses a non-arm64 Flutter target or a missing generated host library.
@@ -64,10 +64,10 @@ mouse. Mouse/stylus devices continue through canonical semantic mouse input.
 Desktop primary drag becomes client-local absolute-row selection when canonical
 mouse tracking is off; mouse-aware applications keep their semantic drag stream,
 and Shift+drag explicitly forces local selection. Selected UTF-8 still comes from
-Session's canonical text-extract contract. Selection paint follows the copied
+the Instance's canonical text-extract contract. Selection paint follows the copied
 text shape rather than filling intermediate rows to the terminal edge: hard row
 breaks add one newline cell, empty selected rows are one cell, and soft wraps do
-not invent a newline. Desktop wheel routing reads Session's
+not invent a newline. Desktop wheel routing reads the Instance's
 canonical interaction state: an active
 history viewport stays local, mouse-aware applications receive semantic wheel
 reports, DEC alternate-scroll becomes cursor-key input, and ordinary shell wheel
@@ -110,16 +110,16 @@ successful canonical frame resets that cadence. Each transport lifetime has a
 generation, so queued control work from a dead connection is discarded rather
 than replayed into its replacement. Platform/font/packet validation failures
 remain hard failures. Physical Note10 qualification cut a localhost relay out
-from under the running app until the canonical session had zero clients, then
+from under the running app until the canonical Instance had zero clients, then
 restored it; the same Flutter process reattached, reclaimed 32x51 geometry and
-rendered the surviving Bash session without an app restart.
+rendered the surviving Bash Instance without an app restart.
 
 Observer cancellation is out-of-band from the blocking observation request.
 The private native host gives Flutter an independently owned duplicate of the
 observer socket; superseding a presentation shuts down that duplicate to wake
 the blocked receive, then the observer worker processes its ordinary close and
 remains the sole owner which destroys the native Host. This prevents idle
-presentation restarts from accumulating stale session clients without closing
+presentation restarts from accumulating stale Instance clients without closing
 the same fd from two owners.
 
 TCP live presentation permits one pending native observation while Flutter waits for
@@ -170,13 +170,26 @@ client, run from the repository root:
 Flutter 3.47.2, starts only loopback listeners, and stops its session/gateway
 and Flutter process on Ctrl-C.
 
-Build the native host first, then the normal Flutter bundle:
+Build the native host first, then the normal route-agnostic Flutter bundle:
 
 ```sh
 ZIG=/path/to/tracked/zig ./native/build-linux.sh
-flutter build linux --release \
-  --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+flutter build linux --release
 ```
+
+Select the route when the artifact runs:
+
+```sh
+# direct HWLS Instance
+./build/linux/x64/release/bundle/howl_flutter tcp://127.0.0.1:43127
+
+# Server browser -> exact Session + Instance -> same-stream HWLS
+./build/linux/x64/release/bundle/howl_flutter --server tcp://127.0.0.1:43130
+```
+
+`HOWL_ENDPOINT` / `HOWL_SOCKET` are direct-route environment fallbacks.
+`HOWL_SERVER_ENDPOINT` selects Server-browser mode. A compiled endpoint remains an
+optional deployment override, not a requirement of the standard artifact.
 
 The Linux bundle installs `libhowl_native_host.so` into its existing `$ORIGIN/lib` directory and refuses to build if the native host is missing. Linux uses the system FreeType/HarfBuzz libraries.
 
@@ -221,3 +234,16 @@ After that handoff, observer/control/rendering code is identical to direct mode.
 The native seam does not proxy bytes and does not import Server layout or geometry
 state. Server routing chooses an Instance; that Instance remains the sole owner of
 its canonical terminal geometry.
+
+The Dart Server surface is deliberately thin. `NativeServerTree.fetch` performs one
+validated native `server-client` query and returns a typed read-only tree. Flutter
+does not parse `server_protocol` bytes or retain a second authoritative Server model.
+The browser shows Session labels and retained Instance lineage; exited Instances stay
+visible but cannot be opened. Selecting a running Instance creates one
+`ManagedHowlInstanceTarget`, after which the existing terminal observer/control path
+is reused unchanged.
+
+Server identifiers and tree revisions remain opaque decimal strings in Dart so full
+unsigned 64-bit identity survives the language boundary. Session/Instance ids are
+used only as exact routing identities. Pane/split layout and visible surface
+composition remain app-side presentation concerns.

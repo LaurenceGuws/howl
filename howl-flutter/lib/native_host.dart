@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 
+import 'instance_target.dart';
 import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
@@ -392,13 +393,13 @@ final class NativeHostObserver {
   /// one prearmed delta request. False uses compressed complete snapshots.
   /// Dart's display overlap is independent of this native policy.
   static Future<NativeHostObserver> createPlatform({
-    required String endpoint,
+    required HowlInstanceTarget target,
     required TerminalPresentation presentation,
     bool useLiveDeltas = false,
   }) async {
     final fonts = await _nativeHostFonts();
     return create(
-      endpoint: endpoint,
+      target: target,
       primaryFontPath: fonts.primary,
       fallbackFontPath: fonts.fallback,
       secondaryFallbackFontPath: fonts.secondaryFallback,
@@ -408,7 +409,7 @@ final class NativeHostObserver {
   }
 
   static Future<NativeHostObserver> create({
-    required String endpoint,
+    required HowlInstanceTarget target,
     required String primaryFontPath,
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
@@ -433,7 +434,9 @@ final class NativeHostObserver {
       <Object?>[
         ready.sendPort,
         responses.sendPort,
-        endpoint,
+        target.endpointText,
+        target.sessionId,
+        target.instanceId,
         primaryFontPath,
         fallbackFontPath,
         secondaryFallbackFontPath,
@@ -684,6 +687,42 @@ typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _CreateManagedDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _CancellationCreateNative = ffi.Pointer<ffi.Void> Function(
@@ -756,19 +795,25 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
-  final primary = init[3]! as String;
-  final fallback = init[4]! as String;
-  final secondaryFallback = init[5]! as String;
-  final useLiveDeltas = init[6]! as bool;
-  final fontPixels = init[7]! as int;
-  final cellWidth = init[8]! as int;
-  final lineHeight = init[9]! as int;
+  final sessionId = init[3]! as int;
+  final instanceId = init[4]! as int;
+  final primary = init[5]! as String;
+  final fallback = init[6]! as String;
+  final secondaryFallback = init[7]! as String;
+  final useLiveDeltas = init[8]! as bool;
+  final fontPixels = init[9]! as int;
+  final cellWidth = init[10]! as int;
+  final lineHeight = init[11]! as int;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_CreateNative, _CreateDart>(
     'howl_native_host_create',
   );
+  final createManaged = dylib
+      .lookupFunction<_CreateManagedNative, _CreateManagedDart>(
+        'howl_native_host_create_managed',
+      );
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
@@ -839,22 +884,41 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       : copyString(secondaryFallback);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final host = create(
-    endpointPointer,
-    endpointBytes.length,
-    primaryPointer,
-    primaryBytes.length,
-    fallbackPointer,
-    fallbackBytes.length,
-    secondaryFallbackPointer,
-    secondaryFallbackBytes.length,
-    fontPixels,
-    cellWidth,
-    lineHeight,
-    diagnosticPointer,
-    _nativeCreateDiagnosticBytes,
-    diagnosticLength,
-  );
+  final host = sessionId == 0
+      ? create(
+          endpointPointer,
+          endpointBytes.length,
+          primaryPointer,
+          primaryBytes.length,
+          fallbackPointer,
+          fallbackBytes.length,
+          secondaryFallbackPointer,
+          secondaryFallbackBytes.length,
+          fontPixels,
+          cellWidth,
+          lineHeight,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        )
+      : createManaged(
+          endpointPointer,
+          endpointBytes.length,
+          sessionId,
+          instanceId,
+          primaryPointer,
+          primaryBytes.length,
+          fallbackPointer,
+          fallbackBytes.length,
+          secondaryFallbackPointer,
+          secondaryFallbackBytes.length,
+          fontPixels,
+          cellWidth,
+          lineHeight,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        );
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);
   calloc.free(fallbackPointer);
@@ -1017,14 +1081,22 @@ final class NativeHostControl {
   int _nextId = 1;
   bool _closed = false;
 
-  static Future<NativeHostControl> create({required String endpoint}) async {
+  static Future<NativeHostControl> create({
+    required HowlInstanceTarget target,
+  }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeControlWorker,
-      <Object?>[ready.sendPort, responses.sendPort, endpoint],
+      <Object?>[
+        ready.sendPort,
+        responses.sendPort,
+        target.endpointText,
+        target.sessionId,
+        target.instanceId,
+      ],
       debugName: 'Howl native control',
       onError: errors.sendPort,
       onExit: exits.sendPort,
@@ -1224,6 +1296,24 @@ typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _ControlCreateManagedNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlCreateManagedDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlTextNative = ffi.Int32 Function(
@@ -1334,11 +1424,17 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
+  final sessionId = init[3]! as int;
+  final instanceId = init[4]! as int;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
     'howl_native_control_create',
   );
+  final createManaged = dylib
+      .lookupFunction<_ControlCreateManagedNative, _ControlCreateManagedDart>(
+        'howl_native_control_create_managed',
+      );
   final destroy = dylib
       .lookupFunction<_ControlDestroyNative, _ControlDestroyDart>(
         'howl_native_control_destroy',
@@ -1383,13 +1479,23 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   endpointPointer.asTypedList(endpointBytes.length).setAll(0, endpointBytes);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final control = create(
-    endpointPointer,
-    endpointBytes.length,
-    diagnosticPointer,
-    _nativeCreateDiagnosticBytes,
-    diagnosticLength,
-  );
+  final control = sessionId == 0
+      ? create(
+          endpointPointer,
+          endpointBytes.length,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        )
+      : createManaged(
+          endpointPointer,
+          endpointBytes.length,
+          sessionId,
+          instanceId,
+          diagnosticPointer,
+          _nativeCreateDiagnosticBytes,
+          diagnosticLength,
+        );
   calloc.free(endpointPointer);
   if (control == ffi.nullptr) {
     final diagnostic = _nativeCreateDiagnostic(
