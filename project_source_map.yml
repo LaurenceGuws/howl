@@ -15,9 +15,10 @@ accepted:
 experimental:
   server-runtime: >-
     foreground `server_runtime` module owning exactly one Server control listener,
-    one Server model/control service and bounded cooperative scheduling. Dormant live
-    PTYs share one aggregate listener+PTY poll; only control clients or Instance
-    client/timer/write work receives direct rotating service turns. Fully quiescent
+    one Server model/control service and bounded cooperative scheduling. The Server
+    listener, exact control-socket readiness masks and dormant live PTYs share one
+    aggregate poll; only Instance-internal client/timer/write work receives direct
+    rotating service turns. Fully quiescent
     exited Instances remain attachable but consume no scheduler work. Exact attach
     transfers the same fd downward
     into HWLS; no per-Instance listener/proxy exists. Runtime owns no terminal grid,

@@ -139,31 +139,30 @@ pub const Runtime = struct {
         return self.listener.endpointText(output);
     }
 
-    /// One bounded cooperative turn. Dormant running Instances sleep in one
-    /// aggregate listener+PTY poll; only clients/timers/writes receive direct turns.
+    /// One bounded cooperative turn. Socket/PTy readiness shares one aggregate poll;
+    /// only Instance-internal timer/client/write work receives direct rotating turns.
     pub fn turn(self: *Runtime) !void {
-        self.acceptClients();
-        try self.serviceDormantReadiness(0);
+        try self.serviceAggregateReadiness(0);
 
-        if (self.service.clientCount() != 0) try self.service.turn(0);
+        const revision_before_drain = self.server.treeRevision();
         try self.turnActiveInstances(0);
+        if (self.service.clientCount() != 0 and
+            self.server.treeRevision() != revision_before_drain)
+            try self.service.turn(0);
 
-        const control_active = self.service.clientCount() != 0;
         const instance_count: usize = self.server.turnInstanceCount();
-        const owner_count = instance_count + @intFromBool(control_active);
-        if (owner_count == 0) {
-            try self.serviceDormantReadiness(idle_wait_ms);
+        if (instance_count == 0) {
+            try self.serviceAggregateReadiness(idle_wait_ms);
             return;
         }
 
-        const target = self.wait_cursor % owner_count;
-        self.wait_cursor = (target + 1) % owner_count;
-        if (control_active and target == 0) {
-            try self.service.turn(scheduler_wait_ms);
-        } else {
-            const instance_target = target - @intFromBool(control_active);
-            try self.turnNthActiveInstance(instance_target, scheduler_wait_ms);
-        }
+        const target = self.wait_cursor % instance_count;
+        self.wait_cursor = (target + 1) % instance_count;
+        const revision_before_wait = self.server.treeRevision();
+        try self.turnNthActiveInstance(target, scheduler_wait_ms);
+        if (self.service.clientCount() != 0 and
+            self.server.treeRevision() != revision_before_wait)
+            try self.service.turn(0);
     }
 
     pub fn run(self: *Runtime) !void {
@@ -175,11 +174,13 @@ pub const Runtime = struct {
         instance_id: u64,
     };
 
-    fn serviceDormantReadiness(self: *Runtime, timeout_ms: i32) !void {
+    fn serviceAggregateReadiness(self: *Runtime, timeout_ms: i32) !void {
         const maximum_dormant = model.maximum_sessions * model.maximum_instances_per_session;
-        var descriptors: [1 + maximum_dormant]posix.pollfd = undefined;
+        const maximum_descriptors = 1 + control.Service.maximum_wait_descriptors + maximum_dormant;
+        var descriptors: [maximum_descriptors]posix.pollfd = undefined;
         var owners: [maximum_dormant]DormantOwner = undefined;
         var descriptor_count: usize = 1;
+        var control_descriptor_count: usize = 0;
         var owner_count: usize = 0;
 
         descriptors[0] = .{
@@ -187,6 +188,19 @@ pub const Runtime = struct {
             .events = posix.POLL.IN | posix.POLL.HUP | posix.POLL.ERR,
             .revents = 0,
         };
+
+        var control_storage: [control.Service.maximum_wait_descriptors]control.Service.WaitDescriptor = undefined;
+        const control_waits = self.service.snapshotWaitDescriptors(&control_storage);
+        for (control_waits) |wait| {
+            std.debug.assert(descriptor_count < descriptors.len);
+            descriptors[descriptor_count] = .{
+                .fd = wait.fd,
+                .events = wait.events,
+                .revents = 0,
+            };
+            descriptor_count += 1;
+            control_descriptor_count += 1;
+        }
 
         var sessions_storage: [model.maximum_sessions]model.SessionView = undefined;
         const sessions = self.server.snapshotSessions(&sessions_storage);
@@ -214,14 +228,29 @@ pub const Runtime = struct {
         const ready = try posix.poll(descriptors[0..descriptor_count], timeout_ms);
         std.debug.assert(ready <= descriptor_count);
         if (descriptors[0].revents & posix.POLL.NVAL != 0) unreachable;
-        if (descriptors[0].revents & posix.POLL.IN != 0) self.acceptClients();
 
+        var control_ready = false;
+        if (descriptors[0].revents & posix.POLL.IN != 0) {
+            self.acceptClients();
+            control_ready = true;
+        }
+        for (descriptors[1 .. 1 + control_descriptor_count]) |descriptor| {
+            if (descriptor.revents == 0) continue;
+            std.debug.assert(descriptor.revents & posix.POLL.NVAL == 0);
+            control_ready = true;
+        }
+
+        const revision_before_instances = self.server.treeRevision();
+        const instance_base = 1 + control_descriptor_count;
         for (owners[0..owner_count], 0..) |owner, index| {
-            const events = descriptors[1 + index].revents;
+            const events = descriptors[instance_base + index].revents;
             if (events == 0) continue;
             std.debug.assert(events & posix.POLL.NVAL == 0);
             try self.server.turnInstance(owner.session_id, owner.instance_id, 0);
         }
+        const tree_changed = self.server.treeRevision() != revision_before_instances;
+        if (self.service.clientCount() != 0 and (control_ready or tree_changed))
+            try self.service.turn(0);
     }
 
     fn acceptClients(self: *Runtime) void {

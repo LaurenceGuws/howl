@@ -104,6 +104,32 @@ pub const Service = struct {
         return count;
     }
 
+    pub const maximum_wait_descriptors: usize = maximum_clients;
+
+    pub const WaitDescriptor = struct {
+        fd: posix.fd_t,
+        events: i16,
+    };
+
+    /// Snapshots exact socket readiness interests for caller-owned aggregate polling.
+    /// Tree-revision wakeups remain service-owned and require an explicit zero-timeout
+    /// `turn` after the borrowed Server model changes.
+    pub fn snapshotWaitDescriptors(
+        self: *const Service,
+        output: *[maximum_wait_descriptors]WaitDescriptor,
+    ) []const WaitDescriptor {
+        var count: usize = 0;
+        for (self.clients) |maybe_client| {
+            const client = maybe_client orelse continue;
+            output[count] = .{
+                .fd = client.fd,
+                .events = clientPollEvents(client),
+            };
+            count += 1;
+        }
+        return output[0..count];
+    }
+
     pub const AdoptError = std.mem.Allocator.Error || error{
         ClientCapacity,
         InitialInputTooLarge,
@@ -127,13 +153,11 @@ pub const Service = struct {
         var descriptors: [maximum_clients]posix.pollfd = undefined;
         for (self.clients, 0..) |maybe_client, index| {
             if (maybe_client) |client| {
-                var events: i16 = posix.POLL.HUP | posix.POLL.ERR;
-                if (client.outputPending()) {
-                    events |= posix.POLL.OUT;
-                } else if (client.observe_after == null) {
-                    events |= posix.POLL.IN;
-                }
-                descriptors[index] = .{ .fd = client.fd, .events = events, .revents = 0 };
+                descriptors[index] = .{
+                    .fd = client.fd,
+                    .events = clientPollEvents(client),
+                    .revents = 0,
+                };
             } else {
                 descriptors[index] = .{ .fd = -1, .events = 0, .revents = 0 };
             }
@@ -497,6 +521,16 @@ pub const Service = struct {
         }
     }
 };
+
+fn clientPollEvents(client: Client) i16 {
+    var events: i16 = posix.POLL.HUP | posix.POLL.ERR;
+    if (client.outputPending()) {
+        events |= posix.POLL.OUT;
+    } else if (client.observe_after == null) {
+        events |= posix.POLL.IN;
+    }
+    return events;
+}
 
 fn queueFrame(client: *Client, kind: protocol.Kind, payload: []const u8) !void {
     if (client.outputPending() or payload.len > protocol.maximum_payload_bytes)
@@ -922,4 +956,43 @@ test "control Service deinit leaves borrowed Server usable" {
     const second = try server.createSession("second");
     try std.testing.expect(second > first);
     try std.testing.expectEqual(@as(u16, 2), server.sessionCount());
+}
+
+test "control wait descriptors distinguish input output and parked tree observers" {
+    var server = try model.Server.init(std.testing.allocator, 0x59);
+    defer server.deinit();
+    var service = Service.init(std.testing.allocator, std.testing.io, std.testing.environ, &server);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(std.testing.allocator, &service);
+    defer peer.deinit();
+
+    var waits_storage: [Service.maximum_wait_descriptors]Service.WaitDescriptor = undefined;
+    var waits = service.snapshotWaitDescriptors(&waits_storage);
+    try std.testing.expectEqual(@as(usize, 1), waits.len);
+    try std.testing.expect(waits[0].events & posix.POLL.IN != 0);
+    try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.OUT);
+
+    try peer.sendFrame(.hello, &.{});
+    try service.turn(0);
+    waits = service.snapshotWaitDescriptors(&waits_storage);
+    try std.testing.expect(waits[0].events & posix.POLL.OUT != 0);
+    try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.IN);
+
+    var welcome = try awaitControlFrame(&peer, &service);
+    defer welcome.deinit(std.testing.allocator);
+    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+    waits = service.snapshotWaitDescriptors(&waits_storage);
+    try std.testing.expect(waits[0].events & posix.POLL.IN != 0);
+    try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.OUT);
+
+    var observe: [protocol.payload_bytes.observe_tree]u8 = undefined;
+    protocol.encodeObserveTree(&observe, .{ .after_revision = server.treeRevision() });
+    try peer.sendFrame(.observe_tree, &observe);
+    try service.turn(0);
+    waits = service.snapshotWaitDescriptors(&waits_storage);
+    try std.testing.expectEqual(@as(usize, 1), waits.len);
+    try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.IN);
+    try std.testing.expectEqual(@as(i16, 0), waits[0].events & posix.POLL.OUT);
+    try std.testing.expect(waits[0].events & posix.POLL.HUP != 0);
+    try std.testing.expect(waits[0].events & posix.POLL.ERR != 0);
 }

@@ -59,10 +59,14 @@ the accepted stream directly into that Instance's HWLS service; no per-Instance
 listener or byte proxy exists.
 
 The scheduler separates readiness from service work. Running Instances with no clients,
-pending writes or terminal deadlines contribute only their PTY fd to one aggregate poll
-alongside the Server listener. PTY output/exit and new Server connections therefore wake
-the runtime immediately without periodic per-Instance turns. Control clients and
-Instances with client/timer/write work use the bounded rotating service lane. Retained
+pending writes or terminal deadlines contribute only their PTY fd to one aggregate poll.
+Server control sockets contribute the exact readiness mask requested by `server_service`:
+ordinary clients wait for input, queued responses wait for output, and parked tree
+observers wait only for disconnect while tree-revision changes wake them explicitly.
+The Server listener, those control sockets and dormant PTYs therefore share one aggregate
+readiness wait. PTY output/exit, control input/output and new Server connections wake the
+runtime immediately without periodic idle turns. Instances with internal client/timer/
+write work use the bounded rotating direct-service lane. Retained
 exited Instances remain attachable but disappear from all scheduler work once their PTY,
 clients, terminal timers, consequences and publication work are quiescent; a later exact
 attach makes that Instance serviceable again. The aggregate dormant wait has only a
