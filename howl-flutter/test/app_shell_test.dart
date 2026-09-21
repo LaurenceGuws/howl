@@ -147,4 +147,135 @@ void main() {
       expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'editing selected saved Server follows the replacement endpoint',
+    (tester) async {
+      final store = _MemoryStore();
+      final connections = HowlServerConnections(store);
+      await connections.initialize();
+      final oldServer = HowlServerConnection(
+        label: 'Home',
+        endpoint: 'tcp://127.0.0.1:43130',
+      );
+      await connections.upsert(oldServer);
+      await connections.select(oldServer.endpoint);
+
+      final fetched = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HowlAppShell(
+            connections: connections,
+            fetchTree: (endpoint) async {
+              fetched.add(endpoint.toString());
+              return _tree();
+            },
+            terminalBuilder: (_, _) => const SizedBox.shrink(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(fetched.last, oldServer.endpoint);
+
+      final moved = HowlServerConnection(
+        label: 'Home',
+        endpoint: 'tcp://127.0.0.1:43132',
+      );
+      await connections.upsert(moved, replacingEndpoint: oldServer.endpoint);
+      await tester.pumpAndSettle();
+
+      expect(connections.selectedEndpoint, moved.endpoint);
+      expect(fetched.last, moved.endpoint);
+      expect(find.text('work'), findsOneWidget);
+    },
+  );
+
+  testWidgets('removing selected saved Server ejects managed terminal', (
+    tester,
+  ) async {
+    final store = _MemoryStore();
+    final connections = HowlServerConnections(store);
+    await connections.initialize();
+    final server = HowlServerConnection(
+      label: 'Home',
+      endpoint: 'tcp://127.0.0.1:43130',
+    );
+    await connections.upsert(server);
+    await connections.select(server.endpoint);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlAppShell(
+          connections: connections,
+          fetchTree: (_) async => _tree(),
+          terminalBuilder: (_, target) => Text(
+            'terminal ${target.sessionId}/${target.instanceId}',
+            key: const Key('managed-terminal-under-removal'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Instance 2'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('managed-terminal-under-removal')),
+      findsOneWidget,
+    );
+
+    await connections.remove(server.endpoint);
+    await tester.pumpAndSettle();
+
+    expect(connections.selectedEndpoint, isNull);
+    expect(
+      find.byKey(const Key('managed-terminal-under-removal')),
+      findsNothing,
+    );
+    expect(find.text('No Server configured'), findsOneWidget);
+    expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
+  });
+
+  testWidgets('transient Server launch ignores saved selection mutations', (
+    tester,
+  ) async {
+    final store = _MemoryStore();
+    final connections = HowlServerConnections(store);
+    await connections.initialize();
+    final saved = HowlServerConnection(
+      label: 'Saved',
+      endpoint: 'tcp://127.0.0.1:43130',
+    );
+    final other = HowlServerConnection(
+      label: 'Other',
+      endpoint: 'tcp://127.0.0.1:43131',
+    );
+    await connections.upsert(saved);
+    await connections.upsert(other);
+    await connections.select(saved.endpoint);
+
+    final transient = HowlEndpoint.parse('tcp://127.0.0.1:43999');
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HowlAppShell(
+          connections: connections,
+          initialServerEndpoint: transient,
+          fetchTree: (endpoint) async {
+            fetched.add(endpoint.toString());
+            return _tree();
+          },
+          terminalBuilder: (_, _) => const SizedBox.shrink(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(fetched.last, transient.toString());
+
+    await connections.select(other.endpoint);
+    await tester.pumpAndSettle();
+
+    expect(connections.selectedEndpoint, other.endpoint);
+    expect(fetched.last, transient.toString());
+    expect(find.text('work'), findsOneWidget);
+  });
 }

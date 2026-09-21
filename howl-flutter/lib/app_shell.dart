@@ -43,6 +43,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
   late final bool _ownsConnections;
   HowlEndpoint? _activeServer;
   HowlInstanceTarget? _activeInstance;
+  bool _followSavedServer = false;
   bool _initialized = false;
 
   @override
@@ -53,8 +54,13 @@ final class _HowlAppShellState extends State<HowlAppShell> {
         widget.connections ??
         HowlServerConnections(SharedPreferencesHowlServerConnectionStore());
     _connections.addListener(_connectionsChanged);
-    _activeServer = widget.initialServerEndpoint;
     _activeInstance = widget.initialInstanceTarget;
+    _activeServer =
+        widget.initialServerEndpoint ??
+        switch (_activeInstance) {
+          ManagedHowlInstanceTarget target => target.serverEndpoint,
+          _ => null,
+        };
     unawaited(_initialize());
   }
 
@@ -72,13 +78,31 @@ final class _HowlAppShellState extends State<HowlAppShell> {
       final selected = _connections.selectedEndpoint;
       if (selected != null) {
         _activeServer = HowlEndpoint.parse(selected);
+        _followSavedServer = true;
       }
     }
     setState(() => _initialized = true);
   }
 
   void _connectionsChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (!_followSavedServer) {
+      setState(() {});
+      return;
+    }
+
+    final selected = _connections.selectedEndpoint;
+    final current = _activeServer?.toString();
+    if (selected == current) {
+      setState(() {});
+      return;
+    }
+
+    setState(() {
+      _activeServer = selected == null ? null : HowlEndpoint.parse(selected);
+      _activeInstance = null;
+      if (selected == null) _followSavedServer = false;
+    });
   }
 
   Future<void> _selectServer(HowlServerConnection server) async {
@@ -88,6 +112,7 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     setState(() {
       _activeServer = endpoint;
       _activeInstance = null;
+      _followSavedServer = true;
     });
     _closeDrawer();
   }
