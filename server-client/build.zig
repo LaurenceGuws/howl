@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     test_root.addImport("server_client", module);
+    test_root.addImport("howl_client", b.dependency("howl_client", .{ .target = target, .optimize = optimize }).module("howl_client"));
     test_root.addImport("server_model", server.module("server"));
     test_root.addImport("server_service", server.module("server_service"));
     test_root.addImport("client_transport", transport.module("client_transport"));

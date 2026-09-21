@@ -111,6 +111,7 @@ pub fn connectTransport(
 ) Error!Connection {
     var stream = stream_value;
     errdefer stream.deinit();
+    try stream.beginHandshake(diagnostic);
     diagnostic.stage = .hello_write;
     var hello: [protocol.header_bytes]u8 = undefined;
     try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });

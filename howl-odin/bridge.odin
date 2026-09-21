@@ -12,9 +12,9 @@ foreign howl_bridge {
     interrupt_create :: proc() -> rawptr ---
     interrupt_cancel :: proc(token: rawptr) -> i32 ---
     interrupt_destroy :: proc(token: rawptr) ---
-    create             :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, session_id, instance_id: u64, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    create             :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, server_id, session_id, instance_id: u64, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     destroy            :: proc(handle: rawptr) ---
-    consequence_create :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, session_id, instance_id: u64, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    consequence_create :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, server_id, session_id, instance_id: u64, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     consequence_destroy :: proc(handle: rawptr) ---
     consequence_client_id :: proc(handle: rawptr) -> u64 ---
     consequence_acquire :: proc(handle: rawptr) -> i32 ---
@@ -59,7 +59,7 @@ foreign howl_bridge {
     history_count      :: proc(handle: rawptr) -> u32 ---
     history_row_base   :: proc(handle: rawptr) -> u32 ---
     text_truncated     :: proc(handle: rawptr) -> u8 ---
-    render_create      :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, session_id, instance_id: u64, font: [^]u8, font_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    render_create      :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, server_id, session_id, instance_id: u64, font: [^]u8, font_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     render_destroy     :: proc(handle: rawptr) ---
     render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     render_prepare :: proc(handle: rawptr, history_offset: u32) -> i32 ---

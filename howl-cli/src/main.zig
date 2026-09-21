@@ -92,11 +92,7 @@ fn versionCommand(init: std.process.Init) !void {
 
 const InstanceTarget = union(enum) {
     direct: []const u8,
-    server: struct {
-        endpoint: []const u8,
-        session_id: u64,
-        instance_id: u64,
-    },
+    server: server_client.Target,
 };
 
 const ParsedInstanceTarget = struct {
@@ -112,16 +108,18 @@ fn parseInstanceTarget(args: []const [*:0]const u8) error{InvalidArguments}!Pars
             .args = args[1..],
         };
     }
-    if (args.len < 4) return error.InvalidArguments;
-    const session_id = parseNonzeroIdentity(std.mem.span(args[2])) catch return error.InvalidArguments;
-    const instance_id = parseNonzeroIdentity(std.mem.span(args[3])) catch return error.InvalidArguments;
+    if (args.len < 5) return error.InvalidArguments;
+    const server_id = parseNonzeroIdentity(std.mem.span(args[2])) catch return error.InvalidArguments;
+    const session_id = parseNonzeroIdentity(std.mem.span(args[3])) catch return error.InvalidArguments;
+    const instance_id = parseNonzeroIdentity(std.mem.span(args[4])) catch return error.InvalidArguments;
     return .{
         .target = .{ .server = .{
             .endpoint = std.mem.span(args[1]),
+            .server_id = server_id,
             .session_id = session_id,
             .instance_id = instance_id,
         } },
-        .args = args[4..],
+        .args = args[5..],
     };
 }
 
@@ -146,21 +144,10 @@ fn connect(
         },
         .server => |managed| {
             var server_diagnostic: server_client.ConnectDiagnostic = .{};
-            var server = server_client.Connection.connectDiagnosed(
-                init.gpa,
-                managed.endpoint,
-                &server_diagnostic,
-            ) catch |problem| {
+            const attached = server_client.attach(init.gpa, managed, &server_diagnostic, null) catch |problem| {
                 captureServerConnect(context, &server_diagnostic);
                 return problem;
             };
-            var server_live = true;
-            defer if (server_live) server.deinit();
-            const attached = server.attachInstance(.{
-                .session_id = managed.session_id,
-                .instance_id = managed.instance_id,
-            }) catch |problem| return problem;
-            server_live = false;
 
             var instance_diagnostic: client.ConnectDiagnostic = .{};
             return client.connectTransport(
@@ -353,7 +340,7 @@ fn printInstanceHelp(init: std.process.Init) !void {
         "\n" ++
         "TARGET:\n" ++
         "  ENDPOINT\n" ++
-        "  --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\n");
+        "  --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n");
 }
 
 fn printInstanceOperationHelp(init: std.process.Init, operation: []const u8) !void {
@@ -376,7 +363,7 @@ fn printInstanceOperationHelp(init: std.process.Init, operation: []const u8) !vo
     else
         return error.InvalidArguments;
     try printHelp(init, text);
-    return printHelp(init, "TARGET: ENDPOINT | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\n");
+    return printHelp(init, "TARGET: ENDPOINT | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n");
 }
 
 fn printHelp(init: std.process.Init, text: []const u8) !void {

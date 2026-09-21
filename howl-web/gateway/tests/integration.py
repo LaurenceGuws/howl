@@ -62,6 +62,7 @@ class AttachedEchoServer:
     def __init__(self) -> None:
         self.port = free_port()
         self.accepted = 0
+        self.server_id = SERVER_ID
         self.attached: list[tuple[int, int]] = []
         self._stop = threading.Event()
         self._listener = socket.socket()
@@ -96,7 +97,7 @@ class AttachedEchoServer:
                 assert kind == 1 and payload == b''  # hello
                 status = struct.pack(
                     '!QQHHHH8x',
-                    SERVER_ID,
+                    self.server_id,
                     TREE_REVISION,
                     1,
                     1,
@@ -225,7 +226,7 @@ def main() -> None:
         (root/'index.html').write_text('gateway-index\n')
         wire = root/'wire.wasm'; wire.write_bytes(b'wire')
         proc = subprocess.Popen([
-            str(GATEWAY), str(listen), str(server.port), str(SESSION_ID), str(INSTANCE_ID),
+            str(GATEWAY), str(listen), str(server.port), str(SERVER_ID), str(SESSION_ID), str(INSTANCE_ID),
             host, origin, str(root), str(wire), '--require-access',
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -307,10 +308,24 @@ def main() -> None:
             assert one.recv(1) == b''
             one.close()
             for peer in peers: peer.close()
+            # Retain the selected gateway target while its endpoint now welcomes
+            # a different incarnation with exactly the same Session/Instance pair.
+            server.server_id += 1
+            # Capacity teardown is asynchronous; bounded wait for one free lane.
+            deadline = time.monotonic() + 2
+            while True:
+                stale, status, _ = ws_open(listen, host, origin, True)
+                stale.close()
+                assert status == 503
+                if server.accepted > 6:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(.01)
+            assert len(server.attached) == 6, server.attached
             print(json.dumps({
                 'status':'pass', 'access_before_upstream':True, 'host_origin_exact':True,
                 'binary_bridge':True, 'streaming_bridge_bytes':stream_total, 'text_rejected':True, 'websocket_capacity':6,
-                'static_csp':True, 'server_attach':True, 'upstream_accepts':server.accepted,
+                'static_csp':True, 'server_attach':True, 'stale_incarnation_rejected':True, 'upstream_accepts':server.accepted,
             }))
         finally:
             proc.terminate()

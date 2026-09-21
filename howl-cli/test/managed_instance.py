@@ -2,6 +2,7 @@
 """Public CLI proof for Instance interaction routed through one Howl Server."""
 
 import json
+import select
 import subprocess
 import sys
 import time
@@ -36,6 +37,7 @@ def main():
     session_id = None
     instance_id = None
     try:
+        assert select.select([server.stdout], [], [], 4)[0], "Server startup timed out"
         receipt_line = server.stdout.readline()
         assert receipt_line, server.stderr.read()
         receipt = json.loads(receipt_line)
@@ -68,7 +70,7 @@ def main():
             )
         )
         instance_id = instance["instance_id"]
-        target = ("--server", endpoint, session_id, instance_id)
+        target = ("--server", endpoint, receipt["server_id"], session_id, instance_id)
 
         snapshot = invoke(cli, "instance", "snapshot", *target, "--text")
         assert "MANAGED_CLI_READY" in snapshot.stdout, snapshot.stdout
@@ -106,6 +108,7 @@ def main():
             "state",
             "--server",
             endpoint,
+            receipt["server_id"],
             session_id,
             "999999",
             check=False,
@@ -129,7 +132,44 @@ def main():
         instance_id = None
         json_out(invoke(cli, "server", "session", "close", endpoint, session_id))
         session_id = None
-        print("Howl managed CLI interaction: PASS")
+        # ABA: two real Server generations at one endpoint reuse pair (1, 1).
+        # Both observation and control must reject the old selected incarnation.
+        old_target = target
+        old_server_id = receipt["server_id"]
+        server.terminate()
+        server.wait(timeout=3)
+        assert not server.stderr.read()
+        server.stdout.close()
+        server.stderr.close()
+        port = endpoint.rsplit(":", 1)[1]
+        server = subprocess.Popen(
+            [cli, "server", "run", "tcp:" + port], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        assert select.select([server.stdout], [], [], 4)[0], "Server restart timed out"
+        receipt = json.loads(server.stdout.readline())
+        assert receipt["endpoint"] == endpoint
+        assert receipt["server_id"] != old_server_id
+        session_id = json_out(invoke(cli, "server", "session", "create", endpoint, "new"))["session_id"]
+        instance_id = json_out(invoke(
+            cli, "server", "instance", "create", endpoint, session_id,
+            "--shell", "/bin/sh", "--command", "printf 'NEW_OCCURRENCE\\n'; exec cat",
+            "--rows", "8", "--columns", "40", "--history-rows", "32",
+        ))["instance_id"]
+        assert (session_id, instance_id) == old_target[-2:]
+        for operation in ("snapshot", "state"):
+            stale = invoke(cli, "instance", operation, *old_target, check=False)
+            assert stale.returncode == 1 and not stale.stdout, stale
+            assert json.loads(stale.stderr)["code"] == "StaleServerIncarnation", stale.stderr
+        target = ("--server", endpoint, receipt["server_id"], session_id, instance_id)
+        deadline = time.monotonic() + 2
+        while True:
+            snapshot = invoke(cli, "instance", "snapshot", *target, "--text")
+            if "NEW_OCCURRENCE" in snapshot.stdout:
+                break
+            assert time.monotonic() < deadline, snapshot.stdout
+            time.sleep(0.01)
+        print("Howl managed CLI interaction and Server restart ABA: PASS")
     finally:
         if endpoint and session_id and instance_id:
             invoke(

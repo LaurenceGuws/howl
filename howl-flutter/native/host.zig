@@ -332,6 +332,7 @@ fn writeManagedConnectDiagnostic(
 fn connectManagedInstance(
     allocator: std.mem.Allocator,
     server_endpoint: []const u8,
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
     diagnostic_ptr: [*]u8,
@@ -339,38 +340,15 @@ fn connectManagedInstance(
     diagnostic_len: *usize,
 ) ?client.Connection {
     var server_diagnostic: server_client.ConnectDiagnostic = .{};
-    var server = server_client.Connection.connectDiagnosed(
-        allocator,
-        server_endpoint,
-        &server_diagnostic,
-    ) catch |failure| {
-        writeManagedConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            "server_connect",
-            @errorName(failure),
-            server_diagnostic,
-        );
-        return null;
-    };
-    var server_live = true;
-    defer if (server_live) server.deinit();
-
-    const attached = server.attachInstance(.{
+    const attached = server_client.attach(allocator, .{
+        .endpoint = server_endpoint,
+        .server_id = server_id,
         .session_id = session_id,
         .instance_id = instance_id,
-    }) catch |failure| {
-        writeCreateStageFailure(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            "server_attach",
-            @errorName(failure),
-        );
+    }, &server_diagnostic, null) catch |failure| {
+        writeManagedConnectDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "server_attach", @errorName(failure), server_diagnostic);
         return null;
     };
-    server_live = false;
 
     var instance_diagnostic: client.ConnectDiagnostic = .{};
     return client.connectTransport(
@@ -550,6 +528,7 @@ pub export fn howl_native_host_create(
 pub export fn howl_native_host_create_managed(
     server_endpoint_ptr: [*]const u8,
     server_endpoint_len: usize,
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
     primary_ptr: [*]const u8,
@@ -566,7 +545,7 @@ pub export fn howl_native_host_create_managed(
     diagnostic_len: *usize,
 ) ?*HostHandle {
     resetCreateDiagnostic(diagnostic_len);
-    if (server_endpoint_len == 0 or session_id == 0 or instance_id == 0 or primary_len == 0 or
+    if (server_endpoint_len == 0 or server_id == 0 or session_id == 0 or instance_id == 0 or primary_len == 0 or
         font_pixels == 0 or cell_width == 0 or cell_height == 0)
     {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
@@ -576,6 +555,7 @@ pub export fn howl_native_host_create_managed(
     const connection = connectManagedInstance(
         allocator,
         server_endpoint_ptr[0..server_endpoint_len],
+        server_id,
         session_id,
         instance_id,
         diagnostic_ptr,
@@ -657,6 +637,7 @@ pub export fn howl_native_control_create(
 pub export fn howl_native_control_create_managed(
     server_endpoint_ptr: [*]const u8,
     server_endpoint_len: usize,
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
     diagnostic_ptr: [*]u8,
@@ -664,7 +645,7 @@ pub export fn howl_native_control_create_managed(
     diagnostic_len: *usize,
 ) ?*ControlHandle {
     resetCreateDiagnostic(diagnostic_len);
-    if (server_endpoint_len == 0 or session_id == 0 or instance_id == 0) {
+    if (server_endpoint_len == 0 or server_id == 0 or session_id == 0 or instance_id == 0) {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
     }
@@ -672,6 +653,7 @@ pub export fn howl_native_control_create_managed(
     const connection = connectManagedInstance(
         allocator,
         server_endpoint_ptr[0..server_endpoint_len],
+        server_id,
         session_id,
         instance_id,
         diagnostic_ptr,

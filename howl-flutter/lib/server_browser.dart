@@ -62,10 +62,15 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
     }
   }
 
-  void _open(HowlServerSession session, HowlServerInstance instance) {
+  void _open(
+    String serverId,
+    HowlServerSession session,
+    HowlServerInstance instance,
+  ) {
     if (instance.state != HowlServerInstanceState.running) return;
     final target = ManagedHowlInstanceTarget(
       serverEndpoint: widget.endpoint,
+      serverId: serverId,
       sessionId: session.id,
       instanceId: instance.id,
     );
@@ -132,7 +137,11 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
         itemCount: tree.sessions.length,
         itemBuilder: (context, index) {
           final session = tree.sessions[index];
-          return _SessionSection(session: session, onOpen: _open);
+          return _SessionSection(
+            session: session,
+            onOpen: (session, instance) =>
+                _open(tree.serverId, session, instance),
+          );
         },
       ),
     );

@@ -72,7 +72,7 @@ experimental:
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
     Instance interaction accepts either a direct HWLS endpoint or an explicit
-    `--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID` route that consumes exact attach
+    `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` route that consumes exact attach
     before continuing as ordinary HWLS. Session create carries no launch policy;
     Instance create owns shell/command/cwd/geometry inputs. The CLI owns no PTY, VT,
     Instance, Session, Server, listener, discovery, authentication or supervision

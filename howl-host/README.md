@@ -8,7 +8,7 @@ The Host has three explicit initial-Instance routes:
     howl-host --local FONT [--fallback FONT ...]
     howl-host ENDPOINT FONT [--fallback FONT ...]
     howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]
-    howl-host --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]
+    howl-host --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]
 
 Every mode may append ordered `--fallback FONT` pairs. The primary font remains
 the sole cell-metric authority; fallbacks are consulted only when the primary
@@ -67,3 +67,9 @@ Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
 cost, and memory slope before optimizing scheduling. The current physical typing
 proof also makes per-keystroke Instance publication/presentation churn directly
 measurable.
+
+Managed target identity includes the expected `SERVER_ID` from Server status/tree
+(or the run receipt), before Session and Instance IDs. All three are nonzero decimal
+u64 values. A reused endpoint with a different Server incarnation fails closed as
+stale; explicitly browse/select the new Server instead of silently reconnecting to
+its reused Session/Instance numbers. This is target identity, not authentication.

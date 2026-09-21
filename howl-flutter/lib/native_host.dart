@@ -435,6 +435,7 @@ final class NativeHostObserver {
         ready.sendPort,
         responses.sendPort,
         target.endpointText,
+        target.nativeServerId,
         target.sessionId,
         target.instanceId,
         primaryFontPath,
@@ -692,6 +693,7 @@ typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Size,
   ffi.Uint64,
   ffi.Uint64,
+  ffi.Uint64,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Uint8>,
@@ -707,6 +709,7 @@ typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
 );
 typedef _CreateManagedDart = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
+  int,
   int,
   int,
   int,
@@ -795,15 +798,16 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
-  final sessionId = init[3]! as int;
-  final instanceId = init[4]! as int;
-  final primary = init[5]! as String;
-  final fallback = init[6]! as String;
-  final secondaryFallback = init[7]! as String;
-  final useLiveDeltas = init[8]! as bool;
-  final fontPixels = init[9]! as int;
-  final cellWidth = init[10]! as int;
-  final lineHeight = init[11]! as int;
+  final serverId = init[3]! as int;
+  final sessionId = init[4]! as int;
+  final instanceId = init[5]! as int;
+  final primary = init[6]! as String;
+  final fallback = init[7]! as String;
+  final secondaryFallback = init[8]! as String;
+  final useLiveDeltas = init[9]! as bool;
+  final fontPixels = init[10]! as int;
+  final cellWidth = init[11]! as int;
+  final lineHeight = init[12]! as int;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
@@ -904,6 +908,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       : createManaged(
           endpointPointer,
           endpointBytes.length,
+          serverId,
           sessionId,
           instanceId,
           primaryPointer,
@@ -1094,6 +1099,7 @@ final class NativeHostControl {
         ready.sendPort,
         responses.sendPort,
         target.endpointText,
+        target.nativeServerId,
         target.sessionId,
         target.instanceId,
       ],
@@ -1301,12 +1307,14 @@ typedef _ControlCreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Size,
   ffi.Uint64,
   ffi.Uint64,
+  ffi.Uint64,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
   ffi.Pointer<ffi.Size>,
 );
 typedef _ControlCreateManagedDart = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
+  int,
   int,
   int,
   int,
@@ -1424,8 +1432,9 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
-  final sessionId = init[3]! as int;
-  final instanceId = init[4]! as int;
+  final serverId = init[3]! as int;
+  final sessionId = init[4]! as int;
+  final instanceId = init[5]! as int;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
@@ -1490,6 +1499,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       : createManaged(
           endpointPointer,
           endpointBytes.length,
+          serverId,
           sessionId,
           instanceId,
           diagnosticPointer,

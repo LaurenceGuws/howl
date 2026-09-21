@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
     const positionals_valid = if (local_mode)
         positional_end == 3
     else if (server_mode)
-        positional_end == 6
+        positional_end == 7
     else
         positional_end == 3 or positional_end == 4;
     if (!positionals_valid) {
@@ -68,11 +68,15 @@ pub fn main(init: std.process.Init) !void {
     else if (server_mode)
         .{ .server = .{
             .endpoint = std.mem.span(argv[2]),
-            .session_id = parseIdentity(std.mem.span(argv[3])) catch {
+            .server_id = parseIdentity(std.mem.span(argv[3])) catch {
                 printUsage();
                 return error.InvalidArguments;
             },
-            .instance_id = parseIdentity(std.mem.span(argv[4])) catch {
+            .session_id = parseIdentity(std.mem.span(argv[4])) catch {
+                printUsage();
+                return error.InvalidArguments;
+            },
+            .instance_id = parseIdentity(std.mem.span(argv[5])) catch {
                 printUsage();
                 return error.InvalidArguments;
             },
@@ -86,7 +90,7 @@ pub fn main(init: std.process.Init) !void {
     const font_index: usize = if (local_mode)
         2
     else if (server_mode)
-        5
+        6
     else if (positional_end == 4)
         3
     else
@@ -189,7 +193,7 @@ fn printUsage() void {
         "usage: howl-host --local FONT [--fallback FONT ...] | " ++
             "ENDPOINT FONT [--fallback FONT ...] | " ++
             "ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...] | " ++
-            "--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]\n",
+            "--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]\n",
         .{},
     );
 }

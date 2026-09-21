@@ -252,9 +252,10 @@ The app-private native host now has two connection constructors with one common
 presentation/control implementation:
 
 - direct mode connects an explicit HWLS Instance endpoint exactly as before;
-- managed mode connects one explicit Server endpoint, requests an exact
-  `(session_id, instance_id)`, receives `attach_ready`, and hands that same stream
-  into the ordinary HWLS client handshake.
+- managed mode connects one explicit Server endpoint, checks the expected
+  `server_id` against its welcome, requests the exact `(session_id, instance_id)`,
+  receives `attach_ready`, and hands that same stream into the ordinary HWLS
+  client handshake.
 
 After that handoff, observer/control/rendering code is identical to direct mode.
 The native seam does not proxy bytes and does not import Server layout or geometry
@@ -273,3 +274,11 @@ Server identifiers and tree revisions remain opaque decimal strings in Dart so f
 unsigned 64-bit identity survives the language boundary. Session/Instance ids are
 used only as exact routing identities. Pane/split layout and visible surface
 composition remain app-side presentation concerns.
+
+Browser selections retain the Server incarnation as decimal text. Both native
+observer/control constructors receive its full u64 bit pattern before Session and
+Instance IDs, compare the Server welcome before attach, and retain it on reconnect.
+Stale incarnation is a failed target, not automatic reselection or authentication.
+This changes the two managed-create FFI signatures; Dart/native artifacts must be
+rebuilt together. Existing Flutter recovery classification and worker cancellation
+publication remain separate follow-up work.

@@ -76,7 +76,7 @@ howl server ...     # Server tree / Session / Instance orchestration
 
 The CLI is a frontend/composition root, not an architectural owner. Instance commands
 share one target grammar: a direct HWLS endpoint or
-`--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID`. The latter performs exact Server
+`--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`. The latter performs exact Server
 attach only to obtain the Instance stream; snapshot/input/resize semantics remain
 Instance-owned. In particular, `howl server session create` creates only logical Session identity, while
 `howl server instance create` is the only orchestration command that accepts

@@ -21,7 +21,7 @@ being hardened.
 
 Direct local/attached observation keeps the existing lossless raw-snapshot policy on
 validated Unix sockets; TCP attachments retain compression, including loopback. The
-transient `--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID` startup route connects to
+transient `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` startup route connects to
 one Server, consumes exact attach, and then every Odin observer/control/render/
 consequence worker continues over ordinary HWLS on that selected Instance. The bridge
 keeps cancellation active through Server connect, attach, HWLS handshake, and blocked
@@ -279,7 +279,7 @@ howl-odin/zig-out/bin/howl-odin
 Managed Server startup is explicit and transient:
 
 ```text
-howl-odin --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID
+howl-odin --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
 ```
 
 The normal no-argument launch still uses the configured profile catalogue. Persistent
@@ -398,3 +398,13 @@ not block the graphical thread, input worker, or newer observer metadata. Native
 text/image transition and stopped-carrier proofs remain required alongside the
 pixel and CPU controls. The improvement is in Odin's use of the existing shared
 model, not an implicit mobile/Web rollout or a new public client ABI.
+
+Managed target identity includes the expected `SERVER_ID` from Server status/tree
+(or the run receipt), before Session and Instance IDs. All three are nonzero decimal
+u64 values. A reused endpoint with a different Server incarnation fails closed as
+stale; explicitly browse/select the new Server instead of silently reconnecting to
+its reused Session/Instance numbers. This is target identity, not authentication.
+
+The native `create`, `render_create`, and `consequence_create` ABI now takes
+`server_id` before Session/Instance IDs (zero for direct targets). Rebuild the Odin
+caller and native bridge together; no legacy endpoint-plus-pair fallback is kept.

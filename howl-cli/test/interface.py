@@ -28,7 +28,7 @@ def main():
         assert result.returncode == 0, (args, result)
         assert result.stdout and "usage:" in result.stdout, (args, result.stdout)
         if args[:2] == ("instance", "--help") or args[:2] == ("instance", "snapshot"):
-            assert "--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID" in result.stdout, (args, result.stdout)
+            assert "--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID" in result.stdout, (args, result.stdout)
         assert not result.stderr, (args, result.stderr)
 
     for args, operation in [
@@ -37,6 +37,7 @@ def main():
         (("instance", "snapshot"), "instance.snapshot"),
         (("instance", "snapshot", "--server"), "instance.snapshot"),
         (("instance", "snapshot", "--server", "tcp://127.0.0.1:1", "0", "1"), "instance.snapshot"),
+        (("instance", "snapshot", "--server", "tcp://127.0.0.1:1", "0", "1", "1"), "instance.snapshot"),
         (("server",), "server"),
         (("server", "run"), "server.run"),
         (("server", "session"), "server.session"),

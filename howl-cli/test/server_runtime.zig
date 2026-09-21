@@ -29,7 +29,7 @@ fn attachInstance(
     var control = try connectServer(endpoint);
     var control_live = true;
     defer if (control_live) control.deinit();
-    var attached = try control.attachInstance(identity);
+    var attached = try control.attachInstance(control.server_id, identity);
     control_live = false;
     var diagnostic: howl_client.ConnectDiagnostic = .{};
     const connection = try howl_client.connectTransport(

@@ -206,6 +206,7 @@ Instance_View :: struct {
     route_kind: Bridge_Route_Kind,
     endpoint: [PROFILE_ENDPOINT_BYTES]u8,
     endpoint_len: int,
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
     text: []u8,
@@ -1481,7 +1482,7 @@ search_instance :: proc(data: rawptr) {
     diagnostic: [160]u8
     count: c.size_t
     handle := create(desktop_io_runtime, view.search_interrupt, u8(view.route_kind),
-                     raw_data(endpoint), c.size_t(len(endpoint)), view.session_id, view.instance_id,
+                     raw_data(endpoint), c.size_t(len(endpoint)), view.server_id, view.session_id, view.instance_id,
                      raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     view.search = handle
     if handle == nil {
@@ -2071,16 +2072,16 @@ allocate_instance_view :: proc(ownership: Instance_Ownership) -> ^Instance_View 
 create_target_instance_view :: proc(
     route_kind: Bridge_Route_Kind,
     endpoint: string,
-    session_id, instance_id: u64,
+    server_id, session_id, instance_id: u64,
     ownership: Instance_Ownership,
 ) -> ^Instance_View {
     view := allocate_instance_view(ownership)
     if view == nil do return nil
     valid_target := len(endpoint) > 0 && len(endpoint) < len(view.endpoint)
     if route_kind == .Direct {
-        valid_target = valid_target && session_id == 0 && instance_id == 0
+        valid_target = valid_target && server_id == 0 && session_id == 0 && instance_id == 0
     } else if route_kind == .Server {
-        valid_target = valid_target && session_id != 0 && instance_id != 0
+        valid_target = valid_target && server_id != 0 && session_id != 0 && instance_id != 0
     }
     if !valid_target {
         publish_initial_error(view, "Instance target is invalid")
@@ -2089,6 +2090,7 @@ create_target_instance_view :: proc(
     view.route_kind = route_kind
     copy(view.endpoint[:len(endpoint)], transmute([]u8)endpoint)
     view.endpoint_len = len(endpoint)
+    view.server_id = server_id
     view.session_id = session_id
     view.instance_id = instance_id
     view.control_interrupt = interrupt_create()
@@ -2104,15 +2106,15 @@ create_target_instance_view :: proc(
 }
 
 create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) -> ^Instance_View {
-    return create_target_instance_view(.Direct, endpoint, 0, 0, ownership)
+    return create_target_instance_view(.Direct, endpoint, 0, 0, 0, ownership)
 }
 
 create_server_instance_view :: proc(
     endpoint: string,
-    session_id, instance_id: u64,
+    server_id, session_id, instance_id: u64,
     ownership: Instance_Ownership = .Attached,
 ) -> ^Instance_View {
-    return create_target_instance_view(.Server, endpoint, session_id, instance_id, ownership)
+    return create_target_instance_view(.Server, endpoint, server_id, session_id, instance_id, ownership)
 }
 
 create_error_instance_view :: proc(message: string, ownership: Instance_Ownership = .Attached) -> ^Instance_View {
@@ -3956,7 +3958,7 @@ recover_active_instance :: proc(app: ^App) -> bool {
     } else {
         endpoint := instance_endpoint(view)
         if view.route_kind == .Server {
-            replacement = create_server_instance_view(endpoint, view.session_id, view.instance_id)
+            replacement = create_server_instance_view(endpoint, view.server_id, view.session_id, view.instance_id)
         } else {
             replacement = create_instance_view(endpoint, view.ownership)
         }
@@ -6196,25 +6198,27 @@ Startup_Intent :: enum { Run, Server, Help, Version, Invalid }
 
 Startup_Server_Target :: struct {
     endpoint: string,
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
 }
 
 startup_server_target :: proc(args: []string) -> (Startup_Server_Target, bool) {
-    if len(args) != 4 || args[0] != "--server" || len(args[1]) == 0 {
+    if len(args) != 5 || args[0] != "--server" || len(args[1]) == 0 {
         return {}, false
     }
-    session_id, session_ok := strconv.parse_u64_of_base(args[2], 10)
-    instance_id, instance_ok := strconv.parse_u64_of_base(args[3], 10)
-    if !session_ok || !instance_ok || session_id == 0 || instance_id == 0 {
+    server_id, server_ok := strconv.parse_u64_of_base(args[2], 10)
+    session_id, session_ok := strconv.parse_u64_of_base(args[3], 10)
+    instance_id, instance_ok := strconv.parse_u64_of_base(args[4], 10)
+    if !server_ok || server_id == 0 || !session_ok || !instance_ok || session_id == 0 || instance_id == 0 {
         return {}, false
     }
-    return {endpoint = args[1], session_id = session_id, instance_id = instance_id}, true
+    return {endpoint = args[1], server_id = server_id, session_id = session_id, instance_id = instance_id}, true
 }
 
 startup_intent :: proc(args: []string) -> Startup_Intent {
     if len(args) == 0 do return .Run
-    if len(args) == 4 && args[0] == "--server" {
+    if len(args) == 5 && args[0] == "--server" {
         _, ok := startup_server_target(args)
         return ok ? .Server : .Invalid
     }
@@ -6232,13 +6236,13 @@ main :: proc() {
     managed_startup: Startup_Server_Target
     switch intent {
     case .Help:
-        fmt.println("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
+        fmt.println("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\nLaunch without arguments to open Howl. Configure launch and attachment profiles in Settings.")
         return
     case .Version:
         fmt.printf("%s %s\n", APP_NAME, APP_VERSION)
         return
     case .Invalid:
-        fmt.eprintln("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID")
+        fmt.eprintln("Usage: howl-odin [--help | --version] | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID")
         os.exit(2)
     case .Server:
         target, ok := startup_server_target(os.args[1:])
@@ -6381,6 +6385,7 @@ main :: proc() {
     if intent == .Server {
         view := create_server_instance_view(
             managed_startup.endpoint,
+            managed_startup.server_id,
             managed_startup.session_id,
             managed_startup.instance_id,
         )

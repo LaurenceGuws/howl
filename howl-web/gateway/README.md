@@ -71,9 +71,15 @@ zig-out/bin/howl-web-gateway
 Usage:
 
 ```text
-howl-web-gateway LISTEN_PORT SERVER_PORT SESSION_ID INSTANCE_ID EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
+howl-web-gateway LISTEN_PORT SERVER_PORT SERVER_ID SESSION_ID INSTANCE_ID EXPECTED_HOST EXPECTED_ORIGIN SITE_DIR WIRE_WASM [--require-access]
 ```
 
 `SERVER_PORT` is the loopback Howl Server control listener. `SESSION_ID` and
 `INSTANCE_ID` identify the exact terminal occurrence to expose. The gateway does not
 perform Session-name lookup, Instance selection, creation, restart or discovery.
+
+Managed target identity includes the expected `SERVER_ID` from Server status/tree
+(or the run receipt), before Session and Instance IDs. All three are nonzero decimal
+u64 values. A reused endpoint with a different Server incarnation fails closed as
+stale; explicitly browse/select the new Server instead of silently reconnecting to
+its reused Session/Instance numbers. This is target identity, not authentication.

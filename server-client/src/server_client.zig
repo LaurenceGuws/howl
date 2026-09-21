@@ -11,6 +11,8 @@ pub const Cancellation = transport.Cancellation;
 
 pub const Error = std.mem.Allocator.Error || transport.Error || protocol.HeaderError ||
     protocol.PayloadError || error{
+    StaleServerIncarnation,
+    ConnectionRetired,
     UnexpectedHandshakeFrame,
     UnexpectedFrame,
     Malformed,
@@ -36,11 +38,30 @@ pub const Frame = struct {
     }
 };
 
+/// A selected occurrence, not endpoint discovery or authentication.
+pub const Target = struct {
+    endpoint: []const u8,
+    server_id: u64,
+    session_id: u64,
+    instance_id: u64,
+};
+
+/// Obtains only the exact Instance stream. The ordinary HWLS constructor owns
+/// the remaining setup deadline and completes construction after this handoff.
+pub fn attach(allocator: std.mem.Allocator, target: Target, diagnostic: *ConnectDiagnostic, interrupt: ?*Interrupt) Error!Attached {
+    if (target.server_id == 0 or target.session_id == 0 or target.instance_id == 0) return error.InvalidPayload;
+    const stream = try transport.Stream.connectCancelable(target.endpoint, diagnostic, interrupt);
+    var server = try connectTransport(allocator, stream, diagnostic);
+    defer server.deinit();
+    return server.attachInstance(target.server_id, .{ .session_id = target.session_id, .instance_id = target.instance_id });
+}
+
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     stream: transport.Stream,
     server_id: u64,
     tree_revision: u64,
+    live: bool = true,
 
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
         var diagnostic: ConnectDiagnostic = .{};
@@ -67,19 +88,26 @@ pub const Connection = struct {
     }
 
     pub fn deinit(self: *Connection) void {
-        self.stream.deinit();
-        self.* = undefined;
+        self.retire();
     }
 
-    pub fn readinessFd(self: *const Connection) std.posix.fd_t {
+    fn retire(self: *Connection) void {
+        if (self.live) self.stream.deinit();
+        self.live = false;
+    }
+
+    pub fn readinessFd(self: *const Connection) error{ConnectionRetired}!std.posix.fd_t {
+        if (!self.live) return error.ConnectionRetired;
         return self.stream.readinessFd();
     }
 
-    pub fn cancellation(self: *const Connection) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
+    pub fn cancellation(self: *const Connection) error{ ConnectionRetired, SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
+        if (!self.live) return error.ConnectionRetired;
         return self.stream.cancellation();
     }
 
     pub fn status(self: *Connection) Error!protocol.Status {
+        try self.controlReady();
         try self.send(.status, &.{});
         var frame = try self.receive();
         defer frame.deinit();
@@ -90,6 +118,7 @@ pub const Connection = struct {
     }
 
     pub fn observeTree(self: *Connection, after_revision: u64) Error!Tree {
+        try self.controlReady();
         var payload: [protocol.payload_bytes.observe_tree]u8 = undefined;
         protocol.encodeObserveTree(&payload, .{ .after_revision = after_revision });
         try self.send(.observe_tree, &payload);
@@ -144,6 +173,10 @@ pub const Connection = struct {
             else => |err| return err,
         };
         const result = try self.requestResult(.create_instance, encoded);
+        if (result.session_id != launch.session_id) {
+            self.retire();
+            return error.UnexpectedFrame;
+        }
         return .{ .session_id = result.session_id, .instance_id = result.instance_id };
     }
 
@@ -156,10 +189,20 @@ pub const Connection = struct {
     }
 
     /// Successful attach consumes this Connection and returns the same raw stream.
-    /// Failure leaves the control Connection usable.
-    pub fn attachInstance(self: *Connection, identity: protocol.InstanceIdentity) Error!Attached {
+    /// Only local pre-send validation and complete typed rejection leave it usable.
+    /// Any other failure after exchange begins retires/closes it; deinit is safe.
+    pub fn attachInstance(self: *Connection, expected_server_id: u64, identity: protocol.InstanceIdentity) Error!Attached {
         var payload: [protocol.payload_bytes.instance_identity]u8 = undefined;
         try protocol.encodeInstanceIdentity(&payload, identity);
+        if (!self.live) return error.ConnectionRetired;
+        if (expected_server_id == 0 or expected_server_id != self.server_id) {
+            self.retire();
+            return error.StaleServerIncarnation;
+        }
+        var reusable = false;
+        errdefer if (!reusable) self.retire();
+        var diagnostic: ConnectDiagnostic = .{};
+        try self.stream.beginHandshake(&diagnostic);
         try self.send(.attach_instance, &payload);
         var frame = try self.receive();
         defer frame.deinit();
@@ -167,8 +210,11 @@ pub const Connection = struct {
             const result = try protocol.decodeResult(frame.payload);
             if (result.request_kind != .attach_instance) return error.UnexpectedFrame;
             try self.acceptRevision(result.tree_revision);
+            if (result.code == .ok) return error.UnexpectedFrame;
+            try self.stream.finishHandshake(&diagnostic);
+            reusable = true;
             try resultError(result.code);
-            return error.UnexpectedFrame;
+            unreachable;
         }
         if (frame.kind != .attach_ready) return error.UnexpectedFrame;
         const ready = try protocol.decodeAttachReady(frame.payload);
@@ -176,11 +222,12 @@ pub const Connection = struct {
             return error.UnexpectedFrame;
         try self.acceptRevision(ready.tree_revision);
         const stream = self.stream;
-        self.* = undefined;
+        self.live = false;
         return .{ .ready = ready, .stream = stream };
     }
 
     fn requestResult(self: *Connection, kind: protocol.Kind, payload: []const u8) Error!protocol.Result {
+        try self.controlReady();
         try self.send(kind, payload);
         var frame = try self.receive();
         defer frame.deinit();
@@ -192,7 +239,19 @@ pub const Connection = struct {
         return result;
     }
 
+    // Choosing a control operation completes Server-only construction. Observe
+    // may then long-poll indefinitely; attach instead carries setup into HWLS.
+    fn controlReady(self: *Connection) Error!void {
+        if (!self.live) return error.ConnectionRetired;
+        var diagnostic: ConnectDiagnostic = .{};
+        self.stream.finishHandshake(&diagnostic) catch |err| {
+            self.retire();
+            return err;
+        };
+    }
+
     fn send(self: *Connection, kind: protocol.Kind, payload: []const u8) Error!void {
+        if (!self.live) return error.ConnectionRetired;
         if (payload.len > protocol.maximum_request_payload_bytes) return error.PayloadTooLarge;
         var header: [protocol.header_bytes]u8 = undefined;
         try protocol.encodeHeader(&header, .{ .kind = kind, .payload_len = @intCast(payload.len) });
@@ -287,6 +346,7 @@ pub fn connectTransport(
 ) Error!Connection {
     var stream = stream_value;
     errdefer stream.deinit();
+    try stream.beginHandshake(diagnostic);
     diagnostic.stage = .hello_write;
     var hello: [protocol.header_bytes]u8 = undefined;
     try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
@@ -304,7 +364,7 @@ pub fn connectTransport(
     var payload: [protocol.payload_bytes.welcome]u8 = undefined;
     try stream.handshakeRead(&payload);
     const status = try protocol.decodeStatus(&payload);
-    try stream.finishHandshake(diagnostic);
+    diagnostic.stage = .ready;
     return .{
         .allocator = allocator,
         .stream = stream,

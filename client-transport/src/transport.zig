@@ -4,7 +4,6 @@
 //! It knows no Instance framing or higher-level orchestration protocol.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const posix = std.posix;
 const system = posix.system;
 
@@ -123,14 +122,7 @@ pub const Stream = struct {
     restore_flags_after_handshake: bool = false,
 
     pub fn connectDiagnosed(endpoint: []const u8, diagnostic: *ConnectDiagnostic) Error!Stream {
-        diagnostic.* = .{ .stage = .endpoint };
-        const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-            try connectTcp(try tcpEndpoint(endpoint), diagnostic, null)
-        else if (std.mem.startsWith(u8, endpoint, unix_prefix))
-            try connectUnix(endpoint[unix_prefix.len..], null)
-        else
-            return error.InvalidEndpoint;
-        return initOwnedFd(fd, diagnostic, null, null);
+        return connectCancelable(endpoint, diagnostic, null);
     }
 
     pub fn connectCancelable(
@@ -140,14 +132,38 @@ pub const Stream = struct {
     ) Error!Stream {
         diagnostic.* = .{ .stage = .endpoint };
         try checkInterrupted(interrupt);
-        const deadline = (try monotonicMilliseconds()) + tcp_connect_timeout_ms;
+        const deadline = (try monotonicMilliseconds()) + setup_timeout_ms;
         const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-            try connectTcp(try tcpEndpoint(endpoint), diagnostic, interrupt)
+            try connectTcp(try tcpEndpoint(endpoint), diagnostic, deadline, interrupt)
         else if (std.mem.startsWith(u8, endpoint, unix_prefix))
-            try connectUnix(endpoint[unix_prefix.len..], interrupt)
+            try connectUnix(endpoint[unix_prefix.len..], diagnostic, deadline, interrupt)
         else
             return error.InvalidEndpoint;
         return initOwnedFd(fd, diagnostic, deadline, interrupt);
+    }
+
+    /// Takes ownership even on failure. Adopted sockets receive the same bounded
+    /// setup and per-socket policy as sockets created by connect.
+    pub fn adopt(fd: posix.fd_t, diagnostic: *ConnectDiagnostic, interrupt: ?*Interrupt) Error!Stream {
+        const deadline = monotonicMilliseconds() catch |err| {
+            closeFd(fd);
+            return err;
+        };
+        return initOwnedFd(fd, diagnostic, deadline + setup_timeout_ms, interrupt);
+    }
+
+    /// Raw-stream embedders enter construction here; managed handoff preserves
+    /// the original deadline rather than starting another timeout.
+    pub fn beginHandshake(self: *Stream, diagnostic: *ConnectDiagnostic) Error!void {
+        if (self.handshake_deadline_ms != null) return;
+        // initOwnedFd consumes on failure; retain ownership here instead.
+        try suppressSigpipe(self.fd);
+        const flags = try fileStatusFlags(self.fd);
+        try setFileStatusFlags(self.fd, flags | nonblockingFlag());
+        self.original_flags = flags;
+        self.restore_flags_after_handshake = self.interrupt == null;
+        self.handshake_deadline_ms = (try monotonicMilliseconds()) + setup_timeout_ms;
+        diagnostic.stage = .nonblocking_enable;
     }
 
     pub fn deinit(self: *Stream) void {
@@ -187,11 +203,11 @@ pub const Stream = struct {
     }
 
     pub fn write(self: *Stream, bytes: []const u8) Error!void {
-        return writeInterrupt(self.fd, bytes, null, self.interrupt);
+        return writeInterrupt(self.fd, bytes, self.handshake_deadline_ms, self.interrupt);
     }
 
     pub fn read(self: *Stream, output: []u8) Error!void {
-        return readInterrupt(self.fd, output, null, self.interrupt);
+        return readInterrupt(self.fd, output, self.handshake_deadline_ms, self.interrupt);
     }
 };
 
@@ -204,6 +220,7 @@ fn initOwnedFd(
     errdefer closeFd(fd);
     diagnostic.stage = .close_on_exec;
     try setCloseOnExec(fd);
+    try suppressSigpipe(fd);
     try checkInterrupted(interrupt);
     diagnostic.stage = .file_status_read;
     const flags = try fileStatusFlags(fd);
@@ -251,11 +268,12 @@ fn tcpEndpoint(endpoint: []const u8) error{InvalidEndpoint}!TcpEndpoint {
     return .{ .address = address, .port = port };
 }
 
-const tcp_connect_timeout_ms = 15_000;
+const setup_timeout_ms = 15_000;
 
 fn connectTcp(
     endpoint: TcpEndpoint,
     diagnostic: *ConnectDiagnostic,
+    deadline_ms: i64,
     interrupt: ?*Interrupt,
 ) Error!posix.fd_t {
     diagnostic.stage = .socket_create;
@@ -277,6 +295,7 @@ fn connectTcp(
     var connected = false;
     diagnostic.stage = .socket_connect;
     while (true) {
+        try checkSetup(deadline_ms, interrupt);
         const result = system.connect(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in));
         const connect_errno = posix.errno(result);
         switch (connect_errno) {
@@ -295,11 +314,6 @@ fn connectTcp(
 
     if (!connected) {
         diagnostic.stage = .socket_poll;
-        const deadline_ms = std.math.add(
-            i64,
-            try monotonicMilliseconds(),
-            tcp_connect_timeout_ms,
-        ) catch return error.SocketConnectFailed;
         try waitReady(fd, posix.POLL.OUT, deadline_ms, interrupt, &diagnostic.poll_interrupts);
         diagnostic.stage = .socket_verify;
         try verifySocketConnected(fd, diagnostic);
@@ -369,7 +383,8 @@ fn writeInterrupt(fd: posix.fd_t, bytes: []const u8, deadline_ms: ?i64, interrup
     var offset: usize = 0;
     while (offset < bytes.len) {
         try checkInterrupted(interrupt);
-        const count = if (builtin.os.tag == .linux)
+        if (deadline_ms) |end| if (try monotonicMilliseconds() >= end) return error.SocketConnectTimedOut;
+        const count = if (@hasDecl(posix.MSG, "NOSIGNAL"))
             system.sendto(fd, bytes[offset..].ptr, bytes.len - offset, posix.MSG.NOSIGNAL, null, 0)
         else
             system.write(fd, bytes[offset..].ptr, bytes.len - offset);
@@ -448,7 +463,12 @@ fn verifySocketConnected(
     }
 }
 
-fn connectUnix(path: []const u8, interrupt: ?*Interrupt) Error!posix.fd_t {
+fn checkSetup(deadline_ms: i64, interrupt: ?*Interrupt) Error!void {
+    try checkInterrupted(interrupt);
+    if (try monotonicMilliseconds() >= deadline_ms) return error.SocketConnectTimedOut;
+}
+
+fn connectUnix(path: []const u8, diagnostic: *ConnectDiagnostic, deadline_ms: i64, interrupt: ?*Interrupt) Error!posix.fd_t {
     var address: posix.sockaddr.un = undefined;
     if (path.len == 0 or path.len >= address.path.len) return error.SocketPathTooLong;
     const length: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path.len + 1);
@@ -456,19 +476,43 @@ fn connectUnix(path: []const u8, interrupt: ?*Interrupt) Error!posix.fd_t {
     address.family = posix.AF.UNIX;
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
+    diagnostic.stage = .socket_create;
     const raw = system.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0);
     if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
-    if (interrupt != null) try setFileStatusFlags(fd, (try fileStatusFlags(fd)) | nonblockingFlag());
-    try checkInterrupted(interrupt);
+    const flags = try fileStatusFlags(fd);
+    try setFileStatusFlags(fd, flags | nonblockingFlag());
+    diagnostic.stage = .socket_connect;
     while (true) {
+        try checkSetup(deadline_ms, interrupt);
         const result = system.connect(fd, @ptrCast(&address), length);
         switch (posix.errno(result)) {
-            .SUCCESS => return fd,
+            .SUCCESS, .ISCONN => break,
             .INTR => continue,
+            // Linux Unix backlog exhaustion is not an in-progress connection.
+            // Fail boundedly rather than reporting SO_ERROR=0 as connected.
+            .AGAIN => return error.SocketConnectFailed,
+            .INPROGRESS, .ALREADY => {
+                diagnostic.stage = .socket_poll;
+                try waitReady(fd, posix.POLL.OUT, deadline_ms, interrupt, &diagnostic.poll_interrupts);
+                try verifySocketConnected(fd, diagnostic);
+                break;
+            },
             else => return error.SocketConnectFailed,
         }
+    }
+    try setFileStatusFlags(fd, flags);
+    return fd;
+}
+
+fn suppressSigpipe(fd: posix.fd_t) error{SocketOptionFailed}!void {
+    if (@hasDecl(posix.SO, "NOSIGPIPE")) {
+        const enabled: c_int = 1;
+        if (posix.errno(system.setsockopt(fd, posix.SOL.SOCKET, posix.SO.NOSIGPIPE, std.mem.asBytes(&enabled).ptr, @sizeOf(c_int))) != .SUCCESS)
+            return error.SocketOptionFailed;
+    } else if (!@hasDecl(posix.MSG, "NOSIGNAL")) {
+        @compileError("socket transport requires per-socket or per-send SIGPIPE suppression");
     }
 }
 
@@ -505,7 +549,7 @@ fn writeAll(fd: posix.fd_t, bytes: []const u8) error{ SocketWriteFailed, Connect
     while (offset < bytes.len) {
         // A disconnected stream is an I/O result, never permission to terminate
         // the embedder through process SIGPIPE.
-        const result = if (builtin.os.tag == .linux)
+        const result = if (@hasDecl(posix.MSG, "NOSIGNAL"))
             system.sendto(fd, bytes[offset..].ptr, bytes.len - offset, posix.MSG.NOSIGNAL, null, 0)
         else
             system.write(fd, bytes[offset..].ptr, bytes.len - offset);
@@ -614,11 +658,13 @@ test "handshake deadline is bounded and preserves caller close" {
 }
 
 test "closed stream write reports failure without process-wide SIGPIPE policy" {
-    if (builtin.os.tag != .linux) return;
     const pair = testSocketPair();
     defer closeFd(pair[0]);
     closeFd(pair[1]);
+    try suppressSigpipe(pair[0]);
     try std.testing.expectError(error.ConnectionClosed, writeAll(pair[0], "not replayable"));
+    try setFileStatusFlags(pair[0], (try fileStatusFlags(pair[0])) | nonblockingFlag());
+    try std.testing.expectError(error.ConnectionClosed, writeInterrupt(pair[0], "setup", (try monotonicMilliseconds()) + 100, null));
 }
 
 test "cancellation is single use and preempts connection creation" {
@@ -697,4 +743,52 @@ test "cancellation wins over already-readable buffered bytes" {
     try std.testing.expectError(error.ConnectionCanceled, readInterrupt(pair[0], &bytes, null, interrupt));
     try readExact(pair[0], &bytes);
     try std.testing.expectEqualStrings("old", &bytes);
+}
+
+test "Unix connect is nonblocking with full backlog and respects setup cancellation" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    // Linux abstract namespace: no filesystem entry or shared desktop route.
+    var name_storage: [80]u8 = undefined;
+    const name = try std.fmt.bufPrint(&name_storage, "\x00howl-transport-{d}", .{std.os.linux.getpid()});
+    var address: posix.sockaddr.un = undefined;
+    address.family = posix.AF.UNIX;
+    @memset(&address.path, 0);
+    @memcpy(address.path[0..name.len], name);
+    const length: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + name.len + 1);
+    const raw = system.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0);
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(raw));
+    const listener: posix.fd_t = @intCast(raw);
+    defer closeFd(listener);
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.bind(listener, @ptrCast(&address), length)));
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.listen(listener, 0)));
+    var diagnostic: ConnectDiagnostic = .{};
+    const start = try monotonicMilliseconds();
+    const queued = try connectUnix(name, &diagnostic, start + 1000, null);
+    defer closeFd(queued);
+    try std.testing.expectError(error.SocketConnectFailed, connectUnix(name, &diagnostic, start + 1000, null));
+    try std.testing.expect(try monotonicMilliseconds() - start < 1000);
+    try std.testing.expectError(error.SocketConnectTimedOut, connectUnix(name, &diagnostic, start - 1, null));
+    const interrupt = try Interrupt.init(std.testing.allocator);
+    defer interrupt.deinit();
+    try interrupt.cancel();
+    try std.testing.expectError(error.ConnectionCanceled, connectUnix(name, &diagnostic, start + 1000, interrupt));
+}
+
+test "adoption owns socket policy and setup deadline until construction finishes" {
+    const pair = testSocketPair();
+    defer closeFd(pair[1]);
+    var diagnostic: ConnectDiagnostic = .{};
+    var stream = try Stream.adopt(pair[0], &diagnostic, null);
+    defer stream.deinit();
+    try std.testing.expect(stream.handshake_deadline_ms != null);
+    try std.testing.expect((try fileStatusFlags(stream.fd)) & nonblockingFlag() != 0);
+    try stream.finishHandshake(&diagnostic);
+    try std.testing.expectEqual(@as(?i64, null), stream.handshake_deadline_ms);
+    try std.testing.expect((try fileStatusFlags(stream.fd)) & nonblockingFlag() == 0);
+    if (@hasDecl(posix.SO, "NOSIGPIPE")) {
+        var enabled: c_int = 0;
+        var length: posix.socklen_t = @sizeOf(c_int);
+        try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.getsockopt(stream.fd, posix.SOL.SOCKET, posix.SO.NOSIGPIPE, std.mem.asBytes(&enabled).ptr, &length)));
+        try std.testing.expectEqual(@as(c_int, 1), enabled);
+    }
 }

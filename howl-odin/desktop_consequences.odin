@@ -23,6 +23,7 @@ Consequence_Owner :: struct {
 	route_kind: Bridge_Route_Kind,
 	endpoint: [CONSEQUENCE_ENDPOINT_BYTES]u8,
 	endpoint_len: int,
+	server_id: u64,
 	session_id: u64,
 	instance_id: u64,
 	handle: rawptr,
@@ -207,7 +208,7 @@ consequence_owner_worker :: proc(data: rawptr) {
     diagnostic: [160]u8
     count: c.size_t
     owner.handle = consequence_create(desktop_io_runtime, owner.interrupt, u8(owner.route_kind),
-                                       raw_data(endpoint), c.size_t(len(endpoint)), owner.session_id, owner.instance_id,
+                                       raw_data(endpoint), c.size_t(len(endpoint)), owner.server_id, owner.session_id, owner.instance_id,
                                        raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
     if owner.handle == nil {
         sync.mutex_lock(&owner.mutex)
@@ -239,6 +240,7 @@ create_consequence_owner :: proc(view: ^Instance_View, rows, columns: u16) -> ^C
     if owner == nil do return nil
     owner^ = Consequence_Owner{
         route_kind = view.route_kind,
+        server_id = view.server_id,
         session_id = view.session_id,
         instance_id = view.instance_id,
         rows = rows,
@@ -280,7 +282,7 @@ find_consequence_owner :: proc(app: ^App, view: ^Instance_View) -> ^Consequence_
 	for index in 0..<app.consequence_owner_count {
 		owner := app.consequence_owners[index]
         if owner != nil && owner.route_kind == view.route_kind &&
-           owner.session_id == view.session_id && owner.instance_id == view.instance_id &&
+           owner.server_id == view.server_id && owner.session_id == view.session_id && owner.instance_id == view.instance_id &&
            consequence_endpoint(owner) == endpoint {
             return owner
         }

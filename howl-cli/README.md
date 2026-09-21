@@ -4,7 +4,7 @@
 
 Two command families stay deliberately distinct:
 
-- `howl instance ...` performs snapshots/state/input/resize/focus/signals against one exact Instance. Its target may be a direct HWLS endpoint or `--server SERVER_ENDPOINT SESSION_ID INSTANCE_ID`; the managed route consumes Server attach internally and then uses the same ordinary HWLS client.
+- `howl instance ...` performs snapshots/state/input/resize/focus/signals against one exact Instance. Its target may be a direct HWLS endpoint or `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`; the managed route consumes Server attach internally and then uses the same ordinary HWLS client.
 - `howl server run LISTEN` hosts one foreground Server runtime and its single control listener.
 - `howl server ...` client commands talk to one explicit Server control stream for status/tree inspection and exact Session/Instance lifecycle CRUD.
 
@@ -12,7 +12,7 @@ The Instance target grammar is shared by every interaction command:
 
 ```text
 TARGET = ENDPOINT
-       | --server SERVER_ENDPOINT SESSION_ID INSTANCE_ID
+       | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
 
 howl instance snapshot TARGET --text
 howl instance type TARGET 'hello'
@@ -28,3 +28,9 @@ The Server runtime owns no terminal geometry or presentation layout. `server ins
 selects the initial canonical geometry for that Instance; later HWLS resize mutates that same
 Instance geometry. Multiple Instances may be shown on one app surface, but panes/splits and
 surface composition remain client-side.
+
+Managed target identity includes the expected `SERVER_ID` from Server status/tree
+(or the run receipt), before Session and Instance IDs. All three are nonzero decimal
+u64 values. A reused endpoint with a different Server incarnation fails closed as
+stale; explicitly browse/select the new Server instead of silently reconnecting to
+its reused Session/Instance numbers. This is target identity, not authentication.

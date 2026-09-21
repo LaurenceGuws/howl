@@ -411,6 +411,8 @@ pub const TreeDecoder = struct {
     sessions_seen: u16 = 0,
     instances_seen: u16 = 0,
     pending_instances: u16 = 0,
+    previous_session_id: u64 = 0,
+    previous_instance_id: u64 = 0,
 
     pub const DecodedSession = struct {
         session_id: u64,
@@ -437,7 +439,7 @@ pub const TreeDecoder = struct {
         const session_id = readU64(encoded[0..8]);
         const instance_count = readU16(encoded[8..10]);
         const name_len: usize = encoded[10];
-        if (session_id == 0 or instance_count > maximum_instances_per_session or
+        if (session_id <= self.previous_session_id or instance_count > maximum_instances_per_session or
             name_len == 0 or name_len > maximum_session_name_bytes)
             return error.InvalidPayload;
         self.offset += encoded.len;
@@ -447,6 +449,8 @@ pub const TreeDecoder = struct {
         self.offset += name_len;
         self.sessions_seen += 1;
         self.pending_instances = instance_count;
+        self.previous_session_id = session_id;
+        self.previous_instance_id = 0;
         return .{ .session_id = session_id, .name = name, .instance_count = instance_count };
     }
 
@@ -457,7 +461,8 @@ pub const TreeDecoder = struct {
         if (!allZero(encoded[9..16])) return error.InvalidPayload;
         const instance_id = readU64(encoded[0..8]);
         const state = enumFromInt(InstanceState, encoded[8]) orelse return error.InvalidPayload;
-        if (instance_id == 0) return error.InvalidPayload;
+        if (instance_id <= self.previous_instance_id) return error.InvalidPayload;
+        self.previous_instance_id = instance_id;
         self.offset += encoded.len;
         self.instances_seen += 1;
         self.pending_instances -= 1;
@@ -706,4 +711,34 @@ test "tree and identity codecs reject ambiguity" {
     try std.testing.expectEqual(Kind.create_session, (try decodeHeader(&header)).kind);
     header[6] = 1;
     try std.testing.expectError(error.InvalidReservedBits, decodeHeader(&header));
+}
+
+test "tree decoder requires encoder strict identity ordering without allocation" {
+    const instances = [_]InstanceRecord{ .{ .instance_id = 2, .state = .running }, .{ .instance_id = 3, .state = .exited } };
+    const sessions = [_]SessionRecord{ .{ .session_id = 2, .name = "a", .instances = &instances }, .{ .session_id = 3, .name = "b", .instances = &instances } };
+    for ([_]bool{ false, true }) |mutate_session| {
+        for ([_]u64{ 1, 2, 3 }) |id| {
+            var bytes: [256]u8 = undefined;
+            const encoded = try encodeTreeSnapshot(&bytes, .{ .server_id = 91, .tree_revision = 1, .session_count = 2, .instance_count = 4 }, &sessions);
+            const offset: usize = if (mutate_session) 32 + 17 + 32 else 32 + 17 + 16;
+            std.mem.writeInt(u64, bytes[offset..][0..8], id, .big);
+            var decoder = try TreeDecoder.init(encoded);
+            try std.testing.expect((try decoder.nextSession()) != null);
+            try std.testing.expectEqual(@as(u64, 2), (try decoder.nextInstance()).instance_id);
+            if (!mutate_session and id < 3) {
+                try std.testing.expectError(error.InvalidPayload, decoder.nextInstance());
+                continue;
+            }
+            try std.testing.expectEqual(@as(u64, 3), (try decoder.nextInstance()).instance_id);
+            if (mutate_session and id < 3) {
+                try std.testing.expectError(error.InvalidPayload, decoder.nextSession());
+                continue;
+            }
+            try std.testing.expect((try decoder.nextSession()) != null);
+            // Instance order resets for each Session.
+            try std.testing.expectEqual(@as(u64, 2), (try decoder.nextInstance()).instance_id);
+            try std.testing.expectEqual(@as(u64, 3), (try decoder.nextInstance()).instance_id);
+            try std.testing.expectEqual(@as(?TreeDecoder.DecodedSession, null), try decoder.nextSession());
+        }
+    }
 }
