@@ -6,7 +6,7 @@
 const std = @import("std");
 const posix = std.posix;
 const protocol = @import("howl_instance").protocol;
-const transport = @import("transport.zig");
+const transport = @import("client_transport");
 
 pub const ConnectStage = transport.ConnectStage;
 pub const ConnectDiagnostic = transport.ConnectDiagnostic;

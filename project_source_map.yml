@@ -13,6 +13,11 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  client-transport: >-
+    protocol-neutral native Unix/numeric-IPv4 TCP ordered-stream module shared by
+    the Instance client and Server control client. Owns cancellation, descriptor
+    lifetime, bounded connect deadlines and transport diagnostics only; no protocol,
+    Instance/Session/Server, discovery, authentication or route-selection policy
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,
     owns only bounded adopted control streams and long-poll state, decodes

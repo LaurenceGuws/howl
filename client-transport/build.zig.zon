@@ -1,0 +1,8 @@
+.{
+    .name = .client_transport,
+    .version = "0.1.6-dev",
+    .fingerprint = 0x8d8bf121f1a3a1fb,
+    .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
+    .dependencies = .{},
+    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
+}
