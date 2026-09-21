@@ -81,16 +81,17 @@ experimental:
     bounded shape/alpha-atlas reuse using howl-text only; there is no generic
     multi-source Canvas compositor or stable mobile ABI
   howl-flutter: >-
-    maintained native graphical client canary for one Howl Instance interaction
-    stream. Direct HWLS remains available; Server mode performs one validated native
-    tree query, presents Session labels + Instance lineage, and on running-Instance
-    selection attaches exact Session+Instance identity then transitions the same fd
-    into ordinary HWLS with no proxy. Dart never parses server_protocol bytes and
-    keeps no authoritative Server mirror; presentation/input/viewport/history/
-    selection/native-size UX remains Instance-only after handoff. Flutter owns no
-    PTY, VT, Instance, Session, Server, grid, discovery or supervision; Android
-    physical path accepted, Linux bundled host proven, iOS native-host semantics
-    pressure-proven; outside the core gate
+    maintained native graphical client canary with a deliberately small app shell.
+    The shell may start route-less, persists only explicit labelled Server endpoints
+    plus the selected saved Server, and exposes them through a button-opened drawer
+    whose edge-drag gesture is disabled. Direct HWLS remains available; Server mode
+    performs one validated native tree query, presents Session labels + Instance
+    lineage, and on running-Instance selection attaches exact Session+Instance
+    identity then transitions the same fd into ordinary HWLS with no proxy. Dart
+    keeps no authoritative Server mirror; terminal presentation/input/viewport/
+    history/selection/native-size UX remains Instance-only after handoff. Flutter
+    owns no PTY, VT, Instance, Session, Server, grid, discovery or supervision;
+    outside the core gate
   howl-host: >-
     native Linux Vulkan performance canary with two terminal routes: one in-process
     howl-instance selected by --local, or explicit externally owned Instance streams

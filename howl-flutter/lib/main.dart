@@ -13,10 +13,10 @@ import 'history_viewport.dart';
 import 'held_key_repeat.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
+import 'app_shell.dart';
 import 'instance_target.dart';
 import 'ios_network_probe.dart';
 import 'launch_config.dart';
-import 'server_browser.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
 import 'pointer_input.dart';
@@ -38,7 +38,7 @@ const int _nativeImageSnapshotSupersessionLimit = 8;
 Future<void> main(List<String> args) async {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
   const compiledServerEndpoint = String.fromEnvironment('HOWL_SERVER_ENDPOINT');
-  final HowlLaunchTarget launch;
+  HowlLaunchTarget? launch;
   try {
     launch = resolveHowlLaunch(
       args: args,
@@ -49,20 +49,24 @@ Future<void> main(List<String> args) async {
       environmentServerEndpoint: Platform.environment['HOWL_SERVER_ENDPOINT'],
     );
   } on HowlLaunchException catch (error) {
-    stderr.writeln(
-      'usage: howl_flutter ENDPOINT | howl_flutter --server ENDPOINT '
-      '[${error.code}]',
-    );
-    exitCode = 64;
-    return;
+    if (error.code != 'missing_endpoint') {
+      stderr.writeln(
+        'usage: howl_flutter ENDPOINT | howl_flutter --server ENDPOINT '
+        '[${error.code}]',
+      );
+      exitCode = 64;
+      return;
+    }
   }
-  final HowlEndpoint endpoint;
-  try {
-    endpoint = HowlEndpoint.parse(launch.endpoint);
-  } on HowlEndpointException catch (error) {
-    stderr.writeln('invalid Howl endpoint: ${error.code}');
-    exitCode = 64;
-    return;
+  HowlEndpoint? endpoint;
+  if (launch != null) {
+    try {
+      endpoint = HowlEndpoint.parse(launch.endpoint);
+    } on HowlEndpointException catch (error) {
+      stderr.writeln('invalid Howl endpoint: ${error.code}');
+      exitCode = 64;
+      return;
+    }
   }
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -86,26 +90,32 @@ final class HowlApp extends StatelessWidget {
     required this.endpoint,
     required this.geometryLeader,
   });
-  final HowlLaunchTarget launch;
-  final HowlEndpoint endpoint;
+
+  final HowlLaunchTarget? launch;
+  final HowlEndpoint? endpoint;
   final bool geometryLeader;
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    debugShowCheckedModeBanner: false,
-    title: 'Howl',
-    theme: ThemeData.dark(useMaterial3: false),
-    home: launch.managed
-        ? HowlServerBrowser(
-            endpoint: endpoint,
-            terminalBuilder: (context, target) =>
-                HowlTerminal(target: target, geometryLeader: geometryLeader),
-          )
-        : HowlTerminal(
-            target: DirectHowlInstanceTarget(endpoint),
-            geometryLeader: geometryLeader,
-          ),
-  );
+  Widget build(BuildContext context) {
+    final launchValue = launch;
+    final endpointValue = endpoint;
+    final initialServer = launchValue?.managed == true ? endpointValue : null;
+    final initialInstance =
+        launchValue?.managed == false && endpointValue != null
+        ? DirectHowlInstanceTarget(endpointValue)
+        : null;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Howl',
+      theme: ThemeData.dark(useMaterial3: false),
+      home: HowlAppShell(
+        initialServerEndpoint: initialServer,
+        initialInstanceTarget: initialInstance,
+        terminalBuilder: (context, target) =>
+            HowlTerminal(target: target, geometryLeader: geometryLeader),
+      ),
+    );
+  }
 }
 
 final class HowlTerminal extends StatefulWidget {

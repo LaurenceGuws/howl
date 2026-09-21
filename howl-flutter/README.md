@@ -208,6 +208,36 @@ The iOS runner remains an honest platform-pressure target. The same native obser
 
 iOS remains a client only: it does not own a PTY, shell, or Unix userland. The native Howl client may connect to an explicitly configured numeric IPv4 TCP peer; deployment/Fleet policy owns how that private route is made reachable. No DNS, discovery, listener, or authentication policy is added to Howl itself.
 
+## App shell and saved Server routes
+
+Flutter now has a deliberately small application shell around the terminal canary.
+Its default posture is still terminal-first: when the drawer is closed, the active
+terminal or Server browser receives the full body surface. One compact menu button
+opens the drawer; edge-drag drawer opening is disabled so platform back/navigation
+gestures, especially on iOS, keep their native meaning.
+
+The shell owns only app navigation and saved Server endpoints. It does not own a
+Server mirror, Session lifecycle, Instance geometry, terminal grid, pane/split model,
+or discovery protocol. Saved Server records are ordinary app preferences containing
+a human label plus an explicit validated Howl endpoint. Add/edit/remove and the last
+selected saved Server persist across launches. No credentials or secrets are stored.
+
+A standard artifact may launch with no endpoint at all. In that state the shell shows
+a small connection empty-state and the drawer can configure a Server. A saved selected
+Server becomes the startup surface on the next no-argument launch. Explicit launch
+routes still override that startup choice:
+
+```text
+howl_flutter ENDPOINT           direct HWLS Instance
+howl_flutter --server ENDPOINT  transient Server browser
+```
+
+Selecting a Server performs the existing validated one-shot native tree query.
+Selecting a running Instance turns the body into the unchanged terminal canary via
+`ManagedHowlInstanceTarget`. The drawer remains available on top of that terminal and
+provides a simple Back to Server action. Exited Instances remain lifecycle history in
+the browser and are not openable.
+
 ## Ownership notes
 
 - `howl-instance` + `howl-vt` remain canonical terminal truth and never wait for Flutter.

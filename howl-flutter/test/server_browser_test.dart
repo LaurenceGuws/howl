@@ -21,10 +21,7 @@ void main() {
         home: HowlServerBrowser(
           endpoint: HowlEndpoint.parse('tcp://127.0.0.1:43130'),
           fetchTree: (_) async => tree,
-          terminalBuilder: (context, target) {
-            selected = target;
-            return const Text('terminal');
-          },
+          onOpenTarget: (target) => selected = target,
         ),
       ),
     );
@@ -44,6 +41,5 @@ void main() {
     expect(selected, isNotNull);
     expect(selected!.sessionId, 7);
     expect(selected!.instanceId, 2);
-    expect(find.text('terminal'), findsOneWidget);
   });
 }

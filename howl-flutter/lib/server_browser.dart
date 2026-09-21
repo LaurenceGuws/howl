@@ -7,10 +7,6 @@ import 'server_tree.dart';
 typedef HowlServerTreeFetcher = Future<HowlServerTree> Function(
   HowlEndpoint endpoint,
 );
-typedef HowlManagedTerminalBuilder = Widget Function(
-  BuildContext context,
-  ManagedHowlInstanceTarget target,
-);
 
 /// Thin app-side browser over Server lifecycle identity.
 ///
@@ -20,12 +16,12 @@ final class HowlServerBrowser extends StatefulWidget {
   const HowlServerBrowser({
     super.key,
     required this.endpoint,
-    required this.terminalBuilder,
+    required this.onOpenTarget,
     this.fetchTree = NativeServerTree.fetch,
   });
 
   final HowlEndpoint endpoint;
-  final HowlManagedTerminalBuilder terminalBuilder;
+  final ValueChanged<ManagedHowlInstanceTarget> onOpenTarget;
   final HowlServerTreeFetcher fetchTree;
 
   @override
@@ -73,18 +69,7 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
       sessionId: session.id,
       instanceId: instance.id,
     );
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => Scaffold(
-          backgroundColor: const Color(0xff090b0e),
-          appBar: AppBar(
-            title: Text('${session.name} / ${instance.id}'),
-            toolbarHeight: 44,
-          ),
-          body: widget.terminalBuilder(context, target),
-        ),
-      ),
-    );
+    widget.onOpenTarget(target);
   }
 
   @override
@@ -94,6 +79,8 @@ final class _HowlServerBrowserState extends State<HowlServerBrowser> {
     return Scaffold(
       backgroundColor: const Color(0xff090b0e),
       appBar: AppBar(
+        leading: const SizedBox.shrink(),
+        leadingWidth: 48,
         title: const Text('Howl Server'),
         toolbarHeight: 44,
         actions: <Widget>[
