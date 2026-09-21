@@ -59,8 +59,12 @@ the accepted stream directly into that Instance's HWLS service; no per-Instance
 listener or byte proxy exists.
 
 The scheduler first drains all ready owners with zero-timeout turns, then blocks for
-at most one bounded slice on one rotating control/Instance owner. This is intentionally
-a replaceable scheduling policy, not Session or Instance semantics.
+at most one bounded slice on one rotating control/Instance owner. Retained exited
+Instances remain attachable but leave the scheduler once their PTY, clients, terminal
+timers, consequences and publication work are all quiescent; a later attach makes that
+Instance serviceable again. With no control clients or serviceable Instances, the
+runtime sleeps directly on its single Server listener instead of polling an empty tree.
+This is intentionally a replaceable scheduling policy, not Session or Instance semantics.
 
 The runtime owns no terminal geometry. Each Instance keeps one canonical rows/columns
 and cell-pixel lattice in its VT/PTy lifetime. A graphical client may compose multiple

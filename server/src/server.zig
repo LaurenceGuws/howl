@@ -76,6 +76,24 @@ pub const Server = struct {
         return total;
     }
 
+    pub fn serviceInstanceCount(self: *const Server) u16 {
+        var total: u16 = 0;
+        for (self.sessions) |maybe_record| {
+            const record = maybe_record orelse continue;
+            total += record.value.serviceInstanceCount();
+        }
+        return total;
+    }
+
+    pub fn instanceRequiresService(
+        self: *const Server,
+        session_id: SessionId,
+        instance_id: session_mod.InstanceId,
+    ) ?bool {
+        const index = self.findSessionIndex(session_id) orelse return null;
+        return self.sessions[index].?.value.instanceRequiresService(instance_id);
+    }
+
     /// Borrows Session names until the next Server mutation; scalar fields are copied.
     pub fn snapshotSessions(self: *const Server, output: *[maximum_sessions]SessionView) []const SessionView {
         var count: usize = 0;
@@ -425,6 +443,11 @@ test "Instance exit advances tree revision without ending its Session" {
     try std.testing.expectEqual(@as(u16, 1), server.sessionCount());
     try std.testing.expectEqual(@as(u16, 1), server.instanceCount(work).?);
 
-    try server.turnInstance(work, instance_id, 0);
+    var settle: usize = 0;
+    while (settle < 10_000 and server.instanceRequiresService(work, instance_id) == true) : (settle += 1)
+        try server.turnInstance(work, instance_id, 1);
+    try std.testing.expect(server.instanceRequiresService(work, instance_id) == false);
+    try std.testing.expectEqual(@as(u16, 0), server.serviceInstanceCount());
     try std.testing.expectEqual(@as(u64, 4), server.treeRevision());
+    try std.testing.expectEqual(work, server.findSessionByName("work").?);
 }

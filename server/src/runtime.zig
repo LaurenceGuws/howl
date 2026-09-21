@@ -12,6 +12,7 @@ const control = @import("server_service");
 
 const maximum_accepts_per_turn: usize = 16;
 pub const scheduler_wait_ms: i32 = 20;
+const idle_listener_wait_ms: i32 = 250;
 
 pub const ListenerSpec = union(enum) {
     unix: []const u8,
@@ -142,10 +143,20 @@ pub const Runtime = struct {
     /// rotating owner may block for `scheduler_wait_ms`, bounding cross-owner delay.
     pub fn turn(self: *Runtime) !void {
         self.acceptClients();
+        if (self.service.clientCount() == 0 and self.server.serviceInstanceCount() == 0) {
+            try self.waitForListener();
+            return;
+        }
+
         try self.service.turn(0);
         try self.turnAllInstances(0);
 
-        const instance_count: usize = self.server.instanceCountTotal();
+        const instance_count: usize = self.server.serviceInstanceCount();
+        if (self.service.clientCount() == 0 and instance_count == 0) {
+            try self.waitForListener();
+            return;
+        }
+
         const owner_count = 1 + instance_count;
         const target = self.wait_cursor % owner_count;
         self.wait_cursor = (target + 1) % owner_count;
@@ -158,6 +169,17 @@ pub const Runtime = struct {
 
     pub fn run(self: *Runtime) !void {
         while (true) try self.turn();
+    }
+
+    fn waitForListener(self: *Runtime) !void {
+        var descriptor = [1]posix.pollfd{.{
+            .fd = self.listener.fd,
+            .events = posix.POLL.IN | posix.POLL.HUP | posix.POLL.ERR,
+            .revents = 0,
+        }};
+        const ready = try posix.poll(&descriptor, idle_listener_wait_ms);
+        std.debug.assert(ready <= descriptor.len);
+        std.debug.assert(descriptor[0].revents & posix.POLL.NVAL == 0);
     }
 
     fn acceptClients(self: *Runtime) void {
@@ -193,8 +215,10 @@ pub const Runtime = struct {
         for (sessions) |session| {
             var instances_storage: [model.maximum_instances_per_session]model.InstanceView = undefined;
             const instances = self.server.snapshotInstances(session.id, &instances_storage) orelse continue;
-            for (instances) |instance|
+            for (instances) |instance| {
+                if (self.server.instanceRequiresService(session.id, instance.id) != true) continue;
                 try self.server.turnInstance(session.id, instance.id, timeout_ms);
+            }
         }
     }
 
@@ -206,6 +230,7 @@ pub const Runtime = struct {
             var instances_storage: [model.maximum_instances_per_session]model.InstanceView = undefined;
             const instances = self.server.snapshotInstances(session.id, &instances_storage) orelse continue;
             for (instances) |instance| {
+                if (self.server.instanceRequiresService(session.id, instance.id) != true) continue;
                 if (seen == target) return self.server.turnInstance(session.id, instance.id, timeout_ms);
                 seen += 1;
             }

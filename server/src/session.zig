@@ -106,6 +106,21 @@ pub const Session = struct {
         return self.instances[index].?.state;
     }
 
+    pub fn instanceRequiresService(self: *const Session, instance_id: InstanceId) ?bool {
+        const index = self.findInstanceIndex(instance_id) orelse return null;
+        const record = self.instances[index].?;
+        return record.state == .running or record.service.hasRetainedWork();
+    }
+
+    pub fn serviceInstanceCount(self: *const Session) u16 {
+        var count: u16 = 0;
+        for (self.instances) |maybe_record| {
+            const record = maybe_record orelse continue;
+            if (record.state == .running or record.service.hasRetainedWork()) count += 1;
+        }
+        return count;
+    }
+
     pub fn snapshotInstances(self: *const Session, output: *[maximum_instances]InstanceView) []const InstanceView {
         var count: usize = 0;
         for (self.instances) |maybe_record| {

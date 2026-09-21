@@ -589,6 +589,20 @@ pub const Service = struct {
         };
     }
 
+    /// True while this interaction envelope still needs service turns after the
+    /// child has exited. This preserves canonical timers/publication and attached
+    /// clients without forcing quiescent retained Instances through the scheduler.
+    pub fn hasRetainedWork(self: *const Service) bool {
+        if (!self.stream_closed or self.pty_write_pending) return true;
+        for (self.clients) |client| if (client != null) return true;
+        if (self.animation_wait_ms != null) return true;
+        if (self.synchronized_output_started_ns != null or self.synchronized_output_pending) return true;
+        if (self.burst_publication.started_ns != null) return true;
+        if (self.consequence_expiry.started_ns != null) return true;
+        if (howl.consequenceHead(self.instance) != null) return true;
+        return false;
+    }
+
     /// Exact admission failures for an already-connected client stream.
     pub const AdoptError = std.mem.Allocator.Error || error{
         ClientCapacity,
@@ -2607,4 +2621,32 @@ test "failed client adoption retains caller stream ownership" {
     );
     const flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(flags));
+}
+
+test "quiescent exited Instance sleeps until a client attaches" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "exit 0",
+        .rows = 2,
+        .columns = 8,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+
+    var turns: usize = 0;
+    while (turns < 10_000 and service.hasRetainedWork()) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(service.lifecycle().child_exited);
+    try std.testing.expect(service.lifecycle().stream_closed);
+    try std.testing.expect(!service.hasRetainedWork());
+
+    var peer = try TestPeer.adopt(std.testing.allocator, &service);
+    try std.testing.expect(service.hasRetainedWork());
+    peer.deinit();
+
+    turns = 0;
+    while (turns < 10_000 and service.hasRetainedWork()) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(!service.hasRetainedWork());
 }

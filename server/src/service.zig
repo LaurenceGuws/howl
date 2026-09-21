@@ -96,6 +96,14 @@ pub const Service = struct {
         self.* = undefined;
     }
 
+    pub fn clientCount(self: *const Service) u16 {
+        var count: u16 = 0;
+        for (self.clients) |client| {
+            if (client != null) count += 1;
+        }
+        return count;
+    }
+
     pub const AdoptError = std.mem.Allocator.Error || error{
         ClientCapacity,
         InitialInputTooLarge,
