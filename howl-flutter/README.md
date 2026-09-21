@@ -22,7 +22,7 @@ Control is semantic. Flutter maps platform events to committed text, named/Unico
 
 ## Android
 
-The accepted Android client is currently **arm64 only**. Build the native host and Flutter APK through the checked-in wrapper:
+The accepted Android client is currently **arm64 only**. Build the native host and Flutter APK through the checked-in wrapper. Flutter native-assets plugins may publish helper libraries for additional ABIs; app packaging explicitly excludes the non-arm64 DataStore helper slices and the wrapper independently rejects any APK whose final `lib/` ABI set is not exactly `arm64-v8a`:
 
 ```sh
 ZIG=/path/to/tracked/zig \
@@ -39,6 +39,8 @@ changes are explicit serialized Instance resizes; attaching the client still doe
 not otherwise mutate canonical geometry.
 
 The wrapper always performs a clean Flutter build with `--target-platform android-arm64`, verifies that no other ABI entered the APK, and requires `libhowl_native_host.so`. Gradle independently refuses a non-arm64 Flutter target or a missing generated host library.
+
+Physical Note10 pressure also covers the route-less app shell: fresh app data opens the button-only connection shell, a saved Server endpoint persists through Android DataStore, no-argument relaunch returns to that selected Server browser, exact running-Instance selection transitions through Server attach into ordinary HWLS, and leaving the terminal closes its managed observer/control streams before returning to the browser. The test route may be supplied externally through ADB reverse, so Android shell qualification does not depend on WARP/LAN reachability.
 
 `native/build-android.sh` builds the host explicitly; Gradle only verifies and packages the result. The native dependency furnace pins the pressure-proven FreeType and HarfBuzz revisions as static arm64 libraries and links them into one app-private host `.so`. Android does not depend on its private platform FreeType/HarfBuzz ABI.
 

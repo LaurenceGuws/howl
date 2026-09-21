@@ -29,6 +29,20 @@ android {
         }
     }
 
+    packaging {
+        // Flutter native-assets plugins may contribute prebuilt helper libraries for
+        // every Android ABI even when the app itself is arm64-only. Keep the accepted
+        // Howl artifact shape exact: retain the arm64 helper and refuse packaging of
+        // the three non-arm64 DataStore slices.
+        jniLibs {
+            excludes += setOf(
+                "lib/armeabi-v7a/libdatastore_shared_counter.so",
+                "lib/x86/libdatastore_shared_counter.so",
+                "lib/x86_64/libdatastore_shared_counter.so",
+            )
+        }
+    }
+
     buildTypes {
         release {
             // Experimental local client: keep release installs reproducible without a private keystore.
