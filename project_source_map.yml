@@ -13,6 +13,13 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  server: >-
+    optional orchestration module above the Howl terminal family. The exact owner
+    tree is Server -> Sessions -> Instances. Session creation never launches a
+    terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
+    Instance identity is scoped by its owning Session and Session identity by Server.
+    This first cut is module-only and owns no listener, daemon, protocol, discovery,
+    authentication or supervision policy
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction
     stream. Owns Unix/numeric-IPv4 TCP carriage, cancellation, bounded framed I/O,

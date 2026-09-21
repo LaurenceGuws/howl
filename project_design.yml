@@ -22,6 +22,7 @@ composition:
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
 
 experimental:
+  - server
   - howl-client
   - howl-cli
   - howl-render

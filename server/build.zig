@@ -1,0 +1,27 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
+
+    const module = b.addModule("server", .{
+        .root_source_file = b.path("src/server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("howl_instance", instance.module("howl_instance"));
+
+    const tests = b.addTest(.{
+        .name = "server",
+        .root_module = module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
+    const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
+    check.dependOn(&tests.step);
+    const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+    b.default_step = check;
+}
