@@ -10,6 +10,12 @@ const howl_instance = @import("howl_instance");
 pub const SessionId = u64;
 pub const maximum_sessions: usize = 16;
 
+pub const SessionView = struct {
+    id: SessionId,
+    name: []const u8,
+    instance_count: u16,
+};
+
 const SessionRecord = struct {
     value: session_mod.Session,
 
@@ -28,13 +34,15 @@ pub const CreateSessionError = std.mem.Allocator.Error || error{
 
 pub const Server = struct {
     allocator: std.mem.Allocator,
+    id: u64,
     next_session_id: SessionId = 1,
     revision: u64 = 1,
     sessions: [maximum_sessions]?SessionRecord = @splat(null),
     count: u16 = 0,
 
-    pub fn init(allocator: std.mem.Allocator) Server {
-        return .{ .allocator = allocator };
+    pub fn init(allocator: std.mem.Allocator, id: u64) error{InvalidServerIdentity}!Server {
+        if (id == 0) return error.InvalidServerIdentity;
+        return .{ .allocator = allocator, .id = id };
     }
 
     pub fn deinit(self: *Server) void {
@@ -55,6 +63,43 @@ pub const Server = struct {
 
     pub fn treeRevision(self: *const Server) u64 {
         return self.revision;
+    }
+
+    pub fn instanceCountTotal(self: *const Server) u16 {
+        var total: u16 = 0;
+        for (self.sessions) |maybe_record| {
+            const record = maybe_record orelse continue;
+            total += record.value.instanceCount();
+        }
+        return total;
+    }
+
+    /// Borrows Session names until the next Server mutation; scalar fields are copied.
+    pub fn snapshotSessions(self: *const Server, output: *[maximum_sessions]SessionView) []const SessionView {
+        var count: usize = 0;
+        for (self.sessions) |maybe_record| {
+            const record = maybe_record orelse continue;
+            var insert = count;
+            while (insert != 0 and output[insert - 1].id > record.value.id) : (insert -= 1)
+                output[insert] = output[insert - 1];
+            output[insert] = .{
+                .id = record.value.id,
+                .name = record.value.name,
+                .instance_count = record.value.instanceCount(),
+            };
+            count += 1;
+        }
+        std.debug.assert(count == self.count);
+        return output[0..count];
+    }
+
+    pub fn snapshotInstances(
+        self: *const Server,
+        session_id: SessionId,
+        output: *[session_mod.maximum_instances]session_mod.InstanceView,
+    ) ?[]const session_mod.InstanceView {
+        const index = self.findSessionIndex(session_id) orelse return null;
+        return self.sessions[index].?.value.snapshotInstances(output);
     }
 
     pub fn createSession(self: *Server, name: []const u8) CreateSessionError!SessionId {
@@ -171,8 +216,33 @@ pub const Server = struct {
     }
 };
 
+test "Server identity is explicit and nonzero" {
+    try std.testing.expectError(error.InvalidServerIdentity, Server.init(std.testing.allocator, 0));
+    var server = try Server.init(std.testing.allocator, 99);
+    defer server.deinit();
+    try std.testing.expectEqual(@as(u64, 99), server.id);
+}
+
+test "Server observations are sorted after slot reuse and expose no mutable Session" {
+    var server = try Server.init(std.testing.allocator, 42);
+    defer server.deinit();
+    const first = try server.createSession("first");
+    const second = try server.createSession("second");
+    try std.testing.expect(server.closeSession(first));
+    const third = try server.createSession("third");
+    try std.testing.expect(third > second);
+
+    var sessions_storage: [maximum_sessions]SessionView = undefined;
+    const sessions = server.snapshotSessions(&sessions_storage);
+    try std.testing.expectEqual(@as(usize, 2), sessions.len);
+    try std.testing.expectEqual(second, sessions[0].id);
+    try std.testing.expectEqual(third, sessions[1].id);
+    try std.testing.expectEqualStrings("second", sessions[0].name);
+    try std.testing.expectEqualStrings("third", sessions[1].name);
+}
+
 test "Server routes Instance creation through the selected Session" {
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const other = try server.createSession("other");
@@ -198,7 +268,7 @@ fn advanceIdentity(current: u64) error{IdentityExhausted}!u64 {
 }
 
 test "Server creates empty Sessions without constructing Instances" {
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
 
     const work = try server.createSession("work");
@@ -208,7 +278,7 @@ test "Server creates empty Sessions without constructing Instances" {
 }
 
 test "Session identity survives Instance-independent CRUD" {
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const first = try server.createSession("first");
     const second = try server.createSession("second");
@@ -261,7 +331,7 @@ fn testReadExact(
 
 test "Server routes an adopted HWLS stream by exact Session and Instance identity" {
     const protocol = howl_instance.protocol;
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -297,7 +367,7 @@ test "Server routes an adopted HWLS stream by exact Session and Instance identit
 
 test "identity routing failure retains caller stream ownership" {
     const linux = std.os.linux;
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");
     const instance_id = try server.createInstance(work, std.testing.io, std.testing.environ, .{
@@ -329,7 +399,7 @@ test "identity routing failure retains caller stream ownership" {
 }
 
 test "Instance exit advances tree revision without ending its Session" {
-    var server = Server.init(std.testing.allocator);
+    var server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     try std.testing.expectEqual(@as(u64, 1), server.treeRevision());
 

@@ -14,6 +14,11 @@ pub const InstanceState = enum { running, exited };
 
 pub const TurnOutcome = struct { state_changed: bool = false };
 
+pub const InstanceView = struct {
+    id: InstanceId,
+    state: InstanceState,
+};
+
 const InstanceRecord = struct {
     id: InstanceId,
     value: *howl_instance.Instance,
@@ -99,6 +104,20 @@ pub const Session = struct {
     pub fn instanceState(self: *const Session, instance_id: InstanceId) ?InstanceState {
         const index = self.findInstanceIndex(instance_id) orelse return null;
         return self.instances[index].?.state;
+    }
+
+    pub fn snapshotInstances(self: *const Session, output: *[maximum_instances]InstanceView) []const InstanceView {
+        var count: usize = 0;
+        for (self.instances) |maybe_record| {
+            const record = maybe_record orelse continue;
+            var insert = count;
+            while (insert != 0 and output[insert - 1].id > record.id) : (insert -= 1)
+                output[insert] = output[insert - 1];
+            output[insert] = .{ .id = record.id, .state = record.state };
+            count += 1;
+        }
+        std.debug.assert(count == self.count);
+        return output[0..count];
     }
 
     pub const AdoptClientError = instance_service.Service.AdoptError || error{InstanceNotFound};
