@@ -5499,3 +5499,88 @@ test "sessiond shutdown fd distinguishes live pipe from parent EOF" {
     write_open = false;
     try std.testing.expect(try shutdownFdClosed(@intCast(fds[0])));
 }
+
+test "pressure fallback revokes authority and retires exact generation" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-pressure-stale.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 6,
+            .columns = 64,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "i=0; while [ $i -lt 8 ]; do printf '\\033]52;c;?\\007'; i=$((i+1)); done; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\033]52;c;?\\007'; cat",
+        },
+    );
+    defer server.deinit();
+
+    var authority = try TestPeer.connect(std.testing.allocator, path);
+    defer authority.deinit();
+    const welcome = try handshake(&authority, &server);
+    try sendAssignConsequenceLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+
+    try sendInput(&authority, &server, "a");
+    try expectResult(&authority, &server, .input, .ok);
+    var attempts: usize = 0;
+    while (howl.consequenceCount(server.session) < 8 and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(u16, 8), howl.consequenceCount(server.session));
+
+    try sendConsequenceObserve(&authority, &server);
+    var pending = try receiveConsequenceSnapshot(&authority, &server);
+    defer pending.deinit();
+    try std.testing.expectEqual(protocol.ConsequenceKind.clipboard, pending.begin.kind);
+    try std.testing.expect(pending.begin.reply_required);
+    try std.testing.expectEqual(welcome.client_id, pending.begin.authority_client_id);
+    const retired_generation = pending.begin.generation;
+    try std.testing.expectEqual(@as(u64, 1), retired_generation);
+
+    try sendInput(&authority, &server, "b");
+    try expectResult(&authority, &server, .input, .ok);
+    attempts = 0;
+    while (server.consequence_authority.leader() != null and attempts < 2000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(server.consequence_authority.leader() == null);
+    const next = howl.consequenceHead(server.session) orelse return error.TestTimeout;
+    try std.testing.expectEqual(@as(u64, 2), next.id());
+
+    try sendConsequenceReply(
+        &authority,
+        &server,
+        retired_generation,
+        .clipboard,
+        "",
+    );
+    try expectResult(&authority, &server, .consequence_reply, .not_leader);
+
+    try sendAssignConsequenceLeader(&authority, &server, welcome.client_id);
+    try expectResult(&authority, &server, .assign_consequence_leader, .ok);
+    const terminal_revision_before =
+        howl.terminal(server.session).semanticSequence();
+    try sendConsequenceReply(
+        &authority,
+        &server,
+        retired_generation,
+        .clipboard,
+        "",
+    );
+    try expectResult(&authority, &server, .consequence_reply, .rejected);
+    try std.testing.expectEqual(
+        terminal_revision_before,
+        howl.terminal(server.session).semanticSequence(),
+    );
+}
