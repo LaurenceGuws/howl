@@ -301,3 +301,131 @@ test "one Server fairly services several independent live Instances" {
         try std.testing.expect(found);
     }
 }
+
+fn snapshotPid(
+    connection: *howl_client.Connection,
+    prefix: []const u8,
+) !std.posix.pid_t {
+    var attempts: usize = 0;
+    while (attempts < 1_000) : (attempts += 1) {
+        var snapshot = try howl_client.snapshot.request(
+            connection,
+            std.testing.allocator,
+            0,
+            0,
+        );
+        defer snapshot.deinit();
+        for (snapshot.lines) |line| {
+            const start = std.mem.indexOf(u8, line, prefix) orelse continue;
+            var end = start + prefix.len;
+            while (end < line.len and line[end] >= '0' and line[end] <= '9') : (end += 1) {}
+            if (end == start + prefix.len) continue;
+            const value = try std.fmt.parseInt(std.posix.pid_t, line[start + prefix.len .. end], 10);
+            if (value > 0) return value;
+        }
+    }
+    return error.TestTimeout;
+}
+
+fn expectProcessGroupGone(pid: std.posix.pid_t) !void {
+    const linux = std.os.linux;
+    const leader = linux.kill(pid, @fromBackingInt(@intCast(0)));
+    try std.testing.expectEqual(linux.E.SRCH, linux.errno(leader));
+    const group = linux.kill(-pid, @fromBackingInt(@intCast(0)));
+    try std.testing.expectEqual(linux.E.SRCH, linux.errno(group));
+}
+
+test "destructive close follows Server Session Instance lifetime boundaries" {
+    var runtime = try runtime_mod.Runtime.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_loopback = 0 },
+        0xc105e,
+    );
+    defer runtime.deinit();
+
+    var endpoint_storage: [64]u8 = undefined;
+    const endpoint = try runtime.endpointText(&endpoint_storage);
+    var pump = Pump{ .runtime = &runtime };
+    const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
+    defer {
+        pump.stop.store(true, .release);
+        worker.join();
+        std.debug.assert(!pump.failed.load(.acquire));
+    }
+
+    var control = try connectServer(endpoint);
+    defer control.deinit();
+    const doomed_session = try control.createSession("doomed");
+    const sibling_session = try control.createSession("sibling");
+    const doomed = try control.createInstance(.{
+        .session_id = doomed_session,
+        .shell = "/bin/sh",
+        .command = "printf 'DOOMED_PID:%d\\n' \"$$\"; exec cat",
+        .rows = 8,
+        .columns = 48,
+        .history_rows = 32,
+    });
+    const sibling = try control.createInstance(.{
+        .session_id = sibling_session,
+        .shell = "/bin/sh",
+        .command = "printf 'SIBLING_PID:%d\\n' \"$$\"; exec cat",
+        .rows = 8,
+        .columns = 48,
+        .history_rows = 32,
+    });
+
+    var doomed_client = try attachInstance(endpoint, doomed);
+    defer doomed_client.deinit();
+    var sibling_client = try attachInstance(endpoint, sibling);
+    defer sibling_client.deinit();
+    const doomed_pid = try snapshotPid(&doomed_client, "DOOMED_PID:");
+    const sibling_pid = try snapshotPid(&sibling_client, "SIBLING_PID:");
+    try std.testing.expect(doomed_pid != sibling_pid);
+
+    try control.closeSession(doomed_session);
+    try std.testing.expectError(
+        error.ConnectionClosed,
+        howl_client.snapshot.request(&doomed_client, std.testing.allocator, 0, 0),
+    );
+    try expectProcessGroupGone(doomed_pid);
+
+    // Destruction of one Session must not disturb another Session's live Instance.
+    try howl_client.actions.committedText(&sibling_client, "SIBLING_OK\\n");
+    var sibling_snapshot = try howl_client.snapshot.request(
+        &sibling_client,
+        std.testing.allocator,
+        0,
+        0,
+    );
+    defer sibling_snapshot.deinit();
+    var sibling_ok = false;
+    for (sibling_snapshot.lines) |line| {
+        if (std.mem.indexOf(u8, line, "SIBLING_OK") != null) {
+            sibling_ok = true;
+            break;
+        }
+    }
+    try std.testing.expect(sibling_ok);
+
+    var tree_after_session = try control.observeTree(0);
+    defer tree_after_session.deinit();
+    try std.testing.expectEqual(@as(usize, 1), tree_after_session.sessions.len);
+    try std.testing.expectEqual(sibling_session, tree_after_session.sessions[0].id);
+    try std.testing.expectEqual(@as(usize, 1), tree_after_session.sessions[0].instances.len);
+
+    // Instance close owns only that concrete terminal lifetime. Session identity stays.
+    try control.closeInstance(sibling);
+    try std.testing.expectError(
+        error.ConnectionClosed,
+        howl_client.snapshot.request(&sibling_client, std.testing.allocator, 0, 0),
+    );
+    try expectProcessGroupGone(sibling_pid);
+
+    var tree_after_instance = try control.observeTree(0);
+    defer tree_after_instance.deinit();
+    try std.testing.expectEqual(@as(usize, 1), tree_after_instance.sessions.len);
+    try std.testing.expectEqual(sibling_session, tree_after_instance.sessions[0].id);
+    try std.testing.expectEqual(@as(usize, 0), tree_after_instance.sessions[0].instances.len);
+}
