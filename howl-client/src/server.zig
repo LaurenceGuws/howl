@@ -33,6 +33,21 @@ pub const Error = transport.Error || session_client.Error || protocol.HeaderErro
     ServerIdentityChanged,
 };
 
+/// Opens one socket-only HWLM route, transfers it to the exact managed Session,
+/// then completes the unchanged HWLS handshake on that same ordered stream.
+pub fn attach(
+    allocator: std.mem.Allocator,
+    endpoint: []const u8,
+    session_id: u64,
+    diagnostic: *ConnectDiagnostic,
+) Error!AttachOutcome {
+    if (session_id == 0) return error.InvalidPayload;
+    var manager = try Connection.connect(allocator, endpoint, diagnostic);
+    var manager_owned = true;
+    defer if (manager_owned) manager.deinit();
+    return attachConnected(&manager, &manager_owned, allocator, session_id, diagnostic);
+}
+
 /// Opens one short-lived HWLM route, transfers it to the exact managed Session,
 /// then completes the unchanged HWLS handshake on that same ordered stream.
 pub fn attachNative(

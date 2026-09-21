@@ -39,8 +39,10 @@ pub fn build(b: *std.Build) void {
     session.addImport("howl_pty", pty);
     session.addImport("howl_vt", vt);
 
+    const server_protocol = localModule(b, target, optimize, repo, "howl-server/src/protocol.zig");
     const client = localModule(b, target, optimize, repo, "howl-client/src/howl_client.zig");
     client.addImport("howl_session", session);
+    client.addImport("howl_server_protocol", server_protocol);
 
     const text = localModule(b, target, optimize, repo, "howl-text/src/text.zig");
     text.link_libc = true;
