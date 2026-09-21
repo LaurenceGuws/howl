@@ -76,22 +76,31 @@ pub const Server = struct {
         return total;
     }
 
-    pub fn serviceInstanceCount(self: *const Server) u16 {
+    pub fn turnInstanceCount(self: *const Server) u16 {
         var total: u16 = 0;
         for (self.sessions) |maybe_record| {
             const record = maybe_record orelse continue;
-            total += record.value.serviceInstanceCount();
+            total += record.value.turnInstanceCount();
         }
         return total;
     }
 
-    pub fn instanceRequiresService(
+    pub fn instanceRequiresTurn(
         self: *const Server,
         session_id: SessionId,
         instance_id: session_mod.InstanceId,
     ) ?bool {
         const index = self.findSessionIndex(session_id) orelse return null;
-        return self.sessions[index].?.value.instanceRequiresService(instance_id);
+        return self.sessions[index].?.value.instanceRequiresTurn(instance_id);
+    }
+
+    pub fn instanceWaitDescriptor(
+        self: *const Server,
+        session_id: SessionId,
+        instance_id: session_mod.InstanceId,
+    ) error{NotStarted}!?std.posix.fd_t {
+        const index = self.findSessionIndex(session_id) orelse return null;
+        return try self.sessions[index].?.value.instanceWaitDescriptor(instance_id);
     }
 
     /// Borrows Session names until the next Server mutation; scalar fields are copied.
@@ -444,10 +453,10 @@ test "Instance exit advances tree revision without ending its Session" {
     try std.testing.expectEqual(@as(u16, 1), server.instanceCount(work).?);
 
     var settle: usize = 0;
-    while (settle < 10_000 and server.instanceRequiresService(work, instance_id) == true) : (settle += 1)
+    while (settle < 10_000 and server.instanceRequiresTurn(work, instance_id) == true) : (settle += 1)
         try server.turnInstance(work, instance_id, 1);
-    try std.testing.expect(server.instanceRequiresService(work, instance_id) == false);
-    try std.testing.expectEqual(@as(u16, 0), server.serviceInstanceCount());
+    try std.testing.expect(server.instanceRequiresTurn(work, instance_id) == false);
+    try std.testing.expectEqual(@as(u16, 0), server.turnInstanceCount());
     try std.testing.expectEqual(@as(u64, 4), server.treeRevision());
     try std.testing.expectEqual(work, server.findSessionByName("work").?);
 }

@@ -106,19 +106,35 @@ pub const Session = struct {
         return self.instances[index].?.state;
     }
 
-    pub fn instanceRequiresService(self: *const Session, instance_id: InstanceId) ?bool {
+    pub fn instanceRequiresTurn(self: *const Session, instance_id: InstanceId) ?bool {
         const index = self.findInstanceIndex(instance_id) orelse return null;
         const record = self.instances[index].?;
-        return record.state == .running or record.service.hasRetainedWork();
+        if (record.state == .exited)
+            return record.service.hasRetainedWork();
+        return record.service.requiresTurnWithoutPtyReadiness();
     }
 
-    pub fn serviceInstanceCount(self: *const Session) u16 {
+    pub fn turnInstanceCount(self: *const Session) u16 {
         var count: u16 = 0;
         for (self.instances) |maybe_record| {
             const record = maybe_record orelse continue;
-            if (record.state == .running or record.service.hasRetainedWork()) count += 1;
+            const required = if (record.state == .exited)
+                record.service.hasRetainedWork()
+            else
+                record.service.requiresTurnWithoutPtyReadiness();
+            if (required) count += 1;
         }
         return count;
+    }
+
+    pub fn instanceWaitDescriptor(
+        self: *const Session,
+        instance_id: InstanceId,
+    ) error{NotStarted}!?std.posix.fd_t {
+        const index = self.findInstanceIndex(instance_id) orelse return null;
+        const record = self.instances[index].?;
+        if (record.state == .exited) return null;
+        return try record.service.waitDescriptor();
     }
 
     pub fn snapshotInstances(self: *const Session, output: *[maximum_instances]InstanceView) []const InstanceView {

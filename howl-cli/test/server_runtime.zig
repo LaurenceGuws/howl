@@ -163,7 +163,7 @@ test "quiescent exited Instance reactivates on later exact attach" {
     first_worker.join();
     first_running = false;
     try std.testing.expect(!first_pump.failed.load(.acquire));
-    try std.testing.expect(runtime.server.instanceRequiresService(session_id, identity.instance_id) == false);
+    try std.testing.expect(runtime.server.instanceRequiresTurn(session_id, identity.instance_id) == false);
 
     var second_pump = Pump{ .runtime = &runtime };
     const second_worker = try std.Thread.spawn(.{}, Pump.run, .{&second_pump});

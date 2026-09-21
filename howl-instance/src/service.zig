@@ -589,18 +589,41 @@ pub const Service = struct {
         };
     }
 
-    /// True while this interaction envelope still needs service turns after the
-    /// child has exited. This preserves canonical timers/publication and attached
-    /// clients without forcing quiescent retained Instances through the scheduler.
-    pub fn hasRetainedWork(self: *const Service) bool {
-        if (!self.stream_closed or self.pty_write_pending) return true;
-        for (self.clients) |client| if (client != null) return true;
+    /// Returns the bounded number of currently attached HWLS client streams.
+    pub fn clientCount(self: *const Service) u16 {
+        var count: u16 = 0;
+        for (self.clients) |client| {
+            if (client != null) count += 1;
+        }
+        return count;
+    }
+
+    /// True when this service must receive a turn even if its PTY is not ready.
+    /// Runtime may otherwise wait on the PTY descriptor directly.
+    pub fn requiresTurnWithoutPtyReadiness(self: *const Service) bool {
+        // Once the stream closes, service turns still own child-exit reconciliation.
+        if (self.stream_closed and !self.child_exited) return true;
+        if (self.pty_write_pending or self.clientCount() != 0) return true;
         if (self.animation_wait_ms != null) return true;
         if (self.synchronized_output_started_ns != null or self.synchronized_output_pending) return true;
         if (self.burst_publication.started_ns != null) return true;
         if (self.consequence_expiry.started_ns != null) return true;
         if (howl.consequenceHead(self.instance) != null) return true;
         return false;
+    }
+
+    /// Returns the PTY fd only when Runtime may safely sleep on PTY readiness
+    /// instead of scheduling unconditional service turns.
+    pub fn waitDescriptor(self: *const Service) error{NotStarted}!?posix.fd_t {
+        if (self.stream_closed or self.requiresTurnWithoutPtyReadiness()) return null;
+        return try howl.descriptor(self.instance);
+    }
+
+    /// True while an exited interaction envelope still needs service turns.
+    pub fn hasRetainedWork(self: *const Service) bool {
+        if (!self.child_exited) return true;
+        if (!self.stream_closed or self.pty_write_pending) return true;
+        return self.requiresTurnWithoutPtyReadiness();
     }
 
     /// Exact admission failures for an already-connected client stream.

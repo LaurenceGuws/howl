@@ -58,13 +58,17 @@ The listener accepts only Server control connections. Exact Instance attach tran
 the accepted stream directly into that Instance's HWLS service; no per-Instance
 listener or byte proxy exists.
 
-The scheduler first drains all ready owners with zero-timeout turns, then blocks for
-at most one bounded slice on one rotating control/Instance owner. Retained exited
-Instances remain attachable but leave the scheduler once their PTY, clients, terminal
-timers, consequences and publication work are all quiescent; a later attach makes that
-Instance serviceable again. With no control clients or serviceable Instances, the
-runtime sleeps directly on its single Server listener instead of polling an empty tree.
-This is intentionally a replaceable scheduling policy, not Session or Instance semantics.
+The scheduler separates readiness from service work. Running Instances with no clients,
+pending writes or terminal deadlines contribute only their PTY fd to one aggregate poll
+alongside the Server listener. PTY output/exit and new Server connections therefore wake
+the runtime immediately without periodic per-Instance turns. Control clients and
+Instances with client/timer/write work use the bounded rotating service lane. Retained
+exited Instances remain attachable but disappear from all scheduler work once their PTY,
+clients, terminal timers, consequences and publication work are quiescent; a later exact
+attach makes that Instance serviceable again. The aggregate dormant wait has only a
+bounded housekeeping timeout; it is not an input/output latency bound.
+
+This is intentionally replaceable runtime scheduling policy, not Session or Instance semantics.
 
 The runtime owns no terminal geometry. Each Instance keeps one canonical rows/columns
 and cell-pixel lattice in its VT/PTy lifetime. A graphical client may compose multiple
