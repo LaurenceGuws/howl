@@ -43,7 +43,7 @@ pub const Connection = struct {
         diagnostic: *ConnectDiagnostic,
     ) Error!Connection {
         const stream = try transport.Stream.connectDiagnosed(endpoint, diagnostic);
-        return handshake(allocator, stream, diagnostic);
+        return connectTransport(allocator, stream, diagnostic);
     }
 
     pub fn connectNative(
@@ -69,7 +69,7 @@ pub const Connection = struct {
             diagnostic,
             interrupt,
         );
-        return handshake(allocator, stream, diagnostic);
+        return connectTransport(allocator, stream, diagnostic);
     }
 
     pub fn deinit(self: *Connection) void {
@@ -119,7 +119,8 @@ pub const Connection = struct {
     }
 };
 
-fn handshake(
+/// Completes the HWLS handshake over one already-owned native transport stream.
+pub fn connectTransport(
     allocator: std.mem.Allocator,
     stream_value: transport.Stream,
     diagnostic: *ConnectDiagnostic,
@@ -257,7 +258,7 @@ test "handshake establishes client identity over shared transport" {
     const pair = testSocketPair();
     const thread = try std.Thread.spawn(.{}, testHandshakePeer, .{pair[1]});
     var diagnostic: ConnectDiagnostic = .{};
-    var connection = try handshake(std.testing.allocator, .{ .fd = pair[0] }, &diagnostic);
+    var connection = try connectTransport(std.testing.allocator, .{ .fd = pair[0] }, &diagnostic);
     defer connection.deinit();
     thread.join();
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
@@ -268,7 +269,7 @@ test "connection cancellation wakes blocked Session receive while owner retains 
     const pair = testSocketPair();
     const peer = try std.Thread.spawn(.{}, testHandshakePeerUntilClosed, .{pair[1]});
     var diagnostic: ConnectDiagnostic = .{};
-    var connection = try handshake(std.testing.allocator, .{ .fd = pair[0] }, &diagnostic);
+    var connection = try connectTransport(std.testing.allocator, .{ .fd = pair[0] }, &diagnostic);
     defer connection.deinit();
     var probe = CancelReceiveProbe{ .connection = &connection };
     const reader = try std.Thread.spawn(.{}, testBlockedReceive, .{&probe});

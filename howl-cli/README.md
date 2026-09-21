@@ -253,10 +253,11 @@ proof that the requested operation succeeded.
 ## Shared client ownership
 
 The in-tree `howl-client` module owns the shared native ordered-stream transport,
-HWLS Session client, HWLM manager client, semantic actions, rich decoding,
-raw-cache lifetime, and the opaque immutable coarse projection. Protocol ownership
-stays separate even though socket/SSH/cancellation mechanics are shared. The CLI
-consumes those clients and owns command vocabulary and diagnostic formatting only.
+HWLS Session client, HWLM manager client and the exact managed-attach transition
+from HWLM into HWLS on one stream, plus semantic actions, rich decoding, raw-cache
+lifetime, and the opaque immutable coarse projection. Protocol ownership stays
+separate even though socket/SSH/cancellation mechanics are shared. The CLI consumes
+those clients and owns command vocabulary and diagnostic formatting only.
 
 Native Flutter, Odin, and the Web decoding/rendering path reuse these boundaries.
 Application lifecycle, IME, gestures, accessibility, and presentation remain with

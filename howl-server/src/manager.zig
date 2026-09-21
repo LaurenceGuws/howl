@@ -77,6 +77,14 @@ const Client = struct {
 
     fn deinit(self: *Client, allocator: std.mem.Allocator) void {
         closeFd(self.fd);
+        self.releaseBuffers(allocator);
+    }
+
+    fn releaseTransferred(self: *Client, allocator: std.mem.Allocator) void {
+        self.releaseBuffers(allocator);
+    }
+
+    fn releaseBuffers(self: *Client, allocator: std.mem.Allocator) void {
         allocator.free(self.output);
         allocator.free(self.input);
         self.* = undefined;
@@ -260,12 +268,19 @@ pub const Manager = struct {
                     break;
                 }
                 if (client.input_len < frame_bytes) break;
-                const payload = client.input[protocol.header_bytes..frame_bytes];
-                const keep = self.handleFrame(index, client, registry, header.kind, payload);
-                if (!keep or self.clients[index] == null) break;
+                var payload_storage: [protocol.maximum_request_payload_bytes]u8 = undefined;
+                @memcpy(payload_storage[0..header.payload_len], client.input[protocol.header_bytes..frame_bytes]);
                 const remaining = client.input_len - frame_bytes;
                 std.mem.copyForwards(u8, client.input[0..remaining], client.input[frame_bytes..client.input_len]);
                 client.input_len = remaining;
+                const keep = self.handleFrame(
+                    index,
+                    client,
+                    registry,
+                    header.kind,
+                    payload_storage[0..header.payload_len],
+                );
+                if (!keep or self.clients[index] == null) break;
             }
         }
     }
@@ -340,7 +355,7 @@ pub const Manager = struct {
                     registry.roster_revision,
                 );
             },
-            .attach => return self.queueCode(index, client, kind, .unsupported, 0, registry.roster_revision),
+            .attach => return self.handoffAttach(index, client, registry, payload),
             .shutdown => {
                 if (payload.len != 0) return self.queueMalformed(index, client, kind, registry);
                 if (!self.stopping) {
@@ -352,6 +367,52 @@ pub const Manager = struct {
             else => return self.queueCode(index, client, kind, .unsupported, 0, registry.roster_revision),
         }
         return true;
+    }
+
+    fn handoffAttach(
+        self: *Manager,
+        index: usize,
+        client: *Client,
+        registry: *Registry,
+        payload: []const u8,
+    ) bool {
+        if (self.stopping)
+            return self.queueCode(index, client, .attach, .stopping, 0, registry.roster_revision);
+        const session_id = protocol.decodeSessionIdentity(payload) catch
+            return self.queueMalformed(index, client, .attach, registry);
+
+        var ready_payload: [protocol.payload_bytes.attach_ready]u8 = undefined;
+        protocol.encodeAttachReady(&ready_payload, .{
+            .session_id = session_id,
+            .roster_revision = registry.roster_revision,
+        }) catch return self.queueCode(index, client, .attach, .internal, 0, registry.roster_revision);
+        var preface: [protocol.header_bytes + protocol.payload_bytes.attach_ready]u8 = undefined;
+        var ready_header: [protocol.header_bytes]u8 = undefined;
+        protocol.encodeHeader(&ready_header, .{
+            .kind = .attach_ready,
+            .payload_len = ready_payload.len,
+        }) catch return self.queueCode(index, client, .attach, .internal, 0, registry.roster_revision);
+        @memcpy(preface[0..protocol.header_bytes], &ready_header);
+        @memcpy(preface[protocol.header_bytes..], &ready_payload);
+
+        registry.adoptClient(
+            session_id,
+            client.fd,
+            client.input[0..client.input_len],
+            &preface,
+        ) catch |failure| {
+            const code: protocol.ResultCode = switch (failure) {
+                error.SessionNotFound => .not_found,
+                error.SessionUnavailable => .unavailable,
+                error.ClientCapacity => .capacity,
+                else => .internal,
+            };
+            return self.queueCode(index, client, .attach, code, 0, registry.roster_revision);
+        };
+
+        client.releaseTransferred(self.allocator);
+        self.clients[index] = null;
+        return false;
     }
 
     fn queueMalformed(
@@ -741,4 +802,79 @@ test "HWLM manages a live zero-session registry with revisioned roster wakeup" {
     const refused = try control.receive();
     const refused_result = try protocol.decodeResult(refused.body());
     try std.testing.expectEqual(protocol.ResultCode.stopping, refused_result.code);
+}
+
+test "HWLM attach hands the accepted stream into the exact Session endpoint" {
+    const session_protocol = @import("howl_session").protocol;
+    var runtime_buffer: [96]u8 = undefined;
+    const runtime = try std.fmt.bufPrint(
+        &runtime_buffer,
+        "/tmp/howl-manager-attach-{d}",
+        .{linux.getpid()},
+    );
+    std.Io.Dir.createDirPath(.cwd(), std.testing.io, runtime) catch {};
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, runtime) catch {};
+    var socket_buffer: [108]u8 = undefined;
+    const manager_socket = try std.fmt.bufPrint(&socket_buffer, "{s}/manager.sock", .{runtime});
+
+    var registry = try Registry.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        runtime,
+        .{ .shell = "/bin/sh", .rows = 4, .columns = 40 },
+        0x1234,
+    );
+    defer registry.deinit();
+    const session_id = try registry.create(.{ .name = "managed", .command = "sleep 5" });
+
+    var manager = try Manager.init(std.testing.allocator, std.testing.io, .{ .unix = manager_socket });
+    defer manager.deinit();
+    var peer = try TestPeer.connectUnix(manager_socket);
+    defer peer.deinit();
+
+    try peer.send(.hello, &.{});
+    try pump(&manager, &registry, 3);
+    const welcome = try peer.receive();
+    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+
+    var identity: [protocol.payload_bytes.session_identity]u8 = undefined;
+    try protocol.encodeSessionIdentity(&identity, session_id);
+    try peer.send(.attach, &identity);
+    try pump(&manager, &registry, 2);
+
+    // The manager no longer owns the accepted descriptor. Session service drains
+    // the HWLM handoff preface from its ordinary bounded client output queue.
+    try std.testing.expect(registry.serviceTurn(0) == null);
+    const ready = try peer.receive();
+    try std.testing.expectEqual(protocol.Kind.attach_ready, ready.kind);
+    const attached = try protocol.decodeAttachReady(ready.body());
+    try std.testing.expectEqual(session_id, attached.session_id);
+
+    var session_hello: [session_protocol.header_bytes]u8 = undefined;
+    try session_protocol.encodeHeader(&session_hello, .{ .kind = .hello, .payload_len = 0 });
+    try testWriteAll(peer.fd, &session_hello);
+    try std.testing.expect(registry.serviceTurn(0) == null);
+    try std.testing.expect(registry.serviceTurn(0) == null);
+
+    var session_welcome_header_bytes: [session_protocol.header_bytes]u8 = undefined;
+    try testReadExact(peer.fd, &session_welcome_header_bytes);
+    const session_welcome_header = try session_protocol.decodeHeader(&session_welcome_header_bytes);
+    try std.testing.expectEqual(session_protocol.Kind.welcome, session_welcome_header.kind);
+    try std.testing.expectEqual(
+        @as(u32, session_protocol.payload_bytes.welcome),
+        session_welcome_header.payload_len,
+    );
+    var session_welcome_payload: [session_protocol.payload_bytes.welcome]u8 = undefined;
+    try testReadExact(peer.fd, &session_welcome_payload);
+    const session_welcome = try session_protocol.decodeWelcome(&session_welcome_payload);
+    try std.testing.expect(session_welcome.client_id != session_protocol.no_client);
+
+    // Manager service remains independent after the route transfer.
+    var status_peer = try TestPeer.connectUnix(manager_socket);
+    defer status_peer.deinit();
+    try status_peer.send(.hello, &.{});
+    try pump(&manager, &registry, 3);
+    const status_welcome = try status_peer.receive();
+    try std.testing.expectEqual(protocol.Kind.welcome, status_welcome.kind);
 }

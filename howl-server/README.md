@@ -40,7 +40,15 @@ Unix manager sockets are mode 0600. Explicit TCP management listeners bind only
 IPv4 loopback. Authentication, encryption, remote routing, service supervision and
 discovery remain outside Howl.
 
-Each managed Session still publishes its temporary per-session Unix HWLS endpoint
-under `RUNTIME_DIR` in this checkpoint. The next accepted slice replaces that
-intermediate discovery seam with direct HWLM `attach(session_id)` stream handoff;
-the HWLS Session protocol itself remains unchanged.
+Managed attach is direct: HWLM `attach(session_id)` transfers the manager's accepted
+stream into the selected Session endpoint, which drains the small `attach_ready`
+preface before parsing the unchanged HWLS handshake. There is no manager-side byte
+proxy or second terminal protocol. A slow transferred client therefore occupies
+only its ordinary bounded Session client slot and cannot pace canonical PTY/VT
+progress or the manager.
+
+Each managed Session also retains its explicit per-Session Unix HWLS endpoint under
+`RUNTIME_DIR`. That is now an intentional local/debug access route rather than
+discovery authority: managed clients use HWLM identity and attach, while an operator
+can still target a known local Session endpoint directly. Both routes enter the same
+Session client table and terminal truth.

@@ -63,6 +63,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    manager_tests_root.addImport("howl_session", session.module("howl_session"));
     manager_tests_root.addImport("howl_session_endpoint", session.module("howl_session_endpoint"));
     manager_tests_root.addImport("howl_server_protocol", protocol_module);
     const manager_tests = b.addTest(.{

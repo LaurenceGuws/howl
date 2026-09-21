@@ -195,6 +195,24 @@ pub const Registry = struct {
         advanceRevision(&self.roster_revision);
     }
 
+    pub const AttachError = endpoint.Server.AdoptError || error{
+        SessionNotFound,
+        SessionUnavailable,
+    };
+
+    pub fn adoptClient(
+        self: *Registry,
+        session_id: u64,
+        fd: std.posix.fd_t,
+        initial_input: []const u8,
+        preface_output: []const u8,
+    ) AttachError!void {
+        const index = self.findId(session_id) orelse return error.SessionNotFound;
+        const record = if (self.records[index]) |*value| value else return error.SessionNotFound;
+        const server = record.server orelse return error.SessionUnavailable;
+        try server.adoptClient(fd, initial_input, preface_output);
+    }
+
     pub fn endpointText(self: *const Registry, session_id: u64, output: []u8) ![]const u8 {
         const index = self.findId(session_id) orelse return error.SessionNotFound;
         const record = self.records[index].?;

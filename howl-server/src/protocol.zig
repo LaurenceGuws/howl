@@ -67,6 +67,7 @@ pub const ResultCode = enum(u8) {
     stale_identity = 8,
     stopping = 9,
     internal = 10,
+    unavailable = 11,
 };
 
 pub const ServerStatus = struct {
@@ -98,6 +99,11 @@ pub const Result = struct {
     roster_revision: u64 = 0,
 };
 
+pub const AttachReady = struct {
+    session_id: u64,
+    roster_revision: u64,
+};
+
 pub const SessionRecord = struct {
     session_id: u64,
     created_sequence: u64,
@@ -122,6 +128,7 @@ pub const payload_bytes = struct {
     pub const observe_roster: usize = 8;
     pub const create_header: usize = 12;
     pub const session_identity: usize = 8;
+    pub const attach_ready: usize = 16;
     pub const shutdown: usize = 0;
     pub const result: usize = 24;
     pub const roster_header: usize = 24;
@@ -272,6 +279,22 @@ pub fn decodeSessionIdentity(input: []const u8) PayloadError!u64 {
     return session_id;
 }
 
+pub fn encodeAttachReady(output: *[payload_bytes.attach_ready]u8, value: AttachReady) PayloadError!void {
+    if (value.session_id == 0 or value.roster_revision == 0) return error.InvalidPayload;
+    writeU64(output[0..8], value.session_id);
+    writeU64(output[8..16], value.roster_revision);
+}
+
+pub fn decodeAttachReady(input: []const u8) PayloadError!AttachReady {
+    if (input.len != payload_bytes.attach_ready) return error.InvalidPayload;
+    const value = AttachReady{
+        .session_id = readU64(input[0..8]),
+        .roster_revision = readU64(input[8..16]),
+    };
+    if (value.session_id == 0 or value.roster_revision == 0) return error.InvalidPayload;
+    return value;
+}
+
 pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) PayloadError!void {
     if (!requestKind(value.request_kind)) return error.InvalidPayload;
     if (value.code == .ok and value.request_kind == .create and value.session_id == 0)
@@ -305,6 +328,7 @@ pub fn decodeResult(input: []const u8) PayloadError!Result {
         8 => .stale_identity,
         9 => .stopping,
         10 => .internal,
+        11 => .unavailable,
         else => return error.InvalidPayload,
     };
     const value = Result{
@@ -557,6 +581,19 @@ test "result requires exact request kind and create identity" {
     try std.testing.expectError(
         error.InvalidPayload,
         encodeResult(&encoded, .{ .request_kind = .create, .code = .ok, .roster_revision = 9 }),
+    );
+}
+
+test "attach ready binds one exact session identity and roster cut" {
+    var encoded: [payload_bytes.attach_ready]u8 = undefined;
+    try encodeAttachReady(&encoded, .{ .session_id = 17, .roster_revision = 42 });
+    try std.testing.expectEqualDeep(
+        AttachReady{ .session_id = 17, .roster_revision = 42 },
+        try decodeAttachReady(&encoded),
+    );
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeAttachReady(&encoded, .{ .session_id = 0, .roster_revision = 42 }),
     );
 }
 

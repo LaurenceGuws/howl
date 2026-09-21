@@ -27,6 +27,7 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
 const client_output_retain_bytes: usize = 512 * 1024;
+const maximum_adopt_preface_bytes: usize = 4096;
 const listen_backlog: u32 = maximum_clients;
 const lifecycle_poll_ms: i32 = 100;
 // A connected host-consequence authority gets one bounded opportunity to answer
@@ -643,6 +644,46 @@ pub const Server = struct {
         };
     }
 
+    /// Exact admission failures for an already-connected client stream.
+    pub const AdoptError = std.mem.Allocator.Error || error{
+        ClientCapacity,
+        InitialInputTooLarge,
+        PrefaceTooLarge,
+        SocketOptionFailed,
+    };
+
+    /// Adopts one connected stream into the ordinary bounded Session client table.
+    /// On success this endpoint owns `fd`; on failure the caller retains ownership.
+    /// `initial_input` is parsed only after `preface_output` has fully drained.
+    pub fn adoptClient(
+        self: *Server,
+        fd: posix.fd_t,
+        initial_input: []const u8,
+        preface_output: []const u8,
+    ) AdoptError!void {
+        if (initial_input.len > input_buffer_bytes) return error.InitialInputTooLarge;
+        if (preface_output.len > maximum_adopt_preface_bytes) return error.PrefaceTooLarge;
+        const slot = self.freeClientSlot() orelse return error.ClientCapacity;
+
+        const input = try self.allocator.alloc(u8, input_buffer_bytes);
+        errdefer self.allocator.free(input);
+        @memcpy(input[0..initial_input.len], initial_input);
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try output.appendSlice(self.allocator, preface_output);
+
+        try configureAdoptedClientFd(fd);
+        const id = self.nextClientId();
+        self.clients[slot] = .{
+            .fd = fd,
+            .id = id,
+            .input = input,
+            .input_len = initial_input.len,
+            .output = output,
+        };
+    }
+
     fn consequencePolicy(self: *const Server) howl.ConsequencePolicy {
         return if (self.consequence_authority.leader() != null) .retain else .headless;
     }
@@ -701,25 +742,14 @@ pub const Server = struct {
             }
             accepted_count += 1;
             const fd: posix.fd_t = @intCast(accepted);
-            errdefer closeFd(fd);
-            setSendBuffer(fd, client_send_buffer_bytes) catch {
-                closeFd(fd);
-                continue;
-            };
             if (self.listener.tcp_port != null) setTcpNoDelay(fd) catch {
                 closeFd(fd);
                 continue;
             };
-            const slot = self.freeClientSlot() orelse {
+            self.adoptClient(fd, &.{}, &.{}) catch {
                 closeFd(fd);
                 continue;
             };
-            const input = self.allocator.alloc(u8, input_buffer_bytes) catch {
-                closeFd(fd);
-                continue;
-            };
-            const id = self.nextClientId();
-            self.clients[slot] = .{ .fd = fd, .id = id, .input = input };
         }
     }
 
@@ -2481,6 +2511,25 @@ fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTo
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
     return @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
+}
+
+fn configureAdoptedClientFd(fd: posix.fd_t) error{SocketOptionFailed}!void {
+    try setSendBuffer(fd, client_send_buffer_bytes);
+    try setCloseOnExec(fd);
+    try setNonblocking(fd);
+}
+
+fn setCloseOnExec(fd: posix.fd_t) error{SocketOptionFailed}!void {
+    const result = linux.fcntl(fd, linux.F.SETFD, @as(usize, linux.FD_CLOEXEC));
+    if (linux.errno(result) != .SUCCESS) return error.SocketOptionFailed;
+}
+
+fn setNonblocking(fd: posix.fd_t) error{SocketOptionFailed}!void {
+    const current = linux.fcntl(fd, linux.F.GETFL, @as(usize, 0));
+    if (linux.errno(current) != .SUCCESS) return error.SocketOptionFailed;
+    const nonblocking: usize = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
+    const updated = linux.fcntl(fd, linux.F.SETFL, @as(usize, @intCast(current)) | nonblocking);
+    if (linux.errno(updated) != .SUCCESS) return error.SocketOptionFailed;
 }
 
 fn setReuseAddress(fd: posix.fd_t) !void {
@@ -5597,4 +5646,119 @@ test "pressure fallback revokes authority and retires exact generation" {
         terminal_revision_before,
         howl.terminal(server.session).semanticSequence(),
     );
+}
+
+test "adopted client drains preface before buffered Session handshake" {
+    const path = "/tmp/howl-session-adopt-preface.sock";
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; cat",
+            .rows = 4,
+            .columns = 40,
+            .history_rows = 16,
+        },
+    );
+    defer server.deinit();
+
+    var pair: [2]posix.fd_t = undefined;
+    if (posix.errno(posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)) != .SUCCESS)
+        return error.TestSocketCreateFailed;
+    var peer_owned = true;
+    defer if (peer_owned) closeFd(pair[1]);
+    errdefer closeFd(pair[0]);
+
+    var hello: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
+    const preface = "MANAGED_ATTACH_READY";
+    try server.adoptClient(pair[0], &hello, preface);
+
+    try server.turn(0);
+    var received_preface: [preface.len]u8 = undefined;
+    try testReadFdExact(pair[1], &received_preface);
+    try std.testing.expectEqualStrings(preface, &received_preface);
+
+    try server.turn(0);
+    var welcome_header_bytes: [protocol.header_bytes]u8 = undefined;
+    try testReadFdExact(pair[1], &welcome_header_bytes);
+    const welcome_header = try protocol.decodeHeader(&welcome_header_bytes);
+    try std.testing.expectEqual(protocol.Kind.welcome, welcome_header.kind);
+    try std.testing.expectEqual(@as(u32, protocol.payload_bytes.welcome), welcome_header.payload_len);
+    var welcome_payload: [protocol.payload_bytes.welcome]u8 = undefined;
+    try testReadFdExact(pair[1], &welcome_payload);
+    const welcome = try protocol.decodeWelcome(&welcome_payload);
+    try std.testing.expect(welcome.client_id != protocol.no_client);
+
+    peer_owned = false;
+    closeFd(pair[1]);
+}
+
+test "failed adopted client admission retains caller descriptor ownership" {
+    var pair: [2]posix.fd_t = undefined;
+    if (posix.errno(posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)) != .SUCCESS)
+        return error.TestSocketCreateFailed;
+    defer closeFd(pair[0]);
+    defer closeFd(pair[1]);
+
+    const path = "/tmp/howl-session-adopt-reject.sock";
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .shell = "/bin/sh",
+            .command = "stty raw -echo; cat",
+            .rows = 4,
+            .columns = 40,
+            .history_rows = 16,
+        },
+    );
+    defer server.deinit();
+
+    var oversized: [input_buffer_bytes + 1]u8 = @splat(0);
+    try std.testing.expectError(
+        error.InitialInputTooLarge,
+        server.adoptClient(pair[0], &oversized, &.{}),
+    );
+    try testWriteFdAll(pair[1], "still-owned");
+    var echoed: ["still-owned".len]u8 = undefined;
+    try testReadFdExact(pair[0], &echoed);
+    try std.testing.expectEqualStrings("still-owned", &echoed);
+}
+
+fn testReadFdExact(fd: posix.fd_t, output: []u8) !void {
+    var offset: usize = 0;
+    while (offset < output.len) {
+        const result = posix.system.read(fd, output[offset..].ptr, output.len - offset);
+        switch (posix.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > output.len - offset) return error.TestSocketReadFailed;
+                offset += result;
+            },
+            .INTR => continue,
+            else => return error.TestSocketReadFailed,
+        }
+    }
+}
+
+fn testWriteFdAll(fd: posix.fd_t, bytes: []const u8) !void {
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        const result = posix.system.write(fd, bytes[offset..].ptr, bytes.len - offset);
+        switch (posix.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > bytes.len - offset) return error.TestSocketWriteFailed;
+                offset += result;
+            },
+            .INTR => continue,
+            else => return error.TestSocketWriteFailed,
+        }
+    }
 }

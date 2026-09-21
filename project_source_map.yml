@@ -26,9 +26,10 @@ experimental:
   howl-server: >-
     bounded one-process authoritative collection owner for multiple independent
     canonical Sessions; HWLM v1 provides exact server/session identity, revisioned
-    roster observation, dynamic create/close, retained exited/failed records and
-    bounded shutdown while Session data-plane endpoints remain HWLS; direct managed
-    attach is the next lifecycle slice
+    roster observation, dynamic create/close, retained exited/failed records,
+    bounded shutdown and exact-id managed attach that transfers the accepted stream
+    directly into unchanged HWLS Session service without a byte proxy; explicit
+    per-Session Unix endpoints remain a useful local/debug access route
   howl-cli: >-
     native human/agent terminal CLI and operator surface over explicit Session
     endpoints plus the howl-server collection owner; command vocabulary and
