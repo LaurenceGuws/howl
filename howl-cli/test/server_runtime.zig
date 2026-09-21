@@ -192,3 +192,112 @@ test "quiescent exited Instance reactivates on later exact attach" {
     }
     try std.testing.expect(found);
 }
+
+const FairInput = struct {
+    connection: *howl_client.Connection,
+    marker: []const u8,
+    failed: *std.atomic.Value(bool),
+
+    fn run(self: FairInput) void {
+        howl_client.actions.committedText(self.connection, self.marker) catch {
+            self.failed.store(true, .release);
+        };
+    }
+};
+
+test "one Server fairly services several independent live Instances" {
+    const count: usize = 8;
+    const markers = [_][]const u8{
+        "FAIR_0\n",
+        "FAIR_1\n",
+        "FAIR_2\n",
+        "FAIR_3\n",
+        "FAIR_4\n",
+        "FAIR_5\n",
+        "FAIR_6\n",
+        "FAIR_7\n",
+    };
+
+    var runtime = try runtime_mod.Runtime.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_loopback = 0 },
+        0xfa1f,
+    );
+    defer runtime.deinit();
+
+    var endpoint_storage: [64]u8 = undefined;
+    const endpoint = try runtime.endpointText(&endpoint_storage);
+    var pump = Pump{ .runtime = &runtime };
+    const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
+    defer {
+        pump.stop.store(true, .release);
+        worker.join();
+        std.debug.assert(!pump.failed.load(.acquire));
+    }
+
+    var control = try connectServer(endpoint);
+    defer control.deinit();
+    var identities: [count]server_client.protocol.InstanceIdentity = undefined;
+    var connections: [count]howl_client.Connection = undefined;
+    var connected: usize = 0;
+    defer {
+        var index = connected;
+        while (index != 0) {
+            index -= 1;
+            connections[index].deinit();
+        }
+    }
+
+    for (0..count) |index| {
+        var name_storage: [16]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_storage, "fair-{d}", .{index});
+        const session_id = try control.createSession(name);
+        identities[index] = try control.createInstance(.{
+            .session_id = session_id,
+            .shell = "/bin/sh",
+            .command = "cat",
+            .rows = 12,
+            .columns = 40,
+            .history_rows = 32,
+        });
+        connections[index] = try attachInstance(endpoint, identities[index]);
+        connected += 1;
+    }
+
+    var failed: std.atomic.Value(bool) = .init(false);
+    var senders: [count]std.Thread = undefined;
+    for (0..count) |index| {
+        senders[index] = try std.Thread.spawn(.{}, FairInput.run, .{FairInput{
+            .connection = &connections[index],
+            .marker = markers[index],
+            .failed = &failed,
+        }});
+    }
+    for (&senders) |*sender| sender.join();
+    try std.testing.expect(!failed.load(.acquire));
+
+    const status = try control.status();
+    try std.testing.expectEqual(@as(u16, count), status.session_count);
+    try std.testing.expectEqual(@as(u16, count), status.instance_count);
+
+    for (0..count) |index| {
+        var snapshot = try howl_client.snapshot.request(
+            &connections[index],
+            std.testing.allocator,
+            0,
+            0,
+        );
+        defer snapshot.deinit();
+        const needle = markers[index][0 .. markers[index].len - 1];
+        var found = false;
+        for (snapshot.lines) |line| {
+            if (std.mem.indexOf(u8, line, needle) != null) {
+                found = true;
+                break;
+            }
+        }
+        try std.testing.expect(found);
+    }
+}
