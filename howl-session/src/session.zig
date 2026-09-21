@@ -897,3 +897,60 @@ test "retained reply-required pressure defaults oldest query and admits newest" 
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
 }
+
+test "fragmented retained clipboard pressure preserves exact text and FIFO identity" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 16,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    for (0..8) |_| {
+        try std.testing.expect((try state.terminal.feed("\x1b]52;c;?\x07")).stateChanged());
+    }
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 1), state.terminal.consequenceHead().?.id());
+
+    const prefix = "X\x1b]52;c;";
+    @memcpy(state.reads[0..prefix.len], prefix);
+    state.read_start = 0;
+    state.read_end = prefix.len;
+    const first = try state.service(false, false, 1, .retain);
+    try std.testing.expect(first.changed);
+    try std.testing.expect(!first.retained_consequence_fallback);
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 1), state.terminal.consequenceHead().?.id());
+    var view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 1));
+
+    const suffix = "?\x07Y";
+    @memcpy(state.reads[0..suffix.len], suffix);
+    state.read_start = 0;
+    state.read_end = suffix.len;
+    const second = try state.service(false, false, 2, .retain);
+    try std.testing.expect(second.changed);
+    try std.testing.expect(second.retained_consequence_fallback);
+    try std.testing.expect(second.write_pending);
+    try std.testing.expectEqual(@as(u16, 8), state.terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u64, 2), state.terminal.consequenceHead().?.id());
+    try std.testing.expectEqualStrings("\x1b]52;c;\x1b\\", state.writes.bytes[0..state.writes.count]);
+
+    view = state.terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(usize, 0), state.read_start);
+    try std.testing.expectEqual(@as(usize, 0), state.read_end);
+
+    var expected_id: u64 = 2;
+    while (state.terminal.consequenceHead()) |head| : (expected_id += 1) {
+        try std.testing.expectEqual(expected_id, head.id());
+        const replied = try state.terminal.replyClipboard(head.id(), "");
+        try std.testing.expect(replied);
+    }
+    try std.testing.expectEqual(@as(u64, 10), expected_id);
+}
