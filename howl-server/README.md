@@ -17,3 +17,9 @@ filesystem or process discovery.
 keeps collection lifecycle distinct from the HWLS terminal Session protocol and
 defines exact server/session identity, roster, create/close/attach/shutdown and
 result vocabulary. The current runtime has not adopted those operations yet.
+
+`Registry` now owns the dynamic bounded collection model behind the future
+manager: non-reused session ids, retained exited/failed records, exact close by
+id, roster revisions, deterministic roster projection, and Session endpoint
+cleanup. The foreground CLI entrypoint still uses the earlier static loop until
+the manager listener is connected in the next slice.

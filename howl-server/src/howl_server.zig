@@ -7,6 +7,7 @@
 const server = @import("server.zig");
 
 pub const protocol = @import("howl_server_protocol");
+pub const Registry = @import("registry.zig").Registry;
 
 pub const Error = server.Error;
 pub const RunOutcome = server.RunOutcome;

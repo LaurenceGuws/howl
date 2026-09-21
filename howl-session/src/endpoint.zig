@@ -629,6 +629,20 @@ pub const Server = struct {
         return self.turnImpl(timeout_ms);
     }
 
+    /// Read-only lifecycle facts already owned by this endpoint envelope.
+    pub const Lifecycle = struct {
+        stream_closed: bool,
+        child_exited: bool,
+    };
+
+    /// Returns the current immutable endpoint lifecycle envelope.
+    pub fn lifecycle(self: *const Server) Lifecycle {
+        return .{
+            .stream_closed = self.stream_closed,
+            .child_exited = self.child_exited,
+        };
+    }
+
     fn consequencePolicy(self: *const Server) howl.ConsequencePolicy {
         return if (self.consequence_authority.leader() != null) .retain else .headless;
     }
