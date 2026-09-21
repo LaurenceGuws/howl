@@ -32,3 +32,18 @@ mirrors the ownership tree instead of collapsing it:
 
 The protocol owns no listener or transport policy. After a successful Instance attach,
 HWLS remains the unchanged Instance interaction protocol on that ordered stream.
+
+## Control service
+
+`server_service` is a listener-free adopted-stream service around one borrowed
+`Server`. It owns bounded control-client buffers and long-poll state, decodes
+`server_protocol`, performs exact CRUD through the Server model, serializes the
+read-only tree, and transfers an exact `(session_id, instance_id)` stream into
+that Instance's HWLS service. It does not turn Instances itself: a higher runtime
+must schedule control and Instance service turns independently.
+
+The service borrows both Server and inherited environment lifetime. It creates no
+listener, endpoint address, daemon, child process, authentication policy, route,
+or supervision policy. On failed stream adoption the caller retains the fd; on
+successful Instance attach the fd changes ownership directly from control service
+to Instance service with no byte proxy.

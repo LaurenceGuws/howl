@@ -337,6 +337,7 @@ pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) PayloadErr
         .create_instance => if (value.session_id == 0 or value.instance_id == 0) return error.InvalidPayload,
         .close_session => if (value.session_id == 0 or value.instance_id != 0) return error.InvalidPayload,
         .close_instance => if (value.session_id == 0 or value.instance_id == 0) return error.InvalidPayload,
+        .attach_instance => return error.InvalidPayload,
         else => unreachable,
     };
     output.* = @splat(0);
@@ -521,7 +522,7 @@ fn validateTree(status: Status, sessions: []const SessionRecord) PayloadError!vo
 
 fn resultRequestKind(kind: Kind) bool {
     return switch (kind) {
-        .create_session, .close_session, .create_instance, .close_instance => true,
+        .create_session, .close_session, .create_instance, .close_instance, .attach_instance => true,
         else => false,
     };
 }
@@ -629,6 +630,27 @@ test "Instance create wire rejects noncanonical optional process text" {
         .rows = 2,
         .columns = 8,
         .history_rows = 16,
+    }));
+}
+
+test "attach failure result is legal while attach success stays attach_ready" {
+    var encoded: [payload_bytes.result]u8 = undefined;
+    try encodeResult(&encoded, .{
+        .request_kind = .attach_instance,
+        .code = .instance_not_found,
+        .session_id = 7,
+        .instance_id = 99,
+        .tree_revision = 4,
+    });
+    const decoded = try decodeResult(&encoded);
+    try std.testing.expectEqual(Kind.attach_instance, decoded.request_kind);
+    try std.testing.expectEqual(ResultCode.instance_not_found, decoded.code);
+    try std.testing.expectError(error.InvalidPayload, encodeResult(&encoded, .{
+        .request_kind = .attach_instance,
+        .code = .ok,
+        .session_id = 7,
+        .instance_id = 1,
+        .tree_revision = 4,
     }));
 }
 

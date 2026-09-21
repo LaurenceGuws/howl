@@ -13,6 +13,13 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  server-service: >-
+    experimental listener-free `server_service` module. It borrows one Server,
+    owns only bounded adopted control streams and long-poll state, decodes
+    server_protocol, performs CRUD through exact Server/Session/Instance identities,
+    serializes read-only tree state and transfers attach streams directly into the
+    selected Instance HWLS service. It owns no listener/address/process, does not
+    turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
     experimental pure module `server_protocol` under server. It encodes bounded
     orchestration vocabulary that preserves Server -> Sessions -> Instances:

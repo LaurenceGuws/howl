@@ -32,11 +32,28 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    const service_module = b.addModule("server_service", .{
+        .root_source_file = b.path("src/service.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    service_module.addImport("server_model", module);
+    service_module.addImport("server_protocol", protocol_module);
+    service_module.addImport("howl_instance", instance.module("howl_instance"));
+    const service_tests = b.addTest(.{
+        .name = "server-service",
+        .root_module = service_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
     check.dependOn(&tests.step);
     check.dependOn(&protocol_tests.step);
+    check.dependOn(&service_tests.step);
     const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
+    test_step.dependOn(&b.addRunArtifact(service_tests).step);
     b.default_step = check;
 }

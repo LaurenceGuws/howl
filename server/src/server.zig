@@ -9,6 +9,8 @@ const howl_instance = @import("howl_instance");
 
 pub const SessionId = u64;
 pub const maximum_sessions: usize = 16;
+pub const maximum_instances_per_session: usize = session_mod.maximum_instances;
+pub const InstanceView = session_mod.InstanceView;
 
 pub const SessionView = struct {
     id: SessionId,
