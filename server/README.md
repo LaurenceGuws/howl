@@ -76,6 +76,14 @@ bounded housekeeping timeout; it is not an input/output latency bound.
 
 This is intentionally replaceable runtime scheduling policy, not Session or Instance semantics.
 
+TCP accept policy is part of the runtime's interactive carriage contract. Every accepted
+TCP stream has `TCP_NODELAY` enabled before it enters `server_service`; option failure
+retires that accepted fd instead of silently degrading request/response latency. Exact
+Instance attach transfers the same configured fd onward to HWLS. Unix listeners do not
+receive TCP policy. Any deployment relay/proxy in front of the Server creates additional
+TCP legs and must configure NODELAY on those owned sockets independently; endpoint
+configuration cannot reach through a proxy and tune its sockets.
+
 The runtime owns no terminal geometry. Each Instance keeps one canonical rows/columns
 and cell-pixel lattice in its VT/PTy lifetime. A graphical client may compose multiple
 Instances onto one surface and choose their individual geometries, but that pane/layout

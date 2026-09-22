@@ -405,6 +405,9 @@ fn ipv4Loopback(port: u16) linux.sockaddr.in {
     };
 }
 
+// Server TCP is small interactive request/response traffic. Disable Nagle on
+// every accepted TCP fd before protocol service ownership; relays/proxies that
+// create additional TCP legs must apply the same policy to their own sockets.
 fn setTcpNoDelay(fd: posix.fd_t) !void {
     const enabled: c_int = 1;
     if (linux.errno(linux.setsockopt(
@@ -473,6 +476,46 @@ test "runtime owns one TCP listener and reports its resolved endpoint" {
     try std.testing.expect(std.mem.startsWith(u8, endpoint, "tcp://127.0.0.1:"));
     try std.testing.expectEqual(@as(u64, 0x1234), runtime.serverId());
     try std.testing.expectEqual(@as(u16, 0), runtime.server.sessionCount());
+}
+
+test "runtime accepted TCP client disables Nagle before service ownership" {
+    var runtime = try Runtime.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_loopback = 0 },
+        0x1234,
+    );
+    defer runtime.deinit();
+
+    const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(raw));
+    const client_fd: posix.fd_t = @intCast(raw);
+    defer closeFd(client_fd);
+    var address = ipv4Loopback(runtime.listener.tcp_port.?);
+    try std.testing.expectEqual(
+        linux.E.SUCCESS,
+        linux.errno(linux.connect(client_fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))),
+    );
+
+    runtime.acceptClients();
+    var descriptors: [control.Service.maximum_wait_descriptors]control.Service.WaitDescriptor = undefined;
+    const active = runtime.service.snapshotWaitDescriptors(&descriptors);
+    try std.testing.expectEqual(@as(usize, 1), active.len);
+    var enabled: c_int = 0;
+    var length: linux.socklen_t = @sizeOf(c_int);
+    try std.testing.expectEqual(
+        linux.E.SUCCESS,
+        linux.errno(linux.getsockopt(
+            active[0].fd,
+            linux.IPPROTO.TCP,
+            linux.TCP.NODELAY,
+            std.mem.asBytes(&enabled).ptr,
+            &length,
+        )),
+    );
+    try std.testing.expectEqual(@as(linux.socklen_t, @sizeOf(c_int)), length);
+    try std.testing.expectEqual(@as(c_int, 1), enabled);
 }
 
 test "one HWLS welcome allocation failure cannot escape the multi-Instance runtime" {

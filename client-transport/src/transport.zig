@@ -1,7 +1,9 @@
 //! Native ordered-byte-stream transport shared by Howl protocols.
 //!
 //! Owns explicit Unix/TCP connection mechanics, cancellation and descriptor lifetime.
-//! It knows no Instance framing or higher-level orchestration protocol.
+//! TCP sockets are interactive request/response carriage: owned TCP connects must
+//! disable Nagle before they escape this module. It knows no Instance framing or
+//! higher-level orchestration protocol.
 
 const std = @import("std");
 const posix = std.posix;
@@ -625,6 +627,61 @@ fn testSocketPair() [2]posix.fd_t {
     const result = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
     if (posix.errno(result) != .SUCCESS) @panic("test socketpair failed");
     return pair;
+}
+
+const TestTcpListener = struct {
+    fd: posix.fd_t,
+    port: u16,
+
+    fn init() !TestTcpListener {
+        const raw = system.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+        if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+        const fd: posix.fd_t = @intCast(raw);
+        errdefer closeFd(fd);
+        var address = ipv4Address(.{ 127, 0, 0, 1 }, 0);
+        if (posix.errno(system.bind(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in))) != .SUCCESS)
+            return error.SocketConnectFailed;
+        if (posix.errno(system.listen(fd, 4)) != .SUCCESS) return error.SocketConnectFailed;
+        var bound: posix.sockaddr.in = undefined;
+        var length: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        if (posix.errno(system.getsockname(fd, @ptrCast(&bound), &length)) != .SUCCESS or
+            length != @sizeOf(posix.sockaddr.in))
+            return error.SocketConnectFailed;
+        return .{ .fd = fd, .port = std.mem.bigToNative(u16, bound.port) };
+    }
+
+    fn deinit(self: *TestTcpListener) void {
+        closeFd(self.fd);
+        self.* = undefined;
+    }
+};
+
+fn expectTcpNoDelay(fd: posix.fd_t) !void {
+    var enabled: c_int = 0;
+    var length: posix.socklen_t = @sizeOf(c_int);
+    try std.testing.expectEqual(
+        posix.E.SUCCESS,
+        posix.errno(system.getsockopt(
+            fd,
+            posix.IPPROTO.TCP,
+            posix.TCP.NODELAY,
+            std.mem.asBytes(&enabled).ptr,
+            &length,
+        )),
+    );
+    try std.testing.expectEqual(@as(posix.socklen_t, @sizeOf(c_int)), length);
+    try std.testing.expectEqual(@as(c_int, 1), enabled);
+}
+
+test "owned TCP connect disables Nagle before stream handoff" {
+    var listener = try TestTcpListener.init();
+    defer listener.deinit();
+    var endpoint_storage: [64]u8 = undefined;
+    const endpoint = try std.fmt.bufPrint(&endpoint_storage, "tcp://127.0.0.1:{d}", .{listener.port});
+    var diagnostic: ConnectDiagnostic = .{};
+    var stream = try Stream.connectDiagnosed(endpoint, &diagnostic);
+    defer stream.deinit();
+    try expectTcpNoDelay(stream.fd);
 }
 
 test "endpoint parser accepts explicit numeric IPv4 and refuses ambiguous TCP" {
