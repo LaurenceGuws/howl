@@ -1823,13 +1823,18 @@ fn buildContentCommands(
 
     // Cell backgrounds are a distinct Kitty graphics boundary: the deepest
     // image phase sits between the default background and these overrides.
+    // This required scan also records whether a decoration pass can produce
+    // anything, avoiding a second full-grid walk for ordinary undecorated frames.
+    var has_decorations = false;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
         const row_cells = Source.rowCells(snapshot, row);
         if (row_cells.len != contentColumns(begin)) return error.InvalidView;
         const line_columns = try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row));
         for (row_cells[0..line_columns], 0..) |cell, column| {
-            const reversed = contentStyle(cell).reverse != presentation.reverse_screen;
+            const style = contentStyle(cell);
+            has_decorations = has_decorations or style.underline or style.strikethrough;
+            const reversed = style.reverse != presentation.reverse_screen;
             if (!reversed and contentCellColor(cell, .background).kind == .default) continue;
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
@@ -1852,6 +1857,7 @@ fn buildContentCommands(
     // Decorations are foreground content. Ordinary negative-z images must sit
     // below them together with glyphs, not above them as if they were cells.
     for (0..row_count) |row_index| {
+        if (!has_decorations) break;
         const row = Source.rowAt(snapshot, row_index);
         const row_cells = Source.rowCells(snapshot, row);
         if (row_cells.len != contentColumns(begin)) return error.InvalidView;
