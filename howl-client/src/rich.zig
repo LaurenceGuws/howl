@@ -1241,6 +1241,31 @@ fn decodePresentation(payload: []const u8) Error!Presentation {
     };
 }
 
+const text_cell_attribute_bytes = protocol.text_v1.cell_header_bytes - 1;
+
+comptime {
+    if (text_cell_attribute_bytes != 34)
+        @compileError("rich cell attribute compare must track frozen text_v1 header width");
+}
+
+fn sameCellAttributes(
+    left: *const [text_cell_attribute_bytes]u8,
+    right: *const [text_cell_attribute_bytes]u8,
+) bool {
+    // Byte identity is endian-neutral; align(1) keeps these native word loads
+    // valid for arbitrary record offsets without paying a generic slice loop.
+    return @as(*align(1) const u64, @ptrCast(left[0..8].ptr)).* ==
+        @as(*align(1) const u64, @ptrCast(right[0..8].ptr)).* and
+        @as(*align(1) const u64, @ptrCast(left[8..16].ptr)).* ==
+            @as(*align(1) const u64, @ptrCast(right[8..16].ptr)).* and
+        @as(*align(1) const u64, @ptrCast(left[16..24].ptr)).* ==
+            @as(*align(1) const u64, @ptrCast(right[16..24].ptr)).* and
+        @as(*align(1) const u64, @ptrCast(left[24..32].ptr)).* ==
+            @as(*align(1) const u64, @ptrCast(right[24..32].ptr)).* and
+        @as(*align(1) const u16, @ptrCast(left[32..34].ptr)).* ==
+            @as(*align(1) const u16, @ptrCast(right[32..34].ptr)).*;
+}
+
 fn decodeRow(
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
@@ -1271,29 +1296,30 @@ fn decodeRow(
     var scalar_used: usize = 0;
 
     var offset: usize = protocol.text_v1.row_header_bytes;
+    var previous_attributes: ?*const [text_cell_attribute_bytes]u8 = null;
     var column: u16 = 0;
     while (column < begin.columns) : (column += 1) {
         if (payload.len - offset < protocol.text_v1.cell_header_bytes) return error.InvalidSnapshot;
         const encoded = payload[offset..][0..protocol.text_v1.cell_header_bytes];
         const scalar_count = encoded[0];
-        if (scalar_count > protocol.text_v1.maximum_cell_scalars or
-            encoded[1] == 0 or encoded[2] == 0 or encoded[3] >= encoded[1] or encoded[4] >= encoded[2] or
-            encoded[5] > 15 or encoded[6] > 15 or encoded[7] > 3 or encoded[8] > 3 or
-            encoded[9] > 1 or encoded[10] > 15 or encoded[11] > 2 or encoded[12] > 4 or encoded[13] > 2)
-            return error.InvalidSnapshot;
-        const style_bits = readU16(encoded[14..16]);
-        if (style_bits & ~protocol.text_v1.style.known != 0) return error.InvalidSnapshot;
-        const foreground = try decodeColor(encoded[16..21]);
-        const background = try decodeColor(encoded[21..26]);
-        const underline_color = try decodeColor(encoded[26..31]);
-        const link_id = readU32(encoded[31..35]);
-        if (link_id > protocol.text_v1.maximum_hyperlinks) return error.InvalidSnapshot;
-        if (link_id != 0) referenced[link_id] = true;
+        if (scalar_count > protocol.text_v1.maximum_cell_scalars) return error.InvalidSnapshot;
+        const attributes: *const [text_cell_attribute_bytes]u8 = @ptrCast(encoded[1..].ptr);
+        var decoded: Cell = undefined;
+        if (previous_attributes) |previous| {
+            if (sameCellAttributes(attributes, previous)) {
+                decoded = cells[column - 1];
+            } else {
+                decoded = try decodeCellAttributes(encoded, referenced);
+            }
+        } else {
+            decoded = try decodeCellAttributes(encoded, referenced);
+        }
+        previous_attributes = attributes;
 
         offset += protocol.text_v1.cell_header_bytes;
         const scalar_bytes = @as(usize, scalar_count) * 4;
         if (payload.len - offset < scalar_bytes) return error.InvalidSnapshot;
-        if ((encoded[3] != 0 or encoded[4] != 0) and scalar_count != 0) return error.InvalidSnapshot;
+        if ((decoded.x != 0 or decoded.y != 0) and scalar_count != 0) return error.InvalidSnapshot;
         if (scalar_count > scalar_storage.len - scalar_used) return error.InvalidSnapshot;
         const scalars = scalar_storage[scalar_used .. scalar_used + scalar_count];
         for (scalars, 0..) |*value, index| {
@@ -1302,27 +1328,8 @@ fn decodeRow(
                 return error.InvalidSnapshot;
         }
         scalar_used += scalar_count;
-        cells[column] = .{
-            .scalars = scalars,
-            .width = encoded[1],
-            .height = encoded[2],
-            .x = encoded[3],
-            .y = encoded[4],
-            .subscale_n = encoded[5],
-            .subscale_d = encoded[6],
-            .vertical_align = encoded[7],
-            .horizontal_align = encoded[8],
-            .semantic_width = encoded[9] == 1,
-            .font = encoded[10],
-            .baseline = encoded[11],
-            .underline_style = encoded[12],
-            .protection = encoded[13],
-            .style_bits = style_bits,
-            .foreground = foreground,
-            .background = background,
-            .underline_color = underline_color,
-            .link_id = link_id,
-        };
+        decoded.scalars = scalars;
+        cells[column] = decoded;
         offset += scalar_bytes;
     }
     if (offset != payload.len or scalar_used != scalar_storage.len) return error.InvalidSnapshot;
@@ -1331,6 +1338,45 @@ fn decodeRow(
         .line_geometry = payload[1],
         .cells = cells,
         .scalar_storage = scalar_storage,
+    };
+}
+
+fn decodeCellAttributes(
+    encoded: *const [protocol.text_v1.cell_header_bytes]u8,
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+) Error!Cell {
+    if (encoded[1] == 0 or encoded[2] == 0 or encoded[3] >= encoded[1] or encoded[4] >= encoded[2] or
+        encoded[5] > 15 or encoded[6] > 15 or encoded[7] > 3 or encoded[8] > 3 or
+        encoded[9] > 1 or encoded[10] > 15 or encoded[11] > 2 or encoded[12] > 4 or encoded[13] > 2)
+        return error.InvalidSnapshot;
+    const style_bits = readU16(encoded[14..16]);
+    if (style_bits & ~protocol.text_v1.style.known != 0) return error.InvalidSnapshot;
+    const foreground = try decodeColor(encoded[16..21]);
+    const background = try decodeColor(encoded[21..26]);
+    const underline_color = try decodeColor(encoded[26..31]);
+    const link_id = readU32(encoded[31..35]);
+    if (link_id > protocol.text_v1.maximum_hyperlinks) return error.InvalidSnapshot;
+    if (link_id != 0) referenced[link_id] = true;
+    return .{
+        .scalars = &.{},
+        .width = encoded[1],
+        .height = encoded[2],
+        .x = encoded[3],
+        .y = encoded[4],
+        .subscale_n = encoded[5],
+        .subscale_d = encoded[6],
+        .vertical_align = encoded[7],
+        .horizontal_align = encoded[8],
+        .semantic_width = encoded[9] == 1,
+        .font = encoded[10],
+        .baseline = encoded[11],
+        .underline_style = encoded[12],
+        .protection = encoded[13],
+        .style_bits = style_bits,
+        .foreground = foreground,
+        .background = background,
+        .underline_color = underline_color,
+        .link_id = link_id,
     };
 }
 
@@ -1416,26 +1462,34 @@ fn encodeU32(bytes: []u8, value: u32) void {
     bytes[3] = @truncate(value);
 }
 
-test "rich row preserves typed style color and grapheme state" {
-    const begin = protocol.SnapshotBegin{
-        .revision = 3,
-        .terminal_revision = 9,
+fn testRowBegin(columns: u16) protocol.SnapshotBegin {
+    return .{
+        .revision = 1,
+        .terminal_revision = 1,
         .history_offset = 0,
         .history_count = 0,
         .history_row_base = 0,
         .rows = 1,
-        .columns = 1,
+        .columns = columns,
         .cursor_row = 0,
         .cursor_column = 0,
         .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = true,
+        .cursor_visible = false,
+        .cursor_blink = false,
         .alternate_screen = false,
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
         .you_are_leader = false,
     };
+}
+
+test "rich row preserves typed style color and grapheme state" {
+    var begin = testRowBegin(1);
+    begin.revision = 3;
+    begin.terminal_revision = 9;
+    begin.cursor_visible = true;
+    begin.cursor_blink = true;
     var payload: [protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + 8]u8 = @splat(0);
     payload[0] = 1;
     payload[1] = 2;
@@ -1479,6 +1533,61 @@ test "rich row preserves typed style color and grapheme state" {
     try std.testing.expectEqual(@as(u32, 4), decoded.background.value);
     try std.testing.expectEqual(@as(u32, 7), decoded.link_id);
     try std.testing.expect(referenced[7]);
+}
+
+test "rich row reuses identical validated attributes without aliasing scalars" {
+    const begin = testRowBegin(2);
+    var payload: [protocol.text_v1.row_header_bytes + 2 * protocol.text_v1.cell_header_bytes + 8]u8 = @splat(0);
+    encodeU16(payload[2..4], 2);
+    var at: usize = protocol.text_v1.row_header_bytes;
+    const first = payload[at..][0..protocol.text_v1.cell_header_bytes];
+    first[0] = 1;
+    first[1] = 1;
+    first[2] = 1;
+    encodeU32(first[31..35], 7);
+    at += protocol.text_v1.cell_header_bytes;
+    encodeU32(payload[at..][0..4], 'A');
+    at += 4;
+    const second = payload[at..][0..protocol.text_v1.cell_header_bytes];
+    second[0] = 1;
+    @memcpy(second[1..], first[1..]);
+    at += protocol.text_v1.cell_header_bytes;
+    encodeU32(payload[at..][0..4], 'B');
+    at += 4;
+    try std.testing.expectEqual(payload.len, at);
+
+    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    const row = try decodeRow(std.testing.allocator, begin, &payload, &referenced);
+    defer deinitRows(std.testing.allocator, &.{row});
+    try std.testing.expectEqualSlices(u32, &.{'A'}, row.cells[0].scalars);
+    try std.testing.expectEqualSlices(u32, &.{'B'}, row.cells[1].scalars);
+    try std.testing.expectEqual(row.cells[0].foreground, row.cells[1].foreground);
+    try std.testing.expectEqual(row.cells[0].link_id, row.cells[1].link_id);
+    try std.testing.expect(referenced[7]);
+}
+
+test "rich row repeated attributes cannot hide continuation scalars" {
+    const begin = testRowBegin(2);
+    var payload: [protocol.text_v1.row_header_bytes + 2 * protocol.text_v1.cell_header_bytes + 4]u8 = @splat(0);
+    encodeU16(payload[2..4], 2);
+    var at: usize = protocol.text_v1.row_header_bytes;
+    const first = payload[at..][0..protocol.text_v1.cell_header_bytes];
+    first[0] = 0;
+    first[1] = 2;
+    first[2] = 1;
+    first[3] = 1;
+    at += protocol.text_v1.cell_header_bytes;
+    const second = payload[at..][0..protocol.text_v1.cell_header_bytes];
+    second[0] = 1;
+    @memcpy(second[1..], first[1..]);
+    at += protocol.text_v1.cell_header_bytes;
+    encodeU32(payload[at..][0..4], 'X');
+
+    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    try std.testing.expectError(
+        error.InvalidSnapshot,
+        decodeRow(std.testing.allocator, begin, &payload, &referenced),
+    );
 }
 
 test "rich hyperlink preserves arbitrary URI bytes exactly" {
