@@ -23,7 +23,6 @@ void main() {
               modifierLatch: HowlInput.modifierControl | HowlInput.modifierAlt,
               zoomPreset: TerminalZoomPreset.normal,
               geometryLeader: false,
-              keyboardVisible: true,
               onModifier: modifiers.add,
               onKey: keys.add,
               onZoom: zooms.add,
@@ -82,7 +81,7 @@ void main() {
           .widgetList<Semantics>(find.byType(Semantics))
           .where((widget) => widget.properties.toggled == true)
           .length;
-      expect(toggled, greaterThanOrEqualTo(3));
+      expect(toggled, greaterThanOrEqualTo(2));
     },
   );
 }

@@ -1133,17 +1133,17 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _toggleSoftKeyboard() {
     _returnToLiveForInput();
-    if (_platformInput.usesAndroidImeHost &&
-        MediaQuery.viewInsetsOf(context).bottom > 0) {
-      unawaited(_hideSoftKeyboard());
+    if (_platformInput.usesAndroidImeHost) {
+      _activateTextInput();
+      unawaited(_toggleAndroidSoftKeyboard());
       return;
     }
     _activateTextInput(showSoftKeyboard: true);
   }
 
-  Future<void> _hideSoftKeyboard() async {
+  Future<void> _toggleAndroidSoftKeyboard() async {
     try {
-      await _platformInput.hide();
+      await _platformInput.toggle();
     } catch (error) {
       _reportFailure(error);
     }
@@ -1762,8 +1762,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void _changeZoom(TerminalZoomPreset preset) {
     if (_stopping || preset == _zoomPreset) return;
     _scheduledRasterScale = null;
-    _restoreImeAfterPresentationRestart =
-        MediaQuery.viewInsetsOf(context).bottom > 0;
+    _restoreImeAfterPresentationRestart = _platformInput.usesAndroidImeHost
+        ? false
+        : MediaQuery.viewInsetsOf(context).bottom > 0;
     _leaveHistory();
     setState(() {
       _zoomPreset = preset;
@@ -2056,7 +2057,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             zoomPreset: _zoomPreset,
             geometryLeader: _geometryLeader,
-            keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
             onZoom: _changeZoom,

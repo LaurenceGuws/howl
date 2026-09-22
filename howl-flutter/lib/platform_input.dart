@@ -46,8 +46,8 @@ final class TerminalPlatformInput {
     flutterShow();
   }
 
-  Future<void> hide() async {
+  Future<void> toggle() async {
     if (!usesAndroidImeHost) return;
-    await _androidIme.invokeMethod<void>('hide');
+    await _androidIme.invokeMethod<void>('toggle');
   }
 }
