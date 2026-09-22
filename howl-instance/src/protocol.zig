@@ -916,7 +916,7 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     @as(usize, maximum_payload_bytes),
 ) catch unreachable;
 
-/// Hard upper bound for one complete v9 observation response.
+/// Hard upper bound for one complete v10 observation response.
 ///
 /// This includes the bounded text transport body, all possible compressed,
 /// raw, delta, or packed data-frame headers, one complete `graphics_v2` manifest, one

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl Instance v9 wire-vector decoder and validator.
+"""Independent Howl Instance v10 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,10 +18,11 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 9
+FRAMING_VERSION = 10
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
+MAXIMUM_PACKED_TEXT_BYTES = MAXIMUM_TEXT_SNAPSHOT_BYTES + 0xFFFF
 
 KINDS = {
     1: "hello",
@@ -56,6 +57,8 @@ KINDS = {
     30: "observe_delta",
     31: "snapshot_delta_data",
     32: "snapshot_properties",
+    33: "observe_packed",
+    34: "snapshot_packed_data",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -612,6 +615,73 @@ def decode_text_records(payload: bytes, snapshot: dict) -> list[dict]:
     return records
 
 
+
+def unpack_text_v1(packed: bytes, expected_text_len: int) -> bytes:
+    require(0 < len(packed) <= MAXIMUM_PACKED_TEXT_BYTES, "snapshot_packed_limit")
+    require(0 < expected_text_len <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
+    output = bytearray()
+    offset = 0
+    while offset < len(packed):
+        require(len(packed) - offset >= TEXT_RECORD_HEADER_BYTES, "snapshot_packed_record")
+        header = packed[offset:offset + TEXT_RECORD_HEADER_BYTES]
+        kind = header[0]
+        require(header[1:4] == b"\0\0\0" and kind in TEXT_RECORD_KINDS, "snapshot_packed_record")
+        payload_len = u32(header[4:8])
+        output.extend(header)
+        offset += TEXT_RECORD_HEADER_BYTES
+        if kind in (1, 3):
+            require(payload_len <= len(packed) - offset, "snapshot_packed_record")
+            output.extend(packed[offset:offset + payload_len])
+            offset += payload_len
+        elif kind == 2:
+            require(offset < len(packed), "snapshot_packed_row")
+            mode = packed[offset]
+            offset += 1
+            if mode == 0:
+                require(payload_len <= len(packed) - offset, "snapshot_packed_row")
+                output.extend(packed[offset:offset + payload_len])
+                offset += payload_len
+            else:
+                require(mode == 1, "snapshot_packed_row_mode")
+                payload_start = len(output)
+                require(len(packed) - offset >= TEXT_ROW_HEADER_BYTES + 2, "snapshot_packed_row")
+                row_header = packed[offset:offset + TEXT_ROW_HEADER_BYTES]
+                columns = u16(row_header[2:4])
+                output.extend(row_header)
+                offset += TEXT_ROW_HEADER_BYTES
+                run_count = u16(packed[offset:offset + 2])
+                offset += 2
+                require(run_count != 0 or columns == 0, "snapshot_packed_run_count")
+                require(run_count <= columns if columns else run_count == 0, "snapshot_packed_run_count")
+                emitted = 0
+                for _ in range(run_count):
+                    require(len(packed) - offset >= 2 + (TEXT_CELL_HEADER_BYTES - 1), "snapshot_packed_run")
+                    run_len = u16(packed[offset:offset + 2])
+                    offset += 2
+                    require(run_len != 0 and run_len <= columns - emitted, "snapshot_packed_run_length")
+                    attrs = packed[offset:offset + TEXT_CELL_HEADER_BYTES - 1]
+                    offset += TEXT_CELL_HEADER_BYTES - 1
+                    for _ in range(run_len):
+                        require(offset < len(packed), "snapshot_packed_cell")
+                        scalar_count = packed[offset]
+                        offset += 1
+                        require(scalar_count <= TEXT_MAXIMUM_CELL_SCALARS, "snapshot_packed_scalar_count")
+                        scalar_bytes = scalar_count * 4
+                        require(scalar_bytes <= len(packed) - offset, "snapshot_packed_cell")
+                        output.append(scalar_count)
+                        output.extend(attrs)
+                        output.extend(packed[offset:offset + scalar_bytes])
+                        offset += scalar_bytes
+                        emitted += 1
+                require(emitted == columns, "snapshot_packed_columns")
+                require(len(output) - payload_start == payload_len, "snapshot_packed_row_size")
+        else:
+            reject("snapshot_packed_record_kind")
+        require(len(output) <= expected_text_len, "snapshot_packed_text_size")
+    require(offset == len(packed) and len(output) == expected_text_len, "snapshot_packed_text_size")
+    return bytes(output)
+
+
 def finish_snapshot(snapshot: dict, end: dict) -> dict:
     begin = snapshot["begin"]
     require(end["revision"] == begin["revision"], "snapshot_revision")
@@ -629,6 +699,21 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
             require(baseline["begin"]["history_offset"] == request["history_offset"], "snapshot_delta_history")
             require(baseline["begin"]["rows"] == begin["rows"] and baseline["begin"]["columns"] == begin["columns"], "snapshot_delta_geometry")
         body = encoded
+    elif encoding == "packed":
+        require(len(encoded) > 8, "snapshot_compressed_size")
+        text_len = u32(encoded[0:4])
+        packed_len = u32(encoded[4:8])
+        require(0 < text_len <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
+        require(0 < packed_len <= MAXIMUM_PACKED_TEXT_BYTES, "snapshot_packed_limit")
+        inflater = zlib.decompressobj()
+        try:
+            packed_body = inflater.decompress(encoded[8:], packed_len + 1)
+            packed_body += inflater.flush()
+        except zlib.error:
+            reject("snapshot_compression")
+        require(inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail, "snapshot_compression")
+        require(len(packed_body) == packed_len, "snapshot_packed_size")
+        body = unpack_text_v1(packed_body, text_len)
     else:
         require(len(encoded) > 4, "snapshot_compressed_size")
         raw_len = u32(encoded[0:4])
@@ -828,7 +913,7 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_hello(payload)
     if kind == 2:
         return decode_welcome(payload)
-    if kind == 3 or kind == 28 or kind == 30:
+    if kind in (3, 28, 30, 33):
         return decode_observe(payload)
     if kind == 4:
         return decode_snapshot_begin(payload)
@@ -894,15 +979,16 @@ def decode_stream(data: bytes) -> dict:
                         baseline = prior
                         break
             snapshot = new_snapshot(decoded, pending_delta_request, baseline)
-        elif kind == 5 or kind == 29 or kind == 31:
+        elif kind in (5, 29, 31, 34):
             require(snapshot is not None, "snapshot_data_without_begin")
             require(snapshot["graphics"] is None, "snapshot_graphics_order")
-            encoding = "compressed" if kind == 5 else ("raw" if kind == 29 else "delta")
+            encoding = {5: "compressed", 29: "raw", 31: "delta", 34: "packed"}[kind]
             if encoding == "delta":
                 require(snapshot["delta_request"] is not None, "snapshot_delta_request")
             require(snapshot["body_encoding"] is None or snapshot["body_encoding"] == encoding, "snapshot_data_encoding")
             snapshot["body_encoding"] = encoding
-            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_text_limit")
+            encoded_limit = MAXIMUM_PACKED_TEXT_BYTES if encoding == "packed" else MAXIMUM_TEXT_SNAPSHOT_BYTES
+            require(len(snapshot["encoded_body"]) + len(payload) <= encoded_limit, "snapshot_text_limit")
             snapshot["encoded_body"].extend(payload)
             decoded = {"bytes": len(payload)}
         elif kind == 23:
@@ -990,7 +1076,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.instance.wire.v9/vectors", "document_schema")
+    require(document.get("schema") == "howl.instance.wire.v10/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -1003,7 +1089,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v9-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v10-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

@@ -16,7 +16,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `9` |
+| 4 | 1 | framing version, currently `10` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -25,7 +25,7 @@ One frame payload is at most 1 MiB. The node-local endpoint accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
 be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
-v9 observation additionally carries one graphics manifest of at most 857,116
+v10 observation additionally carries one graphics manifest of at most 857,116
 bytes, one properties packet of at most 6,180 bytes, and bounded frame headers.
 Exact image pixels use separate resource transactions.
 
@@ -411,7 +411,7 @@ copying image bytes into every observation could not be complete within the
 snapshot bound and would retransmit unchanged content unnecessarily.
 
 Every observation includes exactly one `snapshot_graphics` frame after the final
-text-data chunk. In v9 it is followed by exactly one `snapshot_properties` frame,
+text-data chunk. In v10 it is followed by exactly one `snapshot_properties` frame,
 then `snapshot_end`. The graphics payload is
 one 28-byte header, zero or more 20-byte image descriptors, then zero or more
 52-byte visible placements. The complete manifest always fits in one ordinary
@@ -624,8 +624,8 @@ the terminal or observation revision.
 
 ## Placement bounds introduced in framing v8
 
-Framing v8 introduced the pixel-geometry/placement changes retained by v9.
-Current clients and endpoints must both use v9; mismatched headers are rejected
+Framing v8 introduced the pixel-geometry/placement changes retained by v10.
+Current clients and endpoints must both use v10; mismatched headers are rejected
 rather than falling back to an older grammar.
 The image byte format remains exact RGBA8. The placement ceiling is 16,384
 independent identities to accommodate cell-tiled previews. The largest graphics
@@ -634,7 +634,7 @@ command, client projection and native/Web packet bounds are tested together.
 The decoded-image quota remains 64 MiB per VT; a larger placement catalogue does
 not increase image-pixel storage or merge replacement/deletion identities.
 
-## Framing v9 coherent terminal properties
+## Framing v9 coherent terminal properties (retained by v10)
 
 Every compressed, raw or delta snapshot now includes exactly one
 `snapshot_properties` frame after `snapshot_graphics` and before `snapshot_end`.
@@ -752,7 +752,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-instance
-python3 tools/validate_vectors.py protocol/v9-vectors.json
+python3 tools/validate_vectors.py protocol/v10-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime
