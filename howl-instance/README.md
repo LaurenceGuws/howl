@@ -65,6 +65,8 @@ Frame kinds are:
 | 30 | `observe_delta` | client → endpoint |
 | 31 | `snapshot_delta_data` | endpoint → client |
 | 32 | `snapshot_properties` | endpoint → client |
+| 33 | `observe_packed` | client → endpoint |
+| 34 | `snapshot_packed_data` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -128,12 +130,12 @@ Bits 13..31 are reserved and must be zero.
 ## Observation model
 
 Observation is request-driven. A client has at most one outstanding observation
-request: ordinary `observe`, complete `observe_raw`, or revision-relative
-`observe_delta`. There is no server-side
+request: ordinary `observe`, complete `observe_raw`, revision-relative
+`observe_delta`, or complete packed `observe_packed`. There is no server-side
 stream queue per observer, so a slow observer never paces the PTY or canonical
 VT.
 
-All three observation requests use the same 12-byte payload:
+All four observation requests use the same 12-byte payload:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -152,12 +154,13 @@ Each observation is:
 
 1. one `snapshot_begin`;
 2. one or more text transport chunks: `snapshot_data` for `observe`,
-   `snapshot_raw_data` for complete raw/fallback responses, or
-   `snapshot_delta_data` for an accepted revision-relative delta;
+   `snapshot_raw_data` for complete raw/fallback responses,
+   `snapshot_delta_data` for an accepted revision-relative delta, or
+   `snapshot_packed_data` for `observe_packed`;
 3. one `snapshot_graphics` manifest;
 4. one `snapshot_end` with the same observation revision.
 
-A single snapshot never mixes compressed, raw, and delta text chunks. The endpoint
+A single snapshot never mixes compressed, raw, delta, and packed text chunks. The endpoint
 materializes the coherent snapshot before emitting `snapshot_begin`. PTY/VT
 progress may continue while those already-copied bytes drain to the observer.
 
@@ -165,6 +168,15 @@ progress may continue while those already-copied bytes drain to the observer.
 `observe_raw` remains the complete standalone raw lane: it changes only the
 text transport envelope; snapshot semantics, history selection, graphics
 manifests, revisions, and `text_v1` records are identical.
+
+`observe_packed` is the framing-v10 complete carriage lane used by maintained
+managed/mobile clients. It does not define a second terminal model. The endpoint
+losslessly packs the exact complete `text_v1` body by preserving record headers,
+carrying presentation/hyperlink records verbatim, and replacing repeated complete
+row-cell attribute headers with consecutive attribute runs. Rows that would grow
+fall back independently to verbatim payloads. The packed bytes are compressed with
+fastest zlib/DEFLATE. The client inflates and unpacks them back to byte-identical
+`text_v1` before the existing semantic decoder runs.
 
 `observe_delta` is the framing-v7 revision-relative lane. Its `after_revision`
 names the caller's exact baseline. If the endpoint cannot prove that baseline
@@ -221,8 +233,9 @@ Flag byte bits are:
 There are no font file names, glyph ids, GPU objects, Flutter types, or
 window-system concepts on this wire. Framing v4 added terminal graphics beside
 it rather than changing its record grammar. Framing v5 added a raw transport lane without changing the `text_v1` record
-grammar. Framing v7 adds explicit revision-relative `text_delta_v2` beside the
-unchanged complete representation.
+grammar. Framing v7 added explicit revision-relative `text_delta_v2` beside the
+unchanged complete representation. Framing v10 adds lossless `text_pack_v1`
+carriage for complete snapshots while keeping `text_v1` byte-for-byte frozen.
 
 For ordinary `observe`, the `snapshot_data` payloads are transport chunks only.
 Concatenate them in order. The resulting bytes are:
@@ -236,6 +249,24 @@ The declared uncompressed body is bounded to 4 MiB before allocation. The zlib
 stream must finish exactly, with no trailing or unconsumed bytes, and inflate to
 exactly the declared length. Every compressed snapshot is independently
 decompressible; no previous client revision is needed to recover or validate it.
+
+For `observe_packed`, concatenate `snapshot_packed_data` payloads in order.
+The resulting bytes begin with an eight-byte big-endian prefix:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 4 | exact reconstructed `text_v1` byte count |
+| 4 | 4 | exact uncompressed `text_pack_v1` byte count |
+| 8 | variable | one zlib/DEFLATE stream containing packed carriage bytes |
+
+The zlib stream must finish exactly and inflate to the declared packed size. The
+packed body must then reconstruct exactly the declared bounded `text_v1` size.
+Presentation and hyperlink records are preserved verbatim. Each row preserves its
+original `text_v1` record header and uses either a verbatim row payload or exact
+consecutive 34-byte attribute runs followed by each cell's scalar count/scalars.
+The unpacker rejects zero/overflowing runs, truncation, scalar-count overflow,
+record-length mismatch, trailing bytes, and any delta-only row-shift record.
+Only after this reconstruction does the ordinary `text_v1` decoder run.
 
 For `observe_raw` or a delta fallback, concatenate the `snapshot_raw_data`
 payloads in order. Those bytes are the complete bounded `text_v1` record body
@@ -267,7 +298,7 @@ self-delimiting records. The eight-byte record header is:
 | 1 | 3 | reserved, zero |
 | 4 | 4 | record payload length |
 
-Records may cross `snapshot_data`, `snapshot_raw_data`, or
+Records may cross `snapshot_data`, `snapshot_raw_data`, `snapshot_packed_data`, or
 `snapshot_delta_data` transport-chunk boundaries because those boundaries have
 no semantic meaning. Complete `text_v1` order is exactly one presentation
 record, exactly `snapshot_begin.rows` row records, then zero or more hyperlink

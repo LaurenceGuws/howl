@@ -139,8 +139,11 @@ disposal. There is no frame queue or unbounded asynchronous image retirement.
 
 The Flutter host selects its existing native observation policy locally: Unix
 uses live row deltas, raw-cache reuse and native request prearming, retaining
-its display-boundary coalescing; TCP uses compressed complete snapshots. `useLiveDeltas` names that coupled native policy,
-not Dart display scheduling. History remains on compressed snapshots. No policy
+its display-boundary coalescing; TCP uses framing-v10 packed complete snapshots.
+`useLiveDeltas` names that coupled native policy, not Dart display scheduling.
+Complete history snapshots also use packed carriage. Packed transport reconstructs
+exact frozen `text_v1` before the native rich decoder, so Canvas/semantic ownership
+is unchanged. No policy
 is imposed on the Web, Odin or Vulkan hosts, and canonical Instance progress never
 waits for a client display boundary.
 

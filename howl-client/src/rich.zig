@@ -581,6 +581,22 @@ pub fn sendRawRequest(
     try connection.send(.observe_raw, &payload);
 }
 
+/// Sends one complete packed text_v1 observation request. The endpoint packs
+/// exact text_v1 row bytes for carriage; receive reconstructs the frozen body
+/// before semantic decoding.
+pub fn sendPackedRequest(
+    connection: *client.Connection,
+    after_revision: u64,
+    history_offset: u32,
+) client.Error!void {
+    var payload: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&payload, .{
+        .after_revision = after_revision,
+        .history_offset = history_offset,
+    });
+    try connection.send(.observe_packed, &payload);
+}
+
 pub fn request(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -600,6 +616,18 @@ pub fn requestRaw(
     history_offset: u32,
 ) Error!Snapshot {
     try sendRawRequest(connection, after_revision, history_offset);
+    return receive(connection, allocator);
+}
+
+/// Requests one complete packed text_v1 observation. Snapshot ownership and
+/// semantic decoding are identical to `request`.
+pub fn requestPacked(
+    connection: *client.Connection,
+    allocator: std.mem.Allocator,
+    after_revision: u64,
+    history_offset: u32,
+) Error!Snapshot {
+    try sendPackedRequest(connection, after_revision, history_offset);
     return receive(connection, allocator);
 }
 
@@ -678,7 +706,7 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
     var phase: DecodePhase = .presentation;
     var text_body: std.ArrayList(u8) = .empty;
     defer text_body.deinit(allocator);
-    const BodyEncoding = enum { none, compressed, raw };
+    const BodyEncoding = enum { none, compressed, raw, packed_text };
     var body_encoding: BodyEncoding = .none;
     var property_bytes: ?[]u8 = null;
     errdefer if (property_bytes) |value| allocator.free(value);
@@ -690,12 +718,14 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
         defer frame.deinit();
         try accountFrame(&total_bytes, frame.payload.len);
         switch (frame.kind) {
-            .snapshot_data, .snapshot_raw_data => {
+            .snapshot_data, .snapshot_raw_data, .snapshot_packed_data => {
                 if (graphics != null) return error.InvalidSnapshot;
-                const encoding: BodyEncoding = if (frame.kind == .snapshot_data)
-                    .compressed
-                else
-                    .raw;
+                const encoding: BodyEncoding = switch (frame.kind) {
+                    .snapshot_data => .compressed,
+                    .snapshot_raw_data => .raw,
+                    .snapshot_packed_data => .packed_text,
+                    else => unreachable,
+                };
                 if (body_encoding != .none and body_encoding != encoding)
                     return error.InvalidSnapshot;
                 body_encoding = encoding;
@@ -733,6 +763,20 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                         &phase,
                     ),
                     .raw => try decodeRawTextBody(
+                        allocator,
+                        begin,
+                        text_body.items,
+                        rows,
+                        &initialized_rows,
+                        &hyperlinks,
+                        &referenced,
+                        &resolved,
+                        &presentation,
+                        &presentation_seen,
+                        &row_count,
+                        &phase,
+                    ),
+                    .packed_text => try decodePackedTextBody(
                         allocator,
                         begin,
                         text_body.items,
@@ -1008,6 +1052,62 @@ fn decodeTextBody(
         allocator,
         begin,
         decoded,
+        rows,
+        initialized_rows,
+        hyperlinks,
+        referenced,
+        resolved,
+        presentation,
+        presentation_seen,
+        row_count,
+        phase,
+    );
+}
+
+fn decodePackedTextBody(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    encoded: []const u8,
+    rows: []Row,
+    initialized_rows: *usize,
+    hyperlinks: *std.ArrayList(Hyperlink),
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    presentation: *Presentation,
+    presentation_seen: *bool,
+    row_count: *u16,
+    phase: *DecodePhase,
+) Error!void {
+    if (encoded.len <= protocol.text_pack_v1.compressed_header_bytes) return error.InvalidSnapshot;
+    const text_len = readU32(encoded[0..4]);
+    const packed_len = readU32(encoded[4..8]);
+    if (text_len == 0 or text_len > protocol.maximum_text_snapshot_bytes or
+        packed_len == 0 or packed_len > protocol.text_pack_v1.maximum_body_bytes)
+        return error.SnapshotTooLarge;
+    const packed_body = try allocator.alloc(u8, packed_len);
+    defer allocator.free(packed_body);
+    var output: std.Io.Writer = .fixed(packed_body);
+    var input: std.Io.Reader = .fixed(encoded[protocol.text_pack_v1.compressed_header_bytes..]);
+    const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(work);
+    var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
+    const decoded_count = decompressor.reader.streamRemaining(&output) catch return error.InvalidSnapshot;
+    if (decoded_count != packed_len or output.buffered().len != packed_len or input.seek != input.end)
+        return error.InvalidSnapshot;
+    if (std.hash.Adler32.hash(packed_body) != decompressor.container_metadata.zlib.adler)
+        return error.InvalidSnapshot;
+
+    var text_body: std.ArrayList(u8) = .empty;
+    defer text_body.deinit(allocator);
+    protocol.unpackTextV1(allocator, packed_body, text_len, &text_body) catch |failure| switch (failure) {
+        error.SnapshotTooLarge => return error.SnapshotTooLarge,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidSnapshot,
+    };
+    return decodeTextRecords(
+        allocator,
+        begin,
+        text_body.items,
         rows,
         initialized_rows,
         hyperlinks,
@@ -1423,6 +1523,29 @@ fn testDeflateBody(allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     return result;
 }
 
+fn testPackedBody(allocator: std.mem.Allocator, body: []const u8) ![]u8 {
+    var packed_body: std.ArrayList(u8) = .empty;
+    defer packed_body.deinit(allocator);
+    try protocol.packTextV1(allocator, body, &packed_body);
+
+    var compressed = try std.Io.Writer.Allocating.initCapacity(allocator, 64);
+    defer compressed.deinit();
+    const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(work);
+    var huffman = try std.compress.flate.Compress.Huffman.init(&compressed.writer, work, .zlib);
+    try huffman.writer.writeAll(packed_body.items);
+    try huffman.finish();
+
+    const result = try allocator.alloc(
+        u8,
+        protocol.text_pack_v1.compressed_header_bytes + compressed.written().len,
+    );
+    encodeU32(result[0..4], @intCast(body.len));
+    encodeU32(result[4..8], @intCast(packed_body.items.len));
+    @memcpy(result[protocol.text_pack_v1.compressed_header_bytes..], compressed.written());
+    return result;
+}
+
 test "deflated rich body reuses the text record decoder" {
     const begin = protocol.SnapshotBegin{
         .revision = 3,
@@ -1569,7 +1692,9 @@ test "deflated rich body rejects corrupt and oversized streams" {
     ));
 }
 
-fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
+const TestBodyEncoding = enum { compressed, raw, packed_text };
+
+fn testFramedSnapshot(allocator: std.mem.Allocator, encoding: TestBodyEncoding) ![]u8 {
     const begin: protocol.SnapshotBegin = .{
         .revision = 3,
         .terminal_revision = 9,
@@ -1594,9 +1719,13 @@ fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
         .kind = .presentation,
         .payload_len = protocol.text_v1.presentation_bytes,
     });
-    const compressed = if (raw) &.{} else try testDeflateBody(allocator, &body);
-    defer if (!raw) allocator.free(compressed);
-    const text_bytes: []const u8 = if (raw) &body else compressed;
+    const encoded_body: []const u8 = switch (encoding) {
+        .raw => &body,
+        .compressed => try testDeflateBody(allocator, &body),
+        .packed_text => try testPackedBody(allocator, &body),
+    };
+    defer if (encoding != .raw) allocator.free(encoded_body);
+    const text_bytes = encoded_body;
     const graphics_bytes = protocol.graphics_v2.manifest_header_bytes;
     const length = 5 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
         text_bytes.len + graphics_bytes + protocol.properties.header_bytes + protocol.payload_bytes.snapshot_end;
@@ -1611,7 +1740,11 @@ fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
     protocol.encodeSnapshotBegin(frames[at..][0..protocol.payload_bytes.snapshot_begin], begin);
     at += protocol.payload_bytes.snapshot_begin;
     try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
-        .kind = if (raw) .snapshot_raw_data else .snapshot_data,
+        .kind = switch (encoding) {
+            .raw => .snapshot_raw_data,
+            .compressed => .snapshot_data,
+            .packed_text => .snapshot_packed_data,
+        },
         .payload_len = @intCast(text_bytes.len),
     });
     at += protocol.header_bytes;
@@ -1659,20 +1792,32 @@ fn testDecodeOwned(allocator: std.mem.Allocator, bytes: []const u8) !void {
 }
 
 test "buffered frames share decoder and clean up at every allocation failure" {
-    const frames = try testFramedSnapshot(std.testing.allocator, false);
+    const frames = try testFramedSnapshot(std.testing.allocator, .compressed);
     defer std.testing.allocator.free(frames);
     try testDecodeOwned(std.testing.allocator, frames);
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testDecodeOwned, .{frames});
 }
 
+test "packed framed snapshots share semantic decoder and clean up allocations" {
+    const frames = try testFramedSnapshot(std.testing.allocator, .packed_text);
+    defer std.testing.allocator.free(frames);
+    try testDecodeOwned(std.testing.allocator, frames);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testDecodeOwned, .{frames});
+
+    // Corrupt the zlib tail; packed carriage must fail before semantic decode.
+    frames[frames.len - protocol.payload_bytes.snapshot_end - protocol.header_bytes - 1] ^= 0xff;
+    defer frames[frames.len - protocol.payload_bytes.snapshot_end - protocol.header_bytes - 1] ^= 0xff;
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, frames));
+}
+
 test "buffered frames decode raw text_v1 snapshot lane" {
-    const frames = try testFramedSnapshot(std.testing.allocator, true);
+    const frames = try testFramedSnapshot(std.testing.allocator, .raw);
     defer std.testing.allocator.free(frames);
     try testDecodeOwned(std.testing.allocator, frames);
 }
 
 test "buffered frames reject truncation trailing data and mismatched revision" {
-    const frames = try testFramedSnapshot(std.testing.allocator, false);
+    const frames = try testFramedSnapshot(std.testing.allocator, .compressed);
     defer std.testing.allocator.free(frames);
     for (0..frames.len) |length| {
         try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, frames[0..length]));
@@ -1923,7 +2068,7 @@ fn testRawCacheBody(allocator: std.mem.Allocator, first: u32, second: u32) ![]u8
 
 test "rich snapshots require exactly one coherent property packet and own its bytes" {
     const allocator = std.testing.allocator;
-    const frames = try testFramedSnapshot(allocator, true);
+    const frames = try testFramedSnapshot(allocator, .raw);
     defer allocator.free(frames);
     var offset: usize = 0;
     var properties_at: usize = 0;
@@ -1960,7 +2105,7 @@ test "rich snapshots require exactly one coherent property packet and own its by
 test "raw cached observations own properties and clear them independently of reused rows" {
     const Packet = struct {
         fn make(allocator: std.mem.Allocator, revision: u64, value: protocol.properties.View) ![]u8 {
-            const base = try testFramedSnapshot(allocator, true);
+            const base = try testFramedSnapshot(allocator, .raw);
             defer allocator.free(base);
             const raw = try testRawCacheBody(allocator, 'A', 'Z');
             defer allocator.free(raw);

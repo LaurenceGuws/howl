@@ -413,8 +413,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         target: widget.target,
         presentation: nativePresentation,
         interrupt: interrupt,
-        // Keep cheap local row-delta reuse on Unix. TCP uses the existing
-        // compressed complete-snapshot path; native delta prearming is part
+        // Keep cheap local row-delta reuse on Unix. TCP uses packed complete
+        // text_v1 carriage; native delta prearming is part
         // of that alternative policy, not Dart's display overlap below.
         useLiveDeltas: widget.target.transportEndpoint.unixPath != null,
       );

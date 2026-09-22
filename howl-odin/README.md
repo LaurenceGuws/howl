@@ -300,7 +300,7 @@ all changes use existing Instance observer wakeups. Clearing the canonical state
 removes the strip. Directory/remote-host/shell-mark properties also survive the
 shared transport but have no automatic desktop execution behavior or new UI yet.
 
-This uses the matching framing-v9 client/Instance bundle. Rebuilding source does
+This uses the matching framing-v10 client/Instance bundle. Rebuilding source does
 not update an independently running remote, mobile or browser Instance service.
 
 

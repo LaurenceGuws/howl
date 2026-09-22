@@ -293,7 +293,7 @@ comptime {
         @compileError("typed key legacy-text bound must match canonical VT scratch bound");
 }
 
-const ObserveMode = enum { compressed, raw, delta };
+const ObserveMode = enum { compressed, raw, delta, packed_text };
 
 const Client = struct {
     fd: posix.fd_t,
@@ -439,6 +439,7 @@ pub const Service = struct {
     // delta lane. Complete observation lanes never allocate or maintain it.
     delta_rows: DeltaRowCache = .{},
     snapshot_body: std.ArrayList(u8) = .empty,
+    snapshot_packed: std.ArrayList(u8) = .empty,
     snapshot_compressed: std.Io.Writer.Allocating,
     snapshot_flate_work: []u8,
     snapshot_compressor: *std.compress.flate.Compress,
@@ -491,6 +492,7 @@ pub const Service = struct {
         }
         self.delta_rows.deinit(self.allocator);
         self.snapshot_body.deinit(self.allocator);
+        self.snapshot_packed.deinit(self.allocator);
         self.snapshot_compressed.deinit();
         self.allocator.free(self.snapshot_flate_work);
         self.allocator.destroy(self.snapshot_compressor);
@@ -814,7 +816,7 @@ pub const Service = struct {
         }
 
         switch (kind) {
-            .observe, .observe_raw, .observe_delta => {
+            .observe, .observe_raw, .observe_delta, .observe_packed => {
                 const request = protocol.decodeObserve(payload) catch {
                     try self.queueResult(client, kind, .malformed);
                     return;
@@ -828,6 +830,7 @@ pub const Service = struct {
                     .observe => .compressed,
                     .observe_raw => .raw,
                     .observe_delta => .delta,
+                    .observe_packed => .packed_text,
                     else => unreachable,
                 };
             },
@@ -1530,6 +1533,7 @@ pub const Service = struct {
                     .compressed => .observe,
                     .raw => .observe_raw,
                     .delta => .observe_delta,
+                    .packed_text => .observe_packed,
                 };
                 self.queueResult(client, request_kind, .rejected) catch |failure| {
                     if (failure != error.ClientResponseOutOfMemory) return failure;
@@ -1564,8 +1568,9 @@ pub const Service = struct {
         const machine = howl.terminal(self.instance);
         const terminal_view = machine.semanticView(request.history_offset);
         const terminal_revision = machine.semanticSequence();
-        const raw = mode != .compressed;
+        const raw = mode == .raw or mode == .delta;
         const delta = mode == .delta;
+        const packed_mode = mode == .packed_text;
         var graphics = machine.images(terminal_view.history_offset);
         const graphics_counts = try countSnapshotGraphics(&graphics);
         const observed_ns = nowNs(self.io);
@@ -1720,7 +1725,32 @@ pub const Service = struct {
 
         var compressed: []const u8 = &.{};
         var encoded_bytes = body_bytes;
-        if (!raw) {
+        if (packed_mode) {
+            protocol.packTextV1(self.allocator, body.items, &self.snapshot_packed) catch |failure| switch (failure) {
+                error.InvalidPayload => return error.InvalidSnapshot,
+                else => |value| return value,
+            };
+            if (self.snapshot_packed.items.len == 0 or
+                self.snapshot_packed.items.len > protocol.text_pack_v1.maximum_body_bytes or
+                self.snapshot_packed.items.len > std.math.maxInt(u32))
+                return error.SnapshotTooLarge;
+            self.snapshot_compressed.writer.end = 0;
+            try self.snapshot_compressed.ensureTotalCapacity(64);
+            self.snapshot_compressor.* = try std.compress.flate.Compress.init(
+                &self.snapshot_compressed.writer,
+                self.snapshot_flate_work,
+                .zlib,
+                .fastest,
+            );
+            try self.snapshot_compressor.writer.writeAll(self.snapshot_packed.items);
+            try self.snapshot_compressor.finish();
+            compressed = self.snapshot_compressed.written();
+            encoded_bytes = std.math.add(
+                usize,
+                protocol.text_pack_v1.compressed_header_bytes,
+                compressed.len,
+            ) catch return error.SnapshotTooLarge;
+        } else if (!raw) {
             // Reinitialize compression state in retained storage. The writer
             // buffer, DEFLATE work window, and compressor allocation survive
             // between compressed cuts.
@@ -1791,10 +1821,25 @@ pub const Service = struct {
                 body.items,
                 if (delta_reuse_allowed) .snapshot_delta_data else .snapshot_raw_data,
             );
+        } else if (packed_mode) {
+            var prefix: [protocol.text_pack_v1.compressed_header_bytes]u8 = undefined;
+            encodeU32(prefix[0..4], @intCast(body_bytes));
+            encodeU32(prefix[4..8], @intCast(self.snapshot_packed.items.len));
+            try self.appendSnapshotCompressedData(
+                &client.output,
+                &prefix,
+                compressed,
+                .snapshot_packed_data,
+            );
         } else {
             var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
             encodeU32(&raw_len, @intCast(body_bytes));
-            try self.appendSnapshotData(&client.output, &raw_len, compressed);
+            try self.appendSnapshotCompressedData(
+                &client.output,
+                &raw_len,
+                compressed,
+                .snapshot_data,
+            );
         }
 
         const graphics_payload = try self.allocator.alloc(u8, graphics_counts.payload_bytes);
@@ -1833,13 +1878,18 @@ pub const Service = struct {
         referenced_links[link_index] = true;
     }
 
-    fn appendSnapshotData(
+    fn appendSnapshotCompressedData(
         self: *Service,
         output: *std.ArrayList(u8),
         prefix: []const u8,
         compressed: []const u8,
+        kind: protocol.Kind,
     ) !void {
-        std.debug.assert(prefix.len == protocol.text_v1.compressed_header_bytes);
+        std.debug.assert(kind == .snapshot_data or kind == .snapshot_packed_data);
+        std.debug.assert(
+            (kind == .snapshot_data and prefix.len == protocol.text_v1.compressed_header_bytes) or
+                (kind == .snapshot_packed_data and prefix.len == protocol.text_pack_v1.compressed_header_bytes),
+        );
         var prefix_offset: usize = 0;
         var compressed_offset: usize = 0;
         while (prefix_offset < prefix.len or compressed_offset < compressed.len) {
@@ -1853,7 +1903,7 @@ pub const Service = struct {
             const payload_len = prefix_count + compressed_count;
             var header: [protocol.header_bytes]u8 = undefined;
             try protocol.encodeHeader(&header, .{
-                .kind = .snapshot_data,
+                .kind = kind,
                 .payload_len = @intCast(payload_len),
             });
             try output.appendSlice(self.allocator, &header);
@@ -2637,6 +2687,110 @@ test "adopted HWLS stream drives one borrowed Instance without owning its lifeti
     try std.testing.expectEqual(before, howl.terminal(instance).semanticSequence());
 }
 
+test "packed observation reconstructs one coherent complete text_v1 cut" {
+    const allocator = std.testing.allocator;
+    const instance = try howl.init(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 4,
+        .columns = 24,
+        .history_rows = 16,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(allocator, std.testing.io, instance);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(allocator, &service);
+    defer peer.deinit();
+
+    try peer.sendFrame(&service, .hello, &.{});
+    var welcome = try awaitTestFrame(&peer, &service);
+    defer welcome.deinit(allocator);
+    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+
+    var observe: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
+    try peer.sendFrame(&service, .observe_packed, &observe);
+
+    var begin: ?protocol.SnapshotBegin = null;
+    var packed_envelope: std.ArrayList(u8) = .empty;
+    defer packed_envelope.deinit(allocator);
+    var saw_packed = false;
+    var saw_graphics = false;
+    var saw_properties = false;
+    var complete = false;
+    for (0..64) |_| {
+        var frame = try awaitTestFrame(&peer, &service);
+        defer frame.deinit(allocator);
+        switch (frame.kind) {
+            .snapshot_begin => begin = try protocol.decodeSnapshotBegin(frame.payload),
+            .snapshot_packed_data => {
+                saw_packed = true;
+                try packed_envelope.appendSlice(allocator, frame.payload);
+            },
+            .snapshot_graphics => saw_graphics = true,
+            .snapshot_properties => saw_properties = true,
+            .snapshot_end => {
+                const end = try protocol.decodeSnapshotEnd(frame.payload);
+                try std.testing.expect(begin != null);
+                try std.testing.expectEqual(begin.?.revision, end.revision);
+                complete = true;
+                break;
+            },
+            else => return error.TestUnexpectedFrame,
+        }
+        if (complete) break;
+    }
+    try std.testing.expect(complete);
+    try std.testing.expect(saw_packed);
+    try std.testing.expect(saw_graphics);
+    try std.testing.expect(saw_properties);
+    try std.testing.expectEqual(@as(u16, 4), begin.?.rows);
+    try std.testing.expectEqual(@as(u16, 24), begin.?.columns);
+    try std.testing.expect(packed_envelope.items.len > protocol.text_pack_v1.compressed_header_bytes);
+
+    const text_len = readU32(packed_envelope.items[0..4]);
+    const packed_len = readU32(packed_envelope.items[4..8]);
+    try std.testing.expect(text_len != 0 and text_len <= protocol.maximum_text_snapshot_bytes);
+    try std.testing.expect(packed_len != 0 and packed_len <= protocol.text_pack_v1.maximum_body_bytes);
+    const packed_body = try allocator.alloc(u8, packed_len);
+    defer allocator.free(packed_body);
+    var packed_output: std.Io.Writer = .fixed(packed_body);
+    var packed_input: std.Io.Reader = .fixed(packed_envelope.items[protocol.text_pack_v1.compressed_header_bytes..]);
+    const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(work);
+    var decompressor: std.compress.flate.Decompress = .init(&packed_input, .zlib, work);
+    const decoded_count = try decompressor.reader.streamRemaining(&packed_output);
+    try std.testing.expectEqual(@as(usize, packed_len), decoded_count);
+    try std.testing.expectEqual(@as(usize, packed_len), packed_output.buffered().len);
+    try std.testing.expectEqual(packed_input.end, packed_input.seek);
+    try std.testing.expectEqual(std.hash.Adler32.hash(packed_body), decompressor.container_metadata.zlib.adler);
+
+    var text_body: std.ArrayList(u8) = .empty;
+    defer text_body.deinit(allocator);
+    try protocol.unpackTextV1(allocator, packed_body, text_len, &text_body);
+    try std.testing.expectEqual(@as(usize, text_len), text_body.items.len);
+    var offset: usize = 0;
+    var presentations: usize = 0;
+    var rows: usize = 0;
+    while (offset < text_body.items.len) {
+        try std.testing.expect(text_body.items.len - offset >= protocol.text_v1.record_header_bytes);
+        var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, text_body.items[offset..][0..protocol.text_v1.record_header_bytes]);
+        const header = try protocol.decodeTextRecordHeader(&encoded_header);
+        const record_len = protocol.text_v1.record_header_bytes + @as(usize, header.payload_len);
+        try std.testing.expect(record_len <= text_body.items.len - offset);
+        switch (header.kind) {
+            .presentation => presentations += 1,
+            .row => rows += 1,
+            .hyperlink => {},
+            .row_shift => return error.TestUnexpectedFrame,
+        }
+        offset += record_len;
+    }
+    try std.testing.expectEqual(@as(usize, 1), presentations);
+    try std.testing.expectEqual(@as(usize, 4), rows);
+}
+
 test "failed client adoption retains caller stream ownership" {
     const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
@@ -2714,7 +2868,7 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
 
     // Fresh clients exercise both first response allocation and each observation
     // materializer, with a healthy client retained throughout.
-    for ([_]?ObserveMode{ null, .raw, .compressed, .delta }) |mode| {
+    for ([_]?ObserveMode{ null, .raw, .compressed, .delta, .packed_text }) |mode| {
         var bad = try TestPeer.adopt(std.testing.allocator, &service);
         defer bad.deinit();
         try bad.sendFrame(&service, .hello, &.{});
@@ -2727,6 +2881,7 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
                 .raw => .observe_raw,
                 .compressed => .observe,
                 .delta => .observe_delta,
+                .packed_text => .observe_packed,
             }, &request);
             // Force a fresh materialization allocation even after a previous mode
             // retained scratch capacity. No canonical storage is touched.

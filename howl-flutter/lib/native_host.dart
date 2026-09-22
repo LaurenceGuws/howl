@@ -392,7 +392,7 @@ final class NativeHostObserver {
   Future<void>? _closeFuture;
 
   /// Selects the native delta/raw-cache policy for live observations, including
-  /// one prearmed delta request. False uses compressed complete snapshots.
+  /// one prearmed delta request. False uses packed complete text_v1 snapshots.
   /// Dart's display overlap is independent of this native policy.
   static Future<NativeHostObserver> createPlatform({
     required HowlInstanceTarget target,

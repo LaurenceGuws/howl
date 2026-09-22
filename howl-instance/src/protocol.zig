@@ -36,7 +36,7 @@ pub const properties = @import("properties.zig");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 9;
+pub const framing_version: u8 = 10;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -92,6 +92,10 @@ pub const Kind = enum(u8) {
     snapshot_delta_data = 31,
     /// Complete live terminal properties belonging to the same snapshot cut.
     snapshot_properties = 32,
+    /// Requests complete text_v1 through lossless row-run transport packing.
+    observe_packed = 33,
+    /// Carries Huffman-zlib compressed text_pack_v1 bytes for one packed response.
+    snapshot_packed_data = 34,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -675,6 +679,36 @@ pub const text_delta_v2 = struct {
     pub const row_shift_bytes: usize = 2;
 };
 
+/// Lossless transport packing for complete `text_v1` bodies.
+///
+/// This is not a second semantic terminal representation. Record headers,
+/// presentation bytes, hyperlink bytes, cell attributes and Unicode scalars
+/// reconstruct byte-for-byte to the frozen `text_v1` grammar before semantic
+/// decoding. Only complete row payload carriage changes.
+pub const text_pack_v1 = struct {
+    /// Original text_v1 bytes followed by packed bytes in the compressed envelope.
+    pub const compressed_header_bytes: usize = 8;
+    /// One row carriage discriminator after the preserved text_v1 record header.
+    pub const row_mode_bytes: usize = 1;
+    /// A text_v1 cell header without its per-cell scalar-count byte.
+    pub const cell_attribute_bytes: usize = text_v1.cell_header_bytes - 1;
+    /// Packed-run prefix: cells in run, both big-endian u16.
+    pub const run_count_bytes: usize = 2;
+    /// Number of consecutive cells owned by one attribute run, big-endian u16.
+    pub const run_length_bytes: usize = 2;
+    /// Worst case uses verbatim rows and adds one mode byte per visible row.
+    pub const maximum_body_bytes: usize = maximum_text_snapshot_bytes + std.math.maxInt(u16);
+
+    /// Per-row carriage chosen independently so pathological rich rows may fall
+    /// back without expanding beyond one discriminator byte.
+    pub const RowMode = enum(u8) {
+        /// Carries the original frozen text_v1 row payload unchanged.
+        verbatim = 0,
+        /// Carries exact consecutive attribute runs plus cell scalar data.
+        runs = 1,
+    };
+};
+
 /// Frozen image-resource and visible-placement grammar introduced with framing v4.
 ///
 /// `text_v1` remains byte-for-byte unchanged. A snapshot carries one separate
@@ -884,8 +918,8 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
 
 /// Hard upper bound for one complete v9 observation response.
 ///
-/// This includes the bounded `text_v1` transport body, all possible compressed,
-/// raw, or delta data-frame headers, one complete `graphics_v2` manifest, one
+/// This includes the bounded text transport body, all possible compressed,
+/// raw, delta, or packed data-frame headers, one complete `graphics_v2` manifest, one
 /// bounded `properties_v1` packet, and the begin/end envelopes.
 /// Demand-fetched RGBA image resources are separate transactions and do not
 /// consume this budget.
@@ -1065,6 +1099,240 @@ pub fn decodeTextRecordHeader(
             return error.InvalidPayload,
         .payload_len = readU32(input[4..8]),
     };
+}
+
+/// Exact failure surface for lossless text_v1 transport packing/unpacking.
+pub const TextPackError = PayloadError || std.mem.Allocator.Error || error{
+    SnapshotTooLarge,
+};
+
+fn textCellRecordBytes(encoded: []const u8) TextPackError!usize {
+    if (encoded.len < text_v1.cell_header_bytes) return error.InvalidPayload;
+    const scalar_count = encoded[0];
+    if (scalar_count > text_v1.maximum_cell_scalars) return error.InvalidPayload;
+    return std.math.add(
+        usize,
+        text_v1.cell_header_bytes,
+        @as(usize, scalar_count) * @sizeOf(u32),
+    ) catch return error.InvalidPayload;
+}
+
+fn packedRowRunSize(payload: []const u8) TextPackError!usize {
+    if (payload.len < text_v1.row_header_bytes) return error.InvalidPayload;
+    const columns = readU16(payload[2..4]);
+    var packed_size = text_pack_v1.row_mode_bytes + text_v1.row_header_bytes + text_pack_v1.run_count_bytes;
+    var offset: usize = text_v1.row_header_bytes;
+    var column: u16 = 0;
+    var run_count: usize = 0;
+    while (column < columns) {
+        if (payload.len - offset < text_v1.cell_header_bytes) return error.InvalidPayload;
+        const attributes = payload[offset + 1 .. offset + text_v1.cell_header_bytes];
+        var run_cells: u16 = 0;
+        var run_scalars: usize = 0;
+        while (column < columns) {
+            if (payload.len - offset < text_v1.cell_header_bytes) return error.InvalidPayload;
+            const candidate = payload[offset + 1 .. offset + text_v1.cell_header_bytes];
+            if (run_cells != 0 and !std.mem.eql(u8, attributes, candidate)) break;
+            const cell_bytes = try textCellRecordBytes(payload[offset..]);
+            if (cell_bytes > payload.len - offset) return error.InvalidPayload;
+            run_scalars = std.math.add(
+                usize,
+                run_scalars,
+                1 + cell_bytes - text_v1.cell_header_bytes,
+            ) catch return error.SnapshotTooLarge;
+            offset += cell_bytes;
+            column += 1;
+            run_cells += 1;
+        }
+        std.debug.assert(run_cells != 0);
+        run_count += 1;
+        if (run_count > std.math.maxInt(u16)) return error.SnapshotTooLarge;
+        packed_size = std.math.add(
+            usize,
+            packed_size,
+            text_pack_v1.run_length_bytes + text_pack_v1.cell_attribute_bytes + run_scalars,
+        ) catch return error.SnapshotTooLarge;
+    }
+    if (offset != payload.len) return error.InvalidPayload;
+    return packed_size;
+}
+
+/// Packs one complete frozen `text_v1` body without changing its semantics.
+/// Rows use consecutive exact attribute runs only when that representation is
+/// smaller; otherwise the original row payload is carried verbatim.
+pub fn packTextV1(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    output: *std.ArrayList(u8),
+) TextPackError!void {
+    if (input.len == 0 or input.len > maximum_text_snapshot_bytes)
+        return error.SnapshotTooLarge;
+    output.clearRetainingCapacity();
+    errdefer output.clearRetainingCapacity();
+
+    var offset: usize = 0;
+    while (offset < input.len) {
+        if (input.len - offset < text_v1.record_header_bytes) return error.InvalidPayload;
+        const record_header_bytes = input[offset..][0..text_v1.record_header_bytes];
+        var encoded_header: [text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, record_header_bytes);
+        const header = try decodeTextRecordHeader(&encoded_header);
+        const record_len = std.math.add(
+            usize,
+            text_v1.record_header_bytes,
+            header.payload_len,
+        ) catch return error.InvalidPayload;
+        if (record_len > input.len - offset) return error.InvalidPayload;
+        const payload = input[offset + text_v1.record_header_bytes .. offset + record_len];
+        try output.appendSlice(allocator, record_header_bytes);
+        switch (header.kind) {
+            .presentation, .hyperlink => try output.appendSlice(allocator, payload),
+            .row => {
+                if (payload.len < text_v1.row_header_bytes) return error.InvalidPayload;
+                const run_size = try packedRowRunSize(payload);
+                const verbatim_size = std.math.add(
+                    usize,
+                    text_pack_v1.row_mode_bytes,
+                    payload.len,
+                ) catch return error.SnapshotTooLarge;
+                if (run_size >= verbatim_size) {
+                    try output.append(allocator, @backingInt(text_pack_v1.RowMode.verbatim));
+                    try output.appendSlice(allocator, payload);
+                } else {
+                    try output.append(allocator, @backingInt(text_pack_v1.RowMode.runs));
+                    try output.appendSlice(allocator, payload[0..text_v1.row_header_bytes]);
+                    const run_count_offset = output.items.len;
+                    try output.appendNTimes(allocator, 0, text_pack_v1.run_count_bytes);
+                    const columns = readU16(payload[2..4]);
+                    var run_count: u16 = 0;
+                    var column: u16 = 0;
+                    var cell_offset: usize = text_v1.row_header_bytes;
+                    while (column < columns) {
+                        const attributes = payload[cell_offset + 1 .. cell_offset + text_v1.cell_header_bytes];
+                        const run_length_offset = output.items.len;
+                        try output.appendNTimes(allocator, 0, text_pack_v1.run_length_bytes);
+                        try output.appendSlice(allocator, attributes);
+                        var run_length: u16 = 0;
+                        while (column < columns) {
+                            const candidate = payload[cell_offset + 1 .. cell_offset + text_v1.cell_header_bytes];
+                            if (run_length != 0 and !std.mem.eql(u8, attributes, candidate)) break;
+                            const cell_bytes = try textCellRecordBytes(payload[cell_offset..]);
+                            const scalar_bytes = cell_bytes - text_v1.cell_header_bytes;
+                            try output.append(allocator, payload[cell_offset]);
+                            try output.appendSlice(
+                                allocator,
+                                payload[cell_offset + text_v1.cell_header_bytes ..][0..scalar_bytes],
+                            );
+                            cell_offset += cell_bytes;
+                            column += 1;
+                            run_length += 1;
+                        }
+                        run_count += 1;
+                        writeU16(output.items[run_length_offset..][0..2], run_length);
+                    }
+                    writeU16(output.items[run_count_offset..][0..2], run_count);
+                    if (cell_offset != payload.len) return error.InvalidPayload;
+                }
+            },
+            .row_shift => return error.InvalidPayload,
+        }
+        if (output.items.len > text_pack_v1.maximum_body_bytes) return error.SnapshotTooLarge;
+        offset += record_len;
+    }
+    if (offset != input.len) return error.InvalidPayload;
+}
+
+/// Reconstructs the exact frozen `text_v1` body from `text_pack_v1` carriage.
+/// The caller supplies the exact expected original byte count from the transport
+/// envelope; hostile input cannot grow beyond that bound.
+pub fn unpackTextV1(
+    allocator: std.mem.Allocator,
+    packed_bytes: []const u8,
+    expected_text_bytes: usize,
+    output: *std.ArrayList(u8),
+) TextPackError!void {
+    if (packed_bytes.len == 0 or packed_bytes.len > text_pack_v1.maximum_body_bytes or
+        expected_text_bytes == 0 or expected_text_bytes > maximum_text_snapshot_bytes)
+        return error.SnapshotTooLarge;
+    output.clearRetainingCapacity();
+    errdefer output.clearRetainingCapacity();
+    try output.ensureTotalCapacity(allocator, expected_text_bytes);
+
+    var offset: usize = 0;
+    while (offset < packed_bytes.len) {
+        if (packed_bytes.len - offset < text_v1.record_header_bytes) return error.InvalidPayload;
+        const record_header_bytes = packed_bytes[offset..][0..text_v1.record_header_bytes];
+        var encoded_header: [text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, record_header_bytes);
+        const header = try decodeTextRecordHeader(&encoded_header);
+        try output.appendSlice(allocator, record_header_bytes);
+        offset += text_v1.record_header_bytes;
+        switch (header.kind) {
+            .presentation, .hyperlink => {
+                if (header.payload_len > packed_bytes.len - offset) return error.InvalidPayload;
+                try output.appendSlice(allocator, packed_bytes[offset..][0..header.payload_len]);
+                offset += header.payload_len;
+            },
+            .row => {
+                if (offset >= packed_bytes.len) return error.InvalidPayload;
+                const mode = enumFromInt(text_pack_v1.RowMode, packed_bytes[offset]) orelse
+                    return error.InvalidPayload;
+                offset += text_pack_v1.row_mode_bytes;
+                switch (mode) {
+                    .verbatim => {
+                        if (header.payload_len > packed_bytes.len - offset) return error.InvalidPayload;
+                        try output.appendSlice(allocator, packed_bytes[offset..][0..header.payload_len]);
+                        offset += header.payload_len;
+                    },
+                    .runs => {
+                        const output_payload_start = output.items.len;
+                        if (packed_bytes.len - offset < text_v1.row_header_bytes + text_pack_v1.run_count_bytes)
+                            return error.InvalidPayload;
+                        const row_header = packed_bytes[offset..][0..text_v1.row_header_bytes];
+                        const columns = readU16(row_header[2..4]);
+                        try output.appendSlice(allocator, row_header);
+                        offset += text_v1.row_header_bytes;
+                        const run_count = readU16(packed_bytes[offset..][0..2]);
+                        offset += text_pack_v1.run_count_bytes;
+                        if (run_count == 0 and columns != 0) return error.InvalidPayload;
+                        var emitted_columns: u16 = 0;
+                        var run_index: u16 = 0;
+                        while (run_index < run_count) : (run_index += 1) {
+                            if (packed_bytes.len - offset < text_pack_v1.run_length_bytes + text_pack_v1.cell_attribute_bytes)
+                                return error.InvalidPayload;
+                            const run_length = readU16(packed_bytes[offset..][0..2]);
+                            offset += text_pack_v1.run_length_bytes;
+                            if (run_length == 0 or run_length > columns - emitted_columns)
+                                return error.InvalidPayload;
+                            const attributes = packed_bytes[offset..][0..text_pack_v1.cell_attribute_bytes];
+                            offset += text_pack_v1.cell_attribute_bytes;
+                            var run_cell: u16 = 0;
+                            while (run_cell < run_length) : (run_cell += 1) {
+                                if (offset >= packed_bytes.len) return error.InvalidPayload;
+                                const scalar_count = packed_bytes[offset];
+                                offset += 1;
+                                if (scalar_count > text_v1.maximum_cell_scalars) return error.InvalidPayload;
+                                const scalar_bytes = @as(usize, scalar_count) * @sizeOf(u32);
+                                if (scalar_bytes > packed_bytes.len - offset) return error.InvalidPayload;
+                                try output.append(allocator, scalar_count);
+                                try output.appendSlice(allocator, attributes);
+                                try output.appendSlice(allocator, packed_bytes[offset..][0..scalar_bytes]);
+                                offset += scalar_bytes;
+                                emitted_columns += 1;
+                            }
+                        }
+                        if (emitted_columns != columns or
+                            output.items.len - output_payload_start != header.payload_len)
+                            return error.InvalidPayload;
+                    },
+                }
+            },
+            .row_shift => return error.InvalidPayload,
+        }
+        if (output.items.len > expected_text_bytes) return error.InvalidPayload;
+    }
+    if (offset != packed_bytes.len or output.items.len != expected_text_bytes)
+        return error.InvalidPayload;
 }
 
 /// Encodes the explicit framing-v7 delta baseline rotation.
@@ -2112,6 +2380,130 @@ test "snapshot begin bytes stay frozen" {
         0x41, 0x42, 0x43, 0x44, 0x51, 0x52, 0x61, 0x62,
         0x71, 0x72, 0x81, 0x82, 0x91, 0x7f,
     }, &encoded);
+}
+
+test "text_pack_v1 round trips exact text_v1 bytes" {
+    const allocator = std.testing.allocator;
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(allocator);
+
+    var presentation_header: [text_v1.record_header_bytes]u8 = undefined;
+    encodeTextRecordHeader(&presentation_header, .{
+        .kind = .presentation,
+        .payload_len = text_v1.presentation_bytes,
+    });
+    try body.appendSlice(allocator, &presentation_header);
+    try body.appendNTimes(allocator, 0, text_v1.presentation_bytes);
+
+    var row_payload: std.ArrayList(u8) = .empty;
+    defer row_payload.deinit(allocator);
+    try row_payload.appendSlice(allocator, &.{ 0, 0, 0, 5 });
+    var attr_a: [text_pack_v1.cell_attribute_bytes]u8 = @splat(0);
+    attr_a[0] = 1; // width
+    attr_a[1] = 1; // height
+    attr_a[4] = 1; // subscale numerator
+    attr_a[5] = 1; // subscale denominator
+    var attr_b = attr_a;
+    attr_b[14] = 1; // distinct foreground color kind byte
+
+    // A, blank, B share attributes; final two cells use another tuple.
+    for ([_]?u32{ 'A', null, 'B' }) |scalar| {
+        try row_payload.append(allocator, @intFromBool(scalar != null));
+        try row_payload.appendSlice(allocator, &attr_a);
+        if (scalar) |value| {
+            var encoded: [4]u8 = undefined;
+            writeU32(&encoded, value);
+            try row_payload.appendSlice(allocator, &encoded);
+        }
+    }
+    for ([_]?u32{ null, 'C' }) |scalar| {
+        try row_payload.append(allocator, @intFromBool(scalar != null));
+        try row_payload.appendSlice(allocator, &attr_b);
+        if (scalar) |value| {
+            var encoded: [4]u8 = undefined;
+            writeU32(&encoded, value);
+            try row_payload.appendSlice(allocator, &encoded);
+        }
+    }
+    var row_header: [text_v1.record_header_bytes]u8 = undefined;
+    encodeTextRecordHeader(&row_header, .{ .kind = .row, .payload_len = @intCast(row_payload.items.len) });
+    try body.appendSlice(allocator, &row_header);
+    try body.appendSlice(allocator, row_payload.items);
+
+    const hyperlink_payload = [_]u8{ 0, 0, 0, 7, 0, 3, 'u', 'r', 'i' };
+    var hyperlink_header: [text_v1.record_header_bytes]u8 = undefined;
+    encodeTextRecordHeader(&hyperlink_header, .{ .kind = .hyperlink, .payload_len = hyperlink_payload.len });
+    try body.appendSlice(allocator, &hyperlink_header);
+    try body.appendSlice(allocator, &hyperlink_payload);
+
+    var packed_body: std.ArrayList(u8) = .empty;
+    defer packed_body.deinit(allocator);
+    try packTextV1(allocator, body.items, &packed_body);
+    try std.testing.expect(packed_body.items.len < body.items.len);
+
+    var decoded: std.ArrayList(u8) = .empty;
+    defer decoded.deinit(allocator);
+    try unpackTextV1(allocator, packed_body.items, body.items.len, &decoded);
+    try std.testing.expectEqualSlices(u8, body.items, decoded.items);
+
+    // Every strict truncation must fail rather than produce a partial body.
+    var truncated: std.ArrayList(u8) = .empty;
+    defer truncated.deinit(allocator);
+    for (0..packed_body.items.len) |cut| {
+        if (unpackTextV1(allocator, packed_body.items[0..cut], body.items.len, &truncated)) |_| {
+            return error.TestUnexpectedResult;
+        } else |_| {}
+    }
+}
+
+test "text_pack_v1 falls back to verbatim rows when runs expand" {
+    const allocator = std.testing.allocator;
+    var row_payload: std.ArrayList(u8) = .empty;
+    defer row_payload.deinit(allocator);
+    try row_payload.appendSlice(allocator, &.{ 0, 0, 0, 2 });
+    var first: [text_pack_v1.cell_attribute_bytes]u8 = @splat(0);
+    first[0] = 1;
+    var second = first;
+    second[1] = 1;
+    for ([_][text_pack_v1.cell_attribute_bytes]u8{ first, second }) |attributes| {
+        try row_payload.append(allocator, 0);
+        try row_payload.appendSlice(allocator, &attributes);
+    }
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(allocator);
+    var header: [text_v1.record_header_bytes]u8 = undefined;
+    encodeTextRecordHeader(&header, .{ .kind = .row, .payload_len = @intCast(row_payload.items.len) });
+    try body.appendSlice(allocator, &header);
+    try body.appendSlice(allocator, row_payload.items);
+
+    var packed_body: std.ArrayList(u8) = .empty;
+    defer packed_body.deinit(allocator);
+    try packTextV1(allocator, body.items, &packed_body);
+    try std.testing.expectEqual(
+        @backingInt(text_pack_v1.RowMode.verbatim),
+        packed_body.items[text_v1.record_header_bytes],
+    );
+
+    var decoded: std.ArrayList(u8) = .empty;
+    defer decoded.deinit(allocator);
+    try unpackTextV1(allocator, packed_body.items, body.items.len, &decoded);
+    try std.testing.expectEqualSlices(u8, body.items, decoded.items);
+}
+
+test "text_pack_v1 rejects malformed cell scalar counts" {
+    const allocator = std.testing.allocator;
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(allocator);
+    var header: [text_v1.record_header_bytes]u8 = undefined;
+    const payload_len = text_v1.row_header_bytes + text_v1.cell_header_bytes;
+    encodeTextRecordHeader(&header, .{ .kind = .row, .payload_len = payload_len });
+    try body.appendSlice(allocator, &header);
+    try body.appendSlice(allocator, &.{ 0, 0, 0, 1 });
+    try body.append(allocator, text_v1.maximum_cell_scalars + 1);
+    try body.appendNTimes(allocator, 0, text_pack_v1.cell_attribute_bytes);
+    var packed_body: std.ArrayList(u8) = .empty;
+    defer packed_body.deinit(allocator);
+    try std.testing.expectError(error.InvalidPayload, packTextV1(allocator, body.items, &packed_body));
 }
 
 test "text_v1 record and color grammar is exact and hostile-safe" {

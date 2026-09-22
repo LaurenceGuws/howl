@@ -4,9 +4,15 @@ Reusable native Zig client engine for an existing Howl Instance interaction stre
 
 It owns explicit endpoint parsing, portable POSIX connection/handshake, bounded framed I/O,
 coherent interaction-state retrieval, canonical semantic client operations including
-mouse facts, and one lossless framing-v9 snapshot model with `text_v1`,
+mouse facts, and one lossless framing-v10 snapshot model with frozen `text_v1`,
 `graphics_v2`, and complete bounded `properties_v1` state. Its rich, cached, and
 coarse projections retain property bytes with the same snapshot lifetime.
+Complete packed observation is transport-only: framing-v10 `observe_packed`
+inflates `text_pack_v1`, reconstructs byte-identical frozen `text_v1`, then reuses
+the same rich decoder as compressed/raw complete snapshots. Revision-relative
+`RawCache` remains a distinct local/live optimization; there is still one semantic
+snapshot model.
+
 The coarse `view` projection owns one immutable allocation for a revision and
 exposes rows, cells, scalars, hyperlinks, images, properties, and presentation facts
 in batches. It resolves transported style bits, cursor-shape values, DEC row geometry,

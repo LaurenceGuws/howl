@@ -1076,7 +1076,7 @@ fn receiveRich(
     history_offset: u32,
 ) !client.rich.Snapshot {
     if (host.armed_live_after_revision != null) return error.InvalidHost;
-    return client.rich.request(
+    return client.rich.requestPacked(
         &host.connection,
         allocator,
         after_revision,
