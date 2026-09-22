@@ -4,10 +4,12 @@ import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'desktop_selection.dart';
 import 'diagnostics.dart';
+import 'frame_perf.dart';
 import 'platform_input.dart';
 import 'history_viewport.dart';
 import 'held_key_repeat.dart';
@@ -143,6 +145,10 @@ final class _PresentationRestart implements Exception {
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final HowlDiagnostics _diagnostics = HowlDiagnostics();
+  final TerminalFramePerf _framePerf = TerminalFramePerf();
+  late final TimingsCallback _frameTimingsCallback;
+  late final Stopwatch _perfClock;
+  int? _lastAdoptUs;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
@@ -201,6 +207,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void initState() {
     super.initState();
     _geometryLeader = widget.geometryLeader;
+    _perfClock = Stopwatch()..start();
+    _frameTimingsCallback = (timings) {
+      for (final timing in timings) {
+        _framePerf.recordFlutterFrame(
+          buildUs: timing.buildDuration.inMicroseconds,
+          rasterUs: timing.rasterDuration.inMicroseconds,
+          totalUs: timing.totalSpan.inMicroseconds,
+          vsyncOverheadUs: timing.vsyncOverhead.inMicroseconds,
+        );
+      }
+    };
+    SchedulerBinding.instance.addTimingsCallback(_frameTimingsCallback);
     _diagnostics.record(
       'App',
       'start platform=${Platform.operatingSystem} target=${widget.target.diagnosticLabel} '
@@ -270,6 +288,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   Future<void> _observeNative() async {
     while (!_stopping) {
       final generation = ++_transportGeneration;
+      _lastAdoptUs = null;
       // A new native Host owns a new Canvas namespace, even when its first
       // resource/generation numbers collide with the previous Host's atlas.
       final oldLive = _nativeLiveLease;
@@ -439,6 +458,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         // One native observation may overlap the previous display boundary.
         // It owns bytes only: image decoding/adoption stays in this loop, so
         // abandoning a prefetched result cannot strand ui.Image resources.
+        final previousRevision = revision;
+        final observeClock = Stopwatch()..start();
         final observed = await _observeNativeFrame(
           observer: observer,
           afterRevision: revision,
@@ -447,8 +468,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           transportGeneration: generation,
           prefetched: prefetched,
         );
+        observeClock.stop();
         prefetched = null;
         late final NativeHostFrame packet;
+        final prepareClock = Stopwatch()..start();
         var preloadsTransferred = false;
         final NativeCanvasLeaseUpdate? prepared;
         try {
@@ -464,12 +487,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             ),
             () => !abandoned(),
           );
+          prepareClock.stop();
         } finally {
           if (!preloadsTransferred) {
             disposeNativeCanvasPreloadedResources(observed.preloaded);
           }
         }
         if (prepared == null) break;
+        final adoptedAtUs = _perfClock.elapsedMicroseconds;
+        final previousAdoptUs = _lastAdoptUs;
+        final adoptGapUs = previousAdoptUs == null
+            ? null
+            : adoptedAtUs - previousAdoptUs;
+        _lastAdoptUs = adoptedAtUs;
+        final displayClock = Stopwatch()..start();
         var adopted = false;
         try {
           if (abandoned()) break;
@@ -522,6 +553,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             prefetched.ignore();
           }
           await WidgetsBinding.instance.endOfFrame;
+          displayClock.stop();
+          _framePerf.recordTerminal(
+            observeUs: observeClock.elapsedMicroseconds,
+            prepareUs: prepareClock.elapsedMicroseconds,
+            displayWaitUs: displayClock.elapsedMicroseconds,
+            adoptGapUs: adoptGapUs,
+            revisionGap: previousRevision == 0 || revision < previousRevision
+                ? null
+                : revision - previousRevision,
+            packetBytes: observed.bytes.length,
+            commands: packet.canvas.commandCount,
+          );
         } finally {
           if (adopted) {
             for (final image in prepared.retired) {
@@ -875,11 +918,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (networkProbe != null) {
       _diagnostics.record('iOS Network', networkProbe);
     }
+    _diagnostics.record('Perf Terminal', _framePerf.terminalSummary());
+    _diagnostics.record('Perf Flutter', _framePerf.flutterSummary());
     _diagnostics.record(
       'App',
       'copy_log entries=${_diagnostics.entries.length}',
     );
     await Clipboard.setData(ClipboardData(text: _diagnostics.export()));
+    _framePerf.reset();
+    _lastAdoptUs = null;
   }
 
   void _copyVisibleText() {
@@ -1822,6 +1869,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
     try {
       _nativeInterrupt?.cancel();
     } catch (_) {}
