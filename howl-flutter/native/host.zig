@@ -1130,15 +1130,11 @@ fn observe(
     } else {
         owned_rich = try receiveRich(host, frame_allocator, after_revision, history_offset);
     }
-    const begin = if (cached_rich) |value| value.begin else owned_rich.?.begin;
-    const view = if (cached_rich) |*value|
-        try client.view.projectView(frame_allocator, value)
-    else
-        try client.view.project(frame_allocator, &owned_rich.?);
-    defer client.view.deinit(view);
+    var rich_view = if (cached_rich) |value| value else owned_rich.?.view();
+    const begin = rich_view.begin;
 
     const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
-    try updateHostCanvas(host, view);
+    try updateHostCanvasRich(host, &rich_view);
     const frame = terminal.frame(host.canvas, residency, .{
         .uploads = &host.frame_uploads,
         .removals = &host.frame_removals,
@@ -1163,7 +1159,7 @@ fn observe(
     const hcr_len = hcr_end - hcr_start;
     if (hcr_end > canvas_packet_budget) return error.BufferTooSmall;
     for (0..begin.rows) |row| {
-        const shape = client.selection.rowShape(view, @intCast(row)) orelse
+        const shape = client.selection.rowShapeRich(&rich_view, @intCast(row)) orelse
             return error.InvalidFrame;
         const encoded_shape = shape.content_end_exclusive |
             (if (shape.wrapped) @as(u16, 1) << 15 else 0);
@@ -1172,7 +1168,10 @@ fn observe(
     const semantic_start = writer.offset;
     if (semantic_start + semantic_capacity > output.len)
         return error.BufferTooSmall;
-    const semantic = client.view.writeVisibleText(view, output[semantic_start .. semantic_start + semantic_capacity]);
+    const semantic = client.view.writeVisibleRichText(
+        &rich_view,
+        output[semantic_start .. semantic_start + semantic_capacity],
+    );
     writer.offset = semantic_start + semantic.bytes_written;
     const total = writer.offset;
     if (total > std.math.maxInt(u32) or hcr_len > std.math.maxInt(u32) or
@@ -1197,11 +1196,11 @@ fn observe(
     return total;
 }
 
-fn updateHostCanvas(
+fn updateHostCanvasRich(
     host: *Host,
-    view: *const client.view.Snapshot,
+    view: *const client.rich.View,
 ) !void {
-    const graphics = client.view.graphics(view);
+    const graphics = view.graphics;
     if (graphics.images.len > maximum_terminal_images)
         return error.InvalidHost;
     var candidate: [maximum_terminal_images]HostImageBinding = undefined;
@@ -1211,7 +1210,7 @@ fn updateHostCanvas(
         graphics.images,
         &candidate,
     ) catch return error.InvalidHost;
-    try terminal.updateWithImageBindings(host.canvas, view, bindings);
+    try terminal.updateRichWithImageBindings(host.canvas, view, bindings);
     @memcpy(host.image_bindings[0..bindings.len], bindings);
     host.image_binding_count = bindings.len;
 }

@@ -230,6 +230,24 @@ pub fn rowShape(snapshot: *const view.Snapshot, viewport_row: u16) ?RowShape {
     return .{ .content_end_exclusive = 0, .wrapped = row.wrapped };
 }
 
+/// Borrowed-rich equivalent of rowShape. Rich observations have already passed
+/// the wire decoder's semantic validation; this scan retains no source slices.
+pub fn rowShapeRich(snapshot: *const rich.View, viewport_row: u16) ?RowShape {
+    if (viewport_row >= snapshot.begin.rows or viewport_row >= snapshot.rows.len) return null;
+    const row = snapshot.rows[viewport_row];
+    var scan = row.cells.len;
+    while (scan > 0) {
+        scan -= 1;
+        const cell = row.cells[scan];
+        if (cell.x != 0 or cell.y != 0 or cell.scalars.len == 0) continue;
+        if (cell.scalars[0] == ' ') continue;
+        const width = @max(cell.width, 1);
+        const end = @min(@as(usize, snapshot.begin.columns), scan + width);
+        return .{ .content_end_exclusive = @intCast(end), .wrapped = row.wrapped };
+    }
+    return .{ .content_end_exclusive = 0, .wrapped = row.wrapped };
+}
+
 /// Requests canonical UTF-8 for one client-local range. The returned allocation belongs to `allocator`.
 pub fn extract(connection: *client.Connection, allocator: std.mem.Allocator, range: Range) Error![]u8 {
     var payload: [protocol.payload_bytes.text_extract]u8 = undefined;
@@ -465,6 +483,11 @@ test "row shape trims blank tail and preserves wide text plus wrap identity" {
         rowShape(snapshot, 1),
     );
     try std.testing.expect(rowShape(snapshot, 2) == null);
+
+    const borrowed = source.view();
+    try std.testing.expectEqual(rowShape(snapshot, 0), rowShapeRich(&borrowed, 0));
+    try std.testing.expectEqual(rowShape(snapshot, 1), rowShapeRich(&borrowed, 1));
+    try std.testing.expect(rowShapeRich(&borrowed, 2) == null);
 
     const visual = (try visualRow(snapshot, 0)).?;
     const ordered = visual.ordered();
