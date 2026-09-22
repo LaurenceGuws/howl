@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
 import 'native_canvas.dart';
@@ -556,15 +556,30 @@ final class NativeCanvasPainter extends CustomPainter {
     required this.logicalWidth,
     required this.logicalHeight,
     this.devicePixelRatio,
-  });
+  }) : _leaseListenable = null,
+       super();
 
-  final NativeCanvasLease lease;
+  NativeCanvasPainter.listenable({
+    required ValueListenable<NativeCanvasLease?> lease,
+    required this.logicalWidth,
+    required this.logicalHeight,
+    this.devicePixelRatio,
+  }) : lease = null,
+       _leaseListenable = lease,
+       super(repaint: lease);
+
+  final NativeCanvasLease? lease;
+  final ValueListenable<NativeCanvasLease?>? _leaseListenable;
   final double logicalWidth;
   final double logicalHeight;
   final double? devicePixelRatio;
 
+  NativeCanvasLease? get _currentLease => _leaseListenable?.value ?? lease;
+
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    final lease = _currentLease;
+    if (lease == null) return;
     final fit = TerminalFit.contain(
       viewportSize: size,
       logicalSize: ui.Size(logicalWidth, logicalHeight),
@@ -590,13 +605,21 @@ final class NativeCanvasPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant NativeCanvasPainter oldDelegate) =>
-      oldDelegate.lease.frame.revision != lease.frame.revision ||
-      oldDelegate.lease.frame.surfaceWidth != lease.frame.surfaceWidth ||
-      oldDelegate.lease.frame.surfaceHeight != lease.frame.surfaceHeight ||
-      oldDelegate.logicalWidth != logicalWidth ||
-      oldDelegate.logicalHeight != logicalHeight ||
-      oldDelegate.devicePixelRatio != devicePixelRatio;
+  bool shouldRepaint(covariant NativeCanvasPainter oldDelegate) {
+    if (!identical(oldDelegate._leaseListenable, _leaseListenable)) return true;
+    if (oldDelegate.logicalWidth != logicalWidth ||
+        oldDelegate.logicalHeight != logicalHeight ||
+        oldDelegate.devicePixelRatio != devicePixelRatio) {
+      return true;
+    }
+    if (_leaseListenable != null) return false;
+    final oldLease = oldDelegate.lease;
+    final lease = this.lease;
+    if (oldLease == null || lease == null) return oldLease != lease;
+    return oldLease.frame.revision != lease.frame.revision ||
+        oldLease.frame.surfaceWidth != lease.frame.surfaceWidth ||
+        oldLease.frame.surfaceHeight != lease.frame.surfaceHeight;
+  }
 }
 
 ui.Rect _destination(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(

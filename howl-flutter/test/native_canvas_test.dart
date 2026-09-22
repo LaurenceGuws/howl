@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/native_canvas.dart';
 import 'package:howl_flutter/native_canvas_surface.dart';
@@ -841,4 +841,41 @@ void main() {
       throwsA(isA<NativeHostException>()),
     );
   });
+
+  test(
+    'listenable painter invalidates paint without replacing its delegate',
+    () async {
+      final firstBytes = _oneFrameCanvas();
+      final secondBytes = _oneFrameCanvas();
+      ByteData.sublistView(secondBytes)
+          .setUint64(NativeCanvasFrame.globalHeaderBytes + 8, 3, Endian.little);
+      final first = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(firstBytes),
+      );
+      final second = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(secondBytes),
+      );
+      final lease = ValueNotifier<NativeCanvasLease?>(first.lease);
+      final painter = NativeCanvasPainter.listenable(
+        lease: lease,
+        logicalWidth: 10,
+        logicalHeight: 20,
+      );
+      var notifications = 0;
+      void listener() => notifications += 1;
+      painter.addListener(listener);
+      try {
+        lease.value = second.lease;
+        expect(notifications, 1);
+        expect(painter.shouldRepaint(painter), isFalse);
+      } finally {
+        painter.removeListener(listener);
+        lease.dispose();
+        disposeNativeCanvasLease(first.lease);
+        disposeNativeCanvasLease(second.lease);
+      }
+    },
+  );
 }

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import 'desktop_selection.dart';
@@ -146,7 +147,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final HowlDiagnostics _diagnostics = HowlDiagnostics();
   final TerminalFramePerf _framePerf = TerminalFramePerf();
+  final ValueNotifier<NativeCanvasLease?> _livePaintLease =
+      ValueNotifier<NativeCanvasLease?>(null);
   late final TimingsCallback _frameTimingsCallback;
+  late final VoidCallback _semanticsEnabledListener;
   late final Stopwatch _perfClock;
   int? _lastAdoptUs;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
@@ -219,6 +223,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       }
     };
     SchedulerBinding.instance.addTimingsCallback(_frameTimingsCallback);
+    _semanticsEnabledListener = () {
+      if (mounted && !_stopping) setState(() {});
+    };
+    SemanticsBinding.instance.addSemanticsEnabledListener(
+      _semanticsEnabledListener,
+    );
     _diagnostics.record(
       'App',
       'start platform=${Platform.operatingSystem} target=${widget.target.diagnosticLabel} '
@@ -294,6 +304,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       final oldLive = _nativeLiveLease;
       setState(() {
         _nativeLiveLease = null;
+        _livePaintLease.value = null;
         _nativeLiveMetadata = null;
         _nativeLiveSemanticText = '';
         _nativeLiveSemanticTruncated = false;
@@ -507,6 +518,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         try {
           if (abandoned()) break;
           if (presentationChanged()) throw const _PresentationRestart();
+          final previousLiveMetadata = _nativeLiveMetadata;
+          final hadSelection = _selection != null;
+          final hadTransportStatus = _failure != null || _reconnecting;
           revision = packet.metadata.revision;
           if (!loggedFirstFrame) {
             loggedFirstFrame = true;
@@ -520,6 +534,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           _nativeLiveSemanticText = packet.semanticText;
           _nativeLiveSemanticTruncated = packet.semanticTruncated;
           _nativeLiveLease = prepared.lease;
+          _livePaintLease.value = prepared.lease;
           adopted = true;
           _transportRecovery.succeeded();
           _failure = null;
@@ -538,7 +553,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           } else if (wasHistoryActive) {
             _leaveHistory();
           } else {
-            setState(() {});
+            final repaintOnly =
+                previousLiveMetadata != null &&
+                previousLiveMetadata.rows == packet.metadata.rows &&
+                previousLiveMetadata.columns == packet.metadata.columns &&
+                !hadSelection &&
+                _selection == null &&
+                !SemanticsBinding.instance.semanticsEnabled &&
+                !hadTransportStatus;
+            if (!repaintOnly) setState(() {});
           }
           // TCP receive can overlap display pacing. Unix retains its existing
           // display-boundary coalescing instead of importing network policy.
@@ -1651,11 +1674,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _activateTextInput();
   }
 
-  void _startSelection(
-    LongPressStartDetails details,
-    Size viewportSize,
-    NativeHostMetadata? metadata,
-  ) {
+  void _startSelection(LongPressStartDetails details, Size viewportSize) {
+    final metadata = _displayedMetadata;
     if (metadata == null || _stopping) return;
     final viewport = _selectionViewport(metadata);
     final geometry = TerminalSelectionGeometry(
@@ -1890,6 +1910,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void dispose() {
     _stopping = true;
     SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
+    SemanticsBinding.instance.removeSemanticsEnabledListener(
+      _semanticsEnabledListener,
+    );
     try {
       _nativeInterrupt?.cancel();
     } catch (_) {}
@@ -1905,6 +1928,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _leaveHistory();
     disposeNativeCanvasLease(_nativeLiveLease);
     disposeNativeCanvasLease(_nativeHistoryLease);
+    _livePaintLease.dispose();
     super.dispose();
   }
 
@@ -1950,12 +1974,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                   nativeMetadata.columns * _cellWidth,
                   nativeMetadata.rows * _lineHeight,
                 ),
-                painter: NativeCanvasPainter(
-                  lease: nativeLease,
-                  logicalWidth: nativeMetadata.columns * _cellWidth,
-                  logicalHeight: nativeMetadata.rows * _lineHeight,
-                  devicePixelRatio: View.of(context).devicePixelRatio,
-                ),
+                painter: !_history.active
+                    ? NativeCanvasPainter.listenable(
+                        lease: _livePaintLease,
+                        logicalWidth: nativeMetadata.columns * _cellWidth,
+                        logicalHeight: nativeMetadata.rows * _lineHeight,
+                        devicePixelRatio: View.of(context).devicePixelRatio,
+                      )
+                    : NativeCanvasPainter(
+                        lease: nativeLease,
+                        logicalWidth: nativeMetadata.columns * _cellWidth,
+                        logicalHeight: nativeMetadata.rows * _lineHeight,
+                        devicePixelRatio: View.of(context).devicePixelRatio,
+                      ),
               ),
             ),
           ),
@@ -1977,11 +2008,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                       Positioned.fill(
                         child: TerminalTouchSurface(
                           onTap: _onTerminalTap,
-                          onLongPressStart: (details) => _startSelection(
-                            details,
-                            constraints.biggest,
-                            nativeMetadata,
-                          ),
+                          onLongPressStart: (details) =>
+                              _startSelection(details, constraints.biggest),
                           onVerticalDragStart: _beginHistoryDrag,
                           onVerticalDragUpdate: _updateHistoryDrag,
                           onVerticalDragEnd: _endHistoryDrag,
