@@ -445,7 +445,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       final restoreIme = _restoreImeAfterPresentationRestart;
       if (_focusNode.hasFocus && _selection == null) {
         _textInput.attach(viewId: View.of(context).viewId);
-        if (restoreIme ?? true) _scheduleTextInputShow();
+        if (restoreIme ?? _platformInput.showsSoftKeyboardImplicitly) {
+          _scheduleTextInputShow();
+        }
         _sendFocus(true);
       }
       if (zoomPreset == _zoomPreset) {
@@ -1119,17 +1121,32 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     }
   }
 
-  void _activateTextInput() {
+  void _activateTextInput({bool showSoftKeyboard = false}) {
     if (_selection != null) return;
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (!_hasControl) return;
     _textInput.attach(viewId: View.of(context).viewId);
-    _scheduleTextInputShow();
+    if (showSoftKeyboard || _platformInput.showsSoftKeyboardImplicitly) {
+      _scheduleTextInputShow();
+    }
   }
 
-  void _showSoftKeyboard() {
+  void _toggleSoftKeyboard() {
     _returnToLiveForInput();
-    _activateTextInput();
+    if (_platformInput.usesAndroidImeHost &&
+        MediaQuery.viewInsetsOf(context).bottom > 0) {
+      unawaited(_hideSoftKeyboard());
+      return;
+    }
+    _activateTextInput(showSoftKeyboard: true);
+  }
+
+  Future<void> _hideSoftKeyboard() async {
+    try {
+      await _platformInput.hide();
+    } catch (error) {
+      _reportFailure(error);
+    }
   }
 
   NativeHostMetadata? get _displayedMetadata =>
@@ -1777,7 +1794,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (!focused) _iosPhysicalArrowRepeat.cancel();
     if (focused && _hasControl && _selection == null) {
       _textInput.attach(viewId: View.of(context).viewId);
-      _scheduleTextInputShow();
+      if (_platformInput.showsSoftKeyboardImplicitly) {
+        _scheduleTextInputShow();
+      }
     } else {
       _textInput.detach();
     }
@@ -2037,11 +2056,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             zoomPreset: _zoomPreset,
             geometryLeader: _geometryLeader,
+            keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
             onZoom: _changeZoom,
             onLead: _takeGeometryLeadership,
-            onKeyboard: _showSoftKeyboard,
+            onKeyboard: _toggleSoftKeyboard,
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
             onLog: () => unawaited(_copyDiagnostics()),

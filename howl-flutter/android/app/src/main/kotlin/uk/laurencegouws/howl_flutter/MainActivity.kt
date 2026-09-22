@@ -45,6 +45,10 @@ class MainActivity : FlutterActivity() {
                         scheduleTerminalIme()
                         result.success(null)
                     }
+                    "hide" -> {
+                        hideTerminalIme()
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -79,6 +83,15 @@ class MainActivity : FlutterActivity() {
         cancelPendingImeShow()
         pendingShowView = flutterView
         flutterView.postDelayed(showImeRunnable, SHOW_DELAY_MS)
+    }
+
+    private fun hideTerminalIme() {
+        cancelPendingImeShow()
+        val flutterView = findViewById<FlutterView>(FLUTTER_VIEW_ID) ?: return
+        val inputMethodManager =
+            getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        val token = flutterView.windowToken ?: return
+        inputMethodManager.hideSoftInputFromWindow(token, 0)
     }
 
     private fun cancelPendingImeShow() {

@@ -21,6 +21,11 @@ final class TerminalPlatformInput {
 
   bool get usesAndroidImeHost => platform == TargetPlatform.android;
 
+  /// Android keeps terminal focus and the TextInput connection ready without
+  /// consuming viewport space. Its software keyboard is an explicit Kbd action.
+  /// iOS preserves the established eager text-input behavior.
+  bool get showsSoftKeyboardImplicitly => !usesAndroidImeHost;
+
   TextInputType get inputType =>
       usesAndroidImeHost ? TextInputType.visiblePassword : TextInputType.text;
 
@@ -39,5 +44,10 @@ final class TerminalPlatformInput {
       return;
     }
     flutterShow();
+  }
+
+  Future<void> hide() async {
+    if (!usesAndroidImeHost) return;
+    await _androidIme.invokeMethod<void>('hide');
   }
 }

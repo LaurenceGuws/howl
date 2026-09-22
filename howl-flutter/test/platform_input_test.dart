@@ -31,4 +31,17 @@ void main() {
       isTrue,
     );
   });
+
+  test('Android software keyboard is explicit while iOS remains implicit', () {
+    expect(
+      const TerminalPlatformInput(platformOverride: TargetPlatform.android)
+          .showsSoftKeyboardImplicitly,
+      isFalse,
+    );
+    expect(
+      const TerminalPlatformInput(platformOverride: TargetPlatform.iOS)
+          .showsSoftKeyboardImplicitly,
+      isTrue,
+    );
+  });
 }
