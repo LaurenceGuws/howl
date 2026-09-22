@@ -158,7 +158,8 @@ Each observation is:
    `snapshot_delta_data` for an accepted revision-relative delta, or
    `snapshot_packed_data` for `observe_packed`;
 3. one `snapshot_graphics` manifest;
-4. one `snapshot_end` with the same observation revision.
+4. one `snapshot_properties` frame from the same immutable cut;
+5. one `snapshot_end` with the same observation revision.
 
 A single snapshot never mixes compressed, raw, delta, and packed text chunks. The endpoint
 materializes the coherent snapshot before emitting `snapshot_begin`. PTY/VT
@@ -636,12 +637,13 @@ not increase image-pixel storage or merge replacement/deletion identities.
 
 ## Framing v9 coherent terminal properties (retained by v10)
 
-Every compressed, raw or delta snapshot now includes exactly one
+Every compressed, raw, delta, or packed snapshot includes exactly one
 `snapshot_properties` frame after `snapshot_graphics` and before `snapshot_end`.
 It belongs to the same immutable cut and needs no second query or title socket.
 Metadata-only mutation wakes ordinary observers; a new attachment receives the
-current values. Missing, duplicate, malformed or wrongly ordered packets fail
-validation. V8 clients and V9 endpoints must be rebuilt as matching bundles.
+current values. Missing, duplicate, malformed or wrongly ordered packets fail validation.
+Historical v8/v9 bundles must be rebuilt as matching bundles; current peers use
+one exact framing-v10 boundary.
 
 The payload is `properties_v1`, at most 6,180 bytes. Multi-byte fields are big-endian.
 
