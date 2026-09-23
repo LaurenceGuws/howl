@@ -1953,6 +1953,12 @@ fn buildContentCommands(
             if (contentStyle(cell).invisible) continue;
 
             if (View.isImagePlaceholder(sequence)) continue;
+            // U+0020 has no glyph ink in the accepted terminal presentation.
+            // Backgrounds, decorations and cursor paint are owned by their
+            // separate layers above/below this glyph pass, so shaping and
+            // atlas lookup for an ordinary space can only rediscover an empty
+            // raster.
+            if (sequence.len == 1 and sequence[0] == ' ') continue;
             const ascii_index = glyph_cache.printableAsciiIndex(sequence);
             const colors = try contentCellColors(cell, presentation);
 

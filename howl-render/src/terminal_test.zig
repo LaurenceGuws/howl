@@ -1350,3 +1350,67 @@ test "terminal Canvas canonical virtual placements and OSC 66 share final projec
         "\x1b[38;5;56m\u{10eeee}\u{305}\u{305}\x1b[0m", 0);
     try expectDirectEquivalent("\x1b]66;s=2;AB\x07", 0);
 }
+
+test "terminal Canvas space owns no glyph ink while presentation layers remain" {
+    var scalar = [_]u32{' '};
+    var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
+    cells[0].style_bits = 0;
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var source = sourceSnapshot(&rows, 1);
+    source.begin.cursor_visible = true;
+    source.presentation.presence_bits = 1;
+    source.presentation.cursor = .{ .r = 9, .g = 8, .b = 7, .a = 255 };
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    defer host.deinit();
+    const frame = (try host.present(view)).frame;
+
+    var alpha_count: usize = 0;
+    var cursor_background = false;
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => alpha_count += 1,
+        .solid => |value| if (std.meta.eql(value.color, terminal.Color{ .r = 9, .g = 8, .b = 7, .a = 255 })) {
+            cursor_background = true;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 0), alpha_count);
+    try std.testing.expect(cursor_background);
+}
+
+test "terminal Canvas styled space keeps background and decoration without glyph ink" {
+    var scalar = [_]u32{' '};
+    var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
+    cells[0].style_bits = (1 << 5) | (1 << 7) | (1 << 8);
+    cells[0].underline_style = 1;
+    cells[0].underline_color = .{ .kind = .rgb, .value = 0x445566 };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    defer host.deinit();
+    const frame = (try host.present(view)).frame;
+
+    var alpha_count: usize = 0;
+    var reverse_background = false;
+    var decoration_count: usize = 0;
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => alpha_count += 1,
+        .solid => |value| {
+            if (std.meta.eql(value.color, terminal.Color{ .r = 0xab, .g = 0xcd, .b = 0xef, .a = 255 }))
+                reverse_background = true;
+            if (std.meta.eql(value.color, terminal.Color{ .r = 0x44, .g = 0x55, .b = 0x66, .a = 255 }))
+                decoration_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 0), alpha_count);
+    try std.testing.expect(reverse_background);
+    try std.testing.expect(decoration_count >= 1);
+}
