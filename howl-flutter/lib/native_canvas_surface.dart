@@ -650,9 +650,11 @@ ui.Color _rgbaBitsToColor(int value) => ui.Color.from(
   blue: _srgbByteToLinear[(value >> 16) & 0xff],
 );
 
-final List<double> _srgbByteToLinear = List<double>.generate(256, (value) {
-  final encoded = value / 255.0;
-  return encoded <= 0.04045
-      ? encoded / 12.92
-      : math.pow((encoded + 0.055) / 1.055, 2.4).toDouble();
-}, growable: false);
+final Float64List _srgbByteToLinear = Float64List.fromList(
+  List<double>.generate(256, (value) {
+    final encoded = value / 255.0;
+    return encoded <= 0.04045
+        ? encoded / 12.92
+        : math.pow((encoded + 0.055) / 1.055, 2.4).toDouble();
+  }, growable: false),
+).asUnmodifiableView();
