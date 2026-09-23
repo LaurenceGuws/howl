@@ -155,6 +155,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int? _lastAdoptUs;
   final IosNetworkProbe _iosNetworkProbe = const IosNetworkProbe();
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
+  late final TerminalSoftKeyboardOwner _softKeyboard;
   final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
   final HistoryViewport _history = HistoryViewport();
   late final TerminalTextInputClient _textInput;
@@ -194,7 +195,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int _modifierLatch = 0;
   TerminalZoomPreset _zoomPreset = TerminalZoomPreset.normal;
   late bool _geometryLeader;
-  bool? _restoreImeAfterPresentationRestart;
+  bool _presentationRestartPending = false;
   Size? _terminalViewportSize;
   TerminalSelectionRange? _selection;
   final DesktopSelectionController _desktopSelection =
@@ -211,6 +212,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void initState() {
     super.initState();
     _geometryLeader = widget.geometryLeader;
+    _softKeyboard = TerminalSoftKeyboardOwner();
     _perfClock = Stopwatch()..start();
     _frameTimingsCallback = (timings) {
       for (final timing in timings) {
@@ -340,7 +342,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             error is _PresentationRestart ||
             (error is NativeHostException &&
                 error.kind == NativeFailureKind.canceled &&
-                _restoreImeAfterPresentationRestart != null);
+                _presentationRestartPending);
         if (presentationRestart) {
           _diagnostics.record('Transport', 'presentation restart');
           _transportRecovery.succeeded();
@@ -453,16 +455,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _interactionStateCache = null;
       _interactionStateCachedAt = null;
       _transportFault = Completer<Object>();
-      final restoreIme = _restoreImeAfterPresentationRestart;
       if (_focusNode.hasFocus && _selection == null) {
         _textInput.attach(viewId: View.of(context).viewId);
-        if (restoreIme ?? _platformInput.showsSoftKeyboardImplicitly) {
-          _scheduleTextInputShow();
+        if (_softKeyboard.requestedVisible) {
+          _scheduleSoftKeyboardApply();
         }
         _sendFocus(true);
       }
       if (zoomPreset == _zoomPreset) {
-        _restoreImeAfterPresentationRestart = null;
+        _presentationRestartPending = false;
       }
       var revision = 0;
       var loggedFirstFrame = false;
@@ -943,6 +944,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (networkProbe != null) {
       _diagnostics.record('iOS Network', networkProbe);
     }
+    _diagnostics.record('Keyboard', _softKeyboard.diagnosticSummary);
     _diagnostics.record('Perf Terminal', _framePerf.terminalSummary());
     _diagnostics.record('Perf Flutter', _framePerf.flutterSummary());
     _diagnostics.record(
@@ -1127,49 +1129,45 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     return KeyEventResult.handled;
   }
 
-  void _scheduleTextInputShow() {
+  void _scheduleSoftKeyboardApply() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _stopping || !_focusNode.hasFocus || !_hasControl) {
+      if (!mounted ||
+          _stopping ||
+          !_focusNode.hasFocus ||
+          !_hasControl ||
+          _selection != null) {
         return;
       }
-      unawaited(_showTextInput());
+      unawaited(_applySoftKeyboardVisibility(_softKeyboard.requestedVisible));
     });
   }
 
-  Future<void> _showTextInput() async {
+  Future<void> _applySoftKeyboardVisibility(bool visible) async {
+    final request = _softKeyboard.request(
+      visible,
+      apply: (requested) =>
+          _textInput.setSoftKeyboardVisible(_platformInput, requested),
+    );
+    if (mounted && !_stopping) setState(() {});
     try {
-      await _textInput.show(_platformInput);
+      await request;
+      _diagnostics.record('Keyboard', _softKeyboard.diagnosticSummary);
     } catch (error) {
-      _reportFailure(error);
+      _diagnostics.record('Keyboard', 'assertion failed: $error');
     }
   }
 
-  void _activateTextInput({bool showSoftKeyboard = false}) {
+  void _activateTextInput() {
     if (_selection != null) return;
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (!_hasControl) return;
     _textInput.attach(viewId: View.of(context).viewId);
-    if (showSoftKeyboard || _platformInput.showsSoftKeyboardImplicitly) {
-      _scheduleTextInputShow();
-    }
   }
 
   void _toggleSoftKeyboard() {
     _returnToLiveForInput();
-    if (_platformInput.usesAndroidImeHost) {
-      _activateTextInput();
-      unawaited(_toggleAndroidSoftKeyboard());
-      return;
-    }
-    _activateTextInput(showSoftKeyboard: true);
-  }
-
-  Future<void> _toggleAndroidSoftKeyboard() async {
-    try {
-      await _platformInput.toggle();
-    } catch (error) {
-      _reportFailure(error);
-    }
+    _activateTextInput();
+    unawaited(_applySoftKeyboardVisibility(!_softKeyboard.requestedVisible));
   }
 
   NativeHostMetadata? get _displayedMetadata =>
@@ -1782,9 +1780,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void _changeZoom(TerminalZoomPreset preset) {
     if (_stopping || preset == _zoomPreset) return;
     _scheduledRasterScale = null;
-    _restoreImeAfterPresentationRestart = _platformInput.usesAndroidImeHost
-        ? false
-        : MediaQuery.viewInsetsOf(context).bottom > 0;
+    _presentationRestartPending = true;
     _leaveHistory();
     setState(() {
       _zoomPreset = preset;
@@ -1815,8 +1811,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (!focused) _iosPhysicalArrowRepeat.cancel();
     if (focused && _hasControl && _selection == null) {
       _textInput.attach(viewId: View.of(context).viewId);
-      if (_platformInput.showsSoftKeyboardImplicitly) {
-        _scheduleTextInputShow();
+      if (_softKeyboard.requestedVisible) {
+        _scheduleSoftKeyboardApply();
       }
     } else {
       _textInput.detach();
@@ -1836,8 +1832,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (currentScale != rasterScale || currentScale == _nativeRasterScale) {
         return;
       }
-      _restoreImeAfterPresentationRestart =
-          MediaQuery.viewInsetsOf(context).bottom > 0;
+      _presentationRestartPending = true;
       _leaveHistory();
       setState(() {
         _selection = null;
@@ -1934,6 +1929,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   @override
   Widget build(BuildContext context) {
+    _softKeyboard.observe(MediaQuery.viewInsetsOf(context).bottom > 0);
     Widget content;
     final failure = _failure;
     final nativeMetadata = _history.active
@@ -2085,6 +2081,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             zoomPreset: _zoomPreset,
             geometryLeader: _geometryLeader,
+            keyboardRequestedVisible: _softKeyboard.requestedVisible,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
             onZoom: _changeZoom,

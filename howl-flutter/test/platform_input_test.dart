@@ -32,16 +32,62 @@ void main() {
     );
   });
 
-  test('Android software keyboard is explicit while iOS remains implicit', () {
+  test('software keyboard owner starts explicitly hidden and settled', () {
+    final owner = TerminalSoftKeyboardOwner();
+    expect(owner.requestedVisible, isFalse);
+    expect(owner.observedVisible, isFalse);
+    expect(owner.settled, isTrue);
     expect(
-      const TerminalPlatformInput(platformOverride: TargetPlatform.android)
-          .showsSoftKeyboardImplicitly,
-      isFalse,
+      owner.diagnosticSummary,
+      'requested=false observed=false settled=true',
     );
-    expect(
-      const TerminalPlatformInput(platformOverride: TargetPlatform.iOS)
-          .showsSoftKeyboardImplicitly,
-      isTrue,
+  });
+
+  test(
+    'software keyboard owner asserts explicit show and hide observations',
+    () async {
+      final owner = TerminalSoftKeyboardOwner();
+      final applied = <bool>[];
+
+      final show = owner.request(
+        true,
+        apply: (visible) async => applied.add(visible),
+      );
+      expect(owner.requestedVisible, isTrue);
+      expect(owner.observedVisible, isFalse);
+      expect(owner.settled, isFalse);
+      owner.observe(true);
+      await show;
+      expect(owner.settled, isTrue);
+
+      final hide = owner.request(
+        false,
+        apply: (visible) async => applied.add(visible),
+      );
+      expect(owner.requestedVisible, isFalse);
+      expect(owner.observedVisible, isTrue);
+      expect(owner.settled, isFalse);
+      owner.observe(false);
+      await hide;
+      expect(owner.settled, isTrue);
+      expect(applied, <bool>[true, false]);
+    },
+  );
+
+  test('software keyboard request fails closed when platform state does not settle', () async {
+    final owner = TerminalSoftKeyboardOwner(
+      settleTimeout: const Duration(milliseconds: 1),
     );
+    await expectLater(
+      owner.request(true, apply: (_) async {}),
+      throwsA(
+        isA<TerminalSoftKeyboardVisibilityException>()
+            .having((error) => error.requestedVisible, 'requested', isTrue)
+            .having((error) => error.observedVisible, 'observed', isFalse),
+      ),
+    );
+    expect(owner.requestedVisible, isTrue);
+    expect(owner.observedVisible, isFalse);
+    expect(owner.settled, isFalse);
   });
 }

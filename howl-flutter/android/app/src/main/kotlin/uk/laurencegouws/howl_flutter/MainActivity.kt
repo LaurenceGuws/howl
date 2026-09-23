@@ -1,9 +1,6 @@
 package uk.laurencegouws.howl_flutter
 
 import android.content.Context
-import android.graphics.Rect
-import android.os.Build
-import android.view.WindowInsets
 import android.util.Log
 import android.view.inputmethod.InputMethodManager
 import io.flutter.embedding.android.FlutterActivity
@@ -48,8 +45,8 @@ class MainActivity : FlutterActivity() {
                         scheduleTerminalIme()
                         result.success(null)
                     }
-                    "toggle" -> {
-                        toggleTerminalIme()
+                    "hide" -> {
+                        hideTerminalIme()
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -86,27 +83,6 @@ class MainActivity : FlutterActivity() {
         cancelPendingImeShow()
         pendingShowView = flutterView
         flutterView.postDelayed(showImeRunnable, SHOW_DELAY_MS)
-    }
-
-
-    private fun toggleTerminalIme() {
-        val flutterView = findViewById<FlutterView>(FLUTTER_VIEW_ID) ?: return
-        if (terminalImeVisible(flutterView)) {
-            hideTerminalIme()
-        } else {
-            scheduleTerminalIme()
-        }
-    }
-
-    private fun terminalImeVisible(flutterView: FlutterView): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return flutterView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
-        }
-        val visible = Rect()
-        flutterView.getWindowVisibleDisplayFrame(visible)
-        val rootHeight = flutterView.rootView.height
-        if (rootHeight <= 0) return false
-        return rootHeight - visible.bottom > rootHeight * 0.15
     }
 
     private fun hideTerminalIme() {

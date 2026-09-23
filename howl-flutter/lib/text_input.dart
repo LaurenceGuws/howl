@@ -293,8 +293,25 @@ final class TerminalTextInputClient with TextInputClient, DeltaTextInputClient {
   }
 
   Future<void> show(TerminalPlatformInput platformInput) async {
+    await setSoftKeyboardVisible(platformInput, true);
+  }
+
+  Future<void> hide(TerminalPlatformInput platformInput) async {
+    await setSoftKeyboardVisible(platformInput, false);
+  }
+
+  Future<void> setSoftKeyboardVisible(
+    TerminalPlatformInput platformInput,
+    bool visible,
+  ) async {
+    if (!visible) {
+      await platformInput.hide();
+      return;
+    }
     final connection = _connection;
-    if (connection == null || !connection.attached) return;
+    if (connection == null || !connection.attached) {
+      throw StateError('terminal text input is not attached');
+    }
     await platformInput.show(connection.show);
   }
 

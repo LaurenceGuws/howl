@@ -509,6 +509,11 @@ void main() {
         const TerminalPlatformInput(platformOverride: TargetPlatform.linux),
       );
       expect(tester.testTextInput.isVisible, isTrue);
+      await client.hide(
+        const TerminalPlatformInput(platformOverride: TargetPlatform.linux),
+      );
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(client.attached, isTrue);
 
       tester.testTextInput.updateEditingValue(
         guardedValue('é', composing: const TextRange(start: 1, end: 2)),
@@ -592,8 +597,10 @@ void main() {
       expect(tester.testTextInput.isVisible, isFalse);
 
       await client.show(platformInput);
-      expect(calls.map((call) => call.method), <String>['show']);
+      await client.hide(platformInput);
+      expect(calls.map((call) => call.method), <String>['show', 'hide']);
       expect(tester.testTextInput.isVisible, isFalse);
+      expect(client.attached, isTrue);
     },
   );
 

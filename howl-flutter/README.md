@@ -75,7 +75,7 @@ history viewport stays local, mouse-aware applications receive semantic wheel
 reports, DEC alternate-scroll becomes cursor-key input, and ordinary shell wheel
 input navigates scrollback. Hover/click never eject an active history viewport. A
 compact strip above the software keyboard exposes one-shot Ctrl/Alt latches plus
-Esc, Tab, arrow keys, keyboard restore, the current raster-size cycle, Copy and
+Esc, Tab, arrow keys, an explicit software-keyboard toggle, the current raster-size cycle, Copy and
 Paste; a latched modifier applies to the next special key or single committed
 Unicode scalar, then clears.
 The size control shows the current raster size and cycles `16px -> 12px -> 9px
@@ -95,6 +95,11 @@ outer input-kind byte still fits the frozen 64 KiB request ceiling. This keeps
 bracketed-paste policy in the canonical VT instead of approximating a multi-line
 paste as text plus synthetic Enter keys. Empty, unavailable or oversized
 clipboard content is a client-local no-op rather than a terminal attach failure.
+Software-keyboard visibility is likewise app-shell policy rather than focus
+policy: the terminal keeps its text-input connection while the `Kbd` control
+explicitly requests show/hide on both Android and iOS. The client observes the
+resulting viewport inset and bounds each request with a requested-vs-observed
+visibility assertion.
 
 Copy is likewise presentation-local. With no active selection it writes the
 current live or scrolled viewport's bounded `howl-client.view.writeVisibleText`

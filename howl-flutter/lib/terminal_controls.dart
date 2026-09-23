@@ -12,6 +12,7 @@ final class TerminalControlStrip extends StatelessWidget {
     required this.modifierLatch,
     required this.zoomPreset,
     required this.geometryLeader,
+    required this.keyboardRequestedVisible,
     required this.onModifier,
     required this.onKey,
     required this.onZoom,
@@ -25,6 +26,7 @@ final class TerminalControlStrip extends StatelessWidget {
   final int modifierLatch;
   final TerminalZoomPreset zoomPreset;
   final bool geometryLeader;
+  final bool keyboardRequestedVisible;
   final ValueChanged<int> onModifier;
   final ValueChanged<int> onKey;
   final ValueChanged<TerminalZoomPreset> onZoom;
@@ -49,7 +51,7 @@ final class TerminalControlStrip extends StatelessWidget {
           _key('↓', HowlInput.namedArrowDown),
           _key('↑', HowlInput.namedArrowUp),
           _key('→', HowlInput.namedArrowRight),
-          _action('Kbd', onKeyboard),
+          _action('Kbd', onKeyboard, latched: keyboardRequestedVisible),
           _action(
             '${zoomPreset.presentation.fontPixels}px',
             () => onZoom(zoomPreset.next),
