@@ -93,6 +93,8 @@ pub const Service = struct {
     changed: bool,
     /// True when this service turn changed visible-row or scroll/history state.
     viewport_changed: bool,
+    /// Ordered semantic release/tail facts. Publication policy belongs to the caller.
+    synchronized_output: Terminal.SynchronizedOutputProgress = .{},
     /// True when retained caller work exceeded its bounded queue and Instance
     /// applied deterministic headless policy to at least one older consequence.
     retained_consequence_fallback: bool = false,
@@ -356,6 +358,7 @@ const State = struct {
     ) ServiceError!Service {
         const revision_before = self.terminal.semanticSequence();
         var viewport_changed = false;
+        var synchronized_output: Terminal.SynchronizedOutputProgress = .{};
         var retained_consequence_fallback = false;
         if (consequence_policy == .headless) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
@@ -364,6 +367,7 @@ const State = struct {
                 revision_before,
                 timestamp_ns,
                 viewport_changed,
+                synchronized_output,
                 retained_consequence_fallback,
             ),
         };
@@ -371,6 +375,7 @@ const State = struct {
             timestamp_ns,
             consequence_policy,
             &viewport_changed,
+            &synchronized_output,
             &retained_consequence_fallback,
         );
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
@@ -388,6 +393,7 @@ const State = struct {
                 timestamp_ns,
                 consequence_policy,
                 &viewport_changed,
+                &synchronized_output,
                 &retained_consequence_fallback,
             );
         }
@@ -399,6 +405,7 @@ const State = struct {
             revision_before,
             timestamp_ns,
             viewport_changed,
+            synchronized_output,
             retained_consequence_fallback,
         );
     }
@@ -408,6 +415,7 @@ const State = struct {
         timestamp_ns: u64,
         consequence_policy: ConsequencePolicy,
         viewport_changed: *bool,
+        synchronized_output: *Terminal.SynchronizedOutputProgress,
         retained_consequence_fallback: *bool,
     ) ServiceError!void {
         while (self.read_start < self.read_end) {
@@ -429,6 +437,7 @@ const State = struct {
             std.debug.assert(progress.consumed <= self.read_end - self.read_start);
             self.read_start += progress.consumed;
             viewport_changed.* = viewport_changed.* or progress.summary.mutations.viewport;
+            synchronized_output.merge(progress.summary.synchronized_output);
             retained_consequence_fallback.* =
                 retained_consequence_fallback.* or progress.consequence_pressure_relieved;
             std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
@@ -452,12 +461,14 @@ const State = struct {
         revision_before: u64,
         timestamp_ns: u64,
         viewport_changed: bool,
+        synchronized_output: Terminal.SynchronizedOutputProgress,
         retained_consequence_fallback: bool,
     ) Service {
         const animation = self.terminal.serviceAnimations(timestamp_ns);
         return .{
             .changed = self.terminal.semanticSequence() != revision_before,
             .viewport_changed = viewport_changed,
+            .synchronized_output = synchronized_output,
             .retained_consequence_fallback = retained_consequence_fallback,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
@@ -1034,4 +1045,35 @@ test "write backpressure preserves reply ordering and unread PTY suffix" {
     view = state.terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'Y'), view.cellAt(0, 1));
+}
+
+test "service preserves synchronized release across buffered feeds and reply boundaries" {
+    const Case = struct { bytes: []const u8, ended: bool, held: bool };
+    const cases = [_]Case{
+        .{ .bytes = "A", .ended = false, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[6n\x1b[?2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\", .ended = true, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l\x1b[?2026hB", .ended = true, .held = true },
+        .{ .bytes = "A\x1b[?2026l", .ended = false, .held = false },
+    };
+    for (cases) |case| {
+        const instance = try init(std.testing.allocator, std.testing.environ, .{
+            .shell = "/bin/sh",
+            .command = "exec sleep 30",
+            .rows = 2,
+            .columns = 24,
+            .history_rows = 2,
+        });
+        defer deinit(instance);
+        const state = stateMut(instance);
+        @memcpy(state.reads[0..case.bytes.len], case.bytes);
+        state.read_end = case.bytes.len;
+        const result = try state.service(false, false, 1, .headless);
+        try std.testing.expectEqual(case.ended, result.synchronized_output.ended);
+        try std.testing.expectEqual(case.held, terminal(instance).synchronizedOutput());
+        try std.testing.expectEqual(@as(usize, 0), state.read_end);
+        const idle = try state.service(false, false, 2, .headless);
+        try std.testing.expect(!idle.synchronized_output.ended);
+    }
 }

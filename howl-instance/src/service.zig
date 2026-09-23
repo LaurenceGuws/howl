@@ -1427,15 +1427,22 @@ pub const Service = struct {
         terminal_changed: bool,
         burst_eligible: bool,
         viewport_changed: bool,
+        synchronized_output: howl.Terminal.SynchronizedOutputProgress,
         now_ns: u64,
     ) TerminalPublication {
+        // A drain can contain end -> begin. A new held frame must not inherit
+        // an older frame's fail-open permission, nor publish that partial cut.
+        if (synchronized_output.ended) {
+            self.synchronized_output_started_ns = null;
+            self.synchronized_output_timed_out = false;
+        }
         if (!howl.terminal(self.instance).synchronizedOutput()) {
-            const release_pending = self.synchronized_output_pending;
+            const release_pending = self.synchronized_output_pending or synchronized_output.ended;
             self.synchronized_output_started_ns = null;
             self.synchronized_output_timed_out = false;
             self.synchronized_output_pending = false;
-            if (release_pending) return .immediate;
-            if (!terminal_changed) return .none;
+            if (release_pending and !synchronized_output.trailing_effect) return .immediate;
+            if (!terminal_changed and !release_pending) return .none;
             if (!burst_eligible) return .immediate;
             return if (viewport_changed) .burst_scroll else .burst_fast;
         }
@@ -1483,6 +1490,7 @@ pub const Service = struct {
             terminal_changed,
             burst_eligible,
             result.viewport_changed,
+            result.synchronized_output,
             now_ns,
         )) {
             .none => {},
@@ -2954,4 +2962,213 @@ test "canonical VT allocation failure still escapes the client containment bound
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expect(escaped);
     try std.testing.expectEqual(@as(u16, 1), service.clientCount());
+}
+
+test "complete synchronized frame publishes without fallback quiet hold" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033[?2026hSYNC_READY\\033[?2026l'; exec sleep 30",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000) : (turns += 1) {
+        try service.turn(1);
+        if (semanticViewContains(howl.terminal(instance).semanticView(0), "SYNC_READY") and
+            !howl.terminal(instance).synchronizedOutput()) break;
+    }
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expectEqual(before + 1, service.observation_revision);
+    try std.testing.expect(service.burst_publication.started_ns == null);
+}
+
+test "unbracketed output retains quiet and bounded burst publication" {
+    var gate: BurstPublicationGate = .{};
+    gate.note(10, burst_publication_fast_max_ns);
+    try std.testing.expect(!gate.ready(10 + burst_publication_quiet_ns - 1));
+    try std.testing.expect(gate.ready(10 + burst_publication_quiet_ns));
+    try std.testing.expect(gate.waitMs(10 + burst_publication_quiet_ns) == null);
+    gate.note(10, burst_publication_fast_max_ns);
+    gate.note(10 + burst_publication_fast_max_ns - 1, burst_publication_fast_max_ns);
+    try std.testing.expect(gate.ready(10 + burst_publication_fast_max_ns));
+    gate.note(10, burst_publication_fast_max_ns);
+    gate.note(10 + burst_publication_fast_max_ns - 1, burst_publication_scroll_max_ns);
+    try std.testing.expect(!gate.ready(10 + burst_publication_fast_max_ns));
+    gate.note(10 + burst_publication_scroll_max_ns - 1, burst_publication_scroll_max_ns);
+    try std.testing.expect(gate.ready(10 + burst_publication_scroll_max_ns));
+
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf RAW_READY; exec sleep 30",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "RAW_READY")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expect(service.burst_publication.started_ns != null);
+    try std.testing.expectEqual(TerminalPublication.burst_fast, service.terminalPublication(true, true, false, .{ .ended = false }, 1));
+    try std.testing.expectEqual(TerminalPublication.burst_scroll, service.terminalPublication(true, true, true, .{ .ended = false }, 1));
+    try std.testing.expectEqual(TerminalPublication.immediate, service.terminalPublication(true, false, false, .{ .ended = false }, 1));
+}
+
+test "release followed by a new held frame neither publishes nor inherits timeout permission" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033[?2026hA\\033[?2026l\\033[?2026hB'; exec sleep 30",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "AB")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(howl.terminal(instance).synchronizedOutput());
+    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expect(service.synchronized_output_pending);
+    try std.testing.expect(service.burst_publication.started_ns == null);
+
+    // Controlled monotonic time proves the boundary, not a wall-clock sleep.
+    try std.testing.expectEqual(TerminalPublication.none, service.terminalPublication(true, true, false, .{ .ended = true }, 100));
+    try std.testing.expectEqual(TerminalPublication.none, service.terminalPublication(false, true, false, .{ .ended = false }, 100 + synchronized_output_timeout_ns - 1));
+    try std.testing.expectEqual(TerminalPublication.immediate, service.terminalPublication(false, true, false, .{ .ended = false }, 100 + synchronized_output_timeout_ns));
+    try std.testing.expect(service.synchronized_output_timed_out);
+    try std.testing.expectEqual(TerminalPublication.none, service.terminalPublication(false, true, false, .{ .ended = false }, 101 + synchronized_output_timeout_ns));
+    try std.testing.expectEqual(TerminalPublication.immediate, service.terminalPublication(true, true, false, .{ .ended = false }, 102 + synchronized_output_timeout_ns));
+    // A later real end -> begin gives the new frame its own bounded hold.
+    try std.testing.expectEqual(TerminalPublication.none, service.terminalPublication(true, true, false, .{ .ended = true }, 200 + synchronized_output_timeout_ns));
+    try std.testing.expect(!service.synchronized_output_timed_out);
+    try std.testing.expectEqual(@as(?u64, 200 + synchronized_output_timeout_ns), service.synchronized_output_started_ns);
+}
+
+test "raw tail after synchronized release retains fallback burst protection" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033[?2026hA\\033[?2026lRAW_PART'; exec sleep 30",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "RAW_PART")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(!howl.terminal(instance).synchronizedOutput());
+    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expect(service.burst_publication.started_ns != null);
+}
+
+test "held frame release with a raw tail preserves batching across PTY turns" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hHELD'; read line; " ++
+            "printf '\\033[?2026lRAW_PART'; exec sleep 30",
+        .rows = 2,
+        .columns = 24,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "HELD")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(service.synchronized_output_pending);
+    try std.testing.expectEqual(before, service.observation_revision);
+    try howl.input(instance, .{ .bytes = "go\n" });
+    service.pty_write_pending = true;
+    turns = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "RAW_PART")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(!howl.terminal(instance).synchronizedOutput());
+    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expect(service.burst_publication.started_ns != null);
+}
+
+test "stalled observer cannot stop canonical synchronized frames or final lifecycle release" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf READY; read line; i=0; " ++
+            "while [ $i -lt 100 ]; do printf '\\033[?2026h\\033[HCANONICAL_%03d\\033[?2026l' $i; i=$((i+1)); done; " ++
+            "printf '\\033[?2026h\\033[HFINAL_HELD'; exit 0",
+        .rows = 47,
+        .columns = 192,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(std.testing.allocator, &service);
+    defer peer.deinit();
+    try peer.sendFrame(&service, .hello, &.{});
+    var welcome = try awaitTestFrame(&peer, &service);
+    defer welcome.deinit(std.testing.allocator);
+    var turns: usize = 0;
+    while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "READY")) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    var observe: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
+    try peer.sendFrame(&service, .observe_raw, &observe);
+    // Deliberately never drain this peer's large snapshot again.
+    for (0..10) |_| try service.turn(0);
+    const before = service.observation_revision;
+    try std.testing.expect(service.clients[0].?.outputPending());
+    try howl.input(instance, .{ .bytes = "go\n" });
+    service.pty_write_pending = true;
+    turns = 0;
+    while (turns < 2_000 and !(service.stream_closed and service.child_exited)) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(semanticViewContains(howl.terminal(instance).semanticView(0), "FINAL_HELD"));
+    try std.testing.expect(service.observation_revision > before);
+    try std.testing.expectEqual(@as(u16, 1), service.clientCount());
+    try std.testing.expect(service.clients[0].?.outputPending());
+}
+
+test "DCS frame with pending-wrap-only tail retains burst protection" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033P=1s\\033\\\\A\\033P=2s\\033\\\\\\033[?6l'; exec sleep 30",
+        .rows = 2,
+        .columns = 1,
+        .history_rows = 2,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+    const before = service.observation_revision;
+    var turns: usize = 0;
+    while (turns < 2_000) : (turns += 1) {
+        try service.turn(1);
+        if (howl.terminal(instance).semanticView(0).cellAt(0, 0) == 'A' and
+            !howl.terminal(instance).synchronizedOutput()) break;
+    }
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expect(service.burst_publication.started_ns != null);
 }

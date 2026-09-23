@@ -3837,9 +3837,28 @@ const TerminalFeedError = error{
     ParsedEventLimit,
 };
 
-/// Reports the one packed mutation set crossing the VT feed boundary.
+/// Ordered semantic facts from a feed, without retained state or publication policy.
+pub const TerminalSynchronizedOutputProgress = struct {
+    /// At least one real enabled-to-disabled transition occurred.
+    ended: bool = false,
+    /// An effect followed the last release, or occurred without a release.
+    /// Reply/consequence effects count conservatively, just like state changes.
+    trailing_effect: bool = false,
+
+    /// Appends a later feed prefix. A later release supersedes earlier effects.
+    pub fn merge(self: *TerminalSynchronizedOutputProgress, later: TerminalSynchronizedOutputProgress) void {
+        self.trailing_effect = if (later.ended)
+            later.trailing_effect
+        else
+            self.trailing_effect or later.trailing_effect;
+        self.ended = self.ended or later.ended;
+    }
+};
+
+/// Reports semantic mutations and transient protocol transitions from one feed.
 pub const TerminalFeedSummary = struct {
     mutations: MutationSet,
+    synchronized_output: TerminalSynchronizedOutputProgress = .{},
 
     /// Derives the legacy aggregate state-change question from `mutations`.
     pub fn stateChanged(self: TerminalFeedSummary) bool {
@@ -3879,6 +3898,9 @@ const TerminalStream = struct {
     terminal: *Terminal,
     consequence_pressure_relief: ?ConsequencePressureRelief = null,
     consequence_pressure_relieved: bool = false,
+    // Transient feed-local facts, never retained on Terminal or per-byte results.
+    synchronized_output: TerminalSynchronizedOutputProgress = .{},
+    synchronized_output_held: bool = false,
 
     /// Creates a stream borrowing the terminal until the stream is discarded.
     fn init(terminal: *Terminal) TerminalStream {
@@ -3909,7 +3931,7 @@ const TerminalStream = struct {
         std.debug.assert(!summary.iconChanged() or summary.stateChanged());
     }
 
-    fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!TerminalFeedSummary {
+    fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
         var mutations: MutationSet = .{};
         const state = &self.terminal.stream_state;
 
@@ -3934,12 +3956,22 @@ const TerminalStream = struct {
                     !event_mutations.stateChanged())
                     event_mutations.mode = true;
                 mutations.merge(event_mutations);
+                var ended = false;
+                if (event_mutations.mode) {
+                    const held = self.terminal.synchronizedOutput();
+                    ended = self.synchronized_output_held and !held;
+                    self.synchronized_output_held = held;
+                }
+                std.debug.assert(self.synchronized_output_held == self.terminal.synchronizedOutput());
+                if (ended) {
+                    self.synchronized_output = .{ .ended = true };
+                } else if (effect.changed or event_mutations.stateChanged()) {
+                    self.synchronized_output.trailing_effect = true;
+                }
             }
         }
 
-        return .{
-            .mutations = mutations,
-        };
+        return mutations;
     }
 
     // Bulk capture only parser-proven payload: no terminal mutation, reply, or
@@ -3959,6 +3991,8 @@ const TerminalStream = struct {
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
+        self.synchronized_output = .{};
+        self.synchronized_output_held = self.terminal.synchronizedOutput();
         var completed = false;
         const before = MutationObservation.capture(self.terminal);
         defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
@@ -3970,14 +4004,14 @@ const TerminalStream = struct {
                 consumed += payload_bytes;
                 continue;
             }
-            const byte_summary = try self.nextSummary(bytes[consumed]);
-            summary.mutations.merge(byte_summary.mutations);
+            summary.mutations.merge(try self.nextSummary(bytes[consumed]));
             consumed += 1;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
             summary.mutations.history_loss = true;
         self.terminal.completeStreamMutation(summary.stateChanged());
+        summary.synchronized_output = self.synchronized_output;
         completed = true;
         return summary;
     }
@@ -3990,6 +4024,8 @@ const TerminalStream = struct {
         consequence_head_before: ?u64,
     ) TerminalFeedError!TerminalFeedProgress {
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
+        self.synchronized_output = .{};
+        self.synchronized_output_held = self.terminal.synchronizedOutput();
         var consumed: usize = 0;
         var completed = false;
         const before = MutationObservation.capture(self.terminal);
@@ -4001,8 +4037,7 @@ const TerminalStream = struct {
                 consumed += payload_bytes;
                 continue;
             }
-            const byte_summary = try self.nextSummary(bytes[consumed]);
-            summary.mutations.merge(byte_summary.mutations);
+            summary.mutations.merge(try self.nextSummary(bytes[consumed]));
             consumed += 1;
             const consequence_head = self.terminal.consequenceHead();
             if (self.terminal.reply_buffer.len() != replies_before or
@@ -4014,6 +4049,7 @@ const TerminalStream = struct {
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
             summary.mutations.history_loss = true;
         self.terminal.completeStreamMutation(summary.stateChanged());
+        summary.synchronized_output = self.synchronized_output;
         completed = true;
         return .{
             .summary = summary,
@@ -4852,6 +4888,8 @@ pub const Terminal = struct {
     pub const FeedSummary = TerminalFeedSummary;
     /// Reports the consumed prefix and merged mutations from a service-bounded feed.
     pub const FeedProgress = TerminalFeedProgress;
+    /// Ordered release and trailing-effect facts from canonical parsing.
+    pub const SynchronizedOutputProgress = TerminalSynchronizedOutputProgress;
     /// Reports one caller-clocked animation service turn.
     pub const AnimationService = struct {
         /// True when a currently displayed image frame changed.
@@ -6614,6 +6652,8 @@ pub const Terminal = struct {
 
     fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) bool {
         const active = self.screen_state.active();
+        // Some mode actions consume pending wrap before the shared cleanup.
+        const wrap_pending_before = active.wrap_pending;
         const mode_changed = switch (mode_number) {
             // Recognized unsupported modes leave even pending-wrap state untouched.
             2, 4, 20, 42 => return false,
@@ -6696,7 +6736,7 @@ pub const Terminal = struct {
             19997 => replaceBool(&self.modes.termios_signals, enabled),
             else => return false,
         };
-        return active.cancelPendingWrap() or mode_changed;
+        return active.cancelPendingWrap() or wrap_pending_before or mode_changed;
     }
 
     fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
@@ -9645,4 +9685,118 @@ test "ordinary OSC9 notifications remain distinct from bounded retained progress
     try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
     const head = terminal.consequenceHead().?;
     try std.testing.expectEqualStrings("hello", head.notification.payload);
+}
+
+test "synchronized release fact survives every feed split and reports actual transitions" {
+    const Case = struct { bytes: []const u8, ended: bool, held: bool };
+    const cases = [_]Case{
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1b[?25;2026hA\x1b[?25;2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\", .ended = true, .held = false },
+        .{ .bytes = "\x1bP=1s\x1b\\A\x1b[?2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l\x1b[?2026hB", .ended = true, .held = true },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l\x1b[?2026hB\x1b[?2026l", .ended = true, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026h", .ended = false, .held = true },
+        .{ .bytes = "A\x1b[?2026l", .ended = false, .held = false },
+        .{ .bytes = "A\x1bP=2s\x1b\\", .ended = false, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1bc", .ended = true, .held = false },
+    };
+    for (cases) |case| {
+        for (0..case.bytes.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+            defer terminal.deinit();
+            const first = try terminal.feed(case.bytes[0..split]);
+            const second = try terminal.feed(case.bytes[split..]);
+            try std.testing.expectEqual(case.ended, first.synchronized_output.ended or second.synchronized_output.ended);
+            try std.testing.expectEqual(case.held, terminal.synchronizedOutput());
+            // The fact belongs to this feed, not the Terminal's retained state.
+            try std.testing.expect(!(try terminal.feed("")).synchronized_output.ended);
+        }
+    }
+}
+
+test "synchronized release remains observable across reply service boundaries" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+    defer terminal.deinit();
+    const bytes = "\x1b[?2026hA\x1b[6n\x1b[?2026l";
+    const query = try terminal.feedAtServiceBoundary(bytes, 1);
+    try std.testing.expect(query.consumed < bytes.len);
+    try std.testing.expect(!query.summary.synchronized_output.ended);
+    try std.testing.expect(terminal.synchronizedOutput());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const release = try terminal.feedAtServiceBoundary(bytes[query.consumed..], 2);
+    try std.testing.expectEqual(bytes.len, query.consumed + release.consumed);
+    try std.testing.expect(release.summary.synchronized_output.ended);
+    try std.testing.expect(!terminal.synchronizedOutput());
+}
+
+test "synchronized progress preserves ordered tail effects across every split" {
+    const Case = struct { suffix: []const u8, tail: bool };
+    const frame = "\x1b[?2026hA\x1b[?2026l";
+    const cases = [_]Case{
+        .{ .suffix = "", .tail = false },
+        .{ .suffix = "\x00", .tail = false },
+        .{ .suffix = "\x1b[?2026l", .tail = false },
+        .{ .suffix = "RAW_PART", .tail = true },
+        .{ .suffix = "\r", .tail = true },
+        .{ .suffix = "\n\n", .tail = true },
+        // Queries remain serviced normally; their reply effect conservatively
+        // leaves the exact-end fast path rather than requiring special policy.
+        .{ .suffix = "\x1b[6n", .tail = true },
+        .{ .suffix = "\x1b[?2026hB", .tail = true },
+        .{ .suffix = "RAW\x1b[?2026hB\x1b[?2026l", .tail = false },
+        .{ .suffix = "\x1b[6nRAW\x1bP=1s\x1b\\B\x1bP=2s\x1b\\", .tail = false },
+    };
+    for (cases) |case| {
+        var buffer: [128]u8 = undefined;
+        @memcpy(buffer[0..frame.len], frame);
+        @memcpy(buffer[frame.len..][0..case.suffix.len], case.suffix);
+        const bytes = buffer[0 .. frame.len + case.suffix.len];
+        for (0..bytes.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+            defer terminal.deinit();
+            var progress = (try terminal.feed(bytes[0..split])).synchronized_output;
+            progress.merge((try terminal.feed(bytes[split..])).synchronized_output);
+            try std.testing.expect(progress.ended);
+            try std.testing.expectEqual(case.tail, progress.trailing_effect);
+        }
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+        defer terminal.deinit();
+        var progress: Terminal.SynchronizedOutputProgress = .{};
+        for (bytes) |byte| progress.merge((try terminal.feed(&.{byte})).synchronized_output);
+        try std.testing.expect(progress.ended);
+        try std.testing.expectEqual(case.tail, progress.trailing_effect);
+    }
+}
+
+test "post-release pending-wrap cancellation is a trailing semantic effect" {
+    const frame = "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\";
+    // DECOM clears pending wrap before setDecMode performs its final cleanup;
+    // repeated DECAWM-off and grouped/restored modes use the same owner.
+    const tails = [_][]const u8{ "\x1b[?6l", "\x1b[?7l", "\x1b[?6;7l", "\x1b[?6s\x1b[?6r" };
+    for (tails) |tail| {
+        var buffer: [96]u8 = undefined;
+        @memcpy(buffer[0..frame.len], frame);
+        @memcpy(buffer[frame.len..][0..tail.len], tail);
+        const bytes = buffer[0 .. frame.len + tail.len];
+        for (0..bytes.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 1, 2);
+            defer terminal.deinit();
+            var progress = (try terminal.feed(bytes[0..split])).synchronized_output;
+            progress.merge((try terminal.feed(bytes[split..])).synchronized_output);
+            try std.testing.expect(progress.ended);
+            try std.testing.expect(progress.trailing_effect);
+            try std.testing.expect(!terminal.screen_state.activeConst().wrap_pending);
+        }
+    }
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 1, 2);
+    defer terminal.deinit();
+    const complete = try terminal.feed(frame);
+    try std.testing.expect(complete.synchronized_output.ended);
+    try std.testing.expect(!complete.synchronized_output.trailing_effect);
+    try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+    const tail = try terminal.feed("\x1b[?6l");
+    try std.testing.expect(tail.mutations.cursor);
+    try std.testing.expect(tail.stateChanged());
+    try std.testing.expect(tail.synchronized_output.trailing_effect);
 }
