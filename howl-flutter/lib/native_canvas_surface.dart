@@ -645,14 +645,14 @@ ui.Rect _source(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(
 
 ui.Color _rgbaBitsToColor(int value) => ui.Color.from(
   alpha: ((value >> 24) & 0xff) / 255.0,
-  red: _srgbByteToLinear(value & 0xff),
-  green: _srgbByteToLinear((value >> 8) & 0xff),
-  blue: _srgbByteToLinear((value >> 16) & 0xff),
+  red: _srgbByteToLinear[value & 0xff],
+  green: _srgbByteToLinear[(value >> 8) & 0xff],
+  blue: _srgbByteToLinear[(value >> 16) & 0xff],
 );
 
-double _srgbByteToLinear(int value) {
+final List<double> _srgbByteToLinear = List<double>.generate(256, (value) {
   final encoded = value / 255.0;
   return encoded <= 0.04045
       ? encoded / 12.92
       : math.pow((encoded + 0.055) / 1.055, 2.4).toDouble();
-}
+}, growable: false);
