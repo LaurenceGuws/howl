@@ -71,7 +71,7 @@ const FastDraw = struct {
 };
 
 const DuetReady = union(enum) {
-    scene: usize,
+    scene: struct { index: usize, prepared: terminal_scene.Prepared },
     command: shared.HostCommand,
     window_size: shared.WindowSize,
     display_scale: shared.DisplayScale,
@@ -227,7 +227,7 @@ fn runFallible(
         }
     }
     scenes[0] = if (local_owner) |owner|
-        try terminal_scene.Scene.initLocal(allocator, owner, font, font_pixels)
+        try terminal_scene.Scene.initLocal(allocator, owner, font, font_pixels, boundary.stopFd())
     else
         try terminal_scene.Scene.init(allocator, target orelse return error.SceneTargetMissing, font, font_pixels);
     initialized_scene_count = 1;
@@ -731,12 +731,10 @@ fn runFallible(
             return failure;
         };
         switch (ready) {
-            .scene => |ready_index| {
+            .scene => |received| {
+                const ready_index = received.index;
                 next_ready_start = (ready_index + 1) % scene_count;
-                const next = scenes[ready_index].?.receivePrepared() catch |failure| {
-                    if (boundary.shouldStop()) break;
-                    return failure;
-                };
+                const next = received.prepared;
                 observation_armed[ready_index] = false;
                 if (next.width != prepared[ready_index].width or
                     next.height != prepared[ready_index].height)
@@ -875,6 +873,7 @@ fn runFallible(
                 workspace_cols = target_cols;
                 if (local_owner) |owner| {
                     try rebuildLocalSceneForScale(
+                        boundary.stopFd(),
                         allocator,
                         owner,
                         font,
@@ -1133,6 +1132,7 @@ fn rebuildScenesForScale(
 }
 
 fn rebuildLocalSceneForScale(
+    stop_descriptor: i32,
     allocator: std.mem.Allocator,
     owner: *local_terminal.Owner,
     font: terminal_scene.FontPaths,
@@ -1154,6 +1154,7 @@ fn rebuildLocalSceneForScale(
         owner,
         font,
         font_pixels,
+        stop_descriptor,
     );
     errdefer replacement.deinit();
     const next = try replacement.prepare(0);
@@ -2246,8 +2247,10 @@ fn waitDuetReady(
         // prevents drag traffic from starving application redraws while keeping
         // motion coalesced at the Boundary.
         if (prefer_scene) {
-            if (readyScene(descriptors[0..scene_count], start)) |index|
-                return .{ .scene = index };
+            if (readyScene(descriptors[0..scene_count], start)) |index| {
+                if (try scenes[index].?.tryReceivePrepared()) |prepared|
+                    return .{ .scene = .{ .index = index, .prepared = prepared } };
+            }
         }
         if (control_events & c.POLLIN != 0) {
             try boundary.drainControlWake();
@@ -2272,8 +2275,10 @@ fn waitDuetReady(
                 continue;
             }
         }
-        if (readyScene(descriptors[0..scene_count], start)) |index|
-            return .{ .scene = index };
+        if (readyScene(descriptors[0..scene_count], start)) |index| {
+            if (try scenes[index].?.tryReceivePrepared()) |prepared|
+                return .{ .scene = .{ .index = index, .prepared = prepared } };
+        }
     }
 }
 

@@ -118,9 +118,28 @@ pub const Scene = struct {
         raw_cache: client.rich.RawCache,
     };
 
+    const Local = struct {
+        owner: *local_terminal.Owner,
+        // Borrowed from the Host Boundary; never drained or closed by Scene.
+        stop_descriptor: i32,
+        after_revision: u64 = 0,
+
+        fn wait(self: Local) !void {
+            var descriptors = [_]std.posix.pollfd{
+                .{ .fd = self.owner.observationFd(), .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = self.stop_descriptor, .events = std.posix.POLL.IN, .revents = 0 },
+            };
+            const ready = try std.posix.poll(&descriptors, -1);
+            if (ready == 0) return error.ScenePoll;
+            if (descriptors[1].revents != 0) return error.Stopping;
+            if (descriptors[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL) != 0)
+                return error.ScenePoll;
+        }
+    };
+
     const Source = union(enum) {
         remote: Remote,
-        local: *local_terminal.Owner,
+        local: Local,
     };
 
     allocator: std.mem.Allocator,
@@ -169,9 +188,14 @@ pub const Scene = struct {
         owner: *local_terminal.Owner,
         font: FontPaths,
         font_pixels: u16,
+        stop_descriptor: i32,
     ) !Scene {
         if (font_pixels == 0) return error.InvalidFontPixels;
-        return initSource(allocator, .{ .local = owner }, font, font_pixels);
+        if (stop_descriptor < 0) return error.InvalidStopDescriptor;
+        return initSource(allocator, .{ .local = .{
+            .owner = owner,
+            .stop_descriptor = stop_descriptor,
+        } }, font, font_pixels);
     }
 
     fn initSource(
@@ -354,7 +378,10 @@ pub const Scene = struct {
                 after_revision,
                 0,
             ),
-            .local => |owner| owner.armObservation(after_revision),
+            .local => |*source| {
+                source.after_revision = after_revision;
+                source.owner.armObservation(after_revision);
+            },
         }
         self.observation_pending = true;
     }
@@ -363,12 +390,21 @@ pub const Scene = struct {
     pub fn readinessFd(self: *const Scene) std.posix.fd_t {
         return switch (self.source) {
             .remote => |source| source.connection.readinessFd(),
-            .local => |owner| owner.observationFd(),
+            .local => |source| source.owner.observationFd(),
         };
     }
 
-    /// Receives and projects exactly one previously armed delta/raw-fallback observation.
+    /// Completes an armed observation; local waits also select Host cancellation.
     pub fn receivePrepared(self: *Scene) !Prepared {
+        while (true) {
+            if (try self.tryReceivePrepared()) |prepared| return prepared;
+            try self.source.local.wait();
+        }
+    }
+
+    /// Local stale/held wakes return null without consuming the revision request.
+    /// Remote streams receive one previously armed delta/raw-fallback as before.
+    pub fn tryReceivePrepared(self: *Scene) !?Prepared {
         if (!self.observation_pending) return error.ObservationNotPending;
         return switch (self.source) {
             .remote => |*source| blk: {
@@ -376,10 +412,11 @@ pub const Scene = struct {
                 self.observation_pending = false;
                 break :blk try self.prepareRich(&rich, &source.connection);
             },
-            .local => |owner| blk: {
-                try owner.drainObservationWake();
+            .local => |source| blk: {
+                var guard = try source.owner.observePublished(source.after_revision) orelse return null;
+                defer guard.deinit();
                 self.observation_pending = false;
-                break :blk try self.prepareLocal(owner, 0);
+                break :blk try self.prepareLocal(guard.value, 0);
             },
         };
     }
@@ -393,7 +430,16 @@ pub const Scene = struct {
         history_offset: u32,
     ) !Prepared {
         switch (self.source) {
-            .local => |owner| return self.prepareLocal(owner, history_offset),
+            .local => |source| {
+                while (true) {
+                    if (try source.owner.observePublished(null)) |borrowed| {
+                        var guard = borrowed;
+                        defer guard.deinit();
+                        return self.prepareLocal(guard.value, history_offset);
+                    }
+                    try source.wait();
+                }
+            },
             .remote => {},
         }
         const control = connection orelse return error.InvalidControl;
@@ -481,12 +527,9 @@ pub const Scene = struct {
 
     fn prepareLocal(
         self: *Scene,
-        owner: *local_terminal.Owner,
+        observation: *const @import("howl_vt").Terminal.Observation,
         history_offset: u32,
     ) !Prepared {
-        var guard = owner.observe();
-        defer guard.deinit();
-        const observation = guard.value;
         const cell_pixels = observation.cellPixelSize() orelse
             return error.InvalidGeometry;
         const view = observation.semanticView(history_offset);
@@ -1018,6 +1061,8 @@ test "terminal scene projects one local Instance image without client transport"
         },
     );
     defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
 
     var ready = false;
     var attempts: u16 = 0;
@@ -1053,6 +1098,7 @@ test "terminal scene projects one local Instance image without client transport"
             .fallbacks = &fallbacks,
         },
         16,
+        stop.descriptor,
     );
     defer scene.deinit();
     try std.testing.expectEqual(
@@ -1072,7 +1118,7 @@ test "terminal scene projects one local Instance image without client transport"
     );
 }
 
-test "local historical prepared frame cannot stale replay after output and reflow" {
+test "terminal scene local historical frame cannot stale replay after output and reflow" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     var owner = try local_terminal.Owner.init(
@@ -1093,6 +1139,8 @@ test "local historical prepared frame cannot stale replay after output and reflo
         },
     );
     defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
 
     var attempts: u16 = 0;
     while (attempts < 4000) : (attempts += 1) {
@@ -1100,7 +1148,7 @@ test "local historical prepared frame cannot stale replay after output and reflo
         var descriptors = [_]std.posix.pollfd{.{
             .fd = state.descriptor,
             .events = std.posix.POLL.IN | std.posix.POLL.HUP |
-                (if (state.write_pending) std.posix.POLL.OUT else 0),
+                @as(i16, if (state.write_pending) std.posix.POLL.OUT else 0),
             .revents = 0,
         }};
         const count = try std.posix.poll(&descriptors, 1);
@@ -1128,6 +1176,7 @@ test "local historical prepared frame cannot stale replay after output and reflo
         &owner,
         .{ .primary = @import("test_fonts").primary_font },
         16,
+        stop.descriptor,
     );
     defer scene.deinit();
 
@@ -1145,7 +1194,7 @@ test "local historical prepared frame cannot stale replay after output and reflo
         var descriptors = [_]std.posix.pollfd{.{
             .fd = state.descriptor,
             .events = std.posix.POLL.IN | std.posix.POLL.HUP |
-                (if (state.write_pending) std.posix.POLL.OUT else 0),
+                @as(i16, if (state.write_pending) std.posix.POLL.OUT else 0),
             .revents = 0,
         }};
         const count = try std.posix.poll(&descriptors, 1);
@@ -1233,4 +1282,272 @@ test "terminal scene prepared geometry compares canonical cell pixels, not prese
         72,
         .{ .width = 10, .height = 20 },
     ));
+}
+
+// Handshakes select the interleaving; the bounded poll only awaits child output.
+fn testLocalTitle(owner: *local_terminal.Owner, title: []const u8, now_ns: u64) !void {
+    try testLocalTitleState(owner, title, now_ns, false);
+}
+
+fn testLocalTitleState(owner: *local_terminal.Owner, title: []const u8, now_ns: u64, leader_may_exit: bool) !void {
+    for (0..2000) |_| {
+        const state = owner.pollState();
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = state.descriptor,
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP |
+                @as(i16, if (state.write_pending) std.posix.POLL.OUT else 0),
+            .revents = 0,
+        }};
+        const ready = try std.posix.poll(&descriptors, 1);
+        const events = if (ready == 0) 0 else descriptors[0].revents;
+        const result = try owner.service(
+            events & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+            state.write_pending or events & std.posix.POLL.OUT != 0,
+            now_ns,
+        );
+        try std.testing.expect(!result.stream_closed);
+        if (!leader_may_exit) try std.testing.expect(result.child_exit == null);
+        var guard = owner.observe();
+        const matched = if (guard.value.title()) |value| std.mem.eql(u8, title, value) else false;
+        guard.deinit();
+        if (matched) return;
+    }
+    return error.Timeout;
+}
+
+fn testSceneReadable(scene: *const Scene, expected: bool) !void {
+    var descriptors = [_]std.posix.pollfd{.{
+        .fd = scene.readinessFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = try std.posix.poll(&descriptors, 0);
+    try std.testing.expectEqual(expected, ready != 0);
+}
+
+test "terminal scene stale publication wake cannot expose a newer held frame" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '0\\033]0;ZERO\\007'; read step; " ++
+            "printf 'A\\033]0;A\\007'; read step; " ++
+            "printf '\\033[?2026hB\\033]0;B\\007'; read step; " ++
+            "printf '\\033[?2026l\\033]0;DONE\\007'; read step",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
+    try testLocalTitle(&owner, "ZERO", 10);
+    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    defer scene.deinit();
+    const first = try scene.prepare(0);
+    try scene.complete();
+    try scene.arm(first.instance_revision);
+    try testSceneReadable(&scene, false);
+
+    try owner.input(.{ .bytes = "go\n" });
+    try testLocalTitle(&owner, "A", 20);
+    try testSceneReadable(&scene, true); // Keep this eligible wake outstanding.
+    try owner.input(.{ .bytes = "go\n" });
+    try testLocalTitle(&owner, "B", 30);
+    const held_revision = held: {
+        var guard = owner.observe();
+        defer guard.deinit();
+        try std.testing.expect(guard.value.synchronizedOutput());
+        try std.testing.expectEqual(@as(u21, 'B'), guard.value.semanticView(0).cellAt(0, 2));
+        break :held guard.value.semanticSequence();
+    };
+    try std.testing.expect(held_revision > first.instance_revision);
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    try std.testing.expect(scene.observation_pending);
+    try std.testing.expect(!scene.residency.pending);
+    try testSceneReadable(&scene, false);
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    owner.armObservation(held_revision);
+    try testSceneReadable(&scene, false);
+
+    try owner.input(.{ .bytes = "go\n" });
+    try testLocalTitle(&owner, "DONE", 40);
+    try testSceneReadable(&scene, true);
+    const released = try scene.receivePrepared();
+    try std.testing.expect(released.instance_revision > held_revision);
+    try scene.complete();
+    try scene.arm(released.instance_revision);
+    try testSceneReadable(&scene, false);
+}
+
+const TestStop = struct {
+    descriptor: i32,
+    fn init() !TestStop {
+        const linux = std.os.linux;
+        const fd = linux.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+        if (linux.errno(fd) != .SUCCESS) return error.Descriptor;
+        return .{ .descriptor = @intCast(fd) };
+    }
+    fn signal(self: *TestStop) !void {
+        const value: u64 = 1;
+        const bytes = std.mem.asBytes(&value);
+        if (std.os.linux.write(self.descriptor, bytes.ptr, bytes.len) != bytes.len) return error.Signal;
+    }
+    fn deinit(self: *TestStop) void {
+        std.debug.assert(std.os.linux.close(self.descriptor) == 0);
+        self.* = undefined;
+    }
+};
+
+test "terminal scene held startup geometry and history wait remain cancellable" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hA\\033]0;HELD\\007'; read step",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
+    try testLocalTitle(&owner, "HELD", 10);
+    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    defer scene.deinit();
+    try scene.arm(0);
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    try std.testing.expect(!scene.residency.pending);
+    const cell = scene.cellSize();
+    try owner.resizeGeometry(3, 12, cell.width, cell.height);
+    // Resize updates published geometry but cannot release the held screen.
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    try testSceneReadable(&scene, false);
+    try std.testing.expect(!owner.interactionState().keyboard_action_mode);
+    try stop.signal();
+    try std.testing.expectError(error.Stopping, scene.receivePrepared());
+    try scene.resetObserver(null);
+    try std.testing.expectError(error.Stopping, scene.prepare(0));
+    try std.testing.expectError(error.Stopping, scene.prepareHistory(null, 0));
+    try std.testing.expectError(error.Stopping, scene.prepareHistory(null, 1));
+    try std.testing.expect(!scene.residency.pending);
+}
+
+test "terminal scene idle synchronized timeout progresses without a new byte" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hA\\033]0;HELD\\007'; read step",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
+    try testLocalTitle(&owner, "HELD", 10);
+    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    defer scene.deinit();
+    try scene.arm(0);
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    try std.testing.expect(!(try owner.service(false, false, 9 + std.time.ns_per_s)).changed);
+    try testSceneReadable(&scene, false);
+    try std.testing.expect(!(try owner.service(false, false, 10 + std.time.ns_per_s)).changed);
+    try testSceneReadable(&scene, true);
+    const current = try scene.receivePrepared();
+    try scene.complete();
+    try scene.arm(current.instance_revision);
+    try std.testing.expect(!(try owner.service(false, false, 11 + std.time.ns_per_s)).changed);
+    try testSceneReadable(&scene, false);
+}
+
+test "terminal scene child exit releases held canonical state without an end" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hA\\033]0;HELD\\007'; read step; exit 0",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
+    try testLocalTitle(&owner, "HELD", 10);
+    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    defer scene.deinit();
+    try scene.arm(0);
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+    try owner.input(.{ .bytes = "exit\n" });
+    for (0..2000) |_| {
+        const state = owner.pollState();
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = state.descriptor,
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP |
+                @as(i16, if (state.write_pending) std.posix.POLL.OUT else 0),
+            .revents = 0,
+        }};
+        const ready = try std.posix.poll(&descriptors, 1);
+        const events = if (ready == 0) 0 else descriptors[0].revents;
+        const result = try owner.service(
+            events & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+            state.write_pending or events & std.posix.POLL.OUT != 0,
+            20,
+        );
+        if (result.stream_closed or result.child_exit != null) break;
+    } else return error.Timeout;
+    const final = try scene.receivePrepared();
+    try scene.complete();
+    try scene.arm(final.instance_revision);
+    // Lifecycle-only repeats do not synthesize later semantic revisions.
+    try std.testing.expect((try scene.tryReceivePrepared()) == null);
+}
+
+test "terminal scene descendant frame stays held after the leader exits" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try local_terminal.Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; trap '' HUP; exec 3<&0; " ++
+            "(printf 'A\\033]0;BASE\\007'; read step; " ++
+            "printf '\\033[?2026hB\\033]0;HELD\\007'; read step; " ++
+            "printf '\\033[?2026l\\033]0;DONE\\007'; read step) <&3 & exit 0",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    var stop = try TestStop.init();
+    defer stop.deinit();
+    try testLocalTitleState(&owner, "BASE", 10, true);
+    for (0..2000) |_| {
+        const result = try owner.service(false, false, 20);
+        try std.testing.expect(!result.stream_closed);
+        if (result.child_exit != null) break;
+        // Await the real leader-exit occurrence, not a guessed wall-clock sleep.
+        var descriptor = [_]std.posix.pollfd{.{
+            .fd = owner.pollState().descriptor,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = try std.posix.poll(&descriptor, 1);
+        try std.testing.expect(ready <= descriptor.len);
+    } else return error.Timeout;
+    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    defer scene.deinit();
+    const first = try scene.prepare(0);
+    try scene.complete();
+    try scene.arm(first.instance_revision);
+    try owner.input(.{ .bytes = "go\n" });
+    try testLocalTitleState(&owner, "HELD", 30, true);
+    const held = try scene.tryReceivePrepared();
+    try std.testing.expectEqual(@as(?u64, null), if (held) |frame| frame.instance_revision else null);
+    try std.testing.expect(!scene.residency.pending);
+    try owner.input(.{ .bytes = "go\n" });
+    try testLocalTitleState(&owner, "DONE", 40, true);
+    const done = try scene.receivePrepared();
+    try std.testing.expect(done.instance_revision > first.instance_revision);
+    try scene.complete();
 }

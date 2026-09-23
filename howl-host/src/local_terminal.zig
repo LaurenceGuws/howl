@@ -12,6 +12,8 @@ const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 
 const Publication = struct {
     revision: u64,
+    // A lifecycle edge releases only this exact cut, not later descendant output.
+    lifecycle_revision: ?u64 = null,
     synchronized_started_ns: ?u64 = null,
     synchronized_pending: bool = false,
     synchronized_timed_out: bool = false,
@@ -56,7 +58,7 @@ const Publication = struct {
     }
 
     fn arm(self: *const Publication, after_revision: u64) bool {
-        return self.revision != after_revision;
+        return self.revision > after_revision;
     }
 };
 
@@ -137,20 +139,30 @@ pub const Owner = struct {
         };
         const current_revision = instance.terminal(self.value).semanticSequence();
         const synchronized = instance.terminal(self.value).synchronizedOutput();
+        // A complete end/begin in this turn starts a new hold, even when the
+        // previous frame had already earned timeout permission.
+        if (serviced.synchronized_output.ended) {
+            self.publication.synchronized_started_ns = null;
+            self.publication.synchronized_timed_out = false;
+        }
         const publish = self.publication.note(
             current_revision,
             synchronized,
             timestamp_ns,
         );
-        self.mutex.unlock(self.io);
 
         const lifecycle_changed =
             serviced.stream_closed != self.stream_closed or
             (serviced.child_exit != null and self.child_exit == null);
+        if (lifecycle_changed) {
+            self.publication.revision = current_revision;
+            self.publication.lifecycle_revision = current_revision;
+        }
         self.stream_closed = serviced.stream_closed;
         if (serviced.child_exit) |value| self.child_exit = value;
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
+        self.mutex.unlock(self.io);
         if (publish or lifecycle_changed) signal(self.observation_fd);
         return serviced;
     }
@@ -166,7 +178,7 @@ pub const Owner = struct {
     /// Ensures Render observes a semantic mutation which raced its arm operation.
     pub fn armObservation(self: *Owner, after_revision: u64) void {
         self.mutex.lockUncancelable(self.io);
-        const ready = self.publication.arm(after_revision);
+        const ready = !self.presentationHeld() and self.publication.arm(after_revision);
         self.mutex.unlock(self.io);
         if (ready) signal(self.observation_fd);
     }
@@ -185,6 +197,30 @@ pub const Owner = struct {
     pub fn observe(self: *Owner) ObservationGuard {
         self.mutex.lockUncancelable(self.io);
         return .{ .owner = self, .value = instance.terminal(self.value) };
+    }
+
+    /// Consumes a wake and borrows only the currently publishable cut. Null
+    /// preserves the caller's request; it must wait for a later wake, not rearm.
+    /// A null revision requests the current cut for explicit history/geometry.
+    pub fn observePublished(self: *Owner, after_revision: ?u64) error{Signal}!?ObservationGuard {
+        var guard = self.observe();
+        errdefer guard.deinit();
+        try drain(self.observation_fd);
+        if (self.presentationHeld() or
+            guard.value.semanticSequence() != self.publication.revision or
+            (if (after_revision) |after| !self.publication.arm(after) else false))
+        {
+            guard.deinit();
+            return null;
+        }
+        return guard;
+    }
+
+    /// Called only under the canonical mutation mutex.
+    fn presentationHeld(self: *const Owner) bool {
+        return instance.terminal(self.value).synchronizedOutput() and
+            !self.publication.synchronized_timed_out and
+            self.publication.lifecycle_revision != instance.terminal(self.value).semanticSequence();
     }
 
     pub fn input(self: *Owner, event: instance.Input) instance.InputError!void {
@@ -358,4 +394,105 @@ test "local publication withholds synchronized output until release or timeout" 
         500 + synchronized_output_timeout_ns + 1,
     ));
     try std.testing.expectEqual(@as(u64, 14), publication.revision);
+}
+
+fn testServiceTitle(owner: *Owner, title: []const u8, timestamp_ns: u64) !instance.Service {
+    for (0..2000) |_| {
+        const state = owner.pollState();
+        var descriptor = c.pollfd{
+            .fd = state.descriptor,
+            .events = @intCast(c.POLLIN | c.POLLHUP | (if (state.write_pending) c.POLLOUT else 0)),
+            .revents = 0,
+        };
+        const ready = c.poll(&descriptor, 1, 1);
+        if (ready < 0) {
+            if (std.c.errno(ready) == .INTR) continue;
+            return error.Poll;
+        }
+        const serviced = try owner.service(
+            descriptor.revents & (c.POLLIN | c.POLLHUP) != 0,
+            state.write_pending or descriptor.revents & c.POLLOUT != 0,
+            timestamp_ns,
+        );
+        try std.testing.expect(!serviced.stream_closed and serviced.child_exit == null);
+        var guard = owner.observe();
+        const matched = if (guard.value.title()) |value| std.mem.eql(u8, value, title) else false;
+        guard.deinit();
+        if (matched) return serviced;
+    }
+    return error.Timeout;
+}
+
+test "local owner end and begin in one turn renews synchronized timeout protection" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hA\\033]0;FIRST\\007'; read step; " ++
+            "printf '\\033[?2026l\\033[?2026hB\\033]0;SECOND\\007'; read step; " ++
+            "printf '\\033[?2026l\\033]0;DONE\\007'; read step",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    try std.testing.expect((try testServiceTitle(&owner, "FIRST", 10)).changed);
+    try std.testing.expect(owner.publication.synchronized_pending);
+    try std.testing.expect(!(try owner.service(false, false, 10 + synchronized_output_timeout_ns)).changed);
+    try std.testing.expect(owner.publication.synchronized_timed_out);
+    const published = owner.publication.revision;
+    try owner.drainObservationWake();
+    try owner.input(.{ .bytes = "go\n" });
+    const reopened = try testServiceTitle(&owner, "SECOND", 11 + synchronized_output_timeout_ns);
+    // Prove this execution exercised the within-turn boundary, not two turns.
+    try std.testing.expect(reopened.synchronized_output.ended);
+    var guard = owner.observe();
+    const synchronized = guard.value.synchronizedOutput();
+    const current = guard.value.semanticSequence();
+    guard.deinit();
+    try std.testing.expect(synchronized and current > published);
+    try std.testing.expectEqual(published, owner.publication.revision);
+    try std.testing.expect(!owner.publication.synchronized_timed_out);
+    try std.testing.expect(owner.publication.synchronized_pending);
+    try owner.input(.{ .bytes = "go\n" });
+    try std.testing.expect((try testServiceTitle(&owner, "DONE", 12 + synchronized_output_timeout_ns)).changed);
+    try std.testing.expect(owner.publication.revision > current);
+}
+
+test "local publication never rearms an already consumed or newer revision" {
+    const publication = Publication{ .revision = 10 };
+    try std.testing.expect(publication.arm(9));
+    try std.testing.expect(!publication.arm(10));
+    try std.testing.expect(!publication.arm(11));
+}
+
+test "local owner new pending frame gets a fresh deadline but repeated begin does not" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?2026hA\\033]0;FIRST\\007'; read step; " ++
+            "printf '\\033[?2026l\\033[?2026hB\\033]0;SECOND\\007'; read step; " ++
+            "printf '\\033[?2026hC\\033]0;REPEATED\\007'; read step",
+        .rows = 2,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer owner.deinit();
+    try std.testing.expect((try testServiceTitle(&owner, "FIRST", 10)).changed);
+    const old = owner.publication.revision;
+    try owner.input(.{ .bytes = "go\n" });
+    const second = try testServiceTitle(&owner, "SECOND", 500);
+    try std.testing.expect(second.synchronized_output.ended);
+    try std.testing.expectEqual(@as(?u64, 500), owner.publication.synchronized_started_ns);
+    try std.testing.expectEqual(old, owner.publication.revision);
+    try owner.input(.{ .bytes = "go\n" });
+    const repeated = try testServiceTitle(&owner, "REPEATED", 700);
+    try std.testing.expect(!repeated.synchronized_output.ended);
+    try std.testing.expectEqual(@as(?u64, 500), owner.publication.synchronized_started_ns);
+    try std.testing.expect(!(try owner.service(false, false, 10 + synchronized_output_timeout_ns)).changed);
+    try std.testing.expect(!owner.publication.synchronized_timed_out);
+    try std.testing.expect(!(try owner.service(false, false, 500 + synchronized_output_timeout_ns)).changed);
+    try std.testing.expect(owner.publication.synchronized_timed_out);
+    try std.testing.expect(owner.publication.revision > old);
 }
