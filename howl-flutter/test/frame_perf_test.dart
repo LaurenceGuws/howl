@@ -28,6 +28,8 @@ void main() {
     expect(terminal, contains('rev_gap='));
     expect(terminal, contains('packet_kib='));
     expect(terminal, contains('commands='));
+    expect(terminal, contains('rev_gap=181/288/300'));
+    expect(terminal, contains('observe=18/29/30ms'));
     expect(perf.flutterSummary(), contains('n=240'));
     expect(perf.flutterSummary(), contains('raster='));
   });

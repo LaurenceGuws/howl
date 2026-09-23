@@ -1,28 +1,43 @@
 final class _BoundedSamples {
-  _BoundedSamples({this.capacity = 240}) : assert(capacity > 0);
+  _BoundedSamples({this.capacity = 240})
+    : assert(capacity > 0),
+      _values = List<int>.filled(capacity, 0, growable: false);
 
   final int capacity;
-  final List<int> _values = <int>[];
+  final List<int> _values;
+  int _length = 0;
+  int _next = 0;
 
-  int get length => _values.length;
+  int get length => _length;
 
   void add(int value) {
     if (value < 0) return;
-    if (_values.length == capacity) _values.removeAt(0);
-    _values.add(value);
+    _values[_next] = value;
+    _next += 1;
+    if (_next == capacity) _next = 0;
+    if (_length < capacity) _length += 1;
   }
 
-  void clear() => _values.clear();
+  void clear() {
+    _length = 0;
+    _next = 0;
+  }
 
   int percentile(double fraction) {
-    if (_values.isEmpty) return 0;
-    final sorted = List<int>.of(_values)..sort();
+    if (_length == 0) return 0;
+    final sorted = List<int>.of(_values.take(_length))..sort();
     final index = ((sorted.length - 1) * fraction).round();
     return sorted[index.clamp(0, sorted.length - 1)];
   }
 
-  int get maximum =>
-      _values.isEmpty ? 0 : _values.reduce((a, b) => a > b ? a : b);
+  int get maximum {
+    if (_length == 0) return 0;
+    var result = _values[0];
+    for (var index = 1; index < _length; index += 1) {
+      if (_values[index] > result) result = _values[index];
+    }
+    return result;
+  }
 }
 
 /// Bounded metadata-only performance evidence for attended Howl canaries.
