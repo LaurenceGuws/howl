@@ -1414,3 +1414,16 @@ test "terminal Canvas styled space keeps background and decoration without glyph
     try std.testing.expect(reverse_background);
     try std.testing.expect(decoration_count >= 1);
 }
+
+test "terminal Canvas canonical singleton and mixed cluster cells equal rich and owned frames" {
+    const cases = [_][]const u8{
+        "  A B   ",
+        "\x1b[7;4;9m \x1b[0m \x1b[6 q",
+        " \u{301} A\u{301} B\u{301}\u{302}\u{303}\u{304}\u{305}",
+        "\u{754c} A \x1b]66;s=2;B\x07",
+        "\x1b#6A B \r\n\x1b#3C D\r\n\x1b#4C D",
+        "A\u{301}\u{302}\u{303}\u{304}\u{305}\r\nB\r\n C\r\nD\r\nE\r\nF",
+    };
+    for (cases) |bytes| try expectDirectEquivalent(bytes, 0);
+    try expectDirectEquivalent(cases[cases.len - 1], 2);
+}

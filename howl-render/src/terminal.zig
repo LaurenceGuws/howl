@@ -174,7 +174,13 @@ const VtSource = struct {
     fn cellScalars(snapshot: *const Snapshot, row: usize, column: usize, cell: VT.Cell, output: *[24]u32) []const u32 {
         // VT resolves continuation coordinates to the lead; presentation must not
         // draw that lead again. Never approximate a sidecar with inline combining.
-        if (cell.x != 0 or cell.y != 0) return &.{};
+        if (cell.x != 0 or cell.y != 0 or cell.codepoint == 0) return &.{};
+        // A singleton is complete in the already borrowed canonical cell.
+        // Combining clusters still use VT's full inline/sidecar resolution.
+        if (cell.combining_len == 0) {
+            output[0] = cell.codepoint;
+            return output[0..1];
+        }
         var scalars: [24]u21 = undefined;
         const sequence = snapshot.view.cellScalarsAt(@intCast(row), @intCast(column), &scalars);
         for (sequence, 0..) |scalar, index| output[index] = scalar;
