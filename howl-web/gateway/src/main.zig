@@ -1,6 +1,7 @@
 //! Owns Howl Web's loopback origin, exact Server attach, then protocol-blind HWLS byte bridge.
 const std = @import("std");
 const Io = std.Io;
+const posix = std.posix;
 const server_client = @import("server_client");
 
 const max_http_connections: u8 = 8;
@@ -138,6 +139,16 @@ fn serve(init: std.process.Init, config: Config) !void {
     }
 }
 
+fn setTcpNoDelay(fd: posix.socket_t) posix.SetSockOptError!void {
+    const enabled: c_int = 1;
+    try posix.setsockopt(
+        fd,
+        posix.IPPROTO.TCP,
+        posix.TCP.NODELAY,
+        std.mem.asBytes(&enabled),
+    );
+}
+
 fn connectionTask(
     init: std.process.Init,
     config: Config,
@@ -176,6 +187,7 @@ fn handleConnection(init: std.process.Init, config: Config, stream: *Io.net.Stre
     }
 
     if (std.mem.eql(u8, request.head.target, "/socket")) {
+        try setTcpNoDelay(stream.socket.handle);
         return handleWebSocket(init, config, &request, headers, active_ws);
     }
     if (std.mem.eql(u8, request.head.target, "/health")) {
