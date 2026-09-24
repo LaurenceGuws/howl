@@ -221,6 +221,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     fast_test_module.addImport("howl_client", client);
+    fast_test_module.addImport("howl_vt", vt.module("howl_vt"));
     fast_test_module.addImport("howl_text", text);
     fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
     const fast_test_fonts = b.addOptions();

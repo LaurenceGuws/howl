@@ -4810,6 +4810,18 @@ pub const Terminal = struct {
             return output[0..values.len];
         }
 
+        /// Returns the current screen-row mutation identity when this visible row
+        /// maps directly to the active screen. History rows deliberately expose no
+        /// identity until history provenance is separately owned.
+        pub fn rowGeneration(self: *const SemanticView, row: u16) ?u64 {
+            if (row >= self.rows) return null;
+            const screen = self.backingScreen();
+            return switch (self.rowSource(row)) {
+                .history => null,
+                .screen => |screen_row| screen.rowGeneration(screen_row),
+            };
+        }
+
         /// Returns one visible row's DEC geometry without prescribing caller scaling.
         pub fn lineGeometry(self: *const SemanticView, row: u16) Screen.LineGeometry {
             const screen = self.backingScreen();
@@ -7830,6 +7842,114 @@ test "terminal feed retains no caller scrolling intent" {
 
     try std.testing.expectEqual(before, vt.semanticView(2).cellAt(0, 0));
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_offset);
+}
+
+test "visible row generations are non-consuming and isolate ordinary writes" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+    defer terminal.deinit();
+
+    const before = terminal.semanticView(0);
+    var generations: [3]u64 = undefined;
+    for (&generations, 0..) |*value, row| value.* = before.rowGeneration(@intCast(row)).?;
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3HA")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(generations[0], after.rowGeneration(0).?);
+    try std.testing.expect(generations[1] != after.rowGeneration(1).?);
+    try std.testing.expectEqual(generations[2], after.rowGeneration(2).?);
+
+    const first_observer = after.rowGeneration(1).?;
+    const second_observer = terminal.semanticView(0).rowGeneration(1).?;
+    try std.testing.expectEqual(first_observer, second_observer);
+
+    try std.testing.expect((try terminal.feed("\x1b[3;1H")).stateChanged());
+    try std.testing.expectEqual(first_observer, terminal.semanticView(0).rowGeneration(1).?);
+}
+
+test "row generations conservatively cover scroll and erase mutations" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AAAA\r\nBBBB\r\nCCCC")).stateChanged());
+    var before: [3]u64 = undefined;
+    for (&before, 0..) |*value, row| value.* = terminal.semanticView(0).rowGeneration(@intCast(row)).?;
+    try std.testing.expect((try terminal.feed("\r\nD")).stateChanged());
+    const scrolled = terminal.semanticView(0);
+    for (before, 0..) |value, row|
+        try std.testing.expect(value != scrolled.rowGeneration(@intCast(row)).?);
+
+    const cursor_generation = scrolled.rowGeneration(scrolled.cursor_row).?;
+    try std.testing.expect((try terminal.feed("\x1b[2K")).stateChanged());
+    const erased = terminal.semanticView(0);
+    try std.testing.expect(erased.rowGeneration(erased.cursor_row).? != cursor_generation);
+}
+
+test "row generation owners cover partial scroll alternate clear and direct reset" {
+    {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 4, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed(
+            "\x1b[?25lAAAA\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[4;1HDDDD" ++
+                "\x1b[2;3r\x1b[3;4HC",
+        )).stateChanged());
+        const before = terminal.semanticView(0).rowGeneration(1).?;
+        try std.testing.expect((try terminal.feed("X")).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(@as(u21, 'C'), after.cellAt(1, 0));
+        try std.testing.expect(before != after.rowGeneration(1).?);
+    }
+
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 4, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed(
+            "\x1b[?25l\x1b[?1049hAAAA\x1b[2;1HBBBB",
+        )).stateChanged());
+        const before0 = terminal.semanticView(0).rowGeneration(0).?;
+        const before1 = terminal.semanticView(0).rowGeneration(1).?;
+        try std.testing.expect((try terminal.feed("\x1b[?1049l\x1b[?1049h")).stateChanged());
+        const after = terminal.semanticView(0);
+        try std.testing.expect(after.is_alternate_screen);
+        try std.testing.expectEqual(@as(u21, 0), after.cellAt(0, 0));
+        try std.testing.expect(before0 != after.rowGeneration(0).?);
+        try std.testing.expect(before1 != after.rowGeneration(1).?);
+    }
+
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("AAAA\x1b[2;1HBBBB")).stateChanged());
+        const before0 = terminal.semanticView(0).rowGeneration(0).?;
+        const before1 = terminal.semanticView(0).rowGeneration(1).?;
+        terminal.hardReset();
+        const after = terminal.semanticView(0);
+        try std.testing.expect(before0 != after.rowGeneration(0).?);
+        try std.testing.expect(before1 != after.rowGeneration(1).?);
+        try std.testing.expectEqual(@as(u21, 0), after.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), after.cellAt(1, 0));
+    }
+}
+
+test "row provenance follows VS16 grapheme relocation into an empty destination row" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[1;4H\u{263a}")).stateChanged());
+    const before = terminal.semanticView(0);
+    const source_generation = before.rowGeneration(0).?;
+    const destination_generation = before.rowGeneration(1).?;
+
+    try std.testing.expect((try terminal.feed("\u{fe0f}")).stateChanged());
+    const after = terminal.semanticView(0);
+    try std.testing.expect(source_generation != after.rowGeneration(0).?);
+    try std.testing.expect(destination_generation != after.rowGeneration(1).?);
+    try std.testing.expectEqual(@as(u21, 0x263a), after.cellAt(1, 0));
+
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(
+        u21,
+        &.{ 0x263a, 0xfe0f },
+        after.cellScalarsAt(1, 0, &scalars),
+    );
 }
 
 test "feed mutation set keeps cursor-only and mixed ownership distinct" {

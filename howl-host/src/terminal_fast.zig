@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
+const VT = @import("howl_vt").Terminal;
 const text = @import("howl_text");
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
@@ -99,6 +100,8 @@ pub const Adapter = struct {
     cached_palette: [256]client.rich.Rgba = undefined,
     cached_foreground: client.rich.Rgba = undefined,
     cached_background: client.rich.Rgba = undefined,
+    vt_presentation: VT.Presentation = undefined,
+    vt_presentation_ready: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, fonts: *text.FontSet) !Adapter {
         const metrics = fonts.metrics();
@@ -167,6 +170,140 @@ pub const Adapter = struct {
         if (try self.prepareShifted(snapshot, width, height)) |prepared| return prepared;
         if (try self.prepareIncremental(snapshot, width, height)) |prepared| return prepared;
         return self.prepareFull(snapshot, width, height);
+    }
+
+    /// Projects one direct canonical observation into the retained terminal-cell
+    /// backend. Unsupported cells fall back to the generic Canvas owner.
+    pub fn prepareObservation(
+        self: *Adapter,
+        observation: *const VT.Observation,
+        changed_rows: []const bool,
+        width: u16,
+        height: u16,
+    ) !?Prepared {
+        const view = observation.semanticView(0);
+        const presentation = observation.presentation();
+        var images = observation.images(0);
+        if (view.rows == 0 or view.cols == 0 or changed_rows.len != view.rows or
+            images.imageCount() != 0 or images.placementCount() != 0)
+            return null;
+        const cell_count = std.math.mul(usize, view.rows, view.cols) catch return null;
+        if (cell_count == 0 or cell_count > backend.maximum_cells) return null;
+        try self.ensureCapacity(cell_count);
+
+        const cursor_draw = vtCursor(&view, &presentation) catch |failure| switch (failure) {
+            error.UnsupportedTransparency => return null,
+        };
+        var changed_count: usize = 0;
+        for (changed_rows) |changed| if (changed) {
+            changed_count += 1;
+        };
+        const sparse_limit = @max(@as(usize, 1), changed_rows.len / 4);
+        const can_sparse = self.incremental_ready and self.vt_presentation_ready and
+            view.rows == self.cached_rows and view.cols == self.cached_cols and
+            std.meta.eql(self.vt_presentation, presentation) and changed_count <= sparse_limit;
+        // Any null/error after this point invalidates retained sparse eligibility.
+        self.incremental_ready = false;
+
+        if (!can_sparse) {
+            for (0..view.rows) |row_index|
+                if (!try self.projectVtRow(&view, @intCast(row_index), &presentation)) return null;
+        } else {
+            for (changed_rows, 0..) |changed, row_index| {
+                if (!changed) continue;
+                if (!try self.projectVtRow(&view, @intCast(row_index), &presentation)) return null;
+            }
+        }
+        const glyphs = (try self.collectRetainedGlyphs()) orelse return null;
+        self.cached_rows = view.rows;
+        self.cached_cols = view.cols;
+        self.vt_presentation = presentation;
+        self.vt_presentation_ready = true;
+        self.incremental_ready = true;
+        return .{
+            .rows = view.rows,
+            .cols = view.cols,
+            .width = width,
+            .height = height,
+            .instances = self.instances,
+            .slots = glyphs.slots,
+            .rasters = glyphs.rasters,
+            .cursor = cursor_draw,
+            .metrics = self.metrics,
+            .clear_color = vtRgbaFloat(presentation.background),
+            .overlay_frame = .{
+                .revision = observation.semanticSequence(),
+                .uploads = &.{},
+                .removals = &.{},
+                .commands = &.{},
+            },
+            .changed_rows = if (can_sparse) changed_rows else null,
+            .row_shift = null,
+        };
+    }
+
+    fn projectVtRow(
+        self: *Adapter,
+        view: *const VT.SemanticView,
+        row: u16,
+        presentation: *const VT.Presentation,
+    ) !bool {
+        if (view.lineGeometry(row) != .single_width) return false;
+        const cells = view.rowCells(row);
+        if (cells.len != view.cols) return false;
+        const first = @as(usize, row) * @as(usize, view.cols);
+        for (cells, 0..) |cell, column| {
+            const projected = try self.vtInstance(cell, presentation) orelse return false;
+            if (projected.glyph_slot != backend.blank_glyph) {
+                const glyph_index: usize = projected.glyph_slot;
+                if (glyph_index >= ascii_count) return false;
+                const cached = try self.ensureGlyph(glyph_index) orelse return false;
+                if (cached != .retained) return false;
+            }
+            self.instances[first + column] = projected;
+        }
+        return true;
+    }
+
+    fn vtInstance(
+        _: *const Adapter,
+        cell: VT.Cell,
+        presentation: *const VT.Presentation,
+    ) !?backend.Instance {
+        if (cell.width != 1 or cell.height != 1 or cell.x != 0 or cell.y != 0 or
+            cell.subscale_n != 0 or cell.subscale_d != 0 or cell.vertical_align != 0 or
+            cell.horizontal_align != 0 or cell.semantic_width or cell.attrs.font != 0 or
+            cell.attrs.baseline != .normal or cell.attrs.dim or cell.attrs.invisible or
+            (cell.attrs.underline and cell.attrs.underline_style != .straight) or
+            cell.combining_len != 0)
+            return null;
+        var glyph_slot = backend.blank_glyph;
+        if (cell.codepoint != 0 and cell.codepoint != ' ') {
+            const scalar = std.math.cast(u8, cell.codepoint) orelse return null;
+            const alnum = (scalar >= '0' and scalar <= '9') or
+                (scalar >= 'A' and scalar <= 'Z') or
+                (scalar >= 'a' and scalar <= 'z');
+            if (!alnum) return null;
+            glyph_slot = try backend.stableGlyphSlot(scalar, false, false);
+        }
+        var foreground = cell.attrs.fg.resolve(presentation.foreground, &presentation.palette);
+        var background = cell.attrs.bg.resolve(presentation.background, &presentation.palette);
+        if (cell.attrs.reverse != presentation.reverse_screen)
+            std.mem.swap(VT.Rgb, &foreground, &background);
+        const underline = cell.attrs.underline_color.resolve(presentation.foreground, &presentation.palette);
+        if (foreground.a != 0xff or background.a != 0xff or underline.a != 0xff) return null;
+        if (cell.attrs.strikethrough and !std.meta.eql(foreground, underline)) return null;
+        const has_ink = cell.codepoint != 0;
+        return .{
+            .glyph_slot = glyph_slot,
+            .flags = .{
+                .underline = has_ink and cell.attrs.underline,
+                .strikethrough = has_ink and cell.attrs.strikethrough,
+            },
+            .foreground = vtPack(foreground),
+            .background = vtPack(background),
+            .underline_color = vtPack(underline),
+        };
     }
 
     fn prepareFull(
@@ -904,6 +1041,43 @@ fn sparseCellWrites(
     return output[0..count];
 }
 
+fn vtPack(value: VT.Rgb) u32 {
+    return @as(u32, value.r) |
+        (@as(u32, value.g) << 8) |
+        (@as(u32, value.b) << 16) |
+        (@as(u32, value.a) << 24);
+}
+
+fn vtRgbaFloat(value: VT.Rgb) [4]f32 {
+    return .{
+        @as(f32, @floatFromInt(value.r)) / 255.0,
+        @as(f32, @floatFromInt(value.g)) / 255.0,
+        @as(f32, @floatFromInt(value.b)) / 255.0,
+        @as(f32, @floatFromInt(value.a)) / 255.0,
+    };
+}
+
+fn vtCursor(view: *const VT.SemanticView, presentation: *const VT.Presentation) !backend.CursorDraw {
+    if (!view.cursor_visible or view.cursor_shape == .none or
+        view.cursor_row >= view.rows or view.cursor_col >= view.cols)
+        return .{};
+    const color = presentation.cursor orelse presentation.foreground;
+    const text_color = presentation.cursor_text orelse presentation.background;
+    if (color.a != 0xff or text_color.a != 0xff) return error.UnsupportedTransparency;
+    return .{
+        .row = view.cursor_row,
+        .col = view.cursor_col,
+        .color = vtPack(color),
+        .text_color = vtPack(text_color),
+        .shape = switch (view.cursor_shape) {
+            .underline => .underline,
+            .bar => .bar,
+            else => .block,
+        },
+        .visible = true,
+    };
+}
+
 fn cursor(
     begin: @FieldType(client.rich.Snapshot, "begin"),
     presentation: *const client.rich.Presentation,
@@ -968,6 +1142,114 @@ fn pack(value: [4]u8) u32 {
         (@as(u32, value[1]) << 8) |
         (@as(u32, value[2]) << 16) |
         (@as(u32, value[3]) << 24);
+}
+
+test "direct canonical retained adapter consumes exact sparse row facts" {
+    const fonts = try text.FontSet.init(std.testing.allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer fonts.deinit();
+    var adapter = try Adapter.init(std.testing.allocator, fonts);
+    defer adapter.deinit();
+    var terminal = try VT.init(std.testing.allocator, 4, 4);
+    defer terminal.deinit();
+    const metrics = fonts.metrics();
+    const width = try std.math.mul(u16, metrics.advance_width, 4);
+    const height = try std.math.mul(u16, metrics.line_height, 4);
+
+    try std.testing.expect((try terminal.feed("\x1b[?25l\x1b[38;5;1mA\x1b[4;4HZ")).stateChanged());
+    var changed: [4]bool = @splat(true);
+    const first = (try adapter.prepareObservation(
+        terminal.observation(),
+        &changed,
+        width,
+        height,
+    )) orelse return error.ExpectedDenseAdmission;
+    try std.testing.expect(first.changed_rows == null);
+    try std.testing.expectEqual(
+        try backend.stableGlyphSlot('A', false, false),
+        first.instances[0].glyph_slot,
+    );
+    const presentation = terminal.presentation();
+    try std.testing.expectEqual(
+        vtPack(presentation.palette[1]),
+        first.instances[0].foreground,
+    );
+
+    try std.testing.expect((try terminal.feed("\x1b[2;2HB")).stateChanged());
+    changed = .{ false, true, false, false };
+    const sparse = (try adapter.prepareObservation(
+        terminal.observation(),
+        &changed,
+        width,
+        height,
+    )) orelse return error.ExpectedIncrementalAdmission;
+    try std.testing.expectEqualSlices(bool, &changed, sparse.changed_rows.?);
+    try std.testing.expectEqual(
+        try backend.stableGlyphSlot('A', false, false),
+        sparse.instances[0].glyph_slot,
+    );
+    try std.testing.expectEqual(
+        try backend.stableGlyphSlot('B', false, false),
+        sparse.instances[5].glyph_slot,
+    );
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H-")).stateChanged());
+    try std.testing.expect((try adapter.prepareObservation(
+        terminal.observation(),
+        &changed,
+        width,
+        height,
+    )) == null);
+    try std.testing.expect(!adapter.incremental_ready);
+}
+
+test "direct canonical retained adapter preserves empty decorations and rejects strike color mismatch" {
+    const fonts = try text.FontSet.init(std.testing.allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer fonts.deinit();
+    const metrics = fonts.metrics();
+    const width = try std.math.mul(u16, metrics.advance_width, 4);
+    const height = try std.math.mul(u16, metrics.line_height, 4);
+    const changed: [4]bool = @splat(true);
+
+    {
+        var adapter = try Adapter.init(std.testing.allocator, fonts);
+        defer adapter.deinit();
+        var terminal = try VT.init(std.testing.allocator, 4, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[?25l\x1b[4;9m\x1b[2J")).stateChanged());
+        const prepared = (try adapter.prepareObservation(
+            terminal.observation(),
+            &changed,
+            width,
+            height,
+        )) orelse return error.ExpectedDenseAdmission;
+        for (prepared.instances) |instance_value| {
+            try std.testing.expect(!instance_value.flags.underline);
+            try std.testing.expect(!instance_value.flags.strikethrough);
+        }
+    }
+
+    {
+        var adapter = try Adapter.init(std.testing.allocator, fonts);
+        defer adapter.deinit();
+        var terminal = try VT.init(std.testing.allocator, 4, 4);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed(
+            "\x1b[?25l\x1b[38;2;255;0;0;58;2;0;0;255;9m ",
+        )).stateChanged());
+        try std.testing.expect((try adapter.prepareObservation(
+            terminal.observation(),
+            &changed,
+            width,
+            height,
+        )) == null);
+        try std.testing.expect(!adapter.incremental_ready);
+    }
 }
 
 test "sparse retained GPU writes target identity and projected physical rows" {

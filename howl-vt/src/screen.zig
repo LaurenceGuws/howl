@@ -201,6 +201,10 @@ pub const Screen = struct {
     cells: ?[]Cell,
     scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
+    // Non-consuming visible-row mutation identities. Physical-row storage moves
+    // with the retained cell row; observers keep their own prior identities.
+    row_generations: ?[]u64,
+    next_row_generation: u64,
 
     // Projected scrollback ring and its transactional scalar plans.
     history: ?[]Cell,
@@ -276,6 +280,8 @@ pub const Screen = struct {
             .cells = cells,
             .scalars = null,
             .row_flags = row_flags,
+            .row_generations = null,
+            .next_row_generation = 1,
             .history = history,
             .history_scalars = null,
             .history_plan = null,
@@ -339,6 +345,9 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (row_flags) |buf| allocator.free(buf);
+        const row_generations = try allocator.alloc(u64, rows);
+        errdefer allocator.free(row_generations);
+        for (row_generations, 1..) |*generation, value| generation.* = value;
         var tab_stops = try tab_stops_mod.State.init(allocator, cols);
         errdefer tab_stops.deinit(allocator);
         var result = initBase(
@@ -358,6 +367,8 @@ pub const Screen = struct {
             error.InvalidCapacity => return error.InvalidDimensions,
         };
         errdefer if (result.scalars) |*storage| storage.deinit();
+        result.row_generations = row_generations;
+        result.next_row_generation = @as(u64, rows) + 1;
         return result;
     }
 
@@ -404,6 +415,8 @@ pub const Screen = struct {
         self.scalars = null;
         if (self.row_flags) |buf| allocator.free(buf);
         self.row_flags = null;
+        if (self.row_generations) |buf| allocator.free(buf);
+        self.row_generations = null;
         self.tab_stops.deinit(allocator);
         if (self.history) |h| allocator.free(h);
         self.history = null;
@@ -474,6 +487,7 @@ pub const Screen = struct {
         try copyVisibleRows(&buffers, reflow, projection, cols);
         var replacement = self.replacementBase(allocator);
         replacement.installResizeState(rows, cols, buffers.take());
+        replacement.markAllRowsChanged();
         errdefer replacement.deinit(allocator);
         try replacement.allocateHistoryAuthority(allocator);
         try replacement.allocateOutputAuthority(allocator);
@@ -567,6 +581,7 @@ pub const Screen = struct {
         replacement.cells = null;
         replacement.scalars = null;
         replacement.row_flags = null;
+        replacement.row_generations = null;
         replacement.tab_stops = .empty;
         replacement.history = null;
         replacement.history_scalars = null;
@@ -595,6 +610,7 @@ pub const Screen = struct {
         self.cells = buffers.cells;
         self.scalars = buffers.scalars;
         self.row_flags = buffers.row_flags;
+        self.row_generations = buffers.row_generations;
         self.tab_stops = buffers.tab_stops;
         self.history = null;
         self.history_scalars = null;
@@ -618,9 +634,11 @@ pub const Screen = struct {
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.scalars != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.row_flags != null) == (rows > 0));
+        std.debug.assert((self.row_generations != null) == (rows > 0));
         std.debug.assert(self.tab_stops.ownsColumns(cols));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
         if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
+        if (self.row_generations) |buf| std.debug.assert(buf.len == rows);
         std.debug.assert(self.history == null);
         std.debug.assert(self.history_flags == null);
         std.debug.assert(self.history_count == 0);
@@ -1209,6 +1227,7 @@ pub const Screen = struct {
         if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |buf| @memset(buf, 0);
         self.tab_stops.reset();
+        self.markAllRowsChanged();
     }
 
     // Applies DECSTR's bank-local defaults without erasing cells or moving the cursor.
@@ -1327,6 +1346,55 @@ pub const Screen = struct {
         const tail = acceptedTail(&self.history_scalars.?, index, lead.combining_len);
         @memcpy(output[1 + direct ..][0..tail.len], tail);
         return output[0 .. 1 + direct + tail.len];
+    }
+
+    fn nextRowGeneration(self: *Screen) u64 {
+        const result = self.next_row_generation;
+        self.next_row_generation = std.math.add(u64, result, 1) catch
+            @panic("row mutation identity exhausted");
+        return result;
+    }
+
+    /// Advances one visible logical row's non-consuming mutation identity.
+    pub fn markRowChanged(self: *Screen, logical_row: u16) void {
+        const generations = self.row_generations orelse return;
+        const index = self.rowWrapIndex(logical_row) orelse return;
+        generations[index] = self.nextRowGeneration();
+    }
+
+    /// Advances every visible logical row. Conservative callers may use this
+    /// when a structural edit changes an unknown or broad row set.
+    pub fn markAllRowsChanged(self: *Screen) void {
+        var row: u16 = 0;
+        while (row < self.rows) : (row += 1) self.markRowChanged(row);
+    }
+
+    /// Returns a non-consuming identity for one currently visible screen row.
+    pub fn rowGeneration(self: *const Screen, logical_row: u16) ?u64 {
+        const generations = self.row_generations orelse return null;
+        const index = self.rowWrapIndex(logical_row) orelse return null;
+        return generations[index];
+    }
+
+    fn noteRowChange(self: *Screen, row: u16, changed: bool) bool {
+        if (changed) self.markRowChanged(row);
+        return changed;
+    }
+
+    fn noteRowRangeChange(self: *Screen, top: u16, bottom_inclusive: u16, changed: bool) bool {
+        if (!changed or self.rows == 0) return changed;
+        var row = top;
+        const bottom = @min(bottom_inclusive, self.rows - 1);
+        while (row <= bottom) : (row += 1) {
+            self.markRowChanged(row);
+            if (row == bottom) break;
+        }
+        return changed;
+    }
+
+    fn noteAllRowsChange(self: *Screen, changed: bool) bool {
+        if (changed) self.markAllRowsChanged();
+        return changed;
     }
 
     /// Borrows one visible row from this screen bank.
@@ -1694,6 +1762,7 @@ pub const Screen = struct {
         if (self.cells) |cells| @memset(cells, blank_cell);
         if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |flags| @memset(flags, 0);
+        self.markAllRowsChanged();
     }
 
     /// Moves the alternate-screen cursor to origin and clears pending wrap.
@@ -1782,7 +1851,7 @@ pub const Screen = struct {
                 changed = self.clearRowContinuation(self.cursor.row) or changed;
             }
         }
-        return changed;
+        return self.noteRowChange(self.cursor.row, changed);
     }
 
     /// Erases at least one character through the logical row edge.
@@ -1797,7 +1866,7 @@ pub const Screen = struct {
         if (self.cursor.col + amount == line_cols) {
             changed = self.clearRowContinuation(self.cursor.row) or changed;
         }
-        return changed;
+        return self.noteRowChange(self.cursor.row, changed);
     }
 
     /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
@@ -1842,7 +1911,7 @@ pub const Screen = struct {
                 }
             }
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Erase one clipped rectangle under ISO or DEC protection rules.
@@ -1857,7 +1926,7 @@ pub const Screen = struct {
                 changed = self.clearRowContinuation(row) or changed;
             }
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Fill a clipped rectangle with `codepoint` and the current write attributes.
@@ -1885,7 +1954,7 @@ pub const Screen = struct {
                 changed = true;
             }
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Copy one clipped page-one rectangle in overlap-safe row and column order.
@@ -1939,7 +2008,7 @@ pub const Screen = struct {
                 std.mem.copyForwards(Cell, dest_cells, source_cells);
             }
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Inserts columns from the cursor through the active right margin across the vertical region.
@@ -1952,7 +2021,7 @@ pub const Screen = struct {
         if (!self.cursorWithinHorizontalMargins()) return changed;
         var row = self.scroll_top;
         while (row <= bottom) : (row += 1) changed = self.insertColumnsInRow(row, count) or changed;
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Deletes columns from the cursor through the active right margin across the vertical region.
@@ -1965,7 +2034,7 @@ pub const Screen = struct {
         if (!self.cursorWithinHorizontalMargins()) return changed;
         var row = self.scroll_top;
         while (row <= bottom) : (row += 1) changed = self.deleteColumnsInRow(row, count) or changed;
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Shift active scroll-region rows left within current horizontal boundaries.
@@ -1988,7 +2057,7 @@ pub const Screen = struct {
         var changed = false;
         var row = self.scroll_top;
         while (row <= bottom) : (row += 1) changed = self.shiftRowLeft(row, count, left, right) or changed;
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     fn shiftColumnsRightInBounds(self: *Screen, count: u16, left: u16, right: u16) bool {
@@ -1997,7 +2066,7 @@ pub const Screen = struct {
         var changed = false;
         var row = self.scroll_top;
         while (row <= bottom) : (row += 1) changed = self.shiftRowRight(row, count, left, right) or changed;
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Insert at least one erase cell at the cursor within the right boundary.
@@ -2055,7 +2124,7 @@ pub const Screen = struct {
         );
         @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
-        return cells_changed or changed;
+        return self.noteRowChange(self.cursor.row, cells_changed or changed);
     }
 
     /// Delete at least one cell at the cursor within the right boundary.
@@ -2110,7 +2179,7 @@ pub const Screen = struct {
         );
         @memset(row[@intCast(tail_start)..@intCast(tail_end)], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
-        return cells_changed or changed;
+        return self.noteRowChange(self.cursor.row, cells_changed or changed);
     }
 
     fn insertColumnsInRow(self: *Screen, row: u16, count: u16) bool {
@@ -2527,6 +2596,7 @@ pub const Screen = struct {
         } else {
             self.cursor.setColByClient(right);
         }
+        self.markRowChanged(self.cursor.row);
         return true;
     }
 
@@ -2693,7 +2763,7 @@ pub const Screen = struct {
         } else {
             self.cursor.setColByClient(right);
         }
-        return changed;
+        return self.noteRowRangeChange(top, top + height - 1, changed);
     }
 
     /// Write one codepoint with Unicode occupancy, insertion, wrapping, dirty, and cursor semantics.
@@ -2796,6 +2866,7 @@ pub const Screen = struct {
         } else {
             self.cursor.setColByClient(right);
         }
+        self.markRowChanged(self.cursor.row);
         return true;
     }
 
@@ -2866,6 +2937,7 @@ pub const Screen = struct {
                 graphic.width = final_width;
             }
         }
+        self.markRowChanged(anchor_row);
         return true;
     }
 
@@ -2946,6 +3018,11 @@ pub const Screen = struct {
                 .semantic_width = true,
                 .attrs = moved.attrs,
             };
+            // Width-changing grapheme relocation owns this newly written row.
+            // Replacement clearing may be a no-op when the destination was
+            // already blank, so the committed lead/continuation write itself
+            // must advance non-consuming row provenance.
+            self.markRowChanged(self.cursor.row);
             const after = destination_col + 2;
             if (after <= right) {
                 self.cursor.setColByClient(after);
@@ -3398,6 +3475,7 @@ pub const Screen = struct {
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
             while (remaining > 0) : (remaining -= 1) self.scrollUp();
+            self.markAllRowsChanged();
             return true;
         }
 
@@ -3429,7 +3507,7 @@ pub const Screen = struct {
             changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     /// Scroll an ordered region downward by at most its bounded row count.
@@ -3455,6 +3533,7 @@ pub const Screen = struct {
             while (clear_row < amount) : (clear_row += 1) {
                 changed = self.clearStructuralRowRange(clear_row, 0, self.cols) or changed;
             }
+            self.markAllRowsChanged();
             return true;
         }
 
@@ -3476,7 +3555,7 @@ pub const Screen = struct {
             changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     // Removes the newest projected history row after its cells and scalar tails
@@ -3519,7 +3598,7 @@ pub const Screen = struct {
                 changed = true;
             }
         }
-        return changed;
+        return self.noteAllRowsChange(changed);
     }
 
     fn preflightHistoryRestore(self: *Screen, slot: u32) bool {
@@ -3636,6 +3715,7 @@ pub const Screen = struct {
             self.cursor.setColByClient(@min(self.cursor.col, width -| 1));
             self.wrap_pending = false;
         }
+        self.markRowChanged(logical_row);
         return true;
     }
 
@@ -3696,6 +3776,7 @@ pub const Screen = struct {
                 }
             }
             if (row_changed) {
+                self.markRowChanged(row);
                 changed = true;
             }
         }
@@ -3712,10 +3793,13 @@ pub const Screen = struct {
     fn setRowWrapped(self: *Screen, logical_row: u16, wrapped: bool) void {
         const flags = self.row_flags orelse return;
         const idx = self.rowWrapIndex(logical_row) orelse return;
+        const before = flags[@intCast(idx)] & row_wrapped_bit != 0;
+        if (before == wrapped) return;
         if (wrapped)
             flags[@intCast(idx)] |= row_wrapped_bit
         else
             flags[@intCast(idx)] &= ~row_wrapped_bit;
+        self.markRowChanged(logical_row);
     }
 
     fn rowFlags(wrapped: bool, geometry: LineGeometry) u8 {
@@ -3894,6 +3978,7 @@ pub const Screen = struct {
             cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))],
             erase_cell,
         );
+        self.markRowChanged(row);
     }
 
     // Clear one structural-edit range and its row state, reporting only observable mutation.
@@ -3915,7 +4000,7 @@ pub const Screen = struct {
             self.resetLineGeometry(row);
             changed = true;
         }
-        return changed;
+        return self.noteRowChange(row, changed);
     }
 
     // Erases one bounded row range and reports exact cell mutation.
@@ -3943,7 +4028,7 @@ pub const Screen = struct {
             cell.* = erase_cell;
             changed = true;
         }
-        return changed;
+        return self.noteRowChange(row, changed);
     }
 
     /// Reject an inverted rectangle, then clamp it to the active origin bounds.
@@ -4005,6 +4090,7 @@ pub const Screen = struct {
                 observed.combining_len,
             );
             cells[@intCast(self.rowStart(row) + col)] = self.eraseCell();
+            self.markRowChanged(row);
             return true;
         }
         const top = row - observed.y;
@@ -4038,6 +4124,7 @@ pub const Screen = struct {
                     changed = true;
                 }
             }
+            if (first != null) self.markRowChanged(y);
         }
         return changed;
     }
@@ -4054,7 +4141,7 @@ pub const Screen = struct {
             return self.clearClusterAt(row, col, false);
         clearAcceptedTail(&self.scalars.?, index, observed.combining_len);
         cells[@intCast(index)] = self.eraseCell();
-        return !std.meta.eql(observed, cells[@intCast(index)]);
+        return self.noteRowChange(row, !std.meta.eql(observed, cells[@intCast(index)]));
     }
 
     // Removes every multicell intersecting one bounded mutation rectangle.
@@ -4155,6 +4242,10 @@ pub const Screen = struct {
             self.copyRowFlags(dst_row, src_row);
         } else {
             changed = self.clearRowContinuation(dst_row) or changed;
+        }
+        if (changed) {
+            self.markRowChanged(dst_row);
+            if (src_row != dst_row) self.markRowChanged(src_row);
         }
         return changed;
     }
@@ -6056,12 +6147,14 @@ const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
     scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
+    row_generations: ?[]u64,
     tab_stops: tab_stops_mod.State,
 
     const empty: ResizeBuffers = .{
         .cells = null,
         .scalars = null,
         .row_flags = null,
+        .row_generations = null,
         .tab_stops = .empty,
     };
 
@@ -6070,6 +6163,7 @@ const ResizeBuffers = struct {
         if (self.cells) |buf| allocator.free(buf);
         if (self.scalars) |*storage| storage.deinit();
         if (self.row_flags) |buf| allocator.free(buf);
+        if (self.row_generations) |buf| allocator.free(buf);
         self.tab_stops.deinit(allocator);
         self.* = empty;
     }
@@ -6486,6 +6580,13 @@ fn allocResizeBuffers(
         row_flags = buf;
     }
     errdefer if (row_flags) |buf| allocator.free(buf);
+    var row_generations: ?[]u64 = null;
+    if (rows > 0) {
+        const buf = try allocator.alloc(u64, rows);
+        @memset(buf, 0);
+        row_generations = buf;
+    }
+    errdefer if (row_generations) |buf| allocator.free(buf);
 
     var tab_stops = try tab_stops_mod.State.initCopied(allocator, cols, old_tab_stops);
     errdefer tab_stops.deinit(allocator);
@@ -6495,11 +6596,13 @@ fn allocResizeBuffers(
     std.debug.assert(tab_stops.ownsColumns(cols));
     if (cells) |buf| std.debug.assert(buf.len == cell_count);
     if (row_flags) |buf| std.debug.assert(buf.len == rows);
+    if (row_generations) |buf| std.debug.assert(buf.len == rows);
 
     return .{
         .cells = cells,
         .scalars = scalars,
         .row_flags = row_flags,
+        .row_generations = row_generations,
         .tab_stops = tab_stops,
     };
 }

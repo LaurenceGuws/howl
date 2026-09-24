@@ -163,6 +163,12 @@ pub const Scene = struct {
     residency: vk_surface.ResidencyStore,
     overlay_residency: vk_surface.ResidencyStore,
     observation_pending: bool = false,
+    local_fast_generations: [presentation.maximum_rows]u64 = @splat(0),
+    local_fast_rows: [presentation.maximum_rows]bool = @splat(false),
+    local_fast_rows_count: u16 = 0,
+    local_fast_cols_count: u16 = 0,
+    local_fast_alternate: bool = false,
+    local_fast_cache_valid: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -539,6 +545,57 @@ pub const Scene = struct {
             return error.InvalidGeometry;
         if (width == 0 or height == 0) return error.InvalidGeometry;
 
+        if (history_offset == 0 and view.rows <= self.local_fast_rows.len) {
+            const changed_rows = self.local_fast_rows[0..view.rows];
+            const comparable = self.local_fast_cache_valid and
+                self.local_fast_rows_count == view.rows and
+                self.local_fast_cols_count == view.cols and
+                self.local_fast_alternate == view.is_alternate_screen;
+            var provenance_complete = true;
+            for (changed_rows, 0..) |*changed, row_index| {
+                const generation = view.rowGeneration(@intCast(row_index)) orelse {
+                    provenance_complete = false;
+                    changed.* = true;
+                    continue;
+                };
+                changed.* = !comparable or generation != self.local_fast_generations[row_index];
+            }
+            if (provenance_complete) {
+                if (try self.fast.prepareObservation(observation, changed_rows, width, height)) |fast| {
+                    for (0..view.rows) |row_index|
+                        self.local_fast_generations[row_index] =
+                            view.rowGeneration(@intCast(row_index)).?;
+                    self.local_fast_rows_count = view.rows;
+                    self.local_fast_cols_count = view.cols;
+                    self.local_fast_alternate = view.is_alternate_screen;
+                    self.local_fast_cache_valid = true;
+                    return .{
+                        .rows = view.rows,
+                        .cols = view.cols,
+                        .width = width,
+                        .height = height,
+                        .cell_pixel_width = cell_pixels.width,
+                        .cell_pixel_height = cell_pixels.height,
+                        .instance_revision = observation.semanticSequence(),
+                        .history_offset = view.history_offset,
+                        .history_count = view.history_count,
+                        .history_row_base = view.history_row_base,
+                        .alternate_screen = view.is_alternate_screen,
+                        .leader_present = false,
+                        .you_are_leader = true,
+                        .mode = .{ .fast = .{
+                            .terminal = fast,
+                            .plan = empty_plan,
+                            .overlay_pending = false,
+                        } },
+                    };
+                }
+            }
+            self.local_fast_cache_valid = false;
+        } else {
+            self.local_fast_cache_valid = false;
+        }
+
         var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
         const bindings = try terminal.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
@@ -770,7 +827,8 @@ pub const Scene = struct {
     }
 
     pub fn complete(self: *Scene) !void {
-        try self.residency.complete();
+        if (self.residency.pending) try self.residency.complete();
+        if (self.overlay_residency.pending) try self.overlay_residency.complete();
     }
 };
 
