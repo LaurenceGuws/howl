@@ -66,7 +66,8 @@ pub fn build(b: *std.Build) void {
         "rv_font_ptr",               "rv_font_capacity",     "rv_fallback_font_ptr",
         "rv_fallback_font_capacity", "rv_symbol_font_ptr",   "rv_symbol_font_capacity",
         "rv_snapshot_ptr",           "rv_snapshot_capacity", "rv_frame_ptr",
-        "rv_frame_len",              "rv_pixels_ptr",        "rv_pixels_len",
+        "rv_frame_len",              "rv_text_ptr",          "rv_text_len",
+        "rv_text_truncated",         "rv_pixels_ptr",        "rv_pixels_len",
         "rv_error_ptr",              "rv_error_len",         "rv_render_count",
         "rv_ready",                  "rv_init",              "rv_init_presentation",
         "rv_missing_external",       "rv_missing_resource",  "rv_missing_generation",
@@ -100,6 +101,14 @@ pub fn build(b: *std.Build) void {
     multi_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
     multi_image_test.setName("live renderer bounded multi image residency");
     check.dependOn(&multi_image_test.step);
+    const visible_text_test = b.addSystemCommand(&.{ "node", "tests/visible_text.mjs" });
+    visible_text_test.setCwd(b.path("."));
+    visible_text_test.addFileArg(live.getEmittedBin());
+    visible_text_test.addFileArg(text.path("testdata/primary.ttf"));
+    visible_text_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    visible_text_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    visible_text_test.setName("live renderer visible text projection");
+    check.dependOn(&visible_text_test.step);
     const asset_contract_test = b.addSystemCommand(&.{ "node", "tests/asset_contract.mjs" });
     asset_contract_test.setCwd(b.path("."));
     asset_contract_test.setName("browser module asset contract");

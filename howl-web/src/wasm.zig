@@ -29,6 +29,11 @@ var history_count: u32 = 0;
 var history_row_base: u32 = 0;
 var alternate_screen: bool = false;
 var leader_present: bool = false;
+var live_passthrough: bool = false;
+var live_begin: ?p.SnapshotBegin = null;
+const LiveEnvelopeStage = enum { begin, body, properties, end };
+var live_envelope_stage: LiveEnvelopeStage = .begin;
+var live_body_kind: ?p.Kind = null;
 var interaction_terminal_revision: u64 = 0;
 var interaction_alternate_scroll: bool = false;
 var interaction_mouse_tracking: u32 = 0;
@@ -224,6 +229,10 @@ export fn hw_reset() u32 {
     history_row_base = 0;
     alternate_screen = false;
     leader_present = false;
+    live_passthrough = false;
+    live_begin = null;
+    live_envelope_stage = .begin;
+    live_body_kind = null;
     interaction_terminal_revision = 0;
     interaction_alternate_scroll = false;
     interaction_mouse_tracking = 0;
@@ -256,6 +265,30 @@ export fn hw_observe(immediate: u32, requested_history_offset: u32) u32 {
     });
     if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
     transcript_len = 0;
+    live_passthrough = false;
+    live_begin = null;
+    live_envelope_stage = .begin;
+    live_body_kind = null;
+    phase = 3;
+    return 1;
+}
+
+/// Requests the ordinary complete live observation lane without performing a
+/// second semantic decode in this framing/control module. Render Wasm owns the
+/// semantic decode for presentation winners; history keeps the full wire path.
+export fn hw_observe_live(immediate: u32) u32 {
+    if (!controlReady()) return 0;
+    var payload: [p.payload_bytes.observe]u8 = undefined;
+    p.encodeObserve(&payload, .{
+        .after_revision = if (immediate != 0) 0 else revision,
+        .history_offset = 0,
+    });
+    if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
+    transcript_len = 0;
+    live_passthrough = true;
+    live_begin = null;
+    live_envelope_stage = .begin;
+    live_body_kind = null;
     phase = 3;
     return 1;
 }
@@ -472,6 +505,34 @@ fn decodeSnapshot() (rich.Error || client.view.Error)!void {
     leader_present = snapshot.begin.leader_present;
 }
 
+fn acceptLiveEnvelope(kind: p.Kind) !void {
+    switch (live_envelope_stage) {
+        .begin => {
+            if (kind != .snapshot_begin) return error.UnexpectedSnapshotFrame;
+            live_envelope_stage = .body;
+        },
+        .body => switch (kind) {
+            .snapshot_data, .snapshot_raw_data => {
+                if (live_body_kind) |accepted_kind| {
+                    if (accepted_kind != kind) return error.MixedSnapshotBodyEncoding;
+                } else {
+                    live_body_kind = kind;
+                }
+            },
+            .snapshot_graphics => {
+                if (live_body_kind == null) return error.MissingSnapshotBody;
+                live_envelope_stage = .properties;
+            },
+            else => return error.UnexpectedSnapshotFrame,
+        },
+        .properties => {
+            if (kind != .snapshot_properties) return error.UnexpectedSnapshotFrame;
+            live_envelope_stage = .end;
+        },
+        .end => if (kind != .snapshot_end) return error.UnexpectedSnapshotFrame,
+    }
+}
+
 fn acceptFrame() u32 {
     const header = p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
     const payload = packet[p.header_bytes..needed];
@@ -484,19 +545,44 @@ fn acceptFrame() u32 {
             phase = 2;
         },
         3 => {
-            if ((transcript_len == 0 and header.kind != .snapshot_begin) or
+            if (live_passthrough) {
+                acceptLiveEnvelope(header.kind) catch |err| return fail(@errorName(err));
+                if (header.kind == .snapshot_begin)
+                    live_begin = p.decodeSnapshotBegin(payload) catch |err| return fail(@errorName(err));
+            } else if ((transcript_len == 0 and header.kind != .snapshot_begin) or
                 (transcript_len != 0 and header.kind != .snapshot_data and
                     header.kind != .snapshot_raw_data and
                     header.kind != .snapshot_graphics and header.kind != .snapshot_properties and header.kind != .snapshot_end))
+            {
                 return fail("UnexpectedSnapshotFrame");
+            }
             if (needed > transcript.len - transcript_len) return fail("SnapshotTooLarge");
             @memcpy(transcript[transcript_len..][0..needed], packet[0..needed]);
             transcript_len += needed;
             if (header.kind == .snapshot_end) {
-                decodeSnapshot() catch |err| {
+                if (live_passthrough) {
+                    const begin = live_begin orelse return fail("MissingSnapshotBegin");
+                    const end = p.decodeSnapshotEnd(payload) catch |err| return fail(@errorName(err));
+                    if (end.revision != begin.revision) return fail("SnapshotRevisionMismatch");
+                    if (begin.history_offset != 0) return fail("LiveHistoryOffsetMismatch");
                     projection_len = 0;
-                    return fail(@errorName(err));
-                };
+                    projection_truncated = false;
+                    revision = begin.revision;
+                    terminal_revision = begin.terminal_revision;
+                    rows = begin.rows;
+                    columns = begin.columns;
+                    history_offset = begin.history_offset;
+                    history_count = begin.history_count;
+                    history_row_base = begin.history_row_base;
+                    alternate_screen = begin.alternate_screen;
+                    leader_present = begin.leader_present;
+                    live_begin = null;
+                } else {
+                    decodeSnapshot() catch |err| {
+                        projection_len = 0;
+                        return fail(@errorName(err));
+                    };
+                }
                 phase = 4;
             }
         },

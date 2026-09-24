@@ -30,6 +30,11 @@ var persistent_heap: [64 * 1024 * 1024]u8 = undefined;
 var transient_heap: [20 * 1024 * 1024]u8 = undefined;
 var metadata: [32 * 1024 * 1024]u8 = undefined;
 var metadata_used: usize = 0;
+var projections: [2][65536]u8 = undefined;
+var projection_lengths: [2]usize = @splat(0);
+var projection_truncated: [2]bool = @splat(false);
+var published_projection: usize = 0;
+var pending_projection: usize = 1;
 var pixels: [atlas_bytes]u8 = undefined;
 var pixels_used: usize = 0;
 var frame_uploads: [residency_capacity]canvas.FrameResourceUpload = undefined;
@@ -97,6 +102,15 @@ export fn rv_frame_ptr() usize {
 }
 export fn rv_frame_len() usize {
     return metadata_used;
+}
+export fn rv_text_ptr() usize {
+    return @intFromPtr(&projections[published_projection]);
+}
+export fn rv_text_len() usize {
+    return projection_lengths[published_projection];
+}
+export fn rv_text_truncated() u32 {
+    return @intFromBool(projection_truncated[published_projection]);
 }
 export fn rv_pixels_ptr() usize {
     return @intFromPtr(&pixels);
@@ -204,6 +218,10 @@ fn initRenderer(
     rendered = 0;
     failure = "";
     metadata_used = 0;
+    projection_lengths = @splat(0);
+    projection_truncated = @splat(false);
+    published_projection = 0;
+    pending_projection = 1;
     pixels_used = 0;
 
     const allocator = persistent.allocator();
@@ -268,6 +286,10 @@ export fn rv_reset() u32 {
     missing_image_binding = null;
     pending_ack = false;
     metadata_used = 0;
+    projection_lengths = @splat(0);
+    projection_truncated = @splat(false);
+    published_projection = 0;
+    pending_projection = 1;
     pixels_used = 0;
     rendered = 0;
     failure = "";
@@ -318,6 +340,10 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     };
     pixels_used = frame.pixels.len;
     try collectPendingResidency(frame.commands);
+    pending_projection = if (published_projection == 0) 1 else 0;
+    const text_projection = client.view.writeVisibleText(view, &projections[pending_projection]);
+    projection_lengths[pending_projection] = text_projection.bytes_written;
+    projection_truncated[pending_projection] = text_projection.truncated;
     try writeFrame(frame, view, begin.revision, begin.terminal_revision, next_render);
     rendered = next_render;
     pending_ack = true;
@@ -412,6 +438,7 @@ export fn rv_ack() u32 {
     @memcpy(accepted_residency[0..pending_residency_count], pending_residency[0..pending_residency_count]);
     accepted_residency_count = pending_residency_count;
     pending_residency_count = 0;
+    published_projection = pending_projection;
     pending_ack = false;
     return 1;
 }

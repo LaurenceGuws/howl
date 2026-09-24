@@ -14,7 +14,7 @@ import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from './webgl_backend.mjs';
 
-const CANARY_GENERATION = 'v42-webgl-text';
+const CANARY_GENERATION = 'v43-web-live-decode';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -286,7 +286,10 @@ class WireConnection {
     if (this.role === 'control' && this.exports.hw_phase() === 6) updateFacts();
   }
   observe(immediate, historyOffset = 0) {
-    if (this.exports.hw_observe(immediate ? 1 : 0, historyOffset) !== 1) throw new Error(`${this.role}: observe rejected`);
+    const accepted = this.role === 'observer'
+      ? this.exports.hw_observe_live(immediate ? 1 : 0)
+      : this.exports.hw_observe(immediate ? 1 : 0, historyOffset);
+    if (accepted !== 1) throw new Error(`${this.role}: observe rejected`);
     this.sendOutput();
   }
   async image(imageId, generation) {
@@ -1464,13 +1467,11 @@ copyButton.addEventListener('click', async () => {
       status.textContent = `Selection copied (${extracted.length} bytes)`;
       return;
     }
-    const connection = history.active ? historyObserver : observer;
-    if (!connection) throw new Error('displayed terminal text is not ready');
-    const wire = connection.exports;
-    const length = Number(wire.hw_text_len());
-    const value = decoder.decode(bytesAt(wire.memory, wire.hw_text_ptr(), length));
+    if (!lastFrame) throw new Error('displayed terminal text is not ready');
+    const length = Number(renderer.exports.rv_text_len());
+    const value = decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_text_ptr(), length));
     await navigator.clipboard.writeText(value);
-    const truncated = wire.hw_text_truncated() === 1;
+    const truncated = renderer.exports.rv_text_truncated() === 1;
     status.textContent = `Visible terminal copied (${length} bytes${truncated ? ', truncated' : ''})`;
   } catch (error) {
     status.textContent = `COPY UNAVAILABLE: ${error.message}`;
