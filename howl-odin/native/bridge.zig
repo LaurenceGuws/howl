@@ -1113,6 +1113,7 @@ const Bridge = struct {
     runtime: ?*Runtime = null,
     connection: client.Connection,
     raw_observation: bool,
+    live_raw_cache: client.rich.RawCache,
     last_begin: ?protocol.SnapshotBegin = null,
     reusable_view: ?*client.view.Snapshot = null,
     text_truncated: bool = false,
@@ -1192,6 +1193,7 @@ pub export fn howl_odin_bridge_create(
         .runtime = runtime,
         .connection = connection,
         .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
+        .live_raw_cache = client.rich.RawCache.init(allocator),
     };
     retainRuntime(runtime);
     accepted = true;
@@ -1203,6 +1205,7 @@ pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const allocator = bridge.allocator;
     if (bridge.reusable_view) |view| client.view.deinit(view);
+    bridge.live_raw_cache.deinit();
     bridge.connection.deinit();
     releaseRuntime(bridge.runtime);
     allocator.destroy(bridge);
@@ -1226,19 +1229,54 @@ pub export fn howl_odin_bridge_snapshot(
     if (bridge.reusable_view) |view| client.view.deinit(view);
     bridge.reusable_view = null;
 
-    var rich = requestObservation(
-        &bridge.connection,
-        bridge.allocator,
-        after_revision,
-        history_offset,
-        bridge.raw_observation,
-    ) catch |failure| {
-        bridge.setError("observe", @errorName(failure));
-        return 2;
+    var owned_rich: ?client.rich.Snapshot = null;
+    defer if (owned_rich) |*snapshot_value| snapshot_value.deinit();
+    const use_live_delta = history_offset == 0;
+    if (use_live_delta) {
+        bridge.live_raw_cache.sendDeltaRequest(
+            &bridge.connection,
+            after_revision,
+            0,
+        ) catch |failure| switch (failure) {
+            // A caller may legitimately return from history or another
+            // complete-observation path with a revision newer than this live
+            // cache. Preserve the caller's after-revision wait with one full raw
+            // response; RawCache receives that same response and adopts it as
+            // the next live delta baseline.
+            error.DeltaBaselineMismatch => client.rich.sendRawRequest(
+                &bridge.connection,
+                after_revision,
+                0,
+            ) catch |resync_failure| {
+                bridge.setError("observe_resync", @errorName(resync_failure));
+                return 2;
+            },
+            else => {
+                bridge.setError("observe_arm", @errorName(failure));
+                return 2;
+            },
+        };
+    }
+    const rich_view: client.rich.View = if (use_live_delta)
+        bridge.live_raw_cache.receive(&bridge.connection) catch |failure| {
+            bridge.setError("observe", @errorName(failure));
+            return 2;
+        }
+    else blk: {
+        owned_rich = requestObservation(
+            &bridge.connection,
+            bridge.allocator,
+            after_revision,
+            history_offset,
+            bridge.raw_observation,
+        ) catch |failure| {
+            bridge.setError("observe", @errorName(failure));
+            return 2;
+        };
+        break :blk owned_rich.?.view();
     };
-    defer rich.deinit();
 
-    const projected = client.view.project(bridge.allocator, &rich) catch |failure| {
+    const projected = client.view.projectView(bridge.allocator, &rich_view) catch |failure| {
         bridge.setError("project", @errorName(failure));
         return 3;
     };
