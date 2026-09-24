@@ -336,6 +336,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
     const entries = [_]Entry{
         .{ .target = "/", .asset = .{ .relative_path = "index.html", .content_type = "text/html; charset=utf-8" } },
         .{ .target = "/host.mjs", .asset = .{ .relative_path = "host.mjs", .content_type = "text/javascript; charset=utf-8" } },
+        .{ .target = "/webgl_backend.mjs", .asset = .{ .relative_path = "webgl_backend.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/input.mjs", .asset = .{ .relative_path = "input.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/pointer_input.mjs", .asset = .{ .relative_path = "pointer_input.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/history.mjs", .asset = .{ .relative_path = "history.mjs", .content_type = "text/javascript; charset=utf-8" } },
@@ -441,6 +442,7 @@ test "static routes are closed and do not traverse the site root" {
     try std.testing.expectEqualStrings("history.mjs", staticAsset("/history.mjs").?.relative_path);
     try std.testing.expectEqualStrings("lifecycle_policy.mjs", staticAsset("/lifecycle_policy.mjs").?.relative_path);
     try std.testing.expectEqualStrings("pointer_input.mjs", staticAsset("/pointer_input.mjs").?.relative_path);
+    try std.testing.expectEqualStrings("webgl_backend.mjs", staticAsset("/webgl_backend.mjs").?.relative_path);
     try std.testing.expectEqualStrings("nerd-font.bin", staticAsset("/nerd-font.bin").?.relative_path);
     try std.testing.expectEqualStrings("nerd-font-license.txt", staticAsset("/nerd-font-license.txt").?.relative_path);
     try std.testing.expect(staticAsset("/../secret") == null);

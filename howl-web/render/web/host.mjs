@@ -12,8 +12,9 @@ import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
+import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from './webgl_backend.mjs';
 
-const CANARY_GENERATION = 'v41-retina';
+const CANARY_GENERATION = 'v42-webgl-text';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -83,6 +84,13 @@ let historyRequestPending = false;
 let historyWheelTimer = null;
 let lastInput = '';
 const telemetry = new Telemetry({capacity:768});
+let webglBackend = null;
+let webglBackendFailure = null;
+try {
+  webglBackend = new WebGLTerminalBackend({glyphCoverageLut});
+} catch (error) {
+  webglBackendFailure = error instanceof Error ? error.message : String(error);
+}
 const liveFrameScheduler = new LatestFrameScheduler({
   schedule:callback => scheduleDisplay(callback, {onWinner:source => telemetry.record('frame_tick', {source})}),
   draw:frame => history.active || presentationChanging
@@ -654,6 +662,7 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, 
       upload_bytes:canvas.upload_bytes, upload_pixels:canvas.upload_pixels,
       max_upload_pixels:canvas.max_upload_pixels, surface_resized:canvas.surface_resized,
       solid_commands:canvas.solid_commands, alpha_commands:canvas.alpha_commands, image_commands:canvas.image_commands,
+      backend:canvas.backend, draw_calls:canvas.draw_calls, webgl_sync_ms:canvas.webgl_sync_ms,
       scratch:[alphaScratch.width, alphaScratch.height],
       terminal:String(metadata.terminal), observation:String(metadata.observation),
     });
@@ -785,26 +794,6 @@ function createResource(upload, framePixels) {
   return resource;
 }
 
-function clippedSprite(destination, clip, source) {
-  const [dx, dy, dw, dh] = destination;
-  const [cx, cy, cw, ch] = clip;
-  const [sx, sy, sw, sh] = source;
-  if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0) return null;
-  const left = Math.max(dx, cx), top = Math.max(dy, cy);
-  const right = Math.min(dx + dw, cx + cw), bottom = Math.min(dy + dh, cy + ch);
-  if (right <= left || bottom <= top) return null;
-  const scaleX = sw / dw, scaleY = sh / dh;
-  return {
-    destination:[left, top, right - left, bottom - top],
-    source:[
-      sx + (left - dx) * scaleX,
-      sy + (top - dy) * scaleY,
-      (right - left) * scaleX,
-      (bottom - top) * scaleY,
-    ],
-  };
-}
-
 function alphaSprite(resource, source, color) {
   const [sx, sy, sw, sh] = source;
   const width = Math.ceil(sw), height = Math.ceil(sh);
@@ -837,7 +826,122 @@ function alphaSprite(resource, source, color) {
   return canvas;
 }
 
+function syncCanvasResourceLease(frame, framePixels) {
+  const started = performance.now();
+  for (const q of frame.removals) resources.delete(resourceKey(q));
+  const removalsFinished = performance.now();
+  let uploadBytes = 0, uploadPixels = 0, maxUploadPixels = 0;
+  for (const upload of frame.uploads) {
+    const pixels = upload.z[0] * upload.z[1];
+    uploadBytes += upload.n;
+    uploadPixels += pixels;
+    maxUploadPixels = Math.max(maxUploadPixels, pixels);
+    resources.set(resourceKey(upload.q), createResource(upload, framePixels));
+  }
+  const uploadsFinished = performance.now();
+  const live = new Set();
+  for (const command of frame.commands) if (command.k !== 0) live.add(resourceKey(command.q));
+  for (const key of [...resources.keys()]) if (!live.has(key)) resources.delete(key);
+  const finished = performance.now();
+  const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
+  return {
+    removals_ms:ms(removalsFinished, started),
+    upload_ms:ms(uploadsFinished, removalsFinished),
+    retire_ms:ms(finished, uploadsFinished),
+    upload_bytes:uploadBytes,
+    upload_pixels:uploadPixels,
+    max_upload_pixels:maxUploadPixels,
+  };
+}
+
+function ensureTerminalSurface(frame) {
+  const [width, height] = frame.surface;
+  const surfaceResized = terminal.width !== width || terminal.height !== height;
+  if (surfaceResized) {
+    terminal.width = width;
+    terminal.height = height;
+  }
+  const logicalWidth = width / rasterScale;
+  const expectedWidth = String(logicalWidth) + 'px';
+  if (terminal.style.width !== expectedWidth) terminal.style.width = expectedWidth;
+  if (terminal.style.height) terminal.style.height = '';
+  context.imageSmoothingEnabled = false;
+  return surfaceResized;
+}
+
+function disableWebGLBackend(error) {
+  webglBackendFailure = error instanceof Error ? error.message : String(error);
+  try { webglBackend?.reset(); } catch {}
+  webglBackend = null;
+}
+
 function drawFrame(frame, framePixels) {
+  let webglSyncMs = 0;
+  if (webglBackend) {
+    const syncStarted = performance.now();
+    try {
+      webglBackend.syncResources(frame, framePixels, resourceKey);
+    } catch (error) {
+      disableWebGLBackend(error);
+    }
+    webglSyncMs = performance.now() - syncStarted;
+  }
+
+  if (!webglBackend || !webglFrameEligible(frame)) {
+    return {
+      ...drawFrameCanvas(frame, framePixels),
+      backend:'canvas2d',
+      draw_calls:null,
+      webgl_sync_ms:Math.round(webglSyncMs * 10) / 10,
+    };
+  }
+
+  try {
+    const started = performance.now();
+    const lease = syncCanvasResourceLease(frame, framePixels);
+    const resourcesFinished = performance.now();
+    const surfaceResized = ensureTerminalSurface(frame);
+    context.clearRect(0, 0, frame.surface[0], frame.surface[1]);
+    const surfaceFinished = performance.now();
+    const gpu = webglBackend.draw(frame, resourceKey);
+    context.drawImage(webglBackend.canvas, 0, 0, frame.surface[0], frame.surface[1]);
+    const commandsFinished = performance.now();
+    const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
+    let solidCommands = 0, alphaCommands = 0;
+    for (const command of frame.commands) {
+      if (command.k === 0) solidCommands += 1;
+      else if (command.k === 1) alphaCommands += 1;
+    }
+    return {
+      removals_ms:lease.removals_ms,
+      upload_ms:Math.round((lease.upload_ms + webglSyncMs) * 10) / 10,
+      surface_ms:ms(surfaceFinished, resourcesFinished),
+      draw_commands_ms:ms(commandsFinished, surfaceFinished),
+      retire_ms:lease.retire_ms,
+      upload_bytes:lease.upload_bytes,
+      upload_pixels:lease.upload_pixels,
+      max_upload_pixels:lease.max_upload_pixels,
+      surface_resized:surfaceResized,
+      solid_commands:solidCommands,
+      alpha_commands:alphaCommands,
+      image_commands:0,
+      backend:'webgl2',
+      draw_calls:gpu.draw_calls,
+      webgl_sync_ms:Math.round(webglSyncMs * 10) / 10,
+      total_backend_ms:ms(commandsFinished, started),
+    };
+  } catch (error) {
+    disableWebGLBackend(error);
+    return {
+      ...drawFrameCanvas(frame, framePixels),
+      backend:'canvas2d',
+      draw_calls:null,
+      webgl_sync_ms:Math.round(webglSyncMs * 10) / 10,
+    };
+  }
+}
+
+function drawFrameCanvas(frame, framePixels) {
   const started = performance.now();
   for (const q of frame.removals) resources.delete(resourceKey(q));
   const removalsFinished = performance.now();
@@ -925,6 +1029,7 @@ function drawFrame(frame, framePixels) {
     retire_ms:ms(finished, commandsFinished),
     upload_bytes:uploadBytes, upload_pixels:uploadPixels, max_upload_pixels:maxUploadPixels,
     surface_resized:surfaceResized, solid_commands:solidCommands, alpha_commands:alphaCommands, image_commands:imageCommands,
+    backend:'canvas2d', draw_calls:null, webgl_sync_ms:0,
   };
 }
 
@@ -1293,6 +1398,7 @@ async function cyclePresentationZoom() {
       throw error;
     }
     resources.clear();
+    webglBackend?.reset();
     alphaScratch.width = 1;
     alphaScratch.height = 1;
     lastFrame = null;
@@ -1580,6 +1686,9 @@ function updateFacts() {
     render_count: renderer ? String(renderer.exports.rv_render_count()) : '0',
     renderer_memory_bytes: renderer?.exports.memory.buffer.byteLength ?? null,
     backend_resources: resources.size,
+    webgl_backend: webglBackend ? 'ready' : 'canvas2d',
+    webgl_resources: webglBackend?.resourceCount() ?? 0,
+    webgl_failure: webglBackendFailure,
     frame: lastFrame ? {
       observation: lastFrame.observation,
       terminal: lastFrame.terminal,
