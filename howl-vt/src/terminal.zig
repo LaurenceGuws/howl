@@ -4039,10 +4039,12 @@ const TerminalStream = struct {
             }
             summary.mutations.merge(try self.nextSummary(bytes[consumed]));
             consumed += 1;
+            if (self.terminal.reply_buffer.len() != replies_before) break;
+            const consequence_count = self.terminal.consequences.count();
+            if (consequence_count != consequences_before) break;
+            if (consequences_before == 0) continue;
             const consequence_head = self.terminal.consequenceHead();
-            if (self.terminal.reply_buffer.len() != replies_before or
-                self.terminal.consequences.count() != consequences_before or
-                (if (consequence_head) |head| head.id() else null) != consequence_head_before)
+            if ((if (consequence_head) |head| head.id() else null) != consequence_head_before)
                 break;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
@@ -9685,6 +9687,97 @@ test "ordinary OSC9 notifications remain distinct from bounded retained progress
     try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
     const head = terminal.consequenceHead().?;
     try std.testing.expectEqualStrings("hello", head.notification.payload);
+}
+
+var service_boundary_test_relieved_id: u64 = 0;
+var service_boundary_test_relief_calls: usize = 0;
+
+fn serviceBoundaryTestConsumeHead(terminal: *Terminal) TerminalFeedError!void {
+    const head = terminal.consequenceHead() orelse return error.ConsequencePressure;
+    service_boundary_test_relieved_id = head.id();
+    terminal.consumeConsequence(head.id()) catch return error.ConsequencePressure;
+}
+
+fn serviceBoundaryTestMustNotRelieve(_: *Terminal) TerminalFeedError!void {
+    service_boundary_test_relief_calls += 1;
+    return error.ConsequencePressure;
+}
+
+test "service boundary preserves reply consequence and unchanged-head cuts" {
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+        defer terminal.deinit();
+        const bytes = "ordinary text";
+        const progress = try terminal.feedAtServiceBoundary(bytes, 1);
+        try std.testing.expectEqual(bytes.len, progress.consumed);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+        defer terminal.deinit();
+        const progress = try terminal.feedAtServiceBoundary("A\x07TAIL", 1);
+        try std.testing.expectEqual(@as(usize, 2), progress.consumed);
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+        defer terminal.deinit();
+        const bytes = "A\x1b[6nTAIL";
+        const progress = try terminal.feedAtServiceBoundary(bytes, 1);
+        try std.testing.expect(progress.consumed < bytes.len);
+        try std.testing.expectEqualStrings("\x1b[1;2R", terminal.replyBytes());
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x07")).stateChanged());
+        const before = terminal.consequenceHead().?.id();
+        const progress = try terminal.feedAtServiceBoundary("AB", 1);
+        try std.testing.expectEqual(@as(usize, 2), progress.consumed);
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+        try std.testing.expectEqual(before, terminal.consequenceHead().?.id());
+    }
+}
+
+test "service boundary detects equal-count head replacement after pressure relief" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+    defer terminal.deinit();
+    for (0..32) |_| try std.testing.expect((try terminal.feed("\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+    const old_head = terminal.consequenceHead().?.id();
+    service_boundary_test_relieved_id = 0;
+    const progress = try terminal.feedAtServiceBoundaryRelievingConsequences(
+        "\x07TAIL",
+        1,
+        serviceBoundaryTestConsumeHead,
+    );
+    try std.testing.expect(progress.consequence_pressure_relieved);
+    try std.testing.expectEqual(old_head, service_boundary_test_relieved_id);
+    try std.testing.expectEqual(@as(usize, 1), progress.consumed);
+    try std.testing.expectEqual(@as(u16, 32), terminal.consequenceCount());
+    const new_head = terminal.consequenceHead().?.id();
+    try std.testing.expectEqual(old_head + 1, new_head);
+    try terminal.consumeConsequence(new_head);
+    try std.testing.expectEqual(old_head + 2, terminal.consequenceHead().?.id());
+}
+
+test "empty service boundary never invokes pressure relief" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+    defer terminal.deinit();
+    service_boundary_test_relief_calls = 0;
+    const bytes = "ordinary text with no caller work";
+    const progress = try terminal.feedAtServiceBoundaryRelievingConsequences(
+        bytes,
+        1,
+        serviceBoundaryTestMustNotRelieve,
+    );
+    try std.testing.expectEqual(bytes.len, progress.consumed);
+    try std.testing.expect(!progress.consequence_pressure_relieved);
+    try std.testing.expectEqual(@as(usize, 0), service_boundary_test_relief_calls);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "synchronized release fact survives every feed split and reports actual transitions" {
