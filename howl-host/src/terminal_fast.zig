@@ -189,6 +189,11 @@ pub const Adapter = struct {
             return null;
         const cell_count = std.math.mul(usize, view.rows, view.cols) catch return null;
         if (cell_count == 0 or cell_count > backend.maximum_cells) return null;
+        // After any rejected frame, cheaply re-check only the scalar domain
+        // before paying color resolution, glyph caching, or instance projection
+        // across the complete canonical view. Successful retained frames skip
+        // this preflight and keep the sparse changed-row path unchanged.
+        if (!self.incremental_ready and !directScalarDomainSupported(&view)) return null;
         try self.ensureCapacity(cell_count);
 
         const cursor_draw = vtCursor(&view, &presentation) catch |failure| switch (failure) {
@@ -240,6 +245,23 @@ pub const Adapter = struct {
             .changed_rows = if (can_sparse) changed_rows else null,
             .row_shift = null,
         };
+    }
+
+    fn directScalarDomainSupported(view: *const VT.SemanticView) bool {
+        for (0..view.rows) |row_index| {
+            if (view.lineGeometry(@intCast(row_index)) != .single_width) return false;
+            const cells = view.rowCells(@intCast(row_index));
+            if (cells.len != view.cols) return false;
+            for (cells) |cell| {
+                if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
+                const scalar = std.math.cast(u8, cell.codepoint) orelse return false;
+                const alnum = (scalar >= '0' and scalar <= '9') or
+                    (scalar >= 'A' and scalar <= 'Z') or
+                    (scalar >= 'a' and scalar <= 'z');
+                if (!alnum) return false;
+            }
+        }
+        return true;
     }
 
     fn projectVtRow(
@@ -1195,7 +1217,7 @@ test "direct canonical retained adapter consumes exact sparse row facts" {
         sparse.instances[5].glyph_slot,
     );
 
-    try std.testing.expect((try terminal.feed("\x1b[2;3H-")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[2;3H:\x1b[2;4H|")).stateChanged());
     try std.testing.expect((try adapter.prepareObservation(
         terminal.observation(),
         &changed,
@@ -1203,6 +1225,18 @@ test "direct canonical retained adapter consumes exact sparse row facts" {
         height,
     )) == null);
     try std.testing.expect(!adapter.incremental_ready);
+    try std.testing.expect(!adapter.glyph_ready[':' - ascii_first]);
+    try std.testing.expect(!adapter.glyph_ready['|' - ascii_first]);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H  ")).stateChanged());
+    const recovered = (try adapter.prepareObservation(
+        terminal.observation(),
+        &changed,
+        width,
+        height,
+    )) orelse return error.ExpectedRecoveredAdmission;
+    try std.testing.expect(recovered.changed_rows == null);
+    try std.testing.expect(adapter.incremental_ready);
 }
 
 test "direct canonical retained adapter preserves empty decorations and rejects strike color mismatch" {
