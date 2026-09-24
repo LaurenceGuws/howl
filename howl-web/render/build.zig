@@ -63,18 +63,18 @@ pub fn build(b: *std.Build) void {
     live_root.addImport("howl_client", client_module);
     live_root.addImport("howl_render", render.module("howl_render"));
     live_root.export_symbol_names = &.{
-        "rv_font_ptr",               "rv_font_capacity",     "rv_fallback_font_ptr",
-        "rv_fallback_font_capacity", "rv_symbol_font_ptr",   "rv_symbol_font_capacity",
-        "rv_snapshot_ptr",           "rv_snapshot_capacity", "rv_frame_ptr",
-        "rv_frame_len",              "rv_text_ptr",          "rv_text_len",
-        "rv_text_truncated",         "rv_pixels_ptr",        "rv_pixels_len",
-        "rv_error_ptr",              "rv_error_len",         "rv_render_count",
-        "rv_ready",                  "rv_init",              "rv_init_presentation",
-        "rv_missing_external",       "rv_missing_resource",  "rv_missing_generation",
-        "rv_missing_format",         "rv_missing_width",     "rv_missing_height",
-        "rv_missing_stride",         "rv_missing_image_id",  "rv_missing_image_generation",
-        "rv_accept_external",        "rv_reset",             "rv_render",
-        "rv_ack",
+        "rv_font_ptr",               "rv_font_capacity",            "rv_fallback_font_ptr",
+        "rv_fallback_font_capacity", "rv_symbol_font_ptr",          "rv_symbol_font_capacity",
+        "rv_snapshot_ptr",           "rv_snapshot_capacity",        "rv_frame_ptr",
+        "rv_frame_len",              "rv_text_ptr",                 "rv_text_len",
+        "rv_text_truncated",         "rv_pixels_ptr",               "rv_pixels_len",
+        "rv_error_ptr",              "rv_error_len",                "rv_render_count",
+        "rv_frame_format",           "rv_set_frame_format",         "rv_ready",
+        "rv_init",                   "rv_init_presentation",        "rv_missing_external",
+        "rv_missing_resource",       "rv_missing_generation",       "rv_missing_format",
+        "rv_missing_width",          "rv_missing_height",           "rv_missing_stride",
+        "rv_missing_image_id",       "rv_missing_image_generation", "rv_accept_external",
+        "rv_reset",                  "rv_render",                   "rv_ack",
     };
     const live = b.addExecutable(.{ .name = "howl-live-render", .root_module = live_root });
     live.entry = .disabled;
@@ -109,6 +109,14 @@ pub fn build(b: *std.Build) void {
     visible_text_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
     visible_text_test.setName("live renderer visible text projection");
     check.dependOn(&visible_text_test.step);
+    const frame_compat_test = b.addSystemCommand(&.{ "node", "tests/frame_compat.mjs" });
+    frame_compat_test.setCwd(b.path("."));
+    frame_compat_test.addFileArg(live.getEmittedBin());
+    frame_compat_test.addFileArg(text.path("testdata/primary.ttf"));
+    frame_compat_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    frame_compat_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    frame_compat_test.setName("live renderer frame generation compatibility");
+    check.dependOn(&frame_compat_test.step);
     const asset_contract_test = b.addSystemCommand(&.{ "node", "tests/asset_contract.mjs" });
     asset_contract_test.setCwd(b.path("."));
     asset_contract_test.setName("browser module asset contract");
@@ -170,7 +178,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(b.path("fonts/NERD-FONTS-LICENSE.txt"), "live-web/nerd-font-license.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "webgl_backend.mjs", "lifecycle_policy.mjs", "input.mjs", "pointer_input.mjs", "history.mjs", "selection.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "frame_v3.mjs", "webgl_backend.mjs", "webgl_backend_v3.mjs", "lifecycle_policy.mjs", "input.mjs", "pointer_input.mjs", "history.mjs", "selection.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep

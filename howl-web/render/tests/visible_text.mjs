@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {assertTextImports, createTextRuntime} from '../../text/web/runtime.mjs';
+import {CommandV3Length, selectRendererFrameV3} from '../web/frame_v3.mjs';
 
 const [wasmPath, primaryPath, fallbackPath, symbolPath] = process.argv.slice(2);
 const binary = await readFile(wasmPath);
@@ -28,6 +29,7 @@ const primary = await readFile(primaryPath);
 const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
+selectRendererFrameV3(w);
 assert.equal(w.rv_text_len(), 0);
 assert.equal(w.rv_text_truncated(), 0);
 
@@ -38,6 +40,16 @@ const snapshot = Buffer.from(vector.hex, 'hex');
 assert.ok(snapshot.length <= w.rv_snapshot_capacity());
 bytesAt(w.rv_snapshot_ptr(), snapshot.length).set(snapshot);
 assert.equal(w.rv_render(snapshot.length), 1, errorText());
+const frame = JSON.parse(decoder.decode(bytesAt(w.rv_frame_ptr(), w.rv_frame_len())));
+assert.equal(frame.schema, 'howl.web-frame/v3');
+const commandLengths = new Map([[0, CommandV3Length.solid], [1, CommandV3Length.alpha], [2, CommandV3Length.rgba]]);
+for (const command of frame.commands) {
+  assert.ok(Array.isArray(command));
+  assert.ok(commandLengths.has(command[0]));
+  assert.equal(command.length, commandLengths.get(command[0]));
+}
+assert.ok(frame.commands.some(command => command[0] === 0));
+assert.ok(frame.commands.some(command => command[0] === 1));
 assert.equal(w.rv_text_len(), 0); // A is staged until the browser acknowledges its draw.
 assert.equal(w.rv_ack(), 1);
 assert.equal(decoder.decode(bytesAt(w.rv_text_ptr(), w.rv_text_len())), 'é中');

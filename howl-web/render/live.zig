@@ -60,6 +60,10 @@ var canvas_ready = false;
 var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
 var surface: canvas.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
+const FrameFormat = enum(u32) { v2 = 2, v3 = 3 };
+// Boot in the last deployed format so an old host may safely consume a newer
+// renderer. A v3-aware host opts in before it opens its observation streams.
+var frame_format: FrameFormat = .v2;
 
 const ImageBinding = render.terminal.ExternalImageBinding;
 
@@ -126,6 +130,18 @@ export fn rv_error_len() usize {
 }
 export fn rv_render_count() u64 {
     return rendered;
+}
+export fn rv_frame_format() u32 {
+    return @backingInt(frame_format);
+}
+export fn rv_set_frame_format(value: u32) u32 {
+    if (pending_ack or rendered != 0) return 0;
+    frame_format = switch (value) {
+        2 => .v2,
+        3 => .v3,
+        else => return 0,
+    };
+    return 1;
 }
 export fn rv_ready() u32 {
     return @intFromBool(canvas_ready);
@@ -482,6 +498,19 @@ fn writeFrame(
     terminal_revision: u64,
     render_revision: u64,
 ) !void {
+    return switch (frame_format) {
+        .v2 => writeFrameV2(frame, snapshot, observation_revision, terminal_revision, render_revision),
+        .v3 => writeFrameV3(frame, snapshot, observation_revision, terminal_revision, render_revision),
+    };
+}
+
+fn writeFrameV2(
+    frame: render.terminal.Frame,
+    snapshot: *const client.view.Snapshot,
+    observation_revision: u64,
+    terminal_revision: u64,
+    render_revision: u64,
+) !void {
     var writer = std.Io.Writer.fixed(&metadata);
     try writer.print(
         "{{\"schema\":\"howl.web-frame/v2\",\"render\":{d},\"observation\":{d},\"terminal\":{d},\"surface\":[{d},{d}],\"cell\":[{d},{d}],\"selection_rows\":[",
@@ -559,8 +588,104 @@ fn writeFrame(
     metadata_used = writer.end;
 }
 
+fn writeFrameV3(
+    frame: render.terminal.Frame,
+    snapshot: *const client.view.Snapshot,
+    observation_revision: u64,
+    terminal_revision: u64,
+    render_revision: u64,
+) !void {
+    // Web frame v3 keeps the readable JSON envelope but makes the high-cardinality
+    // command lane positional so dense text does not repeat object keys thousands
+    // of times per frame:
+    // solid [0,x,y,w,h,r,g,b,a]
+    // alpha [1,dx,dy,dw,dh,cx,cy,cw,ch,q,generation,format,rw,rh,sx,sy,sw,sh,r,g,b,a,cursor]
+    // rgba  [2,dx,dy,dw,dh,cx,cy,cw,ch,q,generation,format,rw,rh,sx,sy,sw,sh]
+    var writer = std.Io.Writer.fixed(&metadata);
+    try writer.print(
+        "{{\"schema\":\"howl.web-frame/v3\",\"render\":{d},\"observation\":{d},\"terminal\":{d},\"surface\":[{d},{d}],\"cell\":[{d},{d}],\"selection_rows\":[",
+        .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
+    );
+    const begin = client.view.begin(snapshot);
+    for (0..begin.rows) |row| {
+        if (row != 0) try writer.writeByte(',');
+        const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
+            return error.InvalidSnapshot;
+        const encoded_shape = shape.content_end_exclusive |
+            (if (shape.wrapped) @as(u16, 1) << 15 else 0);
+        try writer.print("{d}", .{encoded_shape});
+    }
+    try writer.writeAll("],\"uploads\":[");
+    for (frame.uploads, 0..) |upload, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.print(
+            "{{\"q\":[{d},{d}],\"f\":{d},\"z\":[{d},{d}],\"o\":{d},\"n\":{d},\"stride\":{d}}}",
+            .{
+                @backingInt(upload.resource.resource), @backingInt(upload.resource.generation),
+                @backingInt(upload.format),            upload.size.width,
+                upload.size.height,                    upload.pixel_offset,
+                upload.pixel_count,                    upload.stride,
+            },
+        );
+    }
+    try writer.writeAll("],\"removals\":[");
+    for (frame.removals, 0..) |removal, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeQualified(&writer, removal);
+    }
+    try writer.writeAll("],\"commands\":[");
+    for (frame.commands, 0..) |command, index| {
+        if (index != 0) try writer.writeByte(',');
+        switch (command) {
+            .solid => |value| {
+                try writer.writeAll("[0,");
+                try writeRectFields(&writer, value.rect);
+                try writer.writeByte(',');
+                try writeColorFields(&writer, value.color);
+                try writer.writeByte(']');
+            },
+            .alpha_mask => |value| {
+                try writer.writeAll("[1,");
+                try writeRectFields(&writer, value.destination);
+                try writer.writeByte(',');
+                try writeRectFields(&writer, value.clip);
+                try writer.writeByte(',');
+                try writeQualifiedFields(&writer, value.resource.resource);
+                try writer.print(",{d},{d},{d},", .{
+                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
+                });
+                try writeSourceFields(&writer, value.resource.source, value.resource.size);
+                try writer.writeByte(',');
+                try writeColorFields(&writer, value.color);
+                try writer.print(",{d}]", .{@intFromBool(value.cursor_component)});
+            },
+            .rgba => |value| {
+                try writer.writeAll("[2,");
+                try writeRectFields(&writer, value.destination);
+                try writer.writeByte(',');
+                try writeRectFields(&writer, value.clip);
+                try writer.writeByte(',');
+                try writeQualifiedFields(&writer, value.resource.resource);
+                try writer.print(",{d},{d},{d},", .{
+                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
+                });
+                try writeSourceFields(&writer, value.resource.source, value.resource.size);
+                try writer.writeByte(']');
+            },
+        }
+    }
+    try writer.print("] ,\"pixels\":{d},\"residency\":{d}}}", .{ frame.pixels.len, accepted_residency_count });
+    metadata_used = writer.end;
+}
+
 fn writeQualified(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
     try writer.print("[{d},{d}]", .{
+        @backingInt(value.resource), @backingInt(value.generation),
+    });
+}
+
+fn writeQualifiedFields(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+    try writer.print("{d},{d}", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
@@ -576,4 +701,17 @@ fn writeColor(writer: *std.Io.Writer, value: canvas.Color) !void {
 fn writeSourceRect(writer: *std.Io.Writer, value: ?canvas.SourceRect, size: canvas.Size) !void {
     const source = value orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     try writer.print("[{d},{d},{d},{d}]", .{ source.x, source.y, source.width, source.height });
+}
+
+fn writeRectFields(writer: *std.Io.Writer, value: canvas.Rect) !void {
+    try writer.print("{d},{d},{d},{d}", .{ value.x, value.y, value.width, value.height });
+}
+
+fn writeColorFields(writer: *std.Io.Writer, value: canvas.Color) !void {
+    try writer.print("{d},{d},{d},{d}", .{ value.r, value.g, value.b, value.a });
+}
+
+fn writeSourceFields(writer: *std.Io.Writer, value: ?canvas.SourceRect, size: canvas.Size) !void {
+    const source = value orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+    try writer.print("{d},{d},{d},{d}", .{ source.x, source.y, source.width, source.height });
 }

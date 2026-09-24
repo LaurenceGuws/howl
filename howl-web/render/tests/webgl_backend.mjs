@@ -1,27 +1,13 @@
 import assert from 'node:assert/strict';
-import {clippedSprite, webglFrameEligible} from '../web/webgl_backend.mjs';
+import {clippedSprite, webglFrameEligible} from '../web/webgl_backend_v3.mjs';
 
-const solid = color => ({k:0, r:[0, 0, 10, 10], color});
-const alpha = (destination, clip = destination, source = [0, 0, 10, 10]) => ({
-  k:1,
-  d:destination,
-  c:clip,
-  q:[1, 1],
-  f:0,
-  z:[16, 16],
-  s:source,
-  color:[240, 220, 30, 255],
-  cc:false,
-});
-const image = () => ({
-  k:2,
-  d:[0, 0, 10, 10],
-  c:[0, 0, 10, 10],
-  q:[2, 1],
-  f:1,
-  z:[10, 10],
-  s:[0, 0, 10, 10],
-});
+const solid = color => [0, 0, 0, 10, 10, ...color];
+const alpha = (destination, clip = destination, source = [0, 0, 10, 10]) => [
+  1, ...destination, ...clip, 1, 1, 0, 16, 16, ...source, 240, 220, 30, 255, 0,
+];
+const image = () => [
+  2, 0, 0, 10, 10, 0, 0, 10, 10, 2, 1, 1, 10, 10, 0, 0, 10, 10,
+];
 
 assert.equal(webglFrameEligible({commands:[solid([0, 0, 0, 255])]}), true);
 assert.equal(webglFrameEligible({commands:[alpha([0, 0, 10, 10])]}), true);

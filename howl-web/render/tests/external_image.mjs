@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {assertTextImports, createTextRuntime} from '../../text/web/runtime.mjs';
+import {CommandV3Length, selectRendererFrameV3} from '../web/frame_v3.mjs';
 
 const [wasmPath, primaryPath, fallbackPath, symbolPath] = process.argv.slice(2);
 const binary = await readFile(wasmPath);
@@ -28,6 +29,7 @@ const primary = await readFile(primaryPath);
 const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
+selectRendererFrameV3(w);
 
 const corpus = JSON.parse(await readFile('../../howl-instance/protocol/v10-vectors.json', 'utf8'));
 const test = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
@@ -77,13 +79,15 @@ assert.equal(w.rv_missing_external(), 0);
 assert.equal(w.rv_render(snapshot.length), 1, errorText());
 assert.equal(w.rv_render_count(), 1n);
 const frame = JSON.parse(decoder.decode(bytesAt(w.rv_frame_ptr(), w.rv_frame_len())));
+assert.equal(frame.schema, 'howl.web-frame/v3');
 const pixels = bytesAt(w.rv_pixels_ptr(), w.rv_pixels_len());
-const rgba = frame.commands.filter(command => command.k === 2);
+const rgba = frame.commands.filter(command => command[0] === 2);
 assert.equal(rgba.length, 1);
-const rgbaIndex = frame.commands.findIndex(command => command.k === 2);
+assert.equal(rgba[0].length, CommandV3Length.rgba);
+const rgbaIndex = frame.commands.findIndex(command => command[0] === 2);
 assert.ok(rgbaIndex > 0); // default background remains below the ordinary negative image
-assert.deepEqual(rgba[0].q.map(String), externalKey);
-assert.deepEqual(rgba[0].z, [2, 2]);
+assert.deepEqual(rgba[0].slice(9, 11).map(String), externalKey);
+assert.deepEqual(rgba[0].slice(12, 14), [2, 2]);
 assert.equal(frame.uploads.some(upload => upload.q.map(String).join(':') === externalKey.join(':')), false);
 assert.equal(pixels.length, frame.pixels);
 assert.equal(frame.residency, 1);

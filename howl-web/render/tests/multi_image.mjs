@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {assertTextImports, createTextRuntime} from '../../text/web/runtime.mjs';
+import {CommandV3Length, selectRendererFrameV3} from '../web/frame_v3.mjs';
 
 const [wasmPath, primaryPath, fallbackPath, symbolPath] = process.argv.slice(2);
 const binary = await readFile(wasmPath);
@@ -28,6 +29,7 @@ const primary = await readFile(primaryPath);
 const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
+selectRendererFrameV3(w);
 
 function parseFrames(bytes) {
   const frames = [];
@@ -167,10 +169,12 @@ assert.equal(w.rv_render(snapshot.length), 1, errorText());
 assert.equal(w.rv_render_count(), 1n);
 assert.equal(w.rv_missing_external(), 0);
 const frame = JSON.parse(decoder.decode(bytesAt(w.rv_frame_ptr(), w.rv_frame_len())));
-const rgba = frame.commands.filter(command => command.k === 2);
+assert.equal(frame.schema, 'howl.web-frame/v3');
+const rgba = frame.commands.filter(command => command[0] === 2);
 assert.equal(rgba.length, 8);
+assert.ok(rgba.every(command => command.length === CommandV3Length.rgba));
 const keys = new Map(misses.map(value => [value.imageId, qualified(value)]));
-assert.deepEqual(rgba.map(command => command.q.map(String)), [
+assert.deepEqual(rgba.map(command => command.slice(9, 11).map(String)), [
   keys.get(7), keys.get(7),
   keys.get(8), keys.get(9), keys.get(10), keys.get(11), keys.get(12), keys.get(13),
 ]);
@@ -184,7 +188,7 @@ assert.equal(w.rv_render(snapshot.length), 1, errorText());
 assert.equal(w.rv_missing_external(), 0);
 assert.equal(w.rv_render_count(), 2n);
 const stable = JSON.parse(decoder.decode(bytesAt(w.rv_frame_ptr(), w.rv_frame_len())));
-assert.equal(stable.commands.filter(command => command.k === 2).length, 8);
+assert.equal(stable.commands.filter(command => command[0] === 2).length, 8);
 assert.equal(w.rv_ack(), 1);
 
 console.log(JSON.stringify({
