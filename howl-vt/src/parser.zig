@@ -379,9 +379,21 @@ pub const Parser = struct {
             return .{ null, null, null };
         }
 
-        if (self.state == .csi_param and csiParamFastByte(byte)) {
+        if (self.state == .csi_entry and csiEntryParamFastByte(byte)) {
             self.feedParamByte(.csi, byte);
+            self.state = .csi_param;
             return .{ null, null, null };
+        }
+        if (self.state == .csi_param) {
+            if (csiParamFastByte(byte)) {
+                self.feedParamByte(.csi, byte);
+                return .{ null, null, null };
+            }
+            if (csiParamFinalFastByte(byte)) {
+                const action = self.consumeCsiDispatch(byte);
+                self.state = .ground;
+                return .{ null, action, null };
+            }
         }
 
         const transition = table[byte][@backingInt(self.state)];
@@ -500,8 +512,16 @@ pub const Parser = struct {
         self.intermediates_len += 1;
     }
 
+    fn csiEntryParamFastByte(byte: u8) bool {
+        return (byte >= '0' and byte <= '9') or byte == ';';
+    }
+
     fn csiParamFastByte(byte: u8) bool {
         return (byte >= '0' and byte <= '9') or byte == ';' or byte == ':';
+    }
+
+    fn csiParamFinalFastByte(byte: u8) bool {
+        return byte >= 0x40 and byte <= 0x7e;
     }
 
     fn buildPhases(
@@ -953,6 +973,51 @@ test "CSI parameter fast bytes exactly match generated same-state parameter tran
         const table_fast = transition.state == .csi_param and transition.action == .param;
         try std.testing.expectEqual(table_fast, Parser.csiParamFastByte(byte));
     }
+}
+
+test "CSI entry parameter fast bytes exactly match generated entry transitions" {
+    for (0..std.math.maxInt(u8) + 1) |raw| {
+        const byte: u8 = @intCast(raw);
+        const transition = table[byte][@backingInt(ParseState.csi_entry)];
+        const table_fast = transition.state == .csi_param and transition.action == .param;
+        try std.testing.expectEqual(table_fast, Parser.csiEntryParamFastByte(byte));
+    }
+}
+
+test "CSI parameter final fast bytes exactly match generated dispatch transitions" {
+    for (0..std.math.maxInt(u8) + 1) |raw| {
+        const byte: u8 = @intCast(raw);
+        const transition = table[byte][@backingInt(ParseState.csi_param)];
+        const table_fast = transition.state == .ground and transition.action == .csi_dispatch;
+        try std.testing.expectEqual(table_fast, Parser.csiParamFinalFastByte(byte));
+    }
+}
+
+test "CSI entry colon and private leader remain on generated paths" {
+    var colon = try Parser.init(std.testing.allocator);
+    defer colon.deinit();
+    try expectPhaseTags(colon.next(0x1B), null, null, null);
+    try expectPhaseTags(colon.next('['), null, null, null);
+    try expectPhaseTags(colon.next(':'), null, null, null);
+    try std.testing.expectEqual(ParseState.csi_ignore, colon.state);
+
+    var private = try Parser.init(std.testing.allocator);
+    defer private.deinit();
+    try expectPhaseTags(private.next(0x1B), null, null, null);
+    try expectPhaseTags(private.next('['), null, null, null);
+    try expectPhaseTags(private.next('?'), null, null, null);
+    try expectPhaseTags(private.next('2'), null, null, null);
+    try expectPhaseTags(private.next('0'), null, null, null);
+    try expectPhaseTags(private.next('2'), null, null, null);
+    try expectPhaseTags(private.next('6'), null, null, null);
+    const phases = private.next('h');
+    try expectPhaseTags(phases, null, .csi_dispatch, null);
+    const csi = phases[1].?.csi_dispatch;
+    try std.testing.expectEqual(@as(u8, '?'), csi.leader);
+    try std.testing.expect(csi.private);
+    try std.testing.expectEqual(@as(u8, 1), csi.count);
+    try std.testing.expectEqual(@as(i32, 2026), csi.params[0]);
+    try std.testing.expectEqual(@as(u8, 0), csi.intermediates_len);
 }
 
 test "parser DCS hook stays on the hook boundary" {
