@@ -50,6 +50,17 @@ function clippedCommandSprite(commands, i) {
   );
 }
 
+function commandSpriteVisible(commands, i) {
+  const dw = commands.width(i), dh = commands.height(i);
+  const sw = commands.sourceWidth(i), sh = commands.sourceHeight(i);
+  const cw = commands.clipWidth(i), ch = commands.clipHeight(i);
+  if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0) return false;
+  const dx = commands.x(i), dy = commands.y(i);
+  const cx = commands.clipX(i), cy = commands.clipY(i);
+  return Math.min(dx + dw, cx + cw) > Math.max(dx, cx) &&
+    Math.min(dy + dh, cy + ch) > Math.max(dy, cy);
+}
+
 function integralCommandScale(commands, i) {
   const dw = commands.width(i), dh = commands.height(i);
   const sw = commands.sourceWidth(i), sh = commands.sourceHeight(i);
@@ -66,8 +77,7 @@ export function webglFrameEligible(frame) {
     const kind = commands.kind(i);
     if (kind === 0) continue;
     if (kind !== 1) return false;
-    const visible = clippedCommandSprite(commands, i);
-    if (visible && !integralCommandScale(commands, i)) return false;
+    if (commandSpriteVisible(commands, i) && !integralCommandScale(commands, i)) return false;
   }
   return true;
 }

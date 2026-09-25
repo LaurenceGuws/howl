@@ -56,6 +56,28 @@ assert.equal(webglFrameEligible(frame([image()])), false);
 assert.equal(webglFrameEligible(frame([solid([1, 2, 3, 255]), alpha([0, 0, 20, 20]), image()])), false);
 assert.equal(webglFrameEligible(frame([alpha([0, 0, 20, 20], [30, 30, 2, 2])])), true);
 
+const admissionFixtures = [
+  {destination:[0, 0, 20, 20], clip:[4, 6, 10, 8], source:[0, 0, 10, 10]},
+  {destination:[-10, -10, 20, 20], clip:[0, 0, 10, 10], source:[0, 0, 10, 10]},
+  {destination:[0, 0, 10, 10], clip:[10, 0, 10, 10], source:[0, 0, 10, 10]},
+  {destination:[0, 0, 10, 10], clip:[0, 0, 0, 10], source:[0, 0, 10, 10]},
+  {destination:[0, 0, 10, 10], clip:[0, 0, 10, 10], source:[0, 0, 0, 10]},
+  {destination:[0, 0, 15, 15], clip:[0, 0, 15, 15], source:[0, 0, 10, 10]},
+  {destination:[0, 0, 15, 15], clip:[30, 30, 2, 2], source:[0, 0, 10, 10]},
+];
+for (const {destination, clip, source} of admissionFixtures) {
+  const visible = clippedSprite(destination, clip, source) !== null;
+  const integral = Number.isInteger(destination[2]) && Number.isInteger(destination[3]) &&
+    Number.isInteger(source[2]) && Number.isInteger(source[3]) &&
+    source[2] > 0 && source[3] > 0 &&
+    destination[2] >= source[2] && destination[3] >= source[3] &&
+    destination[2] % source[2] === 0 && destination[3] % source[3] === 0;
+  assert.equal(
+    webglFrameEligible(frame([alpha(destination, clip, source)])),
+    !visible || integral,
+  );
+}
+
 const backendState = {admittedCommands:null};
 const admitted = frame([alpha([0, 0, 20, 20])]);
 const rejected = frame([image()]);
