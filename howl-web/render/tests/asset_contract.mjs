@@ -53,6 +53,12 @@ assert(webglV4.includes('frame.commands.count'), 'v4 WebGL backend must consume 
 const leaseTransition = 'frame.uploads.length !== 0 || frame.removals.length !== 0';
 assert(host.includes(leaseTransition), 'v4 Canvas lease reconciliation must be transition-driven');
 assert(webglV4.includes(leaseTransition), 'v4 WebGL lease reconciliation must be transition-driven');
+assert(host.includes('!webglBackend.admit(frame)'),
+  'v4 WebGL host must use the backend one-shot admission before drawing');
+assert(webglV4.includes('this.admittedCommands = null;\n    if (!webglFrameEligible(frame)) return false;') &&
+  webglV4.includes('const admittedCommands = this.admittedCommands;') &&
+  webglV4.includes('if (admittedCommands !== frame.commands)'),
+  'v4 WebGL draw must consume the exact command view admitted by the backend');
 assert(host.includes("const identity = String(missing.q[0]) + ':';") &&
   host.includes('key !== missing.key && key.startsWith(identity)'),
   'v4 external refill must replace older generations of the same logical browser resource');

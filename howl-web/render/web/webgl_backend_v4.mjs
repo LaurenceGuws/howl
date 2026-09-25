@@ -179,6 +179,7 @@ export class WebGLTerminalBackend {
     this.batchMode = -1;
     this.batchResource = null;
     this.drawCalls = 0;
+    this.admittedCommands = null;
   }
 
   resourceCount() {
@@ -188,8 +189,16 @@ export class WebGLTerminalBackend {
   reset() {
     for (const resource of this.resources.values()) this.gl.deleteTexture(resource.texture);
     this.resources.clear();
+    this.admittedCommands = null;
     this.canvas.width = 1;
     this.canvas.height = 1;
+  }
+
+  admit(frame) {
+    this.admittedCommands = null;
+    if (!webglFrameEligible(frame)) return false;
+    this.admittedCommands = frame.commands;
+    return true;
   }
 
   ensureInstances(count) {
@@ -288,7 +297,10 @@ export class WebGLTerminalBackend {
   }
 
   draw(frame, resourceKey) {
-    if (!webglFrameEligible(frame)) throw new Error('frame is outside WebGL terminal admission');
+    const admittedCommands = this.admittedCommands;
+    this.admittedCommands = null;
+    if (admittedCommands !== frame.commands)
+      throw new Error('frame is outside WebGL terminal admission');
     const gl = this.gl;
     const [width, height] = frame.surface;
     if (this.canvas.width !== width || this.canvas.height !== height) {

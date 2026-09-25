@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {BinaryCommands} from '../web/frame_v4.mjs';
-import {clippedSprite, webglFrameEligible} from '../web/webgl_backend_v4.mjs';
+import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from '../web/webgl_backend_v4.mjs';
 
 const solid = color => [0, 0, 0, 10, 10, ...color];
 const alpha = (destination, clip = destination, source = [0, 0, 10, 10]) => [
@@ -55,6 +55,26 @@ assert.equal(webglFrameEligible(frame([alpha([0, 0, 1001, 1001], [0, 0, 1001, 10
 assert.equal(webglFrameEligible(frame([image()])), false);
 assert.equal(webglFrameEligible(frame([solid([1, 2, 3, 255]), alpha([0, 0, 20, 20]), image()])), false);
 assert.equal(webglFrameEligible(frame([alpha([0, 0, 20, 20], [30, 30, 2, 2])])), true);
+
+const backendState = {admittedCommands:null};
+const admitted = frame([alpha([0, 0, 20, 20])]);
+const rejected = frame([image()]);
+assert.equal(WebGLTerminalBackend.prototype.admit.call(backendState, admitted), true);
+assert.equal(backendState.admittedCommands, admitted.commands);
+assert.equal(WebGLTerminalBackend.prototype.admit.call(backendState, rejected), false);
+assert.equal(backendState.admittedCommands, null);
+backendState.admittedCommands = admitted.commands;
+assert.throws(
+  () => WebGLTerminalBackend.prototype.admit.call(backendState, {commands:{count:1, kind() { throw new Error('broken command view'); }}}),
+  /broken command view/,
+);
+assert.equal(backendState.admittedCommands, null);
+backendState.admittedCommands = admitted.commands;
+assert.throws(
+  () => WebGLTerminalBackend.prototype.draw.call(backendState, rejected, () => ''),
+  /outside WebGL terminal admission/,
+);
+assert.equal(backendState.admittedCommands, null);
 
 assert.deepEqual(
   clippedSprite([0, 0, 20, 20], [4, 6, 10, 8], [0, 0, 10, 10]),

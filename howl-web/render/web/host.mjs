@@ -13,7 +13,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 import {parseRendererFrameV4, qualifiedKeyV4 as resourceKey, selectRendererFrameV4} from './frame_v4.mjs';
-import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from './webgl_backend_v4.mjs';
+import {WebGLTerminalBackend, clippedSprite} from './webgl_backend_v4.mjs';
 
 const CANARY_GENERATION = 'v45-web-frame-v4';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
@@ -913,7 +913,7 @@ function drawFrame(frame, framePixels) {
     webglSyncMs = performance.now() - syncStarted;
   }
 
-  if (!webglBackend || !webglFrameEligible(frame)) {
+  if (!webglBackend || !webglBackend.admit(frame)) {
     return {
       ...drawFrameCanvas(frame, framePixels),
       backend:'canvas2d',
