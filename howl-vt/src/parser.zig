@@ -379,6 +379,11 @@ pub const Parser = struct {
             return .{ null, null, null };
         }
 
+        if (self.state == .csi_param and csiParamFastByte(byte)) {
+            self.feedParamByte(.csi, byte);
+            return .{ null, null, null };
+        }
+
         const transition = table[byte][@backingInt(self.state)];
         if (self.isActiveState()) {
             return self.nextActive(byte, transition);
@@ -493,6 +498,10 @@ pub const Parser = struct {
         if (self.intermediates_len >= self.intermediates.len) return;
         self.intermediates[self.intermediates_len] = byte;
         self.intermediates_len += 1;
+    }
+
+    fn csiParamFastByte(byte: u8) bool {
+        return (byte >= '0' and byte <= '9') or byte == ';' or byte == ':';
     }
 
     fn buildPhases(
@@ -935,6 +944,15 @@ test "parser assembles CSI params and separators" {
     try std.testing.expect(csi.separators.isSet(0));
     try std.testing.expect(!csi.separators.isSet(1));
     try std.testing.expect(!csi.separators.isSet(2));
+}
+
+test "CSI parameter fast bytes exactly match generated same-state parameter transitions" {
+    for (0..std.math.maxInt(u8) + 1) |raw| {
+        const byte: u8 = @intCast(raw);
+        const transition = table[byte][@backingInt(ParseState.csi_param)];
+        const table_fast = transition.state == .csi_param and transition.action == .param;
+        try std.testing.expectEqual(table_fast, Parser.csiParamFastByte(byte));
+    }
 }
 
 test "parser DCS hook stays on the hook boundary" {
