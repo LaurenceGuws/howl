@@ -13,10 +13,15 @@ const control = @import("server_service");
 const maximum_accepts_per_turn: usize = 16;
 pub const scheduler_wait_ms: i32 = 20;
 const idle_wait_ms: i32 = 1000;
+const TcpIpv4 = struct {
+    address: [4]u8,
+    port: u16,
+};
 
 pub const ListenerSpec = union(enum) {
     unix: []const u8,
     tcp_loopback: u16,
+    tcp_ipv4: TcpIpv4,
 };
 
 pub const ParseError = error{InvalidListener};
@@ -27,6 +32,10 @@ pub fn parseListener(text: []const u8) ParseError!ListenerSpec {
         if (path.len < 2 or path[0] != '/') return error.InvalidListener;
         return .{ .unix = path };
     }
+    if (std.mem.startsWith(u8, text, "tcp://")) {
+        const endpoint = try parseTcpIpv4(text["tcp://".len..]);
+        return .{ .tcp_ipv4 = endpoint };
+    }
     if (std.mem.startsWith(u8, text, "tcp:")) {
         const port_text = text["tcp:".len..];
         if (port_text.len == 0) return error.InvalidListener;
@@ -34,6 +43,27 @@ pub fn parseListener(text: []const u8) ParseError!ListenerSpec {
         return .{ .tcp_loopback = port };
     }
     return error.InvalidListener;
+}
+
+fn parseTcpIpv4(text: []const u8) ParseError!TcpIpv4 {
+    if (text.len == 0 or std.mem.indexOfAny(u8, text, "/?#") != null)
+        return error.InvalidListener;
+    const colon = std.mem.lastIndexOfScalar(u8, text, ':') orelse return error.InvalidListener;
+    if (colon == 0 or colon + 1 >= text.len or std.mem.indexOfScalar(u8, text[0..colon], ':') != null)
+        return error.InvalidListener;
+    const port = std.fmt.parseInt(u16, text[colon + 1 ..], 10) catch return error.InvalidListener;
+    if (port == 0) return error.InvalidListener;
+
+    var address: [4]u8 = undefined;
+    var parts = std.mem.splitScalar(u8, text[0..colon], '.');
+    var index: usize = 0;
+    while (parts.next()) |part| : (index += 1) {
+        if (index >= address.len or part.len == 0) return error.InvalidListener;
+        address[index] = std.fmt.parseInt(u8, part, 10) catch return error.InvalidListener;
+    }
+    if (index != address.len or std.mem.eql(u8, &address, &.{ 0, 0, 0, 0 }))
+        return error.InvalidListener;
+    return .{ .address = address, .port = port };
 }
 
 pub fn freshServerId(io: std.Io) u64 {
@@ -50,6 +80,7 @@ const Listener = struct {
     unix_path: [108]u8 = @splat(0),
     unix_path_len: u8 = 0,
     tcp_port: ?u16 = null,
+    tcp_address: ?[4]u8 = null,
     unix_identity: ?PathIdentity = null,
 
     fn init(spec: ListenerSpec) !Listener {
@@ -59,8 +90,17 @@ const Listener = struct {
                 break :blk try listenUnix(path);
             },
             .tcp_loopback => |port| blk: {
-                const bound = try listenTcpLoopback(port);
-                break :blk .{ .fd = bound.fd, .tcp_port = bound.port };
+                const address = [4]u8{ 127, 0, 0, 1 };
+                const bound = try listenTcp(address, port);
+                break :blk .{ .fd = bound.fd, .tcp_port = bound.port, .tcp_address = address };
+            },
+            .tcp_ipv4 => |endpoint| blk: {
+                const bound = try listenTcp(endpoint.address, endpoint.port);
+                break :blk .{
+                    .fd = bound.fd,
+                    .tcp_port = bound.port,
+                    .tcp_address = endpoint.address,
+                };
             },
         };
     }
@@ -72,8 +112,14 @@ const Listener = struct {
     }
 
     fn endpointText(self: *const Listener, output: []u8) ![]const u8 {
-        if (self.tcp_port) |port|
-            return std.fmt.bufPrint(output, "tcp://127.0.0.1:{d}", .{port});
+        if (self.tcp_port) |port| {
+            const address = self.tcp_address orelse unreachable;
+            return std.fmt.bufPrint(
+                output,
+                "tcp://{d}.{d}.{d}.{d}:{d}",
+                .{ address[0], address[1], address[2], address[3], port },
+            );
+        }
         return std.fmt.bufPrint(output, "unix:{s}", .{self.unix_path[0..self.unix_path_len]});
     }
 };
@@ -325,7 +371,7 @@ const TcpListener = struct {
     port: u16,
 };
 
-fn listenTcpLoopback(requested_port: u16) !TcpListener {
+fn listenTcp(address_bytes: [4]u8, requested_port: u16) !TcpListener {
     const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
@@ -339,7 +385,7 @@ fn listenTcpLoopback(requested_port: u16) !TcpListener {
         @sizeOf(c_int),
     )) != .SUCCESS) return error.SocketOptionFailed;
 
-    var address = ipv4Loopback(requested_port);
+    var address = ipv4Address(address_bytes, requested_port);
     if (linux.errno(linux.bind(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))) != .SUCCESS)
         return error.SocketBindFailed;
     if (linux.errno(linux.listen(fd, maximum_accepts_per_turn)) != .SUCCESS)
@@ -350,7 +396,7 @@ fn listenTcpLoopback(requested_port: u16) !TcpListener {
     if (linux.errno(linux.getsockname(fd, @ptrCast(&bound), &length)) != .SUCCESS or
         length != @sizeOf(linux.sockaddr.in) or bound.family != linux.AF.INET)
         return error.SocketNameFailed;
-    const expected = ipv4Loopback(0);
+    const expected = ipv4Address(address_bytes, 0);
     if (bound.addr != expected.addr) return error.SocketNameFailed;
     const port = std.mem.bigToNative(u16, bound.port);
     if (port == 0) return error.SocketNameFailed;
@@ -396,8 +442,7 @@ fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTo
     return @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
 }
 
-fn ipv4Loopback(port: u16) linux.sockaddr.in {
-    const bytes = [4]u8{ 127, 0, 0, 1 };
+fn ipv4Address(bytes: [4]u8, port: u16) linux.sockaddr.in {
     const address: *align(1) const u32 = @ptrCast(&bytes);
     return .{
         .port = std.mem.nativeToBig(u16, port),
@@ -455,10 +500,21 @@ const PathIdentity = struct {
 
 test "listener grammar has no terminal launch vocabulary" {
     try std.testing.expectEqualDeep(ListenerSpec{ .tcp_loopback = 0 }, try parseListener("tcp:0"));
+    try std.testing.expectEqualDeep(
+        ListenerSpec{ .tcp_ipv4 = .{ .address = .{ 100, 96, 0, 7 }, .port = 43150 } },
+        try parseListener("tcp://100.96.0.7:43150"),
+    );
     const unix = try parseListener("unix:/tmp/howl-server.sock");
     try std.testing.expectEqualStrings("/tmp/howl-server.sock", unix.unix);
     try std.testing.expectError(error.InvalidListener, parseListener("unix:relative.sock"));
     try std.testing.expectError(error.InvalidListener, parseListener("tcp:"));
+    for ([_][]const u8{
+        "tcp://0.0.0.0:43150",
+        "tcp://100.96.0.7:0",
+        "tcp://100.96.0.7",
+        "tcp://100.96.0.999:43150",
+        "tcp://localhost:43150",
+    }) |bad| try std.testing.expectError(error.InvalidListener, parseListener(bad));
     try std.testing.expectError(error.InvalidListener, parseListener("/tmp/howl.sock"));
 }
 
@@ -492,7 +548,7 @@ test "runtime accepted TCP client disables Nagle before service ownership" {
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(raw));
     const client_fd: posix.fd_t = @intCast(raw);
     defer closeFd(client_fd);
-    var address = ipv4Loopback(runtime.listener.tcp_port.?);
+    var address = ipv4Address(.{ 127, 0, 0, 1 }, runtime.listener.tcp_port.?);
     try std.testing.expectEqual(
         linux.E.SUCCESS,
         linux.errno(linux.connect(client_fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))),
@@ -516,6 +572,20 @@ test "runtime accepted TCP client disables Nagle before service ownership" {
     );
     try std.testing.expectEqual(@as(linux.socklen_t, @sizeOf(c_int)), length);
     try std.testing.expectEqual(@as(c_int, 1), enabled);
+}
+
+test "runtime binds one explicit numeric IPv4 listener and reports that endpoint" {
+    var runtime = try Runtime.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_ipv4 = .{ .address = .{ 127, 0, 0, 1 }, .port = 0 } },
+        0x1234,
+    );
+    defer runtime.deinit();
+    var endpoint_buffer: [64]u8 = undefined;
+    const endpoint = try runtime.endpointText(&endpoint_buffer);
+    try std.testing.expect(std.mem.startsWith(u8, endpoint, "tcp://127.0.0.1:"));
 }
 
 test "one HWLS welcome allocation failure cannot escape the multi-Instance runtime" {

@@ -33,7 +33,7 @@ OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
 FONT_PRESET_MIN :: 0
 FONT_PRESET_MAX :: 2
-CONFIG_SCHEMA :: 3
+CONFIG_SCHEMA :: 4
 
 User_Keybinding_Config :: struct {
     action: string `json:"action"`,
@@ -46,6 +46,7 @@ User_Config :: struct {
     startup_profile: int `json:"startup_profile"`,
     default_profile: string `json:"default_profile"`,
     profiles: []User_Profile_Config `json:"profiles"`,
+    servers: []User_Server_Config `json:"servers"`,
     keybindings: []User_Keybinding_Config `json:"keybindings"`,
     app_theme: string `json:"app_theme"`,
 }
@@ -500,6 +501,21 @@ App :: struct {
     profiles: [MAX_PROFILES]^Profile,
     profile_count: int,
     startup_profile: int,
+    servers: [MAX_SERVERS]Server_Connection,
+    server_count: int,
+    server_browser_open: bool,
+    server_browser_server: int,
+    server_browser_selection: int,
+    server_browser_state: Server_Browser_State,
+    server_browser_tree: Server_Tree,
+    server_browser_error: [SERVER_DIAGNOSTIC_BYTES]u8,
+    server_browser_error_len: int,
+    server_browser_generation: u64,
+    server_browser_thread: ^thread.Thread,
+    server_browser_interrupt: rawptr,
+    server_browser_work: ^Server_Fetch_Work,
+    server_browser_fetch_done: bool,
+    server_browser_mutex: sync.Mutex,
     tab_dragging: bool,
     tab_drag_index: int,
     tab_drag_x: f32,
@@ -590,7 +606,7 @@ load_user_config :: proc() -> User_Config {
     }
     candidate: User_Config
     if json.unmarshal(data, &candidate, allocator=context.temp_allocator) != nil ||
-       (candidate.schema != 1 && candidate.schema != 2 && candidate.schema != CONFIG_SCHEMA) {
+       (candidate.schema != 1 && candidate.schema != 2 && candidate.schema != 3 && candidate.schema != CONFIG_SCHEMA) {
         return result
     }
     if candidate.terminal_font_pixels == 12 || candidate.terminal_font_pixels == 15 || candidate.terminal_font_pixels == 18 {
@@ -608,6 +624,9 @@ load_user_config :: proc() -> User_Config {
         if _, theme_ok := parse_app_theme(candidate.app_theme); theme_ok {
             result.app_theme = candidate.app_theme
         }
+    }
+    if candidate.schema >= 4 {
+        result.servers = candidate.servers
     }
     return result
 }
@@ -670,12 +689,20 @@ save_user_config :: proc(app: ^App) {
 
     default_profile := profile_at(app, app.startup_profile)
     default_id := profile_id(default_profile)
+    server_configs: [MAX_SERVERS]User_Server_Config
+    for index in 0..<app.server_count {
+        server_configs[index] = {
+            label = server_label(&app.servers[index]),
+            endpoint = server_endpoint(&app.servers[index]),
+        }
+    }
     value := User_Config{
         schema = CONFIG_SCHEMA,
         terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
         startup_profile = default_id == "local" ? 1 : 0,
         default_profile = default_id,
         profiles = profile_configs[:profile_config_count],
+        servers = server_configs[:app.server_count],
         keybindings = overrides[:override_count],
         app_theme = app_theme_id(app.app_theme),
     }
@@ -4297,6 +4324,9 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     if event.type != .KEY_DOWN {
         return false
     }
+    if app.server_browser_open {
+        return handle_server_browser_key(app, event)
+    }
     if app.palette_open {
         switch event.key.key {
         case SDL.K_ESCAPE:
@@ -4315,7 +4345,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         return true
     }
     if app.profile_menu_open {
-        item_count := app.profile_count + 2
+        item_count := app.profile_count + 3
         switch event.key.key {
         case SDL.K_ESCAPE:
             app.profile_menu_open = false
@@ -4327,6 +4357,8 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             if app.profile_menu_selection < app.profile_count {
                 open_profile_tab(app, app.profile_menu_selection)
             } else if app.profile_menu_selection == app.profile_count {
+                if app.server_count > 0 do _ = open_server_browser(app, 0)
+            } else if app.profile_menu_selection == app.profile_count + 1 {
                 execute_action(app, .Open_Command_Palette)
             } else {
                 execute_action(app, .Open_Settings)
@@ -4443,7 +4475,7 @@ profile_menu_rect :: proc(app: ^App) -> SDL.FRect {
     profile_count := app != nil ? app.profile_count : 0
     width := window_logical_width(app)
     _, menu, _ := tab_controls(tab_count, width, app != nil && app.client_chrome)
-    height := f32(20 + profile_count * 48 + 92)
+    height := f32(20 + profile_count * 48 + 134)
     return {clamp(menu.x - 8, f32(8), max(f32(8), width - 358)), HEADER_HEIGHT, 350, height}
 }
 
@@ -4469,6 +4501,16 @@ settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool)
 
 handle_click :: proc(app: ^App, x, y, width, height: f32) {
     plus, menu, settings := tab_controls(app.tab_count, width, app.client_chrome)
+
+    if app.server_browser_open {
+        if selection, ok := server_browser_selection_at(app, x, y, width, height); ok {
+            app.server_browser_selection = selection
+            _ = open_server_browser_selection(app)
+            return
+        }
+        if !inside(x, y, server_browser_rect(width, height)) do close_server_browser(app)
+        return
+    }
 
     if app.search_open && inside(x, y, search_bar_rect(width)) {
         return
@@ -4520,10 +4562,14 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         }
         actions_y := panel.y + 14 + f32(app.profile_count) * 48
         if inside(x, y, {panel.x + 8, actions_y, panel.w - 16, 36}) {
-            execute_action(app, .Open_Command_Palette)
+            if app.server_count > 0 do _ = open_server_browser(app, 0)
             return
         }
         if inside(x, y, {panel.x + 8, actions_y + 42, panel.w - 16, 36}) {
+            execute_action(app, .Open_Command_Palette)
+            return
+        }
+        if inside(x, y, {panel.x + 8, actions_y + 84, panel.w - 16, 36}) {
             execute_action(app, .Open_Settings)
             return
         }
@@ -5252,10 +5298,14 @@ draw_profile_menu :: proc(app: ^App) {
         }
     }
     actions_y := panel.y + 14 + f32(app.profile_count) * 48
-    palette_row := SDL.FRect{panel.x + 8, actions_y, panel.w - 16, 36}
-    settings_row := SDL.FRect{panel.x + 8, actions_y + 42, panel.w - 16, 36}
-    if app.profile_menu_selection == app.profile_count do draw_fill(app.renderer, palette_row, palette.tab_active)
-    if app.profile_menu_selection == app.profile_count + 1 do draw_fill(app.renderer, settings_row, palette.tab_active)
+    servers_row := SDL.FRect{panel.x + 8, actions_y, panel.w - 16, 36}
+    palette_row := SDL.FRect{panel.x + 8, actions_y + 42, panel.w - 16, 36}
+    settings_row := SDL.FRect{panel.x + 8, actions_y + 84, panel.w - 16, 36}
+    if app.profile_menu_selection == app.profile_count do draw_fill(app.renderer, servers_row, palette.tab_active)
+    if app.profile_menu_selection == app.profile_count + 1 do draw_fill(app.renderer, palette_row, palette.tab_active)
+    if app.profile_menu_selection == app.profile_count + 2 do draw_fill(app.renderer, settings_row, palette.tab_active)
+    servers_label := app.server_count > 0 ? "Servers" : "Servers (none configured)"
+    draw_text(app, app.ui_font, servers_label, servers_row.x + 10, servers_row.y + 8, app.server_count > 0 ? palette.text : palette.text_muted)
     draw_text(app, app.ui_font, action_label(.Open_Command_Palette), palette_row.x + 10, palette_row.y + 8, palette.text)
     draw_text(app, app.ui_font, action_binding_text(app, .Open_Command_Palette), palette_row.x + 190, palette_row.y + 8, palette.text_muted)
     draw_text(app, app.ui_font, action_label(.Open_Settings), settings_row.x + 10, settings_row.y + 8, palette.text)
@@ -6180,6 +6230,9 @@ draw :: proc(app: ^App) {
     if app.profile_menu_open {
         draw_profile_menu(app)
     }
+    if app.server_browser_open {
+        draw_server_browser(app, width, height)
+    }
     if app.palette_open {
         draw_palette(app, width, height)
     }
@@ -6376,6 +6429,7 @@ main :: proc() {
     }
     defer destroy_profiles(&app)
     load_user_profiles(&app, user_config.profiles)
+    load_server_connections(&app, user_config.servers)
     app.startup_profile = default_profile_index_from_config(&app, user_config)
     if !initialize_action_bindings(&app) {
         sdl_error("Default action bindings invalid")
@@ -6430,6 +6484,7 @@ main :: proc() {
         }
     }
 
+    close_server_browser(&app)
     destroy_consequence_owners(&app)
     for app.tab_count > 0 {
         app.tab_count -= 1

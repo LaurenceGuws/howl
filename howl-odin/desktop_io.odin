@@ -335,7 +335,7 @@ control_result_current :: proc(code: i32, result_generation, current_generation:
 // only a newly accepted frame or changed UI metadata, not the old frame followed
 // by the new one. Input/resize/expose events still invalidate normally.
 service_desktop_io :: proc(app: ^App) -> bool {
-    changed := false
+    changed := service_server_browser(app)
     if app.active_tab >= 0 && app.active_tab < app.tab_count {
         width, height: c.int
         _ = SDL.GetWindowSize(app.window, &width, &height)

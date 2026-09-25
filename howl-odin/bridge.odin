@@ -90,6 +90,7 @@ foreign howl_bridge {
     render_resource_info_size :: proc() -> u32 ---
     render_removal_info_size  :: proc() -> u32 ---
     render_command_info_size  :: proc() -> u32 ---
+    server_tree       :: proc(endpoint: [^]u8, endpoint_len: c.size_t, interrupt: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> i32 ---
 }
 
 Bridge_Route_Kind :: enum u8 {

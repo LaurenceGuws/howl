@@ -2173,6 +2173,83 @@ fn writeConnectDiagnostic(
     }
 }
 
+fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
+    var buffer: [32]u8 = undefined;
+    const rendered = try std.fmt.bufPrint(&buffer, "{d}", .{value});
+    try std.json.Stringify.value(rendered, .{}, writer);
+}
+
+pub export fn howl_odin_bridge_server_tree(
+    endpoint_ptr: [*]const u8,
+    endpoint_len: usize,
+    interrupt: ?*client.Interrupt,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) i32 {
+    output_len.* = 0;
+    diagnostic_len.* = 0;
+    if (endpoint_len == 0 or output_capacity == 0) {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
+        return 1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    var connect_diagnostic: server_client.ConnectDiagnostic = .{};
+    var connection = server_client.Connection.connectCancelable(
+        allocator,
+        endpoint_ptr[0..endpoint_len],
+        &connect_diagnostic,
+        interrupt,
+    ) catch |failure| {
+        writeConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+            connect_diagnostic,
+        );
+        return 2;
+    };
+    defer connection.deinit();
+
+    var tree = connection.observeTree(0) catch |failure| {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+        return 3;
+    };
+    defer tree.deinit();
+
+    var writer: std.Io.Writer = .fixed(output_ptr[0..output_capacity]);
+    writer.writeAll("{\"schema\":\"howl.server.tree/v1\",\"server_id\":") catch return 4;
+    writeJsonIdentity(&writer, tree.status.server_id) catch return 4;
+    writer.writeAll(",\"tree_revision\":") catch return 4;
+    writeJsonIdentity(&writer, tree.status.tree_revision) catch return 4;
+    writer.writeAll(",\"sessions\":[") catch return 4;
+    for (tree.sessions, 0..) |session, session_index| {
+        if (session_index != 0) writer.writeByte(',') catch return 4;
+        writer.writeAll("{\"session_id\":") catch return 4;
+        writeJsonIdentity(&writer, session.id) catch return 4;
+        writer.writeAll(",\"name\":") catch return 4;
+        std.json.Stringify.value(session.name, .{}, &writer) catch return 4;
+        writer.writeAll(",\"instances\":[") catch return 4;
+        for (session.instances, 0..) |instance, instance_index| {
+            if (instance_index != 0) writer.writeByte(',') catch return 4;
+            writer.writeAll("{\"instance_id\":") catch return 4;
+            writeJsonIdentity(&writer, instance.instance_id) catch return 4;
+            writer.writeAll(",\"state\":") catch return 4;
+            std.json.Stringify.value(@tagName(instance.state), .{}, &writer) catch return 4;
+            writer.writeByte('}') catch return 4;
+        }
+        writer.writeAll("]}") catch return 4;
+    }
+    writer.writeAll("]}") catch return 4;
+    output_len.* = writer.buffered().len;
+    return 0;
+}
+
 test "bridge named key action values stay protocol-aligned" {
     try std.testing.expectEqual(@as(u8, 1), @backingInt(protocol.InputKeyName.enter));
     try std.testing.expectEqual(@as(u8, 3), @backingInt(protocol.InputKeyName.backspace));

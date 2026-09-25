@@ -19,7 +19,7 @@ to explicit Instance creation.
 
 The Server model and control service remain listener-free. A server-managed Instance owns an optional `howl_instance_service` interaction service beside its concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service.
 
-`server_runtime` is the optional foreground host around those modules. It owns exactly one Server control listener and cooperative scheduling across control plus all Instance services. It owns no terminal grid, pane/split layout, renderer state, authentication, discovery, persistence or service-supervision policy.
+`server_runtime` is the optional foreground host around those modules. It owns exactly one Server control listener and cooperative scheduling across control plus all Instance services. The listener may be an owner-local Unix socket, loopback `tcp:PORT`, or one explicit caller-supplied numeric-IPv4 `tcp://ADDRESS:PORT`; the latter is route selection, not discovery or authentication. It owns no terminal grid, pane/split layout, renderer state, authentication, discovery, persistence or service-supervision policy.
 
 ## Control protocol
 

@@ -410,7 +410,7 @@ fn printInstanceHelp(init: std.process.Init) !void {
 }
 
 fn printRunHelp(init: std.process.Init) !void {
-    return printText(init, "usage: howl server run unix:/ABSOLUTE/PATH.sock|tcp:PORT\n");
+    return printText(init, "usage: howl server run unix:/ABSOLUTE/PATH.sock|tcp:PORT|tcp://NUMERIC_IPV4:PORT\n");
 }
 
 fn printStatusHelp(init: std.process.Init) !void {
