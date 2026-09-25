@@ -13,6 +13,9 @@ fn trapPanic(_: []const u8, _: ?usize) noreturn {
 }
 
 const command_capacity = render.presentation.maximum_canvas_commands;
+const command_record_bytes: usize = 64;
+const command_wire_bytes: usize = command_capacity * command_record_bytes;
+const metadata_capacity: usize = 32 * 1024 * 1024;
 const atlas_bytes = 1024 * 1024;
 const maximum_terminal_images: usize = render.terminal.maximum_external_images;
 const residency_capacity = maximum_terminal_images + 1;
@@ -20,6 +23,8 @@ const residency_capacity = maximum_terminal_images + 1;
 comptime {
     if (maximum_terminal_images != 7)
         @compileError("Web terminal image bound drifted from the portable client contract");
+    if (command_wire_bytes >= metadata_capacity)
+        @compileError("binary command lane exceeds Web metadata storage");
 }
 
 var font_input: [8 * 1024 * 1024]u8 = undefined;
@@ -28,8 +33,9 @@ var symbol_font_input: [3 * 1024 * 1024]u8 = undefined;
 var snapshot_input: [p.maximum_observation_bytes]u8 = undefined;
 var persistent_heap: [64 * 1024 * 1024]u8 = undefined;
 var transient_heap: [20 * 1024 * 1024]u8 = undefined;
-var metadata: [32 * 1024 * 1024]u8 = undefined;
+var metadata: [metadata_capacity]u8 = undefined;
 var metadata_used: usize = 0;
+var command_wire_count: usize = 0;
 var projections: [2][65536]u8 = undefined;
 var projection_lengths: [2]usize = @splat(0);
 var projection_truncated: [2]bool = @splat(false);
@@ -60,7 +66,7 @@ var canvas_ready = false;
 var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
 var surface: canvas.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
-const FrameFormat = enum(u32) { v2 = 2, v3 = 3 };
+const FrameFormat = enum(u32) { v2 = 2, v3 = 3, v4 = 4 };
 // Boot in the last deployed format so an old host may safely consume a newer
 // renderer. A v3-aware host opts in before it opens its observation streams.
 var frame_format: FrameFormat = .v2;
@@ -102,10 +108,19 @@ export fn rv_snapshot_capacity() usize {
     return snapshot_input.len;
 }
 export fn rv_frame_ptr() usize {
-    return @intFromPtr(&metadata);
+    return @intFromPtr(&metadata) + if (frame_format == .v4) command_wire_bytes else 0;
 }
 export fn rv_frame_len() usize {
     return metadata_used;
+}
+export fn rv_commands_ptr() usize {
+    return @intFromPtr(&metadata);
+}
+export fn rv_commands_count() usize {
+    return command_wire_count;
+}
+export fn rv_commands_stride() usize {
+    return command_record_bytes;
 }
 export fn rv_text_ptr() usize {
     return @intFromPtr(&projections[published_projection]);
@@ -139,6 +154,7 @@ export fn rv_set_frame_format(value: u32) u32 {
     frame_format = switch (value) {
         2 => .v2,
         3 => .v3,
+        4 => .v4,
         else => return 0,
     };
     return 1;
@@ -183,6 +199,7 @@ export fn rv_missing_image_generation() u64 {
 fn fail(message: []const u8) u32 {
     failure = message;
     metadata_used = 0;
+    command_wire_count = 0;
     pixels_used = 0;
     return 0;
 }
@@ -234,6 +251,7 @@ fn initRenderer(
     rendered = 0;
     failure = "";
     metadata_used = 0;
+    command_wire_count = 0;
     projection_lengths = @splat(0);
     projection_truncated = @splat(false);
     published_projection = 0;
@@ -302,6 +320,7 @@ export fn rv_reset() u32 {
     missing_image_binding = null;
     pending_ack = false;
     metadata_used = 0;
+    command_wire_count = 0;
     projection_lengths = @splat(0);
     projection_truncated = @splat(false);
     published_projection = 0;
@@ -317,6 +336,7 @@ export fn rv_render(snapshot_length: usize) u32 {
         return 0;
     failure = "";
     metadata_used = 0;
+    command_wire_count = 0;
     pixels_used = 0;
     missing_external = null;
     missing_image_binding = null;
@@ -501,6 +521,7 @@ fn writeFrame(
     return switch (frame_format) {
         .v2 => writeFrameV2(frame, snapshot, observation_revision, terminal_revision, render_revision),
         .v3 => writeFrameV3(frame, snapshot, observation_revision, terminal_revision, render_revision),
+        .v4 => writeFrameV4(frame, snapshot, observation_revision, terminal_revision, render_revision),
     };
 }
 
@@ -678,8 +699,124 @@ fn writeFrameV3(
     metadata_used = writer.end;
 }
 
+fn writeFrameV4(
+    frame: render.terminal.Frame,
+    snapshot: *const client.view.Snapshot,
+    observation_revision: u64,
+    terminal_revision: u64,
+    render_revision: u64,
+) !void {
+    try writeCommandWire(frame.commands);
+    var writer = std.Io.Writer.fixed(metadata[command_wire_bytes..]);
+    try writer.print(
+        "{{\"schema\":\"howl.web-frame/v4\",\"render\":{d},\"observation\":{d},\"terminal\":{d},\"surface\":[{d},{d}],\"cell\":[{d},{d}],\"selection_rows\":[",
+        .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
+    );
+    const begin = client.view.begin(snapshot);
+    for (0..begin.rows) |row| {
+        if (row != 0) try writer.writeByte(',');
+        const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
+            return error.InvalidSnapshot;
+        const encoded_shape = shape.content_end_exclusive |
+            (if (shape.wrapped) @as(u16, 1) << 15 else 0);
+        try writer.print("{d}", .{encoded_shape});
+    }
+    try writer.writeAll("],\"uploads\":[");
+    for (frame.uploads, 0..) |upload, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.print(
+            "{{\"q\":[\"{d}\",\"{d}\"],\"f\":{d},\"z\":[{d},{d}],\"o\":{d},\"n\":{d},\"stride\":{d}}}",
+            .{
+                @backingInt(upload.resource.resource), @backingInt(upload.resource.generation),
+                @backingInt(upload.format),            upload.size.width,
+                upload.size.height,                    upload.pixel_offset,
+                upload.pixel_count,                    upload.stride,
+            },
+        );
+    }
+    try writer.writeAll("],\"removals\":[");
+    for (frame.removals, 0..) |removal, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writeQualifiedStrings(&writer, removal);
+    }
+    try writer.print(
+        "],\"command_count\":{d},\"command_stride\":{d},\"pixels\":{d},\"residency\":{d}}}",
+        .{ command_wire_count, command_record_bytes, frame.pixels.len, accepted_residency_count },
+    );
+    metadata_used = writer.end;
+}
+
+fn writeCommandWire(commands: []const canvas.Command) !void {
+    if (commands.len > command_capacity) return error.InvalidSnapshot;
+    for (commands, 0..) |command, index| {
+        const record = metadata[index * command_record_bytes ..][0..command_record_bytes];
+        @memset(record, 0);
+        switch (command) {
+            .solid => |value| {
+                record[0] = 0;
+                writeWireRect(record, 4, value.rect);
+                writeWireColor(record, value.color);
+            },
+            .alpha_mask => |value| {
+                record[0] = 1;
+                record[1] = @backingInt(value.resource.format);
+                record[2] = @intFromBool(value.cursor_component);
+                writeWireRect(record, 4, value.destination);
+                writeWireRect(record, 16, value.clip);
+                writeWireResource(record, value.resource);
+                writeWireSource(record, value.resource.source, value.resource.size);
+                writeWireColor(record, value.color);
+            },
+            .rgba => |value| {
+                record[0] = 2;
+                record[1] = @backingInt(value.resource.format);
+                writeWireRect(record, 4, value.destination);
+                writeWireRect(record, 16, value.clip);
+                writeWireResource(record, value.resource);
+                writeWireSource(record, value.resource.source, value.resource.size);
+            },
+        }
+    }
+    command_wire_count = commands.len;
+}
+
+fn writeWireRect(record: []u8, offset: usize, value: canvas.Rect) void {
+    std.mem.writeInt(i32, record[offset..][0..4], value.x, .little);
+    std.mem.writeInt(i32, record[offset + 4 ..][0..4], value.y, .little);
+    std.mem.writeInt(u16, record[offset + 8 ..][0..2], value.width, .little);
+    std.mem.writeInt(u16, record[offset + 10 ..][0..2], value.height, .little);
+}
+
+fn writeWireResource(record: []u8, value: canvas.ResourceView) void {
+    std.mem.writeInt(u64, record[32..40], @backingInt(value.resource.resource), .little);
+    std.mem.writeInt(u64, record[40..48], @backingInt(value.resource.generation), .little);
+    std.mem.writeInt(u16, record[48..50], value.size.width, .little);
+    std.mem.writeInt(u16, record[50..52], value.size.height, .little);
+}
+
+fn writeWireSource(record: []u8, source: ?canvas.SourceRect, size: canvas.Size) void {
+    const value = source orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+    std.mem.writeInt(u16, record[52..54], value.x, .little);
+    std.mem.writeInt(u16, record[54..56], value.y, .little);
+    std.mem.writeInt(u16, record[56..58], value.width, .little);
+    std.mem.writeInt(u16, record[58..60], value.height, .little);
+}
+
+fn writeWireColor(record: []u8, value: canvas.Color) void {
+    record[60] = value.r;
+    record[61] = value.g;
+    record[62] = value.b;
+    record[63] = value.a;
+}
+
 fn writeQualified(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
     try writer.print("[{d},{d}]", .{
+        @backingInt(value.resource), @backingInt(value.generation),
+    });
+}
+
+fn writeQualifiedStrings(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+    try writer.print("[\"{d}\",\"{d}\"]", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }

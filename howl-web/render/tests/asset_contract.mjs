@@ -5,8 +5,10 @@ const host = fs.readFileSync('web/host.mjs', 'utf8');
 const index = fs.readFileSync('web/index.html', 'utf8');
 const serviceWorker = fs.readFileSync('web/sw.js', 'utf8');
 const frameV3 = fs.readFileSync('web/frame_v3.mjs', 'utf8');
+const frameV4 = fs.readFileSync('web/frame_v4.mjs', 'utf8');
 const legacyWebgl = fs.readFileSync('web/webgl_backend.mjs', 'utf8');
 const webglV3 = fs.readFileSync('web/webgl_backend_v3.mjs', 'utf8');
+const webglV4 = fs.readFileSync('web/webgl_backend_v4.mjs', 'utf8');
 const renderBuild = fs.readFileSync('build.zig', 'utf8');
 const gateway = fs.readFileSync('../gateway/src/main.zig', 'utf8');
 
@@ -23,23 +25,32 @@ for (const module of modules) {
   assert(gateway.includes(`.target = "${route}"`), `${module} is imported by the browser host but absent from the gateway allowlist`);
 }
 
-// v3 deliberately uses generation-specific module URLs. An older service
-// worker may still fall back /host.mjs or /render.wasm from its shell, but it
-// cannot substitute its v2 WebGL implementation for either new v3 module.
-for (const route of ['/frame_v3.mjs', '/webgl_backend_v3.mjs', '/webgl_backend.mjs']) {
+// Every incompatible browser vocabulary has a generation-specific URL. Older
+// service workers may still fall back /host.mjs or /render.wasm from their
+// shell, but cannot substitute v2/v3 consumers for a v4 host.
+for (const route of [
+  '/frame_v3.mjs', '/frame_v4.mjs',
+  '/webgl_backend.mjs', '/webgl_backend_v3.mjs', '/webgl_backend_v4.mjs',
+]) {
   assert(shell.has(route), `${route} must remain in the coherent current shell`);
   assert(renderBuild.includes(route.slice(1)), `${route} must remain in the render install graph`);
   assert(gateway.includes(`.target = "${route}"`), `${route} must remain in the gateway allowlist`);
 }
-assert(host.includes("from './frame_v3.mjs'"), 'v3 host must negotiate its renderer vocabulary');
-assert(host.includes("from './webgl_backend_v3.mjs'"), 'v3 host must use a generation-specific WebGL module');
-assert(!host.includes("from './webgl_backend.mjs'"), 'v3 host must not consume the legacy WebGL module');
+assert(host.includes("from './frame_v4.mjs'"), 'v4 host must negotiate its renderer vocabulary');
+assert(host.includes("from './webgl_backend_v4.mjs'"), 'v4 host must use a generation-specific WebGL module');
+assert(!host.includes("from './frame_v3.mjs'"), 'v4 host must not consume the v3 frame module');
+assert(!host.includes("from './webgl_backend_v3.mjs'"), 'v4 host must not consume the v3 WebGL module');
+assert(!host.includes("from './webgl_backend.mjs'"), 'v4 host must not consume the legacy WebGL module');
 assert(webglV3.includes("from './frame_v3.mjs'"), 'v3 WebGL backend must consume the shared positional contract');
 assert(!legacyWebgl.includes("from './frame_v3.mjs'"), 'legacy WebGL URL must remain v2-compatible for an old host');
 assert(legacyWebgl.includes('command.k'), 'legacy WebGL URL must retain the v2 object command vocabulary');
 assert(frameV3.includes('rv_frame_format') && frameV3.includes('rv_set_frame_format'), 'v3 host contract must negotiate renderer format explicitly');
 assert(frameV3.includes('rv_reset'), 'v3 frame mismatch must clear renderer pending-ack state');
-assert(serviceWorker.includes("const CACHE = 'howl-web-canary-v44-web-frame-v3'"), 'v3 shell cache generation is not current');
+assert(frameV4.includes('rv_frame_format') && frameV4.includes('rv_set_frame_format'), 'v4 host contract must negotiate renderer format explicitly');
+assert(frameV4.includes('rv_commands_ptr') && frameV4.includes('rv_commands_stride'), 'v4 host contract must bind the explicit binary command lane');
+assert(frameV4.includes('rv_reset'), 'v4 frame mismatch must clear renderer pending-ack state');
+assert(webglV4.includes('frame.commands.count'), 'v4 WebGL backend must consume the bounded binary command view');
+assert(serviceWorker.includes("const CACHE = 'howl-web-canary-v45-web-frame-v4'"), 'v4 shell cache generation is not current');
 
 assert(index.includes('id="zoom-button"'), 'browser shell must expose the native presentation zoom control');
 assert(index.includes('id="selection-overlay"'), 'browser shell must expose the client-local selection overlay');

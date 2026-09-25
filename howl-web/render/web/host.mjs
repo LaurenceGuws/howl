@@ -12,10 +12,10 @@ import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
-import {CommandV3 as C, parseRendererFrameV3, selectRendererFrameV3} from './frame_v3.mjs';
-import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from './webgl_backend_v3.mjs';
+import {parseRendererFrameV4, qualifiedKeyV4 as resourceKey, selectRendererFrameV4} from './frame_v4.mjs';
+import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from './webgl_backend_v4.mjs';
 
-const CANARY_GENERATION = 'v44-web-frame-v3';
+const CANARY_GENERATION = 'v45-web-frame-v4';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -134,10 +134,8 @@ const errorText = exports => decoder.decode(new Uint8Array(
   exports.memory.buffer, exports.hw_error_ptr?.() ?? exports.rv_error_ptr(),
   exports.hw_error_len?.() ?? exports.rv_error_len()));
 const bytesAt = (memory, pointer, length) => new Uint8Array(memory.buffer, Number(pointer), Number(length));
-const resourceKey = (q, generation) => generation === undefined
-  ? q.map(String).join(':')
-  : `${q}:${generation}`;
 const rgba = color => `rgba(${color[0]},${color[1]},${color[2]},${color[3] / 255})`;
+const rgbaValues = (r, g, b, a) => `rgba(${r},${g},${b},${a / 255})`;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 function telemetryContext() {
@@ -200,7 +198,7 @@ async function instantiateRenderer(fontPixels, cellWidth, lineHeight) {
   instance.exports._initialize?.();
   const candidate = {exports:instance.exports, runtime, bytes:byteLength};
   initializeRendererPresentation(candidate, fontPixels, cellWidth, lineHeight);
-  selectRendererFrameV3(candidate.exports);
+  selectRendererFrameV4(candidate.exports);
   return candidate;
 }
 
@@ -637,7 +635,7 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, 
     if (!stillCurrent()) return;
 
     const metadataStarted = performance.now();
-    const metadata = parseRendererFrameV3(renderer.exports, decoder.decode(bytesAt(
+    const metadata = parseRendererFrameV4(renderer.exports, decoder.decode(bytesAt(
       renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len(),
     )));
     const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
@@ -665,7 +663,7 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, 
       external_bytes:externalBytes,
       external_reused:externalReused,
       gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
-      commands:metadata.commands.length, uploads:metadata.uploads.length,
+      commands:metadata.commands.count, uploads:metadata.uploads.length,
       upload_ms:canvas.upload_ms, draw_commands_ms:canvas.draw_commands_ms,
       surface_ms:canvas.surface_ms, retire_ms:canvas.retire_ms,
       upload_bytes:canvas.upload_bytes, upload_pixels:canvas.upload_pixels,
@@ -849,7 +847,8 @@ function syncCanvasResourceLease(frame, framePixels) {
   }
   const uploadsFinished = performance.now();
   const live = new Set();
-  for (const command of frame.commands) if (command[C.kind] !== 0) live.add(resourceKey(command[C.resource], command[C.generation]));
+  for (let i = 0; i < frame.commands.count; i += 1)
+    if (frame.commands.kind(i) !== 0) live.add(frame.commands.key(i));
   for (const key of [...resources.keys()]) if (!live.has(key)) resources.delete(key);
   const finished = performance.now();
   const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
@@ -917,9 +916,10 @@ function drawFrame(frame, framePixels) {
     const commandsFinished = performance.now();
     const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
     let solidCommands = 0, alphaCommands = 0;
-    for (const command of frame.commands) {
-      if (command[C.kind] === 0) solidCommands += 1;
-      else if (command[C.kind] === 1) alphaCommands += 1;
+    for (let i = 0; i < frame.commands.count; i += 1) {
+      const kind = frame.commands.kind(i);
+      if (kind === 0) solidCommands += 1;
+      else if (kind === 1) alphaCommands += 1;
     }
     return {
       removals_ms:lease.removals_ms,
@@ -976,35 +976,34 @@ function drawFrameCanvas(frame, framePixels) {
   const surfaceFinished = performance.now();
   const currentResources = new Set();
   let solidCommands = 0, alphaCommands = 0, imageCommands = 0;
-  for (const command of frame.commands) {
-    if (command[C.kind] !== 0) currentResources.add(resourceKey(command[C.resource], command[C.generation]));
-    if (command[C.kind] === 0) {
+  const commands = frame.commands;
+  for (let i = 0; i < commands.count; i += 1) {
+    const kind = commands.kind(i);
+    if (kind !== 0) currentResources.add(commands.key(i));
+    if (kind === 0) {
       solidCommands += 1;
-      context.fillStyle = rgba(command.slice(C.solidRed, C.solidAlpha + 1));
-      context.fillRect(command[C.x], command[C.y], command[C.width], command[C.height]);
+      context.fillStyle = rgbaValues(commands.red(i), commands.green(i), commands.blue(i), commands.alpha(i));
+      context.fillRect(commands.x(i), commands.y(i), commands.width(i), commands.height(i));
       continue;
     }
-    const key = resourceKey(command[C.resource], command[C.generation]);
+    const key = commands.key(i);
     const resource = resources.get(key);
     if (!resource) throw new Error(`missing backend resource ${key}`);
-    const source = command.slice(C.sourceX, C.sourceHeight + 1);
+    const source = [commands.sourceX(i), commands.sourceY(i), commands.sourceWidth(i), commands.sourceHeight(i)];
     const visible = clippedSprite(
-      command.slice(C.x, C.height + 1),
-      command.slice(C.clipX, C.clipHeight + 1),
+      [commands.x(i), commands.y(i), commands.width(i), commands.height(i)],
+      [commands.clipX(i), commands.clipY(i), commands.clipWidth(i), commands.clipHeight(i)],
       source,
     );
     if (!visible) continue;
     const [dx, dy, dw, dh] = visible.destination;
     const [sx, sy, sw, sh] = visible.source;
-    if (command[C.kind] === 2) {
+    if (kind === 2) {
       imageCommands += 1;
       context.drawImage(resource.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
-    } else if (command[C.kind] === 1) {
+    } else if (kind === 1) {
       alphaCommands += 1;
-      // Cache the complete source glyph/color pair, then crop that tinted
-      // sprite mathematically. This matches Flutter's atlas-batching intent
-      // without asking Chromium to perform source-in composition per cell.
-      const color = command.slice(C.red, C.alpha + 1);
+      const color = [commands.red(i), commands.green(i), commands.blue(i), commands.alpha(i)];
       const full = alphaSprite(resource, source, color);
       if (full) {
         const [fullSx, fullSy, fullSw, fullSh] = source;
@@ -1029,7 +1028,7 @@ function drawFrameCanvas(frame, framePixels) {
         alphaScratchContext.fillRect(0, 0, scratchWidth, scratchHeight);
         context.drawImage(alphaScratch, 0, 0, scratchWidth, scratchHeight, dx, dy, dw, dh);
       }
-    } else throw new Error(`unknown Canvas command ${command[C.kind]}`);
+    } else throw new Error(`unknown Canvas command ${kind}`);
   }
   const commandsFinished = performance.now();
   // Match Flutter's lease: every completed frame names the exact resource
@@ -1706,7 +1705,7 @@ function updateFacts() {
     frame: lastFrame ? {
       observation: lastFrame.observation,
       terminal: lastFrame.terminal,
-      commands: lastFrame.commands.length,
+      commands: lastFrame.commands.count,
       uploads: lastFrame.uploads.length,
       removals: lastFrame.removals.length,
       surface: lastFrame.surface,

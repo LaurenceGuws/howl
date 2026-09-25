@@ -66,7 +66,8 @@ pub fn build(b: *std.Build) void {
         "rv_font_ptr",               "rv_font_capacity",            "rv_fallback_font_ptr",
         "rv_fallback_font_capacity", "rv_symbol_font_ptr",          "rv_symbol_font_capacity",
         "rv_snapshot_ptr",           "rv_snapshot_capacity",        "rv_frame_ptr",
-        "rv_frame_len",              "rv_text_ptr",                 "rv_text_len",
+        "rv_frame_len",              "rv_commands_ptr",             "rv_commands_count",
+        "rv_commands_stride",        "rv_text_ptr",                 "rv_text_len",
         "rv_text_truncated",         "rv_pixels_ptr",               "rv_pixels_len",
         "rv_error_ptr",              "rv_error_len",                "rv_render_count",
         "rv_frame_format",           "rv_set_frame_format",         "rv_ready",
@@ -93,6 +94,14 @@ pub fn build(b: *std.Build) void {
     external_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
     external_image_test.setName("live renderer external image residency");
     check.dependOn(&external_image_test.step);
+    const external_image_v4_test = b.addSystemCommand(&.{ "node", "tests/external_image_v4.mjs" });
+    external_image_v4_test.setCwd(b.path("."));
+    external_image_v4_test.addFileArg(live.getEmittedBin());
+    external_image_v4_test.addFileArg(text.path("testdata/primary.ttf"));
+    external_image_v4_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    external_image_v4_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    external_image_v4_test.setName("live renderer v4 external image residency");
+    check.dependOn(&external_image_v4_test.step);
     const multi_image_test = b.addSystemCommand(&.{ "node", "tests/multi_image.mjs" });
     multi_image_test.setCwd(b.path("."));
     multi_image_test.addFileArg(live.getEmittedBin());
@@ -101,6 +110,14 @@ pub fn build(b: *std.Build) void {
     multi_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
     multi_image_test.setName("live renderer bounded multi image residency");
     check.dependOn(&multi_image_test.step);
+    const multi_image_v4_test = b.addSystemCommand(&.{ "node", "tests/multi_image_v4.mjs" });
+    multi_image_v4_test.setCwd(b.path("."));
+    multi_image_v4_test.addFileArg(live.getEmittedBin());
+    multi_image_v4_test.addFileArg(text.path("testdata/primary.ttf"));
+    multi_image_v4_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    multi_image_v4_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    multi_image_v4_test.setName("live renderer v4 bounded multi image residency");
+    check.dependOn(&multi_image_v4_test.step);
     const visible_text_test = b.addSystemCommand(&.{ "node", "tests/visible_text.mjs" });
     visible_text_test.setCwd(b.path("."));
     visible_text_test.addFileArg(live.getEmittedBin());
@@ -129,6 +146,10 @@ pub fn build(b: *std.Build) void {
     webgl_test.setCwd(b.path("."));
     webgl_test.setName("browser WebGL backend admission");
     check.dependOn(&webgl_test.step);
+    const webgl_v4_test = b.addSystemCommand(&.{ "node", "tests/webgl_backend_v4.mjs" });
+    webgl_v4_test.setCwd(b.path("."));
+    webgl_v4_test.setName("browser WebGL v4 binary command admission");
+    check.dependOn(&webgl_v4_test.step);
     const input_test = b.addSystemCommand(&.{ "node", "tests/input.mjs" });
     input_test.setCwd(b.path("."));
     input_test.setName("browser semantic input staging");
@@ -178,7 +199,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(b.path("fonts/NERD-FONTS-LICENSE.txt"), "live-web/nerd-font-license.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "frame_v3.mjs", "webgl_backend.mjs", "webgl_backend_v3.mjs", "lifecycle_policy.mjs", "input.mjs", "pointer_input.mjs", "history.mjs", "selection.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "frame_v3.mjs", "frame_v4.mjs", "webgl_backend.mjs", "webgl_backend_v3.mjs", "webgl_backend_v4.mjs", "lifecycle_policy.mjs", "input.mjs", "pointer_input.mjs", "history.mjs", "selection.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep
