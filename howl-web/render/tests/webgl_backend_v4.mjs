@@ -3,8 +3,8 @@ import {BinaryCommands} from '../web/frame_v4.mjs';
 import {WebGLTerminalBackend, clippedSprite, webglFrameEligible} from '../web/webgl_backend_v4.mjs';
 
 const solid = color => [0, 0, 0, 10, 10, ...color];
-const alpha = (destination, clip = destination, source = [0, 0, 10, 10]) => [
-  1, ...destination, ...clip, 1, 1, 0, 16, 16, ...source, 240, 220, 30, 255, 0,
+const alpha = (destination, clip = destination, source = [0, 0, 10, 10], qualified = [1, 1]) => [
+  1, ...destination, ...clip, ...qualified, 0, 16, 16, ...source, 240, 220, 30, 255, 0,
 ];
 const image = () => [
   2, 0, 0, 10, 10, 0, 0, 10, 10, 2, 1, 1, 10, 10, 0, 0, 10, 10,
@@ -75,6 +75,47 @@ assert.throws(
   /outside WebGL terminal admission/,
 );
 assert.equal(backendState.admittedCommands, null);
+
+const runCommands = binary([
+  solid([0, 0, 0, 255]),
+  alpha([0, 0, 20, 20], undefined, undefined, [1, 1]),
+  alpha([20, 0, 20, 20], undefined, undefined, [1, 1]),
+  alpha([40, 0, 20, 20], [100, 100, 1, 1], undefined, [99, 99]),
+  alpha([0, 20, 20, 20], undefined, undefined, [1, 2]),
+  alpha([20, 20, 20, 20], undefined, undefined, [1, 2]),
+  alpha([40, 20, 20, 20], undefined, undefined, [1, 1]),
+]);
+const lookupKeys = [];
+const resourceMap = new Map([['1:1', {id:'one'}], ['1:2', {id:'two'}]]);
+const drawState = {
+  admittedCommands:runCommands,
+  resources:{get(key) { lookupKeys.push(key); return resourceMap.get(key); }},
+  canvas:{width:0, height:0},
+  gl:{
+    COLOR_BUFFER_BIT:1, NO_ERROR:0,
+    viewport() {}, clearColor() {}, clear() {},
+    isContextLost() { return false; }, getError() { return 0; },
+  },
+  count:0, batchKey:null, drawCalls:0,
+  flush() { if (this.count !== 0) { this.drawCalls += 1; this.count = 0; } },
+  beginBatch(key, mode, resource) {
+    this.batchKey = key; this.batchMode = mode; this.batchResource = resource; this.count = 0;
+  },
+  appendValues() { this.count += 1; },
+};
+assert.deepEqual(
+  WebGLTerminalBackend.prototype.draw.call(drawState, {surface:[64, 64], commands:runCommands}, () => ''),
+  {draw_calls:4},
+);
+assert.deepEqual(lookupKeys, ['1:1', '1:2', '1:1']);
+const missingCommands = binary([alpha([0, 0, 20, 20], undefined, undefined, [7, 3])]);
+drawState.admittedCommands = missingCommands;
+assert.throws(
+  () => WebGLTerminalBackend.prototype.draw.call(
+    drawState, {surface:[64, 64], commands:missingCommands}, () => '',
+  ),
+  /missing WebGL alpha resource 7:3/,
+);
 
 assert.deepEqual(
   clippedSprite([0, 0, 20, 20], [4, 6, 10, 8], [0, 0, 10, 10]),

@@ -315,6 +315,8 @@ export class WebGLTerminalBackend {
     this.batchKey = null;
     this.drawCalls = 0;
     const commands = frame.commands;
+    let alphaResourceId = null, alphaGeneration = null;
+    let alphaBatchKey = null, alphaResource = null;
     for (let i = 0; i < commands.count; i += 1) {
       const kind = commands.kind(i);
       if (kind === 0) {
@@ -331,13 +333,18 @@ export class WebGLTerminalBackend {
       }
       const visible = clippedCommandSprite(commands, i);
       if (!visible) continue;
-      const key = commands.key(i);
-      const resource = this.resources.get(key);
-      if (!resource) throw new Error(`missing WebGL alpha resource ${key}`);
-      const batchKey = `alpha:${key}`;
-      if (this.batchKey !== batchKey) {
+      const resourceId = commands.resource(i), generation = commands.generation(i);
+      if (resourceId !== alphaResourceId || generation !== alphaGeneration) {
+        alphaResourceId = resourceId;
+        alphaGeneration = generation;
+        const key = `${resourceId}:${generation}`;
+        alphaBatchKey = `alpha:${key}`;
+        alphaResource = this.resources.get(key);
+        if (!alphaResource) throw new Error(`missing WebGL alpha resource ${key}`);
+      }
+      if (this.batchKey !== alphaBatchKey) {
         this.flush(frame.surface);
-        this.beginBatch(batchKey, 1, resource);
+        this.beginBatch(alphaBatchKey, 1, alphaResource);
       }
       this.appendValues(
         visible.destination[0], visible.destination[1], visible.destination[2], visible.destination[3],
