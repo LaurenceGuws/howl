@@ -575,17 +575,9 @@ async function ensureExternalResource(missing) {
     q:missing.q, f:missing.format, z:[missing.width, missing.height],
     o:0, n:image.pixels.length, stride:missing.stride,
   };
-  resources.set(missing.key, createResource(upload, image.pixels));
+  const resource = createResource(upload, image.pixels);
   const ms = performance.now() - started;
-  telemetry.record('image_refill', {
-    image_id:missing.imageId,
-    image_generation:String(missing.imageGeneration),
-    canvas_resource:missing.key,
-    bytes:image.pixels.length,
-    ms:Math.round(ms * 10) / 10,
-  });
-  updateFacts();
-  return {bytes:image.pixels.length, ms, reused:false};
+  return {bytes:image.pixels.length, ms, reused:false, resource};
 }
 
 function renderSnapshotBytes(snapshot, clientId, mode, stillCurrent = () => true, displayHistory = null) {
@@ -628,7 +620,28 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, 
           current.imageGeneration !== missing.imageGeneration) {
         throw new Error('renderer external image request changed during refill');
       }
-      if (renderer.exports.rv_accept_external() !== 1) throw new Error(errorText(renderer.exports) || 'renderer external residency rejected');
+      // Keep cancellation before cache mutation. From this point through
+      // rv_accept_external there is no await/event-loop handoff: the exact
+      // browser resource is staged before renderer acceptance, rolled back on
+      // rejection, and older generations retire only after acceptance succeeds.
+      if (!refill.reused) resources.set(missing.key, refill.resource);
+      if (renderer.exports.rv_accept_external() !== 1) {
+        if (!refill.reused) resources.delete(missing.key);
+        throw new Error(errorText(renderer.exports) || 'renderer external residency rejected');
+      }
+      if (!refill.reused) {
+        const identity = String(missing.q[0]) + ':';
+        for (const key of [...resources.keys()])
+          if (key !== missing.key && key.startsWith(identity)) resources.delete(key);
+        telemetry.record('image_refill', {
+          image_id:missing.imageId,
+          image_generation:String(missing.imageGeneration),
+          canvas_resource:missing.key,
+          bytes:refill.bytes,
+          ms:Math.round(refill.ms * 10) / 10,
+        });
+        updateFacts();
+      }
       continue;
     }
     if (result !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
@@ -846,10 +859,15 @@ function syncCanvasResourceLease(frame, framePixels) {
     resources.set(resourceKey(upload.q), createResource(upload, framePixels));
   }
   const uploadsFinished = performance.now();
-  const live = new Set();
-  for (let i = 0; i < frame.commands.count; i += 1)
-    if (frame.commands.kind(i) !== 0) live.add(frame.commands.key(i));
-  for (const key of [...resources.keys()]) if (!live.has(key)) resources.delete(key);
+  // Terminal Canvas derives uploads/removals from exact accepted residency.
+  // Stable frames cannot change cache membership, so do not reconstruct the
+  // same lease by walking every command on every presentation.
+  if (frame.uploads.length !== 0 || frame.removals.length !== 0) {
+    const live = new Set();
+    for (let i = 0; i < frame.commands.count; i += 1)
+      if (frame.commands.kind(i) !== 0) live.add(frame.commands.key(i));
+    for (const key of [...resources.keys()]) if (!live.has(key)) resources.delete(key);
+  }
   const finished = performance.now();
   const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
   return {

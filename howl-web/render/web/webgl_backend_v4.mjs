@@ -233,10 +233,15 @@ export class WebGLTerminalBackend {
       const resource = this.createResource(upload, framePixels);
       if (resource) this.resources.set(key, resource);
     }
-    const live = new Set();
-    for (let i = 0; i < frame.commands.count; i += 1)
-      if (frame.commands.kind(i) === 1) live.add(frame.commands.key(i));
-    for (const key of [...this.resources.keys()]) if (!live.has(key)) this.deleteResource(key);
+    // Terminal Canvas already emits every exact residency transition. Keep the
+    // defensive live-set reconciliation on transition frames, but do not walk
+    // the high-cardinality command lane again when the lease is unchanged.
+    if (frame.uploads.length !== 0 || frame.removals.length !== 0) {
+      const live = new Set();
+      for (let i = 0; i < frame.commands.count; i += 1)
+        if (frame.commands.kind(i) === 1) live.add(frame.commands.key(i));
+      for (const key of [...this.resources.keys()]) if (!live.has(key)) this.deleteResource(key);
+    }
   }
 
   beginBatch(key, mode, resource) {

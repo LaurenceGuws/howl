@@ -50,6 +50,20 @@ assert(frameV4.includes('rv_frame_format') && frameV4.includes('rv_set_frame_for
 assert(frameV4.includes('rv_commands_ptr') && frameV4.includes('rv_commands_stride'), 'v4 host contract must bind the explicit binary command lane');
 assert(frameV4.includes('rv_reset'), 'v4 frame mismatch must clear renderer pending-ack state');
 assert(webglV4.includes('frame.commands.count'), 'v4 WebGL backend must consume the bounded binary command view');
+const leaseTransition = 'frame.uploads.length !== 0 || frame.removals.length !== 0';
+assert(host.includes(leaseTransition), 'v4 Canvas lease reconciliation must be transition-driven');
+assert(webglV4.includes(leaseTransition), 'v4 WebGL lease reconciliation must be transition-driven');
+assert(host.includes("const identity = String(missing.q[0]) + ':';") &&
+  host.includes('key !== missing.key && key.startsWith(identity)'),
+  'v4 external refill must replace older generations of the same logical browser resource');
+const refillStage = 'if (!refill.reused) resources.set(missing.key, refill.resource);';
+const refillAccept = 'if (renderer.exports.rv_accept_external() !== 1) {';
+const refillRollback = 'if (!refill.reused) resources.delete(missing.key);';
+assert(host.includes(refillStage) && host.includes(refillAccept) && host.includes(refillRollback),
+  'v4 external refill must stage immediately before accept and roll back rejection');
+assert(host.indexOf(refillStage) < host.indexOf(refillAccept) &&
+  host.indexOf(refillAccept) < host.indexOf("const identity = String(missing.q[0]) + ':';"),
+  'v4 external refill may retire older generations only after renderer acceptance');
 assert(serviceWorker.includes("const CACHE = 'howl-web-canary-v45-web-frame-v4'"), 'v4 shell cache generation is not current');
 
 assert(index.includes('id="zoom-button"'), 'browser shell must expose the native presentation zoom control');
