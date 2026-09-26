@@ -157,6 +157,11 @@ zig build audit
 Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed
 compiler; the repository owns only the version pin.
 
+`VERSION` is the current workspace release marker. The source audit requires all
+current `build.zig.zon` manifests, `project_version_scope.yml`, the native CLI,
+Odin app metadata, and Flutter's base version to agree with it; versioned embedding
+examples remain deliberately frozen at their named historical contract.
+
 Each tracked core module owns its own `build.zig` and proofs. Root gates curate the
 local core and frozen wire vectors. Python 3 is used only as build-time evidence for
 language-neutral protocol fixtures; it is not a Howl runtime dependency.

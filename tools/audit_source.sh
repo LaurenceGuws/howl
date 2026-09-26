@@ -152,4 +152,45 @@ while IFS= read -r literal; do
     fi
 done < <(grep -RhoE "['\"]howl_native_[a-z0-9_]+['\"]" howl-flutter/lib --include='*.dart' | sort -u)
 
+# VERSION is the single current-workspace release marker. Every current package
+# and user-facing native client version must move with it; versioned embedding
+# examples remain deliberately frozen at their named historical contract.
+workspace_version=$(cat VERSION)
+if [[ -z "$workspace_version" || "$workspace_version" == *$'\n'* ]]; then
+    printf 'VERSION: expected one nonempty line\n'
+    status=1
+fi
+
+while IFS= read -r manifest; do
+    case "$manifest" in
+        howl-vt/examples/*) continue ;;
+    esac
+    if ! grep -Fqx "    .version = \"$workspace_version\"," "$manifest"; then
+        printf '%s: version does not match VERSION (%s)\n' "$manifest" "$workspace_version"
+        status=1
+    fi
+done < <(git ls-files '*build.zig.zon' | sort)
+
+if ! grep -Fqx "version: $workspace_version" project_version_scope.yml; then
+    printf 'project_version_scope.yml: version does not match VERSION (%s)\n' "$workspace_version"
+    status=1
+fi
+if ! grep -Fqx "pub const version = \"$workspace_version\";" howl-cli/src/howl_cli.zig; then
+    printf 'howl-cli/src/howl_cli.zig: version does not match VERSION (%s)\n' "$workspace_version"
+    status=1
+fi
+if ! grep -Fqx "APP_VERSION :: \"$workspace_version\"" howl-odin/main.odin; then
+    printf 'howl-odin/main.odin: version does not match VERSION (%s)\n' "$workspace_version"
+    status=1
+fi
+
+flutter_version=$(awk '/^version:[[:space:]]/ { print $2; exit }' howl-flutter/pubspec.yaml)
+flutter_base=${flutter_version%%+*}
+flutter_build=${flutter_version#*+}
+if [[ "$flutter_base" != "$workspace_version" || "$flutter_build" == "$flutter_version" ||
+      ! "$flutter_build" =~ ^[0-9]+$ ]]; then
+    printf 'howl-flutter/pubspec.yaml: version must be VERSION+numeric-build (%s)\n' "$workspace_version"
+    status=1
+fi
+
 exit "$status"
