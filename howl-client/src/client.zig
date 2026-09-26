@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("howl_instance").protocol;
+const protocol = @import("howl_instance_protocol");
 const transport = @import("client_transport");
 
 pub const ConnectStage = transport.ConnectStage;
@@ -62,7 +62,7 @@ pub const Connection = struct {
     }
 
     /// Borrows the ordered stream descriptor for readiness polling only.
-    pub fn readinessFd(self: *const Connection) posix.fd_t {
+    pub fn readinessFd(self: *const Connection) transport.Handle {
         return self.stream.readinessFd();
     }
 

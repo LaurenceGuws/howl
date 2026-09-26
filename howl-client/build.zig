@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("howl_instance", instance.module("howl_instance"));
+    module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     module.addImport("client_transport", transport.module("client_transport"));
     const tests = b.addTest(.{
         .name = "howl-client",

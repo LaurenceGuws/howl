@@ -6,6 +6,15 @@ pub fn build(b: *std.Build) void {
     const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
 
+    // HWLS is transport-neutral client/server vocabulary. Export it separately
+    // so remote clients do not inherit the local PTY/VT ownership module merely
+    // to encode and decode the frozen wire.
+    const protocol = b.addModule("howl_instance_protocol", .{
+        .root_source_file = b.path("src/protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const module = b.addModule("howl_instance", .{
         .root_source_file = b.path("src/instance.zig"),
         .target = target,
@@ -13,6 +22,7 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("howl_pty", pty.module("howl_pty"));
     module.addImport("howl_vt", vt.module("howl_vt"));
+    module.addImport("howl_instance_protocol", protocol);
 
     const tests = b.addTest(.{
         .name = "howl-instance",

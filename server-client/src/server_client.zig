@@ -96,7 +96,7 @@ pub const Connection = struct {
         self.live = false;
     }
 
-    pub fn readinessFd(self: *const Connection) error{ConnectionRetired}!std.posix.fd_t {
+    pub fn readinessFd(self: *const Connection) error{ConnectionRetired}!transport.Handle {
         if (!self.live) return error.ConnectionRetired;
         return self.stream.readinessFd();
     }

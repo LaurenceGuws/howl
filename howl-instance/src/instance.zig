@@ -5,7 +5,7 @@ const pty = @import("howl_pty");
 const vt = @import("howl_vt");
 
 /// Shared-instance wire and geometry-authority contract.
-pub const protocol = @import("protocol.zig");
+pub const protocol = @import("howl_instance_protocol");
 
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;

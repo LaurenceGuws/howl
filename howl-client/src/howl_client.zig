@@ -7,6 +7,7 @@
 
 const impl = @import("client.zig");
 
+pub const protocol = @import("howl_instance_protocol");
 pub const Error = impl.Error;
 pub const ConnectStage = impl.ConnectStage;
 pub const ConnectDiagnostic = impl.ConnectDiagnostic;

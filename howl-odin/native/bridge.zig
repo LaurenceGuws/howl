@@ -5,11 +5,11 @@
 //! presentation text, scalar snapshot metadata, and semantic input operations.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const client = @import("howl_client");
-const local_instance = @import("local_instance.zig");
+const local_platform = @import("local_platform");
 const server_client = @import("server_client");
-const howl_instance = @import("howl_instance");
-const protocol = howl_instance.protocol;
+const protocol = client.protocol;
 
 const render = @import("howl_render");
 const terminal_render = render.terminal;
@@ -17,81 +17,13 @@ const canvas = terminal_render;
 
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;
-const maximum_local_instances: usize = 64;
-
-const LocalSlot = struct {
-    id: u64,
-    owner: *local_instance.Owner,
-};
 
 // One explicit desktop lifetime, constructed/destroyed by the application.
 // Process and route owners borrow its I/O; no per-connection signal handlers.
 const Runtime = struct {
     threaded: std.Io.Threaded,
     borrowers: std.atomic.Value(u32) = .init(0),
-    local_mutex: std.Io.Mutex = .init,
-    local_instances: [maximum_local_instances]?LocalSlot = @splat(null),
-    next_local_id: u64 = 1,
-
-    fn createLocal(self: *Runtime, launch: howl_instance.Launch) !u64 {
-        const owner = try local_instance.Owner.init(
-            std.heap.c_allocator,
-            self.threaded.io(),
-            currentProcessEnviron(),
-            launch,
-        );
-        errdefer owner.deinit();
-
-        self.local_mutex.lockUncancelable(self.threaded.io());
-        defer self.local_mutex.unlock(self.threaded.io());
-        var free: ?usize = null;
-        for (self.local_instances, 0..) |slot, index| {
-            if (slot == null) {
-                free = index;
-                break;
-            }
-        }
-        const index = free orelse return error.LocalInstanceCapacity;
-        const id = self.next_local_id;
-        if (id == 0) return error.LocalIdentityExhausted;
-        self.next_local_id +%= 1;
-        self.local_instances[index] = .{ .id = id, .owner = owner };
-        return id;
-    }
-
-    fn destroyLocal(self: *Runtime, id: u64) bool {
-        if (id == 0) return false;
-        var owner: ?*local_instance.Owner = null;
-        self.local_mutex.lockUncancelable(self.threaded.io());
-        for (&self.local_instances) |*slot| {
-            if (slot.*) |active| {
-                if (active.id == id) {
-                    owner = active.owner;
-                    slot.* = null;
-                    break;
-                }
-            }
-        }
-        self.local_mutex.unlock(self.threaded.io());
-        if (owner) |active| active.deinit();
-        return owner != null;
-    }
-
-    fn connectLocal(
-        self: *Runtime,
-        id: u64,
-        diagnostic: *client.ConnectDiagnostic,
-        interrupt: ?*client.Interrupt,
-    ) local_instance.Error!client.Connection {
-        self.local_mutex.lockUncancelable(self.threaded.io());
-        defer self.local_mutex.unlock(self.threaded.io());
-        for (self.local_instances) |slot| {
-            if (slot) |active| {
-                if (active.id == id) return active.owner.connect(diagnostic, interrupt);
-            }
-        }
-        return error.ServiceFailed;
-    }
+    local: local_platform.State = .{},
 };
 
 fn runtimeValue(raw: ?*RuntimeHandle) ?*Runtime {
@@ -121,7 +53,7 @@ pub export fn howl_odin_bridge_runtime_create() ?*RuntimeHandle {
 pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
     const value = runtimeValue(raw) orelse return;
     std.debug.assert(value.borrowers.load(.acquire) == 0);
-    for (value.local_instances) |slot| std.debug.assert(slot == null);
+    std.debug.assert(local_platform.empty(&value.local));
     value.threaded.deinit();
     std.heap.c_allocator.destroy(value);
 }
@@ -150,14 +82,17 @@ pub export fn howl_odin_bridge_local_instance_create(
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
         return 0;
     }
-    return runtime.createLocal(.{
-        .shell = shell_ptr[0..shell_len],
-        .command = if (command_len == 0) null else command_ptr[0..command_len],
-        .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
-        .rows = rows,
-        .columns = columns,
-        .history_rows = history_rows,
-    }) catch |failure| {
+    return local_platform.create(
+        &runtime.local,
+        runtime.threaded.io(),
+        currentProcessEnviron(),
+        shell_ptr[0..shell_len],
+        command_ptr[0..command_len],
+        cwd_ptr[0..cwd_len],
+        rows,
+        columns,
+        history_rows,
+    ) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return 0;
     };
@@ -168,7 +103,7 @@ pub export fn howl_odin_bridge_local_instance_destroy(
     id: u64,
 ) i32 {
     const runtime = runtimeValue(runtime_raw) orelse return 1;
-    return if (runtime.destroyLocal(id)) 0 else 2;
+    return if (local_platform.destroy(&runtime.local, runtime.threaded.io(), id)) 0 else 2;
 }
 
 pub export fn howl_odin_bridge_interrupt_create() ?*client.Interrupt {
@@ -236,7 +171,7 @@ fn connectForHost(
     interrupt: ?*client.Interrupt,
     target: ConnectTarget,
     diagnostic: *client.ConnectDiagnostic,
-) (client.Error || server_client.Error || local_instance.Error)!client.Connection {
+) (client.Error || server_client.Error || local_platform.Error)!client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
     return switch (target.kind) {
         .direct => client.Connection.connectCancelable(
@@ -254,7 +189,13 @@ fn connectForHost(
             }, diagnostic, interrupt);
             break :blk try client.connectTransport(std.heap.c_allocator, attached.stream, diagnostic);
         },
-        .local => runtime.?.connectLocal(target.instance_id, diagnostic, interrupt),
+        .local => local_platform.connect(
+            &runtime.?.local,
+            runtime.?.threaded.io(),
+            target.instance_id,
+            diagnostic,
+            interrupt,
+        ),
     };
 }
 
@@ -521,11 +462,13 @@ pub export fn howl_odin_bridge_render_create(
         fallback_storage[fallback_count] = secondary_fallback_ptr[0..secondary_fallback_len];
         fallback_count += 1;
     }
-    const fonts = render.text.FontSet.init(allocator, .{
-        .primary = font_ptr[0..font_len],
-        .fallbacks = fallback_storage[0..fallback_count],
-        .size = .{ .pixels = font_pixels },
-    }) catch |failure| {
+    const fonts = initRenderFonts(
+        runtime,
+        allocator,
+        font_ptr[0..font_len],
+        fallback_storage[0..fallback_count],
+        font_pixels,
+    ) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
@@ -568,6 +511,49 @@ pub export fn howl_odin_bridge_render_create(
     retainRuntime(runtime);
     accepted = true;
     return @ptrCast(value);
+}
+
+fn initRenderFonts(
+    runtime: ?*Runtime,
+    allocator: std.mem.Allocator,
+    primary: []const u8,
+    fallbacks: []const []const u8,
+    font_pixels: u16,
+) !*render.text.FontSet {
+    if (comptime builtin.os.tag != .windows) {
+        return render.text.FontSet.init(allocator, .{
+            .primary = primary,
+            .fallbacks = fallbacks,
+            .size = .{ .pixels = font_pixels },
+        });
+    }
+
+    const owner = runtime orelse return error.RuntimeUnavailable;
+    const io = owner.threaded.io();
+    const primary_bytes = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        primary,
+        allocator,
+        .limited(render.text.max_font_bytes),
+    );
+    defer allocator.free(primary_bytes);
+
+    var fallback_bytes: [2][]u8 = undefined;
+    var loaded: usize = 0;
+    defer for (fallback_bytes[0..loaded]) |bytes| allocator.free(bytes);
+    while (loaded < fallbacks.len) : (loaded += 1) {
+        fallback_bytes[loaded] = try std.Io.Dir.cwd().readFileAlloc(
+            io,
+            fallbacks[loaded],
+            allocator,
+            .limited(render.text.max_font_bytes),
+        );
+    }
+    return render.text.FontSet.initMemory(allocator, .{
+        .primary = primary_bytes,
+        .fallbacks = fallback_bytes[0..loaded],
+        .size = .{ .pixels = font_pixels },
+    });
 }
 
 pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
@@ -1221,6 +1207,11 @@ const ConsequenceBridge = struct {
 };
 
 fn currentProcessEnviron() std.process.Environ {
+    if (comptime builtin.os.tag == .windows) return .{ .block = .global };
+    return posixProcessEnviron();
+}
+
+fn posixProcessEnviron() std.process.Environ {
     const c_environ = std.c.environ;
     var count: usize = 0;
     while (c_environ[count] != null) : (count += 1) {}

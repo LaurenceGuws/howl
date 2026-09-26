@@ -4,7 +4,7 @@
 //! encoding remains owned by howl-vt on the Instance side.
 
 const std = @import("std");
-const protocol = @import("howl_instance").protocol;
+const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{

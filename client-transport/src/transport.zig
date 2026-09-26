@@ -12,6 +12,10 @@ const system = posix.system;
 const tcp_prefix = "tcp://";
 const unix_prefix = "unix:";
 
+/// Platform-native ordered-stream handle used only by callers that integrate
+/// transport readiness into an external event loop.
+pub const Handle = posix.fd_t;
+
 pub const Error = error{
     ConnectionCanceled,
     InvalidEndpoint,

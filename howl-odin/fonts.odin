@@ -1,6 +1,7 @@
 package main
 
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 
 FONT_PATH_BYTES :: 4096
@@ -39,6 +40,7 @@ copy_font_path :: proc(output: []u8, used: ^int, path: string) -> bool {
 		return false
 	}
 	copy(output[:len(path)], transmute([]u8)path)
+	output[len(path)] = 0
 	used^ = len(path)
 	return true
 }
@@ -77,10 +79,40 @@ fontconfig_result :: proc(family: string) -> (path: string, ok: bool) {
 	return resolved, true
 }
 
+windows_font_result :: proc(family: string) -> (path: string, ok: bool) {
+	root := os.get_env("WINDIR", context.temp_allocator)
+	if len(root) == 0 {
+		root = os.get_env("SystemRoot", context.temp_allocator)
+	}
+	if len(root) == 0 do return "", false
+
+	candidates: []string
+	if family == "JetBrainsMono Nerd Font" {
+		candidates = []string{"CascadiaMono.ttf", "CascadiaCode.ttf", "consola.ttf"}
+	} else if family == "Noto Sans Arabic" {
+		candidates = []string{"arial.ttf", "segoeui.ttf", "consola.ttf"}
+	} else if family == "Noto Sans CJK JP" {
+		candidates = []string{"YuGothM.ttc", "msgothic.ttc", "msyh.ttc", "malgun.ttf", "segoeui.ttf", "consola.ttf"}
+	} else {
+		return "", false
+	}
+
+	for candidate in candidates {
+		resolved, err := filepath.join([]string{root, "Fonts", candidate}, allocator=context.temp_allocator)
+		if err == nil && os.exists(resolved) {
+			return resolved, true
+		}
+	}
+	return "", false
+}
+
 configured_font :: proc(variable, family: string) -> (string, bool) {
 	configured := os.get_env(variable, context.temp_allocator)
 	if len(configured) != 0 {
 		return configured, os.exists(configured)
+	}
+	when ODIN_OS == .Windows {
+		return windows_font_result(family)
 	}
 	return fontconfig_result(family)
 }

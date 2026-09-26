@@ -54,6 +54,11 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     } });
     const hblib = b.addLibrary(.{ .name = "howl-harfbuzz", .linkage = .static, .root_module = hbmod });
     const translated = b.addTranslateC(.{ .root_source_file = b.path("config/native.h"), .target = target, .optimize = optimize });
+    // MinGW enables fortified CRT inline bodies in optimized translation.
+    // This Zig pin translates two unused wide-string secure wrappers into
+    // invalid Zig. The translated module is declarations only; the actual
+    // FreeType/HarfBuzz C/C++ objects retain their ordinary compiler flags.
+    if (target.result.os.tag == .windows) translated.defineCMacro("_FORTIFY_SOURCE", "0");
     // This exact Zig pin's TranslateC omits CPU-feature defines. Mirror the EH
     // declaration macro only; real C objects still use the actual target feature.
     if (wasm) translated.defineCMacro("__wasm_exception_handling__", "1");

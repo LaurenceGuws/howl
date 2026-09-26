@@ -1139,3 +1139,37 @@ driven floor. Local service admission uses a bounded queue into the single servi
 rather than contending on a mutex held across service polling. This keeps teardown
 bounded and avoids listener-shaped ownership. Environment overrides remain an explicit
 unsupported Local recipe field in this checkpoint; shell/command/cwd are live.
+
+### Windows Remote product checkpoint, 2026-09-26
+
+The Odin desktop now crosses the first Windows platform boundary without moving terminal
+semantics into the UI. HWLS protocol vocabulary is exported independently from the Linux
+Instance/PTy owner, `client-transport` selects a WinSock numeric-IPv4 TCP backend on
+Windows, and Server attach still hands the selected Instance back to the ordinary
+`howl-client` path. The Windows transport retains the existing bounded construction
+deadline, `TCP_NODELAY`, exact diagnostics, and caller-owned event cancellation. Unix
+endpoints fail explicitly on Windows rather than pretending to be portable.
+
+Local ownership is behind one target-selected platform module. Linux retains the accepted
+in-process canonical Instance + unnamed-HWLS-stream implementation. Windows deliberately
+returns `LocalUnsupported` until ConPTY is implemented in the platform PTY owner; Remote
+support does not smuggle in a hidden local Server or daemon.
+
+Windows uses Howl's pinned bundled FreeType/HarfBuzz build. Because that configuration is
+memory-only, the bridge reads configured font files through Zig I/O and constructs
+`FontSet.initMemory`; Linux keeps its path-backed native text path. Explicit `HOWL_FONT*`
+files remain authoritative. Without overrides, Windows resolves ordinary system-font
+candidates from `%WINDIR%/Fonts` so a clean machine can render a normal terminal; prompts
+that depend on Nerd Font private-use glyphs still need a Nerd-capable primary rather than
+silently substituting replacement diamonds.
+
+Physical Win11/KVM evidence used a real Home Server over Fleet Mesh. The final Windows PE
+loaded its SDL/bridge DLL set, attached an exact persisted Server -> Session -> Instance,
+rendered live terminal cells, accepted physical keyboard input through the existing
+WMIO-focus -> HostIO -> noVNC path, retained and scrolled 120 lines of history, and
+survived normal app close/reopen while the Server-owned Instance remained alive. The
+reopened client restored retained history and accepted another interactive round trip.
+The final no-font-override bundle repeated the attach/render/input proof using Windows
+font defaults. This closes Windows Remote only; Windows Local/ConPTY, installer/distribution
+policy, richer Windows font selection UI, and broader Windows application dogfood remain
+separate work.

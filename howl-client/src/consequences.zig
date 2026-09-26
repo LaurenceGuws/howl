@@ -5,7 +5,7 @@
 //! payload plus typed protocol metadata. Host policy remains outside the client.
 
 const std = @import("std");
-const protocol = @import("howl_instance").protocol;
+const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
 pub const Kind = protocol.ConsequenceKind;

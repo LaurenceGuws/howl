@@ -5,7 +5,7 @@
 //! The backing layout is private and is not a C/FFI ABI.
 
 const std = @import("std");
-const protocol = @import("howl_instance").protocol;
+const protocol = @import("howl_instance_protocol");
 const rich = @import("rich.zig");
 
 pub const Error = std.mem.Allocator.Error || error{

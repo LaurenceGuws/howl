@@ -2,7 +2,11 @@ package main
 
 import "core:c"
 
-foreign import howl_bridge "bridge:libhowl_odin_bridge.so"
+when ODIN_OS == .Windows {
+    foreign import howl_bridge "bridge:howl_odin_bridge.lib"
+} else {
+    foreign import howl_bridge "bridge:libhowl_odin_bridge.so"
+}
 
 @(default_calling_convention="c", link_prefix="howl_odin_bridge_")
 foreign howl_bridge {

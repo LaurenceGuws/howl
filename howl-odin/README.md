@@ -10,8 +10,9 @@ The client owns desktop application policy only: windows, tabs, pane layout,
 profiles, settings, command palette, keybindings, and OS integration. It must
 not duplicate VT, PTY, Instance, text shaping, or terminal raster semantics.
 
-The current Linux proof uses Odin + SDL3 for the application/backend shell and
-the existing Howl native render owners for terminal presentation. `native/` is
+The current Linux proof and Windows Remote canary use Odin + SDL3 for the
+application/backend shell and the existing Howl native render owners for terminal
+presentation. `native/` is
 a C-shaped Zig seam over `howl-client`, `server-client`, `howl-render`, and the
 existing explicit Instance client transport. It exports neither wire/client backing structs nor a
 copied terminal renderer: Odin receives canonical Canvas resource/command facts
@@ -43,12 +44,13 @@ Current canary:
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
-- local Launch profiles remain configuration for future in-process Instance embedding;
-  they currently report an explicit unavailable state rather than spawning a helper
-  daemon. Direct Attach profiles own observer/control clients, cancellation, and teardown;
-  **Attach Home Instance** remains the existing direct `tcp://127.0.0.1:39601` route.
-  Separately, `--server` opens one non-owning Server-managed Instance as the initial tab;
-  closing Odin leaves that Instance alive under Server ownership;
+- Local launch profiles own canonical in-process Instances on Linux. Windows keeps the
+  same profile/UI surface but reports Local unavailable until the platform PTY owner gains
+  ConPTY; it never hides a helper daemon or Server behind Local. Direct Attach profiles own
+  observer/control clients, cancellation, and teardown; **Attach Home Instance** remains
+  the existing direct `tcp://127.0.0.1:39601` route. Separately, `--server` opens one
+  non-owning Server-managed Instance as the initial tab on Linux or Windows; closing Odin
+  leaves that Instance alive under Server ownership;
 - tabs use canonical terminal titles with profile-name fallback, Ctrl+Tab/reverse cycling, direct
   Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
   drag reorder through one shared ordering owner. A held chip gets an immediate
@@ -235,10 +237,13 @@ Current canary:
   resource identity while advancing generation; crop/z-order and exact removal are
   renderer-owned, and a Sixel canary proved the path is protocol-independent;
 - terminal font selection now supplies ordered `howl-text` fallbacks rather than
-  accepting replacement diamonds as desktop policy. On Linux, explicit `HOWL_FONT`,
-  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files win; otherwise
-  fontconfig must resolve JetBrainsMono Nerd Font, Noto Sans Arabic, and Noto Sans
-  CJK JP exactly. A live corpus proved combining marks, CJK wide cells, Arabic
+  accepting replacement diamonds as desktop policy. Explicit `HOWL_FONT`,
+  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files win on every desktop.
+  Linux otherwise requires fontconfig to resolve JetBrainsMono Nerd Font, Noto Sans Arabic,
+  and Noto Sans CJK JP exactly. Windows otherwise searches the normal Windows Fonts
+  directory for Cascadia/Consolas plus built-in fallback candidates; a Nerd-font prompt
+  still requires an explicit Nerd-capable primary. A live corpus proved combining marks,
+  CJK wide cells, Arabic
   fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
   truecolor, and final-column wide-cell clipping. Color emoji remains explicit debt:
   the current `howl-text` raster contract accepts mono/gray masks, not BGRA glyphs;
@@ -290,6 +295,13 @@ howl-odin --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
 
 The normal no-argument launch still uses the configured profile catalogue. Persistent
 Server profile editing is not yet claimed by this checkpoint.
+
+The accepted Windows Remote canary builds the same Odin package for `windows_amd64`
+against a Windows bridge DLL. The pinned Odin compiler can emit the Windows COFF object
+but does not currently perform Linux-hosted Windows final linking, so the development
+canary links that object with the repository-pinned Zig/LLD Windows driver. This is a
+build-lab seam, not a second terminal implementation. Windows Local remains explicitly
+unavailable until the later ConPTY tranche.
 
 
 ## Terminal-owned tab properties

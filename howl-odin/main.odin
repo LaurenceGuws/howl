@@ -13,7 +13,6 @@ import "core:time"
 import SDL "vendor:sdl3"
 import TTF "vendor:sdl3/ttf"
 
-UI_FONT_PATH :: "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
 HOME_ENDPOINT :: "tcp://127.0.0.1:39601"
 APP_NAME :: "Howl"
 APP_VERSION :: "0.1.6-dev"
@@ -6424,7 +6423,13 @@ main :: proc() {
     _ = SDL.SetRenderVSync(renderer, 1)
     _ = SDL.SetRenderDrawBlendMode(renderer, SDL.BLENDMODE_BLEND)
 
-    ui_font := TTF.OpenFont(UI_FONT_PATH, 15)
+    terminal_fonts: Desktop_Fonts
+    if font_error, fonts_ok := resolve_desktop_fonts(&terminal_fonts); !fonts_ok {
+        sdl_error(font_error)
+        return
+    }
+    primary_font := cstring(raw_data(terminal_fonts.primary[:]))
+    ui_font := TTF.OpenFont(primary_font, 15)
     if ui_font == nil {
         sdl_error("TTF_OpenFont UI failed")
         return
@@ -6432,18 +6437,13 @@ main :: proc() {
     defer TTF.CloseFont(ui_font)
 
     user_config := load_user_config()
-    terminal_fonts: Desktop_Fonts
-    if font_error, fonts_ok := resolve_desktop_fonts(&terminal_fonts); !fonts_ok {
-        sdl_error(font_error)
-        return
-    }
     app_theme, theme_ok := parse_app_theme(user_config.app_theme)
     if !theme_ok {
         app_theme = .Howl_Dark
     }
     palette = palette_for_theme(app_theme)
     terminal_font_preset := font_preset_from_pixels(user_config.terminal_font_pixels)
-    terminal_font := TTF.OpenFont(UI_FONT_PATH, font_size_for_preset(terminal_font_preset))
+    terminal_font := TTF.OpenFont(primary_font, font_size_for_preset(terminal_font_preset))
     if terminal_font == nil {
         sdl_error("TTF_OpenFont terminal failed")
         return
