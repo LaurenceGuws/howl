@@ -1,9 +1,10 @@
 //! Windows ordered-byte-stream transport for Howl native clients.
 //!
-//! Windows currently admits numeric-IPv4 TCP only. The public transport
-//! contract remains the same as the POSIX backend: bounded construction,
-//! TCP_NODELAY, exact diagnostics, and caller-owned interruption. Unix-domain
-//! endpoints and raw-socket duplication stay explicit unsupported surfaces.
+//! Windows admits numeric-IPv4 TCP plus explicitly adopted in-process duplex
+//! pipe streams. The public transport contract remains the same as the POSIX
+//! backend: bounded construction, exact diagnostics, and caller-owned
+//! interruption; TCP additionally owns TCP_NODELAY. Unix-domain endpoints and
+//! raw-socket duplication stay explicit unsupported surfaces.
 
 const std = @import("std");
 const windows = std.os.windows;
@@ -17,6 +18,17 @@ const SOCKET = usize;
 const invalid_socket = std.math.maxInt(SOCKET);
 const socket_error: c_int = -1;
 const WSAEVENT = ?windows.HANDLE;
+
+const PipeState = struct {
+    read: windows.HANDLE,
+    write: windows.HANDLE,
+    read_event: windows.HANDLE,
+};
+
+const SocketState = struct {
+    socket: SOCKET,
+    event: WSAEVENT,
+};
 
 const fd_read: i32 = 1 << 0;
 const fd_write: i32 = 1 << 1;
@@ -96,6 +108,44 @@ extern "ws2_32" fn setsockopt(
     value: *const c_int,
     length: c_int,
 ) callconv(.winapi) c_int;
+extern "kernel32" fn PeekNamedPipe(
+    pipe: windows.HANDLE,
+    buffer: ?windows.LPVOID,
+    buffer_size: u32,
+    bytes_read: ?*u32,
+    total_bytes_available: ?*u32,
+    bytes_left_this_message: ?*u32,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn ReadFile(
+    file: windows.HANDLE,
+    buffer: windows.LPVOID,
+    bytes_to_read: u32,
+    bytes_read: *u32,
+    overlapped: ?windows.LPVOID,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn WriteFile(
+    file: windows.HANDLE,
+    buffer: windows.LPCVOID,
+    bytes_to_write: u32,
+    bytes_written: *u32,
+    overlapped: ?windows.LPVOID,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn WaitForMultipleObjects(
+    count: u32,
+    handles: [*]const windows.HANDLE,
+    wait_all: windows.BOOL,
+    timeout_ms: u32,
+) callconv(.winapi) u32;
+extern "kernel32" fn Sleep(milliseconds: u32) callconv(.winapi) void;
+extern "kernel32" fn SetNamedPipeHandleState(
+    pipe: windows.HANDLE,
+    mode: ?*u32,
+    maximum_collection_count: ?*u32,
+    collect_data_timeout: ?*u32,
+) callconv(.winapi) windows.BOOL;
+
+const pipe_nowait: u32 = 0x0000_0001;
+const pipe_write_chunk_bytes: usize = 16 * 1024;
 
 /// Platform-native ordered-stream handle used only by callers that integrate
 /// transport readiness into an external event loop.
@@ -199,8 +249,10 @@ fn checkInterrupted(interrupt: ?*Interrupt) error{ConnectionCanceled}!void {
 }
 
 pub const Stream = struct {
-    socket: SOCKET,
-    event: WSAEVENT,
+    kind: union(enum) {
+        socket: SocketState,
+        pipe: PipeState,
+    },
     interrupt: ?*Interrupt = null,
     handshake_deadline_ms: ?i64 = null,
 
@@ -270,8 +322,7 @@ pub const Stream = struct {
         diagnostic.stage = .tcp_nodelay;
         try setTcpNoDelay(socket_value);
         return .{
-            .socket = socket_value,
-            .event = event,
+            .kind = .{ .socket = .{ .socket = socket_value, .event = event } },
             .interrupt = interrupt,
             .handshake_deadline_ms = deadline,
         };
@@ -291,8 +342,34 @@ pub const Stream = struct {
         }
         try checkInterrupted(interrupt);
         return .{
-            .socket = socket_value,
-            .event = event,
+            .kind = .{ .socket = .{ .socket = socket_value, .event = event } },
+            .interrupt = interrupt,
+            .handshake_deadline_ms = (try monotonicMilliseconds()) + setup_timeout_ms,
+        };
+    }
+
+    /// Adopts one already-created anonymous-pipe duplex stream. The caller
+    /// transfers ownership of both pipe ends and the read-wake event on entry.
+    pub fn adoptPipe(
+        read_handle: windows.HANDLE,
+        write_handle: windows.HANDLE,
+        read_event: windows.HANDLE,
+        diagnostic: *ConnectDiagnostic,
+        interrupt: ?*Interrupt,
+    ) Error!Stream {
+        errdefer closeHandle(read_handle);
+        errdefer closeHandle(write_handle);
+        errdefer closeHandle(read_event);
+        try checkInterrupted(interrupt);
+        diagnostic.stage = .nonblocking_enable;
+        try configurePipeNonblocking(read_handle);
+        try configurePipeNonblocking(write_handle);
+        return .{
+            .kind = .{ .pipe = .{
+                .read = read_handle,
+                .write = write_handle,
+                .read_event = read_event,
+            } },
             .interrupt = interrupt,
             .handshake_deadline_ms = (try monotonicMilliseconds()) + setup_timeout_ms,
         };
@@ -306,14 +383,26 @@ pub const Stream = struct {
     }
 
     pub fn deinit(self: *Stream) void {
-        closeSocket(self.socket);
-        closeEvent(self.event);
-        stopWinsock();
+        switch (self.kind) {
+            .socket => |state| {
+                closeSocket(state.socket);
+                closeEvent(state.event);
+                stopWinsock();
+            },
+            .pipe => |state| {
+                closeHandle(state.read);
+                closeHandle(state.write);
+                closeHandle(state.read_event);
+            },
+        }
         self.* = undefined;
     }
 
     pub fn readinessFd(self: *const Stream) Handle {
-        return self.socket;
+        return switch (self.kind) {
+            .socket => |state| state.socket,
+            .pipe => |state| @intFromPtr(state.read),
+        };
     }
 
     pub fn cancellation(_: *const Stream) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
@@ -410,13 +499,20 @@ fn waitSocketReady(
 }
 
 fn readInterrupt(stream: *Stream, output: []u8, deadline_ms: ?i64) Error!void {
+    return switch (stream.kind) {
+        .socket => |state| readSocketInterrupt(stream, state, output, deadline_ms),
+        .pipe => |state| readPipeInterrupt(stream, state, output, deadline_ms),
+    };
+}
+
+fn readSocketInterrupt(stream: *Stream, state: SocketState, output: []u8, deadline_ms: ?i64) Error!void {
     var offset: usize = 0;
     while (offset < output.len) {
         try checkInterrupted(stream.interrupt);
         if (deadline_ms) |deadline| if (try monotonicMilliseconds() >= deadline)
             return error.SocketConnectTimedOut;
         const chunk: c_int = @intCast(@min(output.len - offset, @as(usize, std.math.maxInt(c_int))));
-        const count = recv(stream.socket, output[offset..].ptr, chunk, 0);
+        const count = recv(state.socket, output[offset..].ptr, chunk, 0);
         if (count > 0) {
             offset += @intCast(count);
             continue;
@@ -425,7 +521,7 @@ fn readInterrupt(stream: *Stream, output: []u8, deadline_ms: ?i64) Error!void {
         const failure = WSAGetLastError();
         switch (failure) {
             wsaeintr => continue,
-            wsaewouldblock => try waitSocketReady(stream.socket, stream.event, fd_read, deadline_ms, stream.interrupt),
+            wsaewouldblock => try waitSocketReady(state.socket, state.event, fd_read, deadline_ms, stream.interrupt),
             wsaeconnreset, wsaenotconn => return error.ConnectionClosed,
             wsaetimedout => return error.SocketConnectTimedOut,
             else => return error.SocketReadFailed,
@@ -434,13 +530,20 @@ fn readInterrupt(stream: *Stream, output: []u8, deadline_ms: ?i64) Error!void {
 }
 
 fn writeInterrupt(stream: *Stream, bytes: []const u8, deadline_ms: ?i64) Error!void {
+    return switch (stream.kind) {
+        .socket => |state| writeSocketInterrupt(stream, state, bytes, deadline_ms),
+        .pipe => |state| writePipeInterrupt(stream, state, bytes, deadline_ms),
+    };
+}
+
+fn writeSocketInterrupt(stream: *Stream, state: SocketState, bytes: []const u8, deadline_ms: ?i64) Error!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
         try checkInterrupted(stream.interrupt);
         if (deadline_ms) |deadline| if (try monotonicMilliseconds() >= deadline)
             return error.SocketConnectTimedOut;
         const chunk: c_int = @intCast(@min(bytes.len - offset, @as(usize, std.math.maxInt(c_int))));
-        const count = send(stream.socket, bytes[offset..].ptr, chunk, 0);
+        const count = send(state.socket, bytes[offset..].ptr, chunk, 0);
         if (count > 0) {
             offset += @intCast(count);
             continue;
@@ -449,12 +552,107 @@ fn writeInterrupt(stream: *Stream, bytes: []const u8, deadline_ms: ?i64) Error!v
         const failure = WSAGetLastError();
         switch (failure) {
             wsaeintr => continue,
-            wsaewouldblock => try waitSocketReady(stream.socket, stream.event, fd_write, deadline_ms, stream.interrupt),
+            wsaewouldblock => try waitSocketReady(state.socket, state.event, fd_write, deadline_ms, stream.interrupt),
             wsaeconnreset, wsaenotconn => return error.ConnectionClosed,
             wsaetimedout => return error.SocketConnectTimedOut,
             else => return error.SocketWriteFailed,
         }
     }
+}
+
+fn readPipeInterrupt(stream: *Stream, state: PipeState, output: []u8, deadline_ms: ?i64) Error!void {
+    var offset: usize = 0;
+    while (offset < output.len) {
+        try checkInterrupted(stream.interrupt);
+        if (deadline_ms) |deadline| if (try monotonicMilliseconds() >= deadline)
+            return error.SocketConnectTimedOut;
+
+        var available: u32 = 0;
+        if (!PeekNamedPipe(state.read, null, 0, null, &available, null).toBool()) {
+            return switch (windows.GetLastError()) {
+                .BROKEN_PIPE, .PIPE_NOT_CONNECTED => error.ConnectionClosed,
+                .OPERATION_ABORTED => error.ConnectionCanceled,
+                else => error.SocketReadFailed,
+            };
+        }
+        if (available == 0) {
+            try waitPipeReadable(state.read_event, deadline_ms, stream.interrupt);
+            continue;
+        }
+
+        const count: u32 = @intCast(@min(
+            @min(output.len - offset, @as(usize, available)),
+            @as(usize, std.math.maxInt(u32)),
+        ));
+        var read_count: u32 = 0;
+        if (!ReadFile(state.read, @ptrCast(output[offset..].ptr), count, &read_count, null).toBool()) {
+            return switch (windows.GetLastError()) {
+                .BROKEN_PIPE, .PIPE_NOT_CONNECTED => error.ConnectionClosed,
+                .NO_DATA => continue,
+                .OPERATION_ABORTED => error.ConnectionCanceled,
+                else => error.SocketReadFailed,
+            };
+        }
+        if (read_count == 0) return error.ConnectionClosed;
+        offset += read_count;
+    }
+}
+
+fn writePipeInterrupt(stream: *Stream, state: PipeState, bytes: []const u8, deadline_ms: ?i64) Error!void {
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        try checkInterrupted(stream.interrupt);
+        if (deadline_ms) |deadline| if (try monotonicMilliseconds() >= deadline)
+            return error.SocketConnectTimedOut;
+        const count: u32 = @intCast(@min(
+            bytes.len - offset,
+            @min(pipe_write_chunk_bytes, @as(usize, std.math.maxInt(u32))),
+        ));
+        var written: u32 = 0;
+        if (!WriteFile(state.write, @ptrCast(bytes[offset..].ptr), count, &written, null).toBool()) {
+            switch (windows.GetLastError()) {
+                .BROKEN_PIPE, .PIPE_NOT_CONNECTED => return error.ConnectionClosed,
+                .NO_DATA => {
+                    Sleep(1);
+                    continue;
+                },
+                .OPERATION_ABORTED => return error.ConnectionCanceled,
+                else => return error.SocketWriteFailed,
+            }
+        }
+        if (written == 0) {
+            Sleep(1);
+            continue;
+        }
+        offset += written;
+    }
+}
+
+fn waitPipeReadable(
+    read_event: windows.HANDLE,
+    deadline_ms: ?i64,
+    interrupt: ?*Interrupt,
+) Error!void {
+    try checkInterrupted(interrupt);
+    const timeout_ms: u32 = if (deadline_ms) |deadline| blk: {
+        const remaining = deadline - try monotonicMilliseconds();
+        if (remaining <= 0) return error.SocketConnectTimedOut;
+        break :blk @intCast(@min(remaining, @as(i64, std.math.maxInt(u32) - 1)));
+    } else wsa_infinite;
+
+    var handles = [2]windows.HANDLE{
+        read_event,
+        if (interrupt) |token| token.state().event.? else read_event,
+    };
+    const count: u32 = if (interrupt == null) 1 else 2;
+    const result = WaitForMultipleObjects(count, &handles, .FALSE, timeout_ms);
+    if (result == wsa_wait_timeout) return error.SocketConnectTimedOut;
+    if (result == wsa_wait_failed) return error.SocketReadFailed;
+    if (result == wsa_wait_event_0 + 1 and interrupt != null) {
+        try checkInterrupted(interrupt);
+        return error.ConnectionCanceled;
+    }
+    if (result != wsa_wait_event_0) return error.SocketReadFailed;
 }
 
 fn verifySocketConnected(socket_value: SOCKET, diagnostic: *ConnectDiagnostic) Error!void {
@@ -503,6 +701,16 @@ fn closeSocket(socket_value: SOCKET) void {
 
 fn closeEvent(event: WSAEVENT) void {
     std.debug.assert(WSACloseEvent(event) != 0);
+}
+
+fn closeHandle(handle: windows.HANDLE) void {
+    windows.CloseHandle(handle);
+}
+
+fn configurePipeNonblocking(handle: windows.HANDLE) error{SocketOptionFailed}!void {
+    var mode = pipe_nowait;
+    if (!SetNamedPipeHandleState(handle, &mode, null, null).toBool())
+        return error.SocketOptionFailed;
 }
 
 fn monotonicMilliseconds() error{SocketConnectFailed}!i64 {

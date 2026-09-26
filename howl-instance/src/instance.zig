@@ -16,6 +16,8 @@ const write_calls_per_turn: usize = 4;
 pub const Instance = opaque {};
 /// Canonical terminal engine type owned by one Instance.
 pub const Terminal = vt.Terminal;
+/// Platform-native PTY readiness descriptor exposed only to platform service owners.
+pub const Descriptor = pty.Descriptor;
 /// Host-neutral input accepted by the canonical VT owner.
 pub const Input = vt.Terminal.InputEvent;
 /// Names physical non-Unicode key identities accepted by canonical input encoding.
@@ -126,7 +128,7 @@ pub fn deinit(instance: *Instance) void {
 }
 
 /// Returns the PTY descriptor for caller-owned poll integration.
-pub fn descriptor(instance: *const Instance) error{NotStarted}!std.posix.fd_t {
+pub fn descriptor(instance: *const Instance) error{NotStarted}!pty.Descriptor {
     return stateConst(instance).transport.masterFd();
 }
 
@@ -605,12 +607,8 @@ fn testTerminalImage(machine: *const Terminal.Observation, image_id: u32, genera
 }
 
 fn sleepOneMillisecond() void {
-    const linux = std.os.linux;
-    const request = linux.timespec{ .sec = 0, .nsec = std.time.ns_per_ms };
-    switch (linux.errno(linux.nanosleep(&request, null))) {
-        .SUCCESS, .INTR => {},
-        else => @panic("test nanosleep failed"),
-    }
+    std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake) catch
+        @panic("test sleep failed");
 }
 
 fn serviceUntilContains(instance: *Instance, needle: []const u8) !void {
@@ -797,6 +795,7 @@ test "headless service drains consequence bursts at VT service boundaries" {
 }
 
 test "Instance pixel geometry agrees with PTY reports and rejects overflow transactionally" {
+    if (comptime @import("builtin").os.tag != .linux) return error.SkipZigTest;
     const instance = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "sleep 30",

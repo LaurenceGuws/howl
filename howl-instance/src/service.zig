@@ -6,10 +6,55 @@
 //! Instance progress.
 
 const std = @import("std");
-const posix = std.posix;
-const linux = std.os.linux;
+const builtin = @import("builtin");
+const native_windows = builtin.os.tag == .windows;
+const windows = std.os.windows;
+const posix = if (native_windows) struct {} else std.posix;
+const linux = if (native_windows) struct {} else std.os.linux;
 const howl = @import("howl_instance");
 const protocol = howl.protocol;
+
+/// Owns the Windows service side of one listener-free in-process HWLS duplex stream.
+pub const WindowsAdoptedStream = struct {
+    read: windows.HANDLE,
+    write: windows.HANDLE,
+    peer_read_event: windows.HANDLE,
+};
+
+/// Target-native connected byte stream transferred into one Service client slot.
+pub const AdoptedStream = if (native_windows) WindowsAdoptedStream else std.posix.fd_t;
+
+extern "kernel32" fn PeekNamedPipe(
+    pipe: windows.HANDLE,
+    buffer: ?windows.LPVOID,
+    buffer_size: u32,
+    bytes_read: ?*u32,
+    total_bytes_available: ?*u32,
+    bytes_left_this_message: ?*u32,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn ReadFile(
+    file: windows.HANDLE,
+    buffer: windows.LPVOID,
+    bytes_to_read: u32,
+    bytes_read: *u32,
+    overlapped: ?windows.LPVOID,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn WriteFile(
+    file: windows.HANDLE,
+    buffer: windows.LPCVOID,
+    bytes_to_write: u32,
+    bytes_written: *u32,
+    overlapped: ?windows.LPVOID,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn SetEvent(event: windows.HANDLE) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn SetNamedPipeHandleState(
+    pipe: windows.HANDLE,
+    mode: ?*u32,
+    maximum_collection_count: ?*u32,
+    collect_data_timeout: ?*u32,
+) callconv(.winapi) windows.BOOL;
+
+const pipe_nowait: u32 = 0x0000_0001;
 
 // One polished desktop view currently owns bounded control, observer, render,
 // and consequence-policy connections. Keep enough explicit slots for the
@@ -28,6 +73,11 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const client_output_retain_bytes: usize = 512 * 1024;
 const maximum_adopt_preface_bytes: usize = 4096;
 const lifecycle_poll_ms: i32 = 100;
+// Windows anonymous pipes are bounded byte streams. Keep each nonblocking
+// service write comfortably below the 64 KiB Local pair capacity so a large
+// multi-frame snapshot can drain incrementally instead of requiring one
+// all-or-nothing write to fit at once.
+const windows_pipe_write_chunk_bytes: usize = 16 * 1024;
 // A connected host-consequence authority gets one bounded opportunity to answer
 // a reply-bearing terminal query. Match synchronized-output's existing one-second
 // fail-open policy: host integration may enrich behavior, but cannot indefinitely
@@ -296,7 +346,7 @@ comptime {
 const ObserveMode = enum { compressed, raw, delta, packed_text };
 
 const Client = struct {
-    fd: posix.fd_t,
+    stream: AdoptedStream,
     id: protocol.ClientId,
     phase: enum { hello, ready } = .hello,
     input: []u8 = &.{},
@@ -322,7 +372,7 @@ const Client = struct {
     }
 
     fn deinit(self: *Client, allocator: std.mem.Allocator) void {
-        closeFd(self.fd);
+        closeAdoptedStream(self.stream);
         if (self.input.len != 0) allocator.free(self.input);
         self.output.deinit(allocator);
         self.snapshot_images.deinit(allocator);
@@ -500,6 +550,11 @@ pub const Service = struct {
     }
 
     fn turnImpl(self: *Service, timeout_ms: i32) !void {
+        if (comptime native_windows) return self.turnWindows(timeout_ms);
+        return self.turnPosix(timeout_ms);
+    }
+
+    fn turnPosix(self: *Service, timeout_ms: i32) !void {
         try self.materializeObservers();
         try self.processBufferedRequests();
 
@@ -518,7 +573,7 @@ pub const Service = struct {
                 client_poll_events |= if (active.outputPending()) posix.POLL.OUT else posix.POLL.IN;
             }
             descriptors[1 + index] = if (client) |active| .{
-                .fd = active.fd,
+                .fd = active.stream,
                 .events = client_poll_events,
                 .revents = 0,
             } else .{ .fd = -1, .events = 0, .revents = 0 };
@@ -558,13 +613,66 @@ pub const Service = struct {
                 self.closeClient(index);
                 continue;
             }
-            if (events & posix.POLL.OUT != 0) self.writeClient(index);
-            if (self.clients[index] != null and events & posix.POLL.IN != 0) self.readClient(index);
+            if (events & posix.POLL.OUT != 0) if (self.writeClient(index)) {};
+            if (self.clients[index] != null and events & posix.POLL.IN != 0)
+                if (self.readClient(index)) {};
         }
 
         try self.processBufferedRequests();
         try self.materializeObservers();
         self.syncConsequenceExpiry(nowNs(self.io));
+    }
+
+    fn turnWindows(self: *Service, timeout_ms: i32) !void {
+        try self.materializeObservers();
+        try self.processBufferedRequests();
+
+        var progressed = false;
+        var index: usize = 0;
+        while (index < self.clients.len) : (index += 1) {
+            progressed = self.writeClient(index) or progressed;
+            if (self.clients[index] != null)
+                progressed = self.readClient(index) or progressed;
+        }
+        try self.processBufferedRequests();
+
+        const service_now_ns = nowNs(self.io);
+        self.expireConsequenceAuthority(service_now_ns);
+        const previous_stream_closed = self.stream_closed;
+        const previous_child_exited = self.child_exited;
+        const previous_write_pending = self.pty_write_pending;
+        const result = try howl.serviceWithConsequencePolicy(
+            self.instance,
+            true,
+            true,
+            service_now_ns,
+            self.consequencePolicy(),
+        );
+        self.applyServiceResult(result, service_now_ns, true);
+        progressed = progressed or result.changed or
+            previous_stream_closed != self.stream_closed or
+            previous_child_exited != self.child_exited or
+            previous_write_pending != self.pty_write_pending;
+        self.syncConsequenceExpiry(service_now_ns);
+
+        try self.processBufferedRequests();
+        try self.materializeObservers();
+        index = 0;
+        while (index < self.clients.len) : (index += 1)
+            progressed = self.writeClient(index) or progressed;
+        self.syncConsequenceExpiry(nowNs(self.io));
+
+        if (!progressed) {
+            const wait_ms = boundedPollTimeout(
+                timeout_ms,
+                self.animation_wait_ms,
+                self.burst_publication.waitMs(nowNs(self.io)),
+                self.consequence_expiry.waitMs(nowNs(self.io)),
+            );
+            if (wait_ms > 0)
+                std.Io.sleep(self.io, .fromMilliseconds(@intCast(wait_ms)), .awake) catch
+                    return error.ServiceWaitFailed;
+        }
     }
 
     /// Exact failures from one interaction service turn.
@@ -616,7 +724,8 @@ pub const Service = struct {
 
     /// Returns the PTY fd only when Runtime may safely sleep on PTY readiness
     /// instead of scheduling unconditional service turns.
-    pub fn waitDescriptor(self: *const Service) error{NotStarted}!?posix.fd_t {
+    pub fn waitDescriptor(self: *const Service) error{NotStarted}!?howl.Descriptor {
+        if (comptime native_windows) return null;
         if (self.stream_closed or self.requiresTurnWithoutPtyReadiness()) return null;
         return try howl.descriptor(self.instance);
     }
@@ -637,11 +746,11 @@ pub const Service = struct {
     };
 
     /// Adopts one connected stream into the ordinary bounded Instance client table.
-    /// On success this service owns `fd`; on failure the caller retains ownership.
+    /// On success this service owns `stream`; on failure the caller retains ownership.
     /// `initial_input` is parsed only after `preface_output` has fully drained.
     pub fn adoptClient(
         self: *Service,
-        fd: posix.fd_t,
+        stream: AdoptedStream,
         initial_input: []const u8,
         preface_output: []const u8,
     ) AdoptError!void {
@@ -657,10 +766,10 @@ pub const Service = struct {
         errdefer output.deinit(self.allocator);
         try output.appendSlice(self.allocator, preface_output);
 
-        try configureAdoptedClientFd(fd);
+        try configureAdoptedStream(stream);
         const id = self.nextClientId();
         self.clients[slot] = .{
-            .fd = fd,
+            .stream = stream,
             .id = id,
             .input = input,
             .input_len = initial_input.len,
@@ -721,42 +830,115 @@ pub const Service = struct {
         return id;
     }
 
-    fn readClient(self: *Service, index: usize) void {
-        const client = if (self.clients[index]) |*active| active else return;
-        if (client.outputPending() or client.input_len == client.input.len) return;
+    fn readClient(self: *Service, index: usize) bool {
+        if (comptime native_windows) return self.readClientWindows(index);
+        const client = if (self.clients[index]) |*active| active else return false;
+        if (client.outputPending() or client.input_len == client.input.len) return false;
         const room = client.input[client.input_len..];
-        const result = linux.read(client.fd, room.ptr, room.len);
+        const result = linux.read(client.stream, room.ptr, room.len);
         switch (linux.errno(result)) {
             .SUCCESS => {
                 if (result == 0 or result > room.len) {
                     self.closeClient(index);
-                    return;
+                    return true;
                 }
                 client.input_len += result;
+                return true;
             },
-            .AGAIN, .INTR => {},
-            else => self.closeClient(index),
+            .AGAIN, .INTR => return false,
+            else => {
+                self.closeClient(index);
+                return true;
+            },
         }
     }
 
-    fn writeClient(self: *Service, index: usize) void {
-        const client = if (self.clients[index]) |*active| active else return;
-        if (!client.outputPending()) return;
+    fn writeClient(self: *Service, index: usize) bool {
+        if (comptime native_windows) return self.writeClientWindows(index);
+        const client = if (self.clients[index]) |*active| active else return false;
+        if (!client.outputPending()) return false;
         const bytes = client.output.items[client.output_offset..];
-        const result = linux.write(client.fd, bytes.ptr, bytes.len);
+        const result = linux.write(client.stream, bytes.ptr, bytes.len);
         switch (linux.errno(result)) {
             .SUCCESS => {
                 if (result == 0 or result > bytes.len) {
                     self.closeClient(index);
-                    return;
+                    return true;
                 }
                 client.output_offset += result;
                 if (!client.outputPending()) client.resetOutput(self.allocator);
+                return true;
             },
-            .AGAIN, .INTR => {},
-            .PIPE, .CONNRESET => self.closeClient(index),
-            else => self.closeClient(index),
+            .AGAIN, .INTR => return false,
+            .PIPE, .CONNRESET => {
+                self.closeClient(index);
+                return true;
+            },
+            else => {
+                self.closeClient(index);
+                return true;
+            },
         }
+    }
+
+    fn readClientWindows(self: *Service, index: usize) bool {
+        const client = if (self.clients[index]) |*active| active else return false;
+        if (client.outputPending() or client.input_len == client.input.len) return false;
+        const room = client.input[client.input_len..];
+        var available: u32 = 0;
+        if (!PeekNamedPipe(client.stream.read, null, 0, null, &available, null).toBool()) {
+            self.closeClient(index);
+            return true;
+        }
+        if (available == 0) return false;
+        const count: u32 = @intCast(@min(
+            @min(room.len, @as(usize, available)),
+            @as(usize, std.math.maxInt(u32)),
+        ));
+        var read_count: u32 = 0;
+        if (!ReadFile(client.stream.read, @ptrCast(room.ptr), count, &read_count, null).toBool()) {
+            switch (windows.GetLastError()) {
+                .NO_DATA => return false,
+                else => {
+                    self.closeClient(index);
+                    return true;
+                },
+            }
+        }
+        if (read_count == 0) {
+            self.closeClient(index);
+            return true;
+        }
+        client.input_len += read_count;
+        return true;
+    }
+
+    fn writeClientWindows(self: *Service, index: usize) bool {
+        const client = if (self.clients[index]) |*active| active else return false;
+        if (!client.outputPending()) return false;
+        const bytes = client.output.items[client.output_offset..];
+        const count: u32 = @intCast(@min(
+            bytes.len,
+            @min(windows_pipe_write_chunk_bytes, @as(usize, std.math.maxInt(u32))),
+        ));
+        var written: u32 = 0;
+        if (!WriteFile(client.stream.write, @ptrCast(bytes.ptr), count, &written, null).toBool()) {
+            switch (windows.GetLastError()) {
+                .NO_DATA => return false,
+                else => {
+                    self.closeClient(index);
+                    return true;
+                },
+            }
+        }
+        if (written == 0) return false;
+        client.output_offset += written;
+        if (!SetEvent(client.stream.peer_read_event).toBool()) {
+            self.closeClient(index);
+            return true;
+        }
+        if (!client.outputPending()) client.resetOutput(self.allocator);
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -2475,6 +2657,19 @@ fn encodeU64(output: []u8, value: u64) void {
     output[7] = @truncate(value);
 }
 
+fn configureAdoptedStream(stream: AdoptedStream) error{SocketOptionFailed}!void {
+    if (comptime native_windows) {
+        var mode = pipe_nowait;
+        if (!SetNamedPipeHandleState(stream.read, &mode, null, null).toBool())
+            return error.SocketOptionFailed;
+        mode = pipe_nowait;
+        if (!SetNamedPipeHandleState(stream.write, &mode, null, null).toBool())
+            return error.SocketOptionFailed;
+        return;
+    }
+    return configureAdoptedClientFd(stream);
+}
+
 fn configureAdoptedClientFd(fd: posix.fd_t) error{SocketOptionFailed}!void {
     try setSendBuffer(fd, client_send_buffer_bytes);
     try setCloseOnExec(fd);
@@ -2509,6 +2704,16 @@ fn closeFd(fd: posix.fd_t) void {
     const result = linux.close(fd);
     const errno = linux.errno(result);
     std.debug.assert(errno == .SUCCESS or errno == .INTR);
+}
+
+fn closeAdoptedStream(stream: AdoptedStream) void {
+    if (comptime native_windows) {
+        windows.CloseHandle(stream.read);
+        windows.CloseHandle(stream.write);
+        windows.CloseHandle(stream.peer_read_event);
+        return;
+    }
+    closeFd(stream);
 }
 
 fn nowNs(io: std.Io) u64 {

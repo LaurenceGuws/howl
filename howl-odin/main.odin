@@ -2321,8 +2321,15 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
         return create_error_instance_view("Local profile environment overrides are not wired yet", .Owned)
     }
     shell := profile_shell(profile)
-    if len(shell) == 0 do shell = os.get_env("SHELL", context.temp_allocator)
-    if len(shell) == 0 do shell = "/bin/sh"
+    if len(shell) == 0 {
+        when ODIN_OS == .Windows {
+            shell = os.get_env("COMSPEC", context.temp_allocator)
+            if len(shell) == 0 do shell = "C:\\Windows\\System32\\cmd.exe"
+        } else {
+            shell = os.get_env("SHELL", context.temp_allocator)
+            if len(shell) == 0 do shell = "/bin/sh"
+        }
+    }
     command := profile_command(profile)
     cwd := profile_cwd(profile)
     diagnostic: [160]u8

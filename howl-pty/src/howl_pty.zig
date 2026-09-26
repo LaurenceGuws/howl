@@ -5,6 +5,9 @@ const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
 
+/// Platform-native descriptor used by Linux poll owners.
+pub const Descriptor = posix.fd_t;
+
 // File map:
 //   - raw Linux syscall outcomes and checked conversions
 //   - public lifecycle, observation, and signal contract
@@ -678,7 +681,7 @@ pub const Owned = struct {
     }
 
     /// Returns the live master descriptor for caller-managed poll sets.
-    pub fn masterFd(self: *const Self) error{NotStarted}!posix.fd_t {
+    pub fn masterFd(self: *const Self) error{NotStarted}!Descriptor {
         return self.master_fd orelse error.NotStarted;
     }
 

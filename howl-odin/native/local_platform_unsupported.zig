@@ -1,7 +1,7 @@
 //! Explicit Local-Instance placeholder for Odin targets without a native PTY.
 //!
-//! Remote routes stay available. Local creation fails visibly until the target
-//! earns its own PTY owner, such as the later Windows ConPTY implementation.
+//! Remote routes stay available. Local creation fails visibly until that target
+//! earns its own platform PTY owner.
 
 const std = @import("std");
 const client = @import("howl_client");

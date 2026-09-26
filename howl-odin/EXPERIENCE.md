@@ -1151,9 +1151,9 @@ deadline, `TCP_NODELAY`, exact diagnostics, and caller-owned event cancellation.
 endpoints fail explicitly on Windows rather than pretending to be portable.
 
 Local ownership is behind one target-selected platform module. Linux retains the accepted
-in-process canonical Instance + unnamed-HWLS-stream implementation. Windows deliberately
-returns `LocalUnsupported` until ConPTY is implemented in the platform PTY owner; Remote
-support does not smuggle in a hidden local Server or daemon.
+in-process canonical Instance + unnamed-HWLS-stream implementation. Windows now owns a
+ConPTY-backed canonical Instance and listener-free in-process duplex pipe streams for HWLS;
+neither route smuggles in a hidden local Server or daemon.
 
 Windows uses Howl's pinned bundled FreeType/HarfBuzz build. Because that configuration is
 memory-only, the bridge reads configured font files through Zig I/O and constructs
@@ -1170,6 +1170,45 @@ WMIO-focus -> HostIO -> noVNC path, retained and scrolled 120 lines of history, 
 survived normal app close/reopen while the Server-owned Instance remained alive. The
 reopened client restored retained history and accepted another interactive round trip.
 The final no-font-override bundle repeated the attach/render/input proof using Windows
-font defaults. This closes Windows Remote only; Windows Local/ConPTY, installer/distribution
+font defaults. Windows Local/ConPTY is qualified separately below; installer/distribution
 policy, richer Windows font selection UI, and broader Windows application dogfood remain
 separate work.
+
+### Windows Local ConPTY checkpoint, 2026-09-26
+
+Windows Local now preserves the same product topology as Linux Local: Odin owns one
+canonical Instance in-process and talks to it only through ordinary HWLS clients. The
+platform PTY owner uses ConPTY and owns its process, pseudo-console, input/output pipes,
+resize, exit observation, and bounded teardown. The local HWLS envelope uses two anonymous
+one-way pipes as one duplex stream plus explicit wake events. There is no listener,
+filesystem endpoint, Session, Server, or helper daemon.
+
+The ConPTY bring-up exposed three Windows-specific ownership facts that are now explicit in
+the owner: the pseudoconsole attribute receives the HPCON value itself; the pipe handles
+given to `CreatePseudoConsole` remain alive through hosted `CreateProcessW`; and hosted
+process creation sets `STARTF_USESTDHANDLES` with null standard handles so redirected parent
+stdio cannot leak around ConPTY. A direct Win11 owner canary proved banner/output, input,
+resize, clean `exit`, and child observation. A second canary proved those same facts through
+the canonical Instance and VT rather than the raw PTY owner.
+
+The Windows HWLS service preserves the existing protocol/materialization logic and swaps
+only low-level adopted-stream mechanics. Large observations are drained through bounded
+16 KiB nonblocking pipe writes; this matters because a complete 80x37 snapshot can exceed
+the 64 KiB anonymous-pipe capacity and Windows may reject one oversized `PIPE_NOWAIT` write
+instead of accepting a prefix. The regression canary that previously blocked on the first
+snapshot now returns revision 2 in about 44 ms.
+
+Physical Win11 dogfood used the built-in `Local shell` profile with no `--server` route and
+no font overrides. The owned `cmd.exe` rendered normally, physical HostIO input round-tripped
+`WINDOWS_LOCAL_IO_OK`, 120 lines of output remained scrollable, and `Alt+Shift+D` created a
+second independent Local pane while the first retained its history position. The guest
+process tree showed two distinct `cmd.exe` children and separate headless ConPTY hosts.
+Normal Howl window close retired Howl, both child shells, and both headless ConPTY hosts.
+The same candidate then re-ran the accepted Windows Remote route against a fresh Home Server
+and round-tripped `CANDIDATE_REMOTE_OK`.
+
+This checkpoint deliberately does not guess a universal Windows shell-command grammar.
+Interactive shell and cwd are live; nonempty Local profile `command` is rejected explicitly
+on Windows until cmd/PowerShell/other-shell recipe semantics are designed rather than
+inferred. Odin profile environment overrides remain the same explicit unsupported field as
+the Linux Local checkpoint.
