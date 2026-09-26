@@ -7,6 +7,7 @@ test {
     _ = @import("src/screen/main_test.zig");
     _ = @import("test/unit/terminal_snapshot_test.zig");
     _ = @import("test/unit/terminal_end_to_end_test.zig");
+    _ = @import("test/unit/terminal_poison_test.zig");
     _ = @import("src/screen/cursor_test.zig");
     _ = @import("src/screen/history_test.zig");
     _ = @import("src/screen/resize_test.zig");
