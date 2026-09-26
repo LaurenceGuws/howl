@@ -555,14 +555,33 @@ App :: struct {
     consequence_owner_count: int,
 }
 
+config_root_choice :: proc(xdg, appdata, home: string, windows: bool) -> (root: string, home_config: bool, ok: bool) {
+    if len(xdg) != 0 {
+        return xdg, false, true
+    }
+    if windows && len(appdata) != 0 {
+        return appdata, false, true
+    }
+    if len(home) != 0 {
+        return home, true, true
+    }
+    return "", false, false
+}
+
 config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
-    root := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
-    if len(root) == 0 {
-        home := os.get_env("HOME", context.temp_allocator)
-        if len(home) == 0 {
-            return "", "", "", false
-        }
-        value, err := filepath.join([]string{home, ".config"}, allocator=context.temp_allocator)
+    xdg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+    appdata := os.get_env("APPDATA", context.temp_allocator)
+    home := os.get_env("HOME", context.temp_allocator)
+    windows := false
+    when ODIN_OS == .Windows {
+        windows = true
+    }
+    root, home_config, root_ok := config_root_choice(xdg, appdata, home, windows)
+    if !root_ok {
+        return "", "", "", false
+    }
+    if home_config {
+        value, err := filepath.join([]string{root, ".config"}, allocator=context.temp_allocator)
         if err != nil {
             return "", "", "", false
         }
