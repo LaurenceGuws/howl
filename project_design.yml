@@ -7,10 +7,10 @@ core:
   howl-vt:
     role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences
   howl-instance:
-    role: optional batteries-included composition of one Linux PTY, one canonical howl-vt terminal, ordered I/O lifetime, geometry, signals, and headless environment policy
+    role: optional batteries-included composition of one platform process-terminal owner (Linux PTY or Windows ConPTY), one canonical howl-vt terminal, ordered I/O lifetime, geometry, signals, and headless environment policy
     invariant: Instance is one concrete terminal occurrence, not a Session, Server, listener, daemon, or product identity; observers never own, pace, or block canonical progress
   howl-pty:
-    role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
+    role: platform process-terminal ownership covering Linux PTY or Windows ConPTY, child process/control lifetime, descriptors or handles, resize, signals, and cleanup
   howl-text:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
@@ -22,7 +22,7 @@ composition:
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
   - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
-  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints, but route storage is deployment/app policy and never becomes Server discovery or terminal ownership
+  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through howl-client's listener-free desktop owner, while Android/iOS remain client-only
   - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:
@@ -41,7 +41,7 @@ experimental:
 
 ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer
-  - one howl-instance owns exactly one authoritative PTY and VT when an embedder chooses the batteries-included local composition
+  - one howl-instance owns exactly one authoritative platform process-terminal transport and VT when an embedder chooses the batteries-included local composition
   - Instance exposes no Session or Server identity and publishes no listener or executable
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt

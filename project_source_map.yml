@@ -3,8 +3,8 @@ accepted:
   build.zig: development-only curator for local core checks and tests
   build.zig.zon: local core workspace source boundary including tracked howl-text
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  howl-instance: batteries-included Linux PTY/VT lifetime owner for one concrete terminal occurrence; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
-  howl-pty: Linux PTY and child-process lifecycle
+  howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
+  howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
@@ -64,10 +64,13 @@ experimental:
     optional server-runtime owns the single control listener/scheduler only
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction
-    stream. Owns Unix/numeric-IPv4 TCP carriage, cancellation, bounded framed I/O,
-    snapshots/state/actions/search/selection/images/consequences and owned semantic
-    views. It owns no PTY, VT, Instance, Session, Server, SSH subprocess, discovery,
-    routing, authentication or supervision policy
+    stream. The ordinary howl_client module owns Unix/numeric-IPv4 TCP carriage,
+    cancellation, bounded framed I/O, snapshots/state/actions/search/selection/images/
+    consequences and owned semantic views while owning no PTY, VT, Instance, Session,
+    Server, SSH subprocess, discovery, routing, authentication or supervision policy.
+    The separate optional howl_local module owns one listener-free desktop Local
+    Instance backed by Linux PTY or Windows ConPTY and admits ordinary HWLS streams;
+    importing howl_client never opts a consumer into that process lifetime
   howl-cli: >-
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
@@ -95,9 +98,10 @@ experimental:
     lineage, and on running-Instance selection attaches exact Session+Instance
     identity then transitions the same fd into ordinary HWLS with no proxy. Dart
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
-    history/selection/native-size UX remains Instance-only after handoff. Flutter
-    owns no PTY, VT, Instance, Session, Server, grid, discovery or supervision;
-    outside the core gate
+    history/selection/native-size UX remains Instance-only after handoff. On Linux
+    and Windows the Local route owns one in-process Instance through howl-client's
+    listener-free howl_local owner; Android and iOS remain client-only. Flutter owns
+    no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux Vulkan performance canary with three Instance routes: in-process
     howl-instance via --local, direct externally owned HWLS endpoints, or exact
@@ -123,6 +127,7 @@ experimental:
     server-client exact Session+Instance attach and then the same observer/control/render/
     consequence HWLS workers. Target identity includes route+endpoint+Session+Instance so
     distinct Server-owned Instances never share consequence authority accidentally.
-    Launch profiles retain shell/command/cwd configuration for a future direct in-process
-    Instance embed and currently fail explicitly; no sibling daemon/socket path exists.
-    Outside the core gate
+    Launch profiles create a canonical in-process Instance through the listener-free
+    desktop Local owner (Linux PTY or Windows ConPTY); Direct Attach and Server-selected
+    routes remain non-owning ordinary HWLS attachments. No sibling daemon/socket path
+    exists. Outside the core gate

@@ -1,6 +1,6 @@
 # howl-instance
 
-`howl-instance` is the batteries-included local terminal composition: one PTY, one canonical `howl-vt` terminal, ordered child I/O, explicit geometry, signals, and deterministic headless consequence policy. It is a module, not a daemon, listener, Session, or Server.
+`howl-instance` is the batteries-included local terminal composition: one platform process-terminal transport (Linux PTY or Windows ConPTY), one canonical `howl-vt` terminal, ordered child I/O, explicit geometry, signals, and deterministic headless consequence policy. It is a module, not a daemon, listener, Session, or Server.
 
 An embedder may use `howl-vt` directly and omit PTY/Instance composition entirely. Higher-level Session/Server orchestration is optional and must depend on Instance; Instance never depends on it.
 
@@ -126,6 +126,34 @@ The flags word uses these bits:
 | 12 | in-band resize notifications |
 
 Bits 13..31 are reserved and must be zero.
+
+## Host consequences
+
+VT retains caller-neutral protocol consequences in one bounded global order. HWLS
+allows one explicit consequence authority to observe that order and either consume an
+occurrence or provide a typed reply. When no client owns consequence authority,
+Instance applies a deterministic headless policy so canonical PTY/VT progress never
+waits for presentation policy:
+
+| Consequence | Headless Instance policy |
+| --- | --- |
+| clipboard query | reply with empty clipboard content |
+| clipboard set/other | consume |
+| notification | consume |
+| pointer-shape query | reply `default` |
+| pointer-shape set/other | consume |
+| file transfer | consume |
+| drag/drop | consume |
+| container screen-cell query | reply with current canonical rows/columns |
+| container state/position/icon-title query | decline |
+| other container intent | consume |
+| color-preference query | reply `dark` |
+| media copy, bell, legacy control, DCS, string control | consume |
+
+`howl-client.consequences` exposes the authority/observe/consume/reply mechanism but
+does not choose host policy. A direct `howl-vt` embedder that bypasses Instance owns
+its own consequence policy; VT itself never opens files, steals focus, accesses a
+clipboard, or performs another host side effect.
 
 ## Observation model
 

@@ -8,8 +8,8 @@ objective: >-
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
-  pty: caller-polled Linux PTY and child-process lifecycle
-  instance: opaque owner of one PTY and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
+  pty: caller-polled platform process-terminal ownership with Linux PTY and Windows ConPTY child-process lifecycle
+  instance: opaque owner of one platform process-terminal transport and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
   text: tracked bounded native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and natural alpha rasterization
 
 invariants:
@@ -25,11 +25,11 @@ invariants:
 
 active:
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
-  - pressure the same Instance/client/text/Canvas owners through both maintained visual canaries: Flutter over direct or Server-selected native streams and Web over its Wasm/browser presentation gates
+  - pressure the same Instance/client/text/Canvas owners through maintained visual canaries: Flutter over desktop Local, direct, or Server-selected native streams and Web over its Wasm/browser presentation gates
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
-  - iterate the Odin/SDL3 desktop canary with tabs/splits, profiles, settings, explicit attachments and shared Canvas presentation without duplicating terminal semantics
+  - dogfood the Odin/SDL3 desktop canary across accepted Local and Server-selected routes with tabs/splits, profiles, settings, explicit attachments and shared Canvas presentation without duplicating terminal semantics
 
 deferred:
   - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior
