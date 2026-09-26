@@ -1112,3 +1112,30 @@ The desktop workstream's cursor-20260917 evidence captures real clean Neovim mod
 changes and the user's cursor options in an isolated no-plugin configuration.
 No VT parsing, Session protocol, transport, blink policy or animation timer change.
 Cross-host source/build checks are distinct from runtime/device rollout.
+
+### Linux Local + Remote product model, 2026-09-26
+
+Odin now has two first-class Linux routes that converge after Instance selection. Local
+launch creates the canonical Howl Instance in-process, then adopts unnamed socketpair
+streams into the ordinary HWLS service so control, observation, render, search and host
+consequences stay on the same client semantics as attachments. Local owns no listener,
+filesystem socket, Session, Server, discovery policy or standalone daemon. The local
+Instance is destroyed only after its pane workers have retired; a two-pane physical
+canary confirmed both child shells disappear when the owning Odin process closes.
+
+Remote Servers are persisted separately from profiles in schema 4. The dropdown opens an
+asynchronous Server browser, observes Server -> Sessions -> Instances, and attaches one
+exact running Instance before returning to the ordinary Odin terminal path. Home -> Colt
+physical evidence used the Mesh endpoint `tcp://100.96.0.7:43150`: interactive I/O passed,
+closing all Odin windows left the remote Instance alive, and reattaching preserved shell
+state. The same post-Local candidate reattached that Instance and passed interactive I/O
+again.
+
+The Local canary also exercised Canvas rendering, 120-line scrollback/history, and a
+second owned Instance in a split pane. An early local fast-path race exposed that worker
+completion can precede SDL's first wait; connection-pending windows now use the existing
+bounded retry interval only until the first live cut, then return to the normal event-
+driven floor. Local service admission uses a bounded queue into the single service owner
+rather than contending on a mutex held across service polling. This keeps teardown
+bounded and avoids listener-shaped ownership. Environment overrides remain an explicit
+unsupported Local recipe field in this checkpoint; shell/command/cwd are live.

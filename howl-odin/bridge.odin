@@ -9,6 +9,8 @@ foreign howl_bridge {
     version            :: proc() -> u32 ---
     runtime_create :: proc() -> rawptr ---
     runtime_destroy :: proc(runtime: rawptr) ---
+    local_instance_create :: proc(runtime: rawptr, shell: [^]u8, shell_len: c.size_t, command: [^]u8, command_len: c.size_t, cwd: [^]u8, cwd_len: c.size_t, rows, columns, history_rows: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> u64 ---
+    local_instance_destroy :: proc(runtime: rawptr, instance_id: u64) -> i32 ---
     interrupt_create :: proc() -> rawptr ---
     interrupt_cancel :: proc(token: rawptr) -> i32 ---
     interrupt_destroy :: proc(token: rawptr) ---
@@ -96,6 +98,7 @@ foreign howl_bridge {
 Bridge_Route_Kind :: enum u8 {
     Direct = 0,
     Server = 1,
+    Local = 2,
 }
 
 Consequence_Info :: struct {

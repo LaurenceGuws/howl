@@ -235,7 +235,7 @@ consequence_owner_worker :: proc(data: rawptr) {
 create_consequence_owner :: proc(view: ^Instance_View, rows, columns: u16) -> ^Consequence_Owner {
     if view == nil do return nil
     endpoint := instance_endpoint(view)
-    if len(endpoint) == 0 || len(endpoint) >= CONSEQUENCE_ENDPOINT_BYTES do return nil
+    if len(endpoint) >= CONSEQUENCE_ENDPOINT_BYTES || (view.route_kind != .Local && len(endpoint) == 0) do return nil
     owner := new(Consequence_Owner)
     if owner == nil do return nil
     owner^ = Consequence_Owner{
@@ -278,7 +278,7 @@ destroy_consequence_owner :: proc(owner: ^Consequence_Owner) {
 find_consequence_owner :: proc(app: ^App, view: ^Instance_View) -> ^Consequence_Owner {
 	if app == nil || view == nil do return nil
     endpoint := instance_endpoint(view)
-	if len(endpoint) == 0 do return nil
+	if view.route_kind != .Local && len(endpoint) == 0 do return nil
 	for index in 0..<app.consequence_owner_count {
 		owner := app.consequence_owners[index]
         if owner != nil && owner.route_kind == view.route_kind &&

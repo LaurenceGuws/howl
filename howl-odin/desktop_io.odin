@@ -266,8 +266,9 @@ apply_control_completions :: proc(app: ^App) {
         for view in app.tabs[tab_index].panes {
             if view == nil do continue
             sync.mutex_lock(&view.mutex)
-            if view.control_connect_done && view.control == nil {
+            if view.control_connect_done && !view.control_connect_applied {
                 view.control = view.control_pending_handle
+                view.control_connect_applied = true
                 view.ui_dirty = true
             }
             ready := view.control_result_ready

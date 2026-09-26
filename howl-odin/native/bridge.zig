@@ -6,8 +6,10 @@
 
 const std = @import("std");
 const client = @import("howl_client");
+const local_instance = @import("local_instance.zig");
 const server_client = @import("server_client");
-const protocol = @import("howl_instance").protocol;
+const howl_instance = @import("howl_instance");
+const protocol = howl_instance.protocol;
 
 const render = @import("howl_render");
 const terminal_render = render.terminal;
@@ -15,12 +17,81 @@ const canvas = terminal_render;
 
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;
+const maximum_local_instances: usize = 64;
+
+const LocalSlot = struct {
+    id: u64,
+    owner: *local_instance.Owner,
+};
 
 // One explicit desktop lifetime, constructed/destroyed by the application.
 // Process and route owners borrow its I/O; no per-connection signal handlers.
 const Runtime = struct {
     threaded: std.Io.Threaded,
     borrowers: std.atomic.Value(u32) = .init(0),
+    local_mutex: std.Io.Mutex = .init,
+    local_instances: [maximum_local_instances]?LocalSlot = @splat(null),
+    next_local_id: u64 = 1,
+
+    fn createLocal(self: *Runtime, launch: howl_instance.Launch) !u64 {
+        const owner = try local_instance.Owner.init(
+            std.heap.c_allocator,
+            self.threaded.io(),
+            currentProcessEnviron(),
+            launch,
+        );
+        errdefer owner.deinit();
+
+        self.local_mutex.lockUncancelable(self.threaded.io());
+        defer self.local_mutex.unlock(self.threaded.io());
+        var free: ?usize = null;
+        for (self.local_instances, 0..) |slot, index| {
+            if (slot == null) {
+                free = index;
+                break;
+            }
+        }
+        const index = free orelse return error.LocalInstanceCapacity;
+        const id = self.next_local_id;
+        if (id == 0) return error.LocalIdentityExhausted;
+        self.next_local_id +%= 1;
+        self.local_instances[index] = .{ .id = id, .owner = owner };
+        return id;
+    }
+
+    fn destroyLocal(self: *Runtime, id: u64) bool {
+        if (id == 0) return false;
+        var owner: ?*local_instance.Owner = null;
+        self.local_mutex.lockUncancelable(self.threaded.io());
+        for (&self.local_instances) |*slot| {
+            if (slot.*) |active| {
+                if (active.id == id) {
+                    owner = active.owner;
+                    slot.* = null;
+                    break;
+                }
+            }
+        }
+        self.local_mutex.unlock(self.threaded.io());
+        if (owner) |active| active.deinit();
+        return owner != null;
+    }
+
+    fn connectLocal(
+        self: *Runtime,
+        id: u64,
+        diagnostic: *client.ConnectDiagnostic,
+        interrupt: ?*client.Interrupt,
+    ) local_instance.Error!client.Connection {
+        self.local_mutex.lockUncancelable(self.threaded.io());
+        defer self.local_mutex.unlock(self.threaded.io());
+        for (self.local_instances) |slot| {
+            if (slot) |active| {
+                if (active.id == id) return active.owner.connect(diagnostic, interrupt);
+            }
+        }
+        return error.ServiceFailed;
+    }
 };
 
 fn runtimeValue(raw: ?*RuntimeHandle) ?*Runtime {
@@ -50,8 +121,54 @@ pub export fn howl_odin_bridge_runtime_create() ?*RuntimeHandle {
 pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
     const value = runtimeValue(raw) orelse return;
     std.debug.assert(value.borrowers.load(.acquire) == 0);
+    for (value.local_instances) |slot| std.debug.assert(slot == null);
     value.threaded.deinit();
     std.heap.c_allocator.destroy(value);
+}
+
+pub export fn howl_odin_bridge_local_instance_create(
+    runtime_raw: ?*RuntimeHandle,
+    shell_ptr: [*]const u8,
+    shell_len: usize,
+    command_ptr: [*]const u8,
+    command_len: usize,
+    cwd_ptr: [*]const u8,
+    cwd_len: usize,
+    rows: u16,
+    columns: u16,
+    history_rows: u16,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) u64 {
+    diagnostic_len.* = 0;
+    const runtime = runtimeValue(runtime_raw) orelse {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "runtime_unavailable");
+        return 0;
+    };
+    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0) {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
+        return 0;
+    }
+    return runtime.createLocal(.{
+        .shell = shell_ptr[0..shell_len],
+        .command = if (command_len == 0) null else command_ptr[0..command_len],
+        .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
+        .rows = rows,
+        .columns = columns,
+        .history_rows = history_rows,
+    }) catch |failure| {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+        return 0;
+    };
+}
+
+pub export fn howl_odin_bridge_local_instance_destroy(
+    runtime_raw: ?*RuntimeHandle,
+    id: u64,
+) i32 {
+    const runtime = runtimeValue(runtime_raw) orelse return 1;
+    return if (runtime.destroyLocal(id)) 0 else 2;
 }
 
 pub export fn howl_odin_bridge_interrupt_create() ?*client.Interrupt {
@@ -71,6 +188,7 @@ pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void
 const RouteKind = enum(u8) {
     direct = 0,
     server = 1,
+    local = 2,
 };
 
 const ConnectTarget = struct {
@@ -85,15 +203,17 @@ fn targetFromAbi(kind_raw: u8, endpoint: []const u8, server_id: u64, session_id:
     const kind: RouteKind = switch (kind_raw) {
         0 => .direct,
         1 => .server,
+        2 => .local,
         else => return error.InvalidEndpoint,
     };
-    if (endpoint.len == 0) return error.InvalidEndpoint;
     return switch (kind) {
         .direct => blk: {
+            if (endpoint.len == 0) return error.InvalidEndpoint;
             if (server_id != 0 or session_id != 0 or instance_id != 0) return error.InvalidEndpoint;
             break :blk .{ .kind = .direct, .endpoint = endpoint };
         },
         .server => blk: {
+            if (endpoint.len == 0) return error.InvalidEndpoint;
             if (server_id == 0 or session_id == 0 or instance_id == 0) return error.InvalidEndpoint;
             break :blk .{
                 .kind = .server,
@@ -103,6 +223,11 @@ fn targetFromAbi(kind_raw: u8, endpoint: []const u8, server_id: u64, session_id:
                 .instance_id = instance_id,
             };
         },
+        .local => blk: {
+            if (endpoint.len != 0 or server_id != 0 or session_id != 0 or instance_id == 0)
+                return error.InvalidEndpoint;
+            break :blk .{ .kind = .local, .endpoint = "", .instance_id = instance_id };
+        },
     };
 }
 
@@ -111,7 +236,7 @@ fn connectForHost(
     interrupt: ?*client.Interrupt,
     target: ConnectTarget,
     diagnostic: *client.ConnectDiagnostic,
-) (client.Error || server_client.Error)!client.Connection {
+) (client.Error || server_client.Error || local_instance.Error)!client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
     return switch (target.kind) {
         .direct => client.Connection.connectCancelable(
@@ -129,6 +254,7 @@ fn connectForHost(
             }, diagnostic, interrupt);
             break :blk try client.connectTransport(std.heap.c_allocator, attached.stream, diagnostic);
         },
+        .local => runtime.?.connectLocal(target.instance_id, diagnostic, interrupt),
     };
 }
 
@@ -137,8 +263,8 @@ const RenderHandle = opaque {};
 // Existing full-observation encoding preference, after endpoint validation.
 // TCP retains compression; Unix retains its measured raw-snapshot default.
 // View reuse below is independent of this heuristic and sends no extra bytes.
-fn rawObservationEndpoint(endpoint: []const u8) bool {
-    return std.mem.startsWith(u8, endpoint, "unix:");
+fn rawObservationTarget(target: ConnectTarget) bool {
+    return target.kind == .direct and std.mem.startsWith(u8, target.endpoint, "unix:");
 }
 
 fn requestObservation(
@@ -153,13 +279,9 @@ fn requestObservation(
 }
 
 test "only validated Unix endpoints avoid same-machine text compression" {
-    try std.testing.expect(rawObservationEndpoint("unix:/run/user/1000/howl.sock"));
-    try std.testing.expect(!rawObservationEndpoint("/run/user/1000/howl.sock"));
-    try std.testing.expect(!rawObservationEndpoint("relative.sock"));
-    try std.testing.expect(!rawObservationEndpoint(""));
-    try std.testing.expect(!rawObservationEndpoint("https://example.invalid"));
-    try std.testing.expect(!rawObservationEndpoint("tcp://127.0.0.1:43127"));
-    try std.testing.expect(!rawObservationEndpoint("tcp://192.0.2.1:43127"));
+    try std.testing.expect(rawObservationTarget(try targetFromAbi(0, "unix:/run/user/1000/howl.sock", 0, 0, 0)));
+    try std.testing.expect(!rawObservationTarget(try targetFromAbi(0, "tcp://127.0.0.1:43127", 0, 0, 0)));
+    try std.testing.expect(!rawObservationTarget(try targetFromAbi(2, "", 0, 0, 7)));
 }
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
@@ -436,7 +558,7 @@ pub export fn howl_odin_bridge_render_create(
         .allocator = allocator,
         .runtime = runtime,
         .connection = connection,
-        .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
+        .raw_observation = rawObservationTarget(target),
         .fonts = fonts,
         .canvas = terminal_canvas,
         .cell_size = cell_size,
@@ -1192,7 +1314,7 @@ pub export fn howl_odin_bridge_create(
         .allocator = allocator,
         .runtime = runtime,
         .connection = connection,
-        .raw_observation = rawObservationEndpoint(endpoint_ptr[0..endpoint_len]),
+        .raw_observation = rawObservationTarget(target),
         .live_raw_cache = client.rich.RawCache.init(allocator),
     };
     retainRuntime(runtime);
@@ -2656,8 +2778,14 @@ test "Odin bridge route ABI distinguishes direct and Server targets" {
     try std.testing.expectEqual(@as(u64, 7), managed.session_id);
     try std.testing.expectEqual(@as(u64, 3), managed.instance_id);
 
+    const local = try targetFromAbi(2, "", 0, 0, 44);
+    try std.testing.expectEqual(RouteKind.local, local.kind);
+    try std.testing.expectEqual(@as(u64, 44), local.instance_id);
+
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(0, "tcp://127.0.0.1:1", 91, 7, 3));
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(1, "tcp://127.0.0.1:1", 91, 0, 3));
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(1, "tcp://127.0.0.1:1", 0, 7, 3));
-    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "tcp://127.0.0.1:1", 91, 7, 3));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "tcp://127.0.0.1:1", 0, 0, 3));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "", 0, 0, 0));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(3, "", 0, 0, 3));
 }

@@ -100,21 +100,27 @@ Current canary:
   Howl output. A managed-KWin A/B kept sampled terminal pixels identical across all
   three themes, and High Contrast survived a full process restart;
 - Startup owns the second persisted setting: the default profile can be Home
-  Instance (attach) or Local shell (future local Instance embed). Schema 2 also persists
+  Instance (attach) or Local shell (owned in-process Instance). Schema 2 also persists
   custom shortcuts by stable action id; schema-1 files remain readable and upgrade
   only on save. Missing/invalid independent fields retain their accepted defaults,
   and later saves update the existing config directory instead of treating its
   normal `.Exist` result as failure;
 - `+`, `Ctrl+T`, startup, and split-pane creation all consume that same default
-  profile instead of hard-coding a process type. The runtime catalogue now includes
-  bounded schema-3 user recipes beside Home/Local; each recipe names attach-vs-launch
-  ownership, shell/command/cwd, inherited-environment overrides, endpoint, and an
-  optional font-size presentation default. The profile dropdown enumerates the real
-  catalogue and marks the stable-id default;
-- Launch-profile shell/command/cwd/environment fields are retained as future direct
-  local-Instance recipe state. They no longer imply or package a standalone Instance
-  daemon. The current managed Server route is intentionally separate from that future
-  local embedding work;
+  profile instead of hard-coding a process type. The runtime catalogue includes
+  bounded user recipes beside Home/Local; each recipe names attach-vs-launch ownership,
+  shell/command/cwd, inherited-environment overrides, endpoint, and an optional font-size
+  presentation default. The profile dropdown enumerates the real catalogue and marks the
+  stable-id default. Schema 4 also persists labelled Server endpoints separately from
+  launch/attach profiles;
+- Launch profiles now create a canonical Howl Instance in-process and expose it to the
+  existing Odin control/observation/render/consequence clients through unnamed
+  socketpairs. No listener, filesystem socket, Session, Server, or standalone daemon is
+  created for Local. Shell/command/cwd are live recipe inputs; nonempty environment
+  overrides currently fail explicitly rather than being silently ignored;
+- Servers is a separate product route: the dropdown opens an asynchronous persisted
+  Server browser, observes Server -> Sessions -> Instances, and attaches one exact
+  running Instance. After Local creation or Remote attach, both routes use the same
+  ordinary Odin terminal tabs/panes/input/Canvas/history path;
 - Home tab observes the existing canonical Howl Instance at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys round-trip through `howl-client`;

@@ -152,6 +152,7 @@ Instance_View :: struct {
     control: rawptr,
     control_pending_handle: rawptr,
     control_connect_done: bool,
+    control_connect_applied: bool,
     control_failed: bool,
     control_notice: [160]u8,
     control_notice_len: int,
@@ -1077,7 +1078,7 @@ ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
     if view.render_work != nil && view.canvas_font_pixels != pixels do reset_canvas(view)
     if view.render_work == nil {
-        if len(instance_endpoint(view)) == 0 do return false
+        if view.route_kind != .Local && len(instance_endpoint(view)) == 0 do return false
         view.render_work = start_render_worker(app, view, pixels)
         if view.render_work == nil { set_canvas_error(view, "render worker creation failed"); return false }
         view.canvas_font_pixels = pixels
@@ -1615,7 +1616,7 @@ ensure_search_worker :: proc(view: ^Instance_View) -> bool {
     sync.mutex_unlock(&view.mutex)
     if failed do return false
     if view.search_thread != nil do return true
-    if len(instance_endpoint(view)) == 0 do return false
+    if view.route_kind != .Local && len(instance_endpoint(view)) == 0 do return false
     view.search_interrupt = interrupt_create()
     if view.search_interrupt == nil do return false
     view.search_thread = thread.create_and_start_with_data(rawptr(view), search_instance, name = "howl-odin-search")
@@ -2104,11 +2105,15 @@ create_target_instance_view :: proc(
 ) -> ^Instance_View {
     view := allocate_instance_view(ownership)
     if view == nil do return nil
-    valid_target := len(endpoint) > 0 && len(endpoint) < len(view.endpoint)
+    valid_target := len(endpoint) < len(view.endpoint)
     if route_kind == .Direct {
-        valid_target = valid_target && server_id == 0 && session_id == 0 && instance_id == 0
+        valid_target = valid_target && len(endpoint) > 0 && server_id == 0 && session_id == 0 && instance_id == 0
     } else if route_kind == .Server {
-        valid_target = valid_target && server_id != 0 && session_id != 0 && instance_id != 0
+        valid_target = valid_target && len(endpoint) > 0 && server_id != 0 && session_id != 0 && instance_id != 0
+    } else if route_kind == .Local {
+        valid_target = valid_target && len(endpoint) == 0 && server_id == 0 && session_id == 0 && instance_id != 0
+    } else {
+        valid_target = false
     }
     if !valid_target {
         publish_initial_error(view, "Instance target is invalid")
@@ -2142,6 +2147,10 @@ create_server_instance_view :: proc(
     ownership: Instance_Ownership = .Attached,
 ) -> ^Instance_View {
     return create_target_instance_view(.Server, endpoint, server_id, session_id, instance_id, ownership)
+}
+
+create_local_instance_view :: proc(instance_id: u64) -> ^Instance_View {
+    return create_target_instance_view(.Local, "", 0, 0, instance_id, .Owned)
 }
 
 create_error_instance_view :: proc(message: string, ownership: Instance_Ownership = .Attached) -> ^Instance_View {
@@ -2195,6 +2204,9 @@ destroy_instance_view :: proc(view: ^Instance_View) {
     if view.control_result.bytes != nil do delete(view.control_result.bytes)
     if view.clipboard_reply != nil do delete(view.clipboard_reply)
     if view.reusable_view != nil do view_destroy(view.reusable_view)
+    if view.route_kind == .Local && view.instance_id != 0 {
+        _ = local_instance_destroy(desktop_io_runtime, view.instance_id)
+    }
     delete(view.scratch)
     delete(view.text)
     free(view)
@@ -2213,6 +2225,20 @@ active_instance_view :: proc(app: ^App) -> ^Instance_View {
     }
     tab := &app.tabs[app.active_tab]
     return tab_pane_view(tab, tab.active_pane)
+}
+
+instance_connect_pending :: proc(view: ^Instance_View) -> bool {
+    return view != nil && instance_lifecycle_state(view) == .Connecting
+}
+
+any_instance_connect_pending :: proc(app: ^App) -> bool {
+    if app == nil do return false
+    for index in 0..<app.tab_count {
+        for view in app.tabs[index].panes {
+            if instance_connect_pending(view) do return true
+        }
+    }
+    return false
 }
 
 clear_all_search_results :: proc(app: ^App) {
@@ -2292,7 +2318,33 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
     if app == nil || profile == nil || profile.mode != .Launch {
         return create_error_instance_view("Invalid local Instance profile", .Owned)
     }
-    view := create_error_instance_view("Local Instance embedding is not wired yet", .Owned)
+    if profile.env_count != 0 {
+        return create_error_instance_view("Local profile environment overrides are not wired yet", .Owned)
+    }
+    shell := profile_shell(profile)
+    if len(shell) == 0 do shell = os.get_env("SHELL", context.temp_allocator)
+    if len(shell) == 0 do shell = "/bin/sh"
+    command := profile_command(profile)
+    cwd := profile_cwd(profile)
+    diagnostic: [160]u8
+    diagnostic_len: c.size_t
+    local_id := local_instance_create(
+        desktop_io_runtime,
+        raw_data(shell), c.size_t(len(shell)),
+        raw_data(command), c.size_t(len(command)),
+        raw_data(cwd), c.size_t(len(cwd)),
+        OWNED_SESSION_ROWS, OWNED_SESSION_COLUMNS, 4096,
+        raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &diagnostic_len,
+    )
+    if local_id == 0 {
+        message := int(diagnostic_len) > 0 ? string(diagnostic[:int(diagnostic_len)]) : "Local Instance creation failed"
+        return create_error_instance_view(message, .Owned)
+    }
+    view := create_local_instance_view(local_id)
+    if view == nil {
+        _ = local_instance_destroy(desktop_io_runtime, local_id)
+        return nil
+    }
     if view != nil {
         view.profile_index = profile_index
         view.profile_font_pixels = profile.font_pixels
@@ -6465,6 +6517,15 @@ main :: proc() {
                 if selection_edge_scroll_tick(&app) && app.running {
                     draw(&app)
                 }
+                continue
+            }
+        } else if any_instance_connect_pending(&app) {
+            // Local in-process handshakes can finish before SDL begins waiting.
+            // Poll only while a connection is actually pending; steady-state
+            // desktop operation remains fully event-driven.
+            if !SDL.WaitEventTimeout(&event, SESSION_RETRY_MS) {
+                apply_control_completions(&app)
+                if service_desktop_io(&app) && app.running do draw(&app)
                 continue
             }
         } else if !SDL.WaitEvent(&event) {
