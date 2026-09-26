@@ -539,6 +539,7 @@ App :: struct {
     settings_profile_field: int,
     settings_profile_env_selection: int,
     settings_profile_editing: bool,
+    settings_profile_discard_text_input_once: bool,
     settings_profile_edit_field: Profile_Edit_Field,
     settings_profile_edit_env_index: int,
     settings_profile_edit_buffer: [PROFILE_EDIT_BYTES]u8,
@@ -4765,6 +4766,12 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     case .DROP_TEXT:
         _ = drop_into_active_terminal(app, event.drop.data, false)
     case .KEY_DOWN, .KEY_UP:
+        if event.type == .KEY_DOWN && app.settings_profile_discard_text_input_once {
+            // A printable settings command can open a text editor. If SDL did
+            // not emit that command's paired TEXT_INPUT, retire the one-shot
+            // guard before processing the user's next actual key.
+            app.settings_profile_discard_text_input_once = false
+        }
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
         alt := .LALT in event.key.mod || .RALT in event.key.mod
@@ -4904,6 +4911,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             return
         }
         if app.settings_open && app.settings_profile_editing {
+            if app.settings_profile_discard_text_input_once {
+                app.settings_profile_discard_text_input_once = false
+                return
+            }
             if event.text.text != nil {
                 text := string(event.text.text)
                 if len(text) != 0 {

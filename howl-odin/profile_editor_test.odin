@@ -1,6 +1,7 @@
 package main
 
 import "core:testing"
+import SDL "vendor:sdl3"
 
 @(test)
 profile_editor_respects_builtin_and_mode_field_ownership :: proc(t: ^testing.T) {
@@ -34,6 +35,24 @@ profile_editor_copies_bounded_source_and_backspaces_utf8_scalar :: proc(t: ^test
 	testing.expect_value(t, string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len]), "aé界")
 	testing.expect(t, backspace_profile_edit(&app))
 	testing.expect_value(t, string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len]), "aé")
+}
+
+@(test)
+profile_keyboard_duplicate_arms_exactly_one_text_input_guard :: proc(t: ^testing.T) {
+	app: App
+	testing.expect(t, initialize_builtin_profiles(&app))
+	defer destroy_profiles(&app)
+	app.settings_open = true
+	app.settings_page = .Profile_Defaults
+	app.settings_content_focus = true
+	app.settings_profile_selection = 1
+	event: SDL.Event
+	event.type = .KEY_DOWN
+	event.key.key = SDL.K_D
+	testing.expect(t, handle_profile_list_key(&app, &event))
+	testing.expect(t, app.settings_profile_editing)
+	testing.expect(t, app.settings_profile_discard_text_input_once)
+	testing.expect_value(t, profile_name(selected_settings_profile(&app)), "Local shell copy")
 }
 
 @(test)
