@@ -35,6 +35,48 @@ HowlServerTree _tree() => HowlServerTree.parse(
 
 void main() {
   testWidgets(
+    'desktop shell opens one Local target without inventing a Server route',
+    (tester) async {
+      final connections = HowlServerConnections(_MemoryStore());
+      final builtTargets = <HowlInstanceTarget>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HowlAppShell(
+            localEnabled: true,
+            connections: connections,
+            terminalBuilder: (_, target, _) {
+              builtTargets.add(target);
+              return Text(
+                target.diagnosticLabel,
+                key: const Key('local-terminal'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open Howl'), findsOneWidget);
+      expect(find.byKey(const Key('howl-shell-local')), findsOneWidget);
+      expect(connections.selectedEndpoint, isNull);
+
+      await tester.tap(find.byKey(const Key('howl-shell-local')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('local-terminal')), findsOneWidget);
+      expect(find.text('local instance'), findsOneWidget);
+      expect(builtTargets.single, isA<LocalHowlInstanceTarget>());
+      expect(connections.selectedEndpoint, isNull);
+
+      await tester.tap(find.byKey(const Key('howl-shell-menu')));
+      await tester.pumpAndSettle();
+      final localTile = tester.widget<ListTile>(
+        find.byKey(const Key('howl-shell-local-drawer')),
+      );
+      expect(localTile.selected, isTrue);
+    },
+  );
+
+  testWidgets(
     'route-less shell uses button-only drawer and opens managed Instance',
     (tester) async {
       final connections = HowlServerConnections(_MemoryStore());

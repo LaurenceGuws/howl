@@ -16,8 +16,9 @@ typedef HowlTerminalBuilder = Widget Function(
 
 /// Minimal app shell around the terminal canary.
 ///
-/// The shell owns saved Server endpoints and app navigation only. It deliberately
-/// owns no Server mirror, terminal grid, Session lifecycle, pane layout, or transport.
+/// The shell owns Local-vs-Server navigation, saved Server endpoints, and app
+/// navigation only. It deliberately owns no Server mirror, terminal grid,
+/// Session lifecycle, pane layout, or transport implementation.
 final class HowlAppShell extends StatefulWidget {
   const HowlAppShell({
     super.key,
@@ -26,6 +27,7 @@ final class HowlAppShell extends StatefulWidget {
     this.initialInstanceTarget,
     this.connections,
     this.fetchTree = NativeServerTree.request,
+    this.localEnabled = false,
   });
 
   final HowlTerminalBuilder terminalBuilder;
@@ -33,6 +35,7 @@ final class HowlAppShell extends StatefulWidget {
   final HowlInstanceTarget? initialInstanceTarget;
   final HowlServerConnections? connections;
   final HowlServerTreeFetcher fetchTree;
+  final bool localEnabled;
 
   @override
   State<HowlAppShell> createState() => _HowlAppShellState();
@@ -141,6 +144,17 @@ final class _HowlAppShellState extends State<HowlAppShell> {
     });
   }
 
+  void _openLocal() {
+    if (!widget.localEnabled) return;
+    _navigation++;
+    setState(() {
+      _activeServer = null;
+      _activeInstance = const LocalHowlInstanceTarget();
+      _followSavedServer = false;
+    });
+    _closeDrawer();
+  }
+
   void _backToServer() {
     _navigation++;
     if (_activeServer == null) return;
@@ -180,7 +194,10 @@ final class _HowlAppShellState extends State<HowlAppShell> {
         onOpenTarget: _openManaged,
       );
     }
-    return _EmptyShell(onConfigure: _openDrawer);
+    return _EmptyShell(
+      onConfigure: _openDrawer,
+      onOpenLocal: widget.localEnabled ? _openLocal : null,
+    );
   }
 
   @override
@@ -194,6 +211,8 @@ final class _HowlAppShellState extends State<HowlAppShell> {
         connections: _connections,
         activeServer: _activeServer,
         activeInstance: _activeInstance,
+        localEnabled: widget.localEnabled,
+        onOpenLocal: _openLocal,
         onSelectServer: _selectServer,
         onBackToServer: _backToServer,
       ),
@@ -252,8 +271,9 @@ final class _ShellLoading extends StatelessWidget {
 }
 
 final class _EmptyShell extends StatelessWidget {
-  const _EmptyShell({required this.onConfigure});
+  const _EmptyShell({required this.onConfigure, this.onOpenLocal});
   final VoidCallback onConfigure;
+  final VoidCallback? onOpenLocal;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -267,22 +287,39 @@ final class _EmptyShell extends StatelessWidget {
             const Icon(Icons.terminal, size: 30),
             const SizedBox(height: 12),
             Text(
-              'No Server configured',
+              onOpenLocal == null ? 'No Server configured' : 'Open Howl',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              'Add a Howl Server endpoint to browse its Sessions and Instances.',
+              onOpenLocal == null
+                  ? 'Add a Howl Server endpoint to browse its Sessions and Instances.'
+                  : 'Open a shell on this device, or connect to a Howl Server.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const Key('howl-shell-configure'),
-              onPressed: onConfigure,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add Server'),
-            ),
+            if (onOpenLocal case final openLocal?) ...<Widget>[
+              FilledButton.icon(
+                key: const Key('howl-shell-local'),
+                onPressed: openLocal,
+                icon: const Icon(Icons.terminal, size: 18),
+                label: const Text('Local shell'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const Key('howl-shell-configure'),
+                onPressed: onConfigure,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add Server'),
+              ),
+            ] else
+              FilledButton.icon(
+                key: const Key('howl-shell-configure'),
+                onPressed: onConfigure,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add Server'),
+              ),
           ],
         ),
       ),
@@ -295,6 +332,8 @@ final class _ServerDrawer extends StatelessWidget {
     required this.connections,
     required this.activeServer,
     required this.activeInstance,
+    required this.localEnabled,
+    required this.onOpenLocal,
     required this.onSelectServer,
     required this.onBackToServer,
   });
@@ -302,6 +341,8 @@ final class _ServerDrawer extends StatelessWidget {
   final HowlServerConnections connections;
   final HowlEndpoint? activeServer;
   final HowlInstanceTarget? activeInstance;
+  final bool localEnabled;
+  final VoidCallback onOpenLocal;
   final Future<void> Function(HowlServerConnection) onSelectServer;
   final VoidCallback onBackToServer;
 
@@ -358,6 +399,18 @@ final class _ServerDrawer extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              const Divider(height: 1),
+            ],
+            if (localEnabled) ...<Widget>[
+              ListTile(
+                key: const Key('howl-shell-local-drawer'),
+                dense: true,
+                selected: activeInstance is LocalHowlInstanceTarget,
+                leading: const Icon(Icons.terminal, size: 19),
+                title: const Text('Local shell'),
+                subtitle: const Text('This device'),
+                onTap: onOpenLocal,
               ),
               const Divider(height: 1),
             ],

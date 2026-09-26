@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const linux_desktop = target.result.os.tag == .linux and target.result.abi != .android;
     const windows = target.result.os.tag == .windows;
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const transport = b.dependency("client_transport", .{ .target = target, .optimize = optimize });
@@ -18,7 +19,12 @@ pub fn build(b: *std.Build) void {
     // means ordinary remote clients still import only the transport-neutral
     // howl_client module and do not inherit PTY/VT/process ownership.
     const local = b.addModule("howl_local", .{
-        .root_source_file = b.path("src/local.zig"),
+        .root_source_file = b.path(if (linux_desktop)
+            "src/local_linux.zig"
+        else if (windows)
+            "src/local_windows.zig"
+        else
+            "src/local_unsupported.zig"),
         .target = target,
         .optimize = optimize,
     });

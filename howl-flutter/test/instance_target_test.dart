@@ -6,7 +6,9 @@ void main() {
   test('direct target carries no orchestration identity', () {
     final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43127');
     final target = DirectHowlInstanceTarget(endpoint);
+    expect(target.route, HowlInstanceRoute.direct);
     expect(target.managed, isFalse);
+    expect(target.local, isFalse);
     expect(target.endpointText, 'tcp://127.0.0.1:43127');
     expect(target.serverId, '0');
     expect(target.nativeServerId, 0);
@@ -24,7 +26,9 @@ void main() {
         sessionId: '7',
         instanceId: '3',
       );
+      expect(target.route, HowlInstanceRoute.managed);
       expect(target.managed, isTrue);
+      expect(target.local, isFalse);
       expect(target.endpointText, 'unix:/tmp/howl-server.sock');
       expect(target.serverId, '91');
       expect(target.nativeServerId, 91);
@@ -33,6 +37,21 @@ void main() {
       expect(target.diagnosticLabel, contains('session=7 instance=3'));
     },
   );
+
+  test('local target carries no transport endpoint or remote identity', () {
+    const target = LocalHowlInstanceTarget();
+    expect(target.route, HowlInstanceRoute.local);
+    expect(target.managed, isFalse);
+    expect(target.local, isTrue);
+    expect(target.transportEndpoint, isNull);
+    expect(target.endpointText, isEmpty);
+    expect(target.serverId, '0');
+    expect(target.nativeServerId, 0);
+    expect(target.sessionId, '0');
+    expect(target.instanceId, '0');
+    expect(target.diagnosticLabel, 'local instance');
+  });
+
   test('Server incarnation retains all u64 bits and rejects out of range', () {
     final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:1');
     ManagedHowlInstanceTarget target(String server) =>

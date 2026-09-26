@@ -1,5 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const client = @import("howl_client");
+const local = @import("howl_local");
 const server_client = @import("server_client");
 const protocol = @import("howl_instance").protocol;
 const text = @import("howl_text");
@@ -76,6 +78,7 @@ const HostPacketError = error{
 /// Every constituent set is owned by an existing maintained module; adding a
 /// new owner failure must update this union rather than widening to anyerror.
 const ClassifiedFailure = client.Error ||
+    local.Error ||
     server_client.Error ||
     client.actions.Error ||
     client.images.Error ||
@@ -93,10 +96,20 @@ const ClassifiedFailure = client.Error ||
 const HostHandle = opaque {};
 const InterruptHandle = opaque {};
 const ControlHandle = opaque {};
+const LocalInstanceHandle = opaque {};
+
+const LocalInstance = struct {
+    allocator: std.mem.Allocator,
+    threaded: std.Io.Threaded,
+    state: local.State = .{},
+    instance_id: u64,
+    borrowers: std.atomic.Value(u32) = .init(0),
+};
 
 const Control = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    local_instance: ?*LocalInstance = null,
 };
 
 const HostImageBinding = terminal.ExternalImageBinding;
@@ -109,6 +122,7 @@ const PendingImage = struct {
 const Host = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    local_instance: ?*LocalInstance = null,
     raw_cache: client.rich.RawCache,
     cell_size: canvas.Size,
     fonts: *text.FontSet,
@@ -127,6 +141,36 @@ const Host = struct {
     live_resync_required: bool = false,
     observation_scratch: []u8,
 };
+
+fn currentProcessEnviron() std.process.Environ {
+    if (comptime builtin.os.tag == .windows) return .{ .block = .global };
+    return posixProcessEnviron();
+}
+
+fn posixProcessEnviron() std.process.Environ {
+    const c_environ = std.c.environ;
+    var count: usize = 0;
+    while (c_environ[count] != null) : (count += 1) {}
+    const block: std.process.Environ.Block = .{
+        .slice = c_environ[0..count :null],
+    };
+    return .{ .block = block };
+}
+
+fn localInstanceFromRaw(raw: ?*LocalInstanceHandle) ?*LocalInstance {
+    const value = raw orelse return null;
+    return @ptrCast(@alignCast(value));
+}
+
+fn retainLocalInstance(value: *LocalInstance) void {
+    const before = value.borrowers.fetchAdd(1, .monotonic);
+    std.debug.assert(before < 1024);
+}
+
+fn releaseLocalInstance(value: *LocalInstance) void {
+    const before = value.borrowers.fetchSub(1, .release);
+    std.debug.assert(before > 0);
+}
 
 fn maintainedRasterScale(font_pixels: u16, cell_width: u16, cell_height: u16) ?u16 {
     const bases = [_]struct { font: u16, cell: u16, line: u16 }{
@@ -169,7 +213,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 5;
+    return 6;
 }
 
 /// Reports the shared maintained-client row envelope.
@@ -207,6 +251,72 @@ pub export fn howl_native_interrupt_destroy(raw: ?*InterruptHandle) void {
 fn interruptFromRaw(raw: ?*InterruptHandle) ?*client.Interrupt {
     const value = raw orelse return null;
     return @ptrCast(@alignCast(value));
+}
+
+pub export fn howl_native_local_instance_create(
+    shell_ptr: [*]const u8,
+    shell_len: usize,
+    command_ptr: [*]const u8,
+    command_len: usize,
+    cwd_ptr: [*]const u8,
+    cwd_len: usize,
+    rows: u16,
+    columns: u16,
+    history_rows: u16,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*LocalInstanceHandle {
+    resetCreateDiagnostic(diagnostic_len);
+    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0) {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
+        return null;
+    }
+    const allocator = std.heap.c_allocator;
+    const value = allocator.create(LocalInstance) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_alloc", failure);
+        return null;
+    };
+    value.* = .{
+        .allocator = allocator,
+        .threaded = std.Io.Threaded.init(
+            std.heap.page_allocator,
+            .{ .environ = currentProcessEnviron() },
+        ),
+        .instance_id = 0,
+    };
+    const id = local.create(
+        &value.state,
+        value.threaded.io(),
+        currentProcessEnviron(),
+        shell_ptr[0..shell_len],
+        command_ptr[0..command_len],
+        cwd_ptr[0..cwd_len],
+        rows,
+        columns,
+        history_rows,
+    ) catch |failure| {
+        value.threaded.deinit();
+        allocator.destroy(value);
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_create", failure);
+        return null;
+    };
+    value.instance_id = id;
+    return @ptrCast(value);
+}
+
+/// Returns 0 on destruction and 2 while any Host/Control connection still
+/// borrows the Local Instance. The caller must retire those handles first.
+pub export fn howl_native_local_instance_destroy(raw: ?*LocalInstanceHandle) i32 {
+    const value = localInstanceFromRaw(raw) orelse return 1;
+    if (value.borrowers.load(.acquire) != 0) return 2;
+    if (!local.destroy(&value.state, value.threaded.io(), value.instance_id)) return 3;
+    std.debug.assert(local.empty(&value.state));
+    value.threaded.deinit();
+    const allocator = value.allocator;
+    value.* = undefined;
+    allocator.destroy(value);
+    return 0;
 }
 
 pub export fn howl_native_host_output_minimum_bytes() usize {
@@ -436,6 +546,33 @@ fn connectManagedInstance(
     };
 }
 
+fn connectLocalInstance(
+    value: *LocalInstance,
+    interrupt: ?*client.Interrupt,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?client.Connection {
+    var diagnostic: client.ConnectDiagnostic = .{};
+    return local.connect(
+        &value.state,
+        value.threaded.io(),
+        value.instance_id,
+        &diagnostic,
+        interrupt,
+    ) catch |failure| {
+        writeManagedConnectDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "local_connect",
+            failure,
+            diagnostic,
+        );
+        return null;
+    };
+}
+
 fn createHostFromConnection(
     connection_value: client.Connection,
     primary_ptr: [*]const u8,
@@ -651,6 +788,59 @@ pub export fn howl_native_host_create_managed(
     );
 }
 
+pub export fn howl_native_host_create_local(
+    local_raw: ?*LocalInstanceHandle,
+    primary_ptr: [*]const u8,
+    primary_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: ?[*]const u8,
+    secondary_fallback_len: usize,
+    font_pixels: u16,
+    cell_width: u16,
+    cell_height: u16,
+    interrupt_raw: ?*InterruptHandle,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*HostHandle {
+    resetCreateDiagnostic(diagnostic_len);
+    const local_instance = localInstanceFromRaw(local_raw) orelse {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_instance");
+        return null;
+    };
+    if (primary_len == 0 or font_pixels == 0 or cell_width == 0 or cell_height == 0) {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
+        return null;
+    }
+    const connection = connectLocalInstance(
+        local_instance,
+        interruptFromRaw(interrupt_raw),
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    const raw = createHostFromConnection(
+        connection,
+        primary_ptr,
+        primary_len,
+        fallback_ptr,
+        fallback_len,
+        secondary_fallback_ptr,
+        secondary_fallback_len,
+        font_pixels,
+        cell_width,
+        cell_height,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    const host: *Host = @ptrCast(@alignCast(raw));
+    retainLocalInstance(local_instance);
+    host.local_instance = local_instance;
+    return raw;
+}
+
 fn createControlFromConnection(
     connection_value: client.Connection,
     diagnostic_ptr: [*]u8,
@@ -744,6 +934,37 @@ pub export fn howl_native_control_create_managed(
     );
 }
 
+pub export fn howl_native_control_create_local(
+    local_raw: ?*LocalInstanceHandle,
+    interrupt_raw: ?*InterruptHandle,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*ControlHandle {
+    resetCreateDiagnostic(diagnostic_len);
+    const local_instance = localInstanceFromRaw(local_raw) orelse {
+        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_instance");
+        return null;
+    };
+    const connection = connectLocalInstance(
+        local_instance,
+        interruptFromRaw(interrupt_raw),
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    const raw = createControlFromConnection(
+        connection,
+        diagnostic_ptr,
+        diagnostic_capacity,
+        diagnostic_len,
+    ) orelse return null;
+    const control: *Control = @ptrCast(@alignCast(raw));
+    retainLocalInstance(local_instance);
+    control.local_instance = local_instance;
+    return raw;
+}
+
 fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
     var buffer: [32]u8 = undefined;
     const rendered = try std.fmt.bufPrint(&buffer, "{d}", .{value});
@@ -832,9 +1053,11 @@ pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
     const raw_control = raw orelse return;
     const control: *Control = @ptrCast(@alignCast(raw_control));
     const allocator = control.allocator;
+    const local_instance = control.local_instance;
     control.connection.deinit();
     control.* = undefined;
     allocator.destroy(control);
+    if (local_instance) |value| releaseLocalInstance(value);
 }
 
 pub export fn howl_native_control_committed_text(
@@ -1006,6 +1229,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const allocator = host.allocator;
     const observation_scratch = host.observation_scratch;
+    const local_instance = host.local_instance;
     terminal.deinitCanvas(host.canvas);
     host.fonts.deinit();
     host.raw_cache.deinit();
@@ -1013,6 +1237,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     host.* = undefined;
     allocator.free(observation_scratch);
     allocator.destroy(host);
+    if (local_instance) |value| releaseLocalInstance(value);
 }
 
 /// Private, version-locked blocking observation call.
@@ -1777,4 +2002,34 @@ fn checkedMul(left: usize, right: usize) HostPacketError!usize {
 
 fn checkedAdd(left: usize, right: usize) HostPacketError!usize {
     return std.math.add(usize, left, right) catch error.IntegerOverflow;
+}
+
+test "Flutter Local owner cannot retire while native clients borrow it" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const shell = "/bin/sh";
+    const command = "read line";
+    const empty = "";
+    var diagnostic: [256]u8 = undefined;
+    var diagnostic_len: usize = 0;
+    const raw = howl_native_local_instance_create(
+        shell.ptr,
+        shell.len,
+        command.ptr,
+        command.len,
+        empty.ptr,
+        empty.len,
+        4,
+        40,
+        16,
+        &diagnostic,
+        diagnostic.len,
+        &diagnostic_len,
+    ) orelse return error.LocalCreateFailed;
+
+    const value = localInstanceFromRaw(raw).?;
+    retainLocalInstance(value);
+    try std.testing.expectEqual(@as(i32, 2), howl_native_local_instance_destroy(raw));
+    releaseLocalInstance(value);
+    try std.testing.expectEqual(@as(i32, 0), howl_native_local_instance_destroy(raw));
 }

@@ -398,6 +398,7 @@ final class NativeHostObserver {
     required HowlInstanceTarget target,
     required TerminalPresentation presentation,
     required NativeInterruptScope interrupt,
+    int localInstanceAddress = 0,
     bool useLiveDeltas = false,
   }) async {
     if (interrupt.canceled) {
@@ -420,6 +421,7 @@ final class NativeHostObserver {
       secondaryFallbackFontPath: fonts.secondaryFallback,
       presentation: presentation,
       interrupt: interrupt,
+      localInstanceAddress: localInstanceAddress,
       useLiveDeltas: useLiveDeltas,
     );
   }
@@ -431,6 +433,7 @@ final class NativeHostObserver {
     required String secondaryFallbackFontPath,
     required TerminalPresentation presentation,
     required NativeInterruptScope interrupt,
+    int localInstanceAddress = 0,
     bool useLiveDeltas = false,
   }) async {
     if (interrupt.canceled) {
@@ -460,6 +463,8 @@ final class NativeHostObserver {
         presentation.cellWidth,
         presentation.lineHeight,
         interrupt.address,
+        target.nativeRoute,
+        localInstanceAddress,
       ],
       debugName: 'Howl native observer',
       onError: errors.sendPort,
@@ -743,8 +748,70 @@ typedef _CreateManagedDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _CreateLocalNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _CreateLocalDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
+typedef _LocalInstanceCreateNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _LocalInstanceCreateDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _LocalInstanceDestroyNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
+typedef _LocalInstanceDestroyDart = int Function(ffi.Pointer<ffi.Void>);
 typedef _HostVersionNative = ffi.Uint32 Function();
 typedef _HostVersionDart = int Function();
 typedef _InterruptCreateNative = ffi.Pointer<ffi.Void> Function();
@@ -804,10 +871,128 @@ ffi.DynamicLibrary _nativeHostLibrary() {
   final version = library.lookupFunction<_HostVersionNative, _HostVersionDart>(
     'howl_native_host_version',
   )();
-  if (version != 5) {
+  if (version != 6) {
     throw NativeHostException('native_host_version_$version');
   }
   return library;
+}
+
+final class NativeLocalInstance {
+  NativeLocalInstance._(this._raw, this._destroyNative);
+
+  factory NativeLocalInstance.create({
+    String? shell,
+    String command = '',
+    String cwd = '',
+    int rows = 37,
+    int columns = 100,
+    int historyRows = 4096,
+  }) {
+    if (!Platform.isLinux && !Platform.isWindows) {
+      throw const NativeHostException('local_unsupported');
+    }
+    final selectedShell =
+        shell ??
+        (Platform.isWindows
+            ? (Platform.environment['COMSPEC'] ?? 'cmd.exe')
+            : (Platform.environment['SHELL'] ?? '/bin/sh'));
+    if (selectedShell.isEmpty ||
+        rows <= 0 ||
+        rows > 0xffff ||
+        columns <= 0 ||
+        columns > 0xffff ||
+        historyRows <= 0 ||
+        historyRows > 0xffff) {
+      throw const NativeHostException('local_invalid_launch');
+    }
+    final dylib = _nativeHostLibrary();
+    final create = dylib
+        .lookupFunction<_LocalInstanceCreateNative, _LocalInstanceCreateDart>(
+          'howl_native_local_instance_create',
+        );
+    final destroy = dylib
+        .lookupFunction<_LocalInstanceDestroyNative, _LocalInstanceDestroyDart>(
+          'howl_native_local_instance_destroy',
+        );
+
+    ({ffi.Pointer<ffi.Uint8> pointer, int length}) copyString(String value) {
+      final bytes = utf8.encode(value);
+      final pointer = calloc<ffi.Uint8>(bytes.isEmpty ? 1 : bytes.length);
+      if (bytes.isNotEmpty) {
+        pointer.asTypedList(bytes.length).setAll(0, bytes);
+      }
+      return (pointer: pointer, length: bytes.length);
+    }
+
+    final shellValue = copyString(selectedShell);
+    final commandValue = copyString(command);
+    final cwdValue = copyString(cwd);
+    final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
+    final diagnosticLength = calloc<ffi.Size>();
+    try {
+      final raw = create(
+        shellValue.pointer,
+        shellValue.length,
+        commandValue.pointer,
+        commandValue.length,
+        cwdValue.pointer,
+        cwdValue.length,
+        rows,
+        columns,
+        historyRows,
+        diagnosticPointer,
+        _nativeCreateDiagnosticBytes,
+        diagnosticLength,
+      );
+      if (raw == ffi.nullptr) {
+        final failure = _nativeCreateFailure(
+          diagnosticPointer,
+          diagnosticLength.value,
+        );
+        throw NativeHostException(
+          failure.message.isEmpty
+              ? 'local_instance_create'
+              : 'local_instance_create:${failure.message}',
+          kind: failure.kind,
+        );
+      }
+      return NativeLocalInstance._(raw, destroy);
+    } finally {
+      calloc.free(shellValue.pointer);
+      calloc.free(commandValue.pointer);
+      calloc.free(cwdValue.pointer);
+      calloc.free(diagnosticPointer);
+      calloc.free(diagnosticLength);
+    }
+  }
+
+  final ffi.Pointer<ffi.Void> _raw;
+  final _LocalInstanceDestroyDart _destroyNative;
+  bool _closed = false;
+
+  int get address {
+    if (_closed) throw const NativeHostException('local_instance_closed');
+    return _raw.address;
+  }
+
+  Future<void> close({Duration timeout = const Duration(seconds: 5)}) async {
+    if (_closed) return;
+    final clock = Stopwatch()..start();
+    while (true) {
+      final code = _destroyNative(_raw);
+      if (code == 0) {
+        _closed = true;
+        return;
+      }
+      if (code != 2) {
+        throw NativeHostException('local_instance_destroy_$code');
+      }
+      if (clock.elapsed >= timeout) {
+        throw const NativeHostException('local_instance_destroy_busy');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
 }
 
 final class NativeInterruptScope {
@@ -915,6 +1100,8 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final cellWidth = init[11]! as int;
   final lineHeight = init[12]! as int;
   final interrupt = ffi.Pointer<ffi.Void>.fromAddress(init[13]! as int);
+  final route = init[14]! as int;
+  final localInstanceAddress = init[15]! as int;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
@@ -924,6 +1111,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final createManaged = dylib
       .lookupFunction<_CreateManagedNative, _CreateManagedDart>(
         'howl_native_host_create_managed',
+      );
+  final createLocal = dylib
+      .lookupFunction<_CreateLocalNative, _CreateLocalDart>(
+        'howl_native_host_create_local',
       );
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
@@ -974,8 +1165,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
 
   ffi.Pointer<ffi.Uint8> copyString(String value) {
     final encoded = utf8.encode(value);
-    final result = calloc<ffi.Uint8>(encoded.length);
-    result.asTypedList(encoded.length).setAll(0, encoded);
+    final result = calloc<ffi.Uint8>(encoded.isEmpty ? 1 : encoded.length);
+    if (encoded.isNotEmpty) {
+      result.asTypedList(encoded.length).setAll(0, encoded);
+    }
     return result;
   }
 
@@ -991,44 +1184,62 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
       : copyString(secondaryFallback);
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final host = sessionId == 0
-      ? create(
-          endpointPointer,
-          endpointBytes.length,
-          primaryPointer,
-          primaryBytes.length,
-          fallbackPointer,
-          fallbackBytes.length,
-          secondaryFallbackPointer,
-          secondaryFallbackBytes.length,
-          fontPixels,
-          cellWidth,
-          lineHeight,
-          interrupt,
-          diagnosticPointer,
-          _nativeCreateDiagnosticBytes,
-          diagnosticLength,
-        )
-      : createManaged(
-          endpointPointer,
-          endpointBytes.length,
-          serverId,
-          sessionId,
-          instanceId,
-          primaryPointer,
-          primaryBytes.length,
-          fallbackPointer,
-          fallbackBytes.length,
-          secondaryFallbackPointer,
-          secondaryFallbackBytes.length,
-          fontPixels,
-          cellWidth,
-          lineHeight,
-          interrupt,
-          diagnosticPointer,
-          _nativeCreateDiagnosticBytes,
-          diagnosticLength,
-        );
+  final host = switch (route) {
+    0 => create(
+      endpointPointer,
+      endpointBytes.length,
+      primaryPointer,
+      primaryBytes.length,
+      fallbackPointer,
+      fallbackBytes.length,
+      secondaryFallbackPointer,
+      secondaryFallbackBytes.length,
+      fontPixels,
+      cellWidth,
+      lineHeight,
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    1 => createManaged(
+      endpointPointer,
+      endpointBytes.length,
+      serverId,
+      sessionId,
+      instanceId,
+      primaryPointer,
+      primaryBytes.length,
+      fallbackPointer,
+      fallbackBytes.length,
+      secondaryFallbackPointer,
+      secondaryFallbackBytes.length,
+      fontPixels,
+      cellWidth,
+      lineHeight,
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    2 => createLocal(
+      ffi.Pointer<ffi.Void>.fromAddress(localInstanceAddress),
+      primaryPointer,
+      primaryBytes.length,
+      fallbackPointer,
+      fallbackBytes.length,
+      secondaryFallbackPointer,
+      secondaryFallbackBytes.length,
+      fontPixels,
+      cellWidth,
+      lineHeight,
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    _ => ffi.nullptr,
+  };
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);
   calloc.free(fallbackPointer);
@@ -1189,6 +1400,7 @@ final class NativeHostControl {
   static Future<NativeHostControl> create({
     required HowlInstanceTarget target,
     required NativeInterruptScope interrupt,
+    int localInstanceAddress = 0,
   }) async {
     if (interrupt.canceled) {
       throw const NativeHostException(
@@ -1210,6 +1422,8 @@ final class NativeHostControl {
         target.sessionId,
         target.instanceId,
         interrupt.address,
+        target.nativeRoute,
+        localInstanceAddress,
       ],
       debugName: 'Howl native control',
       onError: errors.sendPort,
@@ -1445,6 +1659,20 @@ typedef _ControlCreateManagedDart = ffi.Pointer<ffi.Void> Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _ControlCreateLocalNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlCreateLocalDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlTextNative = ffi.Int32 Function(
@@ -1559,6 +1787,8 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final sessionId = BigInt.parse(init[4]! as String).toSigned(64).toInt();
   final instanceId = BigInt.parse(init[5]! as String).toSigned(64).toInt();
   final interrupt = ffi.Pointer<ffi.Void>.fromAddress(init[6]! as int);
+  final route = init[7]! as int;
+  final localInstanceAddress = init[8]! as int;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
@@ -1567,6 +1797,10 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final createManaged = dylib
       .lookupFunction<_ControlCreateManagedNative, _ControlCreateManagedDart>(
         'howl_native_control_create_managed',
+      );
+  final createLocal = dylib
+      .lookupFunction<_ControlCreateLocalNative, _ControlCreateLocalDart>(
+        'howl_native_control_create_local',
       );
   final destroy = dylib
       .lookupFunction<_ControlDestroyNative, _ControlDestroyDart>(
@@ -1608,30 +1842,43 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       );
 
   final endpointBytes = utf8.encode(endpoint);
-  final endpointPointer = calloc<ffi.Uint8>(endpointBytes.length);
-  endpointPointer.asTypedList(endpointBytes.length).setAll(0, endpointBytes);
+  final endpointPointer = calloc<ffi.Uint8>(
+    endpointBytes.isEmpty ? 1 : endpointBytes.length,
+  );
+  if (endpointBytes.isNotEmpty) {
+    endpointPointer.asTypedList(endpointBytes.length).setAll(0, endpointBytes);
+  }
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
-  final control = sessionId == 0
-      ? create(
-          endpointPointer,
-          endpointBytes.length,
-          interrupt,
-          diagnosticPointer,
-          _nativeCreateDiagnosticBytes,
-          diagnosticLength,
-        )
-      : createManaged(
-          endpointPointer,
-          endpointBytes.length,
-          serverId,
-          sessionId,
-          instanceId,
-          interrupt,
-          diagnosticPointer,
-          _nativeCreateDiagnosticBytes,
-          diagnosticLength,
-        );
+  final control = switch (route) {
+    0 => create(
+      endpointPointer,
+      endpointBytes.length,
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    1 => createManaged(
+      endpointPointer,
+      endpointBytes.length,
+      serverId,
+      sessionId,
+      instanceId,
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    2 => createLocal(
+      ffi.Pointer<ffi.Void>.fromAddress(localInstanceAddress),
+      interrupt,
+      diagnosticPointer,
+      _nativeCreateDiagnosticBytes,
+      diagnosticLength,
+    ),
+    _ => ffi.nullptr,
+  };
   calloc.free(endpointPointer);
   if (control == ffi.nullptr) {
     final failure = _nativeCreateFailure(

@@ -34,8 +34,22 @@ no socket access or allocation during a selection gesture.
 
 Unix sockets remain local endpoint mechanisms. TCP accepts explicit numeric IPv4
 peers supplied by the caller; there is no DNS, discovery, authentication, route
-selection, or listener policy here. Instance lifecycle, PTY/VT semantics, stale
-coordinate policy, UI, and rendering are deliberately outside this package.
+selection, or listener policy in the ordinary `howl_client` module. Instance
+lifecycle, PTY/VT semantics, stale coordinate policy, UI, and rendering remain
+outside that transport-neutral client.
+
+## Optional desktop Local owner
+
+The package also exports the separate `howl_local` module for maintained desktop
+clients. It owns one canonical in-process Howl Instance plus its platform PTY
+(Linux) or ConPTY (Windows), then admits ordinary HWLS client connections to that
+Instance. It deliberately creates no listener, filesystem socket, Server, or
+Session. The ordinary observer/control clients therefore use the exact same
+`howl_client` path after construction.
+
+Android, iOS, and unsupported targets receive an explicit `LocalUnsupported`
+implementation; importing the ordinary `howl_client` module never opts a client
+into process or PTY ownership.
 
 ## Native carriers
 

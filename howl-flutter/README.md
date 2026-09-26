@@ -226,16 +226,18 @@ terminal or Server browser receives the full body surface. One compact menu butt
 opens the drawer; edge-drag drawer opening is disabled so platform back/navigation
 gestures, especially on iOS, keep their native meaning.
 
-The shell owns only app navigation and saved Server endpoints. It does not own a
-Server mirror, Session lifecycle, Instance geometry, terminal grid, pane/split model,
-or discovery protocol. Saved Server records are ordinary app preferences containing
-a human label plus an explicit validated Howl endpoint. Add/edit/remove and the last
-selected saved Server persist across launches. No credentials or secrets are stored.
+The shell owns app navigation, desktop Local-vs-Server selection, and saved Server
+endpoints. It does not own a Server mirror, Session lifecycle, terminal grid,
+pane/split model, or discovery protocol. Saved Server records are ordinary app
+preferences containing a human label plus an explicit validated Howl endpoint.
+Add/edit/remove and the last selected saved Server persist across launches. No
+credentials or secrets are stored.
 
-A standard artifact may launch with no endpoint at all. In that state the shell shows
-a small connection empty-state and the drawer can configure a Server. A saved selected
-Server becomes the startup surface on the next no-argument launch. Explicit launch
-routes still override that startup choice:
+A standard artifact may launch with no endpoint at all. On Linux and Windows the
+shell offers a Local shell backed by one listener-free in-process Howl Instance; the
+same drawer can still configure a Server. Android and iOS remain client-only and do
+not expose Local. A saved selected Server becomes the startup surface on the next
+no-argument launch. Explicit launch routes still override that startup choice:
 
 ```text
 howl_flutter ENDPOINT           direct HWLS Instance
@@ -248,11 +250,20 @@ Selecting a running Instance turns the body into the unchanged terminal canary v
 provides a simple Back to Server action. Exited Instances remain lifecycle history in
 the browser and are not openable.
 
+Selecting Local creates one native Local owner for the terminal widget lifetime.
+Observer, control, and history workers each borrow ordinary HWLS connections to that
+same Instance. The owner refuses destruction while any worker still borrows it; after
+the workers retire, closing the Flutter terminal destroys the Instance and its owned
+shell. Local owns canonical geometry, so Flutter leads resize for that route without
+changing Remote attach semantics.
+
 ## Ownership notes
 
 - `howl-instance` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
 - `howl-client.rich` remains the single `text_v1` byte parser.
 - `howl-client.view` is immutable, explicitly owned native semantic state.
+- `howl-client`'s optional `howl_local` module owns listener-free desktop Local
+  Instance/PTY lifecycle; mobile does not import that ownership policy.
 - `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.
 - `howl-render.terminal.Content` owns bounded shape/atlas caches and emits complete Canvas state.
 - Flutter owns only platform capture, viewport/history UX, copied resource lifetime, and backend batching.
@@ -262,16 +273,20 @@ The measurement and migration evidence is recorded in `../docs/2026-08-30-native
 
 ## Server-managed Instance construction
 
-The app-private native host now has two connection constructors with one common
+The app-private native host now has three connection constructors with one common
 presentation/control implementation:
 
 - direct mode connects an explicit HWLS Instance endpoint exactly as before;
 - managed mode connects one explicit Server endpoint, checks the expected
   `server_id` against its welcome, requests the exact `(session_id, instance_id)`,
   receives `attach_ready`, and hands that same stream into the ordinary HWLS
-  client handshake.
+  client handshake;
+- Local mode creates one platform-owned Instance in-process and opens ordinary HWLS
+  observer/control/history streams to it without a listener, endpoint, Server, or
+  Session.
 
-After that handoff, observer/control/rendering code is identical to direct mode.
+After construction/attach, observer/control/rendering code is identical across all
+three routes.
 The native seam does not proxy bytes and does not import Server layout or geometry
 state. Server routing chooses an Instance; that Instance remains the sole owner of
 its canonical terminal geometry.

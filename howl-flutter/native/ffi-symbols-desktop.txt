@@ -1,0 +1,4 @@
+howl_native_local_instance_create
+howl_native_local_instance_destroy
+howl_native_host_create_local
+howl_native_control_create_local
