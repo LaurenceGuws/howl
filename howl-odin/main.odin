@@ -594,8 +594,20 @@ font_preset_from_pixels :: proc(pixels: int) -> int {
     }
 }
 
+fresh_startup_profile :: proc() -> int {
+    when ODIN_OS == .Windows {
+        return 1
+    }
+    return 0
+}
+
 load_user_config :: proc() -> User_Config {
-    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15, startup_profile = 0, app_theme = "howl_dark"}
+    result := User_Config{
+        schema = CONFIG_SCHEMA,
+        terminal_font_pixels = 15,
+        startup_profile = fresh_startup_profile(),
+        app_theme = "howl_dark",
+    }
     _, path, _, ok := config_paths()
     if !ok {
         return result

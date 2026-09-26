@@ -84,6 +84,15 @@ default_profile_prefers_stable_id_then_legacy_builtin_index :: proc(t: ^testing.
 }
 
 @(test)
+fresh_profile_default_is_local_on_windows_and_home_elsewhere :: proc(t: ^testing.T) {
+    when ODIN_OS == .Windows {
+        testing.expect_value(t, fresh_startup_profile(), 1)
+    } else {
+        testing.expect_value(t, fresh_startup_profile(), 0)
+    }
+}
+
+@(test)
 user_profile_create_duplicate_delete_preserves_live_recipe_indices :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))
