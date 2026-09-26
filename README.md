@@ -138,7 +138,9 @@ nu --no-config-file -c 'source protocol_coverage.nu; protocol show REFERENCE_ID'
 
 `protocol gaps` is the actionable view: a classified partial/missing record is not a
 gap when it is deliberately delegated, deferred, or excluded with an owned reason.
-`zig build protocol` validates the catalogue.
+`zig build protocol` validates the catalogue. It is deliberately separate from the
+portable core `zig build check` gate so a core builder does not need Nushell merely to
+compile and audit Howl.
 
 ## Build
 

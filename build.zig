@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     const target = b.option([]const u8, "target", "Forward the target triple to every child");
     const cpu = b.option([]const u8, "cpu", "Forward target CPU features to every child");
 
-    const check = b.step("check", "Compile the Howl core and validate root evidence");
+    const check = b.step("check", "Compile the Howl core and run source audit");
     const test_step = b.step("test", "Run every Howl core proof");
 
     inline for (children) |child| {
@@ -51,7 +51,6 @@ pub fn build(b: *std.Build) void {
     });
     protocol_command.setName("protocol catalogue validation");
     protocol.dependOn(&protocol_command.step);
-    check.dependOn(protocol);
 
     const simulate = b.step("simulate", "Run VT simulations");
     addChildBuild(b, simulate, "howl-vt", "simulate", optimize, target, cpu, true);
