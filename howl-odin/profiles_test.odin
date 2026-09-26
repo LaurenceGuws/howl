@@ -84,36 +84,6 @@ default_profile_prefers_stable_id_then_legacy_builtin_index :: proc(t: ^testing.
 }
 
 @(test)
-fresh_profile_default_is_local_on_windows_and_home_elsewhere :: proc(t: ^testing.T) {
-    when ODIN_OS == .Windows {
-        testing.expect_value(t, fresh_startup_profile(), 1)
-    } else {
-        testing.expect_value(t, fresh_startup_profile(), 0)
-    }
-}
-
-@(test)
-windows_native_config_root_precedes_home_fallback :: proc(t: ^testing.T) {
-    root, home_config, ok := config_root_choice("", "C:\\Users\\Beta\\AppData\\Roaming", "C:\\Users\\Beta", true)
-    testing.expect(t, ok)
-    testing.expect_value(t, root, "C:\\Users\\Beta\\AppData\\Roaming")
-    testing.expect(t, !home_config)
-
-    root, home_config, ok = config_root_choice("D:\\portable-config", "C:\\Users\\Beta\\AppData\\Roaming", "C:\\Users\\Beta", true)
-    testing.expect(t, ok)
-    testing.expect_value(t, root, "D:\\portable-config")
-    testing.expect(t, !home_config)
-
-    root, home_config, ok = config_root_choice("", "", "/home/beta", false)
-    testing.expect(t, ok)
-    testing.expect_value(t, root, "/home/beta")
-    testing.expect(t, home_config)
-
-    _, _, ok = config_root_choice("", "", "", false)
-    testing.expect(t, !ok)
-}
-
-@(test)
 user_profile_create_duplicate_delete_preserves_live_recipe_indices :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))

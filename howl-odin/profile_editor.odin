@@ -464,12 +464,8 @@ handle_profile_list_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 	case SDL.K_UP: app.settings_profile_selection = (app.settings_profile_selection + app.profile_count - 1) % app.profile_count
 	case SDL.K_DOWN: app.settings_profile_selection = (app.settings_profile_selection + 1) % app.profile_count
 	case SDL.K_RETURN: _ = profile_ui_action(app, .Edit)
-	case SDL.K_N:
-		if event.key.repeat do return true
-		if profile_ui_action(app, .New) do app.settings_profile_discard_text_input_once = true
-	case SDL.K_D:
-		if event.key.repeat do return true
-		if profile_ui_action(app, .Duplicate) do app.settings_profile_discard_text_input_once = true
+	case SDL.K_N: _ = profile_ui_action(app, .New)
+	case SDL.K_D: _ = profile_ui_action(app, .Duplicate)
 	case SDL.K_DELETE, SDL.K_BACKSPACE:
 		if event.key.repeat do return true
 		if !profile_ui_action(app, .Delete) {
@@ -536,8 +532,7 @@ handle_profile_editor_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 		return false
 	case SDL.K_D:
 		if profile.built_in {
-			if event.key.repeat do return true
-			if profile_ui_action(app, .Duplicate) do app.settings_profile_discard_text_input_once = true
+			_ = profile_ui_action(app, .Duplicate)
 			return true
 		}
 		return false
