@@ -1,4 +1,4 @@
-//! Explicit Local-Instance placeholder for Odin targets without a native PTY.
+//! Explicit Local-Instance placeholder for targets without a native PTY.
 //!
 //! Remote routes stay available. Local creation fails visibly until that target
 //! earns its own platform PTY owner.

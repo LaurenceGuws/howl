@@ -1,4 +1,4 @@
-//! Linux owner for Odin Local Instances.
+//! Linux catalogue for listener-free Local Instances.
 //!
 //! This module is the only Odin-native layer that knows the Local route uses
 //! the Linux canonical Howl Instance and its listener-free HWLS service.
@@ -6,7 +6,7 @@
 const std = @import("std");
 const client = @import("howl_client");
 const instance = @import("howl_instance");
-const local_instance = @import("local_instance.zig");
+const local_instance = @import("local_owner_linux.zig");
 
 const maximum_local_instances: usize = 64;
 

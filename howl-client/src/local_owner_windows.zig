@@ -1,4 +1,4 @@
-//! In-process Windows Howl Instance owner for the Odin desktop.
+//! Listener-free Windows Howl Local Instance owner.
 //!
 //! Local presentation still traverses ordinary HWLS client semantics. Each
 //! connection uses two anonymous one-way pipes as one duplex stream plus an

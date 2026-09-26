@@ -1,4 +1,4 @@
-//! Windows owner for Odin Local Instances.
+//! Windows catalogue for listener-free Local Instances.
 //!
 //! This target uses the canonical Howl Instance, Windows ConPTY PTY owner, and
 //! listener-free in-process HWLS pipe streams.
@@ -6,7 +6,7 @@
 const std = @import("std");
 const client = @import("howl_client");
 const instance = @import("howl_instance");
-const local_instance = @import("local_instance_windows.zig");
+const local_instance = @import("local_owner_windows.zig");
 
 const maximum_local_instances: usize = 64;
 

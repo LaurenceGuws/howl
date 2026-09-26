@@ -7,7 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const client = @import("howl_client");
-const local_platform = @import("local_platform");
+const local_platform = @import("howl_local");
 const server_client = @import("server_client");
 const protocol = client.protocol;
 

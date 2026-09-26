@@ -1,4 +1,4 @@
-//! In-process Howl Instance owner for the Odin desktop.
+//! Listener-free Linux Howl Local Instance owner.
 //!
 //! Local presentation still traverses ordinary HWLS client semantics, but the
 //! service side is adopted through an unnamed socketpair. There is no listener,
