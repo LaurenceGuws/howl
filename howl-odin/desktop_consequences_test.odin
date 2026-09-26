@@ -3,6 +3,12 @@ package main
 import "core:testing"
 
 @(test)
+desktop_consequence_abi_matches_native_protocol :: proc(t: ^testing.T) {
+    testing.expect_value(t, bridge_consequence_kind_signature(), consequence_kind_signature())
+    testing.expect_value(t, bridge_consequence_reply_signature(), consequence_reply_signature())
+}
+
+@(test)
 desktop_consequence_policy_flashes_only_bell_and_attention_families :: proc(t: ^testing.T) {
 	bell := Consequence_Info{kind = u8(Bridge_Consequence_Kind.Bell)}
 	testing.expect_value(t, consequence_action_for(bell), Desktop_Consequence_Action.Attention)

@@ -6362,6 +6362,11 @@ main :: proc() {
     case .Run:
     }
     if version() != 10 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if consequence_kind_signature() != bridge_consequence_kind_signature() ||
+       consequence_reply_signature() != bridge_consequence_reply_signature() {
+        fmt.eprintln("Howl consequence ABI mismatch")
+        return
+    }
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }
@@ -6371,7 +6376,7 @@ main :: proc() {
     assert(size_of(Search_Match_Info) == int(search_match_info_size()))
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
-        assert(size_of(Consequence_Info) == int(consequence_info_size()))
+    assert(size_of(Consequence_Info) == int(consequence_info_size()))
     if !SDL.SetAppMetadata(APP_NAME, APP_VERSION, APP_IDENTIFIER) {
         sdl_error("SDL_SetAppMetadata failed")
         return

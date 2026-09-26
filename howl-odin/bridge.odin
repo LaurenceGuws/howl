@@ -25,6 +25,8 @@ foreign howl_bridge {
     consequence_client_id :: proc(handle: rawptr) -> u64 ---
     consequence_acquire :: proc(handle: rawptr) -> i32 ---
     consequence_info_size :: proc() -> u32 ---
+    consequence_kind_signature :: proc() -> u64 ---
+    consequence_reply_signature :: proc() -> u64 ---
     consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info, payload: [^]u8, payload_capacity: c.size_t, copied_len: ^c.size_t) -> i32 ---
     consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
     consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
@@ -141,6 +143,49 @@ Bridge_Consequence_Reply :: enum u8 {
     Container_Screen_Cells = 6,
     Container_Icon_Title = 7,
     Container_Decline = 8,
+}
+
+bridge_consequence_signature :: proc(values: []u8) -> u64 {
+    assert(len(values) <= 14)
+    result := u64(len(values)) << 56
+    for value, index in values {
+        assert(value <= 0x0f)
+        result |= u64(value) << u64(index * 4)
+    }
+    return result
+}
+
+bridge_consequence_kind_signature :: proc() -> u64 {
+    values := [13]u8{
+        u8(Bridge_Consequence_Kind.None),
+        u8(Bridge_Consequence_Kind.Clipboard),
+        u8(Bridge_Consequence_Kind.Notification),
+        u8(Bridge_Consequence_Kind.Pointer_Shape),
+        u8(Bridge_Consequence_Kind.File_Transfer),
+        u8(Bridge_Consequence_Kind.Drag_Drop),
+        u8(Bridge_Consequence_Kind.Container),
+        u8(Bridge_Consequence_Kind.Color_Preference),
+        u8(Bridge_Consequence_Kind.Media_Copy),
+        u8(Bridge_Consequence_Kind.Bell),
+        u8(Bridge_Consequence_Kind.Legacy_Control),
+        u8(Bridge_Consequence_Kind.Dcs),
+        u8(Bridge_Consequence_Kind.String_Control),
+    }
+    return bridge_consequence_signature(values[:])
+}
+
+bridge_consequence_reply_signature :: proc() -> u64 {
+    values := [8]u8{
+        u8(Bridge_Consequence_Reply.Clipboard),
+        u8(Bridge_Consequence_Reply.Pointer_Shape),
+        u8(Bridge_Consequence_Reply.Color_Preference),
+        u8(Bridge_Consequence_Reply.Container_State),
+        u8(Bridge_Consequence_Reply.Container_Position),
+        u8(Bridge_Consequence_Reply.Container_Screen_Cells),
+        u8(Bridge_Consequence_Reply.Container_Icon_Title),
+        u8(Bridge_Consequence_Reply.Container_Decline),
+    }
+    return bridge_consequence_signature(values[:])
 }
 
 Search_Match_Info :: struct {

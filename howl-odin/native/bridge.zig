@@ -1182,6 +1182,51 @@ comptime {
         @compileError("Odin consequence info must stay one fixed begin-sized record");
 }
 
+fn packedNibbleSignature(comptime values: []const u8) u64 {
+    if (values.len > 14) @compileError("packed ABI signature exceeds u64");
+    var result = @as(u64, values.len) << 56;
+    inline for (values, 0..) |value, index| {
+        if (value > 0x0f) @compileError("packed ABI signature value exceeds nibble");
+        result |= @as(u64, value) << @intCast(index * 4);
+    }
+    return result;
+}
+
+const consequence_kind_values = [_]u8{
+    @backingInt(protocol.ConsequenceKind.none),
+    @backingInt(protocol.ConsequenceKind.clipboard),
+    @backingInt(protocol.ConsequenceKind.notification),
+    @backingInt(protocol.ConsequenceKind.pointer_shape),
+    @backingInt(protocol.ConsequenceKind.file_transfer),
+    @backingInt(protocol.ConsequenceKind.drag_drop),
+    @backingInt(protocol.ConsequenceKind.container),
+    @backingInt(protocol.ConsequenceKind.color_preference),
+    @backingInt(protocol.ConsequenceKind.media_copy),
+    @backingInt(protocol.ConsequenceKind.bell),
+    @backingInt(protocol.ConsequenceKind.legacy_control),
+    @backingInt(protocol.ConsequenceKind.dcs),
+    @backingInt(protocol.ConsequenceKind.string_control),
+};
+const consequence_reply_values = [_]u8{
+    @backingInt(protocol.ConsequenceReplyKind.clipboard),
+    @backingInt(protocol.ConsequenceReplyKind.pointer_shape),
+    @backingInt(protocol.ConsequenceReplyKind.color_preference),
+    @backingInt(protocol.ConsequenceReplyKind.container_state),
+    @backingInt(protocol.ConsequenceReplyKind.container_position),
+    @backingInt(protocol.ConsequenceReplyKind.container_screen_cells),
+    @backingInt(protocol.ConsequenceReplyKind.container_icon_title),
+    @backingInt(protocol.ConsequenceReplyKind.container_decline),
+};
+const consequence_kind_abi_signature = packedNibbleSignature(&consequence_kind_values);
+const consequence_reply_abi_signature = packedNibbleSignature(&consequence_reply_values);
+
+comptime {
+    if (@typeInfo(protocol.ConsequenceKind).@"enum".field_names.len != consequence_kind_values.len)
+        @compileError("update Odin consequence kind ABI signature");
+    if (@typeInfo(protocol.ConsequenceReplyKind).@"enum".field_names.len != consequence_reply_values.len)
+        @compileError("update Odin consequence reply ABI signature");
+}
+
 const ConsequenceBridge = struct {
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
@@ -2491,6 +2536,16 @@ pub export fn howl_odin_bridge_consequence_destroy(raw: ?*ConsequenceHandle) voi
 
 pub export fn howl_odin_bridge_consequence_info_size() u32 {
     return @sizeOf(ConsequenceInfo);
+}
+
+/// Returns the packed canonical consequence-kind ABI values for the Odin startup check.
+pub export fn howl_odin_bridge_consequence_kind_signature() u64 {
+    return consequence_kind_abi_signature;
+}
+
+/// Returns the packed canonical consequence-reply ABI values for the Odin startup check.
+pub export fn howl_odin_bridge_consequence_reply_signature() u64 {
+    return consequence_reply_abi_signature;
 }
 
 /// Observes one current consequence. Payload bytes are copied only up to the
