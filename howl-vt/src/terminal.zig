@@ -7608,7 +7608,17 @@ test "terminal resize report allocation failures preserve state" {
 }
 
 test "prepared resize allocation failures and discard preserve state" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareResizeDiscardTransaction, .{});
+    const backing_bytes = try std.heap.page_allocator.alloc(
+        u8,
+        Screen.retained_output_bytes_max * 8,
+    );
+    defer std.heap.page_allocator.free(backing_bytes);
+    var deterministic = std.heap.FixedBufferAllocator.init(backing_bytes);
+    try std.testing.checkAllAllocationFailures(
+        deterministic.allocator(),
+        prepareResizeDiscardTransaction,
+        .{},
+    );
 }
 
 fn prepareResizeDiscardTransaction(allocator: std.mem.Allocator) !void {
