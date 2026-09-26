@@ -26,12 +26,13 @@ Settings_Search_Page_Definition :: struct {
 	keywords: string,
 }
 
-SETTINGS_SEARCH_PAGES :: [7]Settings_Search_Page_Definition{
+SETTINGS_SEARCH_PAGES :: [8]Settings_Search_Page_Definition{
 	{.Startup, "Startup", "default profile instance launch attach startup"},
 	{.Interaction, "Interaction", "mouse pointer focus scrollback selection paste interaction"},
 	{.Appearance, "Appearance", "font size appearance presentation"},
 	{.Color_Schemes, "Color schemes", "color colours theme scheme palette"},
 	{.Actions, "Actions", "actions shortcuts keybindings commands"},
+	{.Servers, "Servers", "servers remote sessions endpoints connections"},
 	{.Profile_Defaults, "Profiles", "profiles recipes launch attach environment"},
 	{.Profile_Home, "Profile", "profile recipe editor command cwd endpoint environment"},
 }
@@ -114,6 +115,7 @@ open_settings_search :: proc(app: ^App) {
 		return
 	}
 	cancel_profile_edit(app)
+	cancel_server_settings_edit(app)
 	app.settings_binding_recording = false
 	app.settings_search_open = true
 	app.settings_search_query_len = 0
@@ -294,7 +296,7 @@ draw_settings_search :: proc(app: ^App, width, height: f32) {
 	_ = SDL.SetRenderClipRect(app.renderer, nil)
 
 	if app.settings_search_query_len == 0 {
-		draw_text(app, app.ui_font, "Pages · actions · profiles", field.x, field.y + 58, palette.text_muted)
+		draw_text(app, app.ui_font, "Pages · actions · servers · profiles", field.x, field.y + 58, palette.text_muted)
 		draw_text(app, app.ui_font, "Ctrl+F search · Esc close", field.x, field.y + 84, palette.text_muted)
 		return
 	}

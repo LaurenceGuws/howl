@@ -425,9 +425,12 @@ Settings_Page :: enum {
     Appearance,
     Color_Schemes,
     Actions,
+    Servers,
     Profile_Defaults,
     Profile_Home,
 }
+
+SETTINGS_PAGE_COUNT :: 8
 
 Palette :: struct {
     window_bg: SDL.Color,
@@ -535,6 +538,7 @@ App :: struct {
     settings_profile_select_all: bool,
     settings_action_selection: int,
     settings_binding_recording: bool,
+    server_settings: Server_Settings_State,
     settings_profile_selection: int,
     settings_profile_field: int,
     settings_profile_env_selection: int,
@@ -4308,6 +4312,7 @@ execute_action :: proc(app: ^App, action: App_Action) {
         if app.search_open do close_search(app)
         close_settings_search(app)
         cancel_profile_edit(app)
+        cancel_server_settings_edit(app)
         app.profile_menu_open = false
         app.palette_open = false
         app.settings_open = next
@@ -4447,7 +4452,11 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             if app.profile_menu_selection < app.profile_count {
                 open_profile_tab(app, app.profile_menu_selection)
             } else if app.profile_menu_selection == app.profile_count {
-                if app.server_count > 0 do _ = open_server_browser(app, 0)
+                if app.server_count > 0 {
+                    _ = open_server_browser(app, 0)
+                } else {
+                    open_server_settings(app)
+                }
             } else if app.profile_menu_selection == app.profile_count + 1 {
                 execute_action(app, .Open_Command_Palette)
             } else {
@@ -4460,6 +4469,9 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     }
     if app.settings_open {
         page := int(app.settings_page)
+        if app.settings_page == .Servers && (app.settings_content_focus || app.server_settings.editing) {
+            return handle_server_settings_key(app, event)
+        }
         if app.settings_content_focus && app.settings_page == .Profile_Defaults {
             return handle_profile_list_key(app, event)
         }
@@ -4496,8 +4508,12 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         }
         switch event.key.key {
         case SDL.K_TAB:
-            if app.settings_page == .Actions || app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
+            if app.settings_page == .Actions || app.settings_page == .Servers ||
+               app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
                 app.settings_content_focus = true
+                if app.settings_page == .Servers {
+                    app.server_settings.selection = clamp(app.server_settings.selection, 0, max(0, app.server_count - 1))
+                }
                 if app.settings_page == .Profile_Defaults {
                     app.settings_profile_selection = clamp(app.settings_profile_selection, 0, max(0, app.profile_count - 1))
                 }
@@ -4534,13 +4550,15 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             return false
         case SDL.K_UP:
             cancel_profile_edit(app)
+            cancel_server_settings_edit(app)
             app.settings_binding_recording = false
-            app.settings_page = Settings_Page((page + 6) % 7)
+            app.settings_page = Settings_Page((page + SETTINGS_PAGE_COUNT - 1) % SETTINGS_PAGE_COUNT)
             app.settings_content_focus = false
         case SDL.K_DOWN:
             cancel_profile_edit(app)
+            cancel_server_settings_edit(app)
             app.settings_binding_recording = false
-            app.settings_page = Settings_Page((page + 1) % 7)
+            app.settings_page = Settings_Page((page + 1) % SETTINGS_PAGE_COUNT)
             app.settings_content_focus = false
         case SDL.K_HOME:
             cancel_profile_edit(app)
@@ -4580,7 +4598,7 @@ settings_page_at :: proc(x, y: f32, width, height: f32) -> (Settings_Page, bool)
     if !inside(x, y, sidebar) {
         return .Startup, false
     }
-    for index in 0..<7 {
+    for index in 0..<SETTINGS_PAGE_COUNT {
         row := settings_sidebar_row(panel, index)
         if inside(x, y, row) {
             return Settings_Page(index), true
@@ -4621,6 +4639,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         if settings_control_click(app, x, y, width, height) do return
         if page, ok := settings_page_at(x, y, width, height); ok {
             cancel_profile_edit(app)
+            cancel_server_settings_edit(app)
             app.settings_page = page
             app.settings_content_focus = false
             app.settings_binding_recording = false
@@ -4652,7 +4671,11 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         }
         actions_y := panel.y + 14 + f32(app.profile_count) * 48
         if inside(x, y, {panel.x + 8, actions_y, panel.w - 16, 36}) {
-            if app.server_count > 0 do _ = open_server_browser(app, 0)
+            if app.server_count > 0 {
+                _ = open_server_browser(app, 0)
+            } else {
+                open_server_settings(app)
+            }
             return
         }
         if inside(x, y, {panel.x + 8, actions_y + 42, panel.w - 16, 36}) {
@@ -4772,6 +4795,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             // guard before processing the user's next actual key.
             app.settings_profile_discard_text_input_once = false
         }
+        if event.type == .KEY_DOWN && app.server_settings.discard_text_input_once {
+            app.server_settings.discard_text_input_once = false
+        }
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
         alt := .LALT in event.key.mod || .RALT in event.key.mod
@@ -4795,7 +4821,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
             return
         } else if event.type == .KEY_DOWN && app.settings_open && ctrl && !shift && !alt && event.key.key == SDL.K_F &&
-                  !app.settings_profile_editing && !app.settings_binding_recording {
+                  !app.settings_profile_editing && !app.server_settings.editing && !app.settings_binding_recording {
             if app.settings_search_open {
                 close_settings_search(app)
             } else {
@@ -4807,6 +4833,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             return
         } else if app.settings_open && app.settings_profile_editing {
             _ = handle_profile_edit_key(app, event)
+            return
+        } else if app.settings_open && app.server_settings.editing {
+            _ = handle_server_settings_key(app, event)
             return
         } else if app.settings_open && app.settings_binding_recording {
             _ = handle_settings_binding_recording(app, event)
@@ -4859,6 +4888,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
             close_settings_search(app)
             cancel_profile_edit(app)
+            cancel_server_settings_edit(app)
             app.profile_menu_open = false
             app.palette_open = false
             app.settings_open = false
@@ -4919,6 +4949,19 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 text := string(event.text.text)
                 if len(text) != 0 {
                     _ = append_profile_edit_text(app, text)
+                }
+            }
+            return
+        }
+        if app.settings_open && app.server_settings.editing {
+            if app.server_settings.discard_text_input_once {
+                app.server_settings.discard_text_input_once = false
+                return
+            }
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 {
+                    _ = server_settings_append_text(app, text)
                 }
             }
             return
@@ -5404,8 +5447,8 @@ draw_profile_menu :: proc(app: ^App) {
     if app.profile_menu_selection == app.profile_count do draw_fill(app.renderer, servers_row, palette.tab_active)
     if app.profile_menu_selection == app.profile_count + 1 do draw_fill(app.renderer, palette_row, palette.tab_active)
     if app.profile_menu_selection == app.profile_count + 2 do draw_fill(app.renderer, settings_row, palette.tab_active)
-    servers_label := app.server_count > 0 ? "Servers" : "Servers (none configured)"
-    draw_text(app, app.ui_font, servers_label, servers_row.x + 10, servers_row.y + 8, app.server_count > 0 ? palette.text : palette.text_muted)
+    servers_label := app.server_count > 0 ? "Servers" : "Servers (configure)"
+    draw_text(app, app.ui_font, servers_label, servers_row.x + 10, servers_row.y + 8, palette.text)
     draw_text(app, app.ui_font, action_label(.Open_Command_Palette), palette_row.x + 10, palette_row.y + 8, palette.text)
     draw_text(app, app.ui_font, action_binding_text(app, .Open_Command_Palette), palette_row.x + 190, palette_row.y + 8, palette.text_muted)
     draw_text(app, app.ui_font, action_label(.Open_Settings), settings_row.x + 10, settings_row.y + 8, palette.text)
@@ -6168,6 +6211,7 @@ settings_page_title :: proc(page: Settings_Page) -> string {
     case .Appearance:       return "Appearance"
     case .Color_Schemes:    return "Color schemes"
     case .Actions:          return "Actions"
+    case .Servers:          return "Servers"
     case .Profile_Defaults: return "Profiles"
     case .Profile_Home:     return "Edit profile"
     }
@@ -6192,7 +6236,7 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     sidebar := SDL.FRect{panel.x, panel.y, 178, panel.h}
     draw_fill(app.renderer, sidebar, palette.tab_idle)
     draw_text(app, app.ui_font, "Settings", sidebar.x + 18, sidebar.y + 18, palette.text)
-    for index in 0..<7 {
+    for index in 0..<SETTINGS_PAGE_COUNT {
         page := Settings_Page(index)
         row := settings_sidebar_row(panel, index)
         selected := app.settings_page == page
@@ -6203,8 +6247,11 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     }
     settings_clipped_text(app, {body.x, panel.y + 18, max(f32(0), body.w - 78), 24},
                           settings_page_title(app.settings_page), palette.text)
-    settings_draw_button(app, {panel.x + panel.w - 76, panel.y + 10, 64, 30}, "Close", !app.settings_profile_editing)
-    if app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
+    settings_draw_button(app, {panel.x + panel.w - 76, panel.y + 10, 64, 30}, "Close",
+                         !app.settings_profile_editing && !app.server_settings.editing)
+    if app.settings_page == .Servers {
+        settings_draw_server_toolbar(app, layout)
+    } else if app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
         settings_draw_profile_toolbar(app, layout)
     } else {
         settings_clipped_text(app, layout.toolbar, app.settings_page == .Interaction ? "Information only" : "Changes save automatically", palette.text_muted)
@@ -6217,6 +6264,8 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     if !SDL.GetRectIntersection(clip, panel_clip, &clip) do clip = {}
     _ = SDL.SetRenderClipRect(app.renderer, &clip)
     switch app.settings_page {
+    case .Servers:
+        draw_servers_settings(app, body)
     case .Startup:
         draw_text(app, app.ui_font, "Default profile", content_x, content_y + 48, palette.text_muted)
         settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0),
@@ -6278,7 +6327,14 @@ draw_settings :: proc(app: ^App, width, height: f32) {
         draw_fill(app.renderer, {track.x, track.y + app.settings_scroll_y / limit * (body.h - thumb_h), 3, thumb_h}, palette.accent)
     }
     note_y := layout.footer.y
-    if app.settings_page == .Profile_Defaults {
+    if app.settings_page == .Servers && !app.server_settings.editing {
+        settings_draw_button(app, {layout.footer.x, note_y, 136, 30}, "Open Sessions", app.server_count > 0)
+        if server := server_settings_selected(app); server != nil {
+            settings_clipped_text(app, {layout.footer.x + 148, note_y + 7, max(f32(0), layout.footer.w - 148), 24},
+                                  server_label(server), palette.text)
+        }
+        note_y += 38
+    } else if app.settings_page == .Profile_Defaults {
         profile := selected_settings_profile(app)
         is_default := profile != nil && app.startup_profile == app.settings_profile_selection
         settings_draw_button(app, {layout.footer.x, note_y, 136, 30}, is_default ? "Default" : "Set default",

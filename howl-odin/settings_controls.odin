@@ -90,6 +90,9 @@ settings_draw_stepper :: proc(app: ^App, rect: SDL.FRect, label: string, previou
 
 settings_content_height :: proc(app: ^App) -> f32 {
     switch app.settings_page {
+    case .Servers:
+        if app.server_settings.editing do return f32(SERVER_SETTINGS_FIELD_COUNT) * 48
+        return f32(max(1, app.server_count)) * 44
     case .Profile_Defaults: return f32(app.profile_count) * 44
     case .Profile_Home:     return f32(PROFILE_EDIT_FIELD_COUNT) * 48
     case .Actions:          return f32(len(ACTION_DEFINITIONS)) * 32 + 12
@@ -128,6 +131,12 @@ settings_reveal_selection :: proc(app: ^App) {
     limit := settings_sync_scroll(app, layout.body)
     top, size: f32
     switch app.settings_page {
+    case .Servers:
+        if app.server_settings.editing {
+            top, size = f32(app.server_settings.field) * 48, 44
+        } else {
+            top, size = f32(app.server_settings.selection) * 44, 40
+        }
     case .Profile_Defaults: top, size = f32(app.settings_profile_selection) * 44, 40
     case .Profile_Home: top, size = f32(app.settings_profile_field) * 48, 44
     case .Actions: top, size = f32(app.settings_action_selection) * 32 + 2, 30
@@ -141,6 +150,10 @@ settings_footer_note :: proc(app: ^App) -> string {
     if app.config_notice_len != 0 do return string(app.config_notice[:app.config_notice_len])
     if app.settings_profile_editing do return "Enter saves; Esc cancels; Ctrl+A selects all."
     switch app.settings_page {
+    case .Servers:
+        if app.server_settings.editing do return "Tab/↑/↓ fields · Enter advances/saves · Esc cancels."
+        if app.server_count == 0 do return "Press N or New to configure a Server."
+        return "Enter opens Sessions · E edits · Delete twice removes."
     case .Profile_Defaults: return "Select a profile, then Edit or Duplicate."
     case .Profile_Home:
         profile := selected_settings_profile(app)
@@ -153,6 +166,52 @@ settings_footer_note :: proc(app: ^App) -> string {
     case .Interaction: return "Terminal behavior belongs to the canonical Instance."
     }
     return ""
+}
+
+settings_draw_server_toolbar :: proc(app: ^App, layout: Settings_Layout) {
+    if app.server_settings.editing {
+        settings_draw_button(app, settings_button_rect(layout.toolbar, 0, 2), "Save")
+        settings_draw_button(app, settings_button_rect(layout.toolbar, 1, 2), "Cancel")
+        return
+    }
+    enabled := app.server_count > 0
+    confirm := app.server_settings.delete_pending
+    settings_draw_button(app, settings_button_rect(layout.toolbar, 0, 3), "New", app.server_count < MAX_SERVERS)
+    settings_draw_button(app, settings_button_rect(layout.toolbar, 1, 3), "Edit", enabled)
+    settings_draw_button(app, settings_button_rect(layout.toolbar, 2, 3), confirm ? "Delete?" : "Delete", enabled)
+}
+
+draw_servers_settings :: proc(app: ^App, body: SDL.FRect) {
+    if app.server_settings.editing {
+        labels := [SERVER_SETTINGS_FIELD_COUNT]string{"Label", "Endpoint"}
+        for label, index in labels {
+            row := settings_profile_row(body, app.settings_scroll_y, index, true)
+            selected := app.settings_content_focus && app.server_settings.field == index
+            if selected do draw_fill(app.renderer, row, palette.tab_active)
+            settings_clipped_text(app, {row.x + 10, row.y + 13, 150, 22}, label, palette.text_muted)
+            value := settings_profile_value(row)
+            draw_fill(app.renderer, value, app.server_settings.select_all && selected ? palette.tab_active : palette.terminal_bg)
+            draw_outline(app.renderer, value, selected ? palette.accent : palette.border)
+            text := server_settings_field_text_at(app, index)
+            settings_clipped_text(app, {value.x + 7, value.y + 8, max(f32(0), value.w - 14), value.h - 8}, text, palette.text)
+        }
+        return
+    }
+    if app.server_count == 0 {
+        settings_clipped_text(app, {body.x + 8, body.y + 12, max(f32(0), body.w - 16), 24}, "No Servers configured", palette.text_muted)
+        return
+    }
+    for index in 0..<app.server_count {
+        row := settings_profile_row(body, app.settings_scroll_y, index, false)
+        selected := app.settings_content_focus && app.server_settings.selection == index
+        if selected do draw_fill(app.renderer, row, palette.tab_active)
+        draw_outline(app.renderer, row, selected ? palette.accent : palette.border)
+        server := &app.servers[index]
+        settings_clipped_text(app, {row.x + 10, row.y + 3, max(f32(0), row.w - 20), 20},
+                              server_label(server), selected ? palette.accent : palette.text)
+        settings_clipped_text(app, {row.x + 10, row.y + 22, max(f32(0), row.w - 20), 18},
+                              server_endpoint(server), palette.text_muted)
+    }
 }
 
 Profile_UI_Action :: enum { New, Duplicate, Edit, Delete, Default, Back, Save, Cancel }
@@ -253,8 +312,46 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
             }
         }
     }
+    if app.settings_page == .Servers {
+        count := app.server_settings.editing ? 2 : 3
+        for index in 0..<count {
+            if !inside(x, y, settings_button_rect(layout.toolbar, index, count)) do continue
+            if app.server_settings.editing {
+                if index == 0 {
+                    _ = server_settings_commit(app)
+                } else {
+                    cancel_server_settings_edit(app)
+                    set_settings_notice(app, "Server edit canceled")
+                }
+            } else {
+                switch index {
+                case 0: _ = server_settings_begin_new(app)
+                case 1: _ = server_settings_begin_edit(app)
+                case 2: _ = server_settings_delete_selected(app)
+                }
+            }
+            settings_reveal_selection(app)
+            return true
+        }
+    }
     if app.settings_profile_editing {
         set_settings_notice(app, "Save or Cancel the current field before leaving it")
+        return true
+    }
+    if app.server_settings.editing {
+        if inside(x, y, layout.body) {
+            for index in 0..<SERVER_SETTINGS_FIELD_COUNT {
+                row := settings_profile_row(layout.body, app.settings_scroll_y, index, true)
+                if inside(x, y, row) {
+                    app.server_settings.field = index
+                    app.server_settings.select_all = true
+                    app.settings_content_focus = true
+                    settings_reveal_selection(app)
+                    return true
+                }
+            }
+        }
+        set_settings_notice(app, "Save or Cancel the Server before leaving it")
         return true
     }
     close := SDL.FRect{layout.panel.x + layout.panel.w - 76, layout.panel.y + 10, 64, 30}
@@ -266,6 +363,13 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
         button := SDL.FRect{layout.footer.x, layout.footer.y, 136, 30}
         if inside(x, y, button) {
             _ = profile_ui_action(app, .Default)
+            return true
+        }
+    }
+    if app.settings_page == .Servers && !app.server_settings.editing {
+        button := SDL.FRect{layout.footer.x, layout.footer.y, 136, 30}
+        if inside(x, y, button) {
+            _ = server_settings_open_selected(app)
             return true
         }
     }
@@ -300,6 +404,17 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
     }
     offset := app.settings_scroll_y
     switch app.settings_page {
+    case .Servers:
+        for index in 0..<app.server_count {
+            row := settings_profile_row(layout.body, offset, index, false)
+            if inside(x, y, row) {
+                app.server_settings.selection = index
+                app.server_settings.delete_pending = false
+                app.settings_content_focus = true
+                app.settings_notice_len = 0
+                return true
+            }
+        }
     case .Startup:
         if delta := settings_stepper_hit(settings_choice_rect(layout.body, offset, 0), x, y); delta != 0 {
             adjust_startup_profile(app, delta)
