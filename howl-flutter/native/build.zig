@@ -33,45 +33,25 @@ pub fn build(b: *std.Build) void {
     }
     const native_c = translate.createModule();
 
-    const pty = localModule(b, target, optimize, repo, "howl-pty/src/howl_pty.zig");
-    const vt = localModule(b, target, optimize, repo, "howl-vt/src/howl_vt.zig");
-    const instance_protocol = localModule(b, target, optimize, repo, "howl-instance/src/protocol.zig");
-    const instance = localModule(b, target, optimize, repo, "howl-instance/src/instance.zig");
-    instance.addImport("howl_pty", pty);
-    instance.addImport("howl_vt", vt);
-    instance.addImport("howl_instance_protocol", instance_protocol);
+    // Reuse package-owned client/Local/Server/VT dependency wiring. Flutter keeps
+    // only its platform-specific native text/link seam below; Android/iOS deliberately
+    // own a separately pinned static FreeType/HarfBuzz product.
+    const client_dependency = b.dependency("howl_client", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const client = client_dependency.module("howl_client");
+    const local = client_dependency.module("howl_local");
 
-    const client_transport = localModule(b, target, optimize, repo, "client-transport/src/transport.zig");
-    const client = localModule(b, target, optimize, repo, "howl-client/src/howl_client.zig");
-    client.addImport("howl_instance_protocol", instance_protocol);
-    client.addImport("client_transport", client_transport);
+    const server_client = b.dependency("server_client", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("server_client");
 
-    const instance_service = localModule(b, target, optimize, repo, "howl-instance/src/service.zig");
-    instance_service.addImport("howl_instance", instance);
-    const linux_desktop = target.result.os.tag == .linux and target.result.abi != .android;
-    const windows = target.result.os.tag == .windows;
-    const local = localModule(
-        b,
-        target,
-        optimize,
-        repo,
-        if (linux_desktop or windows)
-            "howl-client/src/local_desktop.zig"
-        else
-            "howl-client/src/local_unsupported.zig",
-    );
-    local.addImport("howl_client", client);
-    if (linux_desktop or windows) {
-        local.addImport("client_transport", client_transport);
-        local.addImport("howl_instance", instance);
-        local.addImport("howl_instance_service", instance_service);
-        if (windows) local.linkSystemLibrary("kernel32", .{});
-    }
-
-    const server_protocol = localModule(b, target, optimize, repo, "server/src/protocol.zig");
-    const server_client = localModule(b, target, optimize, repo, "server-client/src/server_client.zig");
-    server_client.addImport("server_protocol", server_protocol);
-    server_client.addImport("client_transport", client_transport);
+    const vt = b.dependency("howl_vt", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("howl_vt");
 
     const text = localModule(b, target, optimize, repo, "howl-text/src/text.zig");
     text.link_libc = true;
@@ -94,7 +74,6 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_client", client);
     root.addImport("howl_local", local);
     root.addImport("server_client", server_client);
-    root.addImport("howl_instance", instance);
     root.addImport("howl_text", text);
     root.addImport("terminal", terminal);
     root.addImport("presentation", presentation);

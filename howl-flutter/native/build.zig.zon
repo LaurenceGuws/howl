@@ -3,7 +3,11 @@
     .version = "0.1.6-dev",
     .fingerprint = 0xf06e5c954256b3dd,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
-    .dependencies = .{},
+    .dependencies = .{
+        .howl_client = .{ .path = "../../howl-client" },
+        .server_client = .{ .path = "../../server-client" },
+        .howl_vt = .{ .path = "../../howl-vt" },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
