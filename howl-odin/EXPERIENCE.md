@@ -49,12 +49,12 @@ below describe defaults, not a user's persisted overrides.
    experienced desktop-terminal user expects unless Howl has a concrete reason
    to differ.
 4. **Idle means idle.** An unchanged terminal should sleep. Work should be driven
-   by Session revisions, UI events, or real timers that own visible behavior.
+   by Instance revisions, UI events, or real timers that own visible behavior.
 5. **No fake settings.** A setting appears when it changes a real client contract.
    Unsupported options are named honestly instead of being decorative toggles.
 6. **Pane-local by default.** History, selection, focus, geometry leadership,
    mouse ownership, and process lifetime should not leak between sibling panes.
-7. **Failures should explain themselves.** Exited shells, lost Sessions, missing
+7. **Failures should explain themselves.** Exited shells, unavailable Instances, missing
    resources, unsupported terminal images, or invalid configuration should have
    a visible, recoverable desktop story.
 8. **Dependencies must buy something.** Prefer Odin, SDL3, Howl's existing
@@ -68,24 +68,24 @@ below describe defaults, not a user's persisted overrides.
 **PROVEN**
 
 - Opens as a normal resizable high-DPI desktop window.
-- Startup profile is persistent and may either attach Home Session or create a
-  client-owned Local shell Session.
+- Startup profile is persistent and may either attach the built-in Home Instance
+  or create a client-owned Local Instance in-process.
 - Window rendering and pointer geometry share one logical coordinate system.
-- Maximizing/resizing drives owned PTY geometry without resizing attached
-  observer-only Sessions.
+- Maximizing/resizing drives owned Local Instance geometry; attached Instances
+  remain fixed unless the user explicitly takes Instance size control.
 
 **PROVEN — multi-window policy**
 
 - One Odin process owns one OS window. `Ctrl+Shift+N` and the command palette
   launch another independent Odin process with the same inherited environment
-  and config; no tab or Session state is transferred implicitly.
+  and config; no tab or Instance state is transferred implicitly.
 - The spawning window retains only one process handle, owned by a self-cleaning
   reaper thread. A KWin canary created a second PID/window, then closing only the
   child removed that PID and the reaper thread while the original window stayed
   alive.
 - Live tab tear-out / cross-window tab movement is deliberately unsupported in
   this cut because no first-class UI-state transfer owner exists yet. We do not
-  fake tear-out by killing/relaunching Sessions.
+  fake tear-out by destroying/recreating Instances.
 
 **WANTED**
 
@@ -93,8 +93,8 @@ below describe defaults, not a user's persisted overrides.
 - Heterogeneous multi-monitor moves and display-hotplug dogfood coverage.
   Live display-scale change handling is wired,
   but moving one window across differently scaled real outputs is not yet proven.
-- Explicit startup choices: default profile, attach a named Session, or restore
-  an accepted previous application layout.
+- Explicit startup choices: default profile, attach an explicit Instance or browse
+  a saved Server, or restore an accepted previous application layout.
 - Qualify ordinary installed-bundle launch/update on the target desktop; native
   identity, icons, and the owned installer already exist (section 16).
 
@@ -119,15 +119,16 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Create, select, close, and cycle tabs. `Ctrl+Shift+W` closes the active pane,
   then tab, and finally the window when only one single-pane tab remains.
 - `+` and `Ctrl+T` use the configured default profile. The explicit profile menu
-  can always choose Local shell or Home Session.
-- Closing a client-owned tab retires its owned Session; closing an attached view
-  only disconnects that view.
+  can always choose Local shell or the direct Home Instance; saved Servers are a
+  separate browse route.
+- Closing a client-owned tab destroys only its owned Local Instance; closing an
+  attached view only disconnects that client and leaves the external Instance alive.
 - `Ctrl+1…8` selects tab slots directly. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle,
   while `Ctrl+Shift+PageUp/PageDown` reorders the active tab.
 - Held tab chips immediately gain a small outline and follow the pointer's
   original grab point before any reorder threshold is crossed. The destination
   slot remains outlined. This is input-driven painting, not an animation clock,
-  texture copy, or duplicate Session state. A stationary held chip adds no timer.
+  texture copy, or duplicate Instance state. A stationary held chip adds no timer.
 - Keyboard interruption cancels tab/scrollbar intent before navigation/overlays;
   the canceled gesture's left release is consumed rather than clicking the new
   surface. Unrelated buttons, fresh clicks and TUI mouse releases stay independent.
@@ -153,8 +154,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Optional MRU switching behavior if it proves better than deterministic cycling.
 - Optional tab-local activity indication, separate from the already-proven
   non-focus-stealing desktop attention policy.
-- Reopen recently closed client-owned tab when its Session still exists or the
-  launch recipe is safely repeatable.
+- Reopen a recently closed attachment when its target Instance still exists, or
+  a Local tab when the launch recipe is safely repeatable.
 - Tab context menu with the same action registry as the command palette.
 
 ### 3. Panes and layout
@@ -162,14 +163,14 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 **PROVEN**
 
 - A bounded recursive pane tree owns layout topology while stable pane slots own
-  Session views. Repeated active-leaf splits can nest without moving Session
-  identities; the first hostile canary created three independently owned panes
-  and three child `howl-sessiond` processes.
+  Instance views. Repeated active-leaf splits can nest without moving Instance
+  identities; the accepted Local canary created three independently owned panes
+  with three distinct child shells/Instances.
 - Pane-local focus, close/promote behavior, clipping, history, selection, and
   geometry leadership remain independent of tree topology.
-- Closing a nested leaf tears down only its Session, promotes the sibling subtree,
-  and lets survivors reacquire the larger geometry without restart. The three-pane
-  canary collapsed 3 → 2 → 1 while child count followed 3 → 2 → 1 exactly.
+- Closing a nested leaf retires only that pane view and its owned Local Instance,
+  if any; attached external Instances survive client close. The three-owned-pane
+  canary collapsed 3 → 2 → 1 while Local child count followed 3 → 2 → 1 exactly.
 - Side-by-side and top/bottom splits are explicit (`Alt+Shift+D` / `Alt+Shift++`
   and `Alt+Shift+-`) and may be nested arbitrarily within the eight-pane bound.
 - `Alt+Arrow` uses actual rectangle separation for four-direction spatial focus;
@@ -181,8 +182,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   PIDs. Release outside the window and focus theft both terminated the drag; later
   buttonless pointer motion left the divider stationary.
 - `Ctrl+Shift+Z` zooms only the active pane as a layout projection and restores
-  the untouched tree on unzoom. `Ctrl+Alt+Arrow` swaps Session-view ownership
-  between geometric neighbors without restarting either Session. A mixed topology
+  the untouched tree on unzoom. `Ctrl+Alt+Arrow` swaps Instance-view ownership
+  between geometric neighbors without restarting either Instance. A mixed topology
   canary (full-width top plus two bottom panes) preserved all three child PIDs
   through focus, keyboard resize, zoom/unzoom, and swap.
 
@@ -195,22 +196,23 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **PROVEN**
 
-- Local shell means “create and own a sibling `howl-sessiond` + PTY”.
-- Home Session means “attach another non-owning client view”.
+- Local shell means “create and own one canonical Instance in-process”. Linux
+  uses the native PTY owner; Windows uses ConPTY. Both expose listener-free ordinary
+  HWLS streams to the same Odin clients and create no sibling daemon or Server.
+- Home Instance means “attach another non-owning direct client view”. Saved Servers
+  are persisted separately and browse Server → Sessions → Instances before attach.
 - One persisted default profile drives startup, `+`, `Ctrl+T`, and split creation.
 - Owned Local shells inherit the real desktop process environment.
-- Schema-3 user profiles are bounded typed recipes with stable id/name,
-  attach-vs-launch ownership, shell, optional command/cwd, inherited-environment
-  overrides, endpoint, and optional 12/15/18 px presentation default. Built-ins
-  and user profiles share one runtime catalogue and dropdown.
-- The host/session launch seam carries optional command and cwd through the existing
-  `SessionProcess` owner into `howl-sessiond`/`howl-pty`; Odin applies bounded env
-  replacements on top of inherited desktop environment instead of shell `export`
-  text. A Lab Recipe canary proved `/tmp` cwd, `HOWL_PROFILE_CANARY=green`, startup
-  command execution, and a 12 px **42×160** grid versus built-in Local 15 px
-  **34×124** in the same pane.
-- Schema-3 saves preserve user recipes atomically and name the default by stable
-  profile id; schema 1/2 remain readable and migrate on later save.
+- User profiles are bounded typed recipes with stable id/name, attach-vs-launch
+  ownership, shell, optional command/cwd, endpoint, environment fields, and optional
+  12/15/18 px presentation default. Schema 4 persists labelled Server endpoints
+  separately from those recipes.
+- Linux Local carries shell/command/cwd into the canonical in-process Instance.
+  Windows Local carries interactive shell/cwd and rejects nonempty command until
+  command-shell grammar is deliberately specified. Nonempty Local environment
+  overrides currently fail explicitly rather than being silently ignored.
+- Saves preserve user recipes atomically and name the default by stable profile id;
+  older schemas remain readable and migrate only on later save.
 
 **PROVEN — profile editor**
 
@@ -226,23 +228,23 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Launch/attach mode changes clear incompatible fields in one save. A duplicated Lab
   canary switched Launch → Attach and atomically dropped shell/command/cwd/env while
   seeding the attach endpoint.
-- Launch-policy edits apply to future/restarted Sessions; presentation font is the
-  explicit live exception. A running Lab Session changed **34×124 at 15 px → 28×102
-  at 18 px → 34×124 at 15 px** with PID/socket identity unchanged.
-- A full Settings edit canary changed Lab cwd `/tmp → /var/tmp`, added
-  `EDITOR_VAR=works`, changed 12→15 px, relaunched, and proved all edits through the
-  shared Session/PTY owner. In-use delete was refused; `N` create + rename + delete
-  returned the config to only the real Lab recipe.
+- Launch-policy edits apply to future/restarted Instances; presentation font is the
+  explicit live exception. A running Local Instance changed **34×124 at 15 px → 28×102
+  at 18 px → 34×124 at 15 px** with child PID/Instance identity unchanged.
+- Settings edits round-trip cwd, environment fields, and presentation size through
+  the typed profile config. Current Local launch applies shell/command/cwd and font
+  policy, but rejects nonempty environment overrides explicitly rather than claiming
+  they reached the child. In-use delete is refused; create/rename/delete remain bounded.
 
 **WANTED**
 
 - Profile icon and optional color accent.
-- Additional per-profile defaults beyond the current typed launch recipe and
-  environment/font overrides. Built-in/user duplicate/edit/delete is proven.
+- Additional per-profile defaults beyond the current typed launch recipe,
+  environment fields, and font override. Built-in/user duplicate/edit/delete is proven.
 - Direct custom-profile launch from the command palette. The profile menu and
   built-in Local/Home palette actions already work.
 - Working-directory inheritance when splitting or duplicating where the canonical
-  child/session contract can support it honestly.
+  child/Instance contract can support it honestly.
 - Import/export of user profile configuration without inventing compatibility
   with Windows Terminal's JSON format.
 
@@ -334,14 +336,14 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **PROVEN — Find**
 
-- Ctrl+Shift+F opens a compact pane-local Find bar without mutating Session.
+- Ctrl+Shift+F opens a compact pane-local Find bar without mutating the Instance.
 - Exact case-sensitive UTF-8 matching is owned by reusable `howl-client.search` over
   immutable projected rows; concealed text is not searchable and wide-cell matches
   use the same canonical visual-span rules as selection.
 - Enter walks older results and Shift+Enter walks newer results, including multiple
   matches on one projected row.
 - A dedicated search connection/worker is created lazily on the first actual query;
-  merely opening Find adds no thread or Session connection.
+  merely opening Find adds no thread or Instance connection.
 - Search may page the complete 4,096-row retained ring without blocking SDL. Results
   name canonical rows/columns and recenter through the same absolute history anchor,
   so live output can continue underneath a highlighted old match without dragging it.
@@ -370,7 +372,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   do not silently pretend adjacent projected rows are one immutable string.
 - Preserve the proven selection edge-autoscroll behavior (section 8) under the
   remaining multi-pane/history pressure cases.
-- A future cross-reflow anchor only if Session/VT gains a stable logical-line
+- A future cross-reflow anchor only if Instance/VT gains a stable logical-line
   identity that can name the same text after column reflow. Do not fake this
   with row-number heuristics.
 
@@ -388,7 +390,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   A real KDE pointer canary covered unequal log lines, an empty line, leading
   spaces, CJK and combining text; canonical extraction stayed byte-identical to
   the old bridge. Wrong geometry/bank/row facts produce no phantom span.
-- Ctrl+Shift+C asks `howl-client.selection` and Session `text_extract` for
+- Ctrl+Shift+C asks `howl-client.selection` and Instance `text_extract` for
   canonical UTF-8; it does not scrape rendered glyphs. VT normalizes continuation
   cells to their lead grapheme during extraction.
 - Selection survives manual wheel/PageUp/scrollbar movement and live output while
@@ -491,17 +493,17 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   then Odin projects Canvas destinations, clips, selection/search overlays,
   cursor geometry, scroll-edge bands, and pointer coordinates back through the
   same scale. At 2× a logical 15 px font became 30 px / 18×40 cells; at 1.5× it
-  became 23 px / 14×31 cells, while an attached fixed Session stayed exactly
+  became 23 px / 14×31 cells, while an attached fixed Instance stayed exactly
   80×37. A client-owned shell at 1.5× resized its real PTY to 108×27 from the
   physical cell lattice instead of retaining the 80×37 startup geometry.
 - SDL_ttf chrome uses logical point sizes with monitor-scaled DPI, rasterizes to
   a high-resolution surface, then presents that texture at its original logical
   rectangle. GDB proved UI/fallback fonts stayed 15 logical points at 108 DPI
   on 1.5× and 144 DPI on 2×; the 1×/1.5×/2× visual canaries retained identical
-  tab/layout geometry. The fractional-scale owned-Session canary returned to
+  tab/layout geometry. The fractional-scale owned-Instance canary returned to
   0.0% idle CPU after resize.
 - Terminal images now use the canonical Howl external-resource lane end-to-end:
-  Session manifests identify exact image generations, `howl-client.images` fetches
+  Instance manifests identify exact image generations, `howl-client.images` fetches
   RGBA8 bytes on demand, `howl-render` owns placement/crop/z-order, Canvas names
   missing external resources and residency, and SDL sees only ordinary RGBA uploads
   and commands. A fresh image frame uploaded atlas + image once, then two unchanged
@@ -550,7 +552,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Dark desktop shell.
 - JetBrains Mono Nerd Font canary.
 - Persistent 12/15/18 px font-size setting.
-- Font zoom never mutates an attached non-owning Session.
+- Font zoom never mutates an attached non-owning Instance.
 - Persistent application chrome themes with live preview: Howl Dark, Slate, and
   High Contrast. Theme switching changes tabs, Settings, borders, labels, and
   accents only; terminal Canvas colors remain byte-identical Howl output. A
@@ -601,14 +603,14 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   environment field, toolbar and footer usable; off-panel controls are not clickable.
 - Real KDE mouse canaries covered startup/theme/global and profile font changes,
   New/Duplicate/Edit/Save/Cancel, environment fields, confirmed deletion, Set default,
-  profile-dropdown Session creation and palette-to-Settings navigation. They used
-  isolated config and left the original GUI, its three Sessions and the real
+  profile-dropdown Instance creation and palette-to-Settings navigation. They used
+  isolated config and left the original GUI, its three Instances and the real
   profile-config bytes unchanged. Quiet Settings used zero CPU ticks over three seconds.
 
 
 - Real navigable Settings surface.
-- Startup, Interaction, Appearance, Color schemes, Actions, Profile defaults,
-  and Home Session pages.
+- Startup, Interaction, Appearance, Color schemes, Actions, Profiles, and Profile
+  pages.
 - Atomic schema-versioned XDG config writes. Schema 2 adds stable action-id
   keybinding overrides while schema-1 files remain readable and upgrade only on save;
   schema 3 adds stable profile recipes and persisted application-theme identity.
@@ -661,7 +663,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   same metadata rather than maintaining parallel lists.
 - Context state is visible rather than silently ignored: for example pane zoom is
   muted with one pane while restart/reconnect is enabled only for a recoverable
-  Session lifecycle state.
+  Instance lifecycle state.
 - Keyboard navigation and Enter execution.
 - Effective shortcut bindings are normalized from one bounded chord grammar and
   drive runtime dispatch plus every visible shortcut hint. Overrides persist by
@@ -683,33 +685,32 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Discoverable shortcut display in menus/settings.
 - Per-profile actions only when the action genuinely belongs to a profile.
 
-### 15. Session and process lifecycle
+### 15. Instance and process lifecycle
 
 **PROVEN**
 
-- Client-created Local shell Session ownership and exact child teardown.
-- Attached Home views never kill the underlying Session.
+- Client-created Local Instance ownership and exact child teardown.
+- Attached direct/Server views never kill the externally owned Instance.
 - Independent observer/control connections and explicit blocked-observer
   cancellation.
 - Canonical `stream_closed` / `child_exited` snapshot facts drive pane-local
   lifecycle state. A client-owned shell preserves its final Canvas frame as
   `Process exited`, stops accepting terminal input, remains locally selectable/
-  scrollable, and offers Restart. Restart reaps the old `howl-sessiond` and
-  creates a new process/socket identity in the same pane.
-- Attached failure/closure is visibly different: `Attached Session unavailable`
-  offers Reconnect against the exact stored endpoint. A private-lab reconnect
-  canary retained zero owned child Sessions before and after retry, proving that
-  recovery does not silently manufacture a Local shell.
+  scrollable, and offers Restart. Restart destroys the old owned Local Instance
+  and creates a fresh in-process Instance in the same pane.
+- Attached failure/closure is visibly different: `Attached Instance unavailable`
+  offers Reconnect against the exact stored target. Reconnect never manufactures
+  a Local Instance or changes external ownership.
 - Ownership is explicit `Attached` / `Owned` client state rather than inferred
-  from whether process creation happened to succeed, so even a failed Local
-  launch retains Restart semantics.
+  from whether Local creation happened to succeed, so even a failed Local launch
+  retains Restart semantics.
 
 **WANTED**
 
-- Exit status once Session exposes it canonically; until then the UI says only
+- Exit status once Instance exposes it canonically; until then the UI says only
   `Process exited` rather than inventing a status.
 - Recent/pinned attach targets where discovery has an explicit owner.
-- “Close tab” versus “terminate process/session” remains an explicit distinction.
+- “Close tab” versus “terminate owned process/Instance” remains an explicit distinction.
 - Application shutdown explains what will remain alive and what is client-owned.
 - Useful cwd/shell-mark consumers beyond the already-live title. These facts
   cross the shared transport but do not yet imply automatic cwd inheritance.
@@ -726,9 +727,9 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   `SDL_SetWindowIcon`. A managed-KWin canary proved the wolf icon in the live
   decorated window after removing diagnostic icon-size fallbacks.
 - User-local `--check` / `--promote` / `--uninstall` packaging keeps the Odin
-  executable, matching bridge library, `howl-sessiond`, and live-window icon in
-  one private libexec bundle. The executable retains `RUNPATH=$ORIGIN`, the
-  launcher is tiny, XDG desktop data honors `XDG_DATA_HOME`, and a hash manifest
+  executable, matching bridge library, and live-window icon in one private libexec
+  bundle. Local Instances run in-process; no Instance daemon is packaged. The
+  executable retains `RUNPATH=$ORIGIN`; the launcher is tiny, XDG desktop data honors `XDG_DATA_HOME`, and a hash manifest
   prevents overwriting or removing unknown/modified files. A clean fake-HOME
   install/resolve/uninstall round trip and an in-place managed-lab manifest
   upgrade both passed.
@@ -745,7 +746,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   key cycle to the terminal. Fresh presses recover from a focus-hidden release.
 - Maximize/restore and minimize/restore are proven through native decorations.
   Hidden/minimized windows skip drawing and presentation but keep observation
-  and Session progress alive. A minimized owned child produced 500 lines without
+  and Instance progress alive. A minimized owned child produced 500 lines without
   any PTY resize; restore presented the newest output. The app spent one 10 ms
   CPU tick processing that burst and zero ticks during the following three
   seconds of idle. Unfocused but visible windows still paint normally.
@@ -755,7 +756,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   rejects empty/NUL/invalid-UTF-8/oversized paths instead of executing or
   interpreting them. A real Dolphin → Howl KWin drag proved spaces plus an
   embedded single quote as `'/tmp/howl-drop-fixture/Captain'\''s notes.txt' `.
-- Ctrl+click opens only canonical Session OSC 8 HTTP(S) hyperlinks; terminal
+- Ctrl+click opens only canonical Instance OSC 8 HTTP(S) hyperlinks; terminal
   text is never regexed into a link and `file://` is refused deliberately.
 - Canonical BEL / RequestAttention / StealFocus consequences request brief
   desktop attention without stealing focus. Ordinary notification messages are
@@ -800,10 +801,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Copy diagnostics action that excludes secrets and irrelevant environment data.
 - Optional frame/revision/performance counters for investigation, invisible in
   ordinary use.
-- Clear error state for unsupported image resources, bridge mismatch, Session
+- Clear error state for unsupported image resources, bridge mismatch, Instance
   attach failure, renderer failure, and invalid config.
 - Recovery actions are explicit; the client does not silently spawn a different
-  Session when attach fails.
+  Local Instance when attach fails.
 
 ### 19. Performance and resource behavior
 
@@ -812,8 +813,9 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Event-driven presentation loop sleeps between invalidations.
 - Quiet Home tab measured at effectively 0.00% of one core over a five-second
   interval on Home.
-- Active btop measured about 0.25–0.30% of one core in the Odin client after the
-  scheduler fix; btop and `howl-sessiond` cost more than the presentation shell.
+- A pre-Instance active-btop sample measured about 0.25–0.30% of one core in
+  the Odin GUI after the scheduler fix. Its sibling service-process cost belongs to
+  the historical topology and is superseded by the whole-process-tree comparison below.
 - Warm complete Canvas regeneration measured roughly 0.7 ms on the attached Home
   view and roughly 1.9 ms on the larger Local shell during the first renderer
   canary.
@@ -825,9 +827,9 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   and collapsed on the owning GUI with process detail, was compared in private
   KWin. Sixty-second process-local user+system ticks were summed exactly once;
   100% is one logical CPU. btop/shell are included; compositor and sampler are not.
-- Baseline total was 3.23% (GUI 1.10%, Session 1.63%, btop 0.50%); matching Kitty
+- Baseline total was 3.23% (GUI 1.10%, then-service 1.63%, btop 0.50%); matching Kitty
   was 0.65% (GUI/helpers 0.12%, btop 0.53%). The accepted CPU slice measured 1.60%
-  total (GUI 0.57%, Session 0.58%, btop 0.45%). Howl overhead fell from 2.73% to
+  total (GUI 0.57%, then-service 0.58%, btop 0.45%). Howl overhead fell from 2.73% to
   1.15%, about 58%, but remains materially above Kitty. Small differences between
   runs are not stable promises; machine load was not frozen.
 - Unix observations avoid unnecessary compression/decompression using the shared
@@ -844,12 +846,12 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **PROVEN: local Yazi image-path latency, 2026-09-16**
 
-- The local Pictures/40-item walk exposed shared VT and Session costs rather
-  than SDL presentation. Inert printable-ASCII APC runs now use the parser's
+- The local Pictures/40-item walk exposed shared VT and then-current service costs
+  rather than SDL presentation. Inert printable-ASCII APC runs now use the parser's
   no-transition prefix; control bytes, bounds and failure recovery stay exact.
-  Session counts immutable image-placement slots once per manifest/visibility
-  loop rather than repeatedly scanning the viewport for placeholders.
-- A warmed old/new Session comparison retained the same GUI/bridge: observation
+  The then-current service counts immutable image-placement slots once per
+  manifest/visibility loop rather than repeatedly scanning the viewport for placeholders.
+- A warmed old/new service comparison retained the same GUI/bridge: observation
   p95 628.9 -> 7.3 ms, SDL input-event age p95 798.8 -> 1.3 ms; no image-quality
   reduction, new debounce or skipped payload policy was added. These are scoped
   dequeue/observation measurements, not an input-to-photon guarantee.
@@ -863,15 +865,17 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 **PROVEN: local pixel geometry and full tiled-preview coverage**
 
 - Owned Odin panes send the actual Canvas cell-pixel metrics with canonical cell
-  counts. Session commits VT queries, in-band resize and PTY pixel dimensions
-  transactionally. This removes the previous 10x20 reported versus 11x24 drawn
-  mismatch; observers still cannot resize or silently claim an attached Session.
+  counts. The then-current terminal service commits VT queries, in-band resize and
+  PTY pixel dimensions transactionally. This removes the previous 10x20 reported
+  versus 11x24 drawn
+  mismatch; observers still cannot resize or silently claim an attached Instance.
 - The explicit v8 bundle boundary carries the pixel pair and raises independent
   placement capacity to 16K within the same 1 MiB manifest bound. Retained image
   bytes remain 64 MiB bounded. A 1,600-placement identity test crosses the old
   ceiling; a live tall preview covers every source pixel across 1,271 placements.
-- A controlled 320x240 RGBA fixture survived source -> Session resource byte for
-  byte, and all 76,800 displayed RGB pixels matched at 1:1. This is not a promise
+- A controlled 320x240 RGBA fixture survived source -> terminal-service resource
+  byte for byte, and all 76,800 displayed RGB pixels matched at 1:1. This is not
+  a promise
   that arbitrary user images resized by their producer remain pixel-identical.
 - Terminal Doom requests a 1452x912 destination for its 640x400 source in the
   full-sized test pane. The geometry-only checkpoint still approached one CPU
@@ -884,7 +888,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   repeats a full viewport scan for each retained image. No new cache or timing
   heuristic was added; bank/admission/deletion and real placeholder tests pass.
 - Identical GUI/bridge A/B at 1920x1036, source 640x400 and destination 1452x912:
-  ~15.9 -> 69.9 full RGBA uploads/s; Session CPU per uploaded frame ~62.0 -> 8.65 ms.
+  ~15.9 -> 69.9 full RGBA uploads/s; then-service CPU per uploaded frame
+  ~62.0 -> 8.65 ms.
   The half-window repeat also reached ~70 uploads/s. Both retained exact image
   semantics and zero observation errors. These are scoped upload cadence/CPU
   measurements, not optical frame-rate or universal graphics acceptance.
@@ -917,7 +922,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   pixel-identical, but the Howl-brand producer proposal is application-checked
   only: it has not been compiled, submitted, or installed. Stock Yazi quality is
   not accepted, and Howl must not ignore requested rectangles or spoof Kitty.
-- Separate transfer/decode, Session transport, client resource fetch, Canvas work,
+- Separate transfer/decode, Instance/HWLS transport, client resource fetch, Canvas work,
   texture upload and presentation costs before choosing an optimization. Record
   workload, build mode, display scale and local-versus-remote producer context.
 - Compare the same case before/after; pressure image replacement/removal, retained
@@ -931,10 +936,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Preserve near-zero idle CPU as a regression bar.
 - Target compositor-smooth 60 FPS presentation during sufficiently fast terminal
   output without blindly repainting at 60 Hz.
-- Coalesce Session bursts to newest useful frame rather than render obsolete
+- Coalesce Instance revision bursts to the newest useful frame rather than render obsolete
   intermediate revisions.
 - Measure frame production, Canvas composition, SDL painting, GPU present, and
-  Session costs separately.
+  Instance/service costs separately.
 - Bound retained resources and memory per pane/tab; no accidental unbounded UI
   logs or frame queues.
 - Hidden/minimized windows should perform less work, not more.
@@ -954,14 +959,14 @@ The ongoing canary matrix should include:
 - Neovim, btop, tmux/zellij, less/man, fzf, yazi, and at least one mouse-aware
   application;
 - maximize/fullscreen/DPI/display transitions;
-- shell/process exit, app close/reopen, Session disconnect/reconnect;
+- shell/process exit, app close/reopen, Instance disconnect/reconnect;
 - image transfer, repeated replacement/animation, and interaction under image load;
 - sustained high-output CPU/memory/frame-time measurement.
 
 For co-operative desktop dogfood, put each tested iteration into Captain's live
 GUI rather than preserving an old golden window beside it. Check active child
 work before replacement, retain saved profiles/bindings, and keep owned versus
-attached Session teardown explicit. Use an isolated compositor only when it is a
+attached Instance teardown explicit. Use an isolated compositor only when it is a
 deliberate part of the current testing agreement, not stale handoff recovery.
 
 ## Dependency posture
@@ -972,11 +977,12 @@ The Odin application deliberately has a small **direct** dependency surface:
 - Odin's vendor SDL3 and SDL3_ttf bindings;
 - `libSDL3` and `libSDL3_ttf` at runtime;
 - one app-private `libhowl_odin_bridge.so`;
-- the sibling `howl-sessiond` executable for client-owned Sessions;
 - libc/libm from the host platform.
 
-The bridge reuses in-tree `howl-client`, `howl-session`, `howl-render`, and the
-existing `SessionProcess` owner. Native text rendering dynamically uses the
+The bridge reuses in-tree `howl-client`, `server-client`, `howl-render`, and the
+optional `howl_local` owner. Local creation composes canonical `howl-instance`/
+`howl-pty`/`howl-vt` in-process; Remote attach remains non-owning. Native text
+rendering dynamically uses the
 system FreeType/HarfBuzz stack, which in turn brings normal font/image support
 libraries such as zlib, bzip2, libpng, Brotli, GLib, Graphite2, and PCRE2 on the
 current Arch machine.
@@ -994,37 +1000,37 @@ Howl's; SDL is the narrow platform/rendering substrate.
   Odin for convenience.
 - Do not add a generic UI framework merely to make Settings faster to build.
 - Do not preserve ambiguous scrollback across horizontal reflow by guessing.
-- Do not make attached Session lifecycle implicit.
+- Do not make attached Instance lifecycle implicit.
 - Do not spend complexity on animation, translucency, or decorative effects
   while ordinary terminal interactions remain rough.
 - Do not optimize from folklore: measure the specific owner that is expensive.
 
 ## Current near-term pressure lanes
 
-Reconciled on 2026-09-17 after `a67fbd7`, `545697a`, and `c953298`. The existing
-Cairn renderer/desktop/accessibility and performance/reliability/packaging steps
-remain open; these are residual acceptance tasks, not a new run or schedule.
+Reconciled on 2026-09-27 after the accepted Linux/Windows Local + Remote checkpoints.
+These are residual product/qualification tasks, not permission to reopen ownership
+that is already proved.
 
-1. Review the delivered tab-title/progress and graphics improvements in ordinary
-   co-op use. Keep checked source, built artifact, installation, and runtime proof
-   distinct. Roll out framing-v9 clients and their Session endpoints as matching
-   bundles; local Odin evidence does not update mobile, Web/PWA, or remote hosts.
-2. Complete the separately tested, truthful Yazi producer integration. Preserve
-   native-size pixel correctness, full preview coverage, and placement identity.
-3. Measure remaining Session CPU/copy costs, input during image churn, longer
-   memory slopes, and asynchronous presentation needs. Do not replace SDL from
-   folklore or describe image-upload rate as optical frame rate.
-4. Qualify the remaining late ACK/DSR and deferred host-reply classes separately
-   from the fixed mode-2048 discovery/teardown leak. No blanket reply dropping.
-5. Give other transported properties deliberate consumers where useful. Complete
-   native accessibility, keyboard focus, font-family selection, diagnostics,
-   mixed-monitor/hotplug, and distribution qualification. Existing partial proofs
-   do not close either broad Cairn step.
-6. Retain the wider WANTED/EXPLORE inventory above without silently treating
-   optional UI ideas, denied protocols, or future platforms as finished work.
-   Keep documentation and compact runtime receipts current, and keep temporary
-   experiments in the active workstream rather than adding another product layer.
+1. Keep ordinary Local and Remote dogfood boring on Linux and Windows. Local owns a
+   canonical in-process Instance; Server browsing/attach stays non-owning. Do not
+   reintroduce a sibling daemon, per-Instance listener, or orchestration-shaped Local route.
+2. Continue evidence-led graphics/performance work against current framing v10. Separate
+   producer, Instance/HWLS, Canvas, backend upload and presentation costs; preserve the
+   near-zero idle floor and exact image/resource lifetime.
+3. Qualify remaining desktop product seams: mixed-monitor/hotplug, accessibility,
+   font-family selection, diagnostics, and installed-bundle/distribution behavior.
+4. Add host-consequence behavior only where a concrete desktop experience earns it.
+   Odin currently owns explicit consequence authority; protocol semantics remain in VT.
+5. Give transported properties deliberate consumers where useful, but keep cwd/shell
+   metadata, discovery and process launch policy outside terminal semantics.
+6. Retain the wider WANTED/EXPLORE inventory without treating optional UI ideas or
+   historical canaries as current architecture. Keep transient experiments in workstreams.
 
+
+Historical checkpoint note: dated sections below preserve the vocabulary and process
+names measured in that epoch. Current ownership is the Instance/Server model described
+above and in the 2026-09-26 Local/Remote checkpoints; old `Session`/`howl-sessiond`
+mentions below are evidence labels, not current product dependencies.
 
 Private-lab workflow (2026-09-17): Captain explicitly authorizes managed KWin
 for repeatable input/control tests, then promotion of tested iterations into the
