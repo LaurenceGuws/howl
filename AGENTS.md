@@ -34,7 +34,7 @@ When a foundation is structurally wrong, replace it beside the old implementatio
 
 ## Evidence
 
-Runtime claims require bounded reproducible evidence. Temporary probes, captures, A/B embedders, and instrumentation live outside accepted source or under ignored `.zig/work/`; delete them after the question is answered. Git keeps only the implementation and conclusions that remain useful.
+Runtime claims require bounded reproducible evidence. Temporary probes, captures, A/B embedders, and instrumentation stay outside accepted source and are deleted after the question is answered. Git keeps only the implementation and conclusions that remain useful.
 
 Do not turn profiling, logging, test scaffolding, or one host's presentation needs into product architecture. References inform behavior and quality, not source structure.
 
