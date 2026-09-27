@@ -61,6 +61,7 @@ pub fn build(b: *std.Build) void {
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const text = text_dependency.module("howl_text");
+    const test_fonts = text_dependency.module("howl_text_test_fonts");
     const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
     const presentation = b.createModule(.{
         .root_source_file = render_dependency.path("src/presentation.zig"),
@@ -224,18 +225,6 @@ pub fn build(b: *std.Build) void {
     fast_test_module.addImport("howl_vt", vt.module("howl_vt"));
     fast_test_module.addImport("howl_text", text);
     fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
-    const fast_test_fonts = b.addOptions();
-    fast_test_fonts.addOption(
-        []const u8,
-        "primary_font",
-        b.root.joinString(b.allocator, "../howl-text/testdata/primary.ttf") catch @panic("OOM"),
-    );
-    fast_test_fonts.addOption(
-        []const u8,
-        "symbol_font",
-        b.root.joinString(b.allocator, "../howl-text/testdata/symbols.ttf") catch @panic("OOM"),
-    );
-    const test_fonts = fast_test_fonts.createModule();
     fast_test_module.addImport("test_fonts", test_fonts);
     fast_test_module.linkSystemLibrary("vulkan", .{});
     const fast_tests = b.addTest(.{
