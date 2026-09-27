@@ -108,6 +108,17 @@ diff -u tools/source_audit.allow <(
         sort
 ) || { printf 'Howl sensitive source sites changed; review the exact allowlist.\n' >&2; status=1; }
 
+# Shared zig-audit is a canary beside Howl's existing local audit while the common
+# checker is dogfooded. Absence on a fresh machine does not weaken the local gate.
+if command -v zig-audit >/dev/null 2>&1; then
+    if ! zig-audit check; then
+        printf 'Howl shared Zig sensitive-source canary failed.\n' >&2
+        status=1
+    fi
+else
+    printf 'Howl source audit: warning: zig-audit not found; shared sensitive-source canary skipped (local audit remains active).\n' >&2
+fi
+
 # The Dart/native FFI surface has one common mobile-safe contract plus a
 # desktop-only Local ownership extension. Every declaration must exist as a
 # Zig export; only the common contract is retained through final iOS linking.
