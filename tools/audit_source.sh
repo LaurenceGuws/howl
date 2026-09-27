@@ -152,6 +152,18 @@ while IFS= read -r literal; do
     fi
 done < <(grep -RhoE "['\"]howl_native_[a-z0-9_]+['\"]" howl-flutter/lib --include='*.dart' | sort -u)
 
+# iOS native-host fonts intentionally mirror canonical howl-text fixture bytes.
+# Keep the duplication explicit until an Xcode build proves a single-copy packaging
+# path; drift between the two copies is never acceptable.
+if ! cmp -s howl-text/testdata/symbols.ttf howl-flutter/ios/Runner/NativeFonts/IosevkaTermNerdFont-Regular.ttf; then
+    printf 'iOS Iosevka font mirror drifted from howl-text canonical bytes\n'
+    status=1
+fi
+if ! cmp -s howl-text/testdata/primary.ttf howl-flutter/ios/Runner/NativeFonts/NotoSans-Regular.ttf; then
+    printf 'iOS Noto Sans font mirror drifted from howl-text canonical bytes\n'
+    status=1
+fi
+
 # VERSION is the single current-workspace release marker. Every current package
 # and user-facing native client version must move with it; versioned embedding
 # examples remain deliberately frozen at their named historical contract.

@@ -1,6 +1,6 @@
 # iOS native font provenance
 
-These are unmodified binaries promoted from the physically accepted iOS native-host pressure fixture.
+These are unmodified iOS resource mirrors of the canonical binaries owned by `howl-text/testdata`. The source audit requires the mirrors to remain byte-identical.
 
 - `IosevkaTermNerdFont-Regular.ttf`
   - SHA-256: `d5116846a175ef4a988f61241dd3572d6a9dd3e09d4d168c67954b10783a7880`
@@ -11,4 +11,9 @@ These are unmodified binaries promoted from the physically accepted iOS native-h
   - embedded copyright: `Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)`
   - embedded license: SIL Open Font License 1.1
 
-`OFL-1.1.md` carries the license text used by both binaries. The font files also carry their license URL/notice in their OpenType name metadata.
+The font files carry their license URL/notice in OpenType name metadata; the canonical combined license text lives with `howl-text`.
+
+Canonical owners:
+- `IosevkaTermNerdFont-Regular.ttf` mirrors `howl-text/testdata/symbols.ttf`.
+- `NotoSans-Regular.ttf` mirrors `howl-text/testdata/primary.ttf`.
+- Canonical combined provenance/license text: `howl-text/LICENSES/test-fonts.txt`.

@@ -51,8 +51,10 @@ zig build check
 zig build test
 ```
 
-Deterministic font fixtures used by the native proofs are documented in
-`LICENSES/test-fonts.txt`. Generated terminal-glyph provenance is documented in
+Deterministic redistributed font assets and proof fixtures are documented in
+`LICENSES/test-fonts.txt`. `primary.ttf` and `symbols.ttf` are also canonical shared
+assets consumed by maintained hosts; downstream product copies must remain byte-identical.
+Generated terminal-glyph provenance is documented in
 `LICENSES/generated-glyphs.txt`.
 
 ## Owned font bytes
