@@ -1,5 +1,6 @@
 {
   "schema": 1,
   "source": "git",
-  "baseline": "tools/source_audit.allow"
+  "baseline": "tools/source_audit.allow",
+  "minimum_ruleset": 1
 }
