@@ -1,12 +1,17 @@
-//! Windows catalogue for listener-free Local Instances.
+//! Desktop catalogue for listener-free Local Instances.
 //!
-//! This target uses the canonical Howl Instance, Windows ConPTY PTY owner, and
-//! listener-free in-process HWLS pipe streams.
+//! The catalogue owns platform-neutral Local identity/lifetime. Linux and
+//! Windows differ only in the unnamed stream owner used beneath ordinary HWLS.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const client = @import("howl_client");
 const instance = @import("howl_instance");
-const local_instance = @import("local_owner_windows.zig");
+const local_instance = switch (builtin.os.tag) {
+    .linux => @import("local_owner_linux.zig"),
+    .windows => @import("local_owner_windows.zig"),
+    else => @compileError("desktop Local catalogue requires Linux or Windows"),
+};
 
 const maximum_local_instances: usize = 64;
 

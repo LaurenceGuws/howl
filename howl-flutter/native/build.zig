@@ -55,10 +55,8 @@ pub fn build(b: *std.Build) void {
         target,
         optimize,
         repo,
-        if (linux_desktop)
-            "howl-client/src/local_linux.zig"
-        else if (windows)
-            "howl-client/src/local_windows.zig"
+        if (linux_desktop or windows)
+            "howl-client/src/local_desktop.zig"
         else
             "howl-client/src/local_unsupported.zig",
     );

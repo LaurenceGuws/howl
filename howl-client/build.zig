@@ -19,10 +19,8 @@ pub fn build(b: *std.Build) void {
     // means ordinary remote clients still import only the transport-neutral
     // howl_client module and do not inherit PTY/VT/process ownership.
     const local = b.addModule("howl_local", .{
-        .root_source_file = b.path(if (linux_desktop)
-            "src/local_linux.zig"
-        else if (windows)
-            "src/local_windows.zig"
+        .root_source_file = b.path(if (linux_desktop or windows)
+            "src/local_desktop.zig"
         else
             "src/local_unsupported.zig"),
         .target = target,
