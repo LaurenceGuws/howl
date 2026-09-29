@@ -1,6 +1,7 @@
 //! Curates the tracked Howl core modules and their owner-local proofs.
 
 const std = @import("std");
+const howl_text_build = @import("howl-text/build.zig");
 
 const children = [_][]const u8{
     "howl-vt",
@@ -11,15 +12,23 @@ const children = [_][]const u8{
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
-    const target = b.option([]const u8, "target", "Forward the target triple to every child");
-    const cpu = b.option([]const u8, "cpu", "Forward target CPU features to every child");
+    const target = b.standardTargetOptions(.{});
+
+    const text_module = howl_text_build.addModule(
+        b,
+        b.path("howl-text"),
+        target,
+        optimize,
+        false,
+    );
+    std.debug.assert(b.modules.get("howl_text") == text_module);
 
     const check = b.step("check", "Compile the Howl core and run source audit");
     const test_step = b.step("test", "Run every Howl core proof");
 
     inline for (children) |child| {
-        addChildBuild(b, check, child, "check", optimize, target, cpu, false);
-        addChildBuild(b, test_step, child, "test", optimize, target, cpu, true);
+        addChildBuild(b, check, child, "check", optimize, target, false);
+        addChildBuild(b, test_step, child, "test", optimize, target, true);
     }
 
     const logger_module = b.createModule(.{
@@ -53,11 +62,11 @@ pub fn build(b: *std.Build) void {
     protocol.dependOn(&protocol_command.step);
 
     const simulate = b.step("simulate", "Run VT simulations");
-    addChildBuild(b, simulate, "howl-vt", "simulate", optimize, target, cpu, true);
+    addChildBuild(b, simulate, "howl-vt", "simulate", optimize, target, true);
     const fuzz = b.step("fuzz:terminal", "Run VT fuzz proofs");
-    addChildBuild(b, fuzz, "howl-vt", "fuzz", optimize, target, cpu, true);
+    addChildBuild(b, fuzz, "howl-vt", "fuzz", optimize, target, true);
     const benchmark = b.step("benchmark:m7", "Run the VT m7 benchmark");
-    addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, cpu, true);
+    addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, true);
     b.default_step = check;
 }
 
@@ -67,16 +76,22 @@ fn addChildBuild(
     child: []const u8,
     step: []const u8,
     optimize: std.builtin.OptimizeMode,
-    target: ?[]const u8,
-    cpu: ?[]const u8,
+    target: std.Build.ResolvedTarget,
     passthru: bool,
 ) void {
     const command = b.addSystemCommand(&.{ b.graph.zig_exe, "build", step });
     command.setName(b.fmt("{s} {s}", .{ child, step }));
     command.setCwd(b.path(child));
     command.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    if (target) |value| command.addArg(b.fmt("-Dtarget={s}", .{value}));
-    if (cpu) |value| command.addArg(b.fmt("-Dcpu={s}", .{value}));
+
+    const target_text = target.query.zigTriple(b.allocator) catch @panic("OOM");
+    command.addArg(b.fmt("-Dtarget={s}", .{target_text}));
+
+    const cpu_text = target.query.serializeCpuAlloc(b.allocator) catch @panic("OOM");
+    if (cpu_text.len != 0) {
+        command.addArg(b.fmt("-Dcpu={s}", .{cpu_text}));
+    }
+
     if (passthru) {
         command.addArg("--");
         command.addPassthruArgs();

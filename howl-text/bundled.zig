@@ -3,7 +3,12 @@ const std = @import("std");
 
 /// Adds the real text engine with target-built C/C++ dependencies. No source
 /// lookup, browser API, renderer policy, or font data belongs in this build.
-pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+pub fn addModule(
+    b: *std.Build,
+    package_root: std.Build.LazyPath,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
     const wasm = target.result.cpu.arch == .wasm32;
     if (wasm and (target.result.os.tag != .wasi or
         !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.exception_handling)) or
@@ -19,7 +24,7 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     const hb_include = hb_root.path(b, "src");
     const ftmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     ftmod.addIncludePath(ft_include);
-    ftmod.addIncludePath(b.path("config"));
+    ftmod.addIncludePath(package_root.path(b, "config"));
     ftmod.addCSourceFiles(.{
         .root = ft_root,
         .files = &.{
@@ -53,7 +58,7 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         "-DHB_NO_MMAP", "-DHB_NO_OPEN",    "-DHB_NO_SETLOCALE", "-DHB_NO_GETENV",  "-DHB_NO_ATEXIT",
     } });
     const hblib = b.addLibrary(.{ .name = "howl-harfbuzz", .linkage = .static, .root_module = hbmod });
-    const translated = b.addTranslateC(.{ .root_source_file = b.path("config/native.h"), .target = target, .optimize = optimize });
+    const translated = b.addTranslateC(.{ .root_source_file = package_root.path(b, "config/native.h"), .target = target, .optimize = optimize });
     // MinGW enables fortified CRT inline bodies in optimized translation.
     // This Zig pin translates two unused wide-string secure wrappers into
     // invalid Zig. The translated module is declarations only; the actual
@@ -65,7 +70,7 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     translated.addIncludePath(ft_include);
     translated.addIncludePath(hb_include);
     const module = b.addModule("howl_text", .{
-        .root_source_file = b.path("src/text.zig"),
+        .root_source_file = package_root.path(b, "src/text.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -76,6 +81,6 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     module.linkLibrary(ftlib);
     // The pinned WASI libc has the real jump runtime, but needs LLVM 22's tag.
     // Keep the compatibility definition with its consuming target libraries.
-    if (wasm) module.addCSourceFile(.{ .file = b.path("config/wasi-exception-tag.c"), .flags = &.{} });
+    if (wasm) module.addCSourceFile(.{ .file = package_root.path(b, "config/wasi-exception-tag.c"), .flags = &.{} });
     return module;
 }

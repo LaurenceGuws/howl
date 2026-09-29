@@ -166,5 +166,21 @@ Each tracked core module owns its own `build.zig` and proofs. Root gates curate 
 local core and frozen wire vectors. Python 3 is used only as build-time evidence for
 language-neutral protocol fixtures; it is not a Howl runtime dependency.
 
+The repository root is also the distribution boundary for downstream Zig consumers.
+It exposes maintained child recipes as named modules without duplicating their build
+logic. `howl_text` is currently available this way:
+
+```zig
+const howl = b.dependency("howl", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+root.addImport("howl_text", howl.module("howl_text"));
+```
+
+Consumers should pin an immutable repository tag or commit. The `howl-text/` package
+continues to own its FreeType/HarfBuzz module recipe and standalone proofs.
+
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.

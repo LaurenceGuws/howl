@@ -6,21 +6,26 @@ pub fn build(b: *std.Build) void {
     const test_fonts = testFontModule(b);
     const bundled = b.option(bool, "bundled", "Build pinned memory-only FreeType/HarfBuzz for this target") orelse false;
     if (bundled) {
-        const module = @import("bundled.zig").addModule(b, target, optimize);
+        const module = addModule(
+            b,
+            b.path("."),
+            target,
+            optimize,
+            true,
+        );
         std.debug.assert(b.modules.get("howl_text") == module);
         return;
     }
-    const native_c = nativeCModule(b, target, optimize);
 
-    const module = b.addModule("howl_text", .{
-        .root_source_file = b.path("src/text.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    module.addImport("native_c", native_c);
-    module.linkSystemLibrary("freetype", .{});
-    module.linkSystemLibrary("harfbuzz", .{});
+    const module = addModule(
+        b,
+        b.path("."),
+        target,
+        optimize,
+        false,
+    );
+    std.debug.assert(b.modules.get("howl_text") == module);
+    const native_c = nativeCModule(b, target, optimize);
 
     const tested = b.createModule(.{
         .root_source_file = b.path("src/text.zig"),
@@ -77,6 +82,36 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(contract_tests).step);
     test_step.dependOn(&b.addRunArtifact(generated_tests).step);
     b.default_step = check;
+}
+
+/// Exposes the maintained howl-text module recipe to workspace consumers.
+pub fn addModule(
+    b: *std.Build,
+    package_root: std.Build.LazyPath,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    bundled: bool,
+) *std.Build.Module {
+    if (bundled) {
+        return @import("bundled.zig").addModule(
+            b,
+            package_root,
+            target,
+            optimize,
+        );
+    }
+
+    const native_c = nativeCModule(b, target, optimize);
+    const module = b.addModule("howl_text", .{
+        .root_source_file = package_root.path(b, "src/text.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    module.addImport("native_c", native_c);
+    module.linkSystemLibrary("freetype", .{});
+    module.linkSystemLibrary("harfbuzz", .{});
+    return module;
 }
 
 fn testFontModule(b: *std.Build) *std.Build.Module {
