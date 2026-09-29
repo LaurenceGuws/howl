@@ -1,11 +1,11 @@
 # howl-text
 
-`howl-text` is the terminal glyph-production owner: bounded font loading, metrics,
-fallback selection, OpenType shaping, source-cluster identity, glyph lookup, ordinary
-alpha rasterization, and generated terminal-cell glyph rasterization.
+`howl-text` is a bounded reusable Zig text-production module: font loading, metrics,
+fallback selection, OpenType shaping, source-cluster identity, glyph lookup, natural
+alpha rasterization, and caller-sized generated glyph geometry.
 
-It deliberately stops before presentation. Windows, widgets, terminal cells,
-line wrapping, clipping, GPU resources, and application layout belong to its
+It deliberately stops before presentation. Windows, widgets, text layout, terminal
+cells, line wrapping, clipping, GPU resources, and application layout belong to its
 callers.
 
 ## Boundary
@@ -22,11 +22,38 @@ The public module is `howl_text`.
   size with the glyph's natural bearings. It does not rescale or crop to fit a
   presentation box.
 - `generated` owns the repository's Kitty-derived box/block/Braille/sextant/octant,
-  Powerline, progress/spinner, and branch terminal-cell masks from explicit cell
-  geometry. These are glyph production, not a rendering backend.
+  Powerline, progress/spinner, and branch masks from explicit caller-supplied geometry.
+  The ordinary `rasterize` API requires only a target width and height; callers may use
+  terminal cells, editor cells, or other layout boxes. Kitty/OSC-specific sizing stays
+  explicit in the narrower box/Powerline/progress/branch APIs. These are glyph
+  production, not a rendering backend.
 
 Retained FreeType and HarfBuzz state is opaque to consumers. Allocation
 ownership and shaping/raster ceilings are explicit in the API.
+
+### Generated geometry
+
+Generated glyphs are not coupled to a VT or terminal renderer. Their geometry is
+explicit because box drawing, block elements, Braille, Powerline separators, and
+similar symbols often need to meet the edges of the layout box exactly. A terminal
+cell is one caller-owned box; a fixed-column editor, dashboard, code block, or other
+text layout can supply different geometry.
+
+The generic generated path remains:
+
+```zig
+const family = howl_text.generated.classify(codepoint);
+try howl_text.generated.rasterize(
+    pixels,
+    width_px,
+    height_px,
+    codepoint,
+);
+```
+
+Some families additionally expose Kitty-derived stroke/DPI/multicell controls for
+terminal consumers. Those controls are optional specialization rather than a
+requirement of generated glyph production.
 
 ## Current scope
 
@@ -54,8 +81,7 @@ zig build test
 Deterministic redistributed font assets and proof fixtures are documented in
 `LICENSES/test-fonts.txt`. `primary.ttf` and `symbols.ttf` are also canonical shared
 assets consumed by maintained hosts; downstream product copies must remain byte-identical.
-Generated terminal-glyph provenance is documented in
-`LICENSES/generated-glyphs.txt`.
+Generated-glyph provenance is documented in `LICENSES/generated-glyphs.txt`.
 
 ## Owned font bytes
 

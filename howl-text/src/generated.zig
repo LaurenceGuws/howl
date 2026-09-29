@@ -1,4 +1,4 @@
-//! Owns bounded generated terminal-glyph classification and alpha rasterization.
+//! Owns bounded caller-sized generated glyph classification and alpha rasterization.
 
 const std = @import("std");
 const generated_block = @import("generated_block.zig");
@@ -9,7 +9,7 @@ const generated_legacy = @import("generated_legacy.zig");
 const generated_powerline = @import("generated_powerline.zig");
 const generated_progress = @import("generated_progress.zig");
 
-/// Bounds each generated terminal-cell dimension and stroke to 256 pixels,
+/// Bounds each generated glyph dimension and stroke to 256 pixels,
 /// limiting the most expensive rounded glyph to 6,356,992 curve samples.
 pub const max_extent_px: u16 = 256;
 
@@ -23,7 +23,7 @@ pub const Error = error{
     UnsupportedGlyph,
 };
 
-/// Classifies one implemented generated terminal glyph family.
+/// Classifies one implemented generated glyph family.
 pub const Glyph = enum {
     box,
     block,

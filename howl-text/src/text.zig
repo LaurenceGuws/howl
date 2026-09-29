@@ -1,12 +1,12 @@
-//! Public boundary for bounded terminal glyph production.
+//! Public boundary for bounded reusable text production.
 //!
-//! Native font loading/shaping/rasterization and generated terminal-cell glyphs
-//! share one owner; presentation, clipping, caches, and backend resources do not.
+//! Native font loading/shaping/rasterization and caller-sized generated glyphs
+//! share one owner; presentation, layout, clipping, caches, and backend resources do not.
 
 const std = @import("std");
 const engine = @import("engine.zig");
 
-/// Owns generated terminal-cell glyph classification and alpha rasterization.
+/// Owns caller-sized generated glyph classification and alpha rasterization.
 pub const generated = @import("generated.zig");
 
 pub const max_fallbacks = engine.max_fallbacks;
