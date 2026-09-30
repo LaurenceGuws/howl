@@ -1119,7 +1119,7 @@ fn wouldEncodeMouse(event: MouseEvent, tracking: MouseTrackingMode, protocol: Mo
 
     const row1 = mouseRow1(event.row);
     const col1 = @as(u32, event.col) + 1;
-    const cb = mouseCode(event, tracking);
+    const cb = mouseCode(event, tracking, protocol);
     if (protocol == .sgr_pixel) {
         const pixel_x = event.pixel_x orelse return false;
         const pixel_y = event.pixel_y orelse return false;
@@ -1150,7 +1150,7 @@ pub fn encodeMouse(buf: []u8, event: MouseEvent, tracking: MouseTrackingMode, pr
 
     const row1 = mouseRow1(event.row);
     const col1 = @as(u32, event.col) + 1;
-    const cb = mouseCode(event, tracking);
+    const cb = mouseCode(event, tracking, protocol);
     return switch (protocol) {
         .sgr => encodeSgrMouse(buf, cb, col1, row1, event.kind == .release),
         .sgr_pixel => encodeSgrMouse(
@@ -1166,10 +1166,16 @@ pub fn encodeMouse(buf: []u8, event: MouseEvent, tracking: MouseTrackingMode, pr
     };
 }
 
-fn mouseCode(event: MouseEvent, tracking: MouseTrackingMode) u16 {
+fn mouseCode(event: MouseEvent, tracking: MouseTrackingMode, protocol: MouseProtocol) u16 {
     var code: u16 = switch (event.kind) {
         .press => pressButtonCode(event.button),
-        .release => 3,
+        // SGR uses the final byte to distinguish press (M) from release (m),
+        // so Cb must continue naming the released button. Legacy CSI-M/UTF-8
+        // and urxvt reporting use button code 3 for release.
+        .release => if (protocol == .sgr or protocol == .sgr_pixel)
+            pressButtonCode(event.button)
+        else
+            3,
         .wheel => wheelButtonCode(event.button),
         .move => moveBaseCode(event),
     };
@@ -1252,6 +1258,14 @@ test "mouse protocols encode boundaries without partial sequences" {
     };
 
     try std.testing.expectEqualStrings("\x1b[<28;7;5M", encodeMouse(&buf, base, .normal, .sgr));
+    try std.testing.expectEqualStrings("\x1b[<0;7;5m", encodeMouse(&buf, .{
+        .kind = .release,
+        .button = .left,
+        .row = 4,
+        .col = 6,
+        .mod = .{},
+        .buttons_down = 0,
+    }, .normal, .sgr));
     try std.testing.expectEqualStrings("", encodeMouse(&buf, base, .normal, .sgr_pixel));
     try std.testing.expectEqualStrings("\x1b[<28;320;240M", encodeMouse(
         &buf,
