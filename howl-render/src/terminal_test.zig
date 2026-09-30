@@ -124,7 +124,15 @@ const Harness = struct {
         font: *text.FontSet,
         config: terminal.CanvasConfig,
     ) !Harness {
-        const owner = try terminal.initCanvas(allocator, font, config);
+        return initFaces(allocator, terminal.FontFaces.single(font), config);
+    }
+
+    fn initFaces(
+        allocator: std.mem.Allocator,
+        font_faces: terminal.FontFaces,
+        config: terminal.CanvasConfig,
+    ) !Harness {
+        const owner = try terminal.initCanvas(allocator, font_faces, config);
         errdefer terminal.deinitCanvas(owner);
         const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_external_images + 1);
         errdefer allocator.free(uploads);
@@ -252,7 +260,7 @@ fn firstRgba(commands: []const terminal.Command) ?@FieldType(terminal.Command, "
 }
 
 fn constructTerminalCanvas(allocator: std.mem.Allocator, font: *text.FontSet) !void {
-    const owner = try terminal.initCanvas(allocator, font, canvasConfig(64));
+    const owner = try terminal.initCanvas(allocator, terminal.FontFaces.single(font), canvasConfig(64));
     terminal.deinitCanvas(owner);
 }
 
@@ -507,6 +515,139 @@ test "terminal Canvas resolves style colors decorations and invisibility in fina
     try std.testing.expect(decoration_count >= 6);
 }
 
+test "terminal Canvas missing style variants share regular cache identity" {
+    var scalar = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+    };
+    cells[0].style_bits = 0;
+    cells[1].style_bits = 1 << 2;
+    cells[2].style_bits = 1 << 0;
+    cells[3].style_bits = (1 << 0) | (1 << 2);
+
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, cells.len);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const regular = try terminalFont();
+    defer regular.deinit();
+    var host = try Harness.init(std.testing.allocator, regular, canvasConfig(64));
+    defer host.deinit();
+
+    _ = try host.present(view);
+    const usage = terminal.canvasUsage(host.canvas);
+    try std.testing.expectEqual(@as(usize, 1), usage.shape.entries);
+    try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
+}
+
+test "terminal Canvas routes bold italic combinations through independent font owners" {
+    var scalar = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+        cell(&scalar, 1, 0),
+    };
+    cells[0].style_bits = 0;
+    cells[1].style_bits = 1 << 2;
+    cells[2].style_bits = 1 << 0;
+    cells[3].style_bits = (1 << 0) | (1 << 2);
+
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, cells.len);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const regular = try terminalFont();
+    defer regular.deinit();
+    const italic = try terminalFont();
+    defer italic.deinit();
+    const bold = try terminalFont();
+    defer bold.deinit();
+    const bold_italic = try terminalFont();
+    defer bold_italic.deinit();
+
+    var host = try Harness.initFaces(std.testing.allocator, .{
+        .regular = regular,
+        .italic = italic,
+        .bold = bold,
+        .bold_italic = bold_italic,
+    }, canvasConfig(64));
+    defer host.deinit();
+
+    const frame = (try host.present(view)).frame;
+    var alpha_count: usize = 0;
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => alpha_count += 1,
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 4), alpha_count);
+
+    const usage = terminal.canvasUsage(host.canvas);
+    try std.testing.expectEqual(@as(usize, 4), usage.shape.entries);
+    try std.testing.expectEqual(@as(usize, 4), usage.atlas_entries);
+}
+
+test "terminal Canvas curly underline uses one smooth atlas mask without staircase solids" {
+    var scalar = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
+    cells[0].style_bits = 1 << 7;
+    cells[0].underline_style = 2;
+    cells[0].underline_color = .{ .kind = .rgb, .value = 0x445566 };
+
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    defer host.deinit();
+    const frame = (try host.present(view)).frame;
+
+    const decoration = terminal.Color{ .r = 0x44, .g = 0x55, .b = 0x66, .a = 255 };
+    var curly_masks: usize = 0;
+    var old_staircase_solids: usize = 0;
+    var curly_source: ?terminal.SourceRect = null;
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (std.meta.eql(value.color, decoration)) {
+                curly_masks += 1;
+                const source_rect = value.resource.source orelse return error.MissingAlpha;
+                curly_source = source_rect;
+                try std.testing.expectEqual(@as(u16, 10), source_rect.width);
+            }
+        },
+        .solid => |value| {
+            if (std.meta.eql(value.color, decoration))
+                old_staircase_solids += 1;
+        },
+        else => {},
+    };
+
+    try std.testing.expectEqual(@as(usize, 1), curly_masks);
+    try std.testing.expectEqual(@as(usize, 0), old_staircase_solids);
+    const source_rect = curly_source orelse return error.MissingAlpha;
+    try std.testing.expect(source_rect.height > 2);
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    const upload = frame.uploads[0];
+    var saw_fractional_alpha = false;
+    for (0..source_rect.height) |row| {
+        const start =
+            upload.pixel_offset +
+            (@as(usize, source_rect.y) + row) * upload.stride +
+            source_rect.x;
+        for (frame.pixels[start..][0..source_rect.width]) |alpha| {
+            if (alpha != 0 and alpha != 255) saw_fractional_alpha = true;
+        }
+    }
+    try std.testing.expect(saw_fractional_alpha);
+}
 test "terminal Canvas places image z phases around terminal paint phases" {
     var a = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
@@ -829,7 +970,7 @@ test "dense 40x120 terminal Canvas is bounded and recovers from command exhausti
     const font = try terminalFont();
     defer font.deinit();
 
-    const limited = try terminal.initCanvas(std.testing.allocator, font, canvasConfig(command_count - 1));
+    const limited = try terminal.initCanvas(std.testing.allocator, terminal.FontFaces.single(font), canvasConfig(command_count - 1));
     defer terminal.deinitCanvas(limited);
     try std.testing.expectError(error.CommandLimit, terminal.update(limited, view));
     const failed = terminal.canvasUsage(limited);
@@ -981,9 +1122,9 @@ test "terminal Canvas construction releases every staged allocation and validate
     try std.testing.checkAllAllocationFailures(std.testing.allocator, constructTerminalCanvas, .{font});
     var invalid = canvasConfig(64);
     invalid.cell_size.width = 0;
-    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, font, invalid));
+    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
     invalid = canvasConfig(0);
-    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, font, invalid));
+    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
 }
 
 const VT = @import("howl_vt").Terminal;

@@ -7,11 +7,73 @@ const std = @import("std");
 const text = @import("howl_text");
 const generated = text.generated;
 
+/// Selects one caller-owned font face variant without owning terminal style policy.
+pub const FontVariant = enum(u2) {
+    regular,
+    italic,
+    bold,
+    bold_italic,
+};
+
+const font_variant_count: usize = 4;
+
+/// Borrows one required regular face plus optional style variants.
+///
+/// Missing variants fall back deterministically without font discovery:
+/// bold-italic prefers bold, then italic, then regular.
+pub const FontFaces = struct {
+    regular: *text.FontSet,
+    italic: ?*text.FontSet = null,
+    bold: ?*text.FontSet = null,
+    bold_italic: ?*text.FontSet = null,
+
+    pub fn single(regular: *text.FontSet) FontFaces {
+        return .{ .regular = regular };
+    }
+
+    pub fn select(self: FontFaces, variant: FontVariant) *text.FontSet {
+        return switch (self.resolveVariant(variant)) {
+            .regular => self.regular,
+            .italic => self.italic.?,
+            .bold => self.bold.?,
+            .bold_italic => self.bold_italic.?,
+        };
+    }
+
+    pub fn resolveVariant(self: FontFaces, variant: FontVariant) FontVariant {
+        return switch (variant) {
+            .regular => .regular,
+            .italic => if (self.italic != null) .italic else .regular,
+            .bold => if (self.bold != null) .bold else .regular,
+            .bold_italic => if (self.bold_italic != null)
+                .bold_italic
+            else if (self.bold != null)
+                .bold
+            else if (self.italic != null)
+                .italic
+            else
+                .regular,
+        };
+    }
+
+    pub fn metrics(self: FontFaces) text.Metrics {
+        return self.regular.metrics();
+    }
+
+    pub fn terminalMetricsCompatible(self: FontFaces) bool {
+        const regular = self.regular.metrics();
+        if (self.italic) |value| if (!std.meta.eql(regular, value.metrics())) return false;
+        if (self.bold) |value| if (!std.meta.eql(regular, value.metrics())) return false;
+        if (self.bold_italic) |value| if (!std.meta.eql(regular, value.metrics())) return false;
+        return true;
+    }
+};
+
 /// Caller-selected memory and packing bounds for one terminal glyph atlas.
 ///
 /// These values are presentation policy, not terminal state or a stable ABI. The
-/// font set supplied at initialization must outlive the atlas and fixes the face
-/// set and raster size for every cached key until deinitialization.
+/// font faces supplied at initialization must outlive the atlas and fix every
+/// native face/raster size used by cached keys until deinitialization.
 pub const AtlasConfig = struct {
     width: u16,
     height: u16,
@@ -20,7 +82,7 @@ pub const AtlasConfig = struct {
     gap: u16 = 1,
 };
 
-/// Caller-selected retained-shaping bounds for one fixed howl-text font set.
+/// Caller-selected retained-shaping bounds for one fixed howl-text face family.
 ///
 /// Exact scalar sequences are the cache key. Retained glyph clusters are relative
 /// to that sequence and are rebased to each immutable view during projection.
@@ -81,8 +143,14 @@ pub const ShapeCacheError = text.ShapeError || error{
 
 const AtlasKey = union(enum) {
     font: struct {
+        variant: FontVariant,
         face_index: u8,
         glyph_id: u32,
+    },
+    smooth_wave: struct {
+        width: u16,
+        thickness: u16,
+        line_height: u16,
     },
     generated: struct {
         codepoint: u32,
@@ -104,6 +172,7 @@ const AtlasEntry = struct {
 
 const ShapeEntry = struct {
     hash: u64,
+    variant: FontVariant,
     scalar_offset: usize,
     scalar_count: usize,
     glyph_offset: usize,
@@ -124,13 +193,13 @@ pub fn printableAsciiIndex(sequence: []const u32) ?usize {
 
 const ShapeCacheImpl = struct {
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     shape: *text.ShapeBuffer,
     entries: []ShapeEntry,
     scalars: []u32,
     glyphs: []text.Glyph,
     max_sequence_scalars: u32,
-    ascii_entries: [printable_ascii_count]?usize = @splat(null),
+    ascii_entries: [font_variant_count][printable_ascii_count]?usize = @splat(@splat(null)),
     entry_count: usize = 0,
     scalar_count: usize = 0,
     glyph_count: usize = 0,
@@ -138,11 +207,11 @@ const ShapeCacheImpl = struct {
 
 const AtlasImpl = struct {
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     entries: []AtlasEntry,
     pixels: []u8,
     config: AtlasConfig,
-    ascii_entries: [printable_ascii_count]?usize = @splat(null),
+    ascii_entries: [font_variant_count][printable_ascii_count]?usize = @splat(@splat(null)),
     entry_count: usize = 0,
     next_x: usize = 0,
     shelf_y: usize = 0,
@@ -167,13 +236,18 @@ pub const AtlasRaster = struct {
     top: i16,
 };
 
-/// Allocates one bounded shaped-run owner for one fixed FontSet.
+pub const AtlasSize = struct {
+    width: u16,
+    height: u16,
+};
+
+/// Allocates one bounded shaped-run owner for one fixed face family.
 ///
 /// All entry/scalar/glyph storage and the reusable HarfBuzz buffer are allocated
 /// during construction. Cache hits and misses allocate nothing afterward.
 pub fn initShapeCache(
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     config: ShapeCacheConfig,
 ) ShapeCacheInitError!*ShapeCache {
     if (config.entry_capacity == 0 or config.scalar_capacity == 0 or
@@ -225,7 +299,7 @@ pub fn resetShapeCache(cache: *ShapeCache) void {
     impl.entry_count = 0;
     impl.scalar_count = 0;
     impl.glyph_count = 0;
-    impl.ascii_entries = @splat(null);
+    impl.ascii_entries = @splat(@splat(null));
 }
 
 pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
@@ -241,7 +315,7 @@ pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
 /// misses after initialization; misses rasterize through caller scratch.
 pub fn initAtlas(
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     config: AtlasConfig,
 ) AtlasError!*Atlas {
     if (config.width == 0 or config.height == 0 or config.entry_capacity == 0)
@@ -287,7 +361,7 @@ pub fn resetAtlas(atlas: *Atlas) AtlasError!void {
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
     impl.entry_count = 0;
-    impl.ascii_entries = @splat(null);
+    impl.ascii_entries = @splat(@splat(null));
     impl.next_x = 0;
     impl.shelf_y = 0;
     impl.shelf_height = 0;
@@ -308,14 +382,14 @@ pub fn atlasEntryCount(atlas: *const Atlas) usize {
     return constAtlasImpl(atlas).entry_count;
 }
 
-/// Returns the fixed font owner shared by this atlas.
-pub fn fontSet(atlas: *const Atlas) *text.FontSet {
+/// Returns the fixed caller-owned font family shared by this atlas.
+pub fn fontFaces(atlas: *const Atlas) FontFaces {
     return constAtlasImpl(atlas).fonts;
 }
 
-/// Reports whether the shape cache and atlas belong to the same fixed font owner.
-pub fn sameFontSet(shape_cache: *const ShapeCache, atlas: *const Atlas) bool {
-    return constShapeCacheImpl(shape_cache).fonts == constAtlasImpl(atlas).fonts;
+/// Reports whether the shape cache and atlas borrow the same fixed font family.
+pub fn sameFontFaces(shape_cache: *const ShapeCache, atlas: *const Atlas) bool {
+    return std.meta.eql(constShapeCacheImpl(shape_cache).fonts, constAtlasImpl(atlas).fonts);
 }
 
 /// Returns the caller-fixed maximum scalar sequence accepted by the shape cache.
@@ -324,25 +398,28 @@ pub fn maximumSequenceScalars(shape_cache: *const ShapeCache) u32 {
 }
 
 /// Returns the fixed atlas pixel extent.
-pub fn atlasSize(atlas: *const Atlas) struct { width: u16, height: u16 } {
+pub fn atlasSize(atlas: *const Atlas) AtlasSize {
     const impl = constAtlasImpl(atlas);
     return .{ .width = impl.config.width, .height = impl.config.height };
 }
 
 pub fn shapeContextualPrimary(
     cache: *ShapeCache,
+    variant: FontVariant,
     sequence: []const u32,
     cluster_scratch: []u32,
     glyph_scratch: []text.Glyph,
 ) ShapeCacheError!?text.Run {
     const impl = shapeCacheImpl(cache);
+    const resolved_variant = impl.fonts.resolveVariant(variant);
+    const fonts = impl.fonts.select(resolved_variant);
     if (sequence.len < 2 or sequence.len > @as(usize, impl.max_sequence_scalars) or
         sequence.len > cluster_scratch.len)
         return null;
-    if ((try impl.fonts.faceFor(sequence)) != 0) return null;
+    if ((try fonts.faceFor(sequence)) != 0) return null;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index|
         cluster.* = @intCast(index);
-    return try impl.fonts.shape(
+    return try fonts.shape(
         impl.shape,
         .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
         glyph_scratch,
@@ -360,18 +437,23 @@ fn shapeEntryRun(impl: *const ShapeCacheImpl, entry_index: usize) text.Run {
 
 pub fn resolveShape(
     cache: *ShapeCache,
+    variant: FontVariant,
     sequence: []const u32,
     cluster_scratch: []u32,
     glyph_scratch: []text.Glyph,
 ) ShapeCacheError!text.Run {
     const impl = shapeCacheImpl(cache);
+    const resolved_variant = impl.fonts.resolveVariant(variant);
+    const fonts = impl.fonts.select(resolved_variant);
+    const variant_index = fontVariantIndex(resolved_variant);
     if (sequence.len == 0 or sequence.len > @as(usize, impl.max_sequence_scalars))
         return error.ShapeSequenceLimit;
     const ascii_index = printableAsciiIndex(sequence);
     if (ascii_index) |index| {
-        if (impl.ascii_entries[index]) |entry_index| {
+        if (impl.ascii_entries[variant_index][index]) |entry_index| {
             const entry = impl.entries[entry_index];
             std.debug.assert(entry.scalar_count == 1);
+            std.debug.assert(entry.variant == resolved_variant);
             std.debug.assert(impl.scalars[entry.scalar_offset] == sequence[0]);
             return shapeEntryRun(impl, entry_index);
         }
@@ -381,10 +463,10 @@ pub fn resolveShape(
         std.mem.sliceAsBytes(sequence),
     );
     for (impl.entries[0..impl.entry_count], 0..) |entry, entry_index| {
-        if (entry.hash != hash or entry.scalar_count != sequence.len) continue;
+        if (entry.variant != resolved_variant or entry.hash != hash or entry.scalar_count != sequence.len) continue;
         const retained = impl.scalars[entry.scalar_offset .. entry.scalar_offset + entry.scalar_count];
         if (!std.mem.eql(u32, retained, sequence)) continue;
-        if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
         return shapeEntryRun(impl, entry_index);
     }
 
@@ -392,7 +474,7 @@ pub fn resolveShape(
     if (sequence.len > impl.scalars.len - impl.scalar_count) return error.ShapeScalarFull;
     if (sequence.len > cluster_scratch.len) return error.ShapeSequenceLimit;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
-    const shaped = impl.fonts.shape(
+    const shaped = fonts.shape(
         impl.shape,
         .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
         glyph_scratch,
@@ -400,7 +482,7 @@ pub fn resolveShape(
         error.MissingGlyph => replacement: {
             const replacement_codepoints = [_]u32{0xfffd};
             cluster_scratch[0] = 0;
-            break :replacement try impl.fonts.shape(
+            break :replacement try fonts.shape(
                 impl.shape,
                 .{ .codepoints = &replacement_codepoints, .clusters = cluster_scratch[0..1] },
                 glyph_scratch,
@@ -420,6 +502,7 @@ pub fn resolveShape(
     const entry_index = impl.entry_count;
     impl.entries[entry_index] = .{
         .hash = hash,
+        .variant = resolved_variant,
         .scalar_offset = scalar_offset,
         .scalar_count = sequence.len,
         .glyph_offset = glyph_offset,
@@ -427,21 +510,29 @@ pub fn resolveShape(
         .face_index = shaped.face_index,
     };
     impl.entry_count += 1;
-    if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+    if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
     return shapeEntryRun(impl, entry_index);
 }
 
 pub fn resolveFontAtlas(
     atlas: *Atlas,
+    variant: FontVariant,
     face_index: u8,
     glyph_id: u32,
     raster_scratch: []u8,
     ascii_index: ?usize,
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
-    const key = AtlasKey{ .font = .{ .face_index = face_index, .glyph_id = glyph_id } };
+    const resolved_variant = impl.fonts.resolveVariant(variant);
+    const fonts = impl.fonts.select(resolved_variant);
+    const variant_index = fontVariantIndex(resolved_variant);
+    const key = AtlasKey{ .font = .{
+        .variant = resolved_variant,
+        .face_index = face_index,
+        .glyph_id = glyph_id,
+    } };
     if (ascii_index) |index| {
-        if (impl.ascii_entries[index]) |entry_index| {
+        if (impl.ascii_entries[variant_index][index]) |entry_index| {
             std.debug.assert(entry_index < impl.entry_count);
             const entry = impl.entries[entry_index];
             std.debug.assert(std.meta.eql(entry.key, key));
@@ -449,12 +540,12 @@ pub fn resolveFontAtlas(
         }
     }
     if (findAtlasIndex(impl, key)) |entry_index| {
-        if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
         return atlasRaster(impl.entries[entry_index]);
     }
 
     var raster_allocator = std.heap.FixedBufferAllocator.init(raster_scratch);
-    var raster = try impl.fonts.rasterize(
+    var raster = try fonts.rasterize(
         raster_allocator.allocator(),
         face_index,
         glyph_id,
@@ -477,9 +568,76 @@ pub fn resolveFontAtlas(
     );
     if (ascii_index) |index| {
         std.debug.assert(impl.entry_count != 0);
-        impl.ascii_entries[index] = impl.entry_count - 1;
+        impl.ascii_entries[variant_index][index] = impl.entry_count - 1;
     }
     return result;
+}
+
+/// Resolves one smooth supersampled wave into the shared alpha atlas.
+///
+/// The cache owns only pixel geometry. Terminal underline semantics remain with
+/// the caller that selects this pattern.
+pub fn resolveSmoothWaveAtlas(
+    atlas: *Atlas,
+    width: u16,
+    thickness: u16,
+    line_height: u16,
+    raster_scratch: []u8,
+) AtlasError!AtlasRaster {
+    if (width == 0 or line_height == 0) return error.InvalidSize;
+    const line_width = @max(@as(f32, @floatFromInt(thickness)), 0.8);
+    const amplitude = @max(@as(f32, 1.45), line_width * 1.25);
+    const period = @max(@as(f32, 8), @as(f32, @floatFromInt(line_height)) * 0.45);
+    const pad = line_width + 1;
+    const height_f = @ceil(amplitude * 2 + pad * 2);
+    if (height_f <= 0 or height_f > std.math.maxInt(u16)) return error.InvalidSize;
+    const height: u16 = @intFromFloat(height_f);
+    const required = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch
+        return error.RasterTooLarge;
+    if (required > raster_scratch.len) return error.BufferTooSmall;
+
+    const impl = atlasImpl(atlas);
+    const key = AtlasKey{ .smooth_wave = .{
+        .width = width,
+        .thickness = thickness,
+        .line_height = line_height,
+    } };
+    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
+
+    const pixels = raster_scratch[0..required];
+    @memset(pixels, 0);
+    const samples: usize = 4;
+    const sample_count: u16 = samples * samples;
+    const half_line = line_width / 2;
+    const curve_origin = pad + amplitude;
+    for (0..height) |py| {
+        for (0..width) |px| {
+            var covered: u16 = 0;
+            for (0..samples) |sy| {
+                for (0..samples) |sx| {
+                    const sample_x =
+                        @as(f32, @floatFromInt(px)) +
+                        (@as(f32, @floatFromInt(sx)) + 0.5) /
+                            @as(f32, @floatFromInt(samples));
+                    const sample_y =
+                        @as(f32, @floatFromInt(py)) +
+                        (@as(f32, @floatFromInt(sy)) + 0.5) /
+                            @as(f32, @floatFromInt(samples));
+                    const curve_y =
+                        curve_origin +
+                        amplitude *
+                            @sin(std.math.tau * sample_x / period);
+                    if (@abs(sample_y - curve_y) <= half_line)
+                        covered += 1;
+                }
+            }
+            pixels[py * @as(usize, width) + px] =
+                @intCast(covered * 255 / sample_count);
+        }
+    }
+    const top = std.math.cast(i16, @as(i32, @intFromFloat(@ceil(pad)))) orelse
+        return error.InvalidSize;
+    return cacheAtlas(impl, key, width, height, 0, top, pixels);
 }
 
 pub fn resolveGeneratedAtlas(
@@ -622,6 +780,10 @@ fn atlasRaster(entry: AtlasEntry) AtlasRaster {
         .left = entry.left,
         .top = entry.top,
     };
+}
+
+fn fontVariantIndex(variant: FontVariant) usize {
+    return @backingInt(variant);
 }
 
 fn planAtlas(impl: *const AtlasImpl, width: u16, height: u16) AtlasError!AtlasPack {

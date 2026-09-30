@@ -84,12 +84,14 @@ experimental:
     one shared Terminal Canvas consuming canonical VT Observation directly,
     a validated borrowed howl-client.rich observation, or the owned
     howl-client.view semantic snapshot through one presentation implementation
-    plus howl-text; it owns terminal
-    pixel geometry, colors/decorations/cursor presentation,
-    exact terminal-image resource projection, backend residency reconciliation,
-    and final backend-neutral terminal frames; private terminal_glyph_cache owns
-    bounded shape/alpha-atlas reuse using howl-text only; there is no generic
-    multi-source Canvas compositor or stable mobile ABI
+    plus howl-text; it owns terminal pixel geometry, colors/decorations/cursor
+    presentation, caller-supplied regular/italic/bold/bold-italic face selection
+    with deterministic fallback, smooth atlas-backed curly underline, exact
+    terminal-image resource projection, backend residency reconciliation, and
+    final backend-neutral terminal frames; private terminal_glyph_cache owns one
+    bounded shape/alpha-atlas reuse domain across all supplied howl-text faces;
+    there is no font discovery, generic multi-source Canvas compositor, or stable
+    mobile ABI
   howl-flutter: >-
     maintained native graphical client canary with a deliberately small app shell.
     The shell may start route-less, persists only explicit labelled Server endpoints

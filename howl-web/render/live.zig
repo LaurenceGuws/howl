@@ -1,11 +1,10 @@
 //! Live browser renderer: framed Howl snapshot bytes -> shared view/text/Canvas state.
 const std = @import("std");
-const instance = @import("howl_instance");
 const client = @import("howl_client");
 const render = @import("howl_render");
 const canvas = render.terminal;
 const text = render.text;
-const p = instance.protocol;
+const p = client.protocol;
 
 pub const panic = std.debug.FullPanic(trapPanic);
 fn trapPanic(_: []const u8, _: ?usize) noreturn {
@@ -277,7 +276,7 @@ fn initRenderer(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const new_canvas = render.terminal.initCanvas(allocator, new_fonts, .{
+    const new_canvas = render.terminal.initCanvas(allocator, render.terminal.FontFaces.single(new_fonts), .{
         .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },

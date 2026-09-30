@@ -227,7 +227,7 @@ pub const Scene = struct {
         };
         const terminal_canvas = try terminal.initCanvas(
             allocator,
-            fonts,
+            terminal.FontFaces.single(fonts),
             .{
                 .cell_size = cell_size,
                 .box_drawing = .{

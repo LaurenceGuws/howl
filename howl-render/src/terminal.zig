@@ -20,6 +20,8 @@ pub const ShapeCacheUsage = glyph_cache.ShapeCacheUsage;
 pub const AtlasError = glyph_cache.AtlasError;
 pub const ShapeCacheInitError = glyph_cache.ShapeCacheInitError;
 pub const ShapeCacheError = glyph_cache.ShapeCacheError;
+pub const FontVariant = glyph_cache.FontVariant;
+pub const FontFaces = glyph_cache.FontFaces;
 
 const ShapeCache = glyph_cache.ShapeCache;
 const Atlas = glyph_cache.Atlas;
@@ -279,6 +281,7 @@ pub const Frame = struct {
 
 pub const CanvasInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
     InvalidCanvasConfig,
+    InvalidFontFaces,
 };
 
 pub const CanvasError = AtlasError || ShapeCacheError || canvas.Error || error{
@@ -419,7 +422,7 @@ const IncrementalPlan = struct {
 
 const CanvasImpl = struct {
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     config: CanvasConfig,
     shape_cache: *ShapeCache,
     atlas: *Atlas,
@@ -466,12 +469,13 @@ const ProjectedPlacement = struct {
 
 /// Allocates one bounded terminal Canvas producer.
 ///
-/// The producer owns presentation caches and fixed scratch only. `fonts` remains
-/// caller-owned and must outlive Content. Every later Content operation is
+/// The producer owns presentation caches and fixed scratch only. Every configured
+/// FontSet remains caller-owned and must outlive the Canvas. Missing style variants
+/// fall back deterministically to an available face. Every later Canvas operation is
 /// allocation-free.
 pub fn initCanvas(
     allocator: std.mem.Allocator,
-    fonts: *text.FontSet,
+    fonts: FontFaces,
     config: CanvasConfig,
 ) CanvasInitError!*Canvas {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
@@ -479,6 +483,7 @@ pub fn initCanvas(
         config.command_capacity == 0 or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidCanvasConfig;
+    if (!fonts.terminalMetricsCompatible()) return error.InvalidFontFaces;
 
     const impl = try allocator.create(CanvasImpl);
     errdefer allocator.destroy(impl);
@@ -1076,6 +1081,12 @@ fn contentStyle(cell: anytype) View.CellStyle {
         .strikethrough = cell.attrs.strikethrough,
     };
 }
+fn contentFontVariant(style: View.CellStyle) FontVariant {
+    if (style.bold and style.italic) return .bold_italic;
+    if (style.bold) return .bold;
+    if (style.italic) return .italic;
+    return .regular;
+}
 fn contentFont(cell: anytype) u8 {
     return if (@TypeOf(cell) == VT.Cell) cell.attrs.font else cell.font;
 }
@@ -1524,13 +1535,11 @@ fn appendContentSolid(
     } });
 }
 
-fn appendContentUnderline(
+fn appendContentCellAlpha(
     output: []canvas.Input,
     used: *usize,
-    clip: canvas.Rect,
-    y: i32,
-    thickness: u16,
-    style: u8,
+    rect: canvas.Rect,
+    resource: canvas.ResourceView,
     color: canvas.Color,
     sizing: ContentCellSizing,
     row: usize,
@@ -1538,6 +1547,41 @@ fn appendContentUnderline(
     cell_size: canvas.Size,
     surface: canvas.Size,
 ) CanvasError!void {
+    const visible_clip = try contentCellVisibleClip(
+        sizing,
+        row,
+        geometry,
+        cell_size,
+        surface,
+    ) orelse return;
+    const sized_rect = try contentCellTransformRect(rect, sizing);
+    try appendContentInput(output, used, .{ .alpha_mask = .{
+        .destination = try contentLineTransformRect(sized_rect, row, geometry, cell_size),
+        .clip = visible_clip,
+        .resource = resource,
+        .color = color,
+    } });
+}
+
+fn appendContentUnderline(
+    output: []canvas.Input,
+    used: *usize,
+    atlas: *Atlas,
+    atlas_size: glyph_cache.AtlasSize,
+    placeholder_resource: canvas.ResourceRef,
+    raster_scratch: []u8,
+    clip: canvas.Rect,
+    y: i32,
+    thickness: u16,
+    line_height: u16,
+    style: u8,
+    color: canvas.Color,
+    sizing: ContentCellSizing,
+    row: usize,
+    geometry: View.LineGeometry,
+    cell_size: canvas.Size,
+    surface: canvas.Size,
+) CanvasError!bool {
     const height = @max(@as(u16, 1), thickness);
     switch (style) {
         1 => {
@@ -1558,24 +1602,35 @@ fn appendContentUnderline(
                 .width = clip.width,
                 .height = height,
             }, color, sizing, row, geometry, cell_size, surface);
+            return false;
         },
-        2 => for (0..clip.width) |offset| {
-            const x = std.math.add(
-                i32,
-                clip.x,
-                @as(i32, @intCast(offset)),
-            ) catch return error.InvalidPresentationGeometry;
-            const wave_y = std.math.add(
-                i32,
-                y,
-                @as(i32, @intCast(offset & 1)),
-            ) catch return error.InvalidPresentationGeometry;
-            try appendContentCellSolid(output, used, .{
-                .x = x,
+        2 => {
+            const wave = try glyph_cache.resolveSmoothWaveAtlas(
+                atlas,
+                clip.width,
+                height,
+                line_height,
+                raster_scratch,
+            );
+            const wave_y = std.math.sub(i32, y, wave.top) catch
+                return error.InvalidPresentationGeometry;
+            try appendContentCellAlpha(output, used, .{
+                .x = clip.x,
                 .y = wave_y,
-                .width = 1,
-                .height = 1,
+                .width = wave.width,
+                .height = wave.height,
+            }, .{
+                .resource = placeholder_resource,
+                .format = .alpha8,
+                .size = .{ .width = atlas_size.width, .height = atlas_size.height },
+                .source = .{
+                    .x = wave.atlas_x,
+                    .y = wave.atlas_y,
+                    .width = wave.width,
+                    .height = wave.height,
+                },
             }, color, sizing, row, geometry, cell_size, surface);
+            return true;
         },
         3 => {
             var offset: usize = 0;
@@ -1592,6 +1647,7 @@ fn appendContentUnderline(
                     .height = height,
                 }, color, sizing, row, geometry, cell_size, surface);
             }
+            return false;
         },
         4 => {
             var offset: usize = 0;
@@ -1610,13 +1666,17 @@ fn appendContentUnderline(
                     .height = height,
                 }, color, sizing, row, geometry, cell_size, surface);
             }
+            return false;
         },
-        else => try appendContentCellSolid(output, used, .{
-            .x = clip.x,
-            .y = y,
-            .width = clip.width,
-            .height = height,
-        }, color, sizing, row, geometry, cell_size, surface),
+        else => {
+            try appendContentCellSolid(output, used, .{
+                .x = clip.x,
+                .y = y,
+                .width = clip.width,
+                .height = height,
+            }, color, sizing, row, geometry, cell_size, surface);
+            return false;
+        },
     }
 }
 
@@ -1809,9 +1869,9 @@ fn buildContentCommands(
     shaped_scratch: []text.Glyph,
     raster_scratch: []u8,
 ) CanvasError!ContentProjection {
-    if (!glyph_cache.sameFontSet(shape_cache, atlas))
+    if (!glyph_cache.sameFontFaces(shape_cache, atlas))
         return error.FontSetMismatch;
-    const fonts = glyph_cache.fontSet(atlas);
+    const fonts = glyph_cache.fontFaces(atlas);
     const atlas_size = glyph_cache.atlasSize(atlas);
     const begin = Source.begin(snapshot);
     const presentation = Source.presentation(snapshot);
@@ -1859,6 +1919,8 @@ fn buildContentCommands(
         }
     }
     const background_end = used;
+    const placeholder_resource = placeholderContentResource();
+    var has_raster = false;
 
     // Decorations are foreground content. Ordinary negative-z images must sit
     // below them together with glyphs, not above them as if they were cells.
@@ -1884,12 +1946,17 @@ fn buildContentCommands(
                     return error.InvalidPresentationGeometry;
                 const y = std.math.add(i64, line_y, @as(i64, metrics.underline_y)) catch
                     return error.InvalidPresentationGeometry;
-                try appendContentUnderline(
+                if (try appendContentUnderline(
                     output,
                     &used,
+                    atlas,
+                    atlas_size,
+                    placeholder_resource,
+                    raster_scratch,
                     clip,
                     std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
                     metrics.underline_height,
+                    metrics.line_height,
                     contentUnderlineStyle(cell),
                     colors.underline,
                     sizing,
@@ -1897,7 +1964,7 @@ fn buildContentCommands(
                     Source.lineGeometry(snapshot, row),
                     cell_size,
                     surface,
-                );
+                )) has_raster = true;
             }
             if (style.strikethrough) {
                 const line_y = std.math.add(i64, @as(i64, physical.y), line_offset) catch
@@ -1914,8 +1981,6 @@ fn buildContentCommands(
         }
     }
 
-    const placeholder_resource = placeholderContentResource();
-    var has_raster = false;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
         const row_start = used;
@@ -1967,6 +2032,7 @@ fn buildContentCommands(
             if (sequence.len == 1 and sequence[0] == ' ') continue;
             const ascii_index = glyph_cache.printableAsciiIndex(sequence);
             const colors = try contentCellColors(cell, presentation);
+            const font_variant = contentFontVariant(contentStyle(cell));
 
             var run: text.Run = undefined;
             var contextual = false;
@@ -1995,6 +2061,7 @@ fn buildContentCommands(
                 if (run_end - column >= 2) {
                     if (try glyph_cache.shapeContextualPrimary(
                         shape_cache,
+                        font_variant,
                         operator_scalars[0 .. run_end - column],
                         cluster_scratch,
                         shaped_scratch,
@@ -2090,6 +2157,7 @@ fn buildContentCommands(
             if (!contextual)
                 run = try glyph_cache.resolveShape(
                     shape_cache,
+                    font_variant,
                     sequence,
                     cluster_scratch,
                     shaped_scratch,
@@ -2143,6 +2211,7 @@ fn buildContentCommands(
                 ) catch return error.InvalidPresentationGeometry;
                 const raster = try glyph_cache.resolveFontAtlas(
                     atlas,
+                    font_variant,
                     run.face_index,
                     shaped.id,
                     raster_scratch,

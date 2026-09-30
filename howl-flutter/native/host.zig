@@ -637,7 +637,7 @@ fn createHostFromConnection(
 
     const terminal_canvas = terminal.initCanvas(
         allocator,
-        fonts,
+        terminal.FontFaces.single(fonts),
         contentConfig(cell_width, cell_height, atlas_extent),
     ) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", failure);

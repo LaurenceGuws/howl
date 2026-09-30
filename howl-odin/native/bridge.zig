@@ -478,7 +478,7 @@ pub export fn howl_odin_bridge_render_create(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const terminal_canvas = terminal_render.initCanvas(allocator, fonts, renderContentConfig(cell_size)) catch |failure| {
+    const terminal_canvas = terminal_render.initCanvas(allocator, terminal_render.FontFaces.single(fonts), renderContentConfig(cell_size)) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
