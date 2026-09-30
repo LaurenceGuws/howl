@@ -14,8 +14,9 @@ Window_Button :: enum { None, Minimize, Maximize, Close }
 
 // Shared geometry for drawing, pointer/selection/search, IME and owned PTY size.
 // The right gutter includes a dedicated scrollbar hit lane and native resize
-// rim. Neither steals terminal cells. Remaining sub-cell pixels stay background,
-// never scaled terminal glyphs.
+// rim. Neither steals terminal cells. Remaining sub-cell pixels stay background;
+// desktop geometry centers the integer cell surface inside this allocation rather
+// than stretching or pinning the remainder to one edge.
 terminal_content_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
     return {pane.x + TERMINAL_PADDING, pane.y + TERMINAL_PADDING,
             max(f32(0), pane.w - TERMINAL_PADDING - TERMINAL_RIGHT_GUTTER),

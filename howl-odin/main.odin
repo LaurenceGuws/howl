@@ -1190,12 +1190,15 @@ rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
     return u8((bits >> shift) & 0xff)
 }
 
-draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect, origin_x, origin_y: f32) -> bool {
+draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -> bool {
     if !update_canvas(app, view) {
         return false
     }
     color := render_background_rgba(view.canvas)
     draw_fill(app.renderer, pane, {rgba_channel(color, 0), rgba_channel(color, 8), rgba_channel(color, 16), rgba_channel(color, 24)})
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     scale := canvas_scale_value(view)
     pane_left := c.int(math.floor(pane.x))
     pane_top := c.int(math.floor(pane.y))
@@ -2437,8 +2440,9 @@ terminal_pointer_location :: proc(
         return 0, 0, 0, 0, false
     }
     scale := canvas_scale_value(view)
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
     bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
@@ -3236,8 +3240,9 @@ selection_cell_at :: proc(
         return 0, 0, false
     }
     scale := canvas_scale_value(view)
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
     bottom := origin_y + canvas_logical_extent(view, view.canvas_surface_height)
     local_x := x
@@ -3483,8 +3488,9 @@ update_selection_edge_scroll_intent :: proc(
         return false
     }
     scale := canvas_scale_value(view)
-    surface_top := terminal_content_rect(pane).y
-    surface_bottom := surface_top + canvas_logical_extent(view, view.canvas_surface_height)
+    surface := terminal_surface_rect(view, pane)
+    surface_top := surface.y
+    surface_bottom := surface.y + surface.h
     alternate := render_alternate_screen(view.canvas) != 0
 
     sync.mutex_lock(&view.mutex)
@@ -3673,8 +3679,9 @@ draw_selection :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
         return
     }
 
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     scale := canvas_scale_value(view)
     pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
     _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
@@ -3735,8 +3742,9 @@ draw_search_highlight :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) 
         return
     }
 
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     scale := canvas_scale_value(view)
     rect := SDL.FRect{
         origin_x + f32(result.start_column * cell_width) / scale,
@@ -5423,7 +5431,8 @@ history_scrollbar_geometry :: proc(
     }
 
     content := terminal_content_rect(pane)
-    track := SDL.FRect{pane.x + pane.w - 8, content.y, 3, content.h}
+    surface := view.canvas != nil ? terminal_surface_rect(view, pane) : content
+    track := SDL.FRect{pane.x + pane.w - 8, surface.y, 3, surface.h}
     if track.h <= 0 {
         return {}, false
     }
@@ -5719,11 +5728,9 @@ draw_real_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
         return
     }
     lifecycle_state := instance_lifecycle_state(view)
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
     content := terminal_content_rect(pane)
     resize_instance_to_pane(app, view, content.w, content.h)
-    if draw_canvas_instance(app, view, pane, origin_x, origin_y) {
+    if draw_canvas_instance(app, view, pane) {
         draw_search_highlight(app, view, pane)
         draw_selection(app, view, pane)
         draw_history_scrollbar(app, view, pane)
@@ -5738,6 +5745,9 @@ draw_real_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
         return
     }
 
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
     _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
     defer {
@@ -5895,8 +5905,9 @@ active_terminal_cursor_rect :: proc(
     row := min(view.cursor_row, rows - 1)
     column := min(view.cursor_column, columns - 1)
     sync.mutex_unlock(&view.mutex)
-    origin_x := terminal_content_rect(pane).x
-    origin_y := terminal_content_rect(pane).y
+    surface := terminal_surface_rect(view, pane)
+    origin_x := surface.x
+    origin_y := surface.y
     scale := canvas_scale_value(view)
     cursor = {
         c.int(math.floor(origin_x + f32(u32(column) * u32(cell_width)) / scale)),

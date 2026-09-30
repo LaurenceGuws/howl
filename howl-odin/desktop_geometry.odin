@@ -2,6 +2,7 @@ package main
 
 import "core:math"
 import "core:sync"
+import SDL "vendor:sdl3"
 
 BRIDGE_SIZE_NOT_LEADER :: i32(7)
 BRIDGE_SIZE_REJECTED :: i32(8)
@@ -71,6 +72,46 @@ pane_geometry :: proc(width, height, scale: f32, cell_width, cell_height: u16) -
     rows := math.floor(height * scale / f32(cell_height))
     return {u16(clamp(rows, 1, f32(render_maximum_rows()))),
             u16(clamp(columns, 1, f32(render_maximum_columns()))), cell_width, cell_height}, true
+}
+
+
+centered_terminal_surface :: proc(
+    content: SDL.FRect,
+    scale: f32,
+    surface_width, surface_height: u16,
+) -> (SDL.FRect, bool) {
+    if !valid_canvas_scale(scale) || content.w <= 0 || content.h <= 0 ||
+       surface_width == 0 || surface_height == 0 {
+        return {}, false
+    }
+    physical_width := f32(surface_width)
+    physical_height := f32(surface_height)
+    available_width := content.w * scale
+    available_height := content.h * scale
+    logical_width := min(content.w, physical_width / scale)
+    logical_height := min(content.h, physical_height / scale)
+    left_pixels := math.floor(max(f32(0), available_width - physical_width) / 2)
+    top_pixels := math.floor(max(f32(0), available_height - physical_height) / 2)
+    return {
+        content.x + left_pixels / scale,
+        content.y + top_pixels / scale,
+        logical_width,
+        logical_height,
+    }, true
+}
+
+terminal_surface_rect :: proc(view: ^Instance_View, pane: SDL.FRect) -> SDL.FRect {
+    content := terminal_content_rect(pane)
+    if view == nil || view.canvas == nil {
+        return content
+    }
+    centered, ok := centered_terminal_surface(
+        content,
+        canvas_scale_value(view),
+        view.canvas_surface_width,
+        view.canvas_surface_height,
+    )
+    return ok ? centered : content
 }
 
 resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: f32) {

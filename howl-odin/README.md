@@ -345,12 +345,17 @@ assume native titlebar double-click behavior is available on every SDL backend.
 If hit testing or border removal is unavailable, the host reports that failure
 and keeps native decorations instead of leaving an immovable borderless window.
 
-There is no outer terminal mat. Paint, input, selection, search, IME and owned
-PTY sizing share one content rectangle: six logical pixels at left/top/bottom,
-and sixteen at right for the scrollbar's independent hit lane plus resize rim.
-Gutters and sub-cell remainder use the accepted Canvas snapshot's default
-background (foreground under screen reverse), not the application chrome theme.
-This changes no terminal cells, image bytes, protocol or saved profile settings.
+There is no differently-colored outer terminal mat. Owned PTY sizing uses one
+content allocation: six logical pixels at left/top/bottom and sixteen at right
+for the scrollbar's independent hit lane plus resize rim. Rows/columns floor into
+that allocation at exact Canvas cell metrics; the resulting integer-cell surface
+is then centered inside the allocation instead of pinning sub-cell remainder to
+the right/bottom. Paint, pointer reporting, selection, search, scrollbar extent,
+cursor/IME geometry and image commands all consume that same centered surface.
+The surrounding pane and sub-cell remainder use the accepted Canvas snapshot's
+default VT background (foreground under screen reverse), not the application
+chrome theme. This changes no terminal cells, image bytes, protocol or saved
+profile settings.
 
 The 640x320 minimum and bounded eight-tab layout reserve window controls,
 Settings, new/profile buttons and at least 28 pixels of native drag space.

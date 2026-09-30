@@ -2,6 +2,7 @@ package main
 
 import "core:testing"
 import "core:math"
+import SDL "vendor:sdl3"
 
 @(test)
 attached_size_stays_fixed_until_explicit_take :: proc(t: ^testing.T) {
@@ -105,4 +106,23 @@ size_actions_are_rebindable_without_hardcoded_shortcuts :: proc(t: ^testing.T) {
     testing.expect_value(t, action_binding_text(&app, .Take_Size_Control), "Ctrl+Shift+G")
     testing.expect(t, !action_enabled(&app, .Take_Size_Control))
     testing.expect(t, !action_enabled(&app, .Stop_Resizing))
+}
+
+@(test)
+terminal_surface_centers_integer_cell_extent_in_available_content :: proc(t: ^testing.T) {
+    centered, ok := centered_terminal_surface({10, 20, 101, 51}, 1, 90, 40)
+    testing.expect(t, ok)
+    testing.expect_value(t, centered, SDL.FRect{15, 25, 90, 40})
+
+    scaled, scaled_ok := centered_terminal_surface({3, 4, 100, 50}, 2, 190, 90)
+    testing.expect(t, scaled_ok)
+    testing.expect_value(t, scaled, SDL.FRect{5.5, 6.5, 95, 45})
+
+    oversized, oversized_ok := centered_terminal_surface({7, 9, 80, 40}, 1, 100, 50)
+    testing.expect(t, oversized_ok)
+    testing.expect_value(t, oversized, SDL.FRect{7, 9, 80, 40})
+
+    _, zero := centered_terminal_surface({0, 0, 80, 40}, 1, 0, 20)
+    _, bad_scale := centered_terminal_surface({0, 0, 80, 40}, 0, 40, 20)
+    testing.expect(t, !zero && !bad_scale)
 }
