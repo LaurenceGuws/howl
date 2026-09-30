@@ -4159,6 +4159,25 @@ pane_direction_for_key :: proc(key: SDL.Keycode) -> (Pane_Direction, bool) {
     }
 }
 
+Pane_Keyboard_Action :: enum u8 {
+    None,
+    Focus,
+    Resize,
+    Swap,
+}
+
+pane_keyboard_action :: proc(
+    key: SDL.Keycode,
+    ctrl, shift, alt: bool,
+) -> (Pane_Keyboard_Action, Pane_Direction, bool) {
+    if !alt do return .None, .Left, false
+    direction, directional := pane_direction_for_key(key)
+    if !directional do return .None, .Left, false
+    if ctrl do return .Swap, direction, true
+    if shift do return .Resize, direction, true
+    return .Focus, direction, true
+}
+
 active_tab_inset :: proc(app: ^App) -> (SDL.FRect, bool) {
     if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return {}, false
@@ -4798,17 +4817,17 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             if index, numeric := tab_index_for_number_key(event.key.key); numeric && index < app.tab_count {
                 _ = select_tab_index(app, index)
             }
-        } else if event.type == .KEY_DOWN && ctrl && alt {
-            if direction, ok := pane_direction_for_key(event.key.key); ok {
-                _ = swap_active_pane_direction_app(app, direction)
-            }
-        } else if event.type == .KEY_DOWN && alt && shift {
-            if direction, ok := pane_direction_for_key(event.key.key); ok {
-                _ = resize_active_pane_direction(app, direction)
-            }
-        } else if event.type == .KEY_DOWN && alt {
-            if direction, ok := pane_direction_for_key(event.key.key); ok {
-                _ = focus_active_pane_direction(app, direction)
+        } else if pane_action, pane_direction, pane_owned := pane_keyboard_action(
+            event.key.key,
+            ctrl,
+            shift,
+            alt,
+        ); event.type == .KEY_DOWN && pane_owned {
+            switch pane_action {
+            case .Swap:   _ = swap_active_pane_direction_app(app, pane_direction)
+            case .Resize: _ = resize_active_pane_direction(app, pane_direction)
+            case .Focus:  _ = focus_active_pane_direction(app, pane_direction)
+            case .None:
             }
         } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
             adjust_terminal_font(app, -1)

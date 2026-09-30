@@ -294,6 +294,13 @@ pub fn encodeKey(
     };
 }
 
+test "legacy Alt unicode key prefixes Escape" {
+    var buf: [max_encoded_len]u8 = undefined;
+    const key = try InputKey.initUnicode('1');
+    const encoded = encodeKey(&buf, key, .{ .alt = true }, false, false, 0, 0, 0);
+    try std.testing.expectEqualStrings("\x1b1", encoded);
+}
+
 /// Encodes one complete physical key event under current terminal modes.
 pub fn encodeEvent(
     buf: []u8,

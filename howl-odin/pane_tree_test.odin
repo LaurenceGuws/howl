@@ -155,3 +155,36 @@ pane_divider_pointer_ratio_is_orientation_aware_and_clamped :: proc(t: ^testing.
     testing.expect_value(t, pane_divider_ratio_for_pointer(.Horizontal, container, 0, -1000), f32(0.15))
     testing.expect_value(t, pane_divider_ratio_for_pointer(.Horizontal, container, 0, 5000), f32(0.85))
 }
+
+@(test)
+pane_keyboard_shortcuts_own_only_directional_alt_keys :: proc(t: ^testing.T) {
+    action, direction, owned := pane_keyboard_action(SDL.K_LEFT, false, false, true)
+    testing.expect(t, owned)
+    testing.expect_value(t, action, Pane_Keyboard_Action.Focus)
+    testing.expect_value(t, direction, Pane_Direction.Left)
+
+    action, direction, owned = pane_keyboard_action(SDL.K_RIGHT, false, true, true)
+    testing.expect(t, owned)
+    testing.expect_value(t, action, Pane_Keyboard_Action.Resize)
+    testing.expect_value(t, direction, Pane_Direction.Right)
+
+    action, direction, owned = pane_keyboard_action(SDL.K_UP, true, false, true)
+    testing.expect(t, owned)
+    testing.expect_value(t, action, Pane_Keyboard_Action.Swap)
+    testing.expect_value(t, direction, Pane_Direction.Up)
+
+    cases := [4]struct {
+        key: SDL.Keycode,
+        ctrl, shift, alt: bool,
+    }{
+        {SDL.K_1, false, false, true},
+        {SDL.K_1, false, true, true},
+        {SDL.K_1, true, false, true},
+        {SDL.K_A, false, false, true},
+    }
+    for value in cases {
+        action, _, owned = pane_keyboard_action(value.key, value.ctrl, value.shift, value.alt)
+        testing.expect(t, !owned)
+        testing.expect_value(t, action, Pane_Keyboard_Action.None)
+    }
+}
