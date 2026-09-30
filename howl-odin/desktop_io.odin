@@ -10,6 +10,7 @@ import SDL "vendor:sdl3"
 // failures are published explicitly and no queued input is replayed on reconnect.
 // Main-thread code never calls a network operation on the control handle.
 BRIDGE_QUERY_DECLINED :: i32(6)
+CONTROL_QUEUE_LOCAL_REJECTED :: i32(7)
 CONTROL_QUEUE_ITEMS :: 128
 CONTROL_QUEUE_BYTES :: 128 * 1024
 CONTROL_PAYLOAD_BYTES :: 65535
@@ -47,11 +48,31 @@ connect_view_channel :: proc(view: ^Instance_View, token: rawptr) -> rawptr {
     return handle
 }
 
-control_queue_push_locked :: proc(view: ^Instance_View, task: Control_Task) -> bool {
-    if view.worker_stop || view.control_failed || view.io_failed || view.control_count >= CONTROL_QUEUE_ITEMS ||
-       len(task.payload) > CONTROL_PAYLOAD_BYTES || view.control_bytes + len(task.payload) > CONTROL_QUEUE_BYTES {
-        return false
+Control_Queue_Admission :: enum u8 {
+    Accepted,
+    Busy,
+    Closed,
+    Rejected,
+}
+
+control_queue_admission_locked :: proc(
+    view: ^Instance_View,
+    item_count, payload_bytes: int,
+) -> Control_Queue_Admission {
+    if view == nil || view.worker_stop || view.control_failed || view.io_failed {
+        return .Closed
     }
+    if item_count <= 0 || payload_bytes < 0 || payload_bytes > CONTROL_QUEUE_BYTES {
+        return .Rejected
+    }
+    if item_count > CONTROL_QUEUE_ITEMS - view.control_count ||
+       payload_bytes > CONTROL_QUEUE_BYTES - view.control_bytes {
+        return .Busy
+    }
+    return .Accepted
+}
+
+control_queue_append_locked :: proc(view: ^Instance_View, task: Control_Task) {
     index := (view.control_head + view.control_count) % CONTROL_QUEUE_ITEMS
     view.control_tasks[index] = task
     view.control_count += 1
@@ -60,6 +81,14 @@ control_queue_push_locked :: proc(view: ^Instance_View, task: Control_Task) -> b
         view.control_notice_len = 0
         view.ui_dirty = true
     }
+}
+
+control_queue_push_locked :: proc(view: ^Instance_View, task: Control_Task) -> bool {
+    if len(task.payload) > CONTROL_PAYLOAD_BYTES ||
+       control_queue_admission_locked(view, 1, len(task.payload)) != .Accepted {
+        return false
+    }
+    control_queue_append_locked(view, task)
     return true
 }
 
@@ -76,22 +105,68 @@ control_queue_pop_locked :: proc(view: ^Instance_View) -> (Control_Task, bool) {
 queue_control :: proc(view: ^Instance_View, task: Control_Task) -> i32 {
     if view == nil || view.control == nil do return 1
     sync.mutex_lock(&view.mutex)
-    accepted := control_queue_push_locked(view, task)
+    admission := Control_Queue_Admission.Accepted
+    if len(task.payload) > CONTROL_PAYLOAD_BYTES {
+        admission = .Rejected
+    } else {
+        admission = control_queue_admission_locked(view, 1, len(task.payload))
+    }
+    if admission == .Accepted do control_queue_append_locked(view, task)
     sync.mutex_unlock(&view.mutex)
-    if !accepted {
-        sync.mutex_lock(&view.mutex)
-        view.control_failed = true
-        sync.mutex_unlock(&view.mutex)
-        if view.control_interrupt != nil do _ = interrupt_cancel(view.control_interrupt)
-        publish_initial_error(view, "Input queue full/closed; new operation rejected, prior delivery may be incomplete")
+    switch admission {
+    case .Accepted:
+        sync.cond_signal(&view.control_cond)
+        return 0
+    case .Busy:
+        publish_control_notice(view, "Input queue busy; newest operation dropped")
+        return CONTROL_QUEUE_LOCAL_REJECTED
+    case .Rejected:
+        publish_control_notice(view, "Input operation exceeds the bounded queue contract")
+        return CONTROL_QUEUE_LOCAL_REJECTED
+    case .Closed:
         return 2
     }
-    sync.cond_signal(&view.control_cond)
-    return 0
+    return 2
+}
+
+queue_named_key_cycle :: proc(view: ^Instance_View, key, modifiers: u8) -> i32 {
+    if view == nil || view.control == nil do return 1
+    press := Control_Task{kind = .Named, key = key, action = u8(Bridge_Key_Action.Press), modifiers = modifiers}
+    release := Control_Task{kind = .Named, key = key, action = u8(Bridge_Key_Action.Release), modifiers = modifiers}
+    sync.mutex_lock(&view.mutex)
+    admission := control_queue_admission_locked(view, 2, 0)
+    if admission == .Accepted {
+        control_queue_append_locked(view, press)
+        control_queue_append_locked(view, release)
+    }
+    sync.mutex_unlock(&view.mutex)
+    switch admission {
+    case .Accepted:
+        sync.cond_signal(&view.control_cond)
+        return 0
+    case .Busy:
+        publish_control_notice(view, "Input queue busy; scroll cycle dropped")
+        return CONTROL_QUEUE_LOCAL_REJECTED
+    case .Rejected:
+        return CONTROL_QUEUE_LOCAL_REJECTED
+    case .Closed:
+        return 2
+    }
+    return 2
+}
+
+control_queue_result_failed :: proc(view: ^Instance_View, result: i32) -> bool {
+    if result == 0 do return false
+    if result != CONTROL_QUEUE_LOCAL_REJECTED do copy_bridge_error(view)
+    return true
 }
 
 queue_text :: proc(view: ^Instance_View, data: [^]u8, length: c.size_t, paste: bool = false) -> i32 {
-    if length == 0 || length > CONTROL_PAYLOAD_BYTES do return 1
+    if length == 0 do return 0
+    if length > CONTROL_PAYLOAD_BYTES {
+        publish_control_notice(view, "Input text exceeds the bounded queue contract")
+        return CONTROL_QUEUE_LOCAL_REJECTED
+    }
     bytes := make([]u8, int(length))
     if bytes == nil do return 2
     copy(bytes, data[:int(length)])

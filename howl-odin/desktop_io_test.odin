@@ -35,6 +35,35 @@ control_queue_bytes_are_bounded_separately_from_event_count :: proc(t: ^testing.
     testing.expect(t, !control_queue_push_locked(&view, {kind = .Named}))
 }
 
+
+@(test)
+control_queue_backpressure_is_nonfatal_and_key_cycles_are_atomic :: proc(t: ^testing.T) {
+    token: u8
+    view := Instance_View{control = rawptr(&token)}
+    for _ in 0..<CONTROL_QUEUE_ITEMS / 2 {
+        testing.expect_value(t, queue_named_key_cycle(&view, u8(Bridge_Key.Down), 0), i32(0))
+    }
+    testing.expect_value(t, view.control_count, CONTROL_QUEUE_ITEMS)
+    result := queue_named_key_cycle(&view, u8(Bridge_Key.Down), 0)
+    testing.expect_value(t, result, CONTROL_QUEUE_LOCAL_REJECTED)
+    testing.expect_value(t, view.control_count, CONTROL_QUEUE_ITEMS)
+    testing.expect(t, !view.control_failed)
+    testing.expect(t, !view.io_failed)
+    testing.expect_value(t, view.error_len, 0)
+    testing.expect(t, view.control_notice_len != 0)
+
+    view = Instance_View{control = rawptr(&token)}
+    for i in 0..<CONTROL_QUEUE_ITEMS - 1 {
+        testing.expect(t, control_queue_push_locked(&view, {kind = .Unicode, scalar = u32(i)}))
+    }
+    before := view.control_count
+    result = queue_named_key_cycle(&view, u8(Bridge_Key.Down), 0)
+    testing.expect_value(t, result, CONTROL_QUEUE_LOCAL_REJECTED)
+    testing.expect_value(t, view.control_count, before)
+    testing.expect(t, !view.control_failed)
+    testing.expect(t, !view.io_failed)
+}
+
 @(test)
 async_selection_and_clipboard_results_require_current_view_intent :: proc(t: ^testing.T) {
     testing.expect(t, control_result_current(0, 4, 4, true))

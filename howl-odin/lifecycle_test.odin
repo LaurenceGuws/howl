@@ -34,10 +34,23 @@ lifecycle_presentation_keeps_owned_and_attached_recovery_distinct :: proc(t: ^te
     testing.expect_value(t, owned.action, "Restart")
     testing.expect(t, owned.recoverable)
 
+    unavailable_owned := instance_lifecycle_presentation(.Unavailable, .Owned)
+    testing.expect_value(t, unavailable_owned.message, "Local connection unavailable")
+    testing.expect_value(t, unavailable_owned.action, "Reconnect")
+    testing.expect(t, unavailable_owned.recoverable)
+
     attached := instance_lifecycle_presentation(.Unavailable, .Attached)
     testing.expect_value(t, attached.message, "Attached Instance unavailable")
     testing.expect_value(t, attached.action, "Reconnect")
     testing.expect(t, attached.recoverable)
+
+    local := Instance_View{ownership = .Owned, route_kind = .Local, instance_id = 17}
+    same := Instance_View{ownership = .Owned, route_kind = .Local, instance_id = 17}
+    different := Instance_View{ownership = .Owned, route_kind = .Local, instance_id = 18}
+    testing.expect(t, local_recovery_reuses_instance(&local, .Unavailable))
+    testing.expect(t, !local_recovery_reuses_instance(&local, .Closed))
+    testing.expect(t, same_local_instance_owner(&local, &same))
+    testing.expect(t, !same_local_instance_owner(&local, &different))
 
     active := instance_lifecycle_presentation(.Active, .Owned)
     testing.expect(t, !active.visible)

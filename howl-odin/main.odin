@@ -1326,6 +1326,8 @@ publish_bridge_error :: proc(view: ^Instance_View, handle: rawptr) {
         c.size_t(len(message)),
         &error_len,
     )
+    error_text := int(error_len) > 0 ? string(message[:int(error_len)]) : "Instance I/O failed without a diagnostic"
+    fmt.eprintln("howl-odin: Instance I/O failure route=", view.route_kind, " instance=", view.instance_id, ": ", error_text)
     sync.mutex_lock(&view.mutex)
     copy(view.error[:], message[:int(error_len)])
     view.error_len = int(error_len)
@@ -2160,7 +2162,7 @@ create_error_instance_view :: proc(message: string, ownership: Instance_Ownershi
     return view
 }
 
-destroy_instance_view :: proc(view: ^Instance_View) {
+destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_local: bool) {
     if view == nil {
         return
     }
@@ -2203,12 +2205,20 @@ destroy_instance_view :: proc(view: ^Instance_View) {
     if view.control_result.bytes != nil do delete(view.control_result.bytes)
     if view.clipboard_reply != nil do delete(view.clipboard_reply)
     if view.reusable_view != nil do view_destroy(view.reusable_view)
-    if view.route_kind == .Local && view.instance_id != 0 {
+    if retire_local && view.route_kind == .Local && view.instance_id != 0 {
         _ = local_instance_destroy(desktop_io_runtime, view.instance_id)
     }
     delete(view.scratch)
     delete(view.text)
     free(view)
+}
+
+destroy_instance_view :: proc(view: ^Instance_View) {
+    destroy_instance_view_with_local_policy(view, true)
+}
+
+destroy_instance_view_preserving_local :: proc(view: ^Instance_View) {
+    destroy_instance_view_with_local_policy(view, false)
 }
 
 tab_pane_view :: proc(tab: ^Tab, pane_index: int) -> ^Instance_View {
@@ -2480,7 +2490,7 @@ send_terminal_mouse :: proc(
     if view == nil || view.control == nil {
         return false
     }
-    if queue_mouse(
+    result := queue_mouse(
         view,
         u8(kind),
         u8(button),
@@ -2491,10 +2501,8 @@ send_terminal_mouse :: proc(
         1,
         pixel_x,
         pixel_y,
-    ) != 0 {
-        copy_bridge_error(view)
-        return false
-    }
+    )
+    if control_queue_result_failed(view, result) do return false
     return true
 }
 
@@ -2638,10 +2646,8 @@ send_semantic_focus :: proc(view: ^Instance_View, focused: bool) -> bool {
     if view == nil || view.control == nil {
         return false
     }
-    if queue_focus(view, u8(focused ? Bridge_Focus.In : Bridge_Focus.Out)) != 0 {
-        copy_bridge_error(view)
-        return false
-    }
+    result := queue_focus(view, u8(focused ? Bridge_Focus.In : Bridge_Focus.Out))
+    if control_queue_result_failed(view, result) do return false
     return true
 }
 
@@ -2649,15 +2655,8 @@ send_named_key_cycle :: proc(view: ^Instance_View, key: Bridge_Key) -> bool {
     if view == nil || view.control == nil {
         return false
     }
-    if queue_named_key(view, u8(key), u8(Bridge_Key_Action.Press), 0) != 0 {
-        copy_bridge_error(view)
-        return false
-    }
-    if queue_named_key(view, u8(key), u8(Bridge_Key_Action.Release), 0) != 0 {
-        copy_bridge_error(view)
-        return false
-    }
-    return true
+    result := queue_named_key_cycle(view, u8(key), 0)
+    return !control_queue_result_failed(view, result)
 }
 
 bridge_modifiers :: proc(mods: SDL.Keymod) -> u8 {
@@ -2750,9 +2749,7 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         u8(action),
         bridge_modifiers(event.key.mod),
     )
-    if result != 0 {
-        copy_bridge_error(view)
-    }
+    _ = control_queue_result_failed(view, result)
     return true
 }
 
@@ -3642,10 +3639,8 @@ paste_clipboard :: proc(view: ^Instance_View) -> bool {
         return false
     }
     _ = return_history_live(view)
-    if queue_text(view, raw_data(text), c.size_t(len(text)), true) != 0 {
-        copy_bridge_error(view)
-        return false
-    }
+    result := queue_text(view, raw_data(text), c.size_t(len(text)), true)
+    if control_queue_result_failed(view, result) do return false
     return true
 }
 
@@ -4010,7 +4005,17 @@ attach_home_tab :: proc(app: ^App) {
     open_profile_tab(app, 0)
 }
 
-replace_active_instance_view :: proc(app: ^App, replacement: ^Instance_View) -> bool {
+same_local_instance_owner :: proc(left, right: ^Instance_View) -> bool {
+    return left != nil && right != nil &&
+           left.route_kind == .Local && right.route_kind == .Local &&
+           left.instance_id != 0 && left.instance_id == right.instance_id
+}
+
+replace_active_instance_view :: proc(
+    app: ^App,
+    replacement: ^Instance_View,
+    preserve_local_owner: bool = false,
+) -> bool {
     _ = finish_pane_resize_drag(app)
     if app == nil || replacement == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return false
@@ -4024,18 +4029,37 @@ replace_active_instance_view :: proc(app: ^App, replacement: ^Instance_View) -> 
     if old == nil {
         return false
     }
+    if preserve_local_owner && !same_local_instance_owner(old, replacement) {
+        return false
+    }
     tab.panes[tab.active_pane] = replacement
     if old != nil {
         _ = finish_terminal_mouse_capture(old, 0)
-        destroy_instance_view(old)
+        if preserve_local_owner {
+            destroy_instance_view_preserving_local(old)
+        } else {
+            destroy_instance_view(old)
+        }
     }
     return true
+}
+
+local_recovery_reuses_instance :: proc(view: ^Instance_View, state: Instance_Lifecycle_State) -> bool {
+    return view != nil && state == .Unavailable && view.route_kind == .Local && view.instance_id != 0
 }
 
 recover_active_instance :: proc(app: ^App) -> bool {
     view := active_instance_view(app)
     if view == nil || !instance_recoverable(view) {
         return false
+    }
+    state := instance_lifecycle_state(view)
+    if local_recovery_reuses_instance(view, state) {
+        replacement := create_local_instance_view(view.instance_id)
+        if replacement == nil do return false
+        replacement.profile_index = view.profile_index
+        replacement.profile_font_pixels = view.profile_font_pixels
+        return replace_active_instance_view(app, replacement, true)
     }
     replacement: ^Instance_View
     if view.profile_index >= 0 {
@@ -4845,9 +4869,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                     u8(action),
                     bridge_modifiers(event.key.mod),
                 )
-                if result != 0 {
-                    copy_bridge_error(view)
-                }
+                _ = control_queue_result_failed(view, result)
             }
         }
     case .TEXT_EDITING:
@@ -4896,9 +4918,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             if len(text) != 0 {
                 _ = return_history_live(view)
                 result := queue_text(view, raw_data(text), c.size_t(len(text)))
-                if result != 0 {
-                    copy_bridge_error(view)
-                }
+                _ = control_queue_result_failed(view, result)
             }
         }
     case .MOUSE_MOTION:
@@ -5606,7 +5626,7 @@ instance_lifecycle_presentation :: proc(
         return {message = "Attached Instance closed", action = "Reconnect", visible = true, recoverable = true}
     case .Unavailable:
         if ownership == .Owned {
-            return {message = "Local Instance unavailable", action = "Restart", visible = true, recoverable = true}
+            return {message = "Local connection unavailable", action = "Reconnect", visible = true, recoverable = true}
         }
         return {message = "Attached Instance unavailable", action = "Reconnect", visible = true, recoverable = true}
     }
@@ -5660,9 +5680,28 @@ draw_instance_lifecycle :: proc(
     background[3] = 238
     draw_fill(app.renderer, bar, background)
     draw_outline(app.renderer, bar, palette.border)
-    draw_text(app, app.ui_font, presentation.message, bar.x + 10, bar.y + 8, palette.text)
+
+    message := presentation.message
+    failure: [160]u8
+    failure_len := 0
+    if state == .Unavailable {
+        sync.mutex_lock(&view.mutex)
+        failure_len = min(view.error_len, len(failure))
+        if failure_len > 0 do copy(failure[:failure_len], view.error[:failure_len])
+        sync.mutex_unlock(&view.mutex)
+        if failure_len > 0 do message = string(failure[:failure_len])
+    }
+
+    action := instance_lifecycle_action_rect(pane)
+    message_right := bar.x + bar.w - 8
+    if presentation.recoverable do message_right = action.x - 8
+    settings_clipped_text(
+        app,
+        {bar.x + 10, bar.y + 7, max(f32(0), message_right - bar.x - 10), bar.h - 8},
+        message,
+        palette.text,
+    )
     if presentation.recoverable {
-        action := instance_lifecycle_action_rect(pane)
         draw_fill(app.renderer, action, palette.tab_active)
         draw_outline(app.renderer, action, palette.accent)
         shortcut := action_binding_text(app, .Recover_Instance)

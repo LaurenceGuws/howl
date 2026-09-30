@@ -701,14 +701,17 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Attached direct/Server views never kill the externally owned Instance.
 - Independent observer/control connections and explicit blocked-observer
   cancellation.
-- Canonical `stream_closed` / `child_exited` snapshot facts drive pane-local
+- Canonical `stream_closed` / `child_exited` snapshot facts drive destructive
   lifecycle state. A client-owned shell preserves its final Canvas frame as
   `Process exited`, stops accepting terminal input, remains locally selectable/
-  scrollable, and offers Restart. Restart destroys the old owned Local Instance
-  and creates a fresh in-process Instance in the same pane.
-- Attached failure/closure is visibly different: `Attached Instance unavailable`
-  offers Reconnect against the exact stored target. Reconnect never manufactures
-  a Local Instance or changes external ownership.
+  scrollable, and offers Restart. Only this canonical closed state may destroy the
+  old owned Local Instance and create a fresh in-process Instance in the same pane.
+- Local observer/control failure is not child death. `Local connection unavailable`
+  offers Reconnect to the same Local Instance id, transfers the owner to the fresh
+  view, and never calls `local_instance_destroy` on the PTY child. Attached
+  failure/closure remains Reconnect against the exact stored target.
+- Exact bridge I/O diagnostics are printed to stderr and shown in the lifecycle bar
+  so a channel failure cannot collapse into an untraceable generic unavailable state.
 - Ownership is explicit `Attached` / `Owned` client state rather than inferred
   from whether Local creation happened to succeed, so even a failed Local launch
   retains Restart semantics.

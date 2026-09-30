@@ -262,12 +262,14 @@ Current canary:
   preserve the Instance size until the user chooses Take Instance size control;
   merely attaching, focusing, or opening a larger window never claims it;
 - pane lifecycle is explicit and ownership-aware. Canonical Instance `stream_closed` /
-  `child_exited` facts preserve the final frame behind a small recovery bar; an owned
-  Local shell becomes `Process exited` with Restart, while an unavailable/closed attached
-  view offers Reconnect to the same endpoint. Restart replaces only that pane with a new
-  owned Instance identity; Reconnect never launches a shell. `Ctrl+Shift+R` invokes the
-  appropriate recovery, and dead panes remain locally scrollable/selectable but stop
-  forwarding terminal input;
+  `child_exited` facts preserve the final frame behind a small recovery bar; an actually
+  closed Local shell becomes `Process exited` with Restart. Local observer/control failure
+  instead offers Reconnect to the same in-process Instance id and transfers ownership
+  without retiring its PTY child. Unavailable/closed attached views reconnect to the same
+  target. Restart is therefore reserved for canonical child closure; Reconnect never
+  launches a shell. The exact bridge diagnostic is shown in the lifecycle bar and stderr.
+  `Ctrl+Shift+R` invokes the appropriate recovery, and dead panes remain locally
+  scrollable/selectable but stop forwarding terminal input;
 - SDL rendering uses the window-logical coordinate space and lets the renderer
   scale to high-density output, keeping chrome, cursor placement, and converted
   pointer coordinates on one geometry contract;
