@@ -258,7 +258,11 @@ Instance_View :: struct {
     canvas: rawptr,
     render_work: ^Render_Work,
     canvas_font_pixels: u16,
+    canvas_render_scale: f32,
     canvas_scale: f32,
+    canvas_frame_font_pixels: u16,
+    canvas_frame_background_rgba: u32,
+    canvas_worker_has_frame: bool,
     canvas_instance_revision: u64,
     canvas_history_offset: u32,
     canvas_frame_revision: u64,
@@ -493,15 +497,14 @@ action_enabled :: proc(app: ^App, action: App_Action) -> bool {
 }
 
 action_label :: proc(action: App_Action) -> string {
-    if definition, ok := action_definition(action); ok {
-        return definition.label
-    }
-    return "Unknown action"
+    definition, ok := action_definition(action)
+    assert(ok)
+    return definition.label
 }
 
 action_default_shortcut :: proc(action: App_Action) -> string {
     index, ok := mapping_index_for_action(action)
-    if !ok do return ""
+    assert(ok)
     return KEY_MAPPING_DEFINITIONS[index].default_shortcut
 }
 
@@ -680,49 +683,98 @@ next_terminal_font_pixels :: proc(current: u16, delta: int) -> u16 {
     return u16(clamp(int(current) + delta, TERMINAL_FONT_PIXELS_MIN, TERMINAL_FONT_PIXELS_MAX))
 }
 
-load_user_config :: proc() -> User_Config {
-    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = TERMINAL_FONT_PIXELS_DEFAULT, startup_profile = 0, app_theme = "howl_dark"}
-    _, path, _, ok := config_paths()
-    if !ok {
-        return result
+config_load_error :: proc(output: []u8, message: string) {
+    if len(output) == 0 do return
+    count := min(len(message), len(output))
+    copy(output[:count], transmute([]u8)message[:count])
+    if count < len(output) do output[count] = 0
+}
+
+user_config_from_candidate :: proc(candidate: User_Config, diagnostic: []u8) -> (User_Config, bool) {
+    result := User_Config{
+        schema = CONFIG_SCHEMA,
+        terminal_font_pixels = TERMINAL_FONT_PIXELS_DEFAULT,
+        startup_profile = 0,
+        app_theme = "howl_dark",
     }
-    data, err := os.read_entire_file(path, context.temp_allocator)
-    if err != nil {
-        return result
+    if candidate.schema != 1 && candidate.schema != 2 &&
+       candidate.schema != 3 && candidate.schema != CONFIG_SCHEMA {
+        config_load_error(diagnostic, "config schema is unsupported")
+        return {}, false
     }
-    candidate: User_Config
-    if json.unmarshal(data, &candidate, allocator=context.temp_allocator) != nil ||
-       (candidate.schema != 1 && candidate.schema != 2 && candidate.schema != 3 && candidate.schema != CONFIG_SCHEMA) {
-        return result
+    if !valid_terminal_font_pixels(candidate.terminal_font_pixels) {
+        config_load_error(diagnostic, "terminal_font_pixels is invalid")
+        return {}, false
     }
-    if valid_terminal_font_pixels(candidate.terminal_font_pixels) {
-        result.terminal_font_pixels = candidate.terminal_font_pixels
+    if candidate.startup_profile < 0 || candidate.startup_profile > 1 {
+        config_load_error(diagnostic, "startup_profile is invalid")
+        return {}, false
     }
-    if candidate.startup_profile >= 0 && candidate.startup_profile <= 1 {
-        result.startup_profile = candidate.startup_profile
-    }
+
+    result.terminal_font_pixels = candidate.terminal_font_pixels
+    result.startup_profile = candidate.startup_profile
+
     if candidate.schema >= 2 {
         result.keybindings = candidate.keybindings
     }
     if candidate.schema >= 3 {
+        if _, theme_ok := parse_app_theme(candidate.app_theme); !theme_ok {
+            config_load_error(diagnostic, "app_theme is invalid")
+            return {}, false
+        }
         result.default_profile = candidate.default_profile
         result.profiles = candidate.profiles
-        if _, theme_ok := parse_app_theme(candidate.app_theme); theme_ok {
-            result.app_theme = candidate.app_theme
-        }
+        result.app_theme = candidate.app_theme
     }
     if candidate.schema >= 4 {
         result.servers = candidate.servers
     }
-    return result
+    return result, true
+}
+
+load_user_config :: proc(diagnostic: []u8) -> (User_Config, bool) {
+    defaults := User_Config{
+        schema = CONFIG_SCHEMA,
+        terminal_font_pixels = TERMINAL_FONT_PIXELS_DEFAULT,
+        startup_profile = 0,
+        app_theme = "howl_dark",
+    }
+    _, path, _, ok := config_paths()
+    if !ok {
+        config_load_error(diagnostic, "config path resolution failed")
+        return {}, false
+    }
+    if !os.exists(path) {
+        return defaults, true
+    }
+
+    data, err := os.read_entire_file(path, context.temp_allocator)
+    if err != nil {
+        config_load_error(diagnostic, "config file exists but could not be read")
+        return {}, false
+    }
+
+    candidate: User_Config
+    if json.unmarshal(data, &candidate, allocator=context.temp_allocator) != nil {
+        config_load_error(diagnostic, "config JSON is invalid")
+        return {}, false
+    }
+    return user_config_from_candidate(candidate, diagnostic)
+}
+
+report_config_save_error :: proc(app: ^App, message: string) {
+    fmt.eprintln("Odin config save error: ", message)
+    if app != nil do set_config_notice(app, message)
 }
 
 save_user_config :: proc(app: ^App) {
     directory, path, temporary, ok := config_paths()
     if !ok {
+        report_config_save_error(app, "config path resolution failed")
         return
     }
     if err := os.make_directory_all(directory); err != nil && err != .Exist {
+        report_config_save_error(app, "config directory creation failed")
         return
     }
     overrides: [len(KEY_MAPPING_DEFINITIONS)]User_Key_Mapping_Config
@@ -790,13 +842,17 @@ save_user_config :: proc(app: ^App) {
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
     if err != nil {
+        report_config_save_error(app, "config serialization failed")
         return
     }
     if os.write_entire_file(temporary, data) != nil {
+        report_config_save_error(app, "config temporary write failed")
         return
     }
     if os.rename(temporary, path) != nil {
         _ = os.remove(temporary)
+        report_config_save_error(app, "config atomic rename failed")
+        return
     }
 }
 
@@ -842,7 +898,7 @@ adjust_terminal_font :: proc(app: ^App, delta: int) {
         app.terminal_font_pixels = next
         for index in 0..<app.tab_count {
             for view in app.tabs[index].panes {
-                if view != nil do reset_canvas(view)
+                if view != nil do restart_canvas_renderer(view)
             }
         }
         save_user_config(app)
@@ -925,10 +981,25 @@ update_text_display_scale :: proc(app: ^App) -> bool {
 }
 
 canvas_scale_value :: proc(view: ^Instance_View) -> f32 {
-    if view != nil && valid_canvas_scale(view.canvas_scale) {
-        return view.canvas_scale
-    }
-    return 1
+    assert(view != nil && valid_canvas_scale(view.canvas_scale))
+    return view.canvas_scale
+}
+
+canvas_render_scale_value :: proc(view: ^Instance_View) -> f32 {
+    assert(view != nil && valid_canvas_scale(view.canvas_render_scale))
+    return view.canvas_render_scale
+}
+
+canvas_frame_available :: proc(view: ^Instance_View) -> bool {
+    return view != nil && len(view.canvas_commands) != 0 &&
+           valid_canvas_scale(view.canvas_scale) &&
+           view.canvas_surface_width != 0 && view.canvas_surface_height != 0
+}
+
+canvas_frame_current :: proc(view: ^Instance_View) -> bool {
+    return canvas_frame_available(view) && view.canvas != nil &&
+           view.canvas_worker_has_frame &&
+           view.canvas_frame_font_pixels == view.canvas_font_pixels
 }
 
 canvas_logical_extent :: proc(view: ^Instance_View, physical: u16) -> f32 {
@@ -981,34 +1052,40 @@ clear_canvas_resources :: proc(view: ^Instance_View) {
     }
 }
 
-reset_canvas :: proc(view: ^Instance_View) {
-    if view == nil {
-        return
-    }
+restart_canvas_renderer :: proc(view: ^Instance_View, clear_error := true) {
+    if view == nil do return
     clear_selection(view)
-    clear_canvas_resources(view)
     if view.render_work != nil {
         stop_render_worker(view.render_work)
         view.render_work = nil
     }
     view.canvas = nil
-    if view.canvas_commands != nil {
-        delete(view.canvas_commands)
-        view.canvas_commands = nil
-    }
     view.canvas_font_pixels = 0
-    view.canvas_scale = 0
-    view.canvas_instance_revision = 0
-    view.canvas_history_offset = 0
-    view.canvas_frame_revision = 0
-    view.canvas_surface_width = 0
-    view.canvas_surface_height = 0
-    view.canvas_error_len = 0
+    view.canvas_render_scale = 0
+    view.canvas_worker_has_frame = false
+    if clear_error do view.canvas_error_len = 0
     sync.mutex_lock(&view.mutex)
     view.size_control.applied = {}
     sync.mutex_unlock(&view.mutex)
 }
 
+reset_canvas :: proc(view: ^Instance_View, clear_error := true) {
+    if view == nil do return
+    restart_canvas_renderer(view, clear_error)
+    clear_canvas_resources(view)
+    if view.canvas_commands != nil {
+        delete(view.canvas_commands)
+        view.canvas_commands = nil
+    }
+    view.canvas_scale = 0
+    view.canvas_frame_font_pixels = 0
+    view.canvas_frame_background_rgba = 0
+    view.canvas_instance_revision = 0
+    view.canvas_history_offset = 0
+    view.canvas_frame_revision = 0
+    view.canvas_surface_width = 0
+    view.canvas_surface_height = 0
+}
 
 find_canvas_resource :: proc(view: ^Instance_View, resource, generation: u64) -> ^Canvas_Texture {
     for index in 0..<view.canvas_resource_count {
@@ -1137,24 +1214,42 @@ ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     scale := SDL.GetWindowDisplayScale(app.window)
     pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
-    if view.render_work != nil && view.canvas_font_pixels != pixels do reset_canvas(view)
-    if view.render_work == nil {
-        if view.route_kind != .Local && len(instance_endpoint(view)) == 0 do return false
-        view.render_work = start_render_worker(app, view, pixels)
-        if view.render_work == nil { set_canvas_error(view, "render worker creation failed"); return false }
-        view.canvas_font_pixels = pixels
+    if view.render_work != nil &&
+       (view.canvas_font_pixels != pixels || view.canvas_render_scale != scale) {
+        restart_canvas_renderer(view)
     }
-    view.canvas_scale = scale
+    if view.render_work == nil {
+        if view.route_kind != .Local && len(instance_endpoint(view)) == 0 {
+            set_canvas_error(view, "render target endpoint unavailable")
+            return false
+        }
+        view.render_work = start_render_worker(app, view, pixels)
+        if view.render_work == nil {
+            set_canvas_error(view, "render worker creation failed")
+            return false
+        }
+        view.canvas_font_pixels = pixels
+        view.canvas_render_scale = scale
+    }
     work := view.render_work
     sync.mutex_lock(&work.mutex)
-    if work.created && view.canvas == nil {
-        view.canvas = work.handle
-        if work.failed {
-            set_canvas_error(view, string(work.error[:work.error_len]))
-            publish_initial_error(view, string(work.error[:work.error_len]))
-        }
-    }
+    created := work.created
+    failed := work.failed
+    handle := work.handle
+    error_len := work.error_len
+    error_copy: [160]u8
+    if error_len > 0 do copy(error_copy[:error_len], work.error[:error_len])
     sync.mutex_unlock(&work.mutex)
+    if created && view.canvas == nil {
+        if failed || handle == nil {
+            message := error_len > 0 ? string(error_copy[:error_len]) : "render worker failed without diagnostic"
+            set_canvas_error(view, message)
+            publish_initial_error(view, message)
+            reset_canvas(view, false)
+            return false
+        }
+        view.canvas = handle
+    }
     return view.canvas != nil
 }
 
@@ -1175,32 +1270,37 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     prepared_history_generation := work.history_generation
     sync.mutex_unlock(&work.mutex)
     if !ready {
-        if view.canvas_instance_revision < target_revision || view.canvas_history_offset != requested_history_offset || len(view.canvas_commands) == 0 {
+        if !view.canvas_worker_has_frame ||
+           view.canvas_instance_revision < target_revision ||
+           view.canvas_history_offset != requested_history_offset {
             request_render(work, view, target_revision, requested_history_offset, requested_history_generation)
         }
-        return len(view.canvas_commands) != 0
+        return canvas_frame_available(view)
     }
     if code != 0 {
         copy_canvas_bridge_error(view)
-        publish_initial_error(view, string(view.canvas_error[:view.canvas_error_len]))
+        message := view.canvas_error_len > 0 ? string(view.canvas_error[:view.canvas_error_len]) : "Canvas render failed without diagnostic"
+        if view.canvas_error_len == 0 do set_canvas_error(view, message)
+        publish_initial_error(view, message)
         sync.mutex_lock(&work.mutex)
         work.ready = false
         sync.mutex_unlock(&work.mutex)
-        return len(view.canvas_commands) != 0
+        reset_canvas(view, false)
+        return false
     }
 
     for index in 0..<int(render_removal_count(view.canvas)) {
         info: Canvas_Removal_Info
         if render_removal_info(view.canvas, u32(index), &info) != 0 {
             set_canvas_error(view, "Canvas removal decode failed")
-            reset_canvas(view)
+            reset_canvas(view, false)
             return false
         }
         remove_canvas_resource_key(view, info.resource, info.generation, true)
     }
     for index in 0..<int(render_upload_count(view.canvas)) {
         if !create_canvas_texture(app, view, u32(index)) {
-            reset_canvas(view)
+            reset_canvas(view, false)
             return false
         }
     }
@@ -1211,7 +1311,7 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         if render_command_info(view.canvas, u32(index), &commands[index]) != 0 {
             delete(commands)
             set_canvas_error(view, "Canvas command decode failed")
-            reset_canvas(view)
+            reset_canvas(view, false)
             return false
         }
     }
@@ -1219,12 +1319,16 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         delete(view.canvas_commands)
     }
     view.canvas_commands = commands
-    render_accept(view.canvas)
+    view.canvas_frame_background_rgba = render_background_rgba(view.canvas)
     view.canvas_surface_width = render_surface_width(view.canvas)
     view.canvas_surface_height = render_surface_height(view.canvas)
     view.canvas_frame_revision = render_frame_revision(view.canvas)
     view.canvas_instance_revision = render_instance_revision(view.canvas)
     view.canvas_history_offset = render_history_offset(view.canvas)
+    view.canvas_scale = view.canvas_render_scale
+    view.canvas_frame_font_pixels = view.canvas_font_pixels
+    view.canvas_worker_has_frame = true
+    render_accept(view.canvas)
     accept_history_snapshot(
         view,
         view.canvas_history_offset,
@@ -1253,17 +1357,24 @@ rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
 }
 
 draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -> bool {
-    if !update_canvas(app, view) {
+    if !update_canvas(app, view) && !canvas_frame_available(view) {
         return false
     }
-    color := render_background_rgba(view.canvas)
+    if view.canvas_error_len != 0 {
+        return false
+    }
+    color := view.canvas_frame_background_rgba
     draw_fill(app.renderer, pane, {
         rgba_channel(color, 0),
         rgba_channel(color, 8),
         rgba_channel(color, 16),
         rgba_channel(color, 24),
     })
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := accepted_terminal_surface_rect(view, pane)
+    if !surface_ok {
+        set_canvas_error(view, "accepted Canvas surface geometry unavailable")
+        return false
+    }
     origin_x := surface.x
     origin_y := surface.y
     scale := canvas_scale_value(view)
@@ -2404,10 +2515,14 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
     if len(shell) == 0 {
         when ODIN_OS == .Windows {
             shell = os.get_env("COMSPEC", context.temp_allocator)
-            if len(shell) == 0 do shell = "C:\\Windows\\System32\\cmd.exe"
+            if len(shell) == 0 {
+                return create_error_instance_view("Local profile shell is blank and COMSPEC is unavailable", .Owned)
+            }
         } else {
             shell = os.get_env("SHELL", context.temp_allocator)
-            if len(shell) == 0 do shell = "/bin/sh"
+            if len(shell) == 0 {
+                return create_error_instance_view("Local profile shell is blank and SHELL is unavailable", .Owned)
+            }
         }
     }
     command := profile_command(profile)
@@ -2423,7 +2538,7 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
         raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &diagnostic_len,
     )
     if local_id == 0 {
-        message := int(diagnostic_len) > 0 ? string(diagnostic[:int(diagnostic_len)]) : "Local Instance creation failed"
+        message := int(diagnostic_len) > 0 ? string(diagnostic[:int(diagnostic_len)]) : "Local Instance creation failed without diagnostic"
         return create_error_instance_view(message, .Owned)
     }
     view := create_local_instance_view(local_id)
@@ -2507,7 +2622,8 @@ terminal_pointer_location :: proc(
         return 0, 0, 0, 0, false
     }
     scale := canvas_scale_value(view)
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return 0, 0, 0, 0, false
     origin_x := surface.x
     origin_y := surface.y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
@@ -2825,9 +2941,7 @@ send_bridge_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 }
 
 history_page_rows :: proc(view: ^Instance_View) -> int {
-    if view == nil {
-        return 1
-    }
+    assert(view != nil)
     sync.mutex_lock(&view.mutex)
     value := max(1, int(view.rows) - 2)
     sync.mutex_unlock(&view.mutex)
@@ -3307,7 +3421,8 @@ selection_cell_at :: proc(
         return 0, 0, false
     }
     scale := canvas_scale_value(view)
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return 0, 0, false
     origin_x := surface.x
     origin_y := surface.y
     right := origin_x + canvas_logical_extent(view, view.canvas_surface_width)
@@ -3555,7 +3670,8 @@ update_selection_edge_scroll_intent :: proc(
         return false
     }
     scale := canvas_scale_value(view)
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return false
     surface_top := surface.y
     surface_bottom := surface.y + surface.h
     alternate := render_alternate_screen(view.canvas) != 0
@@ -3746,7 +3862,8 @@ draw_selection :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
         return
     }
 
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return
     origin_x := surface.x
     origin_y := surface.y
     scale := canvas_scale_value(view)
@@ -3809,7 +3926,8 @@ draw_search_highlight :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) 
         return
     }
 
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return
     origin_x := surface.x
     origin_y := surface.y
     scale := canvas_scale_value(view)
@@ -3984,8 +4102,7 @@ duplicate_active_tab :: proc(app: ^App) -> bool {
         return false
     }
     profile := app.tabs[app.active_tab].profile
-    open_profile_tab(app, profile)
-    return true
+    return open_profile_tab(app, profile)
 }
 
 destroy_tab_contents :: proc(tab: ^Tab) {
@@ -4049,21 +4166,23 @@ profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Instance_View, ti
     return view, title
 }
 
-open_profile_tab :: proc(app: ^App, profile: int) {
+open_profile_tab :: proc(app: ^App, profile: int) -> bool {
+    if app == nil do return false
     view, title := profile_view(app, profile)
-    _ = add_instance_tab(app, view, title, profile)
+    return add_instance_tab(app, view, title, profile)
 }
 
-new_tab :: proc(app: ^App) {
-    open_profile_tab(app, app.startup_profile)
+new_tab :: proc(app: ^App) -> bool {
+    if app == nil do return false
+    return open_profile_tab(app, app.startup_profile)
 }
 
-open_local_tab :: proc(app: ^App) {
-    open_profile_tab(app, 1)
+open_local_tab :: proc(app: ^App) -> bool {
+    return open_profile_tab(app, 1)
 }
 
-attach_home_tab :: proc(app: ^App) {
-    open_profile_tab(app, 0)
+attach_home_tab :: proc(app: ^App) -> bool {
+    return open_profile_tab(app, 0)
 }
 
 same_local_instance_owner :: proc(left, right: ^Instance_View) -> bool {
@@ -4311,14 +4430,14 @@ execute_action :: proc(app: ^App, action: App_Action) {
             close_tab(app, app.active_tab)
         }
     case .New_Tab:
-        new_tab(app)
+        if !new_tab(app) do fmt.eprintln("New tab creation failed")
     case .New_Window:
-        _ = launch_new_window()
+        if !launch_new_window() do fmt.eprintln("New window creation failed")
     case .Toggle_Fullscreen:
         app.palette_open = false
         _ = toggle_window_fullscreen(app)
     case .Duplicate_Tab:
-        _ = duplicate_active_tab(app)
+        if !duplicate_active_tab(app) do fmt.eprintln("Duplicate tab creation failed")
     case .Split_Vertical:
         split_active_pane(app, .Vertical)
     case .Split_Horizontal:
@@ -4329,9 +4448,9 @@ execute_action :: proc(app: ^App, action: App_Action) {
             _ = toggle_pane_zoom(&app.tabs[app.active_tab])
         }
     case .Open_Local:
-        open_local_tab(app)
+        if !open_local_tab(app) do fmt.eprintln("Local tab creation failed")
     case .Attach_Home:
-        attach_home_tab(app)
+        if !attach_home_tab(app) do fmt.eprintln("Home attachment tab creation failed")
     case .Take_Size_Control, .Stop_Resizing:
         app.palette_open = false
         view := active_instance_view(app)
@@ -4523,7 +4642,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             app.profile_menu_selection = (app.profile_menu_selection + 1) % item_count
         case SDL.K_RETURN:
             if app.profile_menu_selection < app.profile_count {
-                open_profile_tab(app, app.profile_menu_selection)
+                if !open_profile_tab(app, app.profile_menu_selection) do fmt.eprintln("Profile tab creation failed")
             } else if app.profile_menu_selection == app.profile_count {
                 if app.server_count > 0 do _ = open_server_browser(app, 0)
             } else if app.profile_menu_selection == app.profile_count + 1 {
@@ -4725,7 +4844,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         for profile_index in 0..<app.profile_count {
             row := SDL.FRect{panel.x + 8, panel.y + 8 + f32(profile_index) * 48, panel.w - 16, 42}
             if inside(x, y, row) {
-                open_profile_tab(app, profile_index)
+                if !open_profile_tab(app, profile_index) do fmt.eprintln("Profile tab creation failed")
                 return
             }
         }
@@ -5433,61 +5552,25 @@ draw_profile_menu :: proc(app: ^App) {
     draw_text(app, app.ui_font, action_binding_text(app, .Open_Settings), settings_row.x + 252, settings_row.y + 8, palette.text_muted)
 }
 
-history_scrollbar_geometry :: proc(
-    view: ^Instance_View,
-    pane: SDL.FRect,
+history_scrollbar_geometry_for_surface :: proc(
+    pane, surface: SDL.FRect,
+    history_offset, history_count_value, visible_rows: u32,
+    alternate: bool,
 ) -> (geometry: History_Scrollbar_Geometry, ok: bool) {
-    if view == nil {
+    if alternate || history_count_value == 0 || visible_rows == 0 || surface.h <= 0 {
         return {}, false
     }
-
-    history_offset: u32
-    history_count_value: u32
-    visible_rows: u32
-    alternate := false
-    if view.canvas != nil {
-        history_offset = render_history_offset(view.canvas)
-        history_count_value = render_history_count(view.canvas)
-        alternate = render_alternate_screen(view.canvas) != 0
-        cell_height := render_cell_height(view.canvas)
-        if cell_height != 0 {
-            visible_rows = u32(view.canvas_surface_height / cell_height)
-        }
-    } else {
-        sync.mutex_lock(&view.mutex)
-        history_offset = view.history_target_offset
-        history_count_value = view.history_count
-        visible_rows = u32(view.rows)
-        alternate = view.alternate_screen
-        sync.mutex_unlock(&view.mutex)
-    }
-    if alternate || history_count_value == 0 || visible_rows == 0 {
-        return {}, false
-    }
-
-    content := terminal_content_rect(pane)
-    surface := view.canvas != nil ? terminal_surface_rect(view, pane) : content
     track := SDL.FRect{pane.x + pane.w - 8, surface.y, 3, surface.h}
-    if track.h <= 0 {
-        return {}, false
-    }
     thumb_top, thumb_height, thumb_ok := history_scrollbar_thumb(
         history_offset,
         history_count_value,
         visible_rows,
         track.h,
     )
-    if !thumb_ok {
-        return {}, false
-    }
-    thumb := SDL.FRect{
-        track.x - 1,
-        track.y + thumb_top,
-        5,
-        thumb_height,
-    }
+    if !thumb_ok do return {}, false
+    thumb := SDL.FRect{track.x - 1, track.y + thumb_top, 5, thumb_height}
     hit := SDL.FRect{pane.x + pane.w - 16, track.y, 12, track.h}
-    return History_Scrollbar_Geometry{
+    return {
         track = track,
         thumb = thumb,
         hit = hit,
@@ -5495,6 +5578,27 @@ history_scrollbar_geometry :: proc(
         history_count = history_count_value,
         visible_rows = visible_rows,
     }, true
+}
+
+history_scrollbar_geometry :: proc(
+    view: ^Instance_View,
+    pane: SDL.FRect,
+) -> (geometry: History_Scrollbar_Geometry, ok: bool) {
+    if view == nil || view.canvas == nil do return {}, false
+
+    cell_height := render_cell_height(view.canvas)
+    if cell_height == 0 do return {}, false
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return {}, false
+
+    return history_scrollbar_geometry_for_surface(
+        pane,
+        surface,
+        render_history_offset(view.canvas),
+        render_history_count(view.canvas),
+        u32(view.canvas_surface_height / cell_height),
+        render_alternate_screen(view.canvas) != 0,
+    )
 }
 
 history_scrollbar_drag_active :: proc(view: ^Instance_View) -> bool {
@@ -5556,27 +5660,18 @@ finish_all_history_scrollbar_drags :: proc(app: ^App) -> bool {
     return changed
 }
 
-update_history_scrollbar_drag :: proc(
+update_history_scrollbar_drag_geometry :: proc(
     view: ^Instance_View,
-    pane: SDL.FRect,
+    geometry: History_Scrollbar_Geometry,
     pointer_y: f32,
 ) -> bool {
-    if view == nil {
-        return false
-    }
+    if view == nil do return false
     sync.mutex_lock(&view.mutex)
     dragging := view.history_scrollbar_dragging
     grab_y := view.history_scrollbar_grab_y
     sync.mutex_unlock(&view.mutex)
-    if !dragging {
-        return false
-    }
+    if !dragging do return false
 
-    geometry, ok := history_scrollbar_geometry(view, pane)
-    if !ok {
-        _ = finish_history_scrollbar_drag(view)
-        return false
-    }
     relative_top := clamp(
         pointer_y - geometry.track.y - grab_y,
         f32(0),
@@ -5592,28 +5687,45 @@ update_history_scrollbar_drag :: proc(
     return true
 }
 
+update_history_scrollbar_drag :: proc(
+    view: ^Instance_View,
+    pane: SDL.FRect,
+    pointer_y: f32,
+) -> bool {
+    if view == nil do return false
+    geometry, ok := history_scrollbar_geometry(view, pane)
+    if !ok {
+        _ = finish_history_scrollbar_drag(view)
+        return false
+    }
+    return update_history_scrollbar_drag_geometry(view, geometry, pointer_y)
+}
+
+begin_history_scrollbar_drag_geometry :: proc(
+    view: ^Instance_View,
+    geometry: History_Scrollbar_Geometry,
+    x, y: f32,
+) -> bool {
+    if view == nil || !inside(x, y, geometry.hit) do return false
+    grab_y := geometry.thumb.h / 2
+    if inside(x, y, geometry.thumb) do grab_y = y - geometry.thumb.y
+    sync.mutex_lock(&view.mutex)
+    view.history_scrollbar_dragging = true
+    view.history_scrollbar_grab_y = grab_y
+    sync.mutex_unlock(&view.mutex)
+    _ = update_history_scrollbar_drag_geometry(view, geometry, y)
+    return true
+}
+
 begin_history_scrollbar_drag :: proc(
     view: ^Instance_View,
     pane: SDL.FRect,
     x, y: f32,
 ) -> bool {
     geometry, ok := history_scrollbar_geometry(view, pane)
-    if !ok || !inside(x, y, geometry.hit) {
-        return false
-    }
-    grab_y := geometry.thumb.h / 2
-    if inside(x, y, geometry.thumb) {
-        grab_y = y - geometry.thumb.y
-    }
-    sync.mutex_lock(&view.mutex)
-    view.history_scrollbar_dragging = true
-    view.history_scrollbar_grab_y = grab_y
-    sync.mutex_unlock(&view.mutex)
-    _ = update_history_scrollbar_drag(view, pane, y)
-    // Match selection/divider drags: delivered button-down owns this gesture.
-    // SDL auto-capture / Wayland's implicit grab supplies held-button events;
-    // unsupported explicit capture must not reduce dragging to the first seek.
-    // Release, focus loss, and application transitions retire it normally.
+    if !ok || !begin_history_scrollbar_drag_geometry(view, geometry, x, y) do return false
+    // Delivered button-down owns this gesture. Capture support is optional,
+    // but runtime geometry remains Canvas-derived.
     _ = SDL.CaptureMouse(true)
     return true
 }
@@ -5759,80 +5871,43 @@ draw_instance_lifecycle :: proc(
 }
 
 draw_real_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
-    if view == nil {
-        return
-    }
+    if view == nil do return
+
     lifecycle_state := instance_lifecycle_state(view)
     content := terminal_content_rect(pane)
     resize_instance_to_pane(app, view, content.w, content.h)
-    if draw_canvas_instance(app, view, pane) {
-        draw_search_highlight(app, view, pane)
-        draw_selection(app, view, pane)
-        draw_history_scrollbar(app, view, pane)
-        if history_active(view) {
-            badge := SDL.FRect{pane.x + pane.w - 92, pane.y + 8, 76, 26}
-            draw_fill(app.renderer, badge, palette.title_bg)
-            draw_outline(app.renderer, badge, palette.accent)
-            draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
-        }
-        draw_control_notice(app, view, pane)
-        draw_instance_lifecycle(app, view, pane, lifecycle_state)
-        return
-    }
 
-    surface := terminal_surface_rect(view, pane)
-    origin_x := surface.x
-    origin_y := surface.y
-    pane_clip := SDL.Rect{c.int(pane.x), c.int(pane.y), c.int(pane.w), c.int(pane.h)}
-    _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
-    defer {
-        _ = SDL.SetRenderClipRect(app.renderer, nil)
-    }
+    if !draw_canvas_instance(app, view, pane) {
+        draw_fill(app.renderer, pane, palette.terminal_panel)
 
-    sync.mutex_lock(&view.mutex)
-    error_text := view.error
-    error_count := view.error_len
-    text := make([]u8, view.text_len)
-    copy(text, view.text[:view.text_len])
-    cursor_is_visible := view.cursor_visible
-    current_rows, current_columns := view.rows, view.columns
-    cursor_row_value, cursor_column_value := view.cursor_row, view.cursor_column
-    shape := view.cursor_shape
-    truncated := view.text_truncated
-    sync.mutex_unlock(&view.mutex)
-    defer delete(text)
-
-    if error_count != 0 {
-        draw_text(app, app.ui_font, string(error_text[:error_count]), origin_x, origin_y, palette.accent)
-        draw_control_notice(app, view, pane)
-        draw_instance_lifecycle(app, view, pane, lifecycle_state)
-        return
-    }
-    if len(text) != 0 {
-        draw_text(app, app.terminal_font, string(text), origin_x, origin_y, palette.text)
-    }
-
-    if cursor_is_visible && current_rows != 0 && current_columns != 0 {
-        cell_w, cell_h: c.int
-        if TTF.GetStringSize(app.terminal_font, "M", 1, &cell_w, &cell_h) {
-            line_h := TTF.GetFontLineSkip(app.terminal_font)
-            cursor_x := origin_x + f32(int(cursor_column_value) * int(cell_w))
-            cursor_y := origin_y + f32(int(cursor_row_value) * int(line_h))
-            switch shape {
-            case 1:
-                draw_fill(app.renderer, {cursor_x, cursor_y + f32(line_h - 2), f32(cell_w), 2}, palette.text)
-            case 2:
-                draw_fill(app.renderer, {cursor_x, cursor_y, 2, f32(line_h)}, palette.text)
-            case 3:
-            case:
-                draw_outline(app.renderer, {cursor_x, cursor_y, f32(cell_w), f32(line_h)}, palette.text_muted)
+        message := "terminal Canvas unavailable"
+        if view.canvas_error_len != 0 {
+            message = string(view.canvas_error[:view.canvas_error_len])
+        } else {
+            sync.mutex_lock(&view.mutex)
+            if view.error_len != 0 {
+                message = string(view.error[:view.error_len])
             }
+            sync.mutex_unlock(&view.mutex)
         }
+
+        error_rect := SDL.FRect{pane.x + 10, pane.y + 10, max(f32(0), pane.w - 20), 34}
+        draw_fill(app.renderer, error_rect, palette.title_bg)
+        draw_outline(app.renderer, error_rect, palette.accent)
+        settings_clipped_text(app, {error_rect.x + 8, error_rect.y + 7, max(f32(0), error_rect.w - 16), 22}, message, palette.accent)
+
+        draw_control_notice(app, view, pane)
+        draw_instance_lifecycle(app, view, pane, lifecycle_state)
+        return
     }
 
-    if truncated {
-        draw_text(app, app.ui_font, "visible-text projection truncated", pane.x + 12, pane.y + pane.h - 24, palette.accent)
+    if !canvas_frame_current(view) {
+        draw_control_notice(app, view, pane)
+        draw_instance_lifecycle(app, view, pane, lifecycle_state)
+        return
     }
+
+    draw_search_highlight(app, view, pane)
     draw_selection(app, view, pane)
     draw_history_scrollbar(app, view, pane)
     if history_active(view) {
@@ -5842,7 +5917,7 @@ draw_real_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
         draw_text(app, app.ui_font, "HISTORY", badge.x + 8, badge.y + 5, palette.accent)
     }
     draw_control_notice(app, view, pane)
-        draw_instance_lifecycle(app, view, pane, lifecycle_state)
+    draw_instance_lifecycle(app, view, pane, lifecycle_state)
 }
 
 clear_ime_preedit :: proc(app: ^App) {
@@ -5872,18 +5947,11 @@ search_input_field :: proc(width: f32) -> SDL.FRect {
 }
 
 text_width :: proc(app: ^App, font: ^TTF.Font, text: string) -> f32 {
-    if font == nil || len(text) == 0 {
-        return 0
-    }
+    assert(app != nil && font != nil && valid_canvas_scale(app.text_scale))
+    if len(text) == 0 do return 0
     width, height: c.int
-    if !TTF.GetStringSize(font, cstring(raw_data(text)), c.size_t(len(text)), &width, &height) {
-        return 0
-    }
-    scale := f32(1)
-    if app != nil && valid_canvas_scale(app.text_scale) {
-        scale = app.text_scale
-    }
-    return f32(width) / scale
+    assert(TTF.GetStringSize(font, cstring(raw_data(text)), c.size_t(len(text)), &width, &height))
+    return f32(width) / app.text_scale
 }
 
 ime_preedit_cursor_byte_offset :: proc(text: string, character_index: i32) -> int {
@@ -5940,7 +6008,8 @@ active_terminal_cursor_rect :: proc(
     row := min(view.cursor_row, rows - 1)
     column := min(view.cursor_column, columns - 1)
     sync.mutex_unlock(&view.mutex)
-    surface := terminal_surface_rect(view, pane)
+    surface, surface_ok := terminal_surface_rect(view, pane)
+    if !surface_ok do return {}, {}, false
     origin_x := surface.x
     origin_y := surface.y
     scale := canvas_scale_value(view)
@@ -6144,19 +6213,11 @@ draw_search_bar :: proc(app: ^App, width: f32) {
     draw_text(app, app.ui_font, status, field.x + field.w + 14, box.y + 13, status_color)
 }
 
-draw_placeholder_instance :: proc(app: ^App) {
-    draw_text(app, app.terminal_font, "Profile shell placeholder", 34, 86, palette.text_muted)
-    draw_text(app, app.terminal_font, "The Home tab is the real canonical Howl Instance.", 34, 116, palette.text)
-}
-
 draw_terminal :: proc(app: ^App, width, height: f32) {
     inset := terminal_inset(width, height)
     draw_fill(app.renderer, inset, palette.terminal_panel)
 
-    if !active_tab_is_instance(app) {
-        draw_placeholder_instance(app)
-        return
-    }
+    assert(active_tab_is_instance(app))
     tab := &app.tabs[app.active_tab]
     layout := pane_layout(tab, inset)
     for index in 0..<layout.divider_count {
@@ -6498,18 +6559,38 @@ main :: proc() {
     }
     defer SDL.DestroyWindow(window)
 
-    if base_path := SDL.GetBasePath(); base_path != nil {
-        icon_path_buffer: [4096]u8
-        icon_path := fmt.bprintf(icon_path_buffer[:len(icon_path_buffer)-1], "%s%s", string(base_path), APP_WINDOW_ICON)
-        icon_path_buffer[len(icon_path)] = 0
-        if icon := SDL.LoadBMP(cstring(raw_data(icon_path_buffer[:]))); icon != nil {
-            _ = SDL.SetWindowIcon(window, icon)
-            SDL.DestroySurface(icon)
-        }
+    base_path := SDL.GetBasePath()
+    if base_path == nil {
+        sdl_error("SDL_GetBasePath failed")
+        return
+    }
+    icon_path_buffer: [4096]u8
+    icon_path := fmt.bprintf(icon_path_buffer[:len(icon_path_buffer)-1], "%s%s", string(base_path), APP_WINDOW_ICON)
+    icon_path_buffer[len(icon_path)] = 0
+    icon := SDL.LoadBMP(cstring(raw_data(icon_path_buffer[:])))
+    if icon == nil {
+        sdl_error("Window icon load failed")
+        return
+    }
+    defer SDL.DestroySurface(icon)
+    if !SDL.SetWindowIcon(window, icon) {
+        sdl_error("SDL_SetWindowIcon failed")
+        return
     }
 
-    renderer_name: cstring = nil
-    if os.get_env("HOWL_ODIN_SDL_RENDERER", context.temp_allocator) == "software" {
+    renderer_name_text := "opengl"
+    renderer_name: cstring = "opengl"
+    when ODIN_OS == .Windows {
+        renderer_name_text = "direct3d11"
+        renderer_name = "direct3d11"
+    }
+    renderer_override := os.get_env("HOWL_ODIN_SDL_RENDERER", context.temp_allocator)
+    if len(renderer_override) != 0 {
+        if renderer_override != "software" {
+            fmt.eprintln("HOWL_ODIN_SDL_RENDERER supports only the explicit software lab override")
+            return
+        }
+        renderer_name_text = "software"
         renderer_name = "software"
     }
     renderer := SDL.CreateRenderer(window, renderer_name)
@@ -6517,15 +6598,28 @@ main :: proc() {
         sdl_error("SDL_CreateRenderer failed")
         return
     }
+    if actual_renderer := SDL.GetRendererName(renderer); actual_renderer == nil ||
+       string(actual_renderer) != renderer_name_text {
+        fmt.eprintln("SDL renderer contract mismatch")
+        SDL.DestroyRenderer(renderer)
+        return
+    }
     defer SDL.DestroyRenderer(renderer)
 
-    _ = SDL.StartTextInput(window)
-    defer {
-        _ = SDL.StopTextInput(window)
+    if !SDL.StartTextInput(window) {
+        sdl_error("SDL_StartTextInput failed")
+        return
     }
+    defer { _ = SDL.StopTextInput(window) }
 
-    _ = SDL.SetRenderVSync(renderer, 1)
-    _ = SDL.SetRenderDrawBlendMode(renderer, SDL.BLENDMODE_BLEND)
+    if !SDL.SetRenderVSync(renderer, 1) {
+        sdl_error("SDL_SetRenderVSync failed")
+        return
+    }
+    if !SDL.SetRenderDrawBlendMode(renderer, SDL.BLENDMODE_BLEND) {
+        sdl_error("SDL_SetRenderDrawBlendMode failed")
+        return
+    }
 
     terminal_fonts: Desktop_Fonts
     if font_error, fonts_ok := resolve_desktop_fonts(&terminal_fonts); !fonts_ok {
@@ -6540,10 +6634,16 @@ main :: proc() {
     }
     defer TTF.CloseFont(ui_font)
 
-    user_config := load_user_config()
+    config_diagnostic: [192]u8
+    user_config, config_ok := load_user_config(config_diagnostic[:])
+    if !config_ok {
+        fmt.eprintln("Odin config error: ", cstring(raw_data(config_diagnostic[:])))
+        return
+    }
     app_theme, theme_ok := parse_app_theme(user_config.app_theme)
     if !theme_ok {
-        app_theme = .Howl_Dark
+        fmt.eprintln("Odin config error: app_theme validation disagreed after load")
+        return
     }
     palette = palette_for_theme(app_theme)
     terminal_font_pixels := u16(user_config.terminal_font_pixels)
@@ -6570,9 +6670,13 @@ main :: proc() {
         pane_resize_tab = -1,
         startup_profile = 0,
     }
-    _ = SDL.SetWindowMinimumSize(window, 640, 320)
+    if !SDL.SetWindowMinimumSize(window, 640, 320) {
+        sdl_error("SDL_SetWindowMinimumSize failed")
+        return
+    }
     if !install_window_chrome(&app) {
-        sdl_error("Unified header unavailable; keeping native window decorations")
+        sdl_error("Unified header initialization failed")
+        return
     }
     defer _ = SDL.SetWindowHitTest(window, nil, nil)
     if !update_text_display_scale(&app) {
@@ -6584,14 +6688,28 @@ main :: proc() {
         return
     }
     defer destroy_profiles(&app)
-    load_user_profiles(&app, user_config.profiles)
-    load_server_connections(&app, user_config.servers)
-    app.startup_profile = default_profile_index_from_config(&app, user_config)
+    if !load_user_profiles(&app, user_config.profiles) {
+        fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
+        return
+    }
+    if !load_server_connections(&app, user_config.servers) {
+        fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
+        return
+    }
+    startup_profile, startup_ok := default_profile_index_from_config(&app, user_config)
+    if !startup_ok {
+        fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
+        return
+    }
+    app.startup_profile = startup_profile
     if !initialize_key_mappings(&app) {
         sdl_error("Default key mappings invalid")
         return
     }
-    _ = apply_user_keybindings(&app, user_config.keybindings)
+    if !apply_user_keybindings(&app, user_config.keybindings) {
+        fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
+        return
+    }
     if intent == .Server {
         view := create_server_instance_view(
             managed_startup.endpoint,
@@ -6609,7 +6727,10 @@ main :: proc() {
             return
         }
     } else {
-        new_tab(&app)
+        if !new_tab(&app) {
+            fmt.eprintln("Initial Instance tab creation failed")
+            return
+        }
     }
     reconcile_consequence_owners(&app)
 

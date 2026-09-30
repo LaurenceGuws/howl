@@ -216,21 +216,21 @@ history_thumb_drag_does_not_require_explicit_mouse_capture :: proc(t: ^testing.T
     // The delivered pointer gesture still owns history until release/cancel.
     view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
-    geometry, ok := history_scrollbar_geometry(&view, pane)
+    geometry, ok := history_scrollbar_geometry_for_surface(pane, terminal_content_rect(pane), view.history_target_offset, view.history_count, u32(view.rows), view.alternate_screen)
     testing.expect(t, ok)
     x, y := geometry.thumb.x + 2, geometry.thumb.y + 5
-    testing.expect(t, begin_history_scrollbar_drag(&view, pane, x, y))
+    testing.expect(t, begin_history_scrollbar_drag_geometry(&view, geometry, x, y))
     testing.expect(t, history_scrollbar_drag_active(&view))
     testing.expect_value(t, view.history_scrollbar_grab_y, f32(5))
     testing.expect_value(t, view.history_target_offset, u32(0))
-    testing.expect(t, update_history_scrollbar_drag(&view, pane, y - 140))
+    testing.expect(t, update_history_scrollbar_drag_geometry(&view, geometry, y - 140))
     testing.expect(t, view.history_target_offset > 0)
     testing.expect_value(t, view.history_scrollbar_grab_y, f32(5))
     testing.expect(t, finish_history_scrollbar_drag(&view))
     testing.expect(t, !history_scrollbar_drag_active(&view))
     testing.expect_value(t, view.history_scrollbar_grab_y, f32(0))
     stopped := view.history_target_offset
-    testing.expect(t, !update_history_scrollbar_drag(&view, pane, -1000))
+    testing.expect(t, !update_history_scrollbar_drag_geometry(&view, geometry, -1000))
     testing.expect_value(t, view.history_target_offset, stopped)
     testing.expect(t, !finish_history_scrollbar_drag(&view))
 }
@@ -239,16 +239,16 @@ history_thumb_drag_does_not_require_explicit_mouse_capture :: proc(t: ^testing.T
 history_track_seek_continues_dragging_and_clamps_outside_the_pane :: proc(t: ^testing.T) {
     view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{200, 100, 500, 400}
-    geometry, ok := history_scrollbar_geometry(&view, pane)
+    geometry, ok := history_scrollbar_geometry_for_surface(pane, terminal_content_rect(pane), view.history_target_offset, view.history_count, u32(view.rows), view.alternate_screen)
     testing.expect(t, ok)
-    testing.expect(t, begin_history_scrollbar_drag(&view, pane, geometry.hit.x + 2,
+    testing.expect(t, begin_history_scrollbar_drag_geometry(&view, geometry, geometry.hit.x + 2,
                                                 geometry.track.y + geometry.track.h / 2))
     middle := view.history_target_offset
     testing.expect(t, middle > 0 && middle < view.history_count)
     testing.expect(t, history_scrollbar_drag_active(&view))
-    testing.expect(t, update_history_scrollbar_drag(&view, pane, -1000))
+    testing.expect(t, update_history_scrollbar_drag_geometry(&view, geometry, -1000))
     testing.expect_value(t, view.history_target_offset, view.history_count)
-    testing.expect(t, update_history_scrollbar_drag(&view, pane, 10000))
+    testing.expect(t, update_history_scrollbar_drag_geometry(&view, geometry, 10000))
     testing.expect_value(t, view.history_target_offset, u32(0))
     testing.expect(t, history_scrollbar_drag_active(&view))
     testing.expect(t, finish_history_scrollbar_drag(&view))
@@ -259,9 +259,9 @@ history_drag_is_pane_local_and_focus_loss_cancels_without_changing_offsets :: pr
     first := Instance_View{rows = 25, columns = 40, history_count = 500}
     second := Instance_View{rows = 25, columns = 40, history_count = 900}
     pane := SDL.FRect{0, HEADER_HEIGHT, 500, 700}
-    geometry, ok := history_scrollbar_geometry(&first, pane)
+    geometry, ok := history_scrollbar_geometry_for_surface(pane, terminal_content_rect(pane), first.history_target_offset, first.history_count, u32(first.rows), first.alternate_screen)
     testing.expect(t, ok)
-    testing.expect(t, begin_history_scrollbar_drag(&first, pane, geometry.hit.x + 2,
+    testing.expect(t, begin_history_scrollbar_drag_geometry(&first, geometry, geometry.hit.x + 2,
                                                 geometry.track.y + geometry.track.h / 2))
     testing.expect(t, history_scrollbar_drag_active(&first))
     testing.expect(t, !history_scrollbar_drag_active(&second))
@@ -286,13 +286,19 @@ history_drag_is_pane_local_and_focus_loss_cancels_without_changing_offsets :: pr
 history_drag_refuses_terminal_cells_empty_history_and_alternate_screen :: proc(t: ^testing.T) {
     view := Instance_View{rows = 25, columns = 80, history_count = 500}
     pane := SDL.FRect{0, HEADER_HEIGHT, 960, 700}
-    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 6, 100))
+    surface := terminal_content_rect(pane)
+    geometry, ok := history_scrollbar_geometry_for_surface(
+        pane, surface, view.history_target_offset, view.history_count, u32(view.rows), false,
+    )
+    testing.expect(t, ok)
+    testing.expect(t, !begin_history_scrollbar_drag_geometry(&view, geometry, 6, 100))
     testing.expect(t, !history_scrollbar_drag_active(&view))
-    view.history_count = 0
-    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 953, 100))
-    view.history_count = 500
-    view.alternate_screen = true
-    testing.expect(t, !begin_history_scrollbar_drag(&view, pane, 953, 100))
+
+    _, empty_ok := history_scrollbar_geometry_for_surface(pane, surface, 0, 0, u32(view.rows), false)
+    testing.expect(t, !empty_ok)
+    _, alternate_ok := history_scrollbar_geometry_for_surface(pane, surface, 0, view.history_count, u32(view.rows), true)
+    testing.expect(t, !alternate_ok)
+
     testing.expect(t, !begin_history_scrollbar_drag(nil, pane, 953, 100))
     testing.expect(t, !history_scrollbar_drag_active(&view))
 }

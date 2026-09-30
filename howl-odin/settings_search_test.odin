@@ -9,7 +9,7 @@ settings_search_finds_pages_actions_and_profiles :: proc(t: ^testing.T) {
 	defer destroy_profiles(&app)
 	testing.expect(t, initialize_key_mappings(&app))
 	custom := [1]User_Profile_Config{{id = "lab", name = "Lab Recipe", mode = "launch"}}
-	load_user_profiles(&app, custom[:])
+	testing.expect(t, load_user_profiles(&app, custom[:]))
 	app.settings_open = true
 
 	open_settings_search(&app)
@@ -50,7 +50,7 @@ settings_search_result_navigation_targets_exact_context :: proc(t: ^testing.T) {
 	defer destroy_profiles(&app)
 	testing.expect(t, initialize_key_mappings(&app))
 	custom := [1]User_Profile_Config{{id = "lab", name = "Lab Recipe", mode = "launch"}}
-	load_user_profiles(&app, custom[:])
+	testing.expect(t, load_user_profiles(&app, custom[:]))
 	app.settings_open = true
 
 	testing.expect(t, apply_settings_search_result(&app, {.Mapping, .Mappings, 1}))

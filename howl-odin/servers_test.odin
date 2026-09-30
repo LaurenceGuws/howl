@@ -13,16 +13,26 @@ server_connection_config_validation :: proc(t: ^testing.T) {
 }
 
 @(test)
-server_connection_load_deduplicates_endpoints :: proc(t: ^testing.T) {
+server_connection_load_is_all_or_nothing :: proc(t: ^testing.T) {
 	app: App
-	configs := [3]User_Server_Config{
+	good := [1]User_Server_Config{{label = "Colt", endpoint = "tcp://100.96.0.7:43150"}}
+	testing.expect(t, load_server_connections(&app, good[:]))
+	testing.expect_value(t, app.server_count, 1)
+
+	app.config_notice_len = 0
+	duplicate := [2]User_Server_Config{
 		{label = "Colt", endpoint = "tcp://100.96.0.7:43150"},
 		{label = "Duplicate", endpoint = "tcp://100.96.0.7:43150"},
-		{label = "Bad", endpoint = "https://example.invalid"},
 	}
-	load_server_connections(&app, configs[:])
-	testing.expect_value(t, app.server_count, 1)
-	testing.expect_value(t, server_label(&app.servers[0]), "Colt")
+	testing.expect(t, !load_server_connections(&app, duplicate[:]))
+	testing.expect_value(t, app.server_count, 0)
+	testing.expect_value(t, string(app.config_notice[:app.config_notice_len]), "servers[1]: duplicate endpoint")
+
+	app.config_notice_len = 0
+	bad := [1]User_Server_Config{{label = "Bad", endpoint = "https://example.invalid"}}
+	testing.expect(t, !load_server_connections(&app, bad[:]))
+	testing.expect_value(t, app.server_count, 0)
+	testing.expect_value(t, string(app.config_notice[:app.config_notice_len]), "servers[0]: invalid server")
 }
 
 @(test)

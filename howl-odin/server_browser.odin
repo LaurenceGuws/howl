@@ -233,9 +233,7 @@ open_server_browser_selection :: proc(app: ^App) -> bool {
 	view := create_server_instance_view(server_endpoint(server), app.server_browser_tree.server_id, session_id, instance_id)
 	if view == nil do return false
 	view.profile_index = -1
-	title := session_name
-	if len(title) == 0 do title = server_label(server)
-	if !add_instance_tab(app, view, title, -1) do return false
+	if !add_instance_tab(app, view, session_name, -1) do return false
 	close_server_browser(app)
 	return true
 }
@@ -282,7 +280,7 @@ draw_server_browser :: proc(app: ^App, width, height: f32) {
 		return
 	}
 	if app.server_browser_state == .Error {
-		message := app.server_browser_error_len > 0 ? string(app.server_browser_error[:app.server_browser_error_len]) : "Server unavailable"
+		message := app.server_browser_error_len > 0 ? string(app.server_browser_error[:app.server_browser_error_len]) : "server fetch failed without diagnostic"
 		draw_text(app, app.ui_font, message, box.x + 18, box.y + 82, palette.text)
 		return
 	}

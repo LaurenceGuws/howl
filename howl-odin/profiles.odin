@@ -323,37 +323,52 @@ profile_from_config :: proc(app: ^App, config: User_Profile_Config, config_index
 	return profile
 }
 
-load_user_profiles :: proc(app: ^App, configs: []User_Profile_Config) {
-	if app == nil {
-		return
-	}
+load_user_profiles :: proc(app: ^App, configs: []User_Profile_Config) -> bool {
+	if app == nil do return false
+	initial_count := app.profile_count
 	for config, index in configs {
 		if app.profile_count >= MAX_PROFILES {
 			profile_config_error(app, index, "profile limit")
-			continue
+			for app.profile_count > initial_count {
+				app.profile_count -= 1
+				free(app.profiles[app.profile_count])
+				app.profiles[app.profile_count] = nil
+			}
+			return false
 		}
 		profile := profile_from_config(app, config, index)
 		if profile == nil {
-			continue
+			for app.profile_count > initial_count {
+				app.profile_count -= 1
+				free(app.profiles[app.profile_count])
+				app.profiles[app.profile_count] = nil
+			}
+			return false
 		}
 		app.profiles[app.profile_count] = profile
 		app.profile_count += 1
 	}
+	return true
 }
 
-default_profile_index_from_config :: proc(app: ^App, config: User_Config) -> int {
+default_profile_index_from_config :: proc(app: ^App, config: User_Config) -> (int, bool) {
 	if app == nil || app.profile_count == 0 {
-		return 0
+		set_config_notice(app, "default_profile: profile catalogue unavailable")
+		return 0, false
 	}
 	if len(config.default_profile) != 0 {
-		if index := profile_index_by_id(app, config.default_profile); index >= 0 {
-			return index
-		}
-		if app.config_notice_len == 0 {
+		index := profile_index_by_id(app, config.default_profile)
+		if index < 0 {
 			set_config_notice(app, "default_profile: unknown profile id")
+			return 0, false
 		}
+		return index, true
 	}
-	return clamp(config.startup_profile, 0, min(1, app.profile_count - 1))
+	if config.startup_profile < 0 || config.startup_profile >= min(2, app.profile_count) {
+		set_config_notice(app, "startup_profile: unavailable built-in profile")
+		return 0, false
+	}
+	return config.startup_profile, true
 }
 
 profile_in_use :: proc(app: ^App, profile_index: int) -> bool {
@@ -431,10 +446,11 @@ duplicate_user_profile :: proc(app: ^App, source_index: int) -> int {
 	}
 	name_storage: [PROFILE_NAME_BYTES]u8
 	source_name := profile_name(source)
-	name: string = "Profile copy"
-	if len(source_name) + len(" copy") < PROFILE_NAME_BYTES {
-		name = fmt.bprintf(name_storage[:], "%s copy", source_name)
+	if len(source_name) + len(" copy") >= PROFILE_NAME_BYTES {
+		free(profile)
+		return -1
 	}
+	name := fmt.bprintf(name_storage[:], "%s copy", source_name)
 	if !profile_set_text(profile.name[:], &profile.name_len, name) {
 		free(profile)
 		return -1
@@ -490,7 +506,7 @@ profile_apply_font_to_views :: proc(app: ^App, profile_index: int) {
 		for view in app.tabs[tab_index].panes {
 			if view != nil && view.profile_index == profile_index {
 				view.profile_font_pixels = profile.font_pixels
-				reset_canvas(view)
+				restart_canvas_renderer(view)
 			}
 		}
 	}

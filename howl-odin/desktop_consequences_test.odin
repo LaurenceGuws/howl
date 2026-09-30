@@ -24,7 +24,7 @@ desktop_consequence_policy_flashes_only_bell_and_attention_families :: proc(t: ^
 }
 
 @(test)
-desktop_consequence_policy_mirrors_headless_reply_fallback :: proc(t: ^testing.T) {
+desktop_consequence_policy_replies_explicitly_to_required_queries :: proc(t: ^testing.T) {
 	clipboard := Consequence_Info{kind = u8(Bridge_Consequence_Kind.Clipboard), reply_required = 1}
 	testing.expect_value(t, consequence_action_for(clipboard), Desktop_Consequence_Action.Reply_Clipboard_Empty)
 	pointer := Consequence_Info{kind = u8(Bridge_Consequence_Kind.Pointer_Shape), reply_required = 1}

@@ -17,8 +17,14 @@ a C-shaped Zig seam over `howl-client`, `server-client`, `howl-render`, and the
 existing explicit Instance client transport. It exports neither wire/client backing structs nor a
 copied terminal renderer: Odin receives canonical Canvas resource/command facts
 and sends semantic input through `howl-client`. SDL3_ttf remains only for app
-chrome and as a fail-soft semantic-text fallback while the Canvas backend is
-being hardened.
+chrome and IME composition; real terminal presentation is Canvas-only.
+
+Odin has no emergency substitute implementation path. A required canonical
+owner either succeeds or reports/fails explicitly. The sole intentional
+substitution mechanism is text shaping's ordered fallback font faces. A font or
+display change may retain the last already-accepted canonical Canvas frame until
+its replacement frame is accepted, but a replacement failure discards that
+retained frame and exposes the exact failure.
 
 Direct local/attached observation keeps the existing lossless raw-snapshot policy on
 validated Unix sockets; TCP attachments retain compression, including loopback. The
@@ -53,7 +59,7 @@ Current canary:
   **Attach Home Instance** remains the existing direct `tcp://127.0.0.1:39601` route.
   Separately, `--server` opens one non-owning Server-managed Instance as the initial tab
   on Linux or Windows; closing Odin leaves that Instance alive under Server ownership;
-- tabs use canonical terminal titles with profile-name fallback. The visible mapping
+- tabs use canonical terminal titles only; absent title stays absent. The visible mapping
   table defaults Ctrl+Tab/reverse cycling, Ctrl+1…8 direct selection, and
   Ctrl+Shift+PageUp/PageDown reorder; pointer
   drag reorder through one shared ordering owner. A held chip gets an immediate
@@ -86,7 +92,7 @@ Current canary:
   remains action-oriented. Impossible actions such as zoom on a single pane
   render disabled rather than failing silently;
 - Settings is a real navigable application surface rather than one static mock:
-  Startup, Interaction, Appearance, Color schemes, Actions, Profiles, and Profile
+  Startup, Interaction, Appearance, Color schemes, Mappings, Profiles, and Profile
   pages expose the client's current truthful configuration and ownership state.
   Actions can be rebound from the keyboard, unbound, or reset; conflicts are rejected
   without mutating either action and the conflicting action is named in the UI.
@@ -107,10 +113,12 @@ Current canary:
   three themes, and High Contrast survived a full process restart;
 - Startup owns the second persisted setting: the default profile can be Home
   Instance (attach) or Local shell (owned in-process Instance). Schema 2 also persists
-  custom shortcuts by stable action id; schema-1 files remain readable and upgrade
-  only on save. Missing/invalid independent fields retain their accepted defaults,
-  and later saves update the existing config directory instead of treating its
-  normal `.Exist` result as failure;
+  custom shortcuts by stable mapping id; schema-1 files remain readable and upgrade
+  only on save. A missing config file intentionally uses built-in defaults; an
+  existing malformed/unsupported config, bad profile/server row, unknown default
+  profile, invalid theme/font value, or invalid mapping set aborts startup rather
+  than partially loading or substituting defaults. Save/write/rename failures are
+  reported instead of silently discarded;
 - `+`, `Ctrl+T`, startup, and split-pane creation all consume that same default
   profile instead of hard-coding a process type. The runtime catalogue includes
   bounded user recipes beside Home/Local; each recipe names attach-vs-launch ownership,
@@ -240,6 +248,12 @@ Current canary:
   reused without further transfer. Kitty replacement preserves logical Canvas
   resource identity while advancing generation; crop/z-order and exact removal are
   renderer-owned, and a Sixel canary proved the path is protocol-independent;
+- Font/DPI replacement keeps the last accepted canonical Canvas frame visible
+  while the replacement Canvas is prepared. Commands, resources, accepted
+  background, scale and geometry remain one immutable accepted cut; once the new
+  frame is accepted it replaces that cut atomically. A renderer error destroys
+  the retained frame and shows the exact Canvas diagnostic rather than switching
+  renderers or drawing semantic text;
 - terminal font selection now supplies ordered `howl-text` fallbacks and a caller-owned
   regular/italic/bold/bold-italic face family rather than accepting replacement diamonds
   or synthetic terminal styles as desktop policy. Explicit `HOWL_FONT`,
@@ -272,9 +286,11 @@ Current canary:
   launches a shell. The exact bridge diagnostic is shown in the lifecycle bar and stderr.
   `Ctrl+Shift+R` invokes the appropriate recovery, and dead panes remain locally
   scrollable/selectable but stop forwarding terminal input;
-- SDL rendering uses the window-logical coordinate space and lets the renderer
-  scale to high-density output, keeping chrome, cursor placement, and converted
-  pointer coordinates on one geometry contract;
+- SDL rendering uses the window-logical coordinate space and keeps chrome,
+  cursor placement, and converted pointer coordinates on one geometry contract.
+  The renderer backend is explicit rather than SDL-selected: OpenGL on Unix and
+  D3D11 on Windows, with only an explicit software lab override. Backend creation
+  or identity mismatch is a startup failure;
 - the current created-instance profile inherits the desktop client's process
   environment and launches the configured shell; richer profile persistence and
   environment editing remain deliberately deferred rather than faked.
@@ -321,10 +337,9 @@ canonical Instance in-process, then converges into the same client/render path a
 ## Terminal-owned tab properties
 
 Each pane observes its own canonical title and retained OSC9;4 progress. The tab
-uses the active pane's title, falling back to its profile label when absent or
-empty. The saved profile name is never overwritten. Title bytes are untrusted:
-invalid UTF-8 falls back to the profile, and controls/bidi formatting are replaced
-with spaces in desktop labels only. The native window title remains Howl.
+uses the active pane's canonical title only. An absent title stays empty and
+profile metadata is never substituted. Title bytes are untrusted; controls/bidi
+formatting are replaced with spaces in desktop labels only. The native window title remains Howl.
 
 A thin tab progress strip displays normal, failure, paused and indeterminate
 states. Indeterminate is a stationary segment rather than a timer-driven pulse;
@@ -344,8 +359,8 @@ four-pixel rim delegates resizing. Minimize, maximize/restore and close use SDL
 window operations; close follows the existing Instance/gesture cleanup path.
 Right-clicking spare header space requests the native system window menu. Do not
 assume native titlebar double-click behavior is available on every SDL backend.
-If hit testing or border removal is unavailable, the host reports that failure
-and keeps native decorations instead of leaving an immovable borderless window.
+Hit-test or border-removal failure aborts startup; Odin never substitutes a
+different window-chrome implementation.
 
 There is no differently-colored outer terminal mat. Owned PTY sizing uses one
 content allocation with six logical pixels on every outer edge. The history

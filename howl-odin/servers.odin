@@ -1,6 +1,7 @@
 package main
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:strconv"
 import "core:strings"
 
@@ -108,24 +109,35 @@ server_connection_from_config :: proc(config: User_Server_Config, output: ^Serve
 	return true
 }
 
-load_server_connections :: proc(app: ^App, configs: []User_Server_Config) {
-    if app == nil do return
+load_server_connections :: proc(app: ^App, configs: []User_Server_Config) -> bool {
+    if app == nil do return false
     app.server_count = 0
-    for config in configs {
-        if app.server_count >= MAX_SERVERS do break
+    for config, config_index in configs {
+        if app.server_count >= MAX_SERVERS {
+            buffer: [192]u8
+            set_config_notice(app, fmt.bprintf(buffer[:], "servers[%d]: server limit", config_index))
+            app.server_count = 0
+            return false
+        }
         server: Server_Connection
-        if !server_connection_from_config(config, &server) do continue
-        duplicate := false
+        if !server_connection_from_config(config, &server) {
+            buffer: [192]u8
+            set_config_notice(app, fmt.bprintf(buffer[:], "servers[%d]: invalid server", config_index))
+            app.server_count = 0
+            return false
+        }
         for index in 0..<app.server_count {
             if server_endpoint(&app.servers[index]) == server_endpoint(&server) {
-                duplicate = true
-                break
+                buffer: [192]u8
+                set_config_notice(app, fmt.bprintf(buffer[:], "servers[%d]: duplicate endpoint", config_index))
+                app.server_count = 0
+                return false
             }
         }
-        if duplicate do continue
         app.servers[app.server_count] = server
         app.server_count += 1
     }
+    return true
 }
 
 parse_server_identity :: proc(value: string) -> (u64, bool) {

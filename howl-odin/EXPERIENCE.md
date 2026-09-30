@@ -54,9 +54,11 @@ below describe defaults, not a user's persisted overrides.
    Unsupported options are named honestly instead of being decorative toggles.
 6. **Pane-local by default.** History, selection, focus, geometry leadership,
    mouse ownership, and process lifetime should not leak between sibling panes.
-7. **Failures should explain themselves.** Exited shells, unavailable Instances, missing
-   resources, unsupported terminal images, or invalid configuration should have
-   a visible, recoverable desktop story.
+7. **Failures should explain themselves.** Exited shells, unavailable Instances,
+   missing resources, unsupported terminal images, or invalid configuration stay
+   failures. Odin must not switch to a substitute renderer, backend, geometry,
+   label source, process, profile, or config value to make the UI appear healthy.
+   Ordered font-face fallback inside text shaping is the intentional exception.
 8. **Dependencies must buy something.** Prefer Odin, SDL3, Howl's existing
    modules, and small native seams over a general UI framework unless a concrete
    experience earns the larger dependency.
@@ -203,7 +205,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Home Instance means “attach another non-owning direct client view”. Saved Servers
   are persisted separately and browse Server → Sessions → Instances before attach.
 - One persisted default profile drives startup, `+`, `Ctrl+T`, and split creation.
-- Owned Local shells inherit the real desktop process environment.
+- Owned Local shells inherit the real desktop process environment. A blank shell
+  explicitly resolves through `SHELL` on Unix or `COMSPEC` on Windows; if that
+  declared source is unavailable, launch fails rather than substituting `/bin/sh`
+  or `cmd.exe`.
 - User profiles are bounded typed recipes with stable id/name, attach-vs-launch
   ownership, shell, optional command/cwd, endpoint, environment fields, and optional
   8–48 px presentation override. Blank/zero keeps the global font size. Schema 4
@@ -483,6 +488,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - SDL consumes Canvas solids, alpha masks, and RGBA resources without terminal
   cell parsing.
 - Canvas residency avoids redundant atlas upload on unchanged generations.
+- Font/DPI rebuild keeps the last accepted canonical Canvas frame visible until
+  the replacement renderer accepts a complete frame. This is retained canonical
+  state, not an emergency renderer. Replacement failure drops the retained frame
+  and surfaces the exact Canvas error.
 - Nerd/Powerline glyphs, ANSI colors, cursor, background, shaping, and HiDPI
   logical geometry are live in the Odin client.
 - Display scaling keeps one logical desktop geometry while rasterizing terminal
@@ -618,23 +627,27 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 
 - Real navigable Settings surface.
-- Startup, Interaction, Appearance, Color schemes, Actions, Profiles, and Profile
+- Startup, Interaction, Appearance, Color schemes, Mappings, Profiles, and Profile
   pages.
-- Atomic schema-versioned XDG config writes. Schema 2 adds stable action-id
+- Atomic schema-versioned XDG config writes. Schema 2 adds stable mapping-id
   keybinding overrides while schema-1 files remain readable and upgrade only on save;
   schema 3 adds stable profile recipes and persisted application-theme identity.
+  Absence of the config file means built-in defaults. An existing invalid config
+  or any invalid persisted profile/server/mapping/default-profile field rejects
+  startup as one failed configuration instead of loading valid siblings or
+  substituting defaults. Save failures are reported.
 - Persistent default profile, font size, and application theme.
-- Settings → Mappings is keyboard-editable: Tab enters the action list, Up/Down
-  chooses an action, Enter records a physical chord, Delete unbinds, and R restores
+- Settings → Mappings is keyboard-editable: Tab enters the mapping list, Up/Down
+  chooses a mapping, Enter records a physical chord, Delete unbinds, and R restores
   the registry default. Recording owns the whole chord so modifier-only transitions
   never leak to the terminal or trigger another app action.
 - Settings → Profiles/Profile is also keyboard-complete: Tab crosses sidebar/content
   ownership, Up/Down navigates catalogue/fields, Enter opens or edits, built-ins
   require Duplicate before mutation, and typed environment overrides have explicit
   add/remove/name/value controls rather than a `NAME=value` mini-language.
-- Keybinding conflicts are rejected transactionally with the conflicting action
-  named in UI. Hand-edited malformed keybinding sets report the precise bad entry
-  while unrelated valid font/startup fields retain their accepted values.
+- Keybinding conflicts are rejected transactionally with the conflicting mapping
+  named in UI. Hand-edited malformed mapping sets report the precise bad entry and
+  reject the persisted configuration rather than retaining unrelated fields.
 
 **PROVEN — Settings search**
 
@@ -666,10 +679,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   registry entries through keyboard navigation even in short windows.
 
 
-- One bounded action registry owns stable action ids, labels, default shortcut
-  strings, categories, context-enabled state, and execution. Command Palette,
-  Settings → Mappings, and profile-menu action labels/shortcut hints consume the
-  same metadata rather than maintaining parallel lists.
+- One bounded action registry owns commands and context-enabled execution. A
+  separate bounded mapping registry is the sole owner of global key chords and
+  may target actions or typed parameterized commands. Command Palette remains
+  action-oriented while Settings → Mappings exposes the complete shortcut surface.
 - Context state is visible rather than silently ignored: for example pane zoom is
   muted with one pane while restart/reconnect is enabled only for a recoverable
   Instance lifecycle state.
@@ -756,7 +769,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Registered application actions own their physical scancode through release.
   Changed modifiers and auto-repeat cannot leak the rest of an application-owned
   key cycle to the terminal. Fresh presses recover from a focus-hidden release.
-- Maximize/restore and minimize/restore are proven through native decorations.
+- Maximize/restore and minimize/restore are proven through SDL/KWin window
+  operations behind the mandatory unified client chrome.
   Hidden/minimized windows skip drawing and presentation but keep observation
   and Instance progress alive. A minimized owned child produced 500 lines without
   any PTY resize; restore presented the newest output. The app spent one 10 ms
@@ -813,8 +827,9 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Copy diagnostics action that excludes secrets and irrelevant environment data.
 - Optional frame/revision/performance counters for investigation, invisible in
   ordinary use.
-- Clear error state for unsupported image resources, bridge mismatch, Instance
-  attach failure, renderer failure, and invalid config.
+- Broader copyable diagnostics for unsupported image resources and bridge/attach
+  failures. Renderer and invalid-config failures already remain explicit rather
+  than falling back.
 - Recovery actions are explicit; the client does not silently spawn a different
   Local Instance when attach fails.
 

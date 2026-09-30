@@ -3,11 +3,10 @@ package main
 import "core:sync"
 import SDL "vendor:sdl3"
 
-// Labels are accepted canonical properties copied by the observer, never parsed
-// from terminal text. The profile name stays available as the empty-title fallback.
+// Labels consume only the accepted canonical title property copied by the
+// observer. Absence stays absence; profile metadata is not a substitute source.
 tab_property_presentation :: proc(tab: ^Tab, output: []u8) -> (title: string, progress: u16) {
     if tab == nil do return "", 0
-    title = tab.title
     view := tab_pane_view(tab, tab.active_pane)
     if view == nil do return
     sync.mutex_lock(&view.mutex)

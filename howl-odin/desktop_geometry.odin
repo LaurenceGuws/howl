@@ -100,18 +100,19 @@ centered_terminal_surface :: proc(
     }, true
 }
 
-terminal_surface_rect :: proc(view: ^Instance_View, pane: SDL.FRect) -> SDL.FRect {
-    content := terminal_content_rect(pane)
-    if view == nil || view.canvas == nil {
-        return content
-    }
-    centered, ok := centered_terminal_surface(
-        content,
+accepted_terminal_surface_rect :: proc(view: ^Instance_View, pane: SDL.FRect) -> (SDL.FRect, bool) {
+    if !canvas_frame_available(view) do return {}, false
+    return centered_terminal_surface(
+        terminal_content_rect(pane),
         canvas_scale_value(view),
         view.canvas_surface_width,
         view.canvas_surface_height,
     )
-    return ok ? centered : content
+}
+
+terminal_surface_rect :: proc(view: ^Instance_View, pane: SDL.FRect) -> (SDL.FRect, bool) {
+    if !canvas_frame_current(view) do return {}, false
+    return accepted_terminal_surface_rect(view, pane)
 }
 
 resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: f32) {
@@ -120,7 +121,7 @@ resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: 
     enabled := view.size_control.mode != .Fixed
     sync.mutex_unlock(&view.mutex)
     if !enabled || !ensure_canvas(app, view) do return
-    geometry, ok := pane_geometry(width, height, canvas_scale_value(view),
+    geometry, ok := pane_geometry(width, height, canvas_render_scale_value(view),
                                   render_cell_width(view.canvas), render_cell_height(view.canvas))
     if !ok do return
     sync.mutex_lock(&view.mutex)

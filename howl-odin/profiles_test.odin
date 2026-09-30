@@ -19,7 +19,7 @@ profile_catalog_loads_builtins_and_bounded_user_launch_recipe :: proc(t: ^testin
 		},
 		font_pixels = 12,
 	}}
-	load_user_profiles(&app, configs[:])
+	testing.expect(t, load_user_profiles(&app, configs[:]))
 	testing.expect_value(t, app.profile_count, 3)
 	profile := profile_at(&app, 2)
 	testing.expect(t, profile != nil)
@@ -34,19 +34,17 @@ profile_catalog_loads_builtins_and_bounded_user_launch_recipe :: proc(t: ^testin
 }
 
 @(test)
-profile_catalog_skips_bad_entry_without_dropping_good_sibling :: proc(t: ^testing.T) {
+profile_catalog_rejects_entire_persisted_set_on_one_bad_entry :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
 	configs := [2]User_Profile_Config{
-		{id = "bad", name = "Bad attach", mode = "attach", endpoint = "unix:/tmp/a", command = "ignored"},
 		{id = "good", name = "Good attach", mode = "attach", endpoint = "unix:/tmp/good", font_pixels = 15},
+		{id = "bad", name = "Bad attach", mode = "attach", endpoint = "unix:/tmp/a", command = "ignored"},
 	}
-	load_user_profiles(&app, configs[:])
-	testing.expect_value(t, app.profile_count, 3)
-	testing.expect_value(t, profile_id(profile_at(&app, 2)), "good")
-	testing.expect(t, app.config_notice_len != 0)
-	testing.expect_value(t, string(app.config_notice[:app.config_notice_len]), "profiles[0]: attach profile has launch fields")
+	testing.expect(t, !load_user_profiles(&app, configs[:]))
+	testing.expect_value(t, app.profile_count, 2)
+	testing.expect_value(t, string(app.config_notice[:app.config_notice_len]), "profiles[1]: attach profile has launch fields")
 }
 
 @(test)
@@ -55,7 +53,7 @@ profile_catalog_rejects_duplicate_ids_and_invalid_environment_names :: proc(t: ^
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
 	duplicate := [1]User_Profile_Config{{id = "home", name = "Duplicate", mode = "attach", endpoint = "unix:/tmp/home"}}
-	load_user_profiles(&app, duplicate[:])
+	testing.expect(t, !load_user_profiles(&app, duplicate[:]))
 	testing.expect_value(t, app.profile_count, 2)
 	app.config_notice_len = 0
 	bad_env := [1]User_Profile_Config{{
@@ -64,7 +62,7 @@ profile_catalog_rejects_duplicate_ids_and_invalid_environment_names :: proc(t: ^
 		mode = "launch",
 		environment = []User_Profile_Env_Config{{name = "BAD=NAME", value = "x"}},
 	}}
-	load_user_profiles(&app, bad_env[:])
+	testing.expect(t, !load_user_profiles(&app, bad_env[:]))
 	testing.expect_value(t, app.profile_count, 2)
 	testing.expect_value(t, string(app.config_notice[:app.config_notice_len]), "profiles[0]: environment")
 }
@@ -75,12 +73,16 @@ default_profile_prefers_stable_id_then_legacy_builtin_index :: proc(t: ^testing.
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
 	custom := [1]User_Profile_Config{{id = "lab", name = "Lab", mode = "launch"}}
-	load_user_profiles(&app, custom[:])
+	testing.expect(t, load_user_profiles(&app, custom[:]))
 	config := User_Config{schema = 3, startup_profile = 0, default_profile = "lab"}
-	testing.expect_value(t, default_profile_index_from_config(&app, config), 2)
+	index, ok := default_profile_index_from_config(&app, config)
+	testing.expect(t, ok)
+	testing.expect_value(t, index, 2)
 	config.default_profile = ""
 	config.startup_profile = 1
-	testing.expect_value(t, default_profile_index_from_config(&app, config), 1)
+	index, ok = default_profile_index_from_config(&app, config)
+	testing.expect(t, ok)
+	testing.expect_value(t, index, 1)
 }
 
 @(test)

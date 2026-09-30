@@ -19,7 +19,7 @@ canonical_title_follows_active_pane_without_overwriting_profile :: proc(t: ^test
     testing.expect_value(t, progress, u16((4 << 8) | 25))
     b.display_title_len = 0; b.task_progress = 0
     title, progress = tab_property_presentation(&tab, output[:])
-    testing.expect_value(t, title, "Local shell")
+    testing.expect_value(t, title, "")
     testing.expect_value(t, progress, u16(0))
     testing.expect_value(t, tab.title, "Local shell")
 }

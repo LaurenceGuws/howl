@@ -142,9 +142,9 @@ keyboard_tab_and_overlay_interruption_retire_old_pointer_intent :: proc(t: ^test
         app.tabs[1].panes[0] = &second
         testing.expect(t, initialize_key_mappings(&app))
         pane := SDL.FRect{0, HEADER_HEIGHT, 500, 700}
-        geometry, ok := history_scrollbar_geometry(&first, pane)
+        geometry, ok := history_scrollbar_geometry_for_surface(pane, terminal_content_rect(pane), first.history_target_offset, first.history_count, u32(first.rows), first.alternate_screen)
         testing.expect(t, ok)
-        testing.expect(t, begin_history_scrollbar_drag(&first, pane, geometry.hit.x + 2,
+        testing.expect(t, begin_history_scrollbar_drag_geometry(&first, geometry, geometry.hit.x + 2,
                                                     geometry.track.y + geometry.track.h / 2))
         testing.expect(t, history_scrollbar_drag_active(&first))
         testing.expect(t, begin_tab_drag(&app, 0, TAB_X + 4))

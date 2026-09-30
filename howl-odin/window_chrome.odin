@@ -79,12 +79,12 @@ window_hit_region :: proc(x, y, width, height: f32, count: int,
 
 window_hit_test :: proc "c" (window: ^SDL.Window, point: ^SDL.Point, user: rawptr) -> SDL.HitTestResult {
     context = runtime.default_context()
-    if user == nil || point == nil do return .NORMAL
+    assert(user != nil && point != nil)
     app := (^App)(user)
     // Never steal an in-progress application drag when it crosses the frame.
     if app.tab_dragging || app.pane_resize_node != nil || app.chrome_pressed != .None || app.window_pointer_buttons != 0 do return .NORMAL
     w, h: c.int
-    if !SDL.GetWindowSize(window, &w, &h) do return .NORMAL
+    assert(SDL.GetWindowSize(window, &w, &h))
     return window_hit_region(f32(point.x), f32(point.y), f32(w), f32(h),
                              app.tab_count, app.client_chrome, SDL.GetWindowFlags(window))
 }
