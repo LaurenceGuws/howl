@@ -314,6 +314,75 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     try std.testing.expect(@backingInt(regenerated.frame.uploads[0].resource.generation) > @backingInt(first_resource.generation));
 }
 
+test "terminal Canvas rolls bounded atlas cache on accumulated entry pressure" {
+    var scalar_a = [_]u32{'A'};
+    var scalar_b = [_]u32{'B'};
+    var scalar_c = [_]u32{'C'};
+    var cells_a = [_]client.rich.Cell{cell(&scalar_a, 1, 0)};
+    var cells_b = [_]client.rich.Cell{cell(&scalar_b, 1, 0)};
+    var cells_c = [_]client.rich.Cell{cell(&scalar_c, 1, 0)};
+    var rows_a = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells_a }};
+    var rows_b = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells_b }};
+    var rows_c = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells_c }};
+    const source_a = sourceSnapshot(&rows_a, 1);
+    const source_b = sourceSnapshot(&rows_b, 1);
+    const source_c = sourceSnapshot(&rows_c, 1);
+    const view_a = try client.view.project(std.testing.allocator, &source_a);
+    defer client.view.deinit(view_a);
+    const view_b = try client.view.project(std.testing.allocator, &source_b);
+    defer client.view.deinit(view_b);
+    const view_c = try client.view.project(std.testing.allocator, &source_c);
+    defer client.view.deinit(view_c);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var config = canvasConfig(64);
+    config.atlas.entry_capacity = 2;
+    var host = try Harness.init(std.testing.allocator, font, config);
+    defer host.deinit();
+
+    const first = try host.present(view_a);
+    try std.testing.expectEqual(@as(usize, 1), terminal.canvasUsage(host.canvas).atlas_entries);
+    const first_atlas = first.frame.uploads[0].resource;
+
+    const second = try host.present(view_b);
+    try std.testing.expectEqual(@as(usize, 2), terminal.canvasUsage(host.canvas).atlas_entries);
+    const second_atlas = second.frame.uploads[0].resource;
+    try std.testing.expectEqual(first_atlas.resource, second_atlas.resource);
+    try std.testing.expect(@backingInt(second_atlas.generation) > @backingInt(first_atlas.generation));
+
+    const third = try host.present(view_c);
+    const rolled = terminal.canvasUsage(host.canvas);
+    try std.testing.expectEqual(@as(usize, 1), rolled.atlas_entries);
+    try std.testing.expectEqual(@as(usize, 1), rolled.shape.entries);
+    try std.testing.expectEqual(@as(u64, 3), third.frame.revision);
+    try std.testing.expectEqual(@as(usize, 1), third.frame.uploads.len);
+    const third_atlas = third.frame.uploads[0].resource;
+    try std.testing.expectEqual(first_atlas.resource, third_atlas.resource);
+    try std.testing.expect(@backingInt(third_atlas.generation) > @backingInt(second_atlas.generation));
+}
+
+test "terminal Canvas reports cache pressure when one frame cannot fit after rollover" {
+    var scalar_a = [_]u32{'A'};
+    var scalar_b = [_]u32{'B'};
+    var cells = [_]client.rich.Cell{ cell(&scalar_a, 1, 0), cell(&scalar_b, 1, 0) };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 2);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var config = canvasConfig(64);
+    config.atlas.entry_capacity = 1;
+    var host = try Harness.init(std.testing.allocator, font, config);
+    defer host.deinit();
+
+    try std.testing.expectError(error.CacheFull, terminal.update(host.canvas, view));
+    try std.testing.expectEqual(@as(usize, 1), terminal.canvasUsage(host.canvas).atlas_entries);
+    try std.testing.expectError(error.InvalidView, host.finishPresent());
+}
+
 test "terminal Canvas generated box raster remains exact in the final frame" {
     var symbol = [_]u32{0x2500};
     var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};

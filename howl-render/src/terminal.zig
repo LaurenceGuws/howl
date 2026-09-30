@@ -643,6 +643,26 @@ fn updateInner(
     snapshot: *const Source.Snapshot,
     image_bindings: []const ExternalImageBinding,
 ) CanvasError!void {
+    updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
+        error.CacheFull,
+        error.AtlasFull,
+        error.ShapeEntryFull,
+        error.ShapeScalarFull,
+        error.ShapeGlyphFull,
+        => {
+            try resetCanvasCaches(owner);
+            return updateInnerOnce(Source, owner, snapshot, image_bindings);
+        },
+        else => return failure,
+    };
+}
+
+fn updateInnerOnce(
+    comptime Source: type,
+    owner: *Canvas,
+    snapshot: *const Source.Snapshot,
+    image_bindings: []const ExternalImageBinding,
+) CanvasError!void {
     const impl = canvasImpl(owner);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
