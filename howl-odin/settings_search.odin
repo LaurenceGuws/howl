@@ -6,11 +6,11 @@ import "core:strings"
 import SDL "vendor:sdl3"
 
 SETTINGS_SEARCH_BYTES :: 128
-MAX_SETTINGS_SEARCH_RESULTS :: 32
+MAX_SETTINGS_SEARCH_RESULTS :: 7 + len(KEY_MAPPING_DEFINITIONS) + MAX_PROFILES
 
 Settings_Search_Result_Kind :: enum u8 {
 	Page,
-	Action,
+	Mapping,
 	Profile,
 }
 
@@ -31,7 +31,7 @@ SETTINGS_SEARCH_PAGES :: [7]Settings_Search_Page_Definition{
 	{.Interaction, "Interaction", "mouse pointer focus scrollback selection paste interaction"},
 	{.Appearance, "Appearance", "font size appearance presentation"},
 	{.Color_Schemes, "Color schemes", "color colours theme scheme palette"},
-	{.Actions, "Actions", "actions shortcuts keybindings commands"},
+	{.Mappings, "Mappings", "mappings shortcuts keybindings commands actions"},
 	{.Profile_Defaults, "Profiles", "profiles recipes launch attach environment"},
 	{.Profile_Home, "Profile", "profile recipe editor command cwd endpoint environment"},
 }
@@ -94,10 +94,10 @@ settings_search_refresh :: proc(app: ^App) {
 			settings_search_append_result(app, {.Page, definition.page, -1})
 		}
 	}
-	for definition, index in ACTION_DEFINITIONS {
-		if contains_ascii_fold(definition.label, query) || contains_ascii_fold(definition.id, query) ||
-		   contains_ascii_fold(action_binding_text(app, definition.action), query) {
-			settings_search_append_result(app, {.Action, .Actions, index})
+	for definition, index in KEY_MAPPING_DEFINITIONS {
+		if contains_ascii_fold(mapping_label(definition), query) || contains_ascii_fold(mapping_id(definition), query) ||
+		   contains_ascii_fold(mapping_binding_text(app, index), query) {
+			settings_search_append_result(app, {.Mapping, .Mappings, index})
 		}
 	}
 	for index in 0..<app.profile_count {
@@ -180,12 +180,12 @@ apply_settings_search_result :: proc(app: ^App, result: Settings_Search_Result) 
 	switch result.kind {
 	case .Page:
 		return true
-	case .Action:
-		if _, ok := action_definition_at(result.index); !ok {
+	case .Mapping:
+		if _, ok := mapping_definition_at(result.index); !ok {
 			return false
 		}
-		app.settings_page = .Actions
-		app.settings_action_selection = result.index
+		app.settings_page = .Mappings
+		app.settings_mapping_selection = result.index
 		app.settings_content_focus = true
 		return true
 	case .Profile:
@@ -236,9 +236,9 @@ settings_search_result_label :: proc(app: ^App, result: Settings_Search_Result, 
 	switch result.kind {
 	case .Page:
 		return settings_page_title(result.page)
-	case .Action:
-		if definition, ok := action_definition_at(result.index); ok {
-			return fmt.bprintf(storage, "Action · %s", definition.label)
+	case .Mapping:
+		if definition, ok := mapping_definition_at(result.index); ok {
+			return fmt.bprintf(storage, "Mapping · %s", mapping_label(definition))
 		}
 	case .Profile:
 		if profile := profile_at(app, result.index); profile != nil {

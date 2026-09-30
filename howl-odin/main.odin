@@ -35,7 +35,9 @@ TERMINAL_FONT_PIXELS_DEFAULT :: 15
 TERMINAL_FONT_PIXELS_MAX :: 48
 CONFIG_SCHEMA :: 4
 
-User_Keybinding_Config :: struct {
+User_Key_Mapping_Config :: struct {
+    // Schema compatibility: the persisted "action" field now names a mapping id,
+    // including parameterized mappings which are not App_Action values.
     action: string `json:"action"`,
     shortcut: string `json:"shortcut"`,
 }
@@ -47,7 +49,7 @@ User_Config :: struct {
     default_profile: string `json:"default_profile"`,
     profiles: []User_Profile_Config `json:"profiles"`,
     servers: []User_Server_Config `json:"servers"`,
-    keybindings: []User_Keybinding_Config `json:"keybindings"`,
+    keybindings: []User_Key_Mapping_Config `json:"keybindings"`,
     app_theme: string `json:"app_theme"`,
 }
 
@@ -306,32 +308,116 @@ Action_Definition :: struct {
     action: App_Action,
     id: string,
     label: string,
-    default_shortcut: string,
     category: Action_Category,
 }
 
 ACTION_DEFINITIONS :: [21]Action_Definition{
-    {.New_Tab, "new_tab", "New tab", "Ctrl+T", .Tab},
-    {.New_Window, "new_window", "New window", "Ctrl+Shift+N", .Window},
-    {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", "Ctrl+Shift+D", .Tab},
-    {.Split_Vertical, "split_right", "Split pane right", "Alt+Shift+D", .Pane},
-    {.Split_Horizontal, "split_down", "Split pane down", "Alt+Shift+-", .Pane},
-    {.Toggle_Pane_Zoom, "toggle_pane_zoom", "Toggle pane zoom", "Ctrl+Shift+Z", .Pane},
-    {.Open_Local, "open_local", "Open Local shell", "", .Profile},
-    {.Attach_Home, "attach_home", "Attach Home Instance", "", .Profile},
-    {.Recover_Instance, "recover_instance", "Restart / reconnect pane", "Ctrl+Shift+R", .Pane},
-    {.Open_Settings, "open_settings", "Open settings", "Ctrl+,", .Application},
-    {.Open_Command_Palette, "command_palette", "Command Palette", "Ctrl+Shift+P", .Application},
-    {.Open_Profile_Menu, "profile_menu", "Profile menu", "Ctrl+Shift+Space", .Application},
-    {.Close_Pane, "close_pane", "Close pane / tab", "Ctrl+Shift+W", .Pane},
-    {.Toggle_Fullscreen, "toggle_fullscreen", "Toggle fullscreen", "F11", .Window},
-    {.Next_Tab, "next_tab", "Next tab", "Ctrl+Tab", .Tab},
-    {.Previous_Tab, "previous_tab", "Previous tab", "Ctrl+Shift+Tab", .Tab},
-    {.Close_Tab, "close_tab", "Close entire tab", "", .Tab},
-    {.Move_Tab_Left, "move_tab_left", "Move tab left", "Ctrl+Shift+PageUp", .Tab},
-    {.Move_Tab_Right, "move_tab_right", "Move tab right", "Ctrl+Shift+PageDown", .Tab},
-    {.Take_Size_Control, "take_size_control", "Take Instance size control", "", .Pane},
-    {.Stop_Resizing, "stop_resizing", "Stop resizing Instance", "", .Pane},
+    {.New_Tab, "new_tab", "New tab", .Tab},
+    {.New_Window, "new_window", "New window", .Window},
+    {.Duplicate_Tab, "duplicate_tab", "Duplicate tab recipe", .Tab},
+    {.Split_Vertical, "split_right", "Split pane right", .Pane},
+    {.Split_Horizontal, "split_down", "Split pane down", .Pane},
+    {.Toggle_Pane_Zoom, "toggle_pane_zoom", "Toggle pane zoom", .Pane},
+    {.Open_Local, "open_local", "Open Local shell", .Profile},
+    {.Attach_Home, "attach_home", "Attach Home Instance", .Profile},
+    {.Recover_Instance, "recover_instance", "Restart / reconnect pane", .Pane},
+    {.Open_Settings, "open_settings", "Open settings", .Application},
+    {.Open_Command_Palette, "command_palette", "Command Palette", .Application},
+    {.Open_Profile_Menu, "profile_menu", "Profile menu", .Application},
+    {.Close_Pane, "close_pane", "Close pane / tab", .Pane},
+    {.Toggle_Fullscreen, "toggle_fullscreen", "Toggle fullscreen", .Window},
+    {.Next_Tab, "next_tab", "Next tab", .Tab},
+    {.Previous_Tab, "previous_tab", "Previous tab", .Tab},
+    {.Close_Tab, "close_tab", "Close entire tab", .Tab},
+    {.Move_Tab_Left, "move_tab_left", "Move tab left", .Tab},
+    {.Move_Tab_Right, "move_tab_right", "Move tab right", .Tab},
+    {.Take_Size_Control, "take_size_control", "Take Instance size control", .Pane},
+    {.Stop_Resizing, "stop_resizing", "Stop resizing Instance", .Pane},
+}
+
+Key_Mapping_Kind :: enum u8 {
+    Action,
+    Toggle_Find,
+    Select_Tab,
+    Adjust_Font,
+    Copy_Selection,
+    Paste_Clipboard,
+    History_Oldest,
+    History_Live,
+    History_Page,
+    Pane_Focus,
+    Pane_Resize,
+    Pane_Swap,
+}
+
+Key_Mapping_Target :: struct {
+    kind: Key_Mapping_Kind,
+    action: App_Action,
+    value: int,
+    direction: Pane_Direction,
+}
+
+Key_Mapping_Definition :: struct {
+    target: Key_Mapping_Target,
+    id: string,
+    label: string,
+    default_shortcut: string,
+    category: Action_Category,
+}
+
+KEY_MAPPING_DEFINITIONS: [50]Key_Mapping_Definition = {
+    {{kind = .Action, action = .New_Tab}, "", "", "Ctrl+T", .Tab},
+    {{kind = .Action, action = .New_Window}, "", "", "Ctrl+Shift+N", .Window},
+    {{kind = .Action, action = .Duplicate_Tab}, "", "", "Ctrl+Shift+D", .Tab},
+    {{kind = .Action, action = .Split_Vertical}, "", "", "", .Pane},
+    {{kind = .Action, action = .Split_Horizontal}, "", "", "", .Pane},
+    {{kind = .Action, action = .Toggle_Pane_Zoom}, "", "", "Ctrl+Shift+Z", .Pane},
+    {{kind = .Action, action = .Open_Local}, "", "", "", .Profile},
+    {{kind = .Action, action = .Attach_Home}, "", "", "", .Profile},
+    {{kind = .Action, action = .Recover_Instance}, "", "", "Ctrl+Shift+R", .Pane},
+    {{kind = .Action, action = .Open_Settings}, "", "", "Ctrl+,", .Application},
+    {{kind = .Action, action = .Open_Command_Palette}, "", "", "Ctrl+Shift+P", .Application},
+    {{kind = .Action, action = .Open_Profile_Menu}, "", "", "Ctrl+Shift+Space", .Application},
+    {{kind = .Action, action = .Close_Pane}, "", "", "Ctrl+Shift+W", .Pane},
+    {{kind = .Action, action = .Toggle_Fullscreen}, "", "", "F11", .Window},
+    {{kind = .Action, action = .Next_Tab}, "", "", "Ctrl+Tab", .Tab},
+    {{kind = .Action, action = .Previous_Tab}, "", "", "Ctrl+Shift+Tab", .Tab},
+    {{kind = .Action, action = .Close_Tab}, "", "", "", .Tab},
+    {{kind = .Action, action = .Move_Tab_Left}, "", "", "Ctrl+Shift+PageUp", .Tab},
+    {{kind = .Action, action = .Move_Tab_Right}, "", "", "Ctrl+Shift+PageDown", .Tab},
+    {{kind = .Action, action = .Take_Size_Control}, "", "", "", .Pane},
+    {{kind = .Action, action = .Stop_Resizing}, "", "", "", .Pane},
+
+    {{kind = .Toggle_Find}, "toggle_find", "Toggle terminal find", "Ctrl+Shift+F", .Pane},
+    {{kind = .Select_Tab, value = 0}, "select_tab_1", "Select tab 1", "Ctrl+1", .Tab},
+    {{kind = .Select_Tab, value = 1}, "select_tab_2", "Select tab 2", "Ctrl+2", .Tab},
+    {{kind = .Select_Tab, value = 2}, "select_tab_3", "Select tab 3", "Ctrl+3", .Tab},
+    {{kind = .Select_Tab, value = 3}, "select_tab_4", "Select tab 4", "Ctrl+4", .Tab},
+    {{kind = .Select_Tab, value = 4}, "select_tab_5", "Select tab 5", "Ctrl+5", .Tab},
+    {{kind = .Select_Tab, value = 5}, "select_tab_6", "Select tab 6", "Ctrl+6", .Tab},
+    {{kind = .Select_Tab, value = 6}, "select_tab_7", "Select tab 7", "Ctrl+7", .Tab},
+    {{kind = .Select_Tab, value = 7}, "select_tab_8", "Select tab 8", "Ctrl+8", .Tab},
+    {{kind = .Adjust_Font, value = -1}, "font_decrease", "Decrease terminal font", "Ctrl+-", .Application},
+    {{kind = .Adjust_Font, value = 1}, "font_increase", "Increase terminal font", "Ctrl+Plus", .Application},
+    {{kind = .Copy_Selection}, "copy_selection", "Copy terminal selection", "Ctrl+Shift+C", .Pane},
+    {{kind = .Paste_Clipboard}, "paste_clipboard", "Paste clipboard", "Ctrl+Shift+V", .Pane},
+    {{kind = .History_Oldest}, "history_oldest", "Jump to oldest history", "Ctrl+Shift+Home", .Pane},
+    {{kind = .History_Live}, "history_live", "Return history to LIVE", "Ctrl+Shift+End", .Pane},
+    {{kind = .History_Page, value = 1}, "history_page_up", "History page up", "Shift+PageUp", .Pane},
+    {{kind = .History_Page, value = -1}, "history_page_down", "History page down", "Shift+PageDown", .Pane},
+
+    {{kind = .Pane_Focus, direction = .Left}, "focus_pane_left", "Focus pane left", "", .Pane},
+    {{kind = .Pane_Focus, direction = .Right}, "focus_pane_right", "Focus pane right", "", .Pane},
+    {{kind = .Pane_Focus, direction = .Up}, "focus_pane_up", "Focus pane up", "", .Pane},
+    {{kind = .Pane_Focus, direction = .Down}, "focus_pane_down", "Focus pane down", "", .Pane},
+    {{kind = .Pane_Resize, direction = .Left}, "resize_pane_left", "Resize pane left", "", .Pane},
+    {{kind = .Pane_Resize, direction = .Right}, "resize_pane_right", "Resize pane right", "", .Pane},
+    {{kind = .Pane_Resize, direction = .Up}, "resize_pane_up", "Resize pane up", "", .Pane},
+    {{kind = .Pane_Resize, direction = .Down}, "resize_pane_down", "Resize pane down", "", .Pane},
+    {{kind = .Pane_Swap, direction = .Left}, "swap_pane_left", "Swap pane left", "", .Pane},
+    {{kind = .Pane_Swap, direction = .Right}, "swap_pane_right", "Swap pane right", "", .Pane},
+    {{kind = .Pane_Swap, direction = .Up}, "swap_pane_up", "Swap pane up", "", .Pane},
+    {{kind = .Pane_Swap, direction = .Down}, "swap_pane_down", "Swap pane down", "", .Pane},
 }
 
 PALETTE_ACTIONS :: [19]App_Action{
@@ -414,10 +500,9 @@ action_label :: proc(action: App_Action) -> string {
 }
 
 action_default_shortcut :: proc(action: App_Action) -> string {
-    if definition, ok := action_definition(action); ok {
-        return definition.default_shortcut
-    }
-    return ""
+    index, ok := mapping_index_for_action(action)
+    if !ok do return ""
+    return KEY_MAPPING_DEFINITIONS[index].default_shortcut
 }
 
 Settings_Page :: enum {
@@ -425,7 +510,7 @@ Settings_Page :: enum {
     Interaction,
     Appearance,
     Color_Schemes,
-    Actions,
+    Mappings,
     Profile_Defaults,
     Profile_Home,
 }
@@ -524,8 +609,8 @@ App :: struct {
     discard_local_drag_release: bool,
     pane_resize_node: ^Pane_Node,
     pane_resize_tab: int,
-    action_bindings: [len(ACTION_DEFINITIONS)]Action_Binding,
-    action_keys_owned: [512]bool,
+    key_mappings: [len(KEY_MAPPING_DEFINITIONS)]Key_Mapping_Binding,
+    mapping_keys_owned: [512]bool,
     config_notice: [192]u8,
     config_notice_len: int,
     settings_content_focus: bool,
@@ -534,7 +619,7 @@ App :: struct {
     settings_delete_pending: bool,
     settings_delete_profile: int,
     settings_profile_select_all: bool,
-    settings_action_selection: int,
+    settings_mapping_selection: int,
     settings_binding_recording: bool,
     settings_profile_selection: int,
     settings_profile_field: int,
@@ -640,19 +725,15 @@ save_user_config :: proc(app: ^App) {
     if err := os.make_directory_all(directory); err != nil && err != .Exist {
         return
     }
-    overrides: [len(ACTION_DEFINITIONS)]User_Keybinding_Config
+    overrides: [len(KEY_MAPPING_DEFINITIONS)]User_Key_Mapping_Config
     override_count := 0
-    for binding in app.action_bindings {
-        if !binding.customized {
+    for binding, index in app.key_mappings {
+        if !binding.customized || override_count >= len(overrides) {
             continue
         }
-        definition, defined := action_definition(binding.action)
-        if !defined || override_count >= len(overrides) {
-            continue
-        }
-        overrides[override_count] = User_Keybinding_Config{
-            action = definition.id,
-            shortcut = action_binding_text(app, binding.action),
+        overrides[override_count] = User_Key_Mapping_Config{
+            action = mapping_id(KEY_MAPPING_DEFINITIONS[index]),
+            shortcut = mapping_binding_text(app, index),
         }
         override_count += 1
     }
@@ -3898,20 +3979,6 @@ update_tab_drag :: proc(app: ^App, x: f32) -> bool {
     return update_tab_drag_at_width(app, x, window_logical_width(app))
 }
 
-tab_index_for_number_key :: proc(key: SDL.Keycode) -> (int, bool) {
-    switch key {
-    case SDL.K_1: return 0, true
-    case SDL.K_2: return 1, true
-    case SDL.K_3: return 2, true
-    case SDL.K_4: return 3, true
-    case SDL.K_5: return 4, true
-    case SDL.K_6: return 5, true
-    case SDL.K_7: return 6, true
-    case SDL.K_8: return 7, true
-    case: return 0, false
-    }
-}
-
 duplicate_active_tab :: proc(app: ^App) -> bool {
     if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count || app.tab_count >= MAX_TABS {
         return false
@@ -4149,35 +4216,6 @@ close_active_pane :: proc(app: ^App) {
     destroy_instance_view(removed)
 }
 
-pane_direction_for_key :: proc(key: SDL.Keycode) -> (Pane_Direction, bool) {
-    switch key {
-    case SDL.K_LEFT:  return .Left, true
-    case SDL.K_RIGHT: return .Right, true
-    case SDL.K_UP:    return .Up, true
-    case SDL.K_DOWN:  return .Down, true
-    case:             return .Left, false
-    }
-}
-
-Pane_Keyboard_Action :: enum u8 {
-    None,
-    Focus,
-    Resize,
-    Swap,
-}
-
-pane_keyboard_action :: proc(
-    key: SDL.Keycode,
-    ctrl, shift, alt: bool,
-) -> (Pane_Keyboard_Action, Pane_Direction, bool) {
-    if !alt do return .None, .Left, false
-    direction, directional := pane_direction_for_key(key)
-    if !directional do return .None, .Left, false
-    if ctrl do return .Swap, direction, true
-    if shift do return .Resize, direction, true
-    return .Focus, direction, true
-}
-
 active_tab_inset :: proc(app: ^App) -> (SDL.FRect, bool) {
     if app == nil || app.active_tab < 0 || app.active_tab >= app.tab_count {
         return {}, false
@@ -4337,6 +4375,49 @@ execute_action :: proc(app: ^App, action: App_Action) {
     }
 }
 
+terminal_mapping_view :: proc(app: ^App) -> ^Instance_View {
+    if app == nil || app.profile_menu_open || app.palette_open || app.settings_open do return nil
+    if !active_tab_is_instance(app) do return nil
+    return active_instance_view(app)
+}
+
+execute_key_mapping :: proc(app: ^App, target: Key_Mapping_Target) {
+    if app == nil do return
+    switch target.kind {
+    case .Action:
+        if action_enabled(app, target.action) do execute_action(app, target.action)
+    case .Toggle_Find:
+        if terminal_mapping_view(app) == nil do return
+        if app.search_open do close_search(app)
+        else do open_search(app)
+    case .Select_Tab:
+        if target.value >= 0 && target.value < app.tab_count do _ = select_tab_index(app, target.value)
+    case .Adjust_Font:
+        adjust_terminal_font(app, target.value)
+    case .Copy_Selection:
+        view := terminal_mapping_view(app)
+        if view != nil do _ = copy_selection_to_clipboard(app, view)
+    case .Paste_Clipboard:
+        view := terminal_mapping_view(app)
+        if view != nil do _ = paste_clipboard(view)
+    case .History_Oldest:
+        view := terminal_mapping_view(app)
+        if view != nil do _ = scroll_history_oldest(view)
+    case .History_Live:
+        view := terminal_mapping_view(app)
+        if view != nil do _ = return_history_live_navigation(view)
+    case .History_Page:
+        view := terminal_mapping_view(app)
+        if view != nil do _ = scroll_history_rows(view, target.value * history_page_rows(view))
+    case .Pane_Focus:
+        if terminal_mapping_view(app) != nil do _ = focus_active_pane_direction(app, target.direction)
+    case .Pane_Resize:
+        if terminal_mapping_view(app) != nil do _ = resize_active_pane_direction(app, target.direction)
+    case .Pane_Swap:
+        if terminal_mapping_view(app) != nil do _ = swap_active_pane_direction_app(app, target.direction)
+    }
+}
+
 palette_action :: proc(index: int) -> (App_Action, bool) {
     if index < 0 {
         return .New_Tab, false
@@ -4359,16 +4440,8 @@ set_settings_notice :: proc(app: ^App, message: string) {
     }
 }
 
-action_definition_at :: proc(index: int) -> (Action_Definition, bool) {
-    if index < 0 {
-        return {}, false
-    }
-    for definition, definition_index in ACTION_DEFINITIONS {
-        if definition_index == index {
-            return definition, true
-        }
-    }
-    return {}, false
+mapping_settings_definition_at :: proc(index: int) -> (Key_Mapping_Definition, bool) {
+    return mapping_definition_at(index)
 }
 
 handle_settings_binding_recording :: proc(app: ^App, event: ^SDL.Event) -> bool {
@@ -4386,7 +4459,7 @@ handle_settings_binding_recording :: proc(app: ^App, event: ^SDL.Event) -> bool 
     if shortcut_modifier_key(event.key.key) {
         return true
     }
-    definition, selected := action_definition_at(app.settings_action_selection)
+    definition, selected := mapping_settings_definition_at(app.settings_mapping_selection)
     if !selected {
         app.settings_binding_recording = false
         set_settings_notice(app, "Selected action is unavailable")
@@ -4397,14 +4470,14 @@ handle_settings_binding_recording :: proc(app: ^App, event: ^SDL.Event) -> bool 
         set_settings_notice(app, "Unsupported shortcut key")
         return true
     }
-    if conflict_action, conflict := binding_conflict(app, definition.action, shortcut); conflict {
+    if conflict_index, conflict := mapping_conflict(app, app.settings_mapping_selection, shortcut); conflict {
         buffer: [192]u8
-        set_settings_notice(app, fmt.bprintf(buffer[:], "Shortcut already used by %s", action_label(conflict_action)))
+        set_settings_notice(app, fmt.bprintf(buffer[:], "Shortcut already used by %s", mapping_label(KEY_MAPPING_DEFINITIONS[conflict_index])))
         return true
     }
     storage: [SHORTCUT_TEXT_BYTES]u8
     text, formatted := format_shortcut(shortcut, storage[:])
-    if !formatted || set_action_binding(app, definition.action, text) != .Applied {
+    if !formatted || set_mapping_binding(app, app.settings_mapping_selection, text) != .Applied {
         set_settings_notice(app, "Shortcut could not be assigned")
         return true
     }
@@ -4471,26 +4544,27 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         if app.settings_content_focus && app.settings_page == .Profile_Home {
             return handle_profile_editor_key(app, event)
         }
-        if app.settings_content_focus && app.settings_page == .Actions {
+        if app.settings_content_focus && app.settings_page == .Mappings {
             switch event.key.key {
             case SDL.K_TAB:
                 app.settings_content_focus = false
             case SDL.K_UP:
-                app.settings_action_selection = (app.settings_action_selection + len(ACTION_DEFINITIONS) - 1) % len(ACTION_DEFINITIONS)
+                app.settings_mapping_selection = (app.settings_mapping_selection + len(KEY_MAPPING_DEFINITIONS) - 1) % len(KEY_MAPPING_DEFINITIONS)
             case SDL.K_DOWN:
-                app.settings_action_selection = (app.settings_action_selection + 1) % len(ACTION_DEFINITIONS)
+                app.settings_mapping_selection = (app.settings_mapping_selection + 1) % len(KEY_MAPPING_DEFINITIONS)
             case SDL.K_RETURN:
                 app.settings_binding_recording = true
                 set_settings_notice(app, "Press a new shortcut · Esc cancels")
             case SDL.K_DELETE, SDL.K_BACKSPACE:
-                if definition, ok := action_definition_at(app.settings_action_selection); ok {
-                    if set_action_binding(app, definition.action, "") == .Applied {
+                if _, ok := mapping_settings_definition_at(app.settings_mapping_selection); ok {
+                    if set_mapping_binding(app, app.settings_mapping_selection, "") == .Applied {
                         save_user_config(app)
-                        set_settings_notice(app, "Action unbound")
+                        set_settings_notice(app, "Mapping unbound")
                     }
                 }
             case SDL.K_R:
-                if definition, ok := action_definition_at(app.settings_action_selection); ok && reset_action_binding(app, definition.action) {
+                if _, ok := mapping_settings_definition_at(app.settings_mapping_selection); ok &&
+                   reset_mapping_binding(app, app.settings_mapping_selection) {
                     save_user_config(app)
                     set_settings_notice(app, "Restored default shortcut")
                 }
@@ -4501,7 +4575,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         }
         switch event.key.key {
         case SDL.K_TAB:
-            if app.settings_page == .Actions || app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
+            if app.settings_page == .Mappings || app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
                 app.settings_content_focus = true
                 if app.settings_page == .Profile_Defaults {
                     app.settings_profile_selection = clamp(app.settings_profile_selection, 0, max(0, app.profile_count - 1))
@@ -4731,7 +4805,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     track_window_pointer_cycle(app, event)
     if handle_local_drag_interruption(app, event) do return
     if handle_window_chrome_event(app, event) do return
-    if consume_owned_action_key(app, event) {
+    if consume_owned_mapping_key(app, event) {
         return
     }
     if event != nil && u32(event.type) == instance_update_event_type {
@@ -4774,14 +4848,13 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
         alt := .LALT in event.key.mod || .RALT in event.key.mod
-        if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_F {
-            if app.search_open {
-                close_search(app)
-            } else {
-                open_search(app)
-            }
-        } else if app.search_open {
+        if app.search_open {
             if event.type == .KEY_DOWN {
+                if mapping_index, mapped := mapping_for_shortcut_event(app, event); mapped &&
+                   KEY_MAPPING_DEFINITIONS[mapping_index].target.kind == .Toggle_Find {
+                    close_search(app)
+                    return
+                }
                 switch event.key.key {
                 case SDL.K_ESCAPE:
                     close_search(app)
@@ -4810,51 +4883,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if app.settings_open && app.settings_binding_recording {
             _ = handle_settings_binding_recording(app, event)
             return
-        } else if handle_registered_action_shortcut(app, event) {
-            // Concrete desktop actions are consumed by the effective binding table.
-        } else if event.type == .KEY_DOWN && ctrl && !shift && !alt &&
-                  event.key.key >= SDL.K_1 && event.key.key <= SDL.K_8 {
-            if index, numeric := tab_index_for_number_key(event.key.key); numeric && index < app.tab_count {
-                _ = select_tab_index(app, index)
-            }
-        } else if pane_action, pane_direction, pane_owned := pane_keyboard_action(
-            event.key.key,
-            ctrl,
-            shift,
-            alt,
-        ); event.type == .KEY_DOWN && pane_owned {
-            switch pane_action {
-            case .Swap:   _ = swap_active_pane_direction_app(app, pane_direction)
-            case .Resize: _ = resize_active_pane_direction(app, pane_direction)
-            case .Focus:  _ = focus_active_pane_direction(app, pane_direction)
-            case .None:
-            }
-        } else if event.type == .KEY_DOWN && ctrl && event.key.key == SDL.K_MINUS {
-            adjust_terminal_font(app, -1)
-        } else if event.type == .KEY_DOWN && ctrl && (event.key.key == SDL.K_EQUALS || event.key.key == SDL.K_PLUS) {
-            adjust_terminal_font(app, 1)
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_C {
-            _ = copy_selection_to_clipboard(app, active_instance_view(app))
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_V {
-            _ = paste_clipboard(active_instance_view(app))
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_HOME &&
-                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            _ = scroll_history_oldest(active_instance_view(app))
-        } else if event.type == .KEY_DOWN && ctrl && shift && event.key.key == SDL.K_END &&
-                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            _ = return_history_live_navigation(active_instance_view(app))
-        } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEUP &&
-                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            view := active_instance_view(app)
-            if view != nil {
-                _ = scroll_history_rows(view, history_page_rows(view))
-            }
-        } else if event.type == .KEY_DOWN && shift && event.key.key == SDL.K_PAGEDOWN &&
-                  !app.profile_menu_open && !app.palette_open && !app.settings_open {
-            view := active_instance_view(app)
-            if view != nil {
-                _ = scroll_history_rows(view, -history_page_rows(view))
-            }
+        } else if handle_registered_mapping(app, event) {
+            // Every terminal-global shortcut is owned by the visible mapping table.
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
             close_settings_search(app)
             cancel_profile_edit(app)
@@ -6180,7 +6210,7 @@ settings_page_title :: proc(page: Settings_Page) -> string {
     case .Interaction:      return "Interaction"
     case .Appearance:       return "Appearance"
     case .Color_Schemes:    return "Color schemes"
-    case .Actions:          return "Actions"
+    case .Mappings:          return "Mappings"
     case .Profile_Defaults: return "Profiles"
     case .Profile_Home:     return "Edit profile"
     }
@@ -6272,16 +6302,16 @@ draw_settings :: proc(app: ^App, width, height: f32) {
             draw_fill(app.renderer, swatch, color)
             draw_outline(app.renderer, swatch, palette.border)
         }
-    case .Actions:
-        for definition, index in ACTION_DEFINITIONS {
+    case .Mappings:
+        for definition, index in KEY_MAPPING_DEFINITIONS {
             y := content_y + 54 + f32(index) * 32
-            selected := app.settings_content_focus && app.settings_action_selection == index
+            selected := app.settings_content_focus && app.settings_mapping_selection == index
             row := SDL.FRect{body.x, y - 5, body.w - 8, 28}
             if selected do draw_fill(app.renderer, row, palette.tab_active)
             draw_outline(app.renderer, row, selected ? palette.accent : palette.border)
             split := max(f32(0), (available - 16) * 0.56)
-            settings_clipped_text(app, {content_x, y, split, 22}, definition.label, selected ? palette.accent : palette.text)
-            shortcut := action_binding_text(app, definition.action)
+            settings_clipped_text(app, {content_x, y, split, 22}, mapping_label(definition), selected ? palette.accent : palette.text)
+            shortcut := mapping_binding_text(app, index)
             if len(shortcut) == 0 do shortcut = "Unbound"
             settings_clipped_text(app, {content_x + split + 8, y, available - split - 8, 22}, shortcut, palette.text_muted)
         }
@@ -6557,8 +6587,8 @@ main :: proc() {
     load_user_profiles(&app, user_config.profiles)
     load_server_connections(&app, user_config.servers)
     app.startup_profile = default_profile_index_from_config(&app, user_config)
-    if !initialize_action_bindings(&app) {
-        sdl_error("Default action bindings invalid")
+    if !initialize_key_mappings(&app) {
+        sdl_error("Default key mappings invalid")
         return
     }
     _ = apply_user_keybindings(&app, user_config.keybindings)

@@ -202,8 +202,8 @@ format_shortcut :: proc(value: Shortcut, output: []u8) -> (string, bool) {
 	return string(output[:used]), true
 }
 
-Action_Binding :: struct {
-	action: App_Action,
+Key_Mapping_Binding :: struct {
+	index: int,
 	shortcut: Shortcut,
 	text: [SHORTCUT_TEXT_BYTES]u8,
 	text_len: int,
@@ -217,31 +217,66 @@ Binding_Update_Result :: enum u8 {
 	Conflict,
 }
 
-binding_for_action :: proc(app: ^App, action: App_Action) -> ^Action_Binding {
-	if app == nil {
-		return nil
-	}
-	for &binding in app.action_bindings {
-		if binding.action == action {
-			return &binding
-		}
-	}
-	return nil
+mapping_definition_at :: proc(index: int) -> (Key_Mapping_Definition, bool) {
+	if index < 0 || index >= len(KEY_MAPPING_DEFINITIONS) do return {}, false
+	return KEY_MAPPING_DEFINITIONS[index], true
 }
 
-action_binding_text :: proc(app: ^App, action: App_Action) -> string {
-	binding := binding_for_action(app, action)
-	if binding == nil || binding.text_len <= 0 {
-		return ""
+mapping_id :: proc(definition: Key_Mapping_Definition) -> string {
+	if definition.target.kind == .Action {
+		if action, ok := action_definition(definition.target.action); ok do return action.id
 	}
+	return definition.id
+}
+
+mapping_label :: proc(definition: Key_Mapping_Definition) -> string {
+	if definition.target.kind == .Action {
+		if action, ok := action_definition(definition.target.action); ok do return action.label
+	}
+	return definition.label
+}
+
+mapping_category :: proc(definition: Key_Mapping_Definition) -> Action_Category {
+	if definition.target.kind == .Action {
+		if action, ok := action_definition(definition.target.action); ok do return action.category
+	}
+	return definition.category
+}
+
+mapping_index_from_id :: proc(id: string) -> (int, bool) {
+	for definition, index in KEY_MAPPING_DEFINITIONS {
+		if mapping_id(definition) == id do return index, true
+	}
+	return -1, false
+}
+
+mapping_index_for_action :: proc(action: App_Action) -> (int, bool) {
+	for definition, index in KEY_MAPPING_DEFINITIONS {
+		if definition.target.kind == .Action && definition.target.action == action do return index, true
+	}
+	return -1, false
+}
+
+mapping_binding :: proc(app: ^App, index: int) -> ^Key_Mapping_Binding {
+	if app == nil || index < 0 || index >= len(app.key_mappings) do return nil
+	return &app.key_mappings[index]
+}
+
+mapping_binding_text :: proc(app: ^App, index: int) -> string {
+	binding := mapping_binding(app, index)
+	if binding == nil || binding.text_len <= 0 do return ""
 	return string(binding.text[:binding.text_len])
 }
 
-write_binding :: proc(binding: ^Action_Binding, action: App_Action, shortcut: Shortcut, text: string, customized: bool) -> bool {
-	if binding == nil || len(text) >= len(binding.text) {
-		return false
-	}
-	binding^ = Action_Binding{action = action, shortcut = shortcut, customized = customized}
+action_binding_text :: proc(app: ^App, action: App_Action) -> string {
+	index, ok := mapping_index_for_action(action)
+	if !ok do return ""
+	return mapping_binding_text(app, index)
+}
+
+write_mapping :: proc(binding: ^Key_Mapping_Binding, index: int, shortcut: Shortcut, text: string, customized: bool) -> bool {
+	if binding == nil || len(text) >= len(binding.text) do return false
+	binding^ = Key_Mapping_Binding{index = index, shortcut = shortcut, customized = customized}
 	if len(text) != 0 {
 		copy(binding.text[:len(text)], transmute([]u8)text)
 		binding.text_len = len(text)
@@ -249,181 +284,143 @@ write_binding :: proc(binding: ^Action_Binding, action: App_Action, shortcut: Sh
 	return true
 }
 
-initialize_action_bindings :: proc(app: ^App) -> bool {
-	if app == nil {
-		return false
-	}
-	for definition, index in ACTION_DEFINITIONS {
+initialize_key_mappings :: proc(app: ^App) -> bool {
+	if app == nil do return false
+	for definition, index in KEY_MAPPING_DEFINITIONS {
 		shortcut: Shortcut
 		text := definition.default_shortcut
 		if len(text) != 0 {
 			parsed, ok := parse_shortcut(text)
-			if !ok {
-				return false
-			}
+			if !ok do return false
 			shortcut = parsed
 		}
-		if !write_binding(&app.action_bindings[index], definition.action, shortcut, text, false) {
-			return false
-		}
+		if !write_mapping(&app.key_mappings[index], index, shortcut, text, false) do return false
 	}
-	for binding, index in app.action_bindings {
-		if !shortcut_valid(binding.shortcut) {
-			continue
-		}
-		for other, other_index in app.action_bindings {
-			if other_index > index && shortcut_valid(other.shortcut) && other.shortcut == binding.shortcut {
-				return false
-			}
+	for binding, index in app.key_mappings {
+		if !shortcut_valid(binding.shortcut) do continue
+		for other, other_index in app.key_mappings {
+			if other_index > index && shortcut_valid(other.shortcut) && other.shortcut == binding.shortcut do return false
 		}
 	}
 	return true
 }
 
-binding_conflict :: proc(app: ^App, action: App_Action, shortcut: Shortcut) -> (App_Action, bool) {
-	if app == nil || !shortcut_valid(shortcut) {
-		return .New_Tab, false
+mapping_conflict :: proc(app: ^App, index: int, shortcut: Shortcut) -> (int, bool) {
+	if app == nil || !shortcut_valid(shortcut) do return -1, false
+	for binding, other_index in app.key_mappings {
+		if other_index != index && shortcut_valid(binding.shortcut) && binding.shortcut == shortcut do return other_index, true
 	}
-	for binding in app.action_bindings {
-		if binding.action != action && shortcut_valid(binding.shortcut) && binding.shortcut == shortcut {
-			return binding.action, true
-		}
-	}
-	return .New_Tab, false
+	return -1, false
 }
 
-set_action_binding :: proc(app: ^App, action: App_Action, text: string) -> Binding_Update_Result {
-	binding := binding_for_action(app, action)
-	if binding == nil {
-		return .Unknown_Action
-	}
+set_mapping_binding :: proc(app: ^App, index: int, text: string) -> Binding_Update_Result {
+	binding := mapping_binding(app, index)
+	if binding == nil do return .Unknown_Action
 	if len(text) == 0 {
-		_ = write_binding(binding, action, {}, "", true)
+		_ = write_mapping(binding, index, {}, "", true)
 		return .Applied
 	}
 	shortcut, ok := parse_shortcut(text)
-	if !ok {
-		return .Invalid
-	}
-	if _, conflict := binding_conflict(app, action, shortcut); conflict {
-		return .Conflict
-	}
+	if !ok do return .Invalid
+	if _, conflict := mapping_conflict(app, index, shortcut); conflict do return .Conflict
 	canonical_storage: [SHORTCUT_TEXT_BYTES]u8
 	canonical, formatted := format_shortcut(shortcut, canonical_storage[:])
-	if !formatted || !write_binding(binding, action, shortcut, canonical, true) {
-		return .Invalid
-	}
+	if !formatted || !write_mapping(binding, index, shortcut, canonical, true) do return .Invalid
 	return .Applied
 }
 
-reset_action_binding :: proc(app: ^App, action: App_Action) -> bool {
-	definition, ok := action_definition(action)
-	if !ok {
-		return false
-	}
-	binding := binding_for_action(app, action)
-	if binding == nil {
-		return false
-	}
+reset_mapping_binding :: proc(app: ^App, index: int) -> bool {
+	definition, ok := mapping_definition_at(index)
+	if !ok do return false
+	binding := mapping_binding(app, index)
+	if binding == nil do return false
 	shortcut: Shortcut
 	if len(definition.default_shortcut) != 0 {
 		parsed, parsed_ok := parse_shortcut(definition.default_shortcut)
-		if !parsed_ok {
-			return false
-		}
+		if !parsed_ok do return false
 		shortcut = parsed
 	}
-	return write_binding(binding, action, shortcut, definition.default_shortcut, false)
+	return write_mapping(binding, index, shortcut, definition.default_shortcut, false)
+}
+
+set_action_binding :: proc(app: ^App, action: App_Action, text: string) -> Binding_Update_Result {
+	index, ok := mapping_index_for_action(action)
+	if !ok do return .Unknown_Action
+	return set_mapping_binding(app, index, text)
+}
+
+reset_action_binding :: proc(app: ^App, action: App_Action) -> bool {
+	index, ok := mapping_index_for_action(action)
+	if !ok do return false
+	return reset_mapping_binding(app, index)
+}
+
+mapping_for_shortcut_event :: proc(app: ^App, event: ^SDL.Event) -> (int, bool) {
+	if app == nil || event == nil do return -1, false
+	for binding, index in app.key_mappings {
+		if shortcut_matches_event(binding.shortcut, event) do return index, true
+	}
+	return -1, false
 }
 
 action_for_shortcut_event :: proc(app: ^App, event: ^SDL.Event) -> (App_Action, bool) {
-	if app == nil || event == nil {
-		return .New_Tab, false
-	}
-	for binding in app.action_bindings {
-		if shortcut_matches_event(binding.shortcut, event) {
-			return binding.action, true
-		}
-	}
-	return .New_Tab, false
+	index, ok := mapping_for_shortcut_event(app, event)
+	if !ok do return .New_Tab, false
+	definition := KEY_MAPPING_DEFINITIONS[index]
+	if definition.target.kind != .Action do return .New_Tab, false
+	return definition.target.action, true
 }
 
-handle_registered_action_shortcut :: proc(app: ^App, event: ^SDL.Event) -> bool {
-	action, ok := action_for_shortcut_event(app, event)
-	if !ok {
-		return false
-	}
-	// The action owns the physical key until release, including auto-repeat.
-	// A fullscreen toggle or an overlay must never leak the rest of its key
-	// cycle to a child using Kitty all-event keyboard mode.
+handle_registered_mapping :: proc(app: ^App, event: ^SDL.Event) -> bool {
+	index, ok := mapping_for_shortcut_event(app, event)
+	if !ok do return false
 	scancode := int(event.key.scancode)
-	if scancode > 0 && scancode < len(app.action_keys_owned) {
-		app.action_keys_owned[scancode] = true
+	if scancode > 0 && scancode < len(app.mapping_keys_owned) {
+		app.mapping_keys_owned[scancode] = true
 	}
-	if action_enabled(app, action) {
-		execute_action(app, action)
-	}
+	execute_key_mapping(app, KEY_MAPPING_DEFINITIONS[index].target)
 	return true
 }
 
 set_config_notice :: proc(app: ^App, message: string) {
-	if app == nil {
-		return
-	}
+	if app == nil do return
 	app.config_notice_len = min(len(message), len(app.config_notice))
 	if app.config_notice_len != 0 {
 		copy(app.config_notice[:app.config_notice_len], transmute([]u8)message[:app.config_notice_len])
 	}
 }
 
-binding_index_for_action :: proc(bindings: ^[len(ACTION_DEFINITIONS)]Action_Binding, action: App_Action) -> int {
-	if bindings == nil {
-		return -1
-	}
-	for binding, index in bindings {
-		if binding.action == action {
-			return index
-		}
-	}
-	return -1
-}
-
-apply_user_keybindings :: proc(app: ^App, overrides: []User_Keybinding_Config) -> bool {
-	if app == nil || len(overrides) == 0 {
-		return true
-	}
-	if len(overrides) > len(app.action_bindings) {
+apply_user_keybindings :: proc(app: ^App, overrides: []User_Key_Mapping_Config) -> bool {
+	if app == nil || len(overrides) == 0 do return true
+	if len(overrides) > len(app.key_mappings) {
 		set_config_notice(app, "keybindings: too many overrides")
 		return false
 	}
-	candidate := app.action_bindings
-	mentioned: [len(ACTION_DEFINITIONS)]bool
-	actions: [len(ACTION_DEFINITIONS)]App_Action
-	shortcuts: [len(ACTION_DEFINITIONS)]Shortcut
-	texts: [len(ACTION_DEFINITIONS)][SHORTCUT_TEXT_BYTES]u8
-	text_lengths: [len(ACTION_DEFINITIONS)]int
+	candidate := app.key_mappings
+	mentioned: [len(KEY_MAPPING_DEFINITIONS)]bool
+	indices: [len(KEY_MAPPING_DEFINITIONS)]int
+	shortcuts: [len(KEY_MAPPING_DEFINITIONS)]Shortcut
+	texts: [len(KEY_MAPPING_DEFINITIONS)][SHORTCUT_TEXT_BYTES]u8
+	text_lengths: [len(KEY_MAPPING_DEFINITIONS)]int
 
 	for override, index in overrides {
-		action, known := action_from_id(override.action)
+		mapping_index, known := mapping_index_from_id(override.action)
 		if !known {
 			buffer: [192]u8
-			set_config_notice(app, fmt.bprintf(buffer[:], "keybindings[%d]: unknown action %s", index, override.action))
+			set_config_notice(app, fmt.bprintf(buffer[:], "keybindings[%d]: unknown mapping %s", index, override.action))
 			return false
 		}
-		binding_index := binding_index_for_action(&candidate, action)
-		if binding_index < 0 || mentioned[binding_index] {
+		if mentioned[mapping_index] {
 			buffer: [192]u8
-			set_config_notice(app, fmt.bprintf(buffer[:], "keybindings[%d]: duplicate action %s", index, override.action))
+			set_config_notice(app, fmt.bprintf(buffer[:], "keybindings[%d]: duplicate mapping %s", index, override.action))
 			return false
 		}
-		mentioned[binding_index] = true
-		actions[index] = action
-		candidate[binding_index].shortcut = {}
-		candidate[binding_index].text_len = 0
-		candidate[binding_index].customized = true
-		if len(override.shortcut) == 0 {
-			continue
-		}
+		mentioned[mapping_index] = true
+		indices[index] = mapping_index
+		candidate[mapping_index].shortcut = {}
+		candidate[mapping_index].text_len = 0
+		candidate[mapping_index].customized = true
+		if len(override.shortcut) == 0 do continue
 		shortcut, parsed := parse_shortcut(override.shortcut)
 		if !parsed {
 			buffer: [192]u8
@@ -440,30 +437,27 @@ apply_user_keybindings :: proc(app: ^App, overrides: []User_Keybinding_Config) -
 	}
 
 	for _, index in overrides {
-		action := actions[index]
-		binding_index := binding_index_for_action(&candidate, action)
-		candidate[binding_index].shortcut = shortcuts[index]
-		candidate[binding_index].text_len = text_lengths[index]
-		candidate[binding_index].customized = true
+		mapping_index := indices[index]
+		candidate[mapping_index].shortcut = shortcuts[index]
+		candidate[mapping_index].text_len = text_lengths[index]
+		candidate[mapping_index].customized = true
 		if text_lengths[index] != 0 {
-			copy(candidate[binding_index].text[:text_lengths[index]], texts[index][:text_lengths[index]])
+			copy(candidate[mapping_index].text[:text_lengths[index]], texts[index][:text_lengths[index]])
 		}
 	}
 	for binding, index in candidate {
-		if !shortcut_valid(binding.shortcut) {
-			continue
-		}
+		if !shortcut_valid(binding.shortcut) do continue
 		for other, other_index in candidate {
 			if other_index > index && shortcut_valid(other.shortcut) && other.shortcut == binding.shortcut {
-				left, _ := action_definition(binding.action)
-				right, _ := action_definition(other.action)
+				left := mapping_id(KEY_MAPPING_DEFINITIONS[index])
+				right := mapping_id(KEY_MAPPING_DEFINITIONS[other_index])
 				buffer: [192]u8
-				set_config_notice(app, fmt.bprintf(buffer[:], "keybindings: %s conflicts with %s", left.id, right.id))
+				set_config_notice(app, fmt.bprintf(buffer[:], "keybindings: %s conflicts with %s", left, right))
 				return false
 			}
 		}
 	}
-	app.action_bindings = candidate
+	app.key_mappings = candidate
 	return true
 }
 

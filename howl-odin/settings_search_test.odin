@@ -7,7 +7,7 @@ settings_search_finds_pages_actions_and_profiles :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
-	testing.expect(t, initialize_action_bindings(&app))
+	testing.expect(t, initialize_key_mappings(&app))
 	custom := [1]User_Profile_Config{{id = "lab", name = "Lab Recipe", mode = "launch"}}
 	load_user_profiles(&app, custom[:])
 	app.settings_open = true
@@ -17,9 +17,9 @@ settings_search_finds_pages_actions_and_profiles :: proc(t: ^testing.T) {
 	found_window := false
 	for index in 0..<app.settings_search_result_count {
 		result := app.settings_search_results[index]
-		if result.kind == .Action {
-			definition, _ := action_definition_at(result.index)
-			if definition.action == .New_Window do found_window = true
+		if result.kind == .Mapping {
+			definition, _ := mapping_definition_at(result.index)
+			if mapping_id(definition) == "new_window" do found_window = true
 		}
 	}
 	testing.expect(t, found_window)
@@ -48,15 +48,15 @@ settings_search_result_navigation_targets_exact_context :: proc(t: ^testing.T) {
 	app: App
 	testing.expect(t, initialize_builtin_profiles(&app))
 	defer destroy_profiles(&app)
-	testing.expect(t, initialize_action_bindings(&app))
+	testing.expect(t, initialize_key_mappings(&app))
 	custom := [1]User_Profile_Config{{id = "lab", name = "Lab Recipe", mode = "launch"}}
 	load_user_profiles(&app, custom[:])
 	app.settings_open = true
 
-	testing.expect(t, apply_settings_search_result(&app, {.Action, .Actions, 1}))
-	testing.expect_value(t, app.settings_page, Settings_Page.Actions)
+	testing.expect(t, apply_settings_search_result(&app, {.Mapping, .Mappings, 1}))
+	testing.expect_value(t, app.settings_page, Settings_Page.Mappings)
 	testing.expect(t, app.settings_content_focus)
-	testing.expect_value(t, app.settings_action_selection, 1)
+	testing.expect_value(t, app.settings_mapping_selection, 1)
 
 	app.settings_open = true
 	testing.expect(t, apply_settings_search_result(&app, {.Profile, .Profile_Home, 2}))

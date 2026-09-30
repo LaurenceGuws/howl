@@ -157,34 +157,20 @@ pane_divider_pointer_ratio_is_orientation_aware_and_clamped :: proc(t: ^testing.
 }
 
 @(test)
-pane_keyboard_shortcuts_own_only_directional_alt_keys :: proc(t: ^testing.T) {
-    action, direction, owned := pane_keyboard_action(SDL.K_LEFT, false, false, true)
-    testing.expect(t, owned)
-    testing.expect_value(t, action, Pane_Keyboard_Action.Focus)
-    testing.expect_value(t, direction, Pane_Direction.Left)
-
-    action, direction, owned = pane_keyboard_action(SDL.K_RIGHT, false, true, true)
-    testing.expect(t, owned)
-    testing.expect_value(t, action, Pane_Keyboard_Action.Resize)
-    testing.expect_value(t, direction, Pane_Direction.Right)
-
-    action, direction, owned = pane_keyboard_action(SDL.K_UP, true, false, true)
-    testing.expect(t, owned)
-    testing.expect_value(t, action, Pane_Keyboard_Action.Swap)
-    testing.expect_value(t, direction, Pane_Direction.Up)
-
-    cases := [4]struct {
-        key: SDL.Keycode,
-        ctrl, shift, alt: bool,
-    }{
-        {SDL.K_1, false, false, true},
-        {SDL.K_1, false, true, true},
-        {SDL.K_1, true, false, true},
-        {SDL.K_A, false, false, true},
+pane_directional_keyboard_capabilities_are_visible_unbound_mappings :: proc(t: ^testing.T) {
+    focus, resize, swap := 0, 0, 0
+    for definition in KEY_MAPPING_DEFINITIONS {
+        #partial switch definition.target.kind {
+        case .Pane_Focus: focus += 1
+        case .Pane_Resize: resize += 1
+        case .Pane_Swap: swap += 1
+        case:
+        }
+        if definition.target.kind == .Pane_Focus || definition.target.kind == .Pane_Resize || definition.target.kind == .Pane_Swap {
+            testing.expect_value(t, definition.default_shortcut, "")
+        }
     }
-    for value in cases {
-        action, _, owned = pane_keyboard_action(value.key, value.ctrl, value.shift, value.alt)
-        testing.expect(t, !owned)
-        testing.expect_value(t, action, Pane_Keyboard_Action.None)
-    }
+    testing.expect_value(t, focus, 4)
+    testing.expect_value(t, resize, 4)
+    testing.expect_value(t, swap, 4)
 }

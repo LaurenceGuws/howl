@@ -27,19 +27,19 @@ window_presentation_allowed :: proc(flags: SDL.WindowFlags) -> bool {
     return .MINIMIZED not_in flags && .HIDDEN not_in flags
 }
 
-consume_owned_action_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
+consume_owned_mapping_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     if app == nil || event == nil || (event.type != .KEY_DOWN && event.type != .KEY_UP) {
         return false
     }
     scancode := int(event.key.scancode)
-    if scancode <= 0 || scancode >= len(app.action_keys_owned) do return false
-    owned := app.action_keys_owned[scancode]
+    if scancode <= 0 || scancode >= len(app.mapping_keys_owned) do return false
+    owned := app.mapping_keys_owned[scancode]
     if event.type == .KEY_UP {
-        app.action_keys_owned[scancode] = false
+        app.mapping_keys_owned[scancode] = false
         return owned
     }
     if event.key.repeat do return owned
     // A fresh press starts a new cycle even when focus loss hid the prior release.
-    app.action_keys_owned[scancode] = false
+    app.mapping_keys_owned[scancode] = false
     return false
 }

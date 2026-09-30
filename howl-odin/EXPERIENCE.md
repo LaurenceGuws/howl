@@ -171,21 +171,22 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Closing a nested leaf retires only that pane view and its owned Local Instance,
   if any; attached external Instances survive client close. The three-owned-pane
   canary collapsed 3 → 2 → 1 while Local child count followed 3 → 2 → 1 exactly.
-- Side-by-side and top/bottom splits are explicit (`Alt+Shift+D` / `Alt+Shift++`
-  and `Alt+Shift+-`) and may be nested arbitrarily within the eight-pane bound.
-- `Alt+Arrow` uses actual rectangle separation for four-direction spatial focus;
-  it does not guess from pane slot order or merely compare rectangle centers.
-- `Alt+Shift+Arrow` moves the nearest divider in that axis, clamped to a sane
+- Side-by-side and top/bottom split actions may be nested arbitrarily within
+  the eight-pane bound. They are visible mappings but have no default shortcut.
+- Spatial focus, directional resize, and directional swap are twelve explicit
+  parameterized mappings. All are unbound by default, so Alt remains terminal
+  input unless the user deliberately assigns an Alt chord.
+- Directional resize moves the nearest divider in that axis, clamped to a sane
   15–85% ratio. Pointer divider drag uses the same ratio owner plus a forgiving
   invisible hit lane. One canary moved the divider from x=588–591 to x=740–743
   and the two canonical PTYs converged to 34×78 and 34×44 without changing child
   PIDs. Release outside the window and focus theft both terminated the drag; later
   buttonless pointer motion left the divider stationary.
-- `Ctrl+Shift+Z` zooms only the active pane as a layout projection and restores
-  the untouched tree on unzoom. `Ctrl+Alt+Arrow` swaps Instance-view ownership
-  between geometric neighbors without restarting either Instance. A mixed topology
-  canary (full-width top plus two bottom panes) preserved all three child PIDs
-  through focus, keyboard resize, zoom/unzoom, and swap.
+- `Ctrl+Shift+Z` remains the default mapping for pane zoom. Directional swap
+  exchanges Instance-view ownership between geometric neighbors without restarting
+  either Instance when the user binds one of the visible swap mappings. A mixed
+  topology canary (full-width top plus two bottom panes) preserved all three child
+  PIDs through focus, keyboard resize, zoom/unzoom, and swap.
 
 **WANTED**
 
@@ -623,7 +624,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   keybinding overrides while schema-1 files remain readable and upgrade only on save;
   schema 3 adds stable profile recipes and persisted application-theme identity.
 - Persistent default profile, font size, and application theme.
-- Settings → Actions is keyboard-editable: Tab enters the action list, Up/Down
+- Settings → Mappings is keyboard-editable: Tab enters the action list, Up/Down
   chooses an action, Enter records a physical chord, Delete unbinds, and R restores
   the registry default. Recording owns the whole chord so modifier-only transitions
   never leak to the terminal or trigger another app action.
@@ -653,12 +654,12 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Richer appearance choices only where they have a clear platform/terminal owner.
 - Import/export user configuration.
 
-### 14. Command palette, actions, and keybindings
+### 14. Command palette, mappings, and keybindings
 
 **PROVEN**
 
 - Next/previous tab, close-entire-tab, and move-tab-left/right are first-class
-  rebindable actions. Ctrl+Tab / Ctrl+Shift+Tab and Ctrl+Shift+PageUp/PageDown
+  rebindable mappings backed by actions. Ctrl+Tab / Ctrl+Shift+Tab and Ctrl+Shift+PageUp/PageDown
   retain their defaults without an unbindable direct-handler fallback. Close
   entire tab is initially unbound and closes every split; Close pane / tab keeps
   its existing Ctrl+Shift+W leaf-first behavior. The bounded palette reveals all
@@ -667,7 +668,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 - One bounded action registry owns stable action ids, labels, default shortcut
   strings, categories, context-enabled state, and execution. Command Palette,
-  Settings → Actions, and profile-menu action labels/shortcut hints consume the
+  Settings → Mappings, and profile-menu action labels/shortcut hints consume the
   same metadata rather than maintaining parallel lists.
 - Context state is visible rather than silently ignored: for example pane zoom is
   muted with one pane while restart/reconnect is enabled only for a recoverable
@@ -1218,7 +1219,7 @@ snapshot now returns revision 2 in about 44 ms.
 
 Physical Win11 dogfood used the built-in `Local shell` profile with no `--server` route and
 no font overrides. The owned `cmd.exe` rendered normally, physical HostIO input round-tripped
-`WINDOWS_LOCAL_IO_OK`, 120 lines of output remained scrollable, and `Alt+Shift+D` created a
+`WINDOWS_LOCAL_IO_OK`, 120 lines of output remained scrollable, and the then-current split shortcut created a
 second independent Local pane while the first retained its history position. The guest
 process tree showed two distinct `cmd.exe` children and separate headless ConPTY hosts.
 Normal Howl window close retired Howl, both child shells, and both headless ConPTY hosts.

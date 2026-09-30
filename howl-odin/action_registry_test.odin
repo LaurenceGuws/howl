@@ -61,7 +61,7 @@ action_context_disables_only_impossible_operations :: proc(t: ^testing.T) {
 registry_owns_visible_default_shortcuts :: proc(t: ^testing.T) {
     testing.expect_value(t, action_default_shortcut(.New_Tab), "Ctrl+T")
     testing.expect_value(t, action_default_shortcut(.New_Window), "Ctrl+Shift+N")
-    testing.expect_value(t, action_default_shortcut(.Split_Horizontal), "Alt+Shift+-")
+    testing.expect_value(t, action_default_shortcut(.Split_Horizontal), "")
     testing.expect_value(t, action_default_shortcut(.Open_Command_Palette), "Ctrl+Shift+P")
     testing.expect_value(t, action_default_shortcut(.Close_Pane), "Ctrl+Shift+W")
 }

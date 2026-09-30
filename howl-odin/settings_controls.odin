@@ -92,7 +92,7 @@ settings_content_height :: proc(app: ^App) -> f32 {
     switch app.settings_page {
     case .Profile_Defaults: return f32(app.profile_count) * 44
     case .Profile_Home:     return f32(PROFILE_EDIT_FIELD_COUNT) * 48
-    case .Actions:          return f32(len(ACTION_DEFINITIONS)) * 32 + 12
+    case .Mappings:          return f32(len(KEY_MAPPING_DEFINITIONS)) * 32 + 12
     case .Appearance:       return 330
     case .Startup, .Interaction: return 270
     case .Color_Schemes:    return 260
@@ -130,7 +130,7 @@ settings_reveal_selection :: proc(app: ^App) {
     switch app.settings_page {
     case .Profile_Defaults: top, size = f32(app.settings_profile_selection) * 44, 40
     case .Profile_Home: top, size = f32(app.settings_profile_field) * 48, 44
-    case .Actions: top, size = f32(app.settings_action_selection) * 32 + 2, 30
+    case .Mappings: top, size = f32(app.settings_mapping_selection) * 32 + 2, 30
     case .Startup, .Interaction, .Appearance, .Color_Schemes: return
     }
     app.settings_scroll_y = settings_reveal_range(app.settings_scroll_y, top, size, layout.body.h, limit)
@@ -149,7 +149,7 @@ settings_footer_note :: proc(app: ^App) -> string {
     case .Appearance: return "Profile sizes override this default. Family picker is not available yet."
     case .Startup: return "Used for new windows, tabs, and split panes."
     case .Color_Schemes: return "Application chrome only; terminal colors are unchanged."
-    case .Actions: return "Tab to edit; Enter records; Del unbinds; R resets."
+    case .Mappings: return "Every global shortcut is listed here. Enter records; Del unbinds; R resets."
     case .Interaction: return "Terminal behavior belongs to the canonical Instance."
     }
     return ""
@@ -349,11 +349,11 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
             settings_reveal_selection(app)
             return true
         }
-    case .Actions:
-        for _, index in ACTION_DEFINITIONS {
+    case .Mappings:
+        for _, index in KEY_MAPPING_DEFINITIONS {
             row := SDL.FRect{layout.body.x, layout.body.y + 1 + f32(index) * 32 - offset, layout.body.w - 8, 30}
             if inside(x, y, row) {
-                app.settings_action_selection = index
+                app.settings_mapping_selection = index
                 app.settings_content_focus = true
                 app.settings_binding_recording = true
                 set_settings_notice(app, "Press shortcut; Esc cancels")

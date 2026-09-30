@@ -65,8 +65,8 @@ tab_actions_have_no_impossible_empty_or_single_tab_effect :: proc(t: ^testing.T)
 @(test)
 tab_actions_rebind_to_kitty_chords_and_release_old_defaults :: proc(t: ^testing.T) {
     app := App{tab_count = 2}
-    testing.expect(t, initialize_action_bindings(&app))
-    overrides := [3]User_Keybinding_Config{
+    testing.expect(t, initialize_key_mappings(&app))
+    overrides := [3]User_Key_Mapping_Config{
         {action = "next_tab", shortcut = "Ctrl+Shift+Right"},
         {action = "previous_tab", shortcut = "Ctrl+Shift+Left"},
         {action = "new_tab", shortcut = "Ctrl+Shift+T"},
@@ -77,15 +77,15 @@ tab_actions_rebind_to_kitty_chords_and_release_old_defaults :: proc(t: ^testing.
     event.key.mod = {.LCTRL, .LSHIFT}
     event.key.key = SDL.K_RIGHT
     event.key.scancode = SDL.Scancode(79)
-    testing.expect(t, handle_registered_action_shortcut(&app, &event))
+    testing.expect(t, handle_registered_mapping(&app, &event))
     testing.expect_value(t, app.active_tab, 1)
-    testing.expect(t, app.action_keys_owned[79])
+    testing.expect(t, app.mapping_keys_owned[79])
     event.key.repeat = true
-    testing.expect(t, consume_owned_action_key(&app, &event))
+    testing.expect(t, consume_owned_mapping_key(&app, &event))
     testing.expect_value(t, app.active_tab, 1)
     event.type = .KEY_UP
     event.key.mod = {} // Ownership survives releasing a modifier first.
-    testing.expect(t, consume_owned_action_key(&app, &event))
+    testing.expect(t, consume_owned_mapping_key(&app, &event))
     event.type = .KEY_DOWN
     event.key.repeat = false
     event.key.mod = {.LCTRL}
@@ -104,7 +104,7 @@ tab_actions_rebind_to_kitty_chords_and_release_old_defaults :: proc(t: ^testing.
 @(test)
 tab_actions_conflicts_are_detected_against_navigation_defaults :: proc(t: ^testing.T) {
     app: App
-    testing.expect(t, initialize_action_bindings(&app))
+    testing.expect(t, initialize_key_mappings(&app))
     testing.expect_value(t, set_action_binding(&app, .New_Tab, "Ctrl+Tab"), Binding_Update_Result.Conflict)
     testing.expect_value(t, set_action_binding(&app, .Next_Tab, ""), Binding_Update_Result.Applied)
     testing.expect_value(t, set_action_binding(&app, .New_Tab, "Ctrl+Tab"), Binding_Update_Result.Applied)

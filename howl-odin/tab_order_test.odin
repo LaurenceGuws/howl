@@ -45,18 +45,14 @@ tab_reorder_target_tracks_nearest_tab_center :: proc(t: ^testing.T) {
 }
 
 @(test)
-numeric_tab_keys_are_direct_and_bounded :: proc(t: ^testing.T) {
-    keys := [8]SDL.Keycode{
-        SDL.K_1, SDL.K_2, SDL.K_3, SDL.K_4,
-        SDL.K_5, SDL.K_6, SDL.K_7, SDL.K_8,
+numeric_tab_selection_is_explicit_parameterized_mapping :: proc(t: ^testing.T) {
+    found := 0
+    for definition in KEY_MAPPING_DEFINITIONS {
+        if definition.target.kind != .Select_Tab do continue
+        testing.expect(t, definition.target.value >= 0 && definition.target.value < MAX_TABS)
+        found += 1
     }
-    for key, expected in keys {
-        index, ok := tab_index_for_number_key(key)
-        testing.expect(t, ok)
-        testing.expect_value(t, index, expected)
-    }
-    _, ok := tab_index_for_number_key(SDL.K_9)
-    testing.expect(t, !ok)
+    testing.expect_value(t, found, MAX_TABS)
 }
 
 @(test)
@@ -144,7 +140,7 @@ keyboard_tab_and_overlay_interruption_retire_old_pointer_intent :: proc(t: ^test
         app.tabs[0].panes[0] = &first
         app.tabs[1].pane_count = 1
         app.tabs[1].panes[0] = &second
-        testing.expect(t, initialize_action_bindings(&app))
+        testing.expect(t, initialize_key_mappings(&app))
         pane := SDL.FRect{0, HEADER_HEIGHT, 500, 700}
         geometry, ok := history_scrollbar_geometry(&first, pane)
         testing.expect(t, ok)

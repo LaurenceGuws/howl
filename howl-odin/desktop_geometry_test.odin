@@ -100,7 +100,7 @@ pane_size_uses_backing_pixels_and_rejects_invalid_geometry :: proc(t: ^testing.T
 @(test)
 size_actions_are_rebindable_without_hardcoded_shortcuts :: proc(t: ^testing.T) {
     app: App
-    testing.expect(t, initialize_action_bindings(&app))
+    testing.expect(t, initialize_key_mappings(&app))
     testing.expect_value(t, action_binding_text(&app, .Take_Size_Control), "")
     testing.expect_value(t, set_action_binding(&app, .Take_Size_Control, "Ctrl+Shift+G"), Binding_Update_Result.Applied)
     testing.expect_value(t, action_binding_text(&app, .Take_Size_Control), "Ctrl+Shift+G")

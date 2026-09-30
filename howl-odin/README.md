@@ -53,8 +53,9 @@ Current canary:
   **Attach Home Instance** remains the existing direct `tcp://127.0.0.1:39601` route.
   Separately, `--server` opens one non-owning Server-managed Instance as the initial tab
   on Linux or Windows; closing Odin leaves that Instance alive under Server ownership;
-- tabs use canonical terminal titles with profile-name fallback, Ctrl+Tab/reverse cycling, direct
-  Ctrl+1…8 selection, keyboard reorder with Ctrl+Shift+PageUp/PageDown, and pointer
+- tabs use canonical terminal titles with profile-name fallback. The visible mapping
+  table defaults Ctrl+Tab/reverse cycling, Ctrl+1…8 direct selection, and
+  Ctrl+Shift+PageUp/PageDown reorder; pointer
   drag reorder through one shared ordering owner. A held chip gets an immediate
   outline, follows the original pointer grab, and leaves an outlined destination
   slot. Updates are input-driven; no tween timer or extra terminal texture exists.
@@ -69,20 +70,21 @@ Current canary:
   reaper only; live tab tear-out/cross-window Instance transfer is deliberately not
   implemented until UI state has an explicit transfer owner;
 - tabs use a bounded recursive pane tree rather than a fixed primary/secondary
-  pair. Side-by-side and top/bottom actions may nest up to eight pane slots;
-  `Alt+Arrow` performs spatial four-way focus, `Alt+Shift+Arrow` resizes the nearest
-  matching divider, pointer drag owns a forgiving divider hit lane, `Ctrl+Shift+Z`
-  zooms/unzooms the active pane without destroying topology, `Ctrl+Alt+Arrow` swaps
-  neighboring Instance views without restart, and `Ctrl+Shift+W` collapses only the
-  active leaf while promoting the sibling subtree;
+  pair. Side-by-side and top/bottom actions may nest up to eight pane slots.
+  Pane focus/resize/swap each expose four directional mappings in Settings →
+  Mappings, but all twelve are unbound by default so Odin reserves no Alt chords.
+  Pointer drag owns a forgiving divider hit lane, `Ctrl+Shift+Z` remains the
+  default mapping for pane zoom, and `Ctrl+Shift+W` remains the default mapping
+  for collapsing only the active leaf while promoting the sibling subtree;
 - Canvas commands are pane-clipped even during the brief resize transition, so
   an old wider frame can never paint across the split into its sibling;
-- one bounded action registry now owns stable action ids, labels, default shortcut
-  strings, category, context-enabled state, and execution. Command Palette,
-  Settings → Actions, and profile-menu action hints consume that same registry;
-  impossible actions such as zoom on a single pane render disabled rather than
-  failing silently. Up/Down/Tab move palette selection and Enter executes the
-  selected enabled action;
+- one bounded action registry owns command ids, labels, categories,
+  context-enabled state, and execution. A separate bounded key-mapping registry
+  is the only owner of global shortcuts and can target either an action or a
+  typed parameterized command such as “select tab 3” or “focus pane left.”
+  Settings → Mappings exposes every row, including unbound rows; Command Palette
+  remains action-oriented. Impossible actions such as zoom on a single pane
+  render disabled rather than failing silently;
 - Settings is a real navigable application surface rather than one static mock:
   Startup, Interaction, Appearance, Color schemes, Actions, Profiles, and Profile
   pages expose the client's current truthful configuration and ownership state.
@@ -377,7 +379,7 @@ One application-owned I/O runtime outlives all attached Instance workers. Connec
 
 ## Instance size control
 
-Command Palette (`Ctrl+Shift+P`) and Settings > Actions expose two rebindable,
+Command Palette (`Ctrl+Shift+P`) and Settings > Mappings expose two rebindable,
 initially unbound actions:
 
 - **Take Instance size control** fits the active pane once, then follows that
