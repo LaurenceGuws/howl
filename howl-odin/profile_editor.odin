@@ -2,6 +2,7 @@ package main
 
 import "core:c"
 import "core:fmt"
+import "core:strconv"
 import SDL "vendor:sdl3"
 
 Profile_Edit_Field :: enum u8 {
@@ -52,17 +53,19 @@ profile_field_label :: proc(field: Profile_Edit_Field, env_index, env_count: int
 	return ""
 }
 
-profile_font_label :: proc(font_pixels: u16) -> string {
-	switch font_pixels {
-	case 0:  return "Inherit global"
-	case 12: return "12 px"
-	case 15: return "15 px"
-	case 18: return "18 px"
-	}
-	return "Invalid"
+profile_font_label :: proc(font_pixels: u16, storage: []u8) -> string {
+	if font_pixels == 0 do return "Inherit global"
+	return fmt.bprintf(storage, "%d px", font_pixels)
 }
 
-profile_field_value :: proc(profile: ^Profile, field: Profile_Edit_Field, env_index: int) -> string {
+parse_profile_font_pixels :: proc(value: string) -> (u16, bool) {
+	if len(value) == 0 do return 0, true
+	parsed, ok := strconv.parse_u64_of_base(value, 10)
+	if !ok || parsed > 0xffff || !valid_profile_font_pixels(int(parsed)) do return 0, false
+	return u16(parsed), true
+}
+
+profile_field_value :: proc(profile: ^Profile, field: Profile_Edit_Field, env_index: int, storage: []u8) -> string {
 	if profile == nil {
 		return ""
 	}
@@ -85,7 +88,7 @@ profile_field_value :: proc(profile: ^Profile, field: Profile_Edit_Field, env_in
 		if profile.mode != .Attach do return "Not used by launch profiles"
 		return profile_endpoint(profile)
 	case .Font:
-		return profile_font_label(profile.font_pixels)
+		return profile_font_label(profile.font_pixels, storage)
 	case .Env_Name:
 		if profile.mode != .Launch do return "Not used by attach profiles"
 		if profile.env_count == 0 do return "No environment overrides"
@@ -113,7 +116,9 @@ profile_text_field_editable :: proc(profile: ^Profile, field: Profile_Edit_Field
 		return profile.mode == .Attach
 	case .Env_Name, .Env_Value:
 		return profile.mode == .Launch && profile.env_count != 0
-	case .Mode, .Font:
+	case .Font:
+		return true
+	case .Mode:
 		return false
 	}
 	return false
@@ -128,13 +133,14 @@ profile_edit_field_capacity :: proc(field: Profile_Edit_Field) -> int {
 	case .Endpoint:  return PROFILE_ENDPOINT_BYTES - 1
 	case .Env_Name:  return PROFILE_ENV_NAME_BYTES - 1
 	case .Env_Value: return PROFILE_ENV_VALUE_BYTES - 1
-	case .Mode, .Font:
+	case .Font:      return 2
+	case .Mode:
 		return 0
 	}
 	return 0
 }
 
-profile_edit_field_source :: proc(profile: ^Profile, field: Profile_Edit_Field, env_index: int) -> string {
+profile_edit_field_source :: proc(profile: ^Profile, field: Profile_Edit_Field, env_index: int, storage: []u8) -> string {
 	if profile == nil {
 		return ""
 	}
@@ -147,10 +153,13 @@ profile_edit_field_source :: proc(profile: ^Profile, field: Profile_Edit_Field, 
 	case .Env_Name:
 		if profile.env_count == 0 do return ""
 		return profile_env_name(&profile.env[clamp(env_index, 0, profile.env_count - 1)])
+	case .Font:
+		if profile.font_pixels == 0 do return ""
+		return fmt.bprintf(storage, "%d", profile.font_pixels)
 	case .Env_Value:
 		if profile.env_count == 0 do return ""
 		return profile_env_value(&profile.env[clamp(env_index, 0, profile.env_count - 1)])
-	case .Mode, .Font:
+	case .Mode:
 		return ""
 	}
 	return ""
@@ -174,7 +183,8 @@ begin_profile_edit :: proc(app: ^App, field: Profile_Edit_Field) -> bool {
 		}
 		return false
 	}
-	source := profile_edit_field_source(profile, field, app.settings_profile_env_selection)
+	source_storage: [16]u8
+	source := profile_edit_field_source(profile, field, app.settings_profile_env_selection, source_storage[:])
 	capacity := profile_edit_field_capacity(field)
 	if capacity <= 0 || len(source) > capacity || len(source) >= len(app.settings_profile_edit_buffer) {
 		set_settings_notice(app, "Profile field exceeds editor bound")
@@ -297,13 +307,22 @@ commit_profile_edit :: proc(app: ^App) -> bool {
 			return false
 		}
 		ok = profile_set_text(profile.env[index].name[:], &profile.env[index].name_len, value)
+	case .Font:
+		parsed, parsed_ok := parse_profile_font_pixels(value)
+		if !parsed_ok {
+			set_settings_notice(app, "Font size must be blank or 8–48 px")
+			return false
+		}
+		profile.font_pixels = parsed
+		ok = true
+		profile_apply_font_to_views(app, app.settings_profile_selection)
 	case .Env_Value:
 		index := app.settings_profile_edit_env_index
 		if profile.mode != .Launch || index < 0 || index >= profile.env_count {
 			return false
 		}
 		ok = profile_set_text(profile.env[index].value[:], &profile.env[index].value_len, value)
-	case .Mode, .Font:
+	case .Mode:
 		return false
 	}
 	if !ok {
@@ -340,27 +359,6 @@ adjust_profile_mode :: proc(app: ^App, delta: int) -> bool {
 	app.settings_profile_env_selection = 0
 	save_user_config(app)
 	set_settings_notice(app, "Profile mode saved · affects future/restarted Instances")
-	return true
-}
-
-adjust_profile_font :: proc(app: ^App, delta: int) -> bool {
-	profile := selected_settings_profile(app)
-	if app == nil || profile == nil || profile.built_in || delta == 0 {
-		return false
-	}
-	values := [4]u16{0, 12, 15, 18}
-	current := 0
-	for value, index in values {
-		if value == profile.font_pixels do current = index
-	}
-	next := clamp(current + delta, 0, len(values) - 1)
-	if next == current {
-		return false
-	}
-	profile.font_pixels = values[next]
-	profile_apply_font_to_views(app, app.settings_profile_selection)
-	save_user_config(app)
-	set_settings_notice(app, "Profile font saved")
 	return true
 }
 
@@ -501,20 +499,16 @@ handle_profile_editor_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 			set_settings_notice(app, "Built-in profile · press D to duplicate")
 		} else if field == .Mode {
 			_ = adjust_profile_mode(app, 1)
-		} else if field == .Font {
-			_ = adjust_profile_font(app, 1)
 		} else {
 			_ = begin_profile_edit(app, field)
 		}
 	case SDL.K_LEFT:
 		if field == .Mode do _ = adjust_profile_mode(app, -1)
-		if field == .Font do _ = adjust_profile_font(app, -1)
 		if (field == .Env_Name || field == .Env_Value) && profile.env_count != 0 {
 			app.settings_profile_env_selection = (app.settings_profile_env_selection + profile.env_count - 1) % profile.env_count
 		}
 	case SDL.K_RIGHT:
 		if field == .Mode do _ = adjust_profile_mode(app, 1)
-		if field == .Font do _ = adjust_profile_font(app, 1)
 		if (field == .Env_Name || field == .Env_Value) && profile.env_count != 0 {
 			app.settings_profile_env_selection = (app.settings_profile_env_selection + 1) % profile.env_count
 		}
@@ -599,11 +593,10 @@ draw_profile_editor_settings :: proc(app: ^App, body: SDL.FRect) {
 		relevant := profile_field_relevant(profile, field)
 		rect := settings_profile_value(row)
 		settings_clipped_text(app, {row.x + 10, row.y + 13, max(f32(0), rect.x - row.x - 18), 22}, label, relevant ? palette.text_muted : palette.border)
-		value := profile_field_value(profile, field, app.settings_profile_env_selection)
-		if !profile.built_in && (field == .Font || field == .Mode) {
-			previous := field == .Mode || profile.font_pixels > 0
-			next := field == .Mode || profile.font_pixels < 18
-			settings_draw_stepper(app, rect, value, previous, next, field == .Font)
+		value_storage: [96]u8
+		value := profile_field_value(profile, field, app.settings_profile_env_selection, value_storage[:])
+		if !profile.built_in && field == .Mode {
+			settings_draw_stepper(app, rect, value, true, true, false)
 			continue
 		}
 		editable := profile_text_field_editable(profile, field)

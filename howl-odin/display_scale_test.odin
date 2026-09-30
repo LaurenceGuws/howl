@@ -58,3 +58,16 @@ display_scale_rejects_invalid_sdl_ttf_dpi :: proc(t: ^testing.T) {
     testing.expect(t, !nan_ok)
     testing.expect(t, !huge_ok)
 }
+
+@(test)
+terminal_font_pixels_are_continuous_inside_one_bounded_range :: proc(t: ^testing.T) {
+    valid := [7]int{8, 9, 13, 17, 23, 47, 48}
+    for value in valid do testing.expect(t, valid_terminal_font_pixels(value))
+    testing.expect(t, !valid_terminal_font_pixels(7))
+    testing.expect(t, !valid_terminal_font_pixels(49))
+
+    testing.expect_value(t, next_terminal_font_pixels(15, 1), u16(16))
+    testing.expect_value(t, next_terminal_font_pixels(15, -1), u16(14))
+    testing.expect_value(t, next_terminal_font_pixels(8, -1), u16(8))
+    testing.expect_value(t, next_terminal_font_pixels(48, 1), u16(48))
+}

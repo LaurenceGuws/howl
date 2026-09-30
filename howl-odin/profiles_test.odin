@@ -119,3 +119,12 @@ profile_delete_refuses_builtin_and_live_instance_recipe :: proc(t: ^testing.T) {
 	app.tab_count = 0
 	testing.expect(t, delete_user_profile(&app, created))
 }
+
+@(test)
+profile_font_pixels_accept_inherit_or_any_global_range_value :: proc(t: ^testing.T) {
+	testing.expect(t, valid_profile_font_pixels(0))
+	values := [5]int{8, 13, 17, 31, 48}
+	for value in values do testing.expect(t, valid_profile_font_pixels(value))
+	testing.expect(t, !valid_profile_font_pixels(7))
+	testing.expect(t, !valid_profile_font_pixels(49))
+}

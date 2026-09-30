@@ -127,7 +127,7 @@ valid_profile_id :: proc(value: string) -> bool {
 }
 
 valid_profile_font_pixels :: proc(value: int) -> bool {
-	return value == 0 || value == 12 || value == 15 || value == 18
+	return value == 0 || valid_terminal_font_pixels(value)
 }
 
 profile_mode_text :: proc(mode: Profile_Mode) -> string {

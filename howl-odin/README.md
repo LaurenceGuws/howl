@@ -92,12 +92,12 @@ Current canary:
   boundaries kept explicit; active profile text editing owns SDL composition input.
   `Ctrl+F` inside Settings searches pages, registry actions, and live profiles and
   navigates to typed destinations; outside Settings the same chord remains terminal input;
-- Appearance owns the first live presentation setting: terminal font size has
-  12/15/18 px presets, adjustable from Settings or the global zoom shortcut,
-  and changing it never mutates canonical Instance geometry; the accepted
-  preset persists across app restarts in a small schema-versioned
-  `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file + rename rather
-  than in-place truncation;
+- Appearance owns the first live presentation setting: terminal font size is
+  one bounded 8–48 px integer, adjustable one pixel at a time from Settings or
+  the global zoom shortcut. Changing it never mutates canonical Instance
+  geometry; the exact pixel value persists across app restarts in the existing
+  schema-versioned `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file
+  + rename rather than in-place truncation;
 - Color schemes now owns the first live application-chrome themes: Howl Dark,
   Slate, and High Contrast cycle with Left/Right and persist by stable id. The
   theme changes desktop shell chrome only; terminal Canvas colors remain canonical

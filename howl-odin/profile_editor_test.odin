@@ -58,3 +58,19 @@ profile_editor_field_relevance_tracks_launch_vs_attach :: proc(t: ^testing.T) {
 	testing.expect(t, profile_field_relevant(&profile, .Name))
 	testing.expect(t, profile_field_relevant(&profile, .Font))
 }
+
+@(test)
+profile_font_editor_parses_numeric_override_or_blank_inherit :: proc(t: ^testing.T) {
+	pixels, ok := parse_profile_font_pixels("")
+	testing.expect(t, ok)
+	testing.expect_value(t, pixels, u16(0))
+
+	pixels, ok = parse_profile_font_pixels("17")
+	testing.expect(t, ok)
+	testing.expect_value(t, pixels, u16(17))
+
+	_, low := parse_profile_font_pixels("7")
+	_, high := parse_profile_font_pixels("49")
+	_, text := parse_profile_font_pixels("large")
+	testing.expect(t, !low && !high && !text)
+}

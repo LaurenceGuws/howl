@@ -205,8 +205,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Owned Local shells inherit the real desktop process environment.
 - User profiles are bounded typed recipes with stable id/name, attach-vs-launch
   ownership, shell, optional command/cwd, endpoint, environment fields, and optional
-  12/15/18 px presentation default. Schema 4 persists labelled Server endpoints
-  separately from those recipes.
+  8–48 px presentation override. Blank/zero keeps the global font size. Schema 4
+  persists labelled Server endpoints separately from those recipes.
 - Linux Local carries shell/command/cwd into the canonical in-process Instance.
   Windows Local carries interactive shell/cwd and rejects nonempty command until
   command-shell grammar is deliberately specified. Nonempty Local environment
@@ -559,7 +559,8 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 - Dark desktop shell.
 - JetBrains Mono Nerd Font canary.
-- Persistent 12/15/18 px font-size setting.
+- Persistent exact 8–48 px font-size setting with one-pixel adjustment.
+- Per-profile font size is either inherited or one exact value from the same range.
 - Font zoom never mutates an attached non-owning Instance.
 - Persistent application chrome themes with live preview: Howl Dark, Slate, and
   High Contrast. Theme switching changes tabs, Settings, borders, labels, and
@@ -570,7 +571,6 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 **WANTED**
 
 - Font family picker with truthful availability/error state.
-- Arbitrary sensible font size or a richer bounded preset model.
 - Canonical terminal color schemes and per-profile override only through the
   appropriate Howl VT/render ownership seam; application chrome must not become
   a hidden terminal-palette override.

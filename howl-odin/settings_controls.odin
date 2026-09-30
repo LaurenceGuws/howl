@@ -339,10 +339,9 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
             value := settings_profile_value(row)
             if profile.built_in {
                 set_settings_notice(app, "Read-only template. Use Duplicate to customize")
-            } else if field == .Font || field == .Mode {
+            } else if field == .Mode {
                 if delta := settings_stepper_hit(value, x, y); delta != 0 {
-                    if field == .Font do _ = adjust_profile_font(app, delta)
-                    if field == .Mode do _ = adjust_profile_mode(app, delta)
+                    _ = adjust_profile_mode(app, delta)
                 }
             } else if inside(x, y, value) {
                 _ = begin_profile_edit(app, field)

@@ -30,8 +30,9 @@ MAX_PANES_PER_TAB :: 8
 MAX_CANVAS_RESOURCES :: 8
 OWNED_SESSION_ROWS :: u16(37)
 OWNED_SESSION_COLUMNS :: u16(80)
-FONT_PRESET_MIN :: 0
-FONT_PRESET_MAX :: 2
+TERMINAL_FONT_PIXELS_MIN :: 8
+TERMINAL_FONT_PIXELS_DEFAULT :: 15
+TERMINAL_FONT_PIXELS_MAX :: 48
 CONFIG_SCHEMA :: 4
 
 User_Keybinding_Config :: struct {
@@ -474,7 +475,7 @@ App :: struct {
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_fonts: Desktop_Fonts,
-    terminal_font_preset: int,
+    terminal_font_pixels: u16,
     text_scale: f32,
     app_theme: App_Theme,
     running: bool,
@@ -586,16 +587,16 @@ config_paths :: proc() -> (directory, path, temporary: string, ok: bool) {
     return directory, path, temporary, true
 }
 
-font_preset_from_pixels :: proc(pixels: int) -> int {
-    switch pixels {
-    case 12: return 0
-    case 18: return 2
-    case:    return 1
-    }
+valid_terminal_font_pixels :: proc(value: int) -> bool {
+    return value >= TERMINAL_FONT_PIXELS_MIN && value <= TERMINAL_FONT_PIXELS_MAX
+}
+
+next_terminal_font_pixels :: proc(current: u16, delta: int) -> u16 {
+    return u16(clamp(int(current) + delta, TERMINAL_FONT_PIXELS_MIN, TERMINAL_FONT_PIXELS_MAX))
 }
 
 load_user_config :: proc() -> User_Config {
-    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = 15, startup_profile = 0, app_theme = "howl_dark"}
+    result := User_Config{schema = CONFIG_SCHEMA, terminal_font_pixels = TERMINAL_FONT_PIXELS_DEFAULT, startup_profile = 0, app_theme = "howl_dark"}
     _, path, _, ok := config_paths()
     if !ok {
         return result
@@ -609,7 +610,7 @@ load_user_config :: proc() -> User_Config {
        (candidate.schema != 1 && candidate.schema != 2 && candidate.schema != 3 && candidate.schema != CONFIG_SCHEMA) {
         return result
     }
-    if candidate.terminal_font_pixels == 12 || candidate.terminal_font_pixels == 15 || candidate.terminal_font_pixels == 18 {
+    if valid_terminal_font_pixels(candidate.terminal_font_pixels) {
         result.terminal_font_pixels = candidate.terminal_font_pixels
     }
     if candidate.startup_profile >= 0 && candidate.startup_profile <= 1 {
@@ -698,7 +699,7 @@ save_user_config :: proc(app: ^App) {
     }
     value := User_Config{
         schema = CONFIG_SCHEMA,
-        terminal_font_pixels = int(font_pixels_for_preset(app.terminal_font_preset)),
+        terminal_font_pixels = int(app.terminal_font_pixels),
         startup_profile = default_id == "local" ? 1 : 0,
         default_profile = default_id,
         profiles = profile_configs[:profile_config_count],
@@ -742,48 +743,28 @@ adjust_startup_profile :: proc(app: ^App, delta: int) {
     save_user_config(app)
 }
 
-font_size_for_preset :: proc(preset: int) -> f32 {
-    switch preset {
-    case 0: return 12
-    case 1: return 15
-    case:   return 18
-    }
-}
-
-font_size_label :: proc(preset: int) -> string {
-    switch preset {
-    case 0: return "12 px"
-    case 1: return "15 px"
-    case:   return "18 px"
-    }
+font_size_label :: proc(pixels: u16, storage: []u8) -> string {
+    return fmt.bprintf(storage, "%d px", pixels)
 }
 
 adjust_terminal_font :: proc(app: ^App, delta: int) {
-    next := clamp(app.terminal_font_preset + delta, FONT_PRESET_MIN, FONT_PRESET_MAX)
-    if next == app.terminal_font_preset {
+    if app == nil || delta == 0 do return
+    next := next_terminal_font_pixels(app.terminal_font_pixels, delta)
+    if next == app.terminal_font_pixels {
         return
     }
     scale := app.text_scale
     if !valid_canvas_scale(scale) {
         scale = 1
     }
-    if set_font_display_scale(app.terminal_font, font_size_for_preset(next), scale) {
-        app.terminal_font_preset = next
+    if set_font_display_scale(app.terminal_font, f32(next), scale) {
+        app.terminal_font_pixels = next
         for index in 0..<app.tab_count {
             for view in app.tabs[index].panes {
                 if view != nil do reset_canvas(view)
             }
         }
         save_user_config(app)
-    }
-}
-
-
-font_pixels_for_preset :: proc(preset: int) -> u16 {
-    switch preset {
-    case 0: return 12
-    case 1: return 15
-    case:   return 18
     }
 }
 
@@ -854,7 +835,7 @@ update_text_display_scale :: proc(app: ^App) -> bool {
     if !set_font_display_scale(app.ui_font, 15, scale) {
         return false
     }
-    if !set_font_display_scale(app.terminal_font, font_size_for_preset(app.terminal_font_preset), scale) {
+    if !set_font_display_scale(app.terminal_font, f32(app.terminal_font_pixels), scale) {
         _ = set_font_display_scale(app.ui_font, 15, previous)
         return false
     }
@@ -1071,7 +1052,7 @@ create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bo
 ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if app == nil || app.window == nil || view == nil do return false
     logical_pixels := view.profile_font_pixels
-    if logical_pixels == 0 do logical_pixels = font_pixels_for_preset(app.terminal_font_preset)
+    if logical_pixels == 0 do logical_pixels = app.terminal_font_pixels
     scale := SDL.GetWindowDisplayScale(app.window)
     pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
@@ -6249,8 +6230,15 @@ draw_settings :: proc(app: ^App, width, height: f32) {
         draw_setting_field(app, "Selection / clipboard", "Drag select / Ctrl+Shift+C,V", content_x, content_y + 204, available)
     case .Appearance:
         draw_text(app, app.ui_font, "Default terminal size", content_x, content_y + 48, palette.text_muted)
-        settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0), font_size_label(app.terminal_font_preset),
-                              app.terminal_font_preset > FONT_PRESET_MIN, app.terminal_font_preset < FONT_PRESET_MAX, true)
+        font_label_storage: [32]u8
+        settings_draw_stepper(
+            app,
+            settings_choice_rect(body, app.settings_scroll_y, 0),
+            font_size_label(app.terminal_font_pixels, font_label_storage[:]),
+            app.terminal_font_pixels > TERMINAL_FONT_PIXELS_MIN,
+            app.terminal_font_pixels < TERMINAL_FONT_PIXELS_MAX,
+            true,
+        )
         draw_setting_field(app, "Font family (fixed for now)", "JetBrainsMono Nerd Font", content_x, content_y + 126, available)
         settings_draw_note(app, {content_x, content_y + 192, available, 40}, "Font family selection is not available yet.")
         draw_setting_field(app, "Application theme (see Color schemes)", app_theme_label(app.app_theme), content_x, content_y + 246, available)
@@ -6509,8 +6497,8 @@ main :: proc() {
         app_theme = .Howl_Dark
     }
     palette = palette_for_theme(app_theme)
-    terminal_font_preset := font_preset_from_pixels(user_config.terminal_font_pixels)
-    terminal_font := TTF.OpenFont(primary_font, font_size_for_preset(terminal_font_preset))
+    terminal_font_pixels := u16(user_config.terminal_font_pixels)
+    terminal_font := TTF.OpenFont(primary_font, f32(terminal_font_pixels))
     if terminal_font == nil {
         sdl_error("TTF_OpenFont terminal failed")
         return
@@ -6523,7 +6511,7 @@ main :: proc() {
         ui_font = ui_font,
         terminal_font = terminal_font,
         terminal_fonts = terminal_fonts,
-        terminal_font_preset = terminal_font_preset,
+        terminal_font_pixels = terminal_font_pixels,
         text_scale = 1,
         app_theme = app_theme,
         running = true,
