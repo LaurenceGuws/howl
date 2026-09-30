@@ -324,13 +324,41 @@ const RenderFront = struct {
     background_rgba: u32 = 0xff211918,
 };
 
+const RenderFonts = struct {
+    regular: *render.text.FontSet,
+    italic: ?*render.text.FontSet = null,
+    bold: ?*render.text.FontSet = null,
+    bold_italic: ?*render.text.FontSet = null,
+
+    fn deinit(self: *RenderFonts) void {
+        if (self.bold_italic) |value| value.deinit();
+        if (self.bold) |value| value.deinit();
+        if (self.italic) |value| value.deinit();
+        self.regular.deinit();
+        self.* = undefined;
+    }
+
+    fn faces(self: *RenderFonts) terminal_render.FontFaces {
+        return .{
+            .regular = self.regular,
+            .italic = self.italic,
+            .bold = self.bold,
+            .bold_italic = self.bold_italic,
+        };
+    }
+
+    fn metrics(self: *const RenderFonts) render.text.Metrics {
+        return self.regular.metrics();
+    }
+};
+
 const Render = struct {
     front: RenderFront = .{},
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
     connection: client.Connection,
     raw_observation: bool,
-    fonts: *render.text.FontSet,
+    fonts: RenderFonts,
     canvas: *terminal_render.Canvas,
     cell_size: canvas.Size,
     frame_uploads: [render_resource_limit]canvas.FrameResourceUpload = undefined,
@@ -414,6 +442,12 @@ pub export fn howl_odin_bridge_render_create(
     instance_id: u64,
     font_ptr: [*]const u8,
     font_len: usize,
+    italic_ptr: [*]const u8,
+    italic_len: usize,
+    bold_ptr: [*]const u8,
+    bold_len: usize,
+    bold_italic_ptr: [*]const u8,
+    bold_italic_len: usize,
     fallback_ptr: [*]const u8,
     fallback_len: usize,
     secondary_fallback_ptr: [*]const u8,
@@ -462,10 +496,13 @@ pub export fn howl_odin_bridge_render_create(
         fallback_storage[fallback_count] = secondary_fallback_ptr[0..secondary_fallback_len];
         fallback_count += 1;
     }
-    const fonts = initRenderFonts(
+    var fonts = initRenderFonts(
         runtime,
         allocator,
         font_ptr[0..font_len],
+        italic_ptr[0..italic_len],
+        bold_ptr[0..bold_len],
+        bold_italic_ptr[0..bold_italic_len],
         fallback_storage[0..fallback_count],
         font_pixels,
     ) catch |failure| {
@@ -478,7 +515,7 @@ pub export fn howl_odin_bridge_render_create(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const terminal_canvas = terminal_render.initCanvas(allocator, terminal_render.FontFaces.single(fonts), renderContentConfig(cell_size)) catch |failure| {
+    const terminal_canvas = terminal_render.initCanvas(allocator, fonts.faces(), renderContentConfig(cell_size)) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
@@ -514,6 +551,29 @@ pub export fn howl_odin_bridge_render_create(
 }
 
 fn initRenderFonts(
+    runtime: ?*Runtime,
+    allocator: std.mem.Allocator,
+    regular_path: []const u8,
+    italic_path: []const u8,
+    bold_path: []const u8,
+    bold_italic_path: []const u8,
+    fallbacks: []const []const u8,
+    font_pixels: u16,
+) !RenderFonts {
+    var result = RenderFonts{
+        .regular = try initRenderFont(runtime, allocator, regular_path, fallbacks, font_pixels),
+    };
+    errdefer result.deinit();
+    if (italic_path.len != 0)
+        result.italic = try initRenderFont(runtime, allocator, italic_path, fallbacks, font_pixels);
+    if (bold_path.len != 0)
+        result.bold = try initRenderFont(runtime, allocator, bold_path, fallbacks, font_pixels);
+    if (bold_italic_path.len != 0)
+        result.bold_italic = try initRenderFont(runtime, allocator, bold_italic_path, fallbacks, font_pixels);
+    return result;
+}
+
+fn initRenderFont(
     runtime: ?*Runtime,
     allocator: std.mem.Allocator,
     primary: []const u8,
@@ -1299,7 +1359,11 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 10;
+    return 11;
+}
+
+test "Odin bridge version tracks style-face render ABI" {
+    try std.testing.expectEqual(@as(u32, 11), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(

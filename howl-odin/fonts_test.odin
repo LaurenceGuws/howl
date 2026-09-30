@@ -34,3 +34,20 @@ desktop_fontconfig_parser_rejects_missing_path_line :: proc(t: ^testing.T) {
 	_, ok := fontconfig_output_path("Noto Sans Arabic\n", "Noto Sans Arabic")
 	testing.expect(t, !ok)
 }
+
+@(test)
+desktop_fontconfig_style_parser_requires_family_style_and_path :: proc(t: ^testing.T) {
+	path, ok := fontconfig_style_output_path(
+		"JetBrainsMono Nerd Font,JetBrainsMono NF\nBold Italic\n/usr/share/fonts/TTF/JetBrainsMonoNerdFont-BoldItalic.ttf\n",
+		"JetBrainsMono Nerd Font",
+		"Bold Italic",
+	)
+	testing.expect(t, ok)
+	testing.expect_value(t, path, "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-BoldItalic.ttf")
+	_, wrong_style := fontconfig_style_output_path(
+		"JetBrainsMono Nerd Font\nBold Italic\n/font.ttf\n",
+		"JetBrainsMono Nerd Font",
+		"Italic",
+	)
+	testing.expect(t, !wrong_style)
+}

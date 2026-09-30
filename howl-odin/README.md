@@ -238,15 +238,23 @@ Current canary:
   reused without further transfer. Kitty replacement preserves logical Canvas
   resource identity while advancing generation; crop/z-order and exact removal are
   renderer-owned, and a Sixel canary proved the path is protocol-independent;
-- terminal font selection now supplies ordered `howl-text` fallbacks rather than
-  accepting replacement diamonds as desktop policy. Explicit `HOWL_FONT`,
+- terminal font selection now supplies ordered `howl-text` fallbacks and a caller-owned
+  regular/italic/bold/bold-italic face family rather than accepting replacement diamonds
+  or synthetic terminal styles as desktop policy. Explicit `HOWL_FONT`,
+  `HOWL_ITALIC_FONT`, `HOWL_BOLD_FONT`, `HOWL_BOLD_ITALIC_FONT`,
   `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files win on every desktop.
-  Linux otherwise requires fontconfig to resolve JetBrainsMono Nerd Font, Noto Sans Arabic,
-  and Noto Sans CJK JP exactly. Windows otherwise searches the normal Windows Fonts
-  directory for Cascadia/Consolas plus built-in fallback candidates; a Nerd-font prompt
-  still requires an explicit Nerd-capable primary. A live corpus proved combining marks,
-  CJK wide cells, Arabic
-  fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
+  Linux otherwise requires fontconfig to resolve JetBrainsMono Nerd Font and its available
+  style faces plus Noto Sans Arabic and Noto Sans CJK JP exactly. Windows searches the
+  normal Windows Fonts directory for style files matching the selected regular face
+  and falls back deterministically when an optional style face is absent. When
+  `HOWL_FONT` selects a custom family, unspecified style variants intentionally fall
+  back to that regular face rather than mixing in JetBrains/Cascadia styles. A Nerd-font prompt still
+  requires an explicit Nerd-capable primary. Each supplied style is an independent
+  `howl-text.FontSet` with the same fallback chain, and `howl-render` selects it from
+  canonical VT bold/italic state while retaining one bounded shape/alpha-atlas domain.
+  Curly underline uses the shared renderer's smooth supersampled alpha mask rather than
+  the old one-pixel staircase. A live corpus proved combining marks, CJK wide cells,
+  Arabic fallback/shaping, ligatures, box drawing, all supported underline styles/colors,
   truecolor, and final-column wide-cell clipping. Color emoji remains explicit debt:
   the current `howl-text` raster contract accepts mono/gray masks, not BGRA glyphs;
 - created Local-shell tabs acquire Instance size control once, then submit only

@@ -6361,7 +6361,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 10 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 11 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")

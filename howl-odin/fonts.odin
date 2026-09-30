@@ -9,6 +9,12 @@ FONT_PATH_BYTES :: 4096
 Desktop_Fonts :: struct {
 	primary: [FONT_PATH_BYTES]u8,
 	primary_len: int,
+	italic: [FONT_PATH_BYTES]u8,
+	italic_len: int,
+	bold: [FONT_PATH_BYTES]u8,
+	bold_len: int,
+	bold_italic: [FONT_PATH_BYTES]u8,
+	bold_italic_len: int,
 	fallback: [FONT_PATH_BYTES]u8,
 	fallback_len: int,
 	secondary: [FONT_PATH_BYTES]u8,
@@ -23,6 +29,21 @@ font_path :: proc(storage: []u8, used: int) -> string {
 terminal_primary_font :: proc(fonts: ^Desktop_Fonts) -> string {
 	if fonts == nil do return ""
 	return font_path(fonts.primary[:], fonts.primary_len)
+}
+
+terminal_italic_font :: proc(fonts: ^Desktop_Fonts) -> string {
+	if fonts == nil do return ""
+	return font_path(fonts.italic[:], fonts.italic_len)
+}
+
+terminal_bold_font :: proc(fonts: ^Desktop_Fonts) -> string {
+	if fonts == nil do return ""
+	return font_path(fonts.bold[:], fonts.bold_len)
+}
+
+terminal_bold_italic_font :: proc(fonts: ^Desktop_Fonts) -> string {
+	if fonts == nil do return ""
+	return font_path(fonts.bold_italic[:], fonts.bold_italic_len)
 }
 
 terminal_fallback_font :: proc(fonts: ^Desktop_Fonts) -> string {
@@ -106,6 +127,70 @@ windows_font_result :: proc(family: string) -> (path: string, ok: bool) {
 	return "", false
 }
 
+fontconfig_style_output_path :: proc(text, family, style: string) -> (path: string, ok: bool) {
+	if len(text) == 0 || len(family) == 0 || len(style) == 0 do return "", false
+	first := strings.index_byte(text, '\n')
+	if first <= 0 || !strings.contains(text[:first], family) do return "", false
+	rest := text[first + 1:]
+	second := strings.index_byte(rest, '\n')
+	if second <= 0 || rest[:second] != style do return "", false
+	path_text := rest[second + 1:]
+	third := strings.index_byte(path_text, '\n')
+	path = third < 0 ? path_text : path_text[:third]
+	return path, len(path) != 0
+}
+
+fontconfig_style_result :: proc(family, style: string) -> (path: string, ok: bool) {
+	pattern := strings.concatenate({family, ":style=", style}, context.temp_allocator)
+	command := []string{"fc-match", "-f", "%{family}\n%{style}\n%{file}\n", pattern}
+	state, stdout, _, err := os.process_exec(os.Process_Desc{command = command}, context.temp_allocator)
+	if err != nil || !state.success do return "", false
+	resolved, parsed := fontconfig_style_output_path(string(stdout), family, style)
+	if !parsed || !os.exists(resolved) do return "", false
+	return resolved, true
+}
+
+windows_style_font_result :: proc(primary, style: string) -> (path: string, ok: bool) {
+	root := os.get_env("WINDIR", context.temp_allocator)
+	if len(root) == 0 do root = os.get_env("SystemRoot", context.temp_allocator)
+	if len(root) == 0 do return "", false
+	candidate := ""
+	if strings.contains(primary, "CascadiaMono.ttf") {
+		switch style {
+		case "Italic":      candidate = "CascadiaMonoItalic.ttf"
+		case "Bold":        candidate = "CascadiaMonoBold.ttf"
+		case "Bold Italic": candidate = "CascadiaMonoBoldItalic.ttf"
+		}
+	} else if strings.contains(primary, "CascadiaCode.ttf") {
+		switch style {
+		case "Italic":      candidate = "CascadiaCodeItalic.ttf"
+		case "Bold":        candidate = "CascadiaCodeBold.ttf"
+		case "Bold Italic": candidate = "CascadiaCodeBoldItalic.ttf"
+		}
+	} else if strings.contains(primary, "consola.ttf") {
+		switch style {
+		case "Italic":      candidate = "consolai.ttf"
+		case "Bold":        candidate = "consolab.ttf"
+		case "Bold Italic": candidate = "consolaz.ttf"
+		}
+	}
+	if len(candidate) == 0 do return "", false
+	resolved, err := filepath.join([]string{root, "Fonts", candidate}, allocator=context.temp_allocator)
+	return resolved, err == nil && os.exists(resolved)
+}
+
+configured_style_font :: proc(variable, family, style, primary: string, discover: bool) -> (path: string, ok: bool, configured: bool) {
+	override := os.get_env(variable, context.temp_allocator)
+	if len(override) != 0 do return override, os.exists(override), true
+	if !discover do return "", false, false
+	when ODIN_OS == .Windows {
+		path, ok = windows_style_font_result(primary, style)
+	} else {
+		path, ok = fontconfig_style_result(family, style)
+	}
+	return path, ok, false
+}
+
 configured_font :: proc(variable, family: string) -> (string, bool) {
 	configured := os.get_env(variable, context.temp_allocator)
 	if len(configured) != 0 {
@@ -120,10 +205,21 @@ configured_font :: proc(variable, family: string) -> (string, bool) {
 resolve_desktop_fonts :: proc(fonts: ^Desktop_Fonts) -> (message: string, ok: bool) {
 	if fonts == nil do return "font_storage", false
 	fonts^ = {}
+	primary_override := os.get_env("HOWL_FONT", context.temp_allocator)
 	primary, primary_ok := configured_font("HOWL_FONT", "JetBrainsMono Nerd Font")
 	if !primary_ok || !copy_font_path(fonts.primary[:], &fonts.primary_len, primary) {
 		return "primary_font_missing", false
 	}
+	discover_styles := len(primary_override) == 0
+	italic, italic_ok, italic_configured := configured_style_font("HOWL_ITALIC_FONT", "JetBrainsMono Nerd Font", "Italic", primary, discover_styles)
+	if italic_configured && !italic_ok do return "italic_font_missing", false
+	if italic_ok && !copy_font_path(fonts.italic[:], &fonts.italic_len, italic) do return "italic_font_missing", false
+	bold, bold_ok, bold_configured := configured_style_font("HOWL_BOLD_FONT", "JetBrainsMono Nerd Font", "Bold", primary, discover_styles)
+	if bold_configured && !bold_ok do return "bold_font_missing", false
+	if bold_ok && !copy_font_path(fonts.bold[:], &fonts.bold_len, bold) do return "bold_font_missing", false
+	bold_italic, bold_italic_ok, bold_italic_configured := configured_style_font("HOWL_BOLD_ITALIC_FONT", "JetBrainsMono Nerd Font", "Bold Italic", primary, discover_styles)
+	if bold_italic_configured && !bold_italic_ok do return "bold_italic_font_missing", false
+	if bold_italic_ok && !copy_font_path(fonts.bold_italic[:], &fonts.bold_italic_len, bold_italic) do return "bold_italic_font_missing", false
 	fallback, fallback_ok := configured_font("HOWL_FALLBACK_FONT", "Noto Sans Arabic")
 	if !fallback_ok || !copy_font_path(fonts.fallback[:], &fonts.fallback_len, fallback) {
 		return "fallback_font_missing", false

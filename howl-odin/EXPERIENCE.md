@@ -516,12 +516,20 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   texture. A separate Sixel 60x30 red/green image rendered through the identical
   residency/refill path, proving Odin consumes canonical graphics state rather than
   a Kitty-specific protocol path.
-- Linux font fallback now follows the exact host-owned policy already pressure-tested
-  by Flutter: explicit `HOWL_FONT`, `HOWL_FALLBACK_FONT`, and
-  `HOWL_SECONDARY_FALLBACK_FONT` paths win; otherwise `fc-match` must resolve the
-  requested family without silent substitution. Odin uses JetBrainsMono Nerd Font,
-  Noto Sans Arabic, then Noto Sans CJK JP, and passes those explicit paths to one
-  `howl-text.FontSet`; no Unicode-specific shaping or raster logic exists in Odin.
+- Desktop font ownership now carries the full face family. Explicit `HOWL_FONT`,
+  `HOWL_ITALIC_FONT`, `HOWL_BOLD_FONT`, `HOWL_BOLD_ITALIC_FONT`,
+  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` paths win. Linux otherwise
+  uses `fc-match` with exact family/style checks for JetBrainsMono Nerd Font regular,
+  italic, bold and bold-italic plus the Arabic/CJK fallback chain. The bridge owns one
+  independent `howl-text.FontSet` per available style and gives `howl-render` all four;
+  Render selects style from canonical VT bits and falls back deterministically when an
+  optional face is unavailable. A custom `HOWL_FONT` disables automatic style-family
+  discovery unless matching style overrides are explicitly supplied, preventing silent
+  cross-family mixing. No Unicode-specific shaping or raster logic exists in Odin.
+- The accepted Switchyard canary proved real regular/italic/bold/bold-italic face
+  consumption before its scaffolding was deleted. The Howl integration additionally
+  proved all four real JetBrainsMono faces share exact 16 px terminal metrics while
+  rasterizing the same glyph to four distinct alpha hashes.
 - A live style/Unicode corpus proved bold/dim/italic/reverse/strike, single/double/
   curly/dotted/dashed underlines, independent underline color, truecolor foreground
   and background, combining marks, JetBrains Mono ligatures, generated box drawing,
@@ -1162,10 +1170,11 @@ ConPTY-backed canonical Instance and listener-free in-process duplex pipe stream
 neither route smuggles in a hidden local Server or daemon.
 
 Windows uses Howl's pinned bundled FreeType/HarfBuzz build. Because that configuration is
-memory-only, the bridge reads configured font files through Zig I/O and constructs
-`FontSet.initMemory`; Linux keeps its path-backed native text path. Explicit `HOWL_FONT*`
-files remain authoritative. Without overrides, Windows resolves ordinary system-font
-candidates from `%WINDIR%/Fonts` so a clean machine can render a normal terminal; prompts
+memory-only, the bridge reads configured regular/style/fallback font files through Zig
+I/O and constructs independent `FontSet.initMemory` owners; Linux keeps its path-backed
+native text path. Explicit `HOWL_FONT*` files remain authoritative. Without overrides,
+Windows resolves ordinary regular and optional style candidates from `%WINDIR%/Fonts`
+so a clean machine can render a normal terminal; prompts
 that depend on Nerd Font private-use glyphs still need a Nerd-capable primary rather than
 silently substituting replacement diamonds.
 

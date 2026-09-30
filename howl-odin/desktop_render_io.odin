@@ -14,8 +14,10 @@ Render_Work :: struct {
     server_id: u64,
     session_id: u64,
     instance_id: u64,
-    font, fallback, secondary: [1024]u8,
-    font_len, fallback_len, secondary_len: int,
+    font, italic, bold, bold_italic: [FONT_PATH_BYTES]u8,
+    fallback, secondary: [FONT_PATH_BYTES]u8,
+    font_len, italic_len, bold_len, bold_italic_len: int,
+    fallback_len, secondary_len: int,
     pixels: u16,
     interrupt: rawptr,
     handle: rawptr,
@@ -38,6 +40,9 @@ render_worker :: proc(data: rawptr) {
     handle := render_create(desktop_io_runtime, work.interrupt, u8(work.route_kind),
                             raw_data(work.endpoint[:]), c.size_t(work.endpoint_len), work.server_id, work.session_id, work.instance_id,
                             raw_data(work.font[:]), c.size_t(work.font_len),
+                            raw_data(work.italic[:]), c.size_t(work.italic_len),
+                            raw_data(work.bold[:]), c.size_t(work.bold_len),
+                            raw_data(work.bold_italic[:]), c.size_t(work.bold_italic_len),
                             raw_data(work.fallback[:]), c.size_t(work.fallback_len),
                             raw_data(work.secondary[:]), c.size_t(work.secondary_len), work.pixels,
                             raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &count)
@@ -84,10 +89,15 @@ start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Re
     if work == nil do return nil
     endpoint := instance_endpoint(view)
     font := terminal_primary_font(&app.terminal_fonts)
+    italic := terminal_italic_font(&app.terminal_fonts)
+    bold := terminal_bold_font(&app.terminal_fonts)
+    bold_italic := terminal_bold_italic_font(&app.terminal_fonts)
     fallback := terminal_fallback_font(&app.terminal_fonts)
     secondary := terminal_secondary_fallback_font(&app.terminal_fonts)
     if len(endpoint) >= len(work.endpoint) || len(font) >= len(work.font) ||
-       len(fallback) >= len(work.fallback) || len(secondary) >= len(work.secondary) {
+       len(italic) >= len(work.italic) || len(bold) >= len(work.bold) ||
+       len(bold_italic) >= len(work.bold_italic) || len(fallback) >= len(work.fallback) ||
+       len(secondary) >= len(work.secondary) {
         free(work)
         return nil
     }
@@ -97,6 +107,9 @@ start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Re
     work.session_id = view.session_id
     work.instance_id = view.instance_id
     copy(work.font[:], transmute([]u8)font); work.font_len = len(font)
+    copy(work.italic[:], transmute([]u8)italic); work.italic_len = len(italic)
+    copy(work.bold[:], transmute([]u8)bold); work.bold_len = len(bold)
+    copy(work.bold_italic[:], transmute([]u8)bold_italic); work.bold_italic_len = len(bold_italic)
     copy(work.fallback[:], transmute([]u8)fallback); work.fallback_len = len(fallback)
     copy(work.secondary[:], transmute([]u8)secondary); work.secondary_len = len(secondary)
     work.pixels = pixels

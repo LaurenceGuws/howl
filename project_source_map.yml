@@ -132,5 +132,7 @@ experimental:
     distinct Server-owned Instances never share consequence authority accidentally.
     Launch profiles create a canonical in-process Instance through the listener-free
     desktop Local owner (Linux PTY or Windows ConPTY); Direct Attach and Server-selected
-    routes remain non-owning ordinary HWLS attachments. No sibling daemon/socket path
-    exists. Outside the core gate
+    routes remain non-owning ordinary HWLS attachments. Its desktop font owner resolves
+    regular/italic/bold/bold-italic files plus fallbacks and supplies independent
+    howl-text FontSets to the shared Render face-family contract. No sibling
+    daemon/socket path exists. Outside the core gate
