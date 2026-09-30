@@ -565,6 +565,7 @@ fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!void {
     if (result != 0) return error.FontSize;
 }
 
+/// Validates every path source and sizing argument before allocation.
 pub fn validateConfig(config: Config) error{InvalidConfig}!void {
     if (config.fallbacks.len > max_fallbacks)
         return error.InvalidConfig;

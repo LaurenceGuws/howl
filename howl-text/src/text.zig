@@ -9,28 +9,49 @@ const engine = @import("engine.zig");
 /// Owns caller-sized generated glyph classification and alpha rasterization.
 pub const generated = @import("generated.zig");
 
+/// Bounds fallback sources supplied by one construction config.
 pub const max_fallbacks = engine.max_fallbacks;
+/// Bounds each copied font path before native library access.
 pub const max_font_path_bytes = engine.max_font_path_bytes;
+/// Bounds each owned in-memory font before any copy or native access.
 pub const max_font_bytes = engine.max_font_bytes;
+/// Bounds aggregate copied font data in one in-memory font set.
 pub const max_font_set_bytes = engine.max_font_set_bytes;
+/// Bounds one shaping call before native library ingestion.
 pub const max_codepoints = engine.max_codepoints;
+/// Bounds one HarfBuzz result before allocation.
 pub const max_glyphs = engine.max_glyphs;
+/// Bounds one owned glyph alpha mask.
 pub const max_raster_bytes = engine.max_raster_bytes;
 
+/// Names construction failures before a complete native font set exists.
 pub const InitError = engine.InitError;
+/// Names failures while shaping one borrowed Unicode sequence.
 pub const ShapeError = engine.ShapeError;
+/// Names caller-buffer initialization failures, including allocation failure.
 pub const ShapeBufferInitError = engine.ShapeBufferInitError || error{OutOfMemory};
+/// Names failures while producing one owned native glyph alpha mask.
 pub const RasterError = engine.RasterError;
+/// Names failures while resolving one Unicode scalar to one configured face.
 pub const GlyphLookupError = engine.GlyphLookupError;
 
+/// Preserves one canonical point-size and DPI construction identity.
 pub const PointSize = engine.PointSize;
+/// Selects exact pixel sizing or point sizing at an integer DPI.
 pub const Size = engine.Size;
+/// Borrows bounded font paths and one exact native size during construction.
 pub const Config = engine.Config;
+/// Borrows font bytes only during construction; successful owners retain independent copies.
 pub const MemoryConfig = engine.MemoryConfig;
+/// Describes validated nonzero font-derived text geometry.
 pub const Metrics = engine.Metrics;
+/// Borrows a bounded Unicode scalar sequence and its source-cluster identities.
 pub const Text = engine.Text;
+/// Records one exact HarfBuzz glyph, source cluster, and 26.6 position.
 pub const Glyph = engine.Glyph;
+/// Borrows caller storage containing one complete bounded shaping result.
 pub const Run = engine.Run;
+/// Owns one bounded tightly packed glyph alpha mask and validated baseline placement.
 pub const Raster = engine.Raster;
 
 const FontOwner = struct {
