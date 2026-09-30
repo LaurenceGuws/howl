@@ -1195,7 +1195,12 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         return false
     }
     color := render_background_rgba(view.canvas)
-    draw_fill(app.renderer, pane, {rgba_channel(color, 0), rgba_channel(color, 8), rgba_channel(color, 16), rgba_channel(color, 24)})
+    draw_fill(app.renderer, pane, {
+        rgba_channel(color, 0),
+        rgba_channel(color, 8),
+        rgba_channel(color, 16),
+        rgba_channel(color, 24),
+    })
     surface := terminal_surface_rect(view, pane)
     origin_x := surface.x
     origin_y := surface.y

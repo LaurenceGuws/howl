@@ -10,7 +10,7 @@ terminal_geometry_has_one_gutter_and_no_outer_mat :: proc(t: ^testing.T) {
     content := terminal_content_rect(pane)
     testing.expect_value(t, content.x, TERMINAL_PADDING)
     testing.expect_value(t, content.y, HEADER_HEIGHT + TERMINAL_PADDING)
-    testing.expect_value(t, content.w, f32(938))
+    testing.expect_value(t, content.w, f32(948))
     testing.expect_value(t, content.h, f32(978))
     tiny := terminal_content_rect({0, 0, 1, 1})
     testing.expect_value(t, tiny.w, f32(0))
@@ -103,10 +103,11 @@ application_drag_retains_release_when_crossing_window_resize_edge :: proc(t: ^te
 
 
 @(test)
-scrollbar_hit_lane_and_window_resize_never_cover_terminal_cells :: proc(t: ^testing.T) {
+terminal_allocation_is_symmetric_and_scrollbar_is_overlay_only :: proc(t: ^testing.T) {
     pane := SDL.FRect{0, HEADER_HEIGHT, 960, 760 - HEADER_HEIGHT}
     content := terminal_content_rect(pane)
-    testing.expect_value(t, content.x + content.w, pane.x + pane.w - 16)
+    testing.expect_value(t, content.x - pane.x, TERMINAL_PADDING)
+    testing.expect_value(t, pane.x + pane.w - (content.x + content.w), TERMINAL_PADDING)
     testing.expect(t, content.x >= WINDOW_RESIZE_EDGE)
     testing.expect(t, content.y + content.h <= pane.y + pane.h - WINDOW_RESIZE_EDGE)
 }

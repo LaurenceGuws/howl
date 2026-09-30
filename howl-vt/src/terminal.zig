@@ -9645,6 +9645,26 @@ test "input error set excludes unrelated terminal owner limits" {
     }
 }
 
+test "OSC 11 and 111 mutate canonical presentation background" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    const initial = terminal.presentation().background;
+    const before = terminal.semanticSequence();
+
+    const set = try terminal.feed("\x1b]11;rgb:1111/2222/3333\x1b\\");
+    try std.testing.expect(set.stateChanged());
+    try std.testing.expect(terminal.semanticSequence() > before);
+    try std.testing.expectEqual(
+        Terminal.Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 },
+        terminal.presentation().background,
+    );
+
+    const reset = try terminal.feed("\x1b]111\x1b\\");
+    try std.testing.expect(reset.stateChanged());
+    try std.testing.expectEqual(initial, terminal.presentation().background);
+}
+
 test "Unicode scalar pressure does not advance terminal semantic identity" {
     var terminal = try Terminal.init(std.testing.allocator, 1, 3);
     defer terminal.deinit();

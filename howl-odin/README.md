@@ -346,8 +346,8 @@ If hit testing or border removal is unavailable, the host reports that failure
 and keeps native decorations instead of leaving an immovable borderless window.
 
 There is no differently-colored outer terminal mat. Owned PTY sizing uses one
-content allocation: six logical pixels at left/top/bottom and sixteen at right
-for the scrollbar's independent hit lane plus resize rim. Rows/columns floor into
+content allocation with six logical pixels on every outer edge. The history
+scrollbar is an overlay lane and never removes terminal columns. Rows/columns floor into
 that allocation at exact Canvas cell metrics; the resulting integer-cell surface
 is then centered inside the allocation instead of pinning sub-cell remainder to
 the right/bottom. Paint, pointer reporting, selection, search, scrollbar extent,

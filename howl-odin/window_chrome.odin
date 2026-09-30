@@ -6,20 +6,18 @@ import SDL "vendor:sdl3"
 
 HEADER_HEIGHT :: f32(46)
 TERMINAL_PADDING :: f32(6)
-TERMINAL_RIGHT_GUTTER :: f32(16)
 WINDOW_RESIZE_EDGE :: f32(4)
 WINDOW_CONTROL_WIDTH :: f32(42)
 
 Window_Button :: enum { None, Minimize, Maximize, Close }
 
-// Shared geometry for drawing, pointer/selection/search, IME and owned PTY size.
-// The right gutter includes a dedicated scrollbar hit lane and native resize
-// rim. Neither steals terminal cells. Remaining sub-cell pixels stay background;
-// desktop geometry centers the integer cell surface inside this allocation rather
-// than stretching or pinning the remainder to one edge.
+// Shared terminal allocation for drawing, pointer/selection/search, IME and
+// owned PTY size. Outer padding is symmetric; the scrollbar is an overlay lane
+// on the right edge and never removes terminal columns. Remaining sub-cell pixels
+// stay background while desktop geometry centers the integer cell surface here.
 terminal_content_rect :: proc(pane: SDL.FRect) -> SDL.FRect {
     return {pane.x + TERMINAL_PADDING, pane.y + TERMINAL_PADDING,
-            max(f32(0), pane.w - TERMINAL_PADDING - TERMINAL_RIGHT_GUTTER),
+            max(f32(0), pane.w - 2 * TERMINAL_PADDING),
             max(f32(0), pane.h - 2 * TERMINAL_PADDING)}
 }
 
