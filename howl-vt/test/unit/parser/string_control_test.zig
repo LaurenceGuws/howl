@@ -26,6 +26,8 @@ const Output = struct {
     }
 
     fn appendPhases(self: *Output, phases: parser_mod.PhaseActions) void {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         owned_actions.appendOwnedPhases(std.testing.allocator, self.arena.allocator(), &self.actions, phases) catch unreachable;
     }
 };
@@ -324,6 +326,8 @@ test "parser string controls: BEL terminates only OSC" {
             .apc_put => |byte| byte,
             .pm_put => |byte| byte,
             .sos_put => |byte| byte,
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         });
         try std.testing.expectEqual(case.end_tag, std.meta.activeTag(output.actions.items[2]));

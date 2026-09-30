@@ -117,6 +117,8 @@ fn roundedComposite(
         0xf5eb => &.{ top | right, bottom | left },
         0xf5ec => &.{ top | left, bottom | right },
         0xf5ed => &.{ top | right, bottom | left },
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     };
     if (switch (codepoint) {
@@ -226,6 +228,8 @@ fn commitLines(index: u32) u8 {
         13 => left | right | bottom,
         14 => left | right | top,
         15 => left | right | top | bottom,
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     };
 }

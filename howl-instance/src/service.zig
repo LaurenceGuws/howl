@@ -896,6 +896,8 @@ pub const Service = struct {
             @as(usize, std.math.maxInt(u32)),
         ));
         var read_count: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         if (!ReadFile(client.stream.read, @ptrCast(room.ptr), count, &read_count, null).toBool()) {
             switch (windows.GetLastError()) {
                 .NO_DATA => return false,
@@ -922,6 +924,8 @@ pub const Service = struct {
             @min(windows_pipe_write_chunk_bytes, @as(usize, std.math.maxInt(u32))),
         ));
         var written: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         if (!WriteFile(client.stream.write, @ptrCast(bytes.ptr), count, &written, null).toBool()) {
             switch (windows.GetLastError()) {
                 .NO_DATA => return false,
@@ -1013,6 +1017,8 @@ pub const Service = struct {
                     .observe_raw => .raw,
                     .observe_delta => .delta,
                     .observe_packed => .packed_text,
+                    // zig-audit: acknowledge unreachable
+                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     else => unreachable,
                 };
             },
@@ -1695,6 +1701,8 @@ pub const Service = struct {
 
     fn bumpObservation(self: *Service) void {
         self.observation_revision = std.math.add(u64, self.observation_revision, 1) catch
+            // zig-audit: acknowledge panic
+            // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
             @panic("Instance observation revision exhausted");
     }
 

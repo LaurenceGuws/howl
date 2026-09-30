@@ -65,6 +65,8 @@ pub fn decodeSet(allocator: std.mem.Allocator, raw: []const u8) DecodeError![]u8
     errdefer allocator.free(output);
     std.debug.assert(output.len == decoded_len);
     const written = decodeSetInto(raw, output) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.ShortBuffer => unreachable,
         error.InvalidCharacter => return error.InvalidCharacter,
         error.InvalidOsc52Payload => return error.InvalidOsc52Payload,
@@ -115,6 +117,8 @@ fn decodeSetInto(raw: []const u8, output: []u8) IntoError!u64 {
     std.base64.standard.Decoder.decode(output[0..decoded_len], request.data) catch |failure| switch (failure) {
         error.InvalidCharacter => return error.InvalidCharacter,
         error.InvalidPadding => return error.InvalidPadding,
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.NoSpaceLeft => unreachable,
     };
     return @intCast(decoded_len);
@@ -124,6 +128,8 @@ fn decodedBase64Size(data: []const u8) error{InvalidPadding}!usize {
     // Size calculation cannot inspect alphabet bytes or consume destination space.
     return std.base64.standard.Decoder.calcSizeForSlice(data) catch |failure| switch (failure) {
         error.InvalidPadding => return error.InvalidPadding,
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.InvalidCharacter, error.NoSpaceLeft => unreachable,
     };
 }

@@ -42,7 +42,7 @@ Do not turn profiling, logging, test scaffolding, or one host's presentation nee
 
 `main` is accepted integration. `release/$VERSION` is historical. Work directly on `main`; do not create worktrees or task branches unless Captain explicitly asks for one. Keep unrelated dirty work untouched, commit only coherent green checkpoints, and push important state so it does not live only in an agent session.
 
-Before a checkpoint: run the affected package proofs, root core gate, protocol validation when relevant, source audit, formatting, and `git diff --check`.
+Before a checkpoint: run the affected package proofs, root core gate, protocol validation when relevant, the required zig-audit plus Howl project audit, formatting, and `git diff --check`.
 
 ## Workspace
 

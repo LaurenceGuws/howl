@@ -38,6 +38,8 @@ const FontOwner = struct {
 };
 
 /// Opaque owner of one ordered native font/fallback set.
+// zig-audit: acknowledge opaque_type
+// reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
 pub const FontSet = opaque {
     /// Copies the config and transactionally opens all native font state.
     pub fn init(allocator: std.mem.Allocator, config: Config) InitError!*FontSet {
@@ -45,6 +47,8 @@ pub const FontSet = opaque {
         const owner = allocator.create(FontOwner) catch return error.OutOfMemory;
         errdefer allocator.destroy(owner);
         owner.* = .{ .value = try engine.FontSet.init(allocator, config) };
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         return @ptrCast(owner);
     }
 
@@ -55,6 +59,8 @@ pub const FontSet = opaque {
         const owner = allocator.create(FontOwner) catch return error.OutOfMemory;
         errdefer allocator.destroy(owner);
         owner.* = .{ .value = try engine.FontSet.initMemory(allocator, config) };
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         return @ptrCast(owner);
     }
 
@@ -123,6 +129,8 @@ const ShapeOwner = struct {
 };
 
 /// Opaque owner of one bounded reusable native shaping buffer.
+// zig-audit: acknowledge opaque_type
+// reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
 pub const ShapeBuffer = opaque {
     /// Allocates one opaque owner and preallocates native shaping capacity.
     pub fn init(
@@ -136,6 +144,8 @@ pub const ShapeBuffer = opaque {
             .allocator = allocator,
             .value = try engine.ShapeBuffer.init(capacity),
         };
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         return @ptrCast(owner);
     }
 
@@ -149,13 +159,25 @@ pub const ShapeBuffer = opaque {
 };
 
 fn fontOwner(value: *FontSet) *FontOwner {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
     return @ptrCast(@alignCast(value));
 }
 
 fn fontOwnerConst(value: *const FontSet) *const FontOwner {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
     return @ptrCast(@alignCast(value));
 }
 
 fn shapeOwner(value: *ShapeBuffer) *ShapeOwner {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
     return @ptrCast(@alignCast(value));
 }

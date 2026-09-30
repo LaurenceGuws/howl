@@ -764,6 +764,8 @@ fn encodeTextKey(buf: []u8, codepoint: u21, mod: Modifier, modify_other_keys: i8
         return buf[0 .. prefix_len + 1];
     }
     if (codepoint > 127) {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         const len = std.unicode.utf8Encode(codepoint, buf[prefix_len..]) catch unreachable;
         std.debug.assert(prefix_len + len <= buf.len);
         return buf[0 .. prefix_len + len];

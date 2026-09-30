@@ -1,17 +1,16 @@
 accepted:
   .zigversion: exact Zig compiler pin
-  VERSION: current workspace release marker; source audit requires every current package/client version to match it while versioned embedding examples remain frozen
+  VERSION: current workspace release marker; Howl project audit requires every current package/client version to match it while versioned embedding examples remain frozen
   build.zig: development-only curator for local core checks and tests
   build.zig.zon: local core workspace source boundary including tracked howl-text
-  .zig-audit.json: shared Zig sensitive-source canary configuration; Howl-specific audit policy remains in tools/audit_source.sh
+  .zig-audit.json: required zig-audit schema-2/ruleset-2 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
   howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
   howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
-  tools/audit_source.sh: maintained-source structural audit
-  tools/source_audit.allow: reviewed sensitive Zig sites
+  tools/audit_project.sh: Howl-specific structural, FFI, asset-mirror, and workspace-version audit; generic Zig sharp-edge detection belongs only to zig-audit
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:

@@ -501,6 +501,8 @@ pub const State = struct {
     /// Records a terminal reset without discarding previously retained occurrences.
     pub fn resetTerminal(self: *State) void {
         self.pointer_shape_reset_generation = std.math.add(u64, self.pointer_shape_reset_generation, 1) catch
+            // zig-audit: acknowledge panic
+            // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
             @panic("pointer reset identity exhausted");
     }
 

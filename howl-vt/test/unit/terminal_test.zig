@@ -35,46 +35,70 @@ const RuntimeAllocatorBoundary = struct {
     }
 
     fn alloc(
+        // zig-audit: acknowledge anyopaque
+        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
         context: *anyopaque,
         len: usize,
         alignment: std.mem.Alignment,
         return_address: usize,
     ) ?[*]u8 {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // zig-audit: acknowledge align_cast
+        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
         const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
         self.reject("alloc");
         return self.parent.rawAlloc(len, alignment, return_address);
     }
 
     fn resize(
+        // zig-audit: acknowledge anyopaque
+        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
         context: *anyopaque,
         memory: []u8,
         alignment: std.mem.Alignment,
         new_len: usize,
         return_address: usize,
     ) bool {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // zig-audit: acknowledge align_cast
+        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
         const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
         self.reject("resize");
         return self.parent.rawResize(memory, alignment, new_len, return_address);
     }
 
     fn remap(
+        // zig-audit: acknowledge anyopaque
+        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
         context: *anyopaque,
         memory: []u8,
         alignment: std.mem.Alignment,
         new_len: usize,
         return_address: usize,
     ) ?[*]u8 {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // zig-audit: acknowledge align_cast
+        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
         const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
         self.reject("remap");
         return self.parent.rawRemap(memory, alignment, new_len, return_address);
     }
 
     fn free(
+        // zig-audit: acknowledge anyopaque
+        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
         context: *anyopaque,
         memory: []u8,
         alignment: std.mem.Alignment,
         return_address: usize,
     ) void {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // zig-audit: acknowledge align_cast
+        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
         const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
         self.reject("free");
         self.parent.rawFree(memory, alignment, return_address);
@@ -1015,6 +1039,8 @@ test "service-bounded feed consumes ordinary slices as one transaction" {
 fn relieveOneNonReplyConsequence(machine: *Terminal) Terminal.FeedError!void {
     const head = machine.consequenceHead() orelse return error.ConsequencePressure;
     machine.consumeConsequence(head.id()) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.StaleConsequence, error.ReplyRequired => unreachable,
     };
 }
@@ -1073,6 +1099,8 @@ test "service boundary relieves one retained head and retries exact semantic eve
 fn consumeOneConsequenceThenFail(machine: *Terminal) Terminal.FeedError!void {
     const head = machine.consequenceHead() orelse return error.ConsequencePressure;
     machine.consumeConsequence(head.id()) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.StaleConsequence, error.ReplyRequired => unreachable,
     };
     return error.ReplyLimit;

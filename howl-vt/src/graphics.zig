@@ -835,6 +835,8 @@ pub const Plane = struct {
         }
         self.reclaimForKittyAdmission(rgba_len, protected_image_id);
         const admitted_prior_index = if (protected_image_id) |image_id|
+            // zig-audit: acknowledge orelse_unreachable
+            // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
             self.imageIndex(image_id) orelse unreachable
         else
             null;
@@ -1224,6 +1226,8 @@ pub const Plane = struct {
         columns: u16,
     ) bool {
         const row_end = std.math.add(u64, row_start, row_count) catch
+            // zig-audit: acknowledge panic
+            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             @panic("terminal graphics retained-row interval overflow");
         var changed = false;
         var index: usize = 0;
@@ -1756,6 +1760,8 @@ pub const Plane = struct {
             (needs_slot and self.image_count == max_images))
         {
             const candidate = self.oldestEvictionCandidate(protected_image_id, true) orelse
+                // zig-audit: acknowledge orelse_unreachable
+                // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
                 self.oldestEvictionCandidate(protected_image_id, false) orelse unreachable;
             const image_id = self.images[candidate].id;
             self.removePlacements(image_id);
@@ -2009,6 +2015,8 @@ pub const Plane = struct {
 
     fn allocateImageId(self: *Plane) u32 {
         if (self.next_image_id == std.math.maxInt(u32))
+            // zig-audit: acknowledge panic
+            // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
             @panic("terminal image identity exhausted");
         self.next_image_id += 1;
         return self.next_image_id;
@@ -2016,6 +2024,8 @@ pub const Plane = struct {
 
     fn advance(self: *Plane) void {
         if (self.next_generation == std.math.maxInt(u64))
+            // zig-audit: acknowledge panic
+            // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
             @panic("terminal image generation exhausted");
         self.next_generation += 1;
     }

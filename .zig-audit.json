@@ -1,6 +1,20 @@
 {
-  "schema": 1,
+  "schema": 2,
   "source": "git",
-  "baseline": "tools/source_audit.allow",
-  "minimum_ruleset": 1
+  "minimum_ruleset": 2,
+  "include": [
+    "build.zig",
+    "howl-vt/build.zig",
+    "howl-vt/src",
+    "howl-vt/test",
+    "howl-vt/test_unit.zig",
+    "howl-instance/build.zig",
+    "howl-instance/src",
+    "howl-pty/build.zig",
+    "howl-pty/src",
+    "howl-text/build.zig",
+    "howl-text/bundled.zig",
+    "howl-text/src",
+    "tools/json_logger.zig"
+  ]
 }

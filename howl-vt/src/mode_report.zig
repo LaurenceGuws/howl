@@ -106,6 +106,8 @@ pub fn appendDec(
     mode: u16,
     state: u8,
 ) replies.AppendError!void {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const payload = std.fmt.bufPrint(encode_buffer, "?{d};{d}$y", .{ mode, state }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -117,6 +119,8 @@ pub fn appendAnsi(
     mode: u16,
     state: u8,
 ) replies.AppendError!void {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const payload = std.fmt.bufPrint(encode_buffer, "{d};{d}$y", .{ mode, state }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }

@@ -77,6 +77,8 @@ pub const DcsCapture = struct {
         while (index < hook.count) : (index += 1) {
             if (index > 0) try self.bytes.append(self.allocator, ';');
             var text_buffer: [32]u8 = undefined;
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             const text = std.fmt.bufPrint(&text_buffer, "{d}", .{hook.params[index]}) catch unreachable;
             try self.bytes.appendSlice(self.allocator, text);
         }
@@ -230,6 +232,8 @@ pub const StringCapture = struct {
 
     /// Returns the active generic string-control classification.
     pub fn payloadKind(self: *const StringCapture) consequences.StringPayloadKind {
+        // zig-audit: acknowledge panic
+        // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
         return self.kind orelse @panic("string capture is inactive");
     }
 

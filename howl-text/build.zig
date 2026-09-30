@@ -116,9 +116,17 @@ pub fn addModule(
 
 fn testFontModule(b: *std.Build) *std.Build.Module {
     const fonts = b.addOptions();
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     fonts.addOption([]const u8, "primary_font", b.root.joinString(b.allocator, "testdata/primary.ttf") catch @panic("OOM"));
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     fonts.addOption([]const u8, "symbol_font", b.root.joinString(b.allocator, "testdata/symbols.ttf") catch @panic("OOM"));
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     fonts.addOption([]const u8, "normal_ligature_font", b.root.joinString(b.allocator, "testdata/fira-code-medium.otf") catch @panic("OOM"));
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     fonts.addOption([]const u8, "mono_font", b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"));
     return b.addModule("howl_text_test_fonts", .{
         .root_source_file = fonts.getOutput(),

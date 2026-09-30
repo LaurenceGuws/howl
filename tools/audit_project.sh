@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 
 status=0
 
+# Howl's public VT embedding root is intentionally curated. zig-audit owns generic
+# sharp-construct detection; this project audit owns only Howl-specific structure.
 root_publics=(
     'pub const Terminal = terminal.Terminal;'
     'pub const MutationSet = terminal.MutationSet;'
@@ -36,6 +38,8 @@ while IFS= read -r file; do
     fi
 
     # Public owner errors stay reviewable instead of widening through inference.
+    # Source-local zig-audit acknowledgement metadata may sit between /// docs and
+    # the declaration it reviews; it is transparent to this Howl-specific rule.
     awk '
         function check_signature() {
             if (signature ~ /\)[[:space:]]*![^=]/) {
@@ -49,6 +53,8 @@ while IFS= read -r file; do
             signature = signature " " $0
             if ($0 ~ /\{[[:space:]]*$/) check_signature()
         }
+        /^[[:space:]]*\/\/ zig-audit: acknowledge / { next }
+        /^[[:space:]]*\/\/ reason:/ { next }
         /^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]/ {
             if (previous !~ /^[[:space:]]*\/\/\//) {
                 printf "%s:%d: undocumented public declaration\n", FILENAME, NR
@@ -72,52 +78,6 @@ while IFS=: read -r file line _; do
     printf '%s:%s: empty lifecycle hook\n' "$file" "$line"
     status=1
 done < <(grep -RnE "$empty_lifecycle_pattern" howl-vt/src --include='*.zig' || true)
-
-# Result discards are limited to compile-only root and parser test probes.
-root_test_start=$(grep -n '^test[[:space:]]*{' howl-vt/src/howl_vt.zig | cut -d: -f1)
-parser_test_start=$(grep -n '^test "parser' howl-vt/src/parser.zig | head -n 1 | cut -d: -f1)
-parser_test_end=$(grep -n '^const StyleChange' howl-vt/src/parser.zig | cut -d: -f1)
-while IFS=: read -r file line text; do
-    allowed=false
-    if [[ "$file" == howl-vt/src/howl_vt.zig &&
-        "$line" -gt "$root_test_start" && "$text" == '    _ = terminal;' ]]; then
-        allowed=true
-    elif [[ "$file" == howl-vt/src/parser.zig &&
-        "$line" -gt "$parser_test_start" && "$line" -lt "$parser_test_end" ]] &&
-        [[ "$text" == '    _ = parser.next('* || "$text" == '    _ = parser.entryPhase('* ]]; then
-        allowed=true
-    fi
-    if [[ "$allowed" == false ]]; then
-        printf '%s:%s: discarded source result\n' "$file" "$line"
-        status=1
-    fi
-done < <(grep -RnE '^[[:space:]]*_[[:space:]]*=' howl-vt/src --include='*.zig' || true)
-
-diff -u tools/source_audit.allow <(
-    git ls-files --cached --others --exclude-standard -z -- '*.zig' |
-        while IFS= read -r -d '' file; do
-            if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi
-        done |
-        xargs -0 perl -ne '
-            $raw=$_; chomp $raw; $code=$raw;
-            $code =~ s/"(?:\\.|[^"\\])*"//g; $code =~ s{//.*$}{};
-            $line=$raw; $line =~ s/^\s+|\s+$//g;
-            while ($code =~ /\b(anytype|anyerror|anyopaque)\b/g) { print "$ARGV|$1|$line\n" }
-            while ($code =~ /(?<![A-Za-z0-9_])_\s*=/g) { print "$ARGV|discard|$line\n" }
-        ' |
-        sort
-) || { printf 'Howl sensitive source sites changed; review the exact allowlist.\n' >&2; status=1; }
-
-# Shared zig-audit is a canary beside Howl's existing local audit while the common
-# checker is dogfooded. Absence on a fresh machine does not weaken the local gate.
-if command -v zig-audit >/dev/null 2>&1; then
-    if ! zig-audit check; then
-        printf 'Howl shared Zig sensitive-source canary failed.\n' >&2
-        status=1
-    fi
-else
-    printf 'Howl source audit: warning: zig-audit not found; shared sensitive-source canary skipped (local audit remains active).\n' >&2
-fi
 
 # The Dart/native FFI surface has one common mobile-safe contract plus a
 # desktop-only Local ownership extension. Every declaration must exist as a

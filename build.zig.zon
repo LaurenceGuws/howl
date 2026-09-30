@@ -14,8 +14,7 @@
         "howl-text",
         "protocol_coverage.nu",
         "protocol_coverage.yml",
-        "tools/audit_source.sh",
-        "tools/source_audit.allow",
+        "tools/audit_project.sh",
         "tools/json_logger.zig",
     },
 }

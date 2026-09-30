@@ -176,6 +176,8 @@ pub const State = struct {
             encode_buf,
             "{d};{d};{d};{d};0&w",
             .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         ) catch unreachable;
         try output.appendCsi(.terminal, text);
         if (self.mode == .one_shot) self.mode = .disabled;
@@ -196,7 +198,11 @@ pub fn appendDeviceStatusReport(
     param: u16,
 ) replies.AppendError!void {
     const text = switch (param) {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         55 => std.fmt.bufPrint(encode_buf, "?50n", .{}) catch unreachable,
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         56 => std.fmt.bufPrint(encode_buf, "?57;1n", .{}) catch unreachable,
         else => return,
     };

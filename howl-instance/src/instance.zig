@@ -13,6 +13,8 @@ const write_bytes_per_turn: usize = 64 * 1024;
 const write_calls_per_turn: usize = 4;
 
 /// Opaque handle to one canonical PTY + VT lifetime owner.
+// zig-audit: acknowledge opaque_type
+// reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
 pub const Instance = opaque {};
 /// Canonical terminal engine type owned by one Instance.
 pub const Terminal = vt.Terminal;
@@ -116,6 +118,8 @@ pub fn init(
     const state = try allocator.create(State);
     errdefer allocator.destroy(state);
     try state.initInto(allocator, inherited_environment, launch);
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
     return @ptrCast(state);
 }
 
@@ -489,6 +493,8 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
     switch (current) {
         .clipboard => |request| if (request.kind == .query) {
             const replied = machine.replyClipboard(identity, "") catch |failure| switch (failure) {
+                // zig-audit: acknowledge unreachable
+                // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                 error.StaleClipboardRequest => unreachable,
                 else => |err| return err,
             };
@@ -497,6 +503,8 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
         },
         .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
             machine.replyPointerShape(identity, "default") catch |failure| switch (failure) {
+                // zig-audit: acknowledge unreachable
+                // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                 error.StalePointerShape, error.PointerShapeReplyMismatch => unreachable,
                 else => |err| return err,
             };
@@ -509,12 +517,16 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
                     .rows = terminal_view.rows,
                     .cols = terminal_view.cols,
                 } }) catch |failure| switch (failure) {
+                    // zig-audit: acknowledge unreachable
+                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     error.StaleContainerRequest, error.ContainerReplyMismatch => unreachable,
                     else => |err| return err,
                 };
                 return;
             },
             .report_state, .report_position, .report_icon_title => {
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
                 machine.declineContainerQuery(identity) catch unreachable;
                 return;
             },
@@ -522,6 +534,8 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
         },
         .color_preference_query => {
             machine.replyColorPreference(identity, .dark) catch |failure| switch (failure) {
+                // zig-audit: acknowledge unreachable
+                // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                 error.StaleColorPreferenceQuery => unreachable,
                 else => |err| return err,
             };
@@ -530,15 +544,25 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
         else => {},
     }
     machine.consumeConsequence(identity) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.StaleConsequence, error.ReplyRequired => unreachable,
     };
 }
 
 fn stateMut(instance: *Instance) *State {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
     return @ptrCast(@alignCast(instance));
 }
 
 fn stateConst(instance: *const Instance) *const State {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
     return @ptrCast(@alignCast(instance));
 }
 
@@ -546,6 +570,8 @@ fn collectReplies(machine: *vt.Terminal, queue: *WriteQueue) error{WriteQueueFul
     const bytes = machine.replyBytes();
     if (bytes.len == 0) return;
     try queue.append(bytes);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     machine.consumeReplyBytes(bytes.len) catch unreachable;
 }
 
@@ -608,6 +634,8 @@ fn testTerminalImage(machine: *const Terminal.Observation, image_id: u32, genera
 
 fn sleepOneMillisecond() void {
     std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake) catch
+        // zig-audit: acknowledge panic
+        // reason: Test scaffolding treats setup/protocol failure as an immediate proof failure instead of widening the product error surface.
         @panic("test sleep failed");
 }
 

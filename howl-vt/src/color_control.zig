@@ -146,6 +146,8 @@ fn handleXtermPaletteControl(
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
         if (std.mem.eql(u8, value, "?")) {
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             const text = std.fmt.bufPrint(encode_buf, "4;{d};", .{idx}) catch unreachable;
             const start = byteCount(output.bytes());
             errdefer output.truncate(start);
@@ -171,6 +173,8 @@ fn handleXtermSpecialPaletteControl(
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u3, idx_text, 10) catch continue;
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         const text = std.fmt.bufPrint(encode_buf, "5;{d};", .{idx}) catch unreachable;
         if (std.mem.eql(u8, value, "?")) {
             const start = byteCount(output.bytes());
@@ -579,6 +583,8 @@ fn appendXtermDynamicColorReply(
     colors: TerminalColorState,
     key: DynamicKey,
 ) replies.AppendError!void {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const text = std.fmt.bufPrint(encode_buf, "{d};", .{dynamicCommandForKey(key)}) catch unreachable;
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
@@ -616,6 +622,8 @@ fn formatColorOsc(buf: []u8, color: Rgb) []const u8 {
         @as(u16, color.r) * 0x101,
         @as(u16, color.g) * 0x101,
         @as(u16, color.b) * 0x101,
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     }) catch unreachable;
 }
 

@@ -13,6 +13,8 @@ pub fn addModule(
     if (wasm and (target.result.os.tag != .wasi or
         !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.exception_handling)) or
         !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.reference_types))))
+        // zig-audit: acknowledge panic
+        // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
         @panic("bundled Wasm text requires wasm32-wasi with exception_handling and reference_types");
     // A missing lazy package must restart configuration before a downstream
     // consumer asks for this module, not return a half-configured dependency.

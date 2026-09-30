@@ -70,6 +70,8 @@ const SgrStackEntry = struct {
 };
 
 fn advanceIdentity(value: *u64) void {
+    // zig-audit: acknowledge panic
+    // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
     value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
 }
 
@@ -1688,6 +1690,8 @@ fn parseDragDrop(bytes: []const u8) ?ParsedDragDrop {
             'y' => y = std.fmt.parseInt(i32, value, 10) catch return null,
             'X' => pixel_x = std.fmt.parseInt(i32, value, 10) catch return null,
             'Y' => pixel_y = std.fmt.parseInt(i32, value, 10) catch return null,
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         }
     }
@@ -1954,6 +1958,8 @@ fn visibleView(screen_state: *const ScreenSet, history_offset: u32) Terminal.Sem
         .history_count = history_count,
         .history_row_base = active.historyRowBase(),
         .start = start,
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         .screen = @ptrCast(active),
     };
 }
@@ -2174,6 +2180,8 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .dcs_payload => |payload| try vt.consequences.retainDcsPayload(payload),
         .string_payload => |payload| try vt.consequences.retainStringPayload(payload),
         .legacy_control => |kind| try vt.consequences.retainLegacyControl(kind),
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     }
     return true;
@@ -2311,6 +2319,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .title_report => try appendTitleReport(vt),
         .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.properties.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     }
 }
@@ -2336,9 +2346,13 @@ fn appendTitleReport(vt: *Terminal) replies.AppendError!void {
 fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) replies.AppendError!bool {
     const active = vt.screen_state.activeConst();
     const payload = switch (kind) {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         .text_cells => std.fmt.bufPrint(scratch, "8;{d};{d}t", .{ active.rows, active.cols }) catch unreachable,
         .cell_pixels => blk: {
             const cell = active.cellPixelSize() orelse return false;
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             break :blk std.fmt.bufPrint(scratch, "6;{d};{d}t", .{ cell.height, cell.width }) catch unreachable;
         },
         .pixel_size_report => blk: {
@@ -2346,6 +2360,8 @@ fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) replies.Appe
             const cell = active.cellPixelSize() orelse return false;
             const height = @as(u64, cell.height) * @as(u64, active.rows);
             const width = @as(u64, cell.width) * @as(u64, active.cols);
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch unreachable;
         },
     };
@@ -2361,6 +2377,8 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) replies.AppendError!v
         scratch,
         "1337;ReportCellSize={d};{d};1",
         .{ cell.height, cell.width },
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try vt.reply_buffer.appendString(.iterm, .osc, payload);
 }
@@ -2434,6 +2452,8 @@ fn appendModifyOtherKeysReport(
     encode_buf: []u8,
     value: i8,
 ) replies.AppendError!void {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -2445,6 +2465,8 @@ fn appendKeyFormatReport(
     resource: u8,
     value: u16,
 ) replies.AppendError!void {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -2542,6 +2564,8 @@ fn appendColorStackReport(
     stack: *const KittyColorStack,
 ) replies.AppendError!void {
     const index = if (stack.len == 0) 0 else stack.len - 1;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
     try output.appendCsi(.kitty, payload);
 }
@@ -2582,6 +2606,8 @@ fn appendSgrAttrs(
     if (attrs.invisible) try appendSgrParam(allocator, output, &first, "8");
     if (attrs.strikethrough) try appendSgrParam(allocator, output, &first, "9");
     if (attrs.font != 0) {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch unreachable;
         try appendSgrParam(allocator, output, &first, font);
     }
@@ -2752,6 +2778,8 @@ fn appendColorParam(
                     (if (idx < 8) 30 + idx else 90 + (idx - 8))
                 else
                     (if (idx < 8) 40 + idx else 100 + (idx - 8));
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
                 const text = std.fmt.bufPrint(encode_buf, "{d}", .{code}) catch unreachable;
                 try appendSgrParam(allocator, output, first, text);
                 return;
@@ -2773,6 +2801,8 @@ fn appendExtendedColorParam(
     switch (color.kind) {
         .default => return,
         .indexed => {
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
             const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch unreachable;
             try appendSgrParam(allocator, output, first, text);
         },
@@ -2782,6 +2812,8 @@ fn appendExtendedColorParam(
                 (color.value >> 16) & 0xFF,
                 (color.value >> 8) & 0xFF,
                 color.value & 0xFF,
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
             }) catch unreachable;
             try appendSgrParam(allocator, output, first, text);
         },
@@ -2865,6 +2897,8 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!bool
                 scratch.buf[0..],
                 "?{d}u",
                 .{active_screen_const.keyboard.flags},
+                // zig-audit: acknowledge catch_unreachable
+                // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
             ) catch unreachable;
             try vt.reply_buffer.appendCsi(.kitty, payload);
             return true;
@@ -2875,6 +2909,8 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!bool
         .kitty_keyboard_pop => |count| {
             return active_screen.keyboard.pop(count);
         },
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     }
 }
@@ -3341,6 +3377,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             var scratch: input.Scratch = .{};
             return try appendSizeReport(vt, scratch.buf[0..], kind);
         },
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         .title_stack => unreachable,
         .ansi_mode_query,
         .modify_other_keys_query,
@@ -3804,6 +3842,8 @@ fn eraseLineColumns(screen: *const Screen, mode: ScreenEraseMode) [2]u16 {
         .cursor_to_end => .{ screen.cursor.col, screen.cols - 1 },
         .start_to_cursor => .{ 0, screen.cursor.col },
         .all => .{ 0, screen.cols - 1 },
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         .scrollback => unreachable,
     };
 }
@@ -4114,6 +4154,8 @@ const TerminalStream = struct {
                     0x0F => 0,
                     0x8E => 2,
                     0x8F => 3,
+                    // zig-audit: acknowledge unreachable
+                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     else => unreachable,
                 };
                 const changed = if (ctrl == 0x8E or ctrl == 0x8F)
@@ -4137,6 +4179,8 @@ const TerminalStream = struct {
                         ')' => 1,
                         '*' => 2,
                         '+' => 3,
+                        // zig-audit: acknowledge unreachable
+                        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                         else => unreachable,
                     };
                     const changed = self.terminal.charset.configureCharset(slot, esc.final);
@@ -4723,6 +4767,8 @@ pub const Terminal = struct {
     ///
     /// Embedders observe rows through SemanticView methods instead of gaining
     /// structural access to the mutable Screen owner retained by Terminal.
+    // zig-audit: acknowledge opaque_type
+    // reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
     pub const SemanticScreen = opaque {};
 
     /// Borrows a unified history-and-screen view until terminal mutation.
@@ -4744,6 +4790,10 @@ pub const Terminal = struct {
         screen: *const SemanticScreen,
 
         fn backingScreen(self: *const SemanticView) *const Screen {
+            // zig-audit: acknowledge ptr_cast
+            // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+            // zig-audit: acknowledge align_cast
+            // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
             return @ptrCast(@alignCast(self.screen));
         }
 
@@ -4931,11 +4981,17 @@ pub const Terminal = struct {
         /// Commits both prepared screens and every resize side effect exactly once.
         pub fn commit(self: *PreparedResize) void {
             if (self.committed or !self.terminal.resize_prepared)
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("prepared resize is no longer live");
             const state = self.state orelse
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("prepared resize has no candidate");
             if (self.terminal.semantic_sequence != state.semantic_sequence or
                 self.terminal.reply_buffer.len() != state.reply_len)
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("terminal mutated during prepared resize");
             var primary = state.primary;
             var alternate = state.alternate;
@@ -5250,6 +5306,8 @@ pub const Terminal = struct {
         z: i32,
     };
     /// Opaque backing owner for one borrowed image observation.
+    // zig-audit: acknowledge opaque_type
+    // reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
     pub const ImagePlane = opaque {};
 
     /// Borrows coherent image-plane state until terminal mutation.
@@ -5266,6 +5324,10 @@ pub const Terminal = struct {
         cell_pixel_height: u32,
 
         fn backingPlane(self: *const Images) *const graphics_mod.Plane {
+            // zig-audit: acknowledge ptr_cast
+            // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+            // zig-audit: acknowledge align_cast
+            // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
             return @ptrCast(@alignCast(self.plane));
         }
 
@@ -5673,8 +5735,14 @@ pub const Terminal = struct {
     /// as Instance may instead lend this opaque capability so another component
     /// can observe canonical VT semantics without copying the owning Terminal value
     /// or reaching mutable retained storage.
+    // zig-audit: acknowledge opaque_type
+    // reason: This handle intentionally hides its backing owner layout so callers can use only the bounded public lifetime/API.
     pub const Observation = opaque {
         fn terminal(self: *const Observation) *const Terminal {
+            // zig-audit: acknowledge ptr_cast
+            // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+            // zig-audit: acknowledge align_cast
+            // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
             return @ptrCast(@alignCast(self));
         }
 
@@ -5859,6 +5927,8 @@ pub const Terminal = struct {
 
     fn requireNoPreparedResize(self: *const Terminal) void {
         if (self.resize_prepared)
+            // zig-audit: acknowledge panic
+            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             @panic("terminal mutation during prepared resize");
     }
 
@@ -6154,6 +6224,8 @@ pub const Terminal = struct {
             output[prefix.len..],
             "48;{d};{d};{d};{d}t",
             .{ rows, cols, pixel_height, pixel_width },
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         ) catch unreachable;
         return @intCast(prefix.len + payload.len);
     }
@@ -6496,6 +6568,8 @@ pub const Terminal = struct {
         const changed = self.applyModeEventInner(event);
         // Mode commands cannot change the cell/pixel dimensions or reply framing
         // of an enable/restore group; all fallible reply work was admitted above.
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         for (0..reports) |_| self.reply_buffer.append(report_bytes[0..report_len]) catch unreachable;
         return changed or reports != 0;
     }
@@ -6580,6 +6654,8 @@ pub const Terminal = struct {
             .dec_mode_reset => |modes| return self.setDecModes(modes.params[0..modes.param_count], false),
             .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
             .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         }
     }
@@ -6798,6 +6874,8 @@ pub const Terminal = struct {
 
     /// Lends a mechanically read-only capability over this live Terminal.
     pub fn observation(self: *const Terminal) *const Observation {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         return @ptrCast(self);
     }
 
@@ -6865,6 +6943,8 @@ pub const Terminal = struct {
         const cell = self.cellPixelSize();
         const bank: graphics_mod.Bank = if (view.is_alternate_screen) .alternate else .primary;
         return .{
+            // zig-audit: acknowledge ptr_cast
+            // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
             .plane = @ptrCast(&self.graphics),
             .bank = bank,
             .view = view,
@@ -7109,6 +7189,8 @@ pub const Terminal = struct {
                         break;
                     }
                     if (separator != 0) try text.append(allocator, '\n');
+                    // zig-audit: acknowledge orelse_unreachable
+                    // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
                     const storage = primary.output_text orelse unreachable;
                     for (line_text.slices(storage)) |slice| {
                         try text.appendSlice(allocator, slice);
@@ -7247,6 +7329,8 @@ pub const Terminal = struct {
             error.KeyTextLimit => return error.KeyTextLimit,
             // InputScratch is mechanically larger than the complete encoding
             // bound asserted above; callers cannot reach this encoder error.
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             error.EncodingLimit => unreachable,
         };
         if (self.modes.meta_sends_escape and event.mods.alt and
@@ -7314,6 +7398,8 @@ pub const Terminal = struct {
         if (request.protocol != .osc52 or request.kind != .set) return null;
         const decoded = clipboard_mod.decodeSet(allocator, request.payload) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
+            // zig-audit: acknowledge panic
+            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             else => @panic("retained OSC 52 set failed prior grammar validation"),
         };
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
@@ -7338,11 +7424,15 @@ pub const Terminal = struct {
         if (request.protocol != .osc52 or request.kind != .set) return null;
         const decoded_len: usize = @intCast(
             clipboard_mod.decodedSetSize(request.payload) catch
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("retained OSC 52 set failed prior grammar validation"),
         );
         if (decoded_len > max_bytes) return error.ClipboardLimit;
         return clipboard_mod.decodeSet(allocator, request.payload) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
+            // zig-audit: acknowledge panic
+            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             else => @panic("retained OSC 52 set failed prior grammar validation"),
         };
     }
@@ -7550,11 +7640,15 @@ fn appendContainerReply(
         .position => |position| try output.appendCsi(
             .iterm,
             std.fmt.bufPrint(scratch.buf[0..], "3;{d};{d}t", .{ position.x, position.y }) catch
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("bounded container-position reply exceeded scratch"),
         ),
         .screen_cells => |size| try output.appendCsi(
             .iterm,
             std.fmt.bufPrint(scratch.buf[0..], "9;{d};{d}t", .{ size.rows, size.cols }) catch
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("bounded screen-cell reply exceeded scratch"),
         ),
         .icon_title => |title| {

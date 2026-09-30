@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
     );
     std.debug.assert(b.modules.get("howl_text") == text_module);
 
-    const check = b.step("check", "Compile the Howl core and run source audit");
+    const check = b.step("check", "Compile the Howl core and run required audits");
     const test_step = b.step("test", "Run every Howl core proof");
 
     inline for (children) |child| {
@@ -45,10 +45,15 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&logger_tests.step);
     test_step.dependOn(&b.addRunArtifact(logger_tests).step);
 
-    const audit = b.step("audit", "Audit maintained Zig source");
-    const audit_command = b.addSystemCommand(&.{ "bash", "tools/audit_source.sh" });
-    audit_command.setName("workspace source audit");
-    audit.dependOn(&audit_command.step);
+    const audit = b.step("audit", "Audit accepted Zig source and Howl project invariants");
+    const zig_audit_command = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit_command.setName("zig-audit accepted core");
+    zig_audit_command.setCwd(b.path("."));
+    audit.dependOn(&zig_audit_command.step);
+
+    const project_audit_command = b.addSystemCommand(&.{ "bash", "tools/audit_project.sh" });
+    project_audit_command.setName("Howl project audit");
+    audit.dependOn(&project_audit_command.step);
     check.dependOn(audit);
 
     const protocol = b.step("protocol", "Validate the protocol catalogue");
@@ -84,9 +89,13 @@ fn addChildBuild(
     command.setCwd(b.path(child));
     command.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
 
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     const target_text = target.query.zigTriple(b.allocator) catch @panic("OOM");
     command.addArg(b.fmt("-Dtarget={s}", .{target_text}));
 
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
     const cpu_text = target.query.serializeCpuAlloc(b.allocator) catch @panic("OOM");
     if (cpu_text.len != 0) {
         command.addArg(b.fmt("-Dcpu={s}", .{cpu_text}));

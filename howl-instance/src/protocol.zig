@@ -914,6 +914,8 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     usize,
     maximum_text_snapshot_bytes,
     @as(usize, maximum_payload_bytes),
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
 ) catch unreachable;
 
 /// Hard upper bound for one complete v10 observation response.
@@ -2174,6 +2176,8 @@ fn enumFromInt(comptime Enum: type, value: @typeInfo(Enum).@"enum".tag_type) ?En
 }
 
 fn advance(value: *u64) void {
+    // zig-audit: acknowledge panic
+    // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
     value.* = std.math.add(u64, value.*, 1) catch @panic("protocol revision exhausted");
 }
 

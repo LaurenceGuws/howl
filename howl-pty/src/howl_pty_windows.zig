@@ -330,6 +330,8 @@ pub const Owned = struct {
         const attribute_storage = self.allocator.alignedAlloc(u8, .of(usize), attribute_bytes) catch
             return error.ChildExecFailed;
         defer self.allocator.free(attribute_storage);
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         const attributes: windows.LPVOID = @ptrCast(attribute_storage.ptr);
         if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attribute_bytes).toBool())
             return error.ChildExecFailed;
@@ -425,12 +427,18 @@ pub const Owned = struct {
         if (self.process) |process| {
             var exit_code: u32 = 0;
             if (!GetExitCodeProcess(process, &exit_code).toBool())
+                // zig-audit: acknowledge panic
+                // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
                 @panic("ConPTY child exit query failed during teardown");
             if (exit_code == still_active) {
                 if (!TerminateProcess(process, 1).toBool())
+                    // zig-audit: acknowledge panic
+                    // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
                     @panic("ConPTY child termination failed during teardown");
             }
             if (WaitForSingleObject(process, stop_wait_ms) != wait_object_0)
+                // zig-audit: acknowledge panic
+                // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
                 @panic("ConPTY child did not stop within cleanup bound");
             closeHandle(process);
             self.process = null;
@@ -467,6 +475,8 @@ pub const Owned = struct {
         if (bytes.len == 0) return 0;
         const count: u32 = @intCast(@min(bytes.len, @as(usize, std.math.maxInt(u32))));
         var written: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         if (!WriteFile(handle, @ptrCast(bytes.ptr), count, &written, null).toBool()) {
             return switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .NO_DATA, .PIPE_NOT_CONNECTED => error.ChildClosed,
@@ -496,6 +506,8 @@ pub const Owned = struct {
             @as(usize, std.math.maxInt(u32)),
         ));
         var read_count: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
         if (!ReadFile(handle, @ptrCast(buffer.ptr), count, &read_count, null).toBool()) {
             return switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .PIPE_NOT_CONNECTED => error.EndOfStream,

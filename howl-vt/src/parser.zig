@@ -498,6 +498,8 @@ pub const Parser = struct {
                     };
                 },
             },
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         };
     }
@@ -640,6 +642,8 @@ pub const Parser = struct {
                     std.debug.assert(self.activeControlCount() == 1);
                     break :sos .sos_start;
                 },
+                // zig-audit: acknowledge unreachable
+                // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                 else => unreachable,
             },
             else => null,
@@ -684,9 +688,13 @@ pub const Parser = struct {
             },
             .csi_dispatch => self.consumeCsiDispatch(byte),
             .osc_put => osc_put: {
+                // zig-audit: acknowledge orelse_unreachable
+                // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
                 const result = self.osc.feed(byte) orelse unreachable;
                 switch (result) {
                     .put => {},
+                    // zig-audit: acknowledge unreachable
+                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     .finish => unreachable,
                 }
                 break :osc_put null;
@@ -695,6 +703,8 @@ pub const Parser = struct {
                 const result = self.dcs.feed(byte) orelse break :put null;
                 break :put switch (result) {
                     .put => |payload_byte| .{ .dcs_put = payload_byte },
+                    // zig-audit: acknowledge unreachable
+                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                     .finish => unreachable,
                 };
             },
@@ -704,6 +714,8 @@ pub const Parser = struct {
                         const result = self.apc.feed(byte) orelse break :apc null;
                         break :apc switch (result) {
                             .put => |payload_byte| .{ .apc_put = payload_byte },
+                            // zig-audit: acknowledge unreachable
+                            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                             .finish => unreachable,
                         };
                     },
@@ -711,6 +723,8 @@ pub const Parser = struct {
                         const result = self.pm.feed(byte) orelse break :pm null;
                         break :pm switch (result) {
                             .put => |payload_byte| .{ .pm_put = payload_byte },
+                            // zig-audit: acknowledge unreachable
+                            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                             .finish => unreachable,
                         };
                     },
@@ -718,6 +732,8 @@ pub const Parser = struct {
                         const result = self.sos.feed(byte) orelse break :sos null;
                         break :sos switch (result) {
                             .put => |payload_byte| .{ .sos_put = payload_byte },
+                            // zig-audit: acknowledge unreachable
+                            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                             .finish => unreachable,
                         };
                     },
@@ -732,6 +748,8 @@ pub const Parser = struct {
                     self.feedParamByte(.dcs, byte);
                     break :dcs null;
                 },
+                // zig-audit: acknowledge unreachable
+                // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
                 else => unreachable,
             },
         };
@@ -1721,6 +1739,8 @@ pub const OscControl = struct {
             .prefix_esc => self.feedPrefixEsc(byte),
             .payload, .payload_esc => self.feedPayload(byte),
             .raw, .raw_esc => self.feedRaw(byte),
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             .screen_title, .screen_title_esc => unreachable,
         };
     }
@@ -1756,6 +1776,8 @@ pub const OscControl = struct {
                 self.append(byte);
                 break :title_continue .{ .put = byte };
             },
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         };
     }
@@ -1837,6 +1859,8 @@ pub const OscControl = struct {
                 self.append(byte);
                 return .{ .put = byte };
             },
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         }
     }
@@ -2196,6 +2220,8 @@ fn prefixDynamicCommand(prefix: OscControl.PrefixState) u16 {
         .c117 => 117,
         .c118 => 118,
         .c119 => 119,
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         else => unreachable,
     };
 }

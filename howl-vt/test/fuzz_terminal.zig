@@ -201,6 +201,8 @@ fn encodeMouse(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
         error.OutOfMemory => return err,
         error.LengthOverflow => return err,
         // Generated key events carry no committed text.
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         error.InvalidUtf8, error.InvalidText, error.KeyTextLimit => unreachable,
     };
     defer encoded.deinit();

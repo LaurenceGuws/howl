@@ -144,6 +144,8 @@ pub fn rasterizeWithStroke(
     if (requiresStroke(codepoint)) return error.InvalidMetrics;
     @memset(pixels[0..required], 0);
     switch (family) {
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         .box => unreachable,
         .powerline => switch (codepoint) {
             0xe0b0, 0xe0b2, 0xe0b4, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be => try generated_powerline
@@ -153,6 +155,8 @@ pub fn rasterizeWithStroke(
                 height_px,
                 codepoint,
             ),
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => unreachable,
             else => try generated_powerline.rasterizeGeneratedPowerlineAlpha(
                 pixels,
@@ -162,6 +166,8 @@ pub fn rasterizeWithStroke(
                 box_drawing,
             ),
         },
+        // zig-audit: acknowledge unreachable
+        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
         .progress => unreachable,
         .branch => if (codepoint == 0xf5ee)
             try generated_branch.rasterize(
@@ -172,6 +178,8 @@ pub fn rasterizeWithStroke(
                 null,
             )
         else
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             unreachable,
         .block => try generated_block.rasterizeGeneratedBlockAlpha(
             pixels,

@@ -715,6 +715,10 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
         metrics.underline_height = line.height;
     }
     if (c.FT_Get_Sfnt_Table(face, c.FT_SFNT_OS2)) |raw_os2| {
+        // zig-audit: acknowledge ptr_cast
+        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // zig-audit: acknowledge align_cast
+        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
         const os2: *const c.TT_OS2 = @ptrCast(@alignCast(raw_os2));
         if (lineFromFontUnits(
             os2.yStrikeoutPosition,
@@ -917,6 +921,8 @@ fn bitmapGeometry(bitmap: c.FT_Bitmap) BitmapGeometryError!BitmapGeometry {
     const source_address = buffer_address - preceding_bytes;
     if (source_bytes > std.math.maxInt(usize) - source_address)
         return error.InvalidBitmap;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: The numeric address was derived from validated in-buffer raster storage; bounds and lifetime are established before pointer recovery.
     const source: [*]const u8 = @ptrFromInt(source_address);
     return .{
         .mode = mode,
@@ -1017,11 +1023,15 @@ fn requireHbBuffer(buffer: *c.hb_buffer_t) error{HarfBuzzBuffer}!void {
 
 fn doneFace(face: c.FT_Face) void {
     if (c.FT_Done_Face(face) != 0)
+        // zig-audit: acknowledge panic
+        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
         @panic("FreeType rejected an owned face during cleanup");
 }
 
 fn doneLibrary(library: c.FT_Library) void {
     if (c.FT_Done_FreeType(library) != 0)
+        // zig-audit: acknowledge panic
+        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
         @panic("FreeType rejected an owned library during cleanup");
 }
 
@@ -1058,6 +1068,8 @@ test "nonstandard gray levels normalize or reject exact samples" {
 
 test "bitmap geometry rejects hostile external input before slicing" {
     var byte: u8 = 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
     const pointer: [*]u8 = @ptrCast(&byte);
     try expectBitmapError(error.UnsupportedPixelMode, 0, 1, 1, 1, pointer);
     try expectBitmapError(error.InvalidBitmap, c.FT_PIXEL_MODE_GRAY, 2, 1, 1, pointer);
@@ -1090,6 +1102,8 @@ test "bitmap geometry rejects hostile external input before slicing" {
         1,
         2,
         -1,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This proof/ABI path needs a deterministic non-null opaque-handle sentinel; the synthetic pointer is never dereferenced.
         @ptrFromInt(1),
     );
     try std.testing.expectError(
@@ -1102,6 +1116,8 @@ test "bitmap geometry rejects hostile external input before slicing" {
         1,
         1,
         1,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This proof/ABI path needs a deterministic non-null opaque-handle sentinel; the synthetic pointer is never dereferenced.
         @ptrFromInt(std.math.maxInt(usize)),
     );
     try std.testing.expectError(
@@ -1335,6 +1351,8 @@ fn expectSyntheticAlpha(
         width,
         height,
         pitch,
+        // zig-audit: acknowledge const_cast
+        // reason: The external raster API requires a mutable pointer type for borrowed bytes; this path does not mutate the source storage.
         @constCast(bytes.ptr + row_offset),
     );
     const geometry = try bitmapGeometry(bitmap);

@@ -144,7 +144,7 @@ compile and audit Howl.
 
 ## Build
 
-Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`:
+Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`. The root core gate also requires `zig-audit` with stable ruleset 2 or newer:
 
 ```sh
 test "$(zig version)" = "$(cat .zigversion)"
@@ -157,10 +157,15 @@ zig build audit
 Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed
 compiler; the repository owns only the version pin.
 
-`VERSION` is the current workspace release marker. The source audit requires all
+`VERSION` is the current workspace release marker. The Howl project audit requires all
 current `build.zig.zon` manifests, `project_version_scope.yml`, the native CLI,
 Odin app metadata, and Flutter's base version to agree with it; versioned embedding
 examples remain deliberately frozen at their named historical contract.
+
+`.zig-audit.json` uses schema 2 and ruleset 2 over the accepted core source, its build
+glue, and the VT unit-proof root. Intentional sharp constructs are acknowledged beside
+the exact source with a reason. Experimental clients remain outside the root core audit
+until promoted; their package-local gates still own their proofs.
 
 Each tracked core module owns its own `build.zig` and proofs. Root gates curate the
 local core and frozen wire vectors. Python 3 is used only as build-time evidence for

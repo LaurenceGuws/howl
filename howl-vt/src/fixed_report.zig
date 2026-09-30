@@ -33,6 +33,8 @@ pub fn appendPrimaryDeviceAttributes(
         encode_buffer,
         "?{d};22c",
         .{dec_conformance_level},
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -58,6 +60,8 @@ pub fn appendTitleStackPosition(
         encode_buffer,
         "{d};{d}#S",
         .{ current, maximum },
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -90,6 +94,8 @@ pub fn appendScreenExtent(
         encode_buffer,
         "{d};{d};1;1;1\"w",
         .{ view.rows, view.cols },
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -105,6 +111,8 @@ pub fn appendTerminalParameters(
         encode_buffer,
         "{d};1;1;128;128;1;0x",
         .{kind + 2},
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -120,6 +128,8 @@ pub fn appendRectChecksum(
         encode_buffer,
         "{d}!~{X:0>4}",
         .{ request_id, checksum },
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
     ) catch unreachable;
     try output.appendString(.terminal, .dcs, payload);
 }
@@ -133,8 +143,12 @@ fn appendCursor(
     const row = cursorCoordinate(view.cursor_row, view.origin_top, view.origin_mode);
     const column = cursorCoordinate(view.cursor_col, view.origin_left, view.origin_mode);
     const payload = if (private)
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         std.fmt.bufPrint(encode_buffer, "?{d};{d}R", .{ row, column }) catch unreachable
     else
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
         std.fmt.bufPrint(encode_buffer, "{d};{d}R", .{ row, column }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
