@@ -13,7 +13,6 @@ pub fn build(b: *std.Build) void {
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = optimize,
-        .native_text = true,
         .bundled_text = true,
     });
     const text = b.dependency("howl_text", .{

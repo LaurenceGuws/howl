@@ -3,24 +3,55 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const native_enabled = b.option(
+    const renderer_enabled = b.option(
         bool,
-        "native_text",
-        "Expose terminal presentation backed by howl-text",
+        "renderer",
+        "Build the terminal renderer module and its howl-text dependencies",
     ) orelse true;
     const bundled_text = b.option(
         bool,
         "bundled_text",
         "Build howl-text with its pinned target FreeType/HarfBuzz sources",
     ) orelse false;
-    if (bundled_text and !native_enabled)
-        @panic("bundled_text requires native_text");
+    if (bundled_text and !renderer_enabled)
+        @panic("bundled_text requires renderer");
 
-    const root_source = if (native_enabled)
-        b.path("src/root_native.zig")
-    else
-        b.path("src/root.zig");
+    // Always expose the small dependency-free limits contract. The Web wire
+    // client uses this without constructing the terminal renderer or text stack.
+    const limits = b.addModule("howl_render_limits", .{
+        .root_source_file = b.path("src/limits.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
+    const check = b.step("check", "Compile maintained howl-render proofs");
+    const test_step = b.step("test", "Run maintained howl-render proofs");
+
+    if (!renderer_enabled) {
+        // Freestanding consumers need a compile proof, not std's process-backed
+        // test runner. The full renderer build below executes limits.zig tests.
+        const limits_check = b.addObject(.{
+            .name = "howl-render-limits-check",
+            .root_module = limits,
+            .use_llvm = false,
+            .use_lld = false,
+        });
+        check.dependOn(&limits_check.step);
+        test_step.dependOn(&limits_check.step);
+        b.default_step = check;
+        return;
+    }
+
+    const limits_tests = b.addTest(.{
+        .name = "howl-render-limits",
+        .root_module = limits,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&limits_tests.step);
+    test_step.dependOn(&b.addRunArtifact(limits_tests).step);
+
+    const root_source = b.path("src/root.zig");
     const module = b.addModule("howl_render", .{
         .root_source_file = root_source,
         .target = target,
@@ -31,113 +62,72 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-
-    const limits = b.createModule(.{
-        .root_source_file = b.path("src/limits.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     module.addImport("limits", limits);
     test_module.addImport("limits", limits);
 
-    var vt: ?*std.Build.Module = null;
-    var client: ?*std.Build.Module = null;
-    var text: ?*std.Build.Module = null;
-    var text_test_fonts: ?*std.Build.Module = null;
-    if (native_enabled) {
-        vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt");
-        const client_dependency = b.dependency("howl_client", .{
-            .target = target,
-            .optimize = optimize,
-        });
-        client = client_dependency.module("howl_client");
-
-        const text_dependency = b.dependency("howl_text", .{
-            .target = target,
-            .optimize = optimize,
-            .bundled = bundled_text,
-        });
-        text = text_dependency.module("howl_text");
-        text_test_fonts = text_dependency.module("howl_text_test_fonts");
-
-        module.addImport("howl_text", text.?);
-        test_module.addImport("howl_text", text.?);
-
-        const source_semantics = b.createModule(.{
-            .root_source_file = b.path("src/source.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        const renderer = rendererModule(
-            b,
-            target,
-            optimize,
-            limits,
-            source_semantics,
-            text.?,
-        );
-        const terminal = terminalModule(
-            b,
-            target,
-            optimize,
-            renderer,
-            source_semantics,
-            client.?,
-            vt.?,
-        );
-        module.addImport("terminal", terminal);
-        test_module.addImport("terminal", terminal);
-    }
-
-    const selected = b.addOptions();
-    selected.addOption(bool, "native_text", native_enabled);
-    const capability_tests = b.createModule(.{
-        .root_source_file = b.path("src/capability_test.zig"),
+    const vt = b.dependency("howl_vt", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("howl_vt");
+    const client_dependency = b.dependency("howl_client", .{
         .target = target,
         .optimize = optimize,
     });
-    capability_tests.addImport("howl_render", test_module);
-    capability_tests.addImport("selected_capabilities", selected.createModule());
-    if (client) |value| capability_tests.addImport("howl_client", value);
-    if (text) |value| capability_tests.addImport("howl_text", value);
-    if (text_test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
+    const client = client_dependency.module("howl_client");
 
-    const tests = b.addTest(.{
-        .name = "howl-render-capabilities",
-        .root_module = capability_tests,
+    const text_dependency = b.dependency("howl_text", .{
+        .target = target,
+        .optimize = optimize,
+        .bundled = bundled_text,
+    });
+    const text = text_dependency.module("howl_text");
+    const text_test_fonts = text_dependency.module("howl_text_test_fonts");
+    module.addImport("howl_text", text);
+    test_module.addImport("howl_text", text);
+
+    const source_semantics = b.createModule(.{
+        .root_source_file = b.path("src/source.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const renderer = rendererModule(
+        b,
+        target,
+        optimize,
+        limits,
+        source_semantics,
+        text,
+    );
+    const terminal = terminalModule(
+        b,
+        target,
+        optimize,
+        renderer,
+        source_semantics,
+        client,
+        vt,
+    );
+    module.addImport("terminal", terminal);
+    test_module.addImport("terminal", terminal);
+
+    const terminal_test_module = b.createModule(.{
+        .root_source_file = b.path("src/terminal_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_test_module.addImport("howl_render", test_module);
+    terminal_test_module.addImport("howl_client", client);
+    terminal_test_module.addImport("howl_vt", vt);
+    terminal_test_module.addImport("howl_text", text);
+    terminal_test_module.addImport("test_fonts", text_test_fonts);
+    const terminal_tests = b.addTest(.{
+        .name = "howl-render-terminal",
+        .root_module = terminal_test_module,
         .use_llvm = false,
         .use_lld = false,
     });
-    const check = b.step("check", "Compile selected drawing and terminal-presentation proofs");
-    check.dependOn(&tests.step);
-
-    const run_tests = b.addRunArtifact(tests);
-    run_tests.addPassthruArgs();
-    const test_step = b.step("test", "Run selected drawing and terminal-presentation proofs");
-    test_step.dependOn(&run_tests.step);
-
-    if (native_enabled) {
-        const terminal_test_module = b.createModule(.{
-            .root_source_file = b.path("src/terminal_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        terminal_test_module.addImport("howl_render", test_module);
-        terminal_test_module.addImport("howl_client", client.?);
-        terminal_test_module.addImport("howl_vt", vt.?);
-        terminal_test_module.addImport("howl_text", text.?);
-        terminal_test_module.addImport("test_fonts", text_test_fonts.?);
-        const terminal_tests = b.addTest(.{
-            .name = "howl-render-terminal",
-            .root_module = terminal_test_module,
-            .use_llvm = false,
-            .use_lld = false,
-        });
-        check.dependOn(&terminal_tests.step);
-        const run_terminal_tests = b.addRunArtifact(terminal_tests);
-        run_terminal_tests.addPassthruArgs();
-        test_step.dependOn(&run_terminal_tests.step);
-    }
+    check.dependOn(&terminal_tests.step);
+    test_step.dependOn(&b.addRunArtifact(terminal_tests).step);
 
     b.default_step = check;
 }

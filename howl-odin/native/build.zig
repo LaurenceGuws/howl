@@ -8,7 +8,6 @@ pub fn build(b: *std.Build) void {
     const render_dependency = b.dependency("howl_render", .{
         .target = target,
         .optimize = optimize,
-        .native_text = true,
         // Linux uses the installed text stack. Cross-target clients use the
         // pinned memory-only FreeType/HarfBuzz sources already owned by Howl.
         .bundled_text = target.result.os.tag != .linux,

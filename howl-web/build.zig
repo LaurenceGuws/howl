@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = .ReleaseSafe,
-        .native_text = false,
+        .renderer = false,
     });
     const root = b.createModule(.{
         .root_source_file = b.path("src/wasm.zig"),
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseSafe,
     });
     root.addImport("howl_client", client_module);
-    root.addImport("howl_render", render.module("howl_render"));
+    root.addImport("limits", render.module("howl_render_limits"));
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;
     root.export_symbol_names = &.{

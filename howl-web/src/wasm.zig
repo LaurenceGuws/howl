@@ -3,8 +3,7 @@ const std = @import("std");
 const client = @import("howl_client");
 const p = client.protocol;
 const rich = client.rich;
-const render = @import("howl_render");
-const limits = render.limits;
+const limits = @import("limits");
 
 // A deliberately coarse canary budget, not the final terminal-renderer budget.
 var input: [32768]u8 = undefined;

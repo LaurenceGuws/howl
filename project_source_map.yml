@@ -83,8 +83,11 @@ experimental:
   howl-render: >-
     backend-independent terminal-frame projection backed by howl-text. Thin source
     adapters accept canonical VT Observation, validated borrowed howl-client.rich,
-    or owned howl-client.view storage while the source-neutral projector itself
-    knows no VT owner, client transport, window system, or graphics backend. It owns
+    or owned howl-client.view storage while the source-neutral renderer itself
+    knows no VT owner, client transport, window system, or graphics backend. The
+    package separately exposes dependency-free `howl_render_limits` for wire-only
+    consumers; its full root re-exports the exact howl-text module instance so
+    caller-owned FontSet values preserve Zig type identity. It owns
     terminal pixel geometry, colors/decorations/cursor projection, caller-supplied
     regular/italic/bold/bold-italic face selection with deterministic fallback,
     bounded shape/alpha-atlas caching, exact terminal-image resource projection,
