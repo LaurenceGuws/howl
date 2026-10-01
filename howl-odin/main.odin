@@ -1331,6 +1331,13 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
             return false
         }
     }
+    // Bridge metadata belongs to the accepted front cut. Every pending
+    // upload and command has now decoded successfully, so publish that cut
+    // before reading revision/history/presentation facts from it. Reading
+    // these accessors first lags history by one frame and can replay the same
+    // slow wheel offset indefinitely.
+    render_accept(view.canvas)
+
     if view.canvas_commands != nil {
         delete(view.canvas_commands)
     }
@@ -1344,7 +1351,6 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     view.canvas_scale = view.canvas_render_scale
     view.canvas_frame_font_pixels = view.canvas_font_pixels
     view.canvas_worker_has_frame = true
-    render_accept(view.canvas)
     accept_history_snapshot(
         view,
         view.canvas_history_offset,

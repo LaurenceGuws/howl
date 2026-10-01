@@ -318,3 +318,26 @@ late_history_frame_cannot_overwrite_newer_navigation_or_live_intent :: proc(t: ^
     testing.expect_value(t, view.history_target_offset, u32(0))
     testing.expect(t, !view.history_anchor_valid)
 }
+
+@(test)
+slow_history_wheel_acceptance_advances_instead_of_replaying_one_offset :: proc(t: ^testing.T) {
+    view := Instance_View{
+        history_count = 100,
+        history_row_base = 50,
+    }
+
+    expected_offsets := [3]u32{3, 6, 9}
+    for expected in expected_offsets {
+        testing.expect(t, scroll_history_wheel(&view, 1))
+        testing.expect_value(t, view.history_target_offset, expected)
+        generation := view.history_generation
+
+        // This is the metadata of the frame just accepted by the render bridge.
+        // The bridge contract deliberately does not expose it until render_accept.
+        accept_history_snapshot(&view, expected, 100, 50, false, generation)
+
+        testing.expect_value(t, view.history_target_offset, expected)
+        testing.expect_value(t, view.history_anchor_top_row, u64(150 - expected))
+        testing.expect(t, view.history_anchor_valid)
+    }
+}

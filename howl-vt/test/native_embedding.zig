@@ -93,3 +93,46 @@ test "native observation capability hides retained owners" {
     const mark_pointer = @typeInfo(@TypeOf(observation.shellMark().metadata)).pointer;
     try std.testing.expect(mark_pointer.attrs.@"const");
 }
+
+
+test "wrapped history offset advances exactly one physical row" {
+    var terminal = try howl_vt.Terminal.initWithHistory(std.testing.allocator, 6, 24, 128);
+    defer terminal.deinit();
+
+    const replay =
+        "/projects/device-reader-integration/requirements/source/\r\n" ++
+        "./workspace/docs/projects/resident-booking/requirements/source/Resident Facility Booking module specification and acceptance notes.docx\r\n" ++
+        "./workspace/docs/projects/product-catalogue/reference/product-and-feature-catalogue-with-long-descriptive-filename.pdf\r\n" ++
+        "./workspace/docs/projects/scanner-replatform/architecture/source/scanner_replatform_architecture_and_migration_notes.pdf\r\n" ++
+        "./workspace/docs/projects/secure-device-control/requirements/source/Secure Device Control Solution for Smart Access Hardware.docx\r\n" ++
+        "./workspace/docs/projects/third-party-integration/guides/gateway-client-installation-and-troubleshooting-guide.md\r\n" ++
+        "./workspace/docs/scripts/environment-refresh/restore-and-validate-after-refresh.sh\r\n";
+    try std.testing.expect((try terminal.feed(replay)).stateChanged());
+
+    const live = terminal.semanticView(0);
+    try std.testing.expect(live.history_count > 10);
+    const max_offset = @min(live.history_count, 20);
+    var previous: [6][24]u21 = undefined;
+    var previous_wrapped: [6]bool = undefined;
+    {
+        const view = terminal.semanticView(0);
+        for (0..view.rows) |row| {
+            previous_wrapped[row] = view.rowWrapped(@intCast(row));
+            for (0..view.cols) |col| previous[row][col] = view.cellAt(@intCast(row), @intCast(col));
+        }
+    }
+    var offset: u32 = 1;
+    while (offset <= max_offset) : (offset += 1) {
+        const view = terminal.semanticView(offset);
+        for (1..view.rows) |row| {
+            try std.testing.expectEqual(previous_wrapped[row - 1], view.rowWrapped(@intCast(row)));
+            for (0..view.cols) |col| {
+                try std.testing.expectEqual(previous[row - 1][col], view.cellAt(@intCast(row), @intCast(col)));
+            }
+        }
+        for (0..view.rows) |row| {
+            previous_wrapped[row] = view.rowWrapped(@intCast(row));
+            for (0..view.cols) |col| previous[row][col] = view.cellAt(@intCast(row), @intCast(col));
+        }
+    }
+}
