@@ -1,11 +1,11 @@
-//! Private final-frame vocabulary for one terminal presentation.
+//! Backend-independent final-frame vocabulary for one terminal presentation.
 //!
 //! There is exactly one terminal resource identity space. This file owns
 //! clipping, exact resource metadata, backend residency comparison, and final
 //! command projection only. It owns no retained terminal state.
 
 const std = @import("std");
-const validation = @import("terminal_frame_validation.zig");
+const validation = @import("frame_validation.zig");
 
 pub const Error = error{
     InvalidSurface,

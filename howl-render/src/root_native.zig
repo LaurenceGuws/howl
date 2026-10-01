@@ -1,7 +1,7 @@
-//! Exposes the one shared terminal presentation owner.
+//! Exposes terminal-frame projection backed by howl-text.
 
-/// Owns the bounded maintained-client presentation envelope.
-pub const presentation = @import("presentation");
+/// Exposes shared terminal-frame storage limits.
+pub const limits = @import("limits");
 /// Temporary package-graph pass-through; implementation ownership remains howl-text.
 pub const text = @import("howl_text");
 /// Owns semantic terminal-to-backend presentation, resources, and final frames.

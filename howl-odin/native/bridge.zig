@@ -227,7 +227,7 @@ test "only validated Unix endpoints avoid same-machine text compression" {
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
-const render_command_capacity: usize = render.presentation.maximum_canvas_commands;
+const render_command_capacity: usize = render.limits.maximum_canvas_commands;
 const RenderImageBinding = terminal_render.ExternalImageBinding;
 
 const ExternalUpload = struct {
@@ -319,7 +319,7 @@ const maximum_search_retries: usize = 8;
 const RenderFront = struct {
     frame_revision: u64 = 0,
     begin: ?protocol.SnapshotBegin = null,
-    selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
+    selection_rows: [render.limits.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     background_rgba: u32 = 0xff211918,
 };
@@ -380,7 +380,7 @@ const Render = struct {
     frame_revision: u64 = 0,
     // Pending snapshot facts are published only after the host accepts resources.
     begin: ?protocol.SnapshotBegin = null,
-    selection_rows: [render.presentation.maximum_rows]client.selection.RowShape = undefined,
+    selection_rows: [render.limits.maximum_rows]client.selection.RowShape = undefined,
     surface: canvas.Size = .{ .width = 1, .height = 1 },
     background_rgba: u32 = 0xff211918,
     last_error: [160]u8 = undefined,
@@ -931,11 +931,11 @@ pub export fn howl_odin_bridge_render_cell_height(raw: ?*RenderHandle) u16 {
 }
 
 pub export fn howl_odin_bridge_render_maximum_rows() u16 {
-    return render.presentation.maximum_rows;
+    return render.limits.maximum_rows;
 }
 
 pub export fn howl_odin_bridge_render_maximum_columns() u16 {
-    return render.presentation.maximum_columns;
+    return render.limits.maximum_columns;
 }
 
 pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {

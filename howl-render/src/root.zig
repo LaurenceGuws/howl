@@ -1,4 +1,4 @@
-//! Exposes the maintained presentation envelope without native terminal text.
+//! Exposes the maintained terminal-frame limits without terminal text projection.
 
-/// Owns the bounded maintained-client presentation envelope.
-pub const presentation = @import("presentation");
+/// Exposes shared terminal-frame storage limits.
+pub const limits = @import("limits");

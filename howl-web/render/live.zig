@@ -11,7 +11,7 @@ fn trapPanic(_: []const u8, _: ?usize) noreturn {
     @trap();
 }
 
-const command_capacity = render.presentation.maximum_canvas_commands;
+const command_capacity = render.limits.maximum_canvas_commands;
 const command_record_bytes: usize = 64;
 const command_wire_bytes: usize = command_capacity * command_record_bytes;
 const metadata_capacity: usize = 32 * 1024 * 1024;

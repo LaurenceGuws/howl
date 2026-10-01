@@ -7,7 +7,7 @@ const protocol = client.protocol;
 const text = @import("howl_text");
 const terminal = @import("terminal");
 const canvas = terminal;
-const presentation = @import("presentation");
+const limits = @import("limits");
 
 const host_header_bytes: usize = 64;
 const global_header_bytes: usize = 16;
@@ -20,7 +20,7 @@ const image_refill_header_bytes: usize = 56;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
-const selection_rows_capacity: usize = presentation.maximum_rows * @sizeOf(u16);
+const selection_rows_capacity: usize = limits.maximum_rows * @sizeOf(u16);
 // Reuse one bounded decode/projection arena for every observation so dense live
 // frames do not churn the process-global malloc arenas. Web uses the same
 // reset-per-frame ownership model around this shared rich/view pipeline.
@@ -37,7 +37,7 @@ const maximum_non_command_packet_bytes: usize = host_header_bytes + global_heade
     maximum_frame_resources * removal_record_bytes + pixel_capacity;
 // Maintained native and Web clients share one renderer-owned geometry and
 // command envelope. The private Host packet remains separately byte-bounded.
-const command_capacity: usize = presentation.maximum_canvas_commands;
+const command_capacity: usize = limits.maximum_canvas_commands;
 // Retain one bounded common interactive row-command window. Larger/richer
 // frames use the complete terminal projection path unchanged.
 const incremental_command_capacity: usize = 8 * 1024;
@@ -207,7 +207,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
         .shaped_capacity = 32,
         .raster_bytes = raster_bytes,
         .command_capacity = command_capacity,
-        .incremental_row_capacity = presentation.maximum_rows,
+        .incremental_row_capacity = limits.maximum_rows,
         .incremental_command_capacity = incremental_command_capacity,
     };
 }
@@ -218,12 +218,12 @@ pub export fn howl_native_host_version() u32 {
 
 /// Reports the shared maintained-client row envelope.
 pub export fn howl_native_host_maximum_rows() u32 {
-    return presentation.maximum_rows;
+    return limits.maximum_rows;
 }
 
 /// Reports the shared maintained-client column envelope.
 pub export fn howl_native_host_maximum_columns() u32 {
-    return presentation.maximum_columns;
+    return limits.maximum_columns;
 }
 
 /// Caller-owned cancellation exists before connection setup and is borrowed by
@@ -1560,10 +1560,10 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(?u16, 3), maintainedRasterScale(36, 24, 45));
     try std.testing.expectEqual(@as(?u16, 4), maintainedRasterScale(64, 40, 80));
     try std.testing.expectEqual(@as(?u16, null), maintainedRasterScale(17, 10, 20));
-    try std.testing.expectEqual(presentation.maximum_canvas_commands, command_capacity);
-    try std.testing.expect(command_capacity >= presentation.maximum_cells + client.view.maximum_image_placements + 1);
-    try std.testing.expectEqual(@as(u32, presentation.maximum_rows), howl_native_host_maximum_rows());
-    try std.testing.expectEqual(@as(u32, presentation.maximum_columns), howl_native_host_maximum_columns());
+    try std.testing.expectEqual(limits.maximum_canvas_commands, command_capacity);
+    try std.testing.expect(command_capacity >= limits.maximum_cells + client.view.maximum_image_placements + 1);
+    try std.testing.expectEqual(@as(u32, limits.maximum_rows), howl_native_host_maximum_rows());
+    try std.testing.expectEqual(@as(u32, limits.maximum_columns), howl_native_host_maximum_columns());
     try std.testing.expectEqual(
         maximum_non_command_packet_bytes + command_capacity * command_record_bytes +
             selection_rows_capacity + semantic_capacity,

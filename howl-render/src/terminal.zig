@@ -9,10 +9,9 @@ const std = @import("std");
 const VT = @import("howl_vt").Terminal;
 const client = @import("howl_client");
 const text = @import("howl_text");
-const drawing = @import("terminal_frame.zig");
-const canvas = drawing;
+const frame_vocabulary = @import("frame.zig");
 const generated = text.generated;
-const glyph_cache = @import("terminal_glyph_cache.zig");
+const glyph_cache = @import("glyph_cache.zig");
 
 pub const AtlasConfig = glyph_cache.AtlasConfig;
 pub const ShapeCacheConfig = glyph_cache.ShapeCacheConfig;
@@ -207,19 +206,19 @@ const VtSource = struct {
     }
 };
 
-pub const Color = drawing.Color;
-pub const Size = drawing.Size;
-pub const Rect = drawing.Rect;
-pub const SourceRect = drawing.SourceRect;
-pub const ResourceId = drawing.ResourceId;
-pub const ResourceGeneration = drawing.ResourceGeneration;
-pub const ResourceFormat = drawing.ResourceFormat;
-pub const ResourceRef = drawing.ResourceRef;
-pub const ResourceView = drawing.ResourceView;
-pub const Residency = drawing.Residency;
-pub const FrameResourceUpload = drawing.FrameResourceUpload;
-pub const FrameExternalResource = drawing.FrameExternalResource;
-pub const Command = drawing.Command;
+pub const Color = frame_vocabulary.Color;
+pub const Size = frame_vocabulary.Size;
+pub const Rect = frame_vocabulary.Rect;
+pub const SourceRect = frame_vocabulary.SourceRect;
+pub const ResourceId = frame_vocabulary.ResourceId;
+pub const ResourceGeneration = frame_vocabulary.ResourceGeneration;
+pub const ResourceFormat = frame_vocabulary.ResourceFormat;
+pub const ResourceRef = frame_vocabulary.ResourceRef;
+pub const ResourceView = frame_vocabulary.ResourceView;
+pub const Residency = frame_vocabulary.Residency;
+pub const FrameResourceUpload = frame_vocabulary.FrameResourceUpload;
+pub const FrameExternalResource = frame_vocabulary.FrameExternalResource;
+pub const Command = frame_vocabulary.Command;
 
 // File map:
 //   - bounded Content lifecycle and Canvas resource publication
@@ -230,7 +229,7 @@ pub const Command = drawing.Command;
 /// Fixes every allocation and terminal presentation lattice used by one terminal Canvas.
 /// The supplied FontSet remains caller-owned and must outlive the Canvas.
 pub const CanvasConfig = struct {
-    cell_size: canvas.Size,
+    cell_size: frame_vocabulary.Size,
     box_drawing: generated.BoxDrawingConfig,
     shape_cache: ShapeCacheConfig,
     atlas: AtlasConfig,
@@ -246,7 +245,7 @@ pub const CanvasConfig = struct {
 pub const ExternalImageBinding = struct {
     image_id: u32,
     generation: u64,
-    resource: canvas.ResourceRef,
+    resource: frame_vocabulary.ResourceRef,
 };
 
 /// Static image bound shared by maintained hosts. One resource slot is reserved
@@ -265,17 +264,17 @@ pub const CanvasUsage = struct {
 };
 
 pub const FrameBuffers = struct {
-    uploads: []canvas.FrameResourceUpload,
-    removals: []canvas.ResourceRef,
-    commands: []canvas.Command,
+    uploads: []frame_vocabulary.FrameResourceUpload,
+    removals: []frame_vocabulary.ResourceRef,
+    commands: []frame_vocabulary.Command,
     pixels: []u8,
 };
 
 pub const Frame = struct {
     revision: u64,
-    uploads: []const canvas.FrameResourceUpload,
-    removals: []const canvas.ResourceRef,
-    commands: []const canvas.Command,
+    uploads: []const frame_vocabulary.FrameResourceUpload,
+    removals: []const frame_vocabulary.ResourceRef,
+    commands: []const frame_vocabulary.Command,
     pixels: []const u8,
 };
 
@@ -284,7 +283,7 @@ pub const CanvasInitError = std.mem.Allocator.Error || ShapeCacheInitError || At
     InvalidFontFaces,
 };
 
-pub const CanvasError = AtlasError || ShapeCacheError || canvas.Error || error{
+pub const CanvasError = AtlasError || ShapeCacheError || frame_vocabulary.Error || error{
     InvalidView,
     InvalidColor,
     InvalidImageBinding,
@@ -388,13 +387,13 @@ fn planExternalImageBinding(
     allocation_cursor.* = std.math.add(u64, allocation_cursor.*, step) catch
         return error.ResourceIdentityOverflow;
     first_new.* = false;
-    if (allocation_cursor.* == 0 or allocation_cursor.* > canvas.ResourceId.max_identity)
+    if (allocation_cursor.* == 0 or allocation_cursor.* > frame_vocabulary.ResourceId.max_identity)
         return error.ResourceIdentityOverflow;
     return .{
         .image_id = image_id,
         .generation = generation,
         .resource = .{
-            .resource = canvas.ResourceId.init(allocation_cursor.*) catch
+            .resource = frame_vocabulary.ResourceId.init(allocation_cursor.*) catch
                 return error.ResourceIdentityOverflow,
             .generation = @fromBackingInt(generation),
         },
@@ -402,11 +401,11 @@ fn planExternalImageBinding(
 }
 
 const Cursor = struct {
-    rect: canvas.Rect,
-    clip: canvas.Rect,
+    rect: frame_vocabulary.Rect,
+    clip: frame_vocabulary.Rect,
     shape: View.CursorShape,
-    color: canvas.Color,
-    text_color: canvas.Color,
+    color: frame_vocabulary.Color,
+    text_color: frame_vocabulary.Color,
 };
 
 const IncrementalRowCommands = struct {
@@ -429,8 +428,8 @@ const CanvasImpl = struct {
     clusters: []u32,
     shaped: []text.Glyph,
     raster: []u8,
-    commands: []canvas.Input,
-    incremental_commands: []canvas.Input,
+    commands: []frame_vocabulary.Input,
+    incremental_commands: []frame_vocabulary.Input,
     incremental_rows: []IncrementalRowCommands,
     incremental_candidate_rows: []IncrementalRowCommands,
     incremental_rows_count: u16 = 0,
@@ -447,12 +446,12 @@ const CanvasImpl = struct {
     revision: u64 = 0,
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
-    atlas_resource_id: ?canvas.ResourceId = null,
+    atlas_resource_id: ?frame_vocabulary.ResourceId = null,
     published_images: [maximum_external_images]PublishedImage = undefined,
     published_image_count: usize = 0,
     published_atlas_generation: u64 = 0,
     published_atlas_entries: usize = 0,
-    surface: canvas.Size = .{ .width = 1, .height = 1 },
+    surface: frame_vocabulary.Size = .{ .width = 1, .height = 1 },
     command_count: usize = 0,
     cursor: ?Cursor = null,
 };
@@ -460,11 +459,11 @@ const CanvasImpl = struct {
 const PublishedImage = struct {
     image_id: u32,
     generation: u64,
-    external: canvas.ExternalResource,
+    external: frame_vocabulary.ExternalResource,
 };
 
 const ProjectedPlacement = struct {
-    command: canvas.Input,
+    command: frame_vocabulary.Input,
 };
 
 /// Allocates one bounded terminal Canvas producer.
@@ -497,9 +496,9 @@ pub fn initCanvas(
     errdefer allocator.free(shaped);
     const raster = try allocator.alloc(u8, config.raster_bytes);
     errdefer allocator.free(raster);
-    const commands = try allocator.alloc(canvas.Input, config.command_capacity);
+    const commands = try allocator.alloc(frame_vocabulary.Input, config.command_capacity);
     errdefer allocator.free(commands);
-    const incremental_commands = try allocator.alloc(canvas.Input, config.incremental_command_capacity);
+    const incremental_commands = try allocator.alloc(frame_vocabulary.Input, config.incremental_command_capacity);
     errdefer allocator.free(incremental_commands);
     const incremental_rows = try allocator.alloc(IncrementalRowCommands, config.incremental_row_capacity);
     errdefer allocator.free(incremental_rows);
@@ -712,10 +711,10 @@ fn updateInnerOnce(
     var next_resource_high_water = impl.resource_high_water;
     var next_atlas_resource_id = impl.atlas_resource_id;
     if (publish_atlas and next_atlas_resource_id == null) {
-        if (next_resource_high_water >= canvas.ResourceId.max_identity)
+        if (next_resource_high_water >= frame_vocabulary.ResourceId.max_identity)
             return error.ResourceIdentityOverflow;
         next_resource_high_water += 1;
-        next_atlas_resource_id = canvas.ResourceId.init(next_resource_high_water) catch
+        next_atlas_resource_id = frame_vocabulary.ResourceId.init(next_resource_high_water) catch
             return error.ResourceIdentityOverflow;
     }
     const atlas_resource = if (projection.has_raster) contentResource(
@@ -739,7 +738,7 @@ fn updateInnerOnce(
         const binding = findExternalImageBinding(image_bindings, image.image_id, image.generation) orelse
             return error.InvalidImageBinding;
         const published = try publishedImage(image, binding);
-        try canvas.validateExternal(published.external);
+        try frame_vocabulary.validateExternal(published.external);
         const image_identity = try contentExternalIdentity(published.external.resource);
         if (next_atlas_resource_id) |atlas_id| {
             if (atlas_id == published.external.resource.resource) return error.InvalidImageBinding;
@@ -817,17 +816,17 @@ fn updateInnerOnce(
 /// absent from exact backend residency.
 pub fn missingExternalResources(
     owner: *const Canvas,
-    residency: []const canvas.Residency,
-    output: []canvas.FrameExternalResource,
-) CanvasError![]const canvas.FrameExternalResource {
+    residency: []const frame_vocabulary.Residency,
+    output: []frame_vocabulary.FrameExternalResource,
+) CanvasError![]const frame_vocabulary.FrameExternalResource {
     const impl = constCanvasImpl(owner);
     if (!impl.frame_ready) return error.InvalidView;
-    try canvas.validateResidencies(residency);
+    try frame_vocabulary.validateResidencies(residency);
     var needed: usize = 0;
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
-        if (canvas.residencyMatches(residency, external.resource, external.format, external.size)) continue;
+        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (frame_vocabulary.residencyMatches(residency, external.resource, external.format, external.size)) continue;
         if (needed == output.len) return error.ResourceLimit;
         output[needed] = .{
             .resource = external.resource,
@@ -843,30 +842,30 @@ pub fn missingExternalResources(
 /// Derives one complete terminal frame against exact backend residency.
 pub fn frame(
     owner: *const Canvas,
-    residency: []const canvas.Residency,
+    residency: []const frame_vocabulary.Residency,
     buffers: FrameBuffers,
 ) CanvasError!Frame {
     const impl = constCanvasImpl(owner);
     if (!impl.frame_ready) return error.InvalidView;
-    try canvas.validateResidencies(residency);
+    try frame_vocabulary.validateResidencies(residency);
 
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
-        if (!canvas.residencyMatches(residency, external.resource, external.format, external.size))
+        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!frame_vocabulary.residencyMatches(residency, external.resource, external.format, external.size))
             return error.MissingExternalResource;
     }
 
     const atlas = glyph_cache.atlasView(impl.atlas);
-    const atlas_ref: ?canvas.ResourceRef = if (impl.atlas_resource_id != null and impl.resource_generation != 0)
+    const atlas_ref: ?frame_vocabulary.ResourceRef = if (impl.atlas_resource_id != null and impl.resource_generation != 0)
         contentResource(impl.atlas_resource_id.?, impl.resource_generation)
     else
         null;
     const atlas_required = if (atlas_ref) |value|
-        canvas.resourceVisible(impl.commands[0..impl.command_count], value)
+        frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], value)
     else
         false;
-    const atlas_upload = atlas_required and !canvas.residencyMatches(
+    const atlas_upload = atlas_required and !frame_vocabulary.residencyMatches(
         residency,
         atlas_ref.?,
         .alpha8,
@@ -892,7 +891,7 @@ pub fn frame(
         if (buffers.pixels.len < atlas.pixels.len) return error.PixelLimit;
     }
 
-    var projected = try canvas.project(
+    var projected = try frame_vocabulary.project(
         impl.surface,
         impl.commands[0..impl.command_count],
         buffers.commands,
@@ -937,20 +936,20 @@ pub fn frame(
 fn residencyRequired(
     impl: *const CanvasImpl,
     atlas: glyph_cache.AtlasView,
-    value: canvas.Residency,
+    value: frame_vocabulary.Residency,
 ) bool {
     if (impl.atlas_resource_id) |id| {
         if (impl.resource_generation != 0) {
             const ref = contentResource(id, impl.resource_generation);
-            if (canvas.resourceVisible(impl.commands[0..impl.command_count], ref) and
+            if (frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], ref) and
                 std.meta.eql(value.resource, ref))
                 return value.format == .alpha8 and
-                    std.meta.eql(value.size, canvas.Size{ .width = atlas.width, .height = atlas.height });
+                    std.meta.eql(value.size, frame_vocabulary.Size{ .width = atlas.width, .height = atlas.height });
         }
     }
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!canvas.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
         if (std.meta.eql(value.resource, external.resource))
             return value.format == external.format and std.meta.eql(value.size, external.size);
     }
@@ -964,7 +963,7 @@ fn cursorCommandUpperBound(impl: *const CanvasImpl) CanvasError!usize {
     for (impl.commands[0..impl.command_count]) |command| switch (command) {
         .alpha_mask => |value| {
             if (value.cursor_component and
-                (try canvas.intersectRects(value.destination, cursor.rect)) != null)
+                (try frame_vocabulary.intersectRects(value.destination, cursor.rect)) != null)
                 count = std.math.add(usize, count, 1) catch return error.CommandLimit;
         },
         else => {},
@@ -974,7 +973,7 @@ fn cursorCommandUpperBound(impl: *const CanvasImpl) CanvasError!usize {
 
 fn appendCursorCommands(
     impl: *const CanvasImpl,
-    commands: []canvas.Command,
+    commands: []frame_vocabulary.Command,
     used: *usize,
 ) CanvasError!void {
     const cursor = impl.cursor orelse return;
@@ -1000,8 +999,8 @@ fn appendCursorCommands(
     for (impl.commands[0..impl.command_count]) |command| switch (command) {
         .alpha_mask => |value| {
             if (!value.cursor_component) continue;
-            const clip = (try canvas.intersectRects(value.clip, cursor.clip)) orelse continue;
-            const cursor_clip = (try canvas.intersectRects(clip, cursor.rect)) orelse continue;
+            const clip = (try frame_vocabulary.intersectRects(value.clip, cursor.clip)) orelse continue;
+            const cursor_clip = (try frame_vocabulary.intersectRects(clip, cursor.rect)) orelse continue;
             try appendProjectedInput(impl.surface, .{ .alpha_mask = .{
                 .destination = value.destination,
                 .clip = cursor_clip,
@@ -1015,14 +1014,14 @@ fn appendCursorCommands(
 }
 
 fn appendProjectedInput(
-    surface: canvas.Size,
-    input: canvas.Input,
-    commands: []canvas.Command,
+    surface: frame_vocabulary.Size,
+    input: frame_vocabulary.Input,
+    commands: []frame_vocabulary.Command,
     used: *usize,
 ) CanvasError!void {
     if (used.* == commands.len) return error.CommandLimit;
-    var one = [_]canvas.Input{input};
-    const projected = try canvas.project(surface, &one, commands[used.*..]);
+    var one = [_]frame_vocabulary.Input{input};
+    const projected = try frame_vocabulary.project(surface, &one, commands[used.*..]);
     if (projected.len == 1) used.* += 1;
 }
 
@@ -1033,12 +1032,12 @@ const maximum_operator_run_cells: usize = 4;
 const content_image_below_background_threshold: i32 = std.math.minInt(i32) / 2;
 
 const ContentCellColors = struct {
-    foreground: canvas.Color,
-    background: canvas.Color,
-    underline: canvas.Color,
+    foreground: frame_vocabulary.Color,
+    background: frame_vocabulary.Color,
+    underline: frame_vocabulary.Color,
 };
 
-fn contentSurfaceSize(begin: anytype, cell_size: canvas.Size) CanvasError!canvas.Size {
+fn contentSurfaceSize(begin: anytype, cell_size: frame_vocabulary.Size) CanvasError!frame_vocabulary.Size {
     const width = std.math.mul(
         u32,
         @as(u32, contentColumns(begin)),
@@ -1055,11 +1054,11 @@ fn contentSurfaceSize(begin: anytype, cell_size: canvas.Size) CanvasError!canvas
     return .{ .width = @intCast(width), .height = @intCast(height) };
 }
 
-fn contentSurfaceRect(size: canvas.Size) canvas.Rect {
+fn contentSurfaceRect(size: frame_vocabulary.Size) frame_vocabulary.Rect {
     return .{ .x = 0, .y = 0, .width = size.width, .height = size.height };
 }
 
-fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) CanvasError!canvas.Rect {
+fn contentCellRect(row: usize, column: usize, cell_size: frame_vocabulary.Size) CanvasError!frame_vocabulary.Rect {
     const x = std.math.mul(usize, column, @as(usize, cell_size.width)) catch
         return error.InvalidPresentationGeometry;
     const y = std.math.mul(usize, row, @as(usize, cell_size.height)) catch
@@ -1073,8 +1072,8 @@ fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) CanvasErro
 }
 
 const ContentCellSizing = struct {
-    origin: canvas.Rect,
-    allocation: canvas.Rect,
+    origin: frame_vocabulary.Rect,
+    allocation: frame_vocabulary.Rect,
     scale_n: u16,
     scale_d: u16,
     offset_x: u16,
@@ -1139,7 +1138,7 @@ fn contentCellSizing(
     row: usize,
     column: usize,
     cell: anytype,
-    cell_size: canvas.Size,
+    cell_size: frame_vocabulary.Size,
 ) CanvasError!ContentCellSizing {
     comptime assertPresentationCell(@TypeOf(cell));
     if (cell.width == 0 or cell.height == 0 or cell.width % cell.height != 0)
@@ -1228,9 +1227,9 @@ fn contentScaleCoordinate(value: i64, numerator: u16, denominator: u16) CanvasEr
 }
 
 fn contentCellTransformRect(
-    rect: canvas.Rect,
+    rect: frame_vocabulary.Rect,
     sizing: ContentCellSizing,
-) CanvasError!canvas.Rect {
+) CanvasError!frame_vocabulary.Rect {
     const local_x = std.math.sub(i64, rect.x, sizing.origin.x) catch
         return error.InvalidPresentationGeometry;
     const local_y = std.math.sub(i64, rect.y, sizing.origin.y) catch
@@ -1276,11 +1275,11 @@ fn contentLineColumnCount(columns: u16, geometry: View.LineGeometry) CanvasError
 }
 
 fn contentLineTransformRect(
-    rect: canvas.Rect,
+    rect: frame_vocabulary.Rect,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-) CanvasError!canvas.Rect {
+    cell_size: frame_vocabulary.Size,
+) CanvasError!frame_vocabulary.Rect {
     const scale = try contentLineScale(geometry);
     const row_y = std.math.mul(i64, @as(i64, @intCast(row)), @as(i64, cell_size.height)) catch
         return error.InvalidPresentationGeometry;
@@ -1307,7 +1306,7 @@ fn contentLineTransformRect(
     };
 }
 
-fn contentIntersectRects(left: canvas.Rect, right: canvas.Rect) ?canvas.Rect {
+fn contentIntersectRects(left: frame_vocabulary.Rect, right: frame_vocabulary.Rect) ?frame_vocabulary.Rect {
     const x1 = @max(@as(i64, left.x), @as(i64, right.x));
     const y1 = @max(@as(i64, left.y), @as(i64, right.y));
     const x2 = @min(
@@ -1328,12 +1327,12 @@ fn contentIntersectRects(left: canvas.Rect, right: canvas.Rect) ?canvas.Rect {
 }
 
 fn contentLineClip(
-    clip: canvas.Rect,
+    clip: frame_vocabulary.Rect,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
-) CanvasError!?canvas.Rect {
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
+) CanvasError!?frame_vocabulary.Rect {
     const transformed = try contentLineTransformRect(clip, row, geometry, cell_size);
     var row_strip = try contentCellRect(row, 0, cell_size);
     row_strip.width = surface.width;
@@ -1345,9 +1344,9 @@ fn contentCellVisibleClip(
     sizing: ContentCellSizing,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
-) CanvasError!?canvas.Rect {
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
+) CanvasError!?frame_vocabulary.Rect {
     if (sizing.allocation.height == cell_size.height or geometry != .single_width)
         return contentLineClip(sizing.allocation, row, geometry, cell_size, surface);
     const transformed = try contentLineTransformRect(
@@ -1420,9 +1419,9 @@ fn contentFontVisibleClip(
     sizing: ContentCellSizing,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
-) CanvasError!?canvas.Rect {
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
+) CanvasError!?frame_vocabulary.Rect {
     comptime assertPresentationCell(@TypeOf(cell));
     if (contentUsesMulticellAllocation(cell))
         return contentCellVisibleClip(sizing, row, geometry, cell_size, surface);
@@ -1432,15 +1431,15 @@ fn contentFontVisibleClip(
 }
 
 fn appendContentLineSolid(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
-    rect: canvas.Rect,
-    clip: canvas.Rect,
-    color: canvas.Color,
+    rect: frame_vocabulary.Rect,
+    clip: frame_vocabulary.Rect,
+    color: frame_vocabulary.Color,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
 ) CanvasError!void {
     const visible_clip = try contentLineClip(clip, row, geometry, cell_size, surface) orelse return;
     try appendContentSolid(
@@ -1453,15 +1452,15 @@ fn appendContentLineSolid(
 }
 
 fn appendContentCellSolid(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
-    rect: canvas.Rect,
-    color: canvas.Color,
+    rect: frame_vocabulary.Rect,
+    color: frame_vocabulary.Color,
     sizing: ContentCellSizing,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
 ) CanvasError!void {
     const visible_clip = try contentCellVisibleClip(
         sizing,
@@ -1480,7 +1479,7 @@ fn appendContentCellSolid(
     );
 }
 
-fn contentRgba(value: anytype) canvas.Color {
+fn contentRgba(value: anytype) frame_vocabulary.Color {
     return .{ .r = value.r, .g = value.g, .b = value.b, .a = value.a };
 }
 
@@ -1488,7 +1487,7 @@ fn contentColor(
     value: TextColor,
     presentation: anytype,
     foreground: bool,
-) CanvasError!canvas.Color {
+) CanvasError!frame_vocabulary.Color {
     return switch (value.kind) {
         .default => contentRgba(if (foreground) presentation.foreground else presentation.background),
         .indexed => blk: {
@@ -1504,7 +1503,7 @@ fn contentColor(
     };
 }
 
-fn dimContentColor(value: canvas.Color) canvas.Color {
+fn dimContentColor(value: frame_vocabulary.Color) frame_vocabulary.Color {
     var result = value;
     result.a = @intCast((@as(u16, value.a) * 55 + 50) / 100);
     return result;
@@ -1519,9 +1518,9 @@ fn contentCellColors(
     var background = try contentColor(contentCellColor(cell, .background), presentation, false);
     const style = contentStyle(cell);
     if (style.reverse)
-        std.mem.swap(canvas.Color, &foreground, &background);
+        std.mem.swap(frame_vocabulary.Color, &foreground, &background);
     if (presentation.reverse_screen)
-        std.mem.swap(canvas.Color, &foreground, &background);
+        std.mem.swap(frame_vocabulary.Color, &foreground, &background);
     if (style.dim)
         foreground = dimContentColor(foreground);
     return .{
@@ -1532,9 +1531,9 @@ fn contentCellColors(
 }
 
 fn appendContentInput(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
-    value: canvas.Input,
+    value: frame_vocabulary.Input,
 ) CanvasError!void {
     if (used.* >= output.len) return error.CommandLimit;
     output[used.*] = value;
@@ -1542,11 +1541,11 @@ fn appendContentInput(
 }
 
 fn appendContentSolid(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
-    rect: canvas.Rect,
-    clip: canvas.Rect,
-    color: canvas.Color,
+    rect: frame_vocabulary.Rect,
+    clip: frame_vocabulary.Rect,
+    color: frame_vocabulary.Color,
 ) CanvasError!void {
     try appendContentInput(output, used, .{ .solid = .{
         .rect = rect,
@@ -1556,16 +1555,16 @@ fn appendContentSolid(
 }
 
 fn appendContentCellAlpha(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
-    rect: canvas.Rect,
-    resource: canvas.ResourceView,
-    color: canvas.Color,
+    rect: frame_vocabulary.Rect,
+    resource: frame_vocabulary.ResourceView,
+    color: frame_vocabulary.Color,
     sizing: ContentCellSizing,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
 ) CanvasError!void {
     const visible_clip = try contentCellVisibleClip(
         sizing,
@@ -1584,23 +1583,23 @@ fn appendContentCellAlpha(
 }
 
 fn appendContentUnderline(
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
     atlas: *Atlas,
     atlas_size: glyph_cache.AtlasSize,
-    placeholder_resource: canvas.ResourceRef,
+    placeholder_resource: frame_vocabulary.ResourceRef,
     raster_scratch: []u8,
-    clip: canvas.Rect,
+    clip: frame_vocabulary.Rect,
     y: i32,
     thickness: u16,
     line_height: u16,
     style: u8,
-    color: canvas.Color,
+    color: frame_vocabulary.Color,
     sizing: ContentCellSizing,
     row: usize,
     geometry: View.LineGeometry,
-    cell_size: canvas.Size,
-    surface: canvas.Size,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
 ) CanvasError!bool {
     const height = @max(@as(u16, 1), thickness);
     switch (style) {
@@ -1705,7 +1704,7 @@ fn fixedContent26_6(value: i64) CanvasError!i32 {
         error.InvalidPresentationGeometry;
 }
 
-fn contentLineOffset(metrics: Metrics, cell_size: canvas.Size) i64 {
+fn contentLineOffset(metrics: Metrics, cell_size: frame_vocabulary.Size) i64 {
     const difference = @as(i64, cell_size.height) - @as(i64, metrics.line_height);
     return @divFloor(difference, 2);
 }
@@ -1806,9 +1805,9 @@ fn planIncrementalRows(
 }
 
 fn translateIncrementalGlyph(
-    value: canvas.Input,
+    value: frame_vocabulary.Input,
     y_delta: i32,
-) CanvasError!canvas.Input {
+) CanvasError!frame_vocabulary.Input {
     return switch (value) {
         .alpha_mask => |mask| blk: {
             var shifted = mask;
@@ -1877,13 +1876,13 @@ fn buildContentCommands(
     snapshot: *const Source.Snapshot,
     atlas: *Atlas,
     shape_cache: *ShapeCache,
-    surface: canvas.Size,
-    output: []canvas.Input,
+    surface: frame_vocabulary.Size,
+    output: []frame_vocabulary.Input,
     incremental_plan: ?IncrementalPlan,
-    incremental_commands: []const canvas.Input,
+    incremental_commands: []const frame_vocabulary.Input,
     incremental_rows: []const IncrementalRowCommands,
     row_ranges: ?[]IncrementalRowCommands,
-    cell_size: canvas.Size,
+    cell_size: frame_vocabulary.Size,
     box_drawing: generated.BoxDrawingConfig,
     cluster_scratch: []u32,
     shaped_scratch: []text.Glyph,
@@ -2032,7 +2031,7 @@ fn buildContentCommands(
         const line_columns = try contentLineColumnCount(contentColumns(begin), Source.lineGeometry(snapshot, row));
         const row_cells = all_row_cells[0..line_columns];
         // Evaluate only after a visible font cell reaches the original checks.
-        var plain_row_clip: ?canvas.Rect = null;
+        var plain_row_clip: ?frame_vocabulary.Rect = null;
         var plain_row_baseline: ?i64 = null;
         var skip_until: usize = 0;
         for (row_cells, 0..) |cell, column| {
@@ -2253,7 +2252,7 @@ fn buildContentCommands(
                         return error.InvalidPresentationGeometry;
                     top = std.math.sub(i64, top, @as(i64, raster.top) * 64) catch
                         return error.InvalidPresentationGeometry;
-                    const base_destination = canvas.Rect{
+                    const base_destination = frame_vocabulary.Rect{
                         .x = try fixedContent26_6(left),
                         .y = try fixedContent26_6(top),
                         .width = raster.width,
@@ -2322,21 +2321,21 @@ fn generatedSizing(cell: anytype) generated.BoxDrawingSizing {
     };
 }
 
-fn bindContentResource(commands: []canvas.Input, resource: canvas.ResourceRef) void {
+fn bindContentResource(commands: []frame_vocabulary.Input, resource: frame_vocabulary.ResourceRef) void {
     for (commands) |*command| switch (command.*) {
         .alpha_mask => command.alpha_mask.resource.resource = resource,
         else => {},
     };
 }
 
-fn placeholderContentResource() canvas.ResourceRef {
+fn placeholderContentResource() frame_vocabulary.ResourceRef {
     return .{
-        .resource = canvas.ResourceId.init(1) catch unreachable,
+        .resource = frame_vocabulary.ResourceId.init(1) catch unreachable,
         .generation = @fromBackingInt(1),
     };
 }
 
-fn contentResource(resource: canvas.ResourceId, generation: u64) canvas.ResourceRef {
+fn contentResource(resource: frame_vocabulary.ResourceId, generation: u64) frame_vocabulary.ResourceRef {
     std.debug.assert(generation != 0);
     return .{
         .resource = resource,
@@ -2344,7 +2343,7 @@ fn contentResource(resource: canvas.ResourceId, generation: u64) canvas.Resource
     };
 }
 
-fn contentExternalIdentity(resource: canvas.ResourceRef) CanvasError!u64 {
+fn contentExternalIdentity(resource: frame_vocabulary.ResourceRef) CanvasError!u64 {
     resource.validate() catch return error.InvalidImageBinding;
     return resource.resource.identity() catch error.InvalidImageBinding;
 }
@@ -2387,7 +2386,7 @@ fn findExternalImageBinding(
 
 fn findPublishedImageByResource(
     images: []const PublishedImage,
-    resource: canvas.ResourceId,
+    resource: frame_vocabulary.ResourceId,
 ) ?PublishedImage {
     for (images) |image| {
         if (image.external.resource.resource == resource) return image;
@@ -2486,10 +2485,10 @@ fn insertExternalPlacements(
     comptime Source: type,
     snapshot: *const Source.Snapshot,
     bindings: []const ExternalImageBinding,
-    surface: canvas.Size,
-    cell_size: canvas.Size,
+    surface: frame_vocabulary.Size,
+    cell_size: frame_vocabulary.Size,
     projection: ContentProjection,
-    output: []canvas.Input,
+    output: []frame_vocabulary.Input,
     used: *usize,
     order_storage: *[View.maximum_image_placements]u16,
 ) CanvasError!void {
@@ -2528,12 +2527,12 @@ fn insertExternalPlacements(
     const old_count = used.*;
     const foreground_shift = deep_count + negative_count;
     std.mem.copyBackwards(
-        canvas.Input,
+        frame_vocabulary.Input,
         output[projection.background_end + foreground_shift .. old_count + foreground_shift],
         output[projection.background_end..old_count],
     );
     std.mem.copyBackwards(
-        canvas.Input,
+        frame_vocabulary.Input,
         output[projection.default_background_end + deep_count .. projection.background_end + deep_count],
         output[projection.default_background_end..projection.background_end],
     );
@@ -2577,8 +2576,8 @@ fn projectExternalPlacement(
     image: View.Image,
     placement: View.ImagePlacement,
     binding: ExternalImageBinding,
-    surface: canvas.Size,
-    cell_size: canvas.Size,
+    surface: frame_vocabulary.Size,
+    cell_size: frame_vocabulary.Size,
 ) CanvasError!ProjectedPlacement {
     if (binding.image_id != image.image_id or binding.generation != image.generation)
         return error.InvalidImageBinding;
@@ -2671,8 +2670,8 @@ fn projectExternalPlacement(
 fn contentCursor(
     comptime Source: type,
     snapshot: *const Source.Snapshot,
-    surface: canvas.Size,
-    cell_size: canvas.Size,
+    surface: frame_vocabulary.Size,
+    cell_size: frame_vocabulary.Size,
 ) CanvasError!?Cursor {
     const begin = Source.begin(snapshot);
     const cursor_shape = Source.cursorShape(snapshot);

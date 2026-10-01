@@ -63,8 +63,8 @@ pub fn build(b: *std.Build) void {
     const text = text_dependency.module("howl_text");
     const test_fonts = text_dependency.module("howl_text_test_fonts");
     const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
-    const presentation = b.createModule(.{
-        .root_source_file = render_dependency.path("src/presentation.zig"),
+    const limits = b.createModule(.{
+        .root_source_file = render_dependency.path("src/limits.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -91,7 +91,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("local_terminal", local_terminal);
     root.addImport("howl_text", text);
-    root.addImport("presentation", presentation);
+    root.addImport("limits", limits);
     root.addImport("terminal", terminal);
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);
@@ -248,7 +248,7 @@ pub fn build(b: *std.Build) void {
     scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("howl_text", text);
     scene_test_module.addImport("local_terminal", local_terminal);
-    scene_test_module.addImport("presentation", presentation);
+    scene_test_module.addImport("limits", limits);
     scene_test_module.addImport("terminal", terminal);
     scene_test_module.addImport("test_fonts", test_fonts);
     scene_test_module.linkSystemLibrary("vulkan", .{});

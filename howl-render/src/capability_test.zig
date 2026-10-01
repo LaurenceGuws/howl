@@ -5,7 +5,7 @@ const render = @import("howl_render");
 const selected = @import("selected_capabilities");
 
 test "public namespaces exactly match compile-time selection" {
-    try std.testing.expect(@hasDecl(render, "presentation"));
+    try std.testing.expect(@hasDecl(render, "limits"));
     try std.testing.expect(!@hasDecl(render, "canvas"));
     try std.testing.expectEqual(selected.native_text, @hasDecl(render, "terminal"));
     try std.testing.expect(!@hasDecl(render, "chrome"));

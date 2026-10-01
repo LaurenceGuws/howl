@@ -8,7 +8,7 @@ const std = @import("std");
 const client = @import("howl_client");
 const local_terminal = @import("local_terminal");
 const remote_target = @import("remote_target.zig");
-const presentation = @import("presentation");
+const limits = @import("limits");
 const terminal = @import("terminal");
 const canvas = terminal;
 const terminal_fast = @import("terminal_fast.zig");
@@ -20,7 +20,7 @@ const prospective_resource_limit: usize = resource_limit + terminal.maximum_exte
 const overlay_resource_limit: usize = terminal_fast.overlay_resource_limit;
 const atlas_extent: u16 = 512;
 const atlas_pixel_bytes: usize = @as(usize, atlas_extent) * atlas_extent;
-const command_capacity: usize = presentation.maximum_canvas_commands;
+const command_capacity: usize = limits.maximum_canvas_commands;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 
 const ExternalUpload = struct {
@@ -163,8 +163,8 @@ pub const Scene = struct {
     residency: vk_surface.ResidencyStore,
     overlay_residency: vk_surface.ResidencyStore,
     observation_pending: bool = false,
-    local_fast_generations: [presentation.maximum_rows]u64 = @splat(0),
-    local_fast_rows: [presentation.maximum_rows]bool = @splat(false),
+    local_fast_generations: [limits.maximum_rows]u64 = @splat(0),
+    local_fast_rows: [limits.maximum_rows]bool = @splat(false),
     local_fast_rows_count: u16 = 0,
     local_fast_cols_count: u16 = 0,
     local_fast_alternate: bool = false,

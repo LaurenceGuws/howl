@@ -32,13 +32,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const presentation = b.createModule(.{
-        .root_source_file = b.path("src/presentation.zig"),
+    const limits = b.createModule(.{
+        .root_source_file = b.path("src/limits.zig"),
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("presentation", presentation);
-    test_module.addImport("presentation", presentation);
+    module.addImport("limits", limits);
+    test_module.addImport("limits", limits);
 
     var vt: ?*std.Build.Module = null;
     var client: ?*std.Build.Module = null;
