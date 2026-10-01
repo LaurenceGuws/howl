@@ -550,7 +550,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 - Image pressure across split panes/history/resize and the seven-image external
   resource bound where canonical semantics permit it.
-- A searchable installed-font family picker on top of the proven exact-path editor.
+- Windows installed-font family discovery to match the Linux fontconfig chooser.
 - Color-emoji support only after `howl-text` gains a color-glyph/resource contract;
   its current raster API intentionally accepts only MONO/GRAY alpha masks, so Noto
   Color Emoji is not silently admitted as an incompatible fallback.
@@ -570,10 +570,14 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Dark desktop shell.
 - JetBrains Mono Nerd Font canary.
 - Persistent exact 8–48 px font-size setting with one-pixel adjustment.
+- Searchable Linux monospace-family chooser backed by fontconfig. Family search
+  is keyboard-first, a selected candidate renders its own sample face, Right previews
+  through the real terminal Canvas, Left restores, Enter commits and Esc cancels
+  back to the previous exact recipe. One family resolves Regular/Italic/Bold/Bold italic automatically.
 - Persistent exact-path Regular/Italic/Bold/Bold italic/Fallback 1/Fallback 2
-  configuration. Blank values inherit startup discovery; a custom Regular makes
-  blank styles reuse that regular face. Live edits restart renderer ownership
-  without replacing canonical Instance state.
+  configuration remains the advanced layer. Blank values inherit startup discovery;
+  a custom Regular makes blank styles reuse that regular face. Live edits restart
+  renderer ownership without replacing canonical Instance state.
 - Per-profile font size is either inherited or one exact value from the same range.
 - Font zoom never mutates an attached non-owning Instance.
 - Persistent application chrome themes with live preview: Howl Dark, Slate, and
@@ -584,7 +588,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **WANTED**
 
-- Searchable font-family picker with truthful availability/error state; exact path configuration is already available.
+- Windows family-catalogue parity plus richer variable-font/OpenType refinement; exact-path configuration already remains available underneath.
 - Canonical terminal color schemes and per-profile override only through the
   appropriate Howl VT/render ownership seam; application chrome must not become
   a hidden terminal-palette override.
@@ -1047,7 +1051,7 @@ that is already proved.
    producer, Instance/HWLS, Canvas, backend upload and presentation costs; preserve the
    near-zero idle floor and exact image/resource lifetime.
 3. Qualify remaining desktop product seams: mixed-monitor/hotplug, accessibility,
-   installed-font discovery/picker UX, diagnostics, and installed-bundle/distribution behavior.
+   Windows installed-font catalogue parity, diagnostics, and installed-bundle/distribution behavior.
 4. Add host-consequence behavior only where a concrete desktop experience earns it.
    Odin currently owns explicit consequence authority; protocol semantics remain in VT.
 5. Give transported properties deliberate consumers where useful, but keep cwd/shell

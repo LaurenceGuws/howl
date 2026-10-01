@@ -14,6 +14,7 @@ Font_Edit_Field :: enum u8 {
 }
 
 FONT_EDIT_FIELD_COUNT :: 6
+FONT_SETTINGS_ITEM_COUNT :: 1 + FONT_EDIT_FIELD_COUNT
 
 font_edit_field_at :: proc(index: int) -> (Font_Edit_Field, bool) {
 	if index < 0 || index >= FONT_EDIT_FIELD_COUNT do return .Regular, false
@@ -77,8 +78,12 @@ font_field_display_value :: proc(app: ^App, field: Font_Edit_Field, storage: []u
 	return fmt.bprintf(storage, "Inherit · %s", effective)
 }
 
+font_family_choice_row :: proc(body: SDL.FRect, scroll: f32) -> SDL.FRect {
+	return {body.x, body.y + 82 - scroll, max(f32(0), body.w - 8), 44}
+}
+
 font_settings_row :: proc(body: SDL.FRect, scroll: f32, index: int) -> SDL.FRect {
-	return {body.x, body.y + 82 + f32(index) * 48 - scroll, max(f32(0), body.w - 8), 44}
+	return {body.x, body.y + 142 + f32(index) * 48 - scroll, max(f32(0), body.w - 8), 44}
 }
 
 font_settings_value :: proc(row: SDL.FRect) -> SDL.FRect {
@@ -243,22 +248,22 @@ handle_font_edit_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 
 handle_font_settings_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 	if app == nil || event.type != .KEY_DOWN do return false
-	field, ok := font_edit_field_at(app.settings_font_field)
-	if !ok {
-		app.settings_font_field = 0
-		field = .Regular
-	}
+	app.settings_font_field = clamp(app.settings_font_field, 0, FONT_SETTINGS_ITEM_COUNT - 1)
 	switch event.key.key {
 	case SDL.K_TAB:
 		app.settings_content_focus = false
 	case SDL.K_UP:
-		app.settings_font_field = (app.settings_font_field + FONT_EDIT_FIELD_COUNT - 1) % FONT_EDIT_FIELD_COUNT
+		app.settings_font_field = (app.settings_font_field + FONT_SETTINGS_ITEM_COUNT - 1) % FONT_SETTINGS_ITEM_COUNT
 		settings_reveal_selection(app)
 	case SDL.K_DOWN:
-		app.settings_font_field = (app.settings_font_field + 1) % FONT_EDIT_FIELD_COUNT
+		app.settings_font_field = (app.settings_font_field + 1) % FONT_SETTINGS_ITEM_COUNT
 		settings_reveal_selection(app)
 	case SDL.K_RETURN:
-		_ = begin_font_edit(app, field)
+		if app.settings_font_field == 0 {
+			_ = open_font_chooser(app)
+		} else if field, ok := font_edit_field_at(app.settings_font_field - 1); ok {
+			_ = begin_font_edit(app, field)
+		}
 	case:
 		return true
 	}
@@ -267,10 +272,30 @@ handle_font_settings_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
 
 draw_font_settings :: proc(app: ^App, body: SDL.FRect) {
 	if app == nil do return
+
+	family_row := font_family_choice_row(body, app.settings_scroll_y)
+	family_selected := app.settings_content_focus && app.settings_font_field == 0
+	if family_selected do draw_fill(app.renderer, family_row, palette.tab_active)
+	settings_clipped_text(
+		app,
+		{family_row.x + 10, family_row.y + 13, min(f32(174), family_row.w * 0.46) - 18, 22},
+		"Font family",
+		palette.text_muted,
+	)
+	family_value := settings_profile_value(family_row)
+	settings_draw_button(app, family_value, "Choose family…", true, family_selected)
+
+	settings_clipped_text(
+		app,
+		{body.x + 10, body.y + 126 - app.settings_scroll_y, max(f32(0), body.w - 20), 18},
+		"Advanced exact paths",
+		palette.text_muted,
+	)
+
 	for index in 0..<FONT_EDIT_FIELD_COUNT {
 		field, _ := font_edit_field_at(index)
 		row := font_settings_row(body, app.settings_scroll_y, index)
-		selected := app.settings_content_focus && app.settings_font_field == index
+		selected := app.settings_content_focus && app.settings_font_field == index + 1
 		if selected do draw_fill(app.renderer, row, palette.tab_active)
 		value_rect := font_settings_value(row)
 		settings_clipped_text(

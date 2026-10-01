@@ -93,7 +93,7 @@ settings_content_height :: proc(app: ^App) -> f32 {
     case .Profile_Defaults: return f32(app.profile_count) * 44
     case .Profile_Home:     return f32(PROFILE_EDIT_FIELD_COUNT) * 48
     case .Mappings:          return f32(len(KEY_MAPPING_DEFINITIONS)) * 32 + 12
-    case .Appearance:       return 430
+    case .Appearance:       return 500
     case .Startup, .Interaction: return 270
     case .Color_Schemes:    return 260
     }
@@ -131,7 +131,12 @@ settings_reveal_selection :: proc(app: ^App) {
     case .Profile_Defaults: top, size = f32(app.settings_profile_selection) * 44, 40
     case .Profile_Home: top, size = f32(app.settings_profile_field) * 48, 44
     case .Mappings: top, size = f32(app.settings_mapping_selection) * 32 + 2, 30
-    case .Appearance: top, size = 82 + f32(app.settings_font_field) * 48, 44
+    case .Appearance:
+        if app.settings_font_field == 0 {
+            top, size = 82, 44
+        } else {
+            top, size = 142 + f32(app.settings_font_field - 1) * 48, 44
+        }
     case .Startup, .Interaction, .Color_Schemes: return
     }
     app.settings_scroll_y = settings_reveal_range(app.settings_scroll_y, top, size, layout.body.h, limit)
@@ -311,10 +316,18 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
             adjust_terminal_font(app, delta)
             return true
         }
+        family_row := font_family_choice_row(layout.body, offset)
+        if inside(x, y, family_row) {
+            app.settings_font_field = 0
+            app.settings_content_focus = true
+            if inside(x, y, settings_profile_value(family_row)) do _ = open_font_chooser(app)
+            settings_reveal_selection(app)
+            return true
+        }
         for index in 0..<FONT_EDIT_FIELD_COUNT {
             row := font_settings_row(layout.body, offset, index)
             if !inside(x, y, row) do continue
-            app.settings_font_field = index
+            app.settings_font_field = index + 1
             app.settings_content_focus = true
             value := font_settings_value(row)
             if inside(x, y, value) {

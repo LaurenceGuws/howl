@@ -106,12 +106,18 @@ Current canary:
   geometry; the exact pixel value persists across app restarts in the existing
   schema-versioned `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file
   + rename rather than in-place truncation;
-- Appearance also owns six exact font-path slots: Regular, Italic, Bold,
-  Bold italic, Fallback 1 and Fallback 2. Blank paths inherit the startup-resolved
-  recipe. If Regular is explicitly replaced, blank style slots deliberately use
-  that regular face instead of cross-mixing the discovered family. Changes persist
-  and restart only live render owners while the last accepted Canvas frame remains
-  visible until replacement acceptance;
+- Appearance owns a searchable **Choose terminal font** surface over the installed
+  monospace catalogue on Linux. Typing filters family names, the selected row shows
+  a real candidate-face sample, Right applies the family to the live Canvas as a
+  temporary preview, Left restores the exact previous recipe, Enter commits it,
+  and Esc cancels.
+  Choosing one family resolves Regular/Italic/Bold/Bold Italic automatically; the
+  six exact-path slots remain visible underneath as the advanced contract. Blank
+  fallback paths inherit the startup-resolved Arabic/CJK chain. If Regular is
+  explicitly replaced while style slots are blank, those styles deliberately reuse
+  Regular instead of cross-mixing another family. The catalogue is lazily heap-owned,
+  bounded to 256 families, and currently uses fontconfig monospace discovery; Windows
+  keeps the exact-path editor until an equivalent installed-font catalogue owner is wired;
 - Color schemes now owns the first live application-chrome themes: Howl Dark,
   Slate, and High Contrast cycle with Left/Right and persist by stable id. The
   theme changes desktop shell chrome only; terminal Canvas colors remain canonical

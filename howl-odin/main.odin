@@ -640,6 +640,7 @@ App :: struct {
     settings_font_edit_field: Font_Edit_Field,
     settings_font_edit_buffer: [FONT_PATH_BYTES]u8,
     settings_font_edit_len: int,
+    font_chooser: ^Font_Chooser_State,
     settings_notice: [192]u8,
     settings_notice_len: int,
     settings_search_open: bool,
@@ -4983,15 +4984,23 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
     case .WINDOW_DISPLAY_SCALE_CHANGED:
         if !update_text_display_scale(app) {
             sdl_error("TTF display scale update failed")
+        } else if font_chooser_is_open(app) {
+            font_chooser_update_sample_font(app)
         }
     case .DROP_FILE:
+        if font_chooser_is_open(app) do return
         _ = drop_into_active_terminal(app, event.drop.data, true)
     case .DROP_TEXT:
+        if font_chooser_is_open(app) do return
         _ = drop_into_active_terminal(app, event.drop.data, false)
     case .KEY_DOWN, .KEY_UP:
         ctrl := .LCTRL in event.key.mod || .RCTRL in event.key.mod
         shift := .LSHIFT in event.key.mod || .RSHIFT in event.key.mod
         alt := .LALT in event.key.mod || .RALT in event.key.mod
+        if font_chooser_is_open(app) {
+            _ = font_chooser_handle_key(app, event)
+            return
+        }
         if app.search_open {
             if event.type == .KEY_DOWN {
                 if mapping_index, mapped := mapping_for_shortcut_event(app, event); mapped &&
@@ -5076,6 +5085,13 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         }
     case .TEXT_INPUT:
         clear_ime_preedit(app)
+        if font_chooser_is_open(app) {
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 do _ = font_chooser_append_query(app, text)
+            }
+            return
+        }
         if app.settings_open && app.settings_search_open {
             if event.text.text != nil {
                 text := string(event.text.text)
@@ -5122,6 +5138,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .MOUSE_MOTION:
+        if font_chooser_is_open(app) do return
         if app.profile_menu_open || app.palette_open || app.settings_open || app.search_open {
             break
         }
@@ -5194,6 +5211,10 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
         w, h: c.int
         if SDL.GetWindowSize(app.window, &w, &h) {
+            if font_chooser_is_open(app) {
+                _ = font_chooser_handle_pointer(app, event, f32(w), f32(h))
+                return
+            }
             if handle_overlay_pointer(app, event, f32(w), f32(h)) {
                 return
             }
@@ -5370,6 +5391,15 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
         }
     case .MOUSE_WHEEL:
+        if font_chooser_is_open(app) {
+            ticks := int(event.wheel.integer_y)
+            if ticks == 0 {
+                if event.wheel.y > 0 do ticks = 1
+                if event.wheel.y < 0 do ticks = -1
+            }
+            if ticks != 0 do font_chooser_move_selection(app, -ticks)
+            return
+        }
         if app.settings_open && !app.settings_search_open {
             _ = SDL.ConvertEventToRenderCoordinates(app.renderer, event)
             w, h: c.int
@@ -6062,6 +6092,23 @@ active_terminal_cursor_rect :: proc(
 }
 
 update_text_input_area :: proc(app: ^App, width, height: f32) {
+    if font_chooser_is_open(app) {
+        field := font_chooser_search_rect(font_chooser_rect(width, height))
+        query := font_chooser_query(app.font_chooser)
+        input_x := min(field.x + 10 + text_width(app, app.ui_font, query), field.x + field.w - 10)
+        caret := ime_preedit_caret_pixels(app, app.ui_font)
+        available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
+        area_width := max(c.int(2), caret + 2)
+        if app.ime_preedit_len != 0 {
+            preedit := string(app.ime_preedit[:app.ime_preedit_len])
+            area_width = max(area_width, c.int(text_width(app, app.ui_font, preedit)))
+        }
+        area_width = min(area_width, available)
+        caret = min(caret, max(c.int(0), area_width - 1))
+        area := SDL.Rect{c.int(input_x), c.int(field.y + 5), area_width, c.int(field.h - 10)}
+        _ = SDL.SetTextInputArea(app.window, &area, caret)
+        return
+    }
     if app.settings_open && app.settings_search_open {
         field := settings_search_input_rect(width, height)
         query := settings_search_query(app)
@@ -6156,6 +6203,18 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
         return
     }
     preedit := string(app.ime_preedit[:app.ime_preedit_len])
+    if font_chooser_is_open(app) {
+        field := font_chooser_search_rect(font_chooser_rect(width, height))
+        query := font_chooser_query(app.font_chooser)
+        x := min(field.x + 10 + text_width(app, app.ui_font, query), field.x + field.w - 12)
+        clip := SDL.Rect{c.int(field.x + 8), c.int(field.y), c.int(max(f32(1), field.w - 16)), c.int(field.h)}
+        _ = SDL.SetRenderClipRect(app.renderer, &clip)
+        draw_text(app, app.ui_font, preedit, x, field.y + 10, palette.accent)
+        underline_width := max(f32(4), min(text_width(app, app.ui_font, preedit), field.x + field.w - 10 - x))
+        draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
+        _ = SDL.SetRenderClipRect(app.renderer, nil)
+        return
+    }
     if app.settings_open && app.settings_search_open {
         field := settings_search_input_rect(width, height)
         query := settings_search_query(app)
@@ -6522,6 +6581,7 @@ draw :: proc(app: ^App) {
             draw_settings_search(app, width, height)
         }
     }
+    if font_chooser_is_open(app) do draw_font_chooser(app, width, height)
     update_text_input_area(app, width, height)
     draw_ime_preedit(app, width, height)
     _ = SDL.RenderPresent(app.renderer)
@@ -6746,6 +6806,7 @@ main :: proc() {
         startup_profile = 0,
     }
     defer {
+        destroy_font_chooser(&app)
         if app.terminal_font != nil do TTF.CloseFont(app.terminal_font)
     }
     if !SDL.SetWindowMinimumSize(window, 640, 320) {
