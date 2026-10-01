@@ -4476,37 +4476,43 @@ fn appendLogicalCells(
     try candidate.cells.ensureTotalCapacity(allocator, new_len);
     candidate.cells.appendSliceAssumeCapacity(line.cells.items);
     candidate.cells.appendSliceAssumeCapacity(appended);
-    candidate.scalars = scalar_storage.Storage.init(
-        allocator,
-        new_len,
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        // zig-audit: acknowledge unreachable
-        // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
-        error.InvalidCapacity => unreachable,
-    };
-    if (line.scalars) |*source| {
-        copyScalarCells(
-            source,
-            line.cells.items,
-            0,
-            &candidate.scalars.?,
-            0,
-            old_len,
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-        ) catch @panic("logical scalar clone mismatch");
+    std.debug.assert((line.scalars != null) == cellsHaveExternalScalars(line.cells.items));
+    const appended_have_external_scalars = cellsHaveExternalScalars(appended);
+    if (line.scalars != null or appended_have_external_scalars) {
+        candidate.scalars = scalar_storage.Storage.init(
+            allocator,
+            new_len,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // zig-audit: acknowledge unreachable
+            // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
+            error.InvalidCapacity => unreachable,
+        };
+        if (line.scalars) |*source| {
+            copyScalarCells(
+                source,
+                line.cells.items,
+                0,
+                &candidate.scalars.?,
+                0,
+                old_len,
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+            ) catch @panic("logical scalar clone mismatch");
+        }
+        if (appended_have_external_scalars) {
+            copyScalarCells(
+                appended_scalars,
+                appended,
+                appended_start,
+                &candidate.scalars.?,
+                old_len,
+                appended.len,
+                // zig-audit: acknowledge panic
+                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+            ) catch @panic("visible scalar clone mismatch");
+        }
     }
-    copyScalarCells(
-        appended_scalars,
-        appended,
-        appended_start,
-        &candidate.scalars.?,
-        old_len,
-        appended.len,
-        // zig-audit: acknowledge panic
-        // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-    ) catch @panic("visible scalar clone mismatch");
     line.deinit(allocator);
     line.* = candidate;
     candidate = .{};
@@ -7251,6 +7257,65 @@ test "logical output accepts its exact per-line byte bound" {
 
     try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
     try std.testing.expectEqual(logical_output_line_bytes_max, screen.output_bytes);
+}
+
+test "logical line scalar sidecar stays lazy until external scalars arrive" {
+    var source = try scalar_storage.Storage.init(std.testing.allocator, 3);
+    defer source.deinit();
+
+    var inline_cell = blank_cell;
+    inline_cell.codepoint = 'a';
+    inline_cell.combining_len = scalar_storage.inline_scalars - 1;
+    inline_cell.combining = .{ 0x0300, 0x0301, 0x0302 };
+
+    var line = LogicalLine{};
+    defer line.deinit(std.testing.allocator);
+    try appendLogicalCells(
+        std.testing.allocator,
+        &line,
+        &.{inline_cell},
+        &source,
+        0,
+    );
+    try std.testing.expect(line.scalars == null);
+    try std.testing.expectEqualDeep(inline_cell, line.cells.items[0]);
+
+    var external_cell = blank_cell;
+    external_cell.codepoint = 'b';
+    external_cell.combining_len = scalar_storage.inline_scalars;
+    external_cell.combining = .{ 0x0310, 0x0311, 0x0312 };
+    const external_tail = [_]u32{0x0313};
+    try source.set(1, 0, &external_tail);
+    try appendLogicalCells(
+        std.testing.allocator,
+        &line,
+        &.{external_cell},
+        &source,
+        1,
+    );
+    try std.testing.expect(line.scalars != null);
+    try std.testing.expectEqualSlices(
+        u32,
+        &external_tail,
+        try line.scalars.?.tail(1, external_cell.combining_len),
+    );
+
+    var later_inline = blank_cell;
+    later_inline.codepoint = 'c';
+    try appendLogicalCells(
+        std.testing.allocator,
+        &line,
+        &.{later_inline},
+        &source,
+        2,
+    );
+    try std.testing.expectEqual(@as(usize, 3), line.cells.items.len);
+    try std.testing.expectEqualSlices(
+        u32,
+        &external_tail,
+        try line.scalars.?.tail(1, external_cell.combining_len),
+    );
+    try std.testing.expectEqualDeep(later_inline, line.cells.items[2]);
 }
 
 test "scroll rows preserve scalar tails while transferring cell metadata" {
