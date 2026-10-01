@@ -107,7 +107,8 @@ Current canary:
   schema-versioned `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file
   + rename rather than in-place truncation;
 - Appearance owns a searchable **Choose terminal font** surface over the installed
-  monospace catalogue on Linux. Typing filters family names, the selected row shows
+  terminal-width catalogue on Linux. Fontconfig spacing 90 (dual-width) and 100
+  (strict monospace) are admitted; proportional/unset spacing is excluded. Typing filters family names, the selected row shows
   a real candidate-face sample, Right applies the family to the live Canvas as a
   temporary preview, Left restores the exact previous recipe, Enter commits it,
   and Esc cancels.
@@ -116,7 +117,7 @@ Current canary:
   fallback paths inherit the startup-resolved Arabic/CJK chain. If Regular is
   explicitly replaced while style slots are blank, those styles deliberately reuse
   Regular instead of cross-mixing another family. The catalogue is lazily heap-owned,
-  bounded to 256 families, and currently uses fontconfig monospace discovery; Windows
+  bounded to 256 terminal-width families, and currently uses fontconfig monospace discovery; Windows
   keeps the exact-path editor until an equivalent installed-font catalogue owner is wired;
 - Color schemes now owns the first live application-chrome themes: Howl Dark,
   Slate, and High Contrast cycle with Left/Right and persist by stable id. The

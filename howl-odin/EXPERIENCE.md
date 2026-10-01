@@ -570,7 +570,9 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Dark desktop shell.
 - JetBrains Mono Nerd Font canary.
 - Persistent exact 8–48 px font-size setting with one-pixel adjustment.
-- Searchable Linux monospace-family chooser backed by fontconfig. Family search
+- Searchable Linux terminal-width family chooser backed by fontconfig. It admits
+  spacing 90 dual-width families and spacing 100 strict monospace families while
+  excluding proportional/unset spacing. Family search
   is keyboard-first, a selected candidate renders its own sample face, Right previews
   through the real terminal Canvas, Left restores, Enter commits and Esc cancels
   back to the previous exact recipe. One family resolves Regular/Italic/Bold/Bold italic automatically.

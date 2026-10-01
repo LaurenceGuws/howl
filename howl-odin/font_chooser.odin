@@ -118,6 +118,10 @@ font_chooser_sort_families :: proc(state: ^Font_Chooser_State) {
 	}
 }
 
+font_chooser_terminal_spacing :: proc(value: string) -> bool {
+	return value == "90" || value == "100"
+}
+
 font_chooser_parse_catalogue :: proc(state: ^Font_Chooser_State, text: string) -> bool {
 	if state == nil do return false
 	state.family_count = 0
@@ -132,10 +136,17 @@ font_chooser_parse_catalogue :: proc(state: ^Font_Chooser_State, text: string) -
 				rest := line[first + 1:]
 				second := strings.index_byte(rest, '\t')
 				if second >= 0 {
-					family := line[:first]
-					style := rest[:second]
-					path := rest[second + 1:]
-					font_chooser_add_family(state, family, style, path)
+					spacing := rest[:second]
+					if font_chooser_terminal_spacing(spacing) {
+						after_spacing := rest[second + 1:]
+						third := strings.index_byte(after_spacing, '\t')
+						if third >= 0 {
+							family := line[:first]
+							style := after_spacing[:third]
+							path := after_spacing[third + 1:]
+							font_chooser_add_family(state, family, style, path)
+						}
+					}
 				}
 			}
 		}
@@ -153,7 +164,7 @@ font_chooser_load_catalogue :: proc(state: ^Font_Chooser_State) -> bool {
 		font_chooser_set_error(state, "Installed-font family discovery is not wired on Windows yet")
 		return false
 	} else {
-		command := []string{"fc-list", ":spacing=100", "-f", "%{family[0]}\t%{style[0]}\t%{file}\n"}
+		command := []string{"fc-list", "-f", "%{family[0]}\t%{spacing}\t%{style[0]}\t%{file}\n"}
 		process, stdout, _, err := os.process_exec(
 			os.Process_Desc{command = command},
 			context.temp_allocator,
@@ -163,7 +174,7 @@ font_chooser_load_catalogue :: proc(state: ^Font_Chooser_State) -> bool {
 			return false
 		}
 		if !font_chooser_parse_catalogue(state, string(stdout)) {
-			font_chooser_set_error(state, "fontconfig returned no monospace families")
+			font_chooser_set_error(state, "fontconfig returned no terminal-width families")
 			return false
 		}
 		state.loaded = true
@@ -537,7 +548,7 @@ draw_font_chooser :: proc(app: ^App, width, height: f32) {
 	query := font_chooser_query(app.font_chooser)
 	if len(query) == 0 {
 		search_storage: [96]u8
-		placeholder := fmt.bprintf(search_storage[:], "Search %d monospace families…", app.font_chooser^.family_count)
+		placeholder := fmt.bprintf(search_storage[:], "Search %d terminal font families…", app.font_chooser^.family_count)
 		settings_clipped_text(app, {search.x + 10, search.y + 10, search.w - 20, 22}, placeholder, palette.text_muted)
 	} else {
 		settings_clipped_text(app, {search.x + 10, search.y + 10, search.w - 20, 22}, query, palette.text)

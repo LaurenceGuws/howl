@@ -10,7 +10,7 @@ font_chooser_test_query :: proc(state: ^Font_Chooser_State, value: string) {
 @(test)
 font_chooser_catalogue_deduplicates_and_sorts_family_names :: proc(t: ^testing.T) {
 	state: Font_Chooser_State
-	text := "Zulu Mono\tRegular\t/missing/z.ttf\nJetBrains Mono\tBold\t/missing/jb.ttf\nAlpha Mono\tRegular\t/missing/a.ttf\nJetBrains Mono\tRegular\t/missing/jr.ttf\n"
+	text := "Zulu Mono\t100\tRegular\t/missing/z.ttf\nJetBrains Mono\t100\tBold\t/missing/jb.ttf\nAlpha Mono\t90\tRegular\t/missing/a.ttf\nJetBrains Mono\t100\tRegular\t/missing/jr.ttf\nIgnored Propo\t\tRegular\t/missing/p.ttf\nIgnored Variable\t0\tRegular\t/missing/v.ttf\n"
 	testing.expect(t, font_chooser_parse_catalogue(&state, text))
 	testing.expect_value(t, state.family_count, 3)
 	testing.expect_value(t, font_chooser_family_name(&state.families[0]), "Alpha Mono")
@@ -61,4 +61,14 @@ font_chooser_style_scoring_prefers_regular_nonitalic_faces :: proc(t: ^testing.T
 	testing.expect(t, font_chooser_style_score("Regular") > font_chooser_style_score("Medium"))
 	testing.expect(t, font_chooser_style_score("Medium") > font_chooser_style_score("Italic"))
 	testing.expect_value(t, font_chooser_style_score("Bold Italic"), u8(0))
+}
+
+
+@(test)
+font_chooser_accepts_dual_and_mono_spacing_only :: proc(t: ^testing.T) {
+	testing.expect(t, font_chooser_terminal_spacing("90"))
+	testing.expect(t, font_chooser_terminal_spacing("100"))
+	testing.expect(t, !font_chooser_terminal_spacing(""))
+	testing.expect(t, !font_chooser_terminal_spacing("0"))
+	testing.expect(t, !font_chooser_terminal_spacing("80"))
 }
