@@ -1,4 +1,4 @@
-//! Adapts howl-client semantic views to the terminal projector source contract.
+//! Adapts howl-client semantic views to the terminal renderer source contract.
 //!
 //! This file owns storage/lifetime adaptation only. It does not render, shape,
 //! rasterize, retain backend resources, or interpret terminal protocol bytes.

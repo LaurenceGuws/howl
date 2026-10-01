@@ -1,4 +1,4 @@
-//! Adapts a borrowed howl-vt observation to the terminal projector source contract.
+//! Adapts a borrowed howl-vt observation to the terminal renderer source contract.
 //!
 //! The snapshot exists only for one synchronous projection call. No VT storage
 //! or observation borrow survives the update.
@@ -139,7 +139,7 @@ pub const Source = struct {
 
     pub fn isImagePlaceholder(_: *const Snapshot, _: usize, _: usize, sequence: []const u32) bool {
         // The adapter recognizes Kitty's reserved Unicode placeholder scalar;
-        // the projector itself remains unaware of that protocol encoding.
+        // the renderer itself remains unaware of that protocol encoding.
         return sequence.len != 0 and sequence[0] == kitty_image_placeholder;
     }
 

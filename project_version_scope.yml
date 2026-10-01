@@ -19,17 +19,17 @@ invariants:
   - text shaping and rasterization expose no renderer, window, Instance, Session, Server, or client authority
   - renderer and platform code are not core dependencies
   - VT owns terminal animation state and Instance owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
-  - canonical graphics identity/resource generations cross an Instance interaction boundary; Canvas/backend residency does not
+  - canonical graphics identity/resource generations cross an Instance interaction boundary; renderer/backend residency does not
   - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
-  - pressure the same Instance/client/text/Canvas owners through maintained visual canaries: Flutter over desktop Local, direct, or Server-selected native streams and Web over its Wasm/browser presentation gates
+  - pressure the same Instance/client/text/renderer owners through maintained visual canaries: Flutter over desktop Local, direct, or Server-selected native streams and Web over its Wasm/browser presentation gates
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
-  - dogfood the Odin/SDL3 desktop canary across accepted Local and Server-selected routes with tabs/splits, profiles, settings, explicit attachments and shared Canvas presentation without duplicating terminal semantics
+  - dogfood the Odin/SDL3 desktop canary across accepted Local and Server-selected routes with tabs/splits, profiles, settings, explicit attachments and shared terminal-renderer presentation without duplicating terminal semantics
 
 deferred:
   - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior

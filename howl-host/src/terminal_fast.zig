@@ -4,7 +4,7 @@
 //! current generic presentation can be reproduced exactly by howl-vk's retained
 //! terminal-cell backend. Rare glyph overhang is preserved through generic
 //! alpha overlays in the same Vulkan render pass. Unsupported snapshots fall
-//! back to generic Canvas.
+//! back to terminal renderer.
 
 const std = @import("std");
 const client = @import("howl_client");
@@ -174,7 +174,7 @@ pub const Adapter = struct {
     }
 
     /// Projects one direct canonical observation into the retained terminal-cell
-    /// backend. Unsupported cells fall back to the generic Canvas owner.
+    /// backend. Unsupported cells fall back to the terminal renderer owner.
     pub fn prepareObservation(
         self: *Adapter,
         observation: *const VT.Observation,

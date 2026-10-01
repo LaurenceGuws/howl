@@ -59,13 +59,13 @@ pub fn build(b: *std.Build) void {
 
     const limits = localModule(b, target, optimize, repo, "howl-render/src/limits.zig");
     const source = localModule(b, target, optimize, repo, "howl-render/src/source.zig");
-    const projector = localModule(b, target, optimize, repo, "howl-render/src/projector.zig");
-    projector.addImport("limits", limits);
-    projector.addImport("source", source);
-    projector.addImport("howl_text", text);
+    const renderer = localModule(b, target, optimize, repo, "howl-render/src/renderer.zig");
+    renderer.addImport("limits", limits);
+    renderer.addImport("source", source);
+    renderer.addImport("howl_text", text);
 
     const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal.zig");
-    terminal.addImport("projector", projector);
+    terminal.addImport("renderer", renderer);
     terminal.addImport("source", source);
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_vt", vt);

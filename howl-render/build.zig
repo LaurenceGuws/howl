@@ -68,7 +68,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        const projector = projectorModule(
+        const renderer = rendererModule(
             b,
             target,
             optimize,
@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
             b,
             target,
             optimize,
-            projector,
+            renderer,
             source_semantics,
             client.?,
             vt.?,
@@ -142,7 +142,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = check;
 }
 
-fn projectorModule(
+fn rendererModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -150,22 +150,22 @@ fn projectorModule(
     source: *std.Build.Module,
     text: *std.Build.Module,
 ) *std.Build.Module {
-    const projector = b.createModule(.{
-        .root_source_file = b.path("src/projector.zig"),
+    const renderer = b.createModule(.{
+        .root_source_file = b.path("src/renderer.zig"),
         .target = target,
         .optimize = optimize,
     });
-    projector.addImport("limits", limits);
-    projector.addImport("source", source);
-    projector.addImport("howl_text", text);
-    return projector;
+    renderer.addImport("limits", limits);
+    renderer.addImport("source", source);
+    renderer.addImport("howl_text", text);
+    return renderer;
 }
 
 fn terminalModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    projector: *std.Build.Module,
+    renderer: *std.Build.Module,
     source: *std.Build.Module,
     client: *std.Build.Module,
     vt: *std.Build.Module,
@@ -175,7 +175,7 @@ fn terminalModule(
         .target = target,
         .optimize = optimize,
     });
-    terminal.addImport("projector", projector);
+    terminal.addImport("renderer", renderer);
     terminal.addImport("source", source);
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_vt", vt);

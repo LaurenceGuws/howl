@@ -1,8 +1,7 @@
-//! Live browser renderer: framed Howl snapshot bytes -> shared view/text/Canvas state.
+//! Live browser renderer: framed Howl snapshot bytes -> shared view/text/terminal-renderer state.
 const std = @import("std");
 const client = @import("howl_client");
 const render = @import("howl_render");
-const canvas = render.terminal;
 const text = render.text;
 const p = client.protocol;
 
@@ -42,15 +41,15 @@ var published_projection: usize = 0;
 var pending_projection: usize = 1;
 var pixels: [atlas_bytes]u8 = undefined;
 var pixels_used: usize = 0;
-var frame_uploads: [residency_capacity]canvas.FrameResourceUpload = undefined;
-var frame_removals: [residency_capacity]canvas.ResourceRef = undefined;
-var frame_commands: [command_capacity]canvas.Command = undefined;
-var accepted_residency: [residency_capacity]canvas.Residency = undefined;
+var frame_uploads: [residency_capacity]render.terminal.FrameResourceUpload = undefined;
+var frame_removals: [residency_capacity]render.terminal.ResourceRef = undefined;
+var frame_commands: [command_capacity]render.terminal.Command = undefined;
+var accepted_residency: [residency_capacity]render.terminal.Residency = undefined;
 var accepted_residency_count: usize = 0;
-var pending_residency: [residency_capacity]canvas.Residency = undefined;
+var pending_residency: [residency_capacity]render.terminal.Residency = undefined;
 var pending_residency_count: usize = 0;
-var missing_external_storage: [maximum_terminal_images]canvas.FrameExternalResource = undefined;
-var missing_external: ?canvas.FrameExternalResource = null;
+var missing_external_storage: [maximum_terminal_images]render.terminal.FrameExternalResource = undefined;
+var missing_external: ?render.terminal.FrameExternalResource = null;
 var image_bindings: [maximum_terminal_images]ImageBinding = undefined;
 var image_binding_count: usize = 0;
 var missing_image_binding: ?ImageBinding = null;
@@ -60,10 +59,10 @@ var failure: []const u8 = "";
 var persistent = std.heap.FixedBufferAllocator.init(&persistent_heap);
 var transient = std.heap.FixedBufferAllocator.init(&transient_heap);
 var fonts: ?*text.FontSet = null;
-var terminal_canvas: ?*render.terminal.Canvas = null;
-var canvas_ready = false;
-var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
-var surface: canvas.Size = .{ .width = 1, .height = 1 };
+var terminal_renderer: ?*render.terminal.Renderer = null;
+var renderer_ready = false;
+var cell_size: render.terminal.Size = .{ .width = 1, .height = 1 };
+var surface: render.terminal.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
 const FrameFormat = enum(u32) { v2 = 2, v3 = 3, v4 = 4 };
 // Boot in the last deployed format so an old host may safely consume a newer
@@ -74,7 +73,7 @@ const ImageBinding = render.terminal.ExternalImageBinding;
 
 const PendingExternal = struct {
     binding: ImageBinding,
-    external: canvas.FrameExternalResource,
+    external: render.terminal.FrameExternalResource,
 };
 
 const RenderResult = enum {
@@ -159,7 +158,7 @@ export fn rv_set_frame_format(value: u32) u32 {
     return 1;
 }
 export fn rv_ready() u32 {
-    return @intFromBool(canvas_ready);
+    return @intFromBool(renderer_ready);
 }
 export fn rv_missing_external() u32 {
     return @intFromBool(missing_external != null);
@@ -234,9 +233,9 @@ fn initRenderer(
     fallback_font_length: usize,
     symbol_font_length: usize,
     font_pixels: u32,
-    requested_cell: ?canvas.Size,
+    requested_cell: ?render.terminal.Size,
 ) u32 {
-    if (canvas_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
+    if (renderer_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
         fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
         symbol_font_length == 0 or symbol_font_length > symbol_font_input.len) return 0;
     persistent.reset();
@@ -272,11 +271,11 @@ fn initRenderer(
     @memset(fallback_font_input[0..fallback_font_length], 0x5a);
     @memset(symbol_font_input[0..symbol_font_length], 0x3c);
     const metrics = new_fonts.metrics();
-    const presentation_cell = requested_cell orelse canvas.Size{
+    const presentation_cell = requested_cell orelse render.terminal.Size{
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const new_canvas = render.terminal.initCanvas(allocator, render.terminal.FontFaces.single(new_fonts), .{
+    const new_renderer = render.terminal.init(allocator, render.terminal.FontFaces.single(new_fonts), .{
         .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
@@ -293,23 +292,23 @@ fn initRenderer(
         .raster_bytes = 256 * 1024,
         .command_capacity = command_capacity,
     }) catch |err| return fail(@errorName(err));
-    errdefer render.terminal.deinitCanvas(new_canvas);
+    errdefer render.terminal.deinit(new_renderer);
 
     fonts = new_fonts;
-    terminal_canvas = new_canvas;
+    terminal_renderer = new_renderer;
     cell_size = presentation_cell;
-    canvas_ready = true;
+    renderer_ready = true;
     return 1;
 }
 
 export fn rv_reset() u32 {
-    if (canvas_ready) {
-        render.terminal.deinitCanvas(terminal_canvas.?);
+    if (renderer_ready) {
+        render.terminal.deinit(terminal_renderer.?);
         fonts.?.deinit();
     }
     fonts = null;
-    terminal_canvas = null;
-    canvas_ready = false;
+    terminal_renderer = null;
+    renderer_ready = false;
     persistent.reset();
     transient.reset();
     accepted_residency_count = 0;
@@ -331,7 +330,7 @@ export fn rv_reset() u32 {
 }
 
 export fn rv_render(snapshot_length: usize) u32 {
-    if (!canvas_ready or pending_ack or snapshot_length == 0 or snapshot_length > snapshot_input.len)
+    if (!renderer_ready or pending_ack or snapshot_length == 0 or snapshot_length > snapshot_input.len)
         return 0;
     failure = "";
     metadata_used = 0;
@@ -356,12 +355,12 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     defer client.view.deinit(view);
     const begin = client.view.begin(view);
     const next_render = std.math.add(u64, rendered, 1) catch return error.RenderRevisionOverflow;
-    try updateCanvas(view);
+    try updateRenderer(view);
     surface = .{
         .width = std.math.mul(u16, begin.columns, cell_size.width) catch return error.SurfaceOverflow,
         .height = std.math.mul(u16, begin.rows, cell_size.height) catch return error.SurfaceOverflow,
     };
-    const frame = render.terminal.frame(terminal_canvas.?, accepted_residency[0..accepted_residency_count], .{
+    const frame = render.terminal.frame(terminal_renderer.?, accepted_residency[0..accepted_residency_count], .{
         .uploads = &frame_uploads,
         .removals = &frame_removals,
         .commands = &frame_commands,
@@ -388,9 +387,9 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
 /// Installs the exact externally uploaded resource currently requested by
 /// `rv_render`. The browser calls this only after its backend resource exists.
 export fn rv_accept_external() u32 {
-    if (!canvas_ready or pending_ack) return 0;
+    if (!renderer_ready or pending_ack) return 0;
     const value = missing_external orelse return 0;
-    const residency = canvas.Residency{
+    const residency = render.terminal.Residency{
         .resource = value.resource,
         .format = value.format,
         .size = value.size,
@@ -411,28 +410,28 @@ export fn rv_accept_external() u32 {
     return 1;
 }
 
-fn updateCanvas(view: *const client.view.Snapshot) !void {
+fn updateRenderer(view: *const client.view.Snapshot) !void {
     const graphics = client.view.graphics(view);
     if (graphics.images.len > maximum_terminal_images)
         return error.UnsupportedGraphics;
     var candidate: [maximum_terminal_images]ImageBinding = undefined;
     const bindings = render.terminal.planExternalImageBindings(
         image_bindings[0..image_binding_count],
-        render.terminal.canvasUsage(terminal_canvas.?),
+        render.terminal.usage(terminal_renderer.?),
         graphics.images,
         &candidate,
     ) catch |err| switch (err) {
         error.ImageLimit => return error.UnsupportedGraphics,
         else => return err,
     };
-    try render.terminal.updateWithImageBindings(terminal_canvas.?, view, bindings);
+    try render.terminal.updateWithImageBindings(terminal_renderer.?, view, bindings);
     @memcpy(image_bindings[0..bindings.len], bindings);
     image_binding_count = bindings.len;
 }
 
 fn findImageBindingByResource(
     bindings: []const ImageBinding,
-    resource: canvas.ResourceRef,
+    resource: render.terminal.ResourceRef,
 ) ?ImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -442,7 +441,7 @@ fn findImageBindingByResource(
     return null;
 }
 
-fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !PendingExternal {
+fn selectMissingExternal(missing: []const render.terminal.FrameExternalResource) !PendingExternal {
     if (missing.len == 0 or missing.len > image_binding_count)
         return error.InvalidExternalResource;
     var selected: ?PendingExternal = null;
@@ -459,7 +458,7 @@ fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !Pending
 
 fn prepareMissingExternal() !void {
     const missing = try render.terminal.missingExternalResources(
-        terminal_canvas.?,
+        terminal_renderer.?,
         accepted_residency[0..accepted_residency_count],
         &missing_external_storage,
     );
@@ -469,7 +468,7 @@ fn prepareMissingExternal() !void {
 }
 
 export fn rv_ack() u32 {
-    if (!canvas_ready or !pending_ack) return 0;
+    if (!renderer_ready or !pending_ack) return 0;
     @memcpy(accepted_residency[0..pending_residency_count], pending_residency[0..pending_residency_count]);
     accepted_residency_count = pending_residency_count;
     pending_residency_count = 0;
@@ -478,15 +477,15 @@ export fn rv_ack() u32 {
     return 1;
 }
 
-fn exactResourceEqual(a: canvas.ResourceRef, b: canvas.ResourceRef) bool {
+fn exactResourceEqual(a: render.terminal.ResourceRef, b: render.terminal.ResourceRef) bool {
     return @backingInt(a.resource) == @backingInt(b.resource) and
         @backingInt(a.generation) == @backingInt(b.generation);
 }
 
-fn collectPendingResidency(commands: []const canvas.Command) error{ResidencyLimit}!void {
+fn collectPendingResidency(commands: []const render.terminal.Command) error{ResidencyLimit}!void {
     pending_residency_count = 0;
     for (commands) |command| {
-        const view: ?canvas.ResourceView = switch (command) {
+        const view: ?render.terminal.ResourceView = switch (command) {
             .solid => null,
             .alpha_mask => |value| value.resource,
             .rgba => |value| value.resource,
@@ -745,7 +744,7 @@ fn writeFrameV4(
     metadata_used = writer.end;
 }
 
-fn writeCommandWire(commands: []const canvas.Command) !void {
+fn writeCommandWire(commands: []const render.terminal.Command) !void {
     if (commands.len > command_capacity) return error.InvalidSnapshot;
     for (commands, 0..) |command, index| {
         const record = metadata[index * command_record_bytes ..][0..command_record_bytes];
@@ -779,75 +778,75 @@ fn writeCommandWire(commands: []const canvas.Command) !void {
     command_wire_count = commands.len;
 }
 
-fn writeWireRect(record: []u8, offset: usize, value: canvas.Rect) void {
+fn writeWireRect(record: []u8, offset: usize, value: render.terminal.Rect) void {
     std.mem.writeInt(i32, record[offset..][0..4], value.x, .little);
     std.mem.writeInt(i32, record[offset + 4 ..][0..4], value.y, .little);
     std.mem.writeInt(u16, record[offset + 8 ..][0..2], value.width, .little);
     std.mem.writeInt(u16, record[offset + 10 ..][0..2], value.height, .little);
 }
 
-fn writeWireResource(record: []u8, value: canvas.ResourceView) void {
+fn writeWireResource(record: []u8, value: render.terminal.ResourceView) void {
     std.mem.writeInt(u64, record[32..40], @backingInt(value.resource.resource), .little);
     std.mem.writeInt(u64, record[40..48], @backingInt(value.resource.generation), .little);
     std.mem.writeInt(u16, record[48..50], value.size.width, .little);
     std.mem.writeInt(u16, record[50..52], value.size.height, .little);
 }
 
-fn writeWireSource(record: []u8, source: ?canvas.SourceRect, size: canvas.Size) void {
-    const value = source orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeWireSource(record: []u8, source: ?render.terminal.SourceRect, size: render.terminal.Size) void {
+    const value = source orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     std.mem.writeInt(u16, record[52..54], value.x, .little);
     std.mem.writeInt(u16, record[54..56], value.y, .little);
     std.mem.writeInt(u16, record[56..58], value.width, .little);
     std.mem.writeInt(u16, record[58..60], value.height, .little);
 }
 
-fn writeWireColor(record: []u8, value: canvas.Color) void {
+fn writeWireColor(record: []u8, value: render.terminal.Color) void {
     record[60] = value.r;
     record[61] = value.g;
     record[62] = value.b;
     record[63] = value.a;
 }
 
-fn writeQualified(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+fn writeQualified(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
     try writer.print("[{d},{d}]", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeQualifiedStrings(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+fn writeQualifiedStrings(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
     try writer.print("[\"{d}\",\"{d}\"]", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeQualifiedFields(writer: *std.Io.Writer, value: canvas.ResourceRef) !void {
+fn writeQualifiedFields(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
     try writer.print("{d},{d}", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeRect(writer: *std.Io.Writer, value: canvas.Rect) !void {
+fn writeRect(writer: *std.Io.Writer, value: render.terminal.Rect) !void {
     try writer.print("[{d},{d},{d},{d}]", .{ value.x, value.y, value.width, value.height });
 }
 
-fn writeColor(writer: *std.Io.Writer, value: canvas.Color) !void {
+fn writeColor(writer: *std.Io.Writer, value: render.terminal.Color) !void {
     try writer.print("[{d},{d},{d},{d}]", .{ value.r, value.g, value.b, value.a });
 }
 
-fn writeSourceRect(writer: *std.Io.Writer, value: ?canvas.SourceRect, size: canvas.Size) !void {
-    const source = value orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeSourceRect(writer: *std.Io.Writer, value: ?render.terminal.SourceRect, size: render.terminal.Size) !void {
+    const source = value orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     try writer.print("[{d},{d},{d},{d}]", .{ source.x, source.y, source.width, source.height });
 }
 
-fn writeRectFields(writer: *std.Io.Writer, value: canvas.Rect) !void {
+fn writeRectFields(writer: *std.Io.Writer, value: render.terminal.Rect) !void {
     try writer.print("{d},{d},{d},{d}", .{ value.x, value.y, value.width, value.height });
 }
 
-fn writeColorFields(writer: *std.Io.Writer, value: canvas.Color) !void {
+fn writeColorFields(writer: *std.Io.Writer, value: render.terminal.Color) !void {
     try writer.print("{d},{d},{d},{d}", .{ value.r, value.g, value.b, value.a });
 }
 
-fn writeSourceFields(writer: *std.Io.Writer, value: ?canvas.SourceRect, size: canvas.Size) !void {
-    const source = value orelse canvas.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeSourceFields(writer: *std.Io.Writer, value: ?render.terminal.SourceRect, size: render.terminal.Size) !void {
+    const source = value orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     try writer.print("{d},{d},{d},{d}", .{ source.x, source.y, source.width, source.height });
 }

@@ -1,7 +1,7 @@
 //! Private bounded text-shape and alpha-atlas caches for terminal presentation.
 //!
 //! This module consumes only howl-text. It owns no terminal/client semantics,
-//! Canvas resources, host topology, or backend state.
+//! renderer resources, host topology, or backend state.
 
 const std = @import("std");
 const text = @import("howl_text");

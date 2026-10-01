@@ -7,7 +7,7 @@ rules:
   - usize is for indexes, lengths, capacities, byte counts, and standard-library boundaries; domain quantities use sized types.
   - VT owns terminal semantics, history, images, input encoding, replies, and protocol consequences; it owns no observer or renderer publication queue.
   - VT owns retained terminal image/frame/animation semantics. Instance supplies caller-monotonic service time and the next wake deadline for Instance-owned terminals; a direct VT embedder supplies that scheduling itself. Renderers own no independent terminal-animation clock.
-  - VT exposes canonical semantic observation, graphics identity, geometry, and exact resource generations; Terminal owners keep the direct mutable engine while Instance may lend only VT-owned opaque Terminal.Observation and must not mirror that observation API. Renderer/Canvas/backend residency remains presentation state outside VT and Instance.
+  - VT exposes canonical semantic observation, graphics identity, geometry, and exact resource generations; Terminal owners keep the direct mutable engine while Instance may lend only VT-owned opaque Terminal.Observation and must not mirror that observation API. Renderer/backend residency remains presentation state outside VT and Instance.
   - VT projected history and the visible screen are the sole cell authority for future reflow; rows older than history_row_base never return, while bounded logical-output evidence remains independent.
   - Instance owns one canonical platform process-terminal transport and VT, ordered process I/O, explicit geometry, signals, child lifetime, and deterministic headless consequence policy.
   - Instance exposes no mutable PTY or VT escape hatch; its public handle is opaque and terminal(instance) returns only *const Terminal.Observation for synchronous observation.
@@ -16,7 +16,7 @@ rules:
   - The platform process-terminal owner owns native descriptors or handles, child process/control lifetime, resize, signals, and cleanup.
   - Attaching an observer never resizes the platform process-terminal transport; geometry changes are explicit serialized Instance mutations.
   - Rendering, UI, platform lifecycle, networking, authentication, and Session/Server orchestration remain outside VT, PTY, and Instance.
-  - Terminal Canvas may synchronously consume VT-owned Terminal.Observation, a validated howl-client rich observation, or the owned client.view form for consumers that need independent lifetime; no borrowed source may outlive the update call. All storage forms share one presentation implementation and must prove final-frame equivalence.
+  - Terminal renderer may synchronously consume VT-owned Terminal.Observation, a validated howl-client rich observation, or the owned client.view form for consumers that need independent lifetime; no borrowed source may outlive the update call. All storage forms share one presentation implementation and must prove final-frame equivalence.
   - Each core package owns its direct build identity, dependencies, native interfaces, and proofs.
   - Every concrete core artifact uses the tracked Zig compiler with self-hosted code generation and linking.
   - Tests prove behavior, failure, cleanup, bounds, and ownership rather than rejected architecture.

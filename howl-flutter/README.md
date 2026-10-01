@@ -9,14 +9,14 @@ howl-instance / howl-vt
         ↓
 howl-client.rich → howl-client.view
         ↓
-howl-render.terminal.Canvas → final terminal Frame
+howl-render.terminal.Renderer → final terminal Frame
         ↓
 app-private copied native-host frame
         ↓
 Flutter resource lease + batched Canvas backend
 ```
 
-`howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal Canvas generations then decide whether recovery is needed.
+`howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, then forwards them through `howl-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
@@ -265,7 +265,7 @@ changing Remote attach semantics.
 - `howl-client`'s optional `howl_local` module owns listener-free desktop Local
   Instance/PTY lifecycle; mobile does not import that ownership policy.
 - `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.
-- `howl-render.terminal.Content` owns bounded shape/atlas caches and emits complete Canvas state.
+- `howl-render.terminal.Renderer` owns bounded shape/atlas caches and emits complete terminal frames.
 - Flutter owns only platform capture, viewport/history UX, copied resource lifetime, and backend batching.
 - The app-private host packet and FFI symbols are version-locked implementation details, not compatibility surfaces.
 

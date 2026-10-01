@@ -1,7 +1,7 @@
 //! Bridges one canonical Instance snapshot into the native Vulkan surface model.
 //!
 //! This owner is intentionally host-local. Instance remains canonical terminal
-//! truth, Render owns terminal/Canvas projection, and howl-vk owns backend
+//! truth, Render owns terminal-frame projection, and howl-vk owns backend
 //! residency and geometry. This file only composes those existing contracts.
 
 const std = @import("std");
@@ -11,7 +11,6 @@ const remote_target = @import("remote_target.zig");
 const render = @import("howl_render");
 const limits = render.limits;
 const terminal = render.terminal;
-const canvas = terminal;
 const terminal_fast = @import("terminal_fast.zig");
 const text = render.text;
 const vk_surface = @import("howl_vk").surface;
@@ -25,7 +24,7 @@ const command_capacity: usize = limits.maximum_frame_commands;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 
 const ExternalUpload = struct {
-    external: canvas.FrameExternalResource,
+    external: terminal.FrameExternalResource,
     width: u32,
     height: u32,
     pixels: []const u8,
@@ -89,7 +88,7 @@ pub fn preparedMatchesGeometry(
     prepared: Prepared,
     rows: u16,
     cols: u16,
-    cell_size: canvas.Size,
+    cell_size: terminal.Size,
 ) bool {
     return prepared.rows == rows and
         prepared.cols == cols and
@@ -101,7 +100,7 @@ pub fn measureCellSize(
     allocator: std.mem.Allocator,
     font: FontPaths,
     font_pixels: u16,
-) !canvas.Size {
+) !terminal.Size {
     if (font_pixels == 0) return error.InvalidFontPixels;
     const fonts = try text.FontSet.init(allocator, .{
         .primary = font.primary,
@@ -147,17 +146,17 @@ pub const Scene = struct {
     source: Source,
     fonts: *text.FontSet,
     fast: terminal_fast.Adapter,
-    canvas: *terminal.Canvas,
-    cell_size: canvas.Size,
-    frame_uploads: []canvas.FrameResourceUpload,
-    frame_removals: []canvas.ResourceRef,
-    frame_commands: []canvas.Command,
+    renderer: *terminal.Renderer,
+    cell_size: terminal.Size,
+    frame_uploads: []terminal.FrameResourceUpload,
+    frame_removals: []terminal.ResourceRef,
+    frame_commands: []terminal.Command,
     frame_pixels: []u8,
     surface_uploads: []vk_surface.Upload,
     surface_removals: []vk_surface.Removal,
     surface_commands: []vk_surface.FrameCommand,
     surface_residencies: []vk_surface.Residency,
-    canvas_residencies: []canvas.Residency,
+    renderer_residencies: []terminal.Residency,
     image_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     builder: vk_surface.FrameBuilder,
@@ -222,11 +221,11 @@ pub const Scene = struct {
         const metrics = fonts.metrics();
         var fast = try terminal_fast.Adapter.init(allocator, fonts);
         errdefer fast.deinit();
-        const cell_size = canvas.Size{
+        const cell_size = terminal.Size{
             .width = metrics.advance_width,
             .height = metrics.line_height,
         };
-        const terminal_canvas = try terminal.initCanvas(
+        const terminal_renderer = try terminal.init(
             allocator,
             terminal.FontFaces.single(fonts),
             .{
@@ -251,13 +250,13 @@ pub const Scene = struct {
                 .command_capacity = command_capacity,
             },
         );
-        errdefer terminal.deinitCanvas(terminal_canvas);
+        errdefer terminal.deinit(terminal_renderer);
 
-        const frame_uploads = try allocator.alloc(canvas.FrameResourceUpload, resource_limit);
+        const frame_uploads = try allocator.alloc(terminal.FrameResourceUpload, resource_limit);
         errdefer allocator.free(frame_uploads);
-        const frame_removals = try allocator.alloc(canvas.ResourceRef, resource_limit);
+        const frame_removals = try allocator.alloc(terminal.ResourceRef, resource_limit);
         errdefer allocator.free(frame_removals);
-        const frame_commands = try allocator.alloc(canvas.Command, command_capacity);
+        const frame_commands = try allocator.alloc(terminal.Command, command_capacity);
         errdefer allocator.free(frame_commands);
         const frame_pixels = try allocator.alloc(u8, atlas_pixel_bytes);
         errdefer allocator.free(frame_pixels);
@@ -269,8 +268,8 @@ pub const Scene = struct {
         errdefer allocator.free(surface_commands);
         const surface_residencies = try allocator.alloc(vk_surface.Residency, resource_limit);
         errdefer allocator.free(surface_residencies);
-        const canvas_residencies = try allocator.alloc(canvas.Residency, prospective_resource_limit);
-        errdefer allocator.free(canvas_residencies);
+        const renderer_residencies = try allocator.alloc(terminal.Residency, prospective_resource_limit);
+        errdefer allocator.free(renderer_residencies);
         var builder = try vk_surface.FrameBuilder.init(allocator);
         errdefer builder.deinit();
         var residency = try vk_surface.ResidencyStore.init(allocator, .{
@@ -289,7 +288,7 @@ pub const Scene = struct {
             .source = owned_source,
             .fonts = fonts,
             .fast = fast,
-            .canvas = terminal_canvas,
+            .renderer = terminal_renderer,
             .cell_size = cell_size,
             .frame_uploads = frame_uploads,
             .frame_removals = frame_removals,
@@ -299,7 +298,7 @@ pub const Scene = struct {
             .surface_removals = surface_removals,
             .surface_commands = surface_commands,
             .surface_residencies = surface_residencies,
-            .canvas_residencies = canvas_residencies,
+            .renderer_residencies = renderer_residencies,
             .builder = builder,
             .residency = residency,
             .overlay_residency = overlay_residency,
@@ -310,7 +309,7 @@ pub const Scene = struct {
         self.overlay_residency.deinit();
         self.residency.deinit();
         self.builder.deinit();
-        self.allocator.free(self.canvas_residencies);
+        self.allocator.free(self.renderer_residencies);
         self.allocator.free(self.surface_residencies);
         self.allocator.free(self.surface_commands);
         self.allocator.free(self.surface_removals);
@@ -319,7 +318,7 @@ pub const Scene = struct {
         self.allocator.free(self.frame_commands);
         self.allocator.free(self.frame_removals);
         self.allocator.free(self.frame_uploads);
-        terminal.deinitCanvas(self.canvas);
+        terminal.deinit(self.renderer);
         self.fast.deinit();
         self.fonts.deinit();
         deinitSource(&self.source);
@@ -499,27 +498,27 @@ pub const Scene = struct {
         var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
         const bindings = try terminal.planExternalImageBindings(
             self.image_bindings[0..self.image_binding_count],
-            terminal.canvasUsage(self.canvas),
+            terminal.usage(self.renderer),
             graphics.images,
             &candidate_bindings,
         );
-        try terminal.updateRichWithImageBindings(self.canvas, rich, bindings);
+        try terminal.updateRichWithImageBindings(self.renderer, rich, bindings);
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
 
-        var canvas_residency_count = try self.acceptedCanvasResidencies();
+        var renderer_residency_count = try self.acceptedRendererResidencies();
         var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
         var external_upload_count: usize = 0;
         defer clearExternalUploads(&external_uploads, &external_upload_count);
         try self.prepareRemoteExternalUploads(
             refill_connection,
             bindings,
-            &canvas_residency_count,
+            &renderer_residency_count,
             &external_uploads,
             &external_upload_count,
         );
         const generic = try self.finishGeneric(
-            canvas_residency_count,
+            renderer_residency_count,
             external_uploads[0..external_upload_count],
         );
         return preparedEnvelope(
@@ -600,13 +599,13 @@ pub const Scene = struct {
         var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
         const bindings = try terminal.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
-            terminal.canvasUsage(self.canvas),
+            terminal.usage(self.renderer),
             observation,
             history_offset,
             &candidate_bindings,
         );
         try terminal.updateObservation(
-            self.canvas,
+            self.renderer,
             observation,
             history_offset,
             bindings,
@@ -614,19 +613,19 @@ pub const Scene = struct {
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
 
-        var canvas_residency_count = try self.acceptedCanvasResidencies();
+        var renderer_residency_count = try self.acceptedRendererResidencies();
         var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
         var external_upload_count: usize = 0;
         try self.prepareLocalExternalUploads(
             observation,
             history_offset,
             bindings,
-            &canvas_residency_count,
+            &renderer_residency_count,
             &external_uploads,
             &external_upload_count,
         );
         const generic = try self.finishGeneric(
-            canvas_residency_count,
+            renderer_residency_count,
             external_uploads[0..external_upload_count],
         );
         return .{
@@ -647,12 +646,12 @@ pub const Scene = struct {
         };
     }
 
-    fn acceptedCanvasResidencies(self: *Scene) !usize {
+    fn acceptedRendererResidencies(self: *Scene) !usize {
         const resident = try self.residency.enumerate(self.surface_residencies);
-        if (resident.len > self.canvas_residencies.len) return error.Capacity;
+        if (resident.len > self.renderer_residencies.len) return error.Capacity;
         for (resident, 0..) |value, index| {
-            self.canvas_residencies[index] = .{
-                .resource = try canvasResource(value.resource),
+            self.renderer_residencies[index] = .{
+                .resource = try renderResource(value.resource),
                 .format = switch (value.kind) {
                     .alpha_mask => .alpha8,
                     .rgba => .rgba8,
@@ -666,12 +665,12 @@ pub const Scene = struct {
 
     fn finishGeneric(
         self: *Scene,
-        canvas_residency_count: usize,
+        renderer_residency_count: usize,
         external_uploads: []const ExternalUpload,
     ) !GenericPrepared {
         const frame = try terminal.frame(
-            self.canvas,
-            self.canvas_residencies[0..canvas_residency_count],
+            self.renderer,
+            self.renderer_residencies[0..renderer_residency_count],
             .{
                 .uploads = self.frame_uploads,
                 .removals = self.frame_removals,
@@ -679,7 +678,7 @@ pub const Scene = struct {
                 .pixels = self.frame_pixels,
             },
         );
-        const generic = try adaptCanvasFrame(
+        const generic = try adaptRendererFrame(
             frame,
             external_uploads,
             self.surface_uploads,
@@ -696,14 +695,14 @@ pub const Scene = struct {
         self: *Scene,
         refill_connection: *client.Connection,
         bindings: []const terminal.ExternalImageBinding,
-        canvas_residency_count: *usize,
+        renderer_residency_count: *usize,
         uploads: *[terminal.maximum_external_images]ExternalUpload,
         upload_count: *usize,
     ) !void {
-        var missing_storage: [terminal.maximum_external_images]canvas.FrameExternalResource = undefined;
+        var missing_storage: [terminal.maximum_external_images]terminal.FrameExternalResource = undefined;
         const missing = try terminal.missingExternalResources(
-            self.canvas,
-            self.canvas_residencies[0..canvas_residency_count.*],
+            self.renderer,
+            self.renderer_residencies[0..renderer_residency_count.*],
             &missing_storage,
         );
         if (missing.len > uploads.len) return error.Capacity;
@@ -740,9 +739,9 @@ pub const Scene = struct {
             };
             upload_count.* += 1;
             fetched_owned = false;
-            try upsertCanvasResidency(
-                self.canvas_residencies,
-                canvas_residency_count,
+            try upsertRendererResidency(
+                self.renderer_residencies,
+                renderer_residency_count,
                 .{
                     .resource = external.resource,
                     .format = external.format,
@@ -757,14 +756,14 @@ pub const Scene = struct {
         observation: *const @import("howl_vt").Terminal.Observation,
         history_offset: u32,
         bindings: []const terminal.ExternalImageBinding,
-        canvas_residency_count: *usize,
+        renderer_residency_count: *usize,
         uploads: *[terminal.maximum_external_images]ExternalUpload,
         upload_count: *usize,
     ) !void {
-        var missing_storage: [terminal.maximum_external_images]canvas.FrameExternalResource = undefined;
+        var missing_storage: [terminal.maximum_external_images]terminal.FrameExternalResource = undefined;
         const missing = try terminal.missingExternalResources(
-            self.canvas,
-            self.canvas_residencies[0..canvas_residency_count.*],
+            self.renderer,
+            self.renderer_residencies[0..renderer_residency_count.*],
             &missing_storage,
         );
         if (missing.len > uploads.len) return error.Capacity;
@@ -795,9 +794,9 @@ pub const Scene = struct {
                 .pixels = image.pixels,
             };
             upload_count.* += 1;
-            try upsertCanvasResidency(
-                self.canvas_residencies,
-                canvas_residency_count,
+            try upsertRendererResidency(
+                self.renderer_residencies,
+                renderer_residency_count,
                 .{
                     .resource = external.resource,
                     .format = external.format,
@@ -817,7 +816,7 @@ pub const Scene = struct {
         }
     }
 
-    pub fn cellSize(self: *const Scene) canvas.Size {
+    pub fn cellSize(self: *const Scene) terminal.Size {
         return self.cell_size;
     }
 
@@ -884,7 +883,7 @@ fn findObservationImage(
 
 fn findImageBindingByResource(
     bindings: []const terminal.ExternalImageBinding,
-    resource: canvas.ResourceRef,
+    resource: terminal.ResourceRef,
 ) ?terminal.ExternalImageBinding {
     for (bindings) |binding| {
         if (std.meta.eql(binding.resource, resource)) return binding;
@@ -892,10 +891,10 @@ fn findImageBindingByResource(
     return null;
 }
 
-fn upsertCanvasResidency(
-    storage: []canvas.Residency,
+fn upsertRendererResidency(
+    storage: []terminal.Residency,
     count: *usize,
-    value: canvas.Residency,
+    value: terminal.Residency,
 ) error{Capacity}!void {
     for (storage[0..count.*]) |*existing| {
         if (existing.resource.resource == value.resource.resource) {
@@ -908,7 +907,7 @@ fn upsertCanvasResidency(
     count.* += 1;
 }
 
-fn adaptCanvasFrame(
+fn adaptRendererFrame(
     frame: terminal.Frame,
     external_uploads: []const ExternalUpload,
     uploads: []vk_surface.Upload,
@@ -988,7 +987,7 @@ fn adaptCanvasFrame(
     };
 }
 
-fn surfaceResource(value: canvas.ResourceRef) error{InvalidFrame}!vk_surface.ResourceGeneration {
+fn surfaceResource(value: terminal.ResourceRef) error{InvalidFrame}!vk_surface.ResourceGeneration {
     value.validate() catch return error.InvalidFrame;
     return vk_surface.ResourceGeneration.init(
         @backingInt(value.resource),
@@ -996,20 +995,20 @@ fn surfaceResource(value: canvas.ResourceRef) error{InvalidFrame}!vk_surface.Res
     ) catch error.InvalidFrame;
 }
 
-fn canvasResource(value: vk_surface.ResourceGeneration) error{InvalidFrame}!canvas.ResourceRef {
+fn renderResource(value: vk_surface.ResourceGeneration) error{InvalidFrame}!terminal.ResourceRef {
     value.validate() catch return error.InvalidFrame;
     return .{
-        .resource = canvas.ResourceId.fromEncoded(value.resource) catch
+        .resource = terminal.ResourceId.fromEncoded(value.resource) catch
             return error.InvalidFrame,
         .generation = @fromBackingInt(value.generation),
     };
 }
 
-fn surfaceRect(value: canvas.Rect) vk_surface.Rect {
+fn surfaceRect(value: terminal.Rect) vk_surface.Rect {
     return .{ .x = value.x, .y = value.y, .width = value.width, .height = value.height };
 }
 
-fn surfaceColor(value: canvas.Color) [4]f32 {
+fn surfaceColor(value: terminal.Color) [4]f32 {
     return .{
         @as(f32, @floatFromInt(value.r)) / 255.0,
         @as(f32, @floatFromInt(value.g)) / 255.0,
@@ -1019,33 +1018,33 @@ fn surfaceColor(value: canvas.Color) [4]f32 {
 }
 
 test "terminal scene prospective residency replaces one logical image identity" {
-    var storage: [3]canvas.Residency = undefined;
+    var storage: [3]terminal.Residency = undefined;
     var count: usize = 0;
-    const resource = try canvas.ResourceId.init(2);
-    const first = canvas.Residency{
+    const resource = try terminal.ResourceId.init(2);
+    const first = terminal.Residency{
         .resource = .{ .resource = resource, .generation = @fromBackingInt(3) },
         .format = .rgba8,
         .size = .{ .width = 2, .height = 2 },
     };
-    const replacement = canvas.Residency{
+    const replacement = terminal.Residency{
         .resource = .{ .resource = resource, .generation = @fromBackingInt(4) },
         .format = .rgba8,
         .size = .{ .width = 3, .height = 1 },
     };
-    try upsertCanvasResidency(&storage, &count, first);
-    try upsertCanvasResidency(&storage, &count, replacement);
+    try upsertRendererResidency(&storage, &count, first);
+    try upsertRendererResidency(&storage, &count, replacement);
     try std.testing.expectEqual(@as(usize, 1), count);
     try std.testing.expectEqualDeep(replacement, storage[0]);
 
-    const second = canvas.Residency{
+    const second = terminal.Residency{
         .resource = .{
-            .resource = try canvas.ResourceId.init(3),
+            .resource = try terminal.ResourceId.init(3),
             .generation = @fromBackingInt(1),
         },
         .format = .rgba8,
         .size = .{ .width = 1, .height = 1 },
     };
-    try upsertCanvasResidency(&storage, &count, second);
+    try upsertRendererResidency(&storage, &count, second);
     try std.testing.expectEqual(@as(usize, 2), count);
 }
 
@@ -1061,8 +1060,8 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
     };
     defer fetched.deinit();
 
-    const resource = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.init(2),
+    const resource = terminal.ResourceRef{
+        .resource = try terminal.ResourceId.init(2),
         .generation = @fromBackingInt(9),
     };
     const external = ExternalUpload{
@@ -1086,7 +1085,7 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
     var uploads: [1]vk_surface.Upload = undefined;
     var removals: [1]vk_surface.Removal = undefined;
     var commands: [1]vk_surface.FrameCommand = undefined;
-    const adapted = try adaptCanvasFrame(
+    const adapted = try adaptRendererFrame(
         frame,
         &.{external},
         &uploads,

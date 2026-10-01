@@ -121,7 +121,7 @@ Current canary:
   keeps the exact-path editor until an equivalent installed-font catalogue owner is wired;
 - Color schemes now owns the first live application-chrome themes: Howl Dark,
   Slate, and High Contrast cycle with Left/Right and persist by stable id. The
-  theme changes desktop shell chrome only; terminal Canvas colors remain canonical
+  theme changes desktop shell chrome only; terminal renderer colors remain canonical
   Howl output. A managed-KWin A/B kept sampled terminal pixels identical across all
   three themes, and High Contrast survived a full process restart;
 - Startup owns the second persisted setting: the default profile can be Home
@@ -250,11 +250,11 @@ Current canary:
   text-shaped extent, trimming untouched trailing blank cells rather than
   pretending a wrapped logical line has one stable desktop identity. VT itself
   normalizes wide-cell continuation endpoints during canonical text extraction;
-- terminal content is projected by the shared `howl-render` Terminal Canvas;
+- terminal content is projected by the shared `howl-render` terminal renderer;
   the Odin bridge exposes fixed C resource/removal/command
   records, while SDL caches Canvas resources and paints ordered solid,
   alpha-mask, and RGBA commands without parsing terminal cells itself;
-- Canvas residency survives unchanged revisions, so the first frame uploads only
+- Renderer residency survives unchanged revisions, so the first frame uploads only
   missing presentation resources. Terminal images now use Canvas external-resource
   residency too: exact Instance image generations are demand-fetched through
   `howl-client.images`, exposed to SDL through the same RGBA upload API, and then

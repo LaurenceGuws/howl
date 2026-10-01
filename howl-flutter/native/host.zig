@@ -6,7 +6,6 @@ const server_client = @import("server_client");
 const protocol = client.protocol;
 const text = @import("howl_text");
 const terminal = @import("terminal");
-const canvas = terminal;
 const limits = @import("limits");
 
 const host_header_bytes: usize = 64;
@@ -41,23 +40,23 @@ const command_capacity: usize = limits.maximum_frame_commands;
 // Retain one bounded common interactive row-command window. Larger/richer
 // frames use the complete terminal projection path unchanged.
 const incremental_command_capacity: usize = 8 * 1024;
-const canvas_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
-const output_minimum_bytes: usize = canvas_packet_budget + selection_rows_capacity + semantic_capacity;
+const render_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
+const output_minimum_bytes: usize = render_packet_budget + selection_rows_capacity + semantic_capacity;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
-    if (maximum_non_command_packet_bytes > canvas_packet_budget)
+    if (maximum_non_command_packet_bytes > render_packet_budget)
         @compileError("native host fixed frame state exceeds its minimum output packet");
     if (command_capacity == 0)
-        @compileError("native host output packet leaves no room for Canvas commands");
+        @compileError("native host output packet leaves no room for terminal-frame commands");
     if (incremental_command_capacity == 0 or incremental_command_capacity > command_capacity)
         @compileError("native host incremental command budget is invalid");
-    if (maximum_packet_bytes > canvas_packet_budget)
+    if (maximum_packet_bytes > render_packet_budget)
         @compileError("native host frame bounds exceed its minimum output packet");
-    if (canvas_packet_budget - maximum_packet_bytes >= command_record_bytes)
+    if (render_packet_budget - maximum_packet_bytes >= command_record_bytes)
         @compileError("native host command capacity does not consume the available packet budget");
-    if (output_minimum_bytes - canvas_packet_budget != selection_rows_capacity + semantic_capacity)
+    if (output_minimum_bytes - render_packet_budget != selection_rows_capacity + semantic_capacity)
         @compileError("native host selection/semantic allowance drifted from its packet budget");
     if (maximum_terminal_images + 1 > maximum_frame_resources)
         @compileError("native image bound leaves no room for the terminal glyph atlas");
@@ -87,8 +86,8 @@ const ClassifiedFailure = client.Error ||
     client.rich.Error ||
     client.view.Error ||
     text.InitError ||
-    terminal.CanvasInitError ||
-    terminal.CanvasError ||
+    terminal.InitError ||
+    terminal.Error ||
     std.mem.Allocator.Error ||
     HostPacketError ||
     error{ Overflow, InvalidHost };
@@ -116,7 +115,7 @@ const HostImageBinding = terminal.ExternalImageBinding;
 
 const PendingImage = struct {
     binding: HostImageBinding,
-    external: canvas.FrameExternalResource,
+    external: terminal.FrameExternalResource,
 };
 
 const Host = struct {
@@ -124,15 +123,15 @@ const Host = struct {
     connection: client.Connection,
     local_instance: ?*LocalInstance = null,
     raw_cache: client.rich.RawCache,
-    cell_size: canvas.Size,
+    cell_size: terminal.Size,
     fonts: *text.FontSet,
-    canvas: *terminal.Canvas,
-    frame_uploads: [maximum_frame_resources]canvas.FrameResourceUpload = undefined,
-    frame_removals: [maximum_frame_resources]canvas.ResourceRef = undefined,
-    frame_commands: [command_capacity]canvas.Command = undefined,
+    renderer: *terminal.Renderer,
+    frame_uploads: [maximum_frame_resources]terminal.FrameResourceUpload = undefined,
+    frame_removals: [maximum_frame_resources]terminal.ResourceRef = undefined,
+    frame_commands: [command_capacity]terminal.Command = undefined,
     frame_pixels: [pixel_capacity]u8 = undefined,
-    residencies: [maximum_frame_resources]canvas.Residency = undefined,
-    missing_external: [maximum_terminal_images]canvas.FrameExternalResource = undefined,
+    residencies: [maximum_frame_resources]terminal.Residency = undefined,
+    missing_external: [maximum_terminal_images]terminal.FrameExternalResource = undefined,
     image_bindings: [maximum_terminal_images]HostImageBinding = undefined,
     image_binding_count: usize = 0,
     pending_image: ?PendingImage = null,
@@ -189,7 +188,7 @@ fn maintainedRasterScale(font_pixels: u16, cell_width: u16, cell_height: u16) ?u
     return null;
 }
 
-fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.CanvasConfig {
+fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.Config {
     const raster_bytes = @as(usize, atlas_extent) * @as(usize, atlas_extent);
     return .{
         .cell_size = .{ .width = cell_width, .height = cell_height },
@@ -635,7 +634,7 @@ fn createHostFromConnection(
     var fonts_live = true;
     defer if (fonts_live) fonts.deinit();
 
-    const terminal_canvas = terminal.initCanvas(
+    const terminal_renderer = terminal.init(
         allocator,
         terminal.FontFaces.single(fonts),
         contentConfig(cell_width, cell_height, atlas_extent),
@@ -643,8 +642,8 @@ fn createHostFromConnection(
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "terminal_canvas", failure);
         return null;
     };
-    var canvas_live = true;
-    defer if (canvas_live) terminal.deinitCanvas(terminal_canvas);
+    var renderer_live = true;
+    defer if (renderer_live) terminal.deinit(terminal_renderer);
 
     const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", failure);
@@ -663,13 +662,13 @@ fn createHostFromConnection(
         .raw_cache = raw_cache,
         .cell_size = .{ .width = cell_width, .height = cell_height },
         .fonts = fonts,
-        .canvas = terminal_canvas,
+        .renderer = terminal_renderer,
         .observation_scratch = observation_scratch,
     };
     connection_live = false;
     raw_cache_live = false;
     fonts_live = false;
-    canvas_live = false;
+    renderer_live = false;
     scratch_live = false;
     return @ptrCast(host);
 }
@@ -1230,7 +1229,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     const allocator = host.allocator;
     const observation_scratch = host.observation_scratch;
     const local_instance = host.local_instance;
-    terminal.deinitCanvas(host.canvas);
+    terminal.deinit(host.renderer);
     host.fonts.deinit();
     host.raw_cache.deinit();
     host.connection.deinit();
@@ -1359,8 +1358,8 @@ fn observe(
     const begin = rich_view.begin;
 
     const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
-    try updateHostCanvasRich(host, &rich_view);
-    const frame = terminal.frame(host.canvas, residency, .{
+    try updateHostRendererRich(host, &rich_view);
+    const frame = terminal.frame(host.renderer, residency, .{
         .uploads = &host.frame_uploads,
         .removals = &host.frame_removals,
         .commands = &host.frame_commands,
@@ -1382,7 +1381,7 @@ fn observe(
     try writeFrame(&writer, frame, 1);
     const hcr_end = writer.offset;
     const hcr_len = hcr_end - hcr_start;
-    if (hcr_end > canvas_packet_budget) return error.BufferTooSmall;
+    if (hcr_end > render_packet_budget) return error.BufferTooSmall;
     for (0..begin.rows) |row| {
         const shape = client.selection.rowShapeRich(&rich_view, @intCast(row)) orelse
             return error.InvalidFrame;
@@ -1421,7 +1420,7 @@ fn observe(
     return total;
 }
 
-fn updateHostCanvasRich(
+fn updateHostRendererRich(
     host: *Host,
     view: *const client.rich.View,
 ) !void {
@@ -1431,18 +1430,18 @@ fn updateHostCanvasRich(
     var candidate: [maximum_terminal_images]HostImageBinding = undefined;
     const bindings = terminal.planExternalImageBindings(
         host.image_bindings[0..host.image_binding_count],
-        terminal.canvasUsage(host.canvas),
+        terminal.usage(host.renderer),
         graphics.images,
         &candidate,
     ) catch return error.InvalidHost;
-    try terminal.updateRichWithImageBindings(host.canvas, view, bindings);
+    try terminal.updateRichWithImageBindings(host.renderer, view, bindings);
     @memcpy(host.image_bindings[0..bindings.len], bindings);
     host.image_binding_count = bindings.len;
 }
 
 fn findImageBindingByResource(
     bindings: []const HostImageBinding,
-    resource: canvas.ResourceRef,
+    resource: terminal.ResourceRef,
 ) ?HostImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -1454,7 +1453,7 @@ fn findImageBindingByResource(
 
 fn selectPendingImage(
     bindings: []const HostImageBinding,
-    missing: []const canvas.FrameExternalResource,
+    missing: []const terminal.FrameExternalResource,
 ) !PendingImage {
     if (missing.len == 0 or missing.len > bindings.len) return error.InvalidHost;
     var selected: ?PendingImage = null;
@@ -1469,10 +1468,10 @@ fn selectPendingImage(
 
 fn prepareImageRefill(
     host: *Host,
-    residency: []const canvas.Residency,
+    residency: []const terminal.Residency,
 ) !void {
     const missing = try terminal.missingExternalResources(
-        host.canvas,
+        host.renderer,
         residency,
         &host.missing_external,
     );
@@ -1485,7 +1484,7 @@ fn prepareImageRefill(
     host.pending_image = pending;
 }
 
-fn imageRefillPixelBytes(size: canvas.Size) !usize {
+fn imageRefillPixelBytes(size: terminal.Size) !usize {
     const stride = std.math.mul(usize, size.width, 4) catch return error.InvalidFrame;
     return std.math.mul(usize, stride, size.height) catch return error.InvalidFrame;
 }
@@ -1527,7 +1526,7 @@ fn writeImageRefill(
     if (writer.offset != output.len) return error.InvalidFrame;
 }
 
-fn surfaceSize(rows: u16, columns: u16, cell_size: canvas.Size) !canvas.Size {
+fn surfaceSize(rows: u16, columns: u16, cell_size: terminal.Size) !terminal.Size {
     if (rows == 0 or columns == 0 or cell_size.width == 0 or cell_size.height == 0)
         return error.InvalidFrame;
     return .{
@@ -1538,11 +1537,11 @@ fn surfaceSize(rows: u16, columns: u16, cell_size: canvas.Size) !canvas.Size {
 
 test "native host surface follows configured presentation lattice" {
     try std.testing.expectEqualDeep(
-        canvas.Size{ .width = 408, .height = 705 },
+        terminal.Size{ .width = 408, .height = 705 },
         try surfaceSize(47, 51, .{ .width = 8, .height = 15 }),
     );
     try std.testing.expectEqualDeep(
-        canvas.Size{ .width = 510, .height = 948 },
+        terminal.Size{ .width = 510, .height = 948 },
         try surfaceSize(79, 85, .{ .width = 6, .height = 12 }),
     );
     try std.testing.expectError(
@@ -1590,19 +1589,19 @@ test "native host distinguishes superseded image generation and failure classes"
 }
 
 test "native host selects one exact refill from multiple missing images" {
-    const first_local = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.init(2),
+    const first_local = terminal.ResourceRef{
+        .resource = try terminal.ResourceId.init(2),
         .generation = @fromBackingInt(5),
     };
-    const second_local = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.init(3),
+    const second_local = terminal.ResourceRef{
+        .resource = try terminal.ResourceId.init(3),
         .generation = @fromBackingInt(7),
     };
     const bindings = [_]HostImageBinding{
         .{ .image_id = 11, .generation = 5, .resource = first_local },
         .{ .image_id = 12, .generation = 7, .resource = second_local },
     };
-    var missing = [_]canvas.FrameExternalResource{
+    var missing = [_]terminal.FrameExternalResource{
         .{
             .resource = first_local,
             .format = .rgba8,
@@ -1622,15 +1621,15 @@ test "native host selects one exact refill from multiple missing images" {
 
     const first_resource = missing[0].resource;
     missing[0].resource = .{
-        .resource = try canvas.ResourceId.init(99),
+        .resource = try terminal.ResourceId.init(99),
         .generation = first_resource.generation,
     };
     try std.testing.expectError(error.InvalidHost, selectPendingImage(&bindings, &missing));
     missing[0].resource = first_resource;
 
     const second_resource = missing[1].resource;
-    const unknown = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.init(9),
+    const unknown = terminal.ResourceRef{
+        .resource = try terminal.ResourceId.init(9),
         .generation = @fromBackingInt(1),
     };
     missing[1].resource = unknown;
@@ -1646,8 +1645,8 @@ test "native host selects one exact refill from multiple missing images" {
 }
 
 test "native host image refill packet carries exact terminal identity" {
-    const local_resource = canvas.ResourceRef{
-        .resource = try canvas.ResourceId.init(7),
+    const local_resource = terminal.ResourceRef{
+        .resource = try terminal.ResourceId.init(7),
         .generation = @fromBackingInt(11),
     };
     const pending = PendingImage{
@@ -1695,7 +1694,7 @@ test "native host image refill packet carries exact terminal identity" {
         std.mem.readInt(u64, packet[24..32], .little),
     );
     try std.testing.expectEqual(@as(u32, 17), std.mem.readInt(u32, packet[32..36], .little));
-    try std.testing.expectEqual(@backingInt(canvas.ResourceFormat.rgba8), packet[36]);
+    try std.testing.expectEqual(@backingInt(terminal.ResourceFormat.rgba8), packet[36]);
     try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[38..40], .little));
     try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[40..42], .little));
     try std.testing.expectEqual(@as(u32, 8), std.mem.readInt(u32, packet[44..48], .little));
@@ -1715,7 +1714,7 @@ fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
     try writer.writeU16(host_header_bytes);
     try writer.writeU32(0); // total bytes, patched after serialization
     try writer.writeU32(host_header_bytes);
-    try writer.writeU32(0); // Canvas payload bytes, patched after serialization
+    try writer.writeU32(0); // terminal-frame payload bytes, patched after serialization
     var flags: u32 = 0;
     if (begin.alternate_screen) flags |= 1 << 0;
     if (begin.stream_closed) flags |= 1 << 1;
@@ -1737,7 +1736,7 @@ fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
     if (writer.offset != host_header_bytes) return error.InvalidFrame;
 }
 
-fn writeGlobalHeader(writer: *Writer, surface: canvas.Size) !void {
+fn writeGlobalHeader(writer: *Writer, surface: terminal.Size) !void {
     const magic = try writer.need(4);
     @memcpy(magic, "HCR1");
     try writer.writeU16(2);
@@ -1749,7 +1748,7 @@ fn writeGlobalHeader(writer: *Writer, surface: canvas.Size) !void {
 
 const residency_record_bytes: usize = 24;
 
-fn decodeResidencies(host: *Host, bytes: []const u8) HostPacketError![]const canvas.Residency {
+fn decodeResidencies(host: *Host, bytes: []const u8) HostPacketError![]const terminal.Residency {
     if (bytes.len % residency_record_bytes != 0) return error.InvalidResidency;
     const count = bytes.len / residency_record_bytes;
     if (count > host.residencies.len) return error.InvalidResidency;
@@ -1762,9 +1761,9 @@ fn decodeResidencies(host: *Host, bytes: []const u8) HostPacketError![]const can
         const height: u16 = std.mem.readInt(u16, at[20..22], .little);
         if (generation == 0 or width == 0 or height == 0 or
             at[17] != 0 or std.mem.readInt(u16, at[22..24], .little) != 0 or
-            format_value > @backingInt(canvas.ResourceFormat.rgba8))
+            format_value > @backingInt(terminal.ResourceFormat.rgba8))
             return error.InvalidResidency;
-        const resource = canvas.ResourceId.fromEncoded(resource_encoded) catch
+        const resource = terminal.ResourceId.fromEncoded(resource_encoded) catch
             return error.InvalidResidency;
         host.residencies[index] = .{
             .resource = .{
@@ -1819,7 +1818,7 @@ const Writer = struct {
 };
 
 fn writeFrame(writer: *Writer, frame: terminal.Frame, flags: u32) !void {
-    var resources: [maximum_frame_resources]canvas.ResourceView = undefined;
+    var resources: [maximum_frame_resources]terminal.ResourceView = undefined;
     const resource_count = try collectFrameResources(frame.commands, &resources);
     const resource_bytes = try checkedMul(resource_count, resource_record_bytes);
     const removal_bytes = try checkedMul(frame.removals.len, removal_record_bytes);
@@ -1861,12 +1860,12 @@ fn writeFrame(writer: *Writer, frame: terminal.Frame, flags: u32) !void {
 }
 
 fn collectFrameResources(
-    commands: []const canvas.Command,
-    output: *[maximum_frame_resources]canvas.ResourceView,
+    commands: []const terminal.Command,
+    output: *[maximum_frame_resources]terminal.ResourceView,
 ) !usize {
     var used: usize = 0;
     for (commands) |command| {
-        const view: ?canvas.ResourceView = switch (command) {
+        const view: ?terminal.ResourceView = switch (command) {
             .solid => null,
             .alpha_mask => |value| value.resource,
             .rgba => |value| value.resource,
@@ -1891,10 +1890,10 @@ fn collectFrameResources(
 
 fn writeResource(
     writer: *Writer,
-    resource: canvas.ResourceView,
+    resource: terminal.ResourceView,
     frame: terminal.Frame,
 ) !void {
-    var upload: ?canvas.FrameResourceUpload = null;
+    var upload: ?terminal.FrameResourceUpload = null;
     for (frame.uploads) |candidate| {
         if (std.meta.eql(candidate.resource, resource.resource)) {
             upload = candidate;
@@ -1925,8 +1924,8 @@ fn writeResource(
 
 fn writeCommand(
     writer: *Writer,
-    command: canvas.Command,
-    resources: []const canvas.ResourceView,
+    command: terminal.Command,
+    resources: []const terminal.ResourceView,
 ) !void {
     switch (command) {
         .solid => |value| {
@@ -1963,8 +1962,8 @@ fn writeCommand(
 }
 
 fn frameResourceIndex(
-    resources: []const canvas.ResourceView,
-    resource: canvas.ResourceRef,
+    resources: []const terminal.ResourceView,
+    resource: terminal.ResourceRef,
 ) !u8 {
     for (resources, 0..) |candidate, index| {
         if (std.meta.eql(candidate.resource, resource)) return @intCast(index);
@@ -1972,15 +1971,15 @@ fn frameResourceIndex(
     return error.MissingResource;
 }
 
-fn writeRect(writer: *Writer, rect: canvas.Rect) !void {
+fn writeRect(writer: *Writer, rect: terminal.Rect) !void {
     try writer.writeI32(rect.x);
     try writer.writeI32(rect.y);
     try writer.writeU16(rect.width);
     try writer.writeU16(rect.height);
 }
 
-fn writeSourceRect(writer: *Writer, resource: canvas.ResourceView) !void {
-    const source = resource.source orelse canvas.SourceRect{
+fn writeSourceRect(writer: *Writer, resource: terminal.ResourceView) !void {
+    const source = resource.source orelse terminal.SourceRect{
         .x = 0,
         .y = 0,
         .width = resource.size.width,
@@ -1992,7 +1991,7 @@ fn writeSourceRect(writer: *Writer, resource: canvas.ResourceView) !void {
     try writer.writeU16(source.height);
 }
 
-fn colorBits(value: canvas.Color) u32 {
+fn colorBits(value: terminal.Color) u32 {
     return @bitCast(value);
 }
 

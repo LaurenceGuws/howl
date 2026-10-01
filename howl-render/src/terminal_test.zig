@@ -1,4 +1,4 @@
-//! Proves one bounded terminal Canvas through the final backend-facing frame.
+//! Proves one bounded terminal renderer through the final backend-facing frame.
 
 const std = @import("std");
 const render = @import("howl_render");
@@ -76,7 +76,7 @@ fn sourceSnapshot(rows: []client.rich.Row, columns: u16) client.rich.Snapshot {
     };
 }
 
-fn canvasConfig(command_capacity: usize) terminal.CanvasConfig {
+fn rendererConfig(command_capacity: usize) terminal.Config {
     return .{
         .cell_size = .{ .width = 10, .height = 20 },
         .box_drawing = .{
@@ -110,7 +110,7 @@ const Presented = struct {
 
 const Harness = struct {
     allocator: std.mem.Allocator,
-    canvas: *terminal.Canvas,
+    renderer: *terminal.Renderer,
     uploads: []terminal.FrameResourceUpload,
     removals: []terminal.ResourceRef,
     commands: []terminal.Command,
@@ -122,7 +122,7 @@ const Harness = struct {
     fn init(
         allocator: std.mem.Allocator,
         font: *text.FontSet,
-        config: terminal.CanvasConfig,
+        config: terminal.Config,
     ) !Harness {
         return initFaces(allocator, terminal.FontFaces.single(font), config);
     }
@@ -130,10 +130,10 @@ const Harness = struct {
     fn initFaces(
         allocator: std.mem.Allocator,
         font_faces: terminal.FontFaces,
-        config: terminal.CanvasConfig,
+        config: terminal.Config,
     ) !Harness {
-        const owner = try terminal.initCanvas(allocator, font_faces, config);
-        errdefer terminal.deinitCanvas(owner);
+        const owner = try terminal.init(allocator, font_faces, config);
+        errdefer terminal.deinit(owner);
         const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_external_images + 1);
         errdefer allocator.free(uploads);
         const removals = try allocator.alloc(terminal.ResourceRef, terminal.maximum_external_images + 1);
@@ -145,7 +145,7 @@ const Harness = struct {
         const pixels = try allocator.alloc(u8, pixel_count);
         return .{
             .allocator = allocator,
-            .canvas = owner,
+            .renderer = owner,
             .uploads = uploads,
             .removals = removals,
             .commands = commands,
@@ -154,7 +154,7 @@ const Harness = struct {
     }
 
     fn deinit(self: *Harness) void {
-        terminal.deinitCanvas(self.canvas);
+        terminal.deinit(self.renderer);
         self.allocator.free(self.pixels);
         self.allocator.free(self.commands);
         self.allocator.free(self.removals);
@@ -171,7 +171,7 @@ const Harness = struct {
         view: *const client.view.Snapshot,
         bindings: []const terminal.ExternalImageBinding,
     ) !Presented {
-        try terminal.updateWithImageBindings(self.canvas, view, bindings);
+        try terminal.updateWithImageBindings(self.renderer, view, bindings);
         return self.finishPresent();
     }
 
@@ -184,13 +184,13 @@ const Harness = struct {
         view: *const client.rich.View,
         bindings: []const terminal.ExternalImageBinding,
     ) !Presented {
-        try terminal.updateRichWithImageBindings(self.canvas, view, bindings);
+        try terminal.updateRichWithImageBindings(self.renderer, view, bindings);
         return self.finishPresent();
     }
 
     fn finishPresent(self: *Harness) !Presented {
         const external = try terminal.missingExternalResources(
-            self.canvas,
+            self.renderer,
             self.residencies[0..self.residency_count],
             &self.missing,
         );
@@ -200,7 +200,7 @@ const Harness = struct {
             .size = value.size,
         });
         const frame = try terminal.frame(
-            self.canvas,
+            self.renderer,
             self.residencies[0..self.residency_count],
             .{
                 .uploads = self.uploads,
@@ -259,12 +259,12 @@ fn firstRgba(commands: []const terminal.Command) ?@FieldType(terminal.Command, "
     return null;
 }
 
-fn constructTerminalCanvas(allocator: std.mem.Allocator, font: *text.FontSet) !void {
-    const owner = try terminal.initCanvas(allocator, terminal.FontFaces.single(font), canvasConfig(64));
-    terminal.deinitCanvas(owner);
+fn constructTerminalrenderer(allocator: std.mem.Allocator, font: *text.FontSet) !void {
+    const owner = try terminal.init(allocator, terminal.FontFaces.single(font), rendererConfig(64));
+    terminal.deinit(owner);
 }
 
-test "terminal Canvas owns final atlas residency and recovers after backend loss" {
+test "terminal renderer owns final atlas residency and recovers after backend loss" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
@@ -273,7 +273,7 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(64));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(64));
     defer host.deinit();
 
     const first = try host.present(view);
@@ -288,7 +288,7 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     try std.testing.expectEqual(first_resource, firstAlpha(second.frame.commands).?.resource.resource);
 
     host.residency_count = 0;
-    const replay = try terminal.frame(host.canvas, &.{}, .{
+    const replay = try terminal.frame(host.renderer, &.{}, .{
         .uploads = host.uploads,
         .removals = host.removals,
         .commands = host.commands,
@@ -297,9 +297,9 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     try std.testing.expectEqual(@as(usize, 1), replay.uploads.len);
     try std.testing.expectEqual(first_resource, replay.uploads[0].resource);
 
-    try terminal.resetCanvasCaches(host.canvas);
+    try terminal.resetCaches(host.renderer);
     try std.testing.expectError(error.InvalidView, host.finishPresent());
-    try std.testing.expectError(error.InvalidView, terminal.frame(host.canvas, &.{}, .{
+    try std.testing.expectError(error.InvalidView, terminal.frame(host.renderer, &.{}, .{
         .uploads = host.uploads,
         .removals = host.removals,
         .commands = host.commands,
@@ -314,7 +314,7 @@ test "terminal Canvas owns final atlas residency and recovers after backend loss
     try std.testing.expect(@backingInt(regenerated.frame.uploads[0].resource.generation) > @backingInt(first_resource.generation));
 }
 
-test "terminal Canvas rolls bounded atlas cache on accumulated entry pressure" {
+test "terminal renderer rolls bounded atlas cache on accumulated entry pressure" {
     var scalar_a = [_]u32{'A'};
     var scalar_b = [_]u32{'B'};
     var scalar_c = [_]u32{'C'};
@@ -336,23 +336,23 @@ test "terminal Canvas rolls bounded atlas cache on accumulated entry pressure" {
 
     const font = try terminalFont();
     defer font.deinit();
-    var config = canvasConfig(64);
+    var config = rendererConfig(64);
     config.atlas.entry_capacity = 2;
     var host = try Harness.init(std.testing.allocator, font, config);
     defer host.deinit();
 
     const first = try host.present(view_a);
-    try std.testing.expectEqual(@as(usize, 1), terminal.canvasUsage(host.canvas).atlas_entries);
+    try std.testing.expectEqual(@as(usize, 1), terminal.usage(host.renderer).atlas_entries);
     const first_atlas = first.frame.uploads[0].resource;
 
     const second = try host.present(view_b);
-    try std.testing.expectEqual(@as(usize, 2), terminal.canvasUsage(host.canvas).atlas_entries);
+    try std.testing.expectEqual(@as(usize, 2), terminal.usage(host.renderer).atlas_entries);
     const second_atlas = second.frame.uploads[0].resource;
     try std.testing.expectEqual(first_atlas.resource, second_atlas.resource);
     try std.testing.expect(@backingInt(second_atlas.generation) > @backingInt(first_atlas.generation));
 
     const third = try host.present(view_c);
-    const rolled = terminal.canvasUsage(host.canvas);
+    const rolled = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 1), rolled.atlas_entries);
     try std.testing.expectEqual(@as(usize, 1), rolled.shape.entries);
     try std.testing.expectEqual(@as(u64, 3), third.frame.revision);
@@ -362,7 +362,7 @@ test "terminal Canvas rolls bounded atlas cache on accumulated entry pressure" {
     try std.testing.expect(@backingInt(third_atlas.generation) > @backingInt(second_atlas.generation));
 }
 
-test "terminal Canvas reports cache pressure when one frame cannot fit after rollover" {
+test "terminal renderer reports cache pressure when one frame cannot fit after rollover" {
     var scalar_a = [_]u32{'A'};
     var scalar_b = [_]u32{'B'};
     var cells = [_]client.rich.Cell{ cell(&scalar_a, 1, 0), cell(&scalar_b, 1, 0) };
@@ -373,17 +373,17 @@ test "terminal Canvas reports cache pressure when one frame cannot fit after rol
 
     const font = try terminalFont();
     defer font.deinit();
-    var config = canvasConfig(64);
+    var config = rendererConfig(64);
     config.atlas.entry_capacity = 1;
     var host = try Harness.init(std.testing.allocator, font, config);
     defer host.deinit();
 
-    try std.testing.expectError(error.CacheFull, terminal.update(host.canvas, view));
-    try std.testing.expectEqual(@as(usize, 1), terminal.canvasUsage(host.canvas).atlas_entries);
+    try std.testing.expectError(error.CacheFull, terminal.update(host.renderer, view));
+    try std.testing.expectEqual(@as(usize, 1), terminal.usage(host.renderer).atlas_entries);
     try std.testing.expectError(error.InvalidView, host.finishPresent());
 }
 
-test "terminal Canvas generated box raster remains exact in the final frame" {
+test "terminal renderer generated box raster remains exact in the final frame" {
     var symbol = [_]u32{0x2500};
     var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
@@ -392,7 +392,7 @@ test "terminal Canvas generated box raster remains exact in the final frame" {
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    const config = canvasConfig(64);
+    const config = rendererConfig(64);
     var host = try Harness.init(std.testing.allocator, font, config);
     defer host.deinit();
     const presented = try host.present(view);
@@ -408,12 +408,12 @@ test "terminal Canvas generated box raster remains exact in the final frame" {
             presented.frame.pixels[at..][0..10],
         );
     }
-    const usage = terminal.canvasUsage(host.canvas);
+    const usage = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
     try std.testing.expectEqual(@as(usize, 0), usage.shape.entries);
 }
 
-test "terminal Canvas final commands preserve DEC double width and height" {
+test "terminal renderer final commands preserve DEC double width and height" {
     var block = [_]u32{0x2588};
     var empty = [_]u32{};
     var row0_cells = [_]client.rich.Cell{ cell(&block, 1, 0), cell(&empty, 1, 0) };
@@ -431,7 +431,7 @@ test "terminal Canvas final commands preserve DEC double width and height" {
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
     var destinations: [4]terminal.Rect = undefined;
@@ -467,7 +467,7 @@ test "terminal Canvas final commands preserve DEC double width and height" {
     );
 }
 
-test "terminal Canvas projects OSC 66 fraction and alignment once" {
+test "terminal renderer projects OSC 66 fraction and alignment once" {
     var block = [_]u32{0x2588};
     var empty = [_]u32{};
     var lead = cell(&block, 3, 0);
@@ -504,7 +504,7 @@ test "terminal Canvas projects OSC 66 fraction and alignment once" {
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
     const alpha = firstAlpha(frame.commands) orelse return error.MissingAlpha;
@@ -516,7 +516,7 @@ test "terminal Canvas projects OSC 66 fraction and alignment once" {
     try std.testing.expectEqualDeep(terminal.SourceRect{ .x = 0, .y = 0, .width = 15, .height = 30 }, alpha.resource.source.?);
 }
 
-test "terminal Canvas resolves style colors decorations and invisibility in final commands" {
+test "terminal renderer resolves style colors decorations and invisibility in final commands" {
     var a = [_]u32{'A'};
     var b = [_]u32{'B'};
     var c = [_]u32{'C'};
@@ -537,7 +537,7 @@ test "terminal Canvas resolves style colors decorations and invisibility in fina
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(64));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(64));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
 
@@ -584,7 +584,7 @@ test "terminal Canvas resolves style colors decorations and invisibility in fina
     try std.testing.expect(decoration_count >= 6);
 }
 
-test "terminal Canvas missing style variants share regular cache identity" {
+test "terminal renderer missing style variants share regular cache identity" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{
         cell(&scalar, 1, 0),
@@ -604,16 +604,16 @@ test "terminal Canvas missing style variants share regular cache identity" {
 
     const regular = try terminalFont();
     defer regular.deinit();
-    var host = try Harness.init(std.testing.allocator, regular, canvasConfig(64));
+    var host = try Harness.init(std.testing.allocator, regular, rendererConfig(64));
     defer host.deinit();
 
     _ = try host.present(view);
-    const usage = terminal.canvasUsage(host.canvas);
+    const usage = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 1), usage.shape.entries);
     try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
 }
 
-test "terminal Canvas routes bold italic combinations through independent font owners" {
+test "terminal renderer routes bold italic combinations through independent font owners" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{
         cell(&scalar, 1, 0),
@@ -645,7 +645,7 @@ test "terminal Canvas routes bold italic combinations through independent font o
         .italic = italic,
         .bold = bold,
         .bold_italic = bold_italic,
-    }, canvasConfig(64));
+    }, rendererConfig(64));
     defer host.deinit();
 
     const frame = (try host.present(view)).frame;
@@ -656,12 +656,12 @@ test "terminal Canvas routes bold italic combinations through independent font o
     };
     try std.testing.expectEqual(@as(usize, 4), alpha_count);
 
-    const usage = terminal.canvasUsage(host.canvas);
+    const usage = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 4), usage.shape.entries);
     try std.testing.expectEqual(@as(usize, 4), usage.atlas_entries);
 }
 
-test "terminal Canvas curly underline uses one smooth atlas mask without staircase solids" {
+test "terminal renderer curly underline uses one smooth atlas mask without staircase solids" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     cells[0].style_bits = 1 << 7;
@@ -675,7 +675,7 @@ test "terminal Canvas curly underline uses one smooth atlas mask without stairca
 
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
 
@@ -717,7 +717,7 @@ test "terminal Canvas curly underline uses one smooth atlas mask without stairca
     }
     try std.testing.expect(saw_fractional_alpha);
 }
-test "terminal Canvas places image z phases around terminal paint phases" {
+test "terminal renderer places image z phases around terminal paint phases" {
     var a = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
     cells[0].background = .{ .kind = .rgb, .value = 0x112233 };
@@ -771,7 +771,7 @@ test "terminal Canvas places image z phases around terminal paint phases" {
         defer client.view.deinit(view);
         const font = try terminalFont();
         defer font.deinit();
-        var host = try Harness.init(std.testing.allocator, font, canvasConfig(16));
+        var host = try Harness.init(std.testing.allocator, font, rendererConfig(16));
         defer host.deinit();
         const presented = try host.presentWithBindings(view, &.{binding});
         try std.testing.expectEqual(@as(usize, 1), presented.external.len);
@@ -814,7 +814,7 @@ test "terminal Canvas places image z phases around terminal paint phases" {
     }
 }
 
-test "terminal Canvas external image residency is requested once and removed when absent" {
+test "terminal renderer external image residency is requested once and removed when absent" {
     var a = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
@@ -850,7 +850,7 @@ test "terminal Canvas external image residency is requested once and removed whe
     defer client.view.deinit(plain_view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const binding = terminal.ExternalImageBinding{
         .image_id = 7,
@@ -875,7 +875,7 @@ test "terminal Canvas external image residency is requested once and removed whe
     try std.testing.expect(firstRgba(without.frame.commands) == null);
 }
 
-test "terminal Canvas rejected update invalidates frame until same Canvas retries" {
+test "terminal renderer rejected update invalidates frame until same renderer retries" {
     const font = try terminalFont();
     defer font.deinit();
     inline for (.{ false, true }) |borrowed| {
@@ -913,7 +913,7 @@ test "terminal Canvas rejected update invalidates frame until same Canvas retrie
             .generation = 9,
             .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(9) },
         };
-        var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+        var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
         defer host.deinit();
         var rich = source.view();
         const owned_a = try client.view.projectView(std.testing.allocator, &rich);
@@ -924,7 +924,7 @@ test "terminal Canvas rejected update invalidates frame until same Canvas retrie
             try host.presentWithBindings(owned_a, &.{binding});
         const first_revision = first.frame.revision;
         const atlas_resource = first.frame.uploads[0].resource;
-        const before = terminal.canvasUsage(host.canvas);
+        const before = terminal.usage(host.renderer);
 
         // B changes drawing AND grows the atlas before the stale binding fails.
         cells[0] = cell(&b, 1, 0);
@@ -933,28 +933,28 @@ test "terminal Canvas rejected update invalidates frame until same Canvas retrie
         const owned_b = try client.view.projectView(std.testing.allocator, &rich);
         defer client.view.deinit(owned_b);
         try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
-            terminal.updateRichWithImageBindings(host.canvas, &rich, &.{binding})
+            terminal.updateRichWithImageBindings(host.renderer, &rich, &.{binding})
         else
-            terminal.updateWithImageBinding(host.canvas, owned_b, binding));
-        const rejected = terminal.canvasUsage(host.canvas);
+            terminal.updateWithImageBinding(host.renderer, owned_b, binding));
+        const rejected = terminal.usage(host.renderer);
         try std.testing.expect(rejected.atlas_entries > before.atlas_entries);
         try std.testing.expectEqual(before.revision, rejected.revision);
         try std.testing.expectEqual(before.resource_generation, rejected.resource_generation);
         try std.testing.expectEqual(before.resource_high_water, rejected.resource_high_water);
-        try std.testing.expectError(error.InvalidView, terminal.frame(host.canvas, host.residencies[0..host.residency_count], .{
+        try std.testing.expectError(error.InvalidView, terminal.frame(host.renderer, host.residencies[0..host.residency_count], .{
             .uploads = host.uploads,
             .removals = host.removals,
             .commands = host.commands,
             .pixels = host.pixels,
         }));
-        try std.testing.expectError(error.InvalidView, terminal.missingExternalResources(host.canvas, &.{}, &host.missing));
+        try std.testing.expectError(error.InvalidView, terminal.missingExternalResources(host.renderer, &.{}, &host.missing));
 
         // Matching the image is insufficient: its backend generation must advance.
         binding.generation = 10;
         try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
-            terminal.updateRichWithImageBindings(host.canvas, &rich, &.{binding})
+            terminal.updateRichWithImageBindings(host.renderer, &rich, &.{binding})
         else
-            terminal.updateWithImageBindings(host.canvas, owned_b, &.{binding}));
+            terminal.updateWithImageBindings(host.renderer, owned_b, &.{binding}));
         binding.resource.generation = @fromBackingInt(10);
         const retry = if (borrowed)
             try host.presentRichWithBindings(&rich, &.{binding})
@@ -971,9 +971,9 @@ test "terminal Canvas rejected update invalidates frame until same Canvas retrie
 
         // The no-binding entrypoints obey the same invalidation contract.
         try std.testing.expectError(error.InvalidImageBinding, if (borrowed)
-            terminal.updateRich(host.canvas, &rich)
+            terminal.updateRich(host.renderer, &rich)
         else
-            terminal.update(host.canvas, owned_b));
+            terminal.update(host.renderer, owned_b));
         try std.testing.expectError(error.InvalidView, host.finishPresent());
         const same = if (borrowed)
             try host.presentRichWithBindings(&rich, &.{binding})
@@ -985,7 +985,7 @@ test "terminal Canvas rejected update invalidates frame until same Canvas retrie
     }
 }
 
-test "terminal Canvas block cursor is final presentation not compositor topology" {
+test "terminal renderer block cursor is final presentation not compositor topology" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
@@ -998,7 +998,7 @@ test "terminal Canvas block cursor is final presentation not compositor topology
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
     var cursor_background = false;
@@ -1018,7 +1018,7 @@ test "terminal Canvas block cursor is final presentation not compositor topology
     try std.testing.expect(recolored);
 }
 
-test "dense 40x120 terminal Canvas is bounded and recovers from command exhaustion" {
+test "dense 40x120 terminal renderer is bounded and recovers from command exhaustion" {
     const row_count: usize = 40;
     const column_count: usize = 120;
     const cell_count = row_count * column_count;
@@ -1039,21 +1039,21 @@ test "dense 40x120 terminal Canvas is bounded and recovers from command exhausti
     const font = try terminalFont();
     defer font.deinit();
 
-    const limited = try terminal.initCanvas(std.testing.allocator, terminal.FontFaces.single(font), canvasConfig(command_count - 1));
-    defer terminal.deinitCanvas(limited);
+    const limited = try terminal.init(std.testing.allocator, terminal.FontFaces.single(font), rendererConfig(command_count - 1));
+    defer terminal.deinit(limited);
     try std.testing.expectError(error.CommandLimit, terminal.update(limited, view));
-    const failed = terminal.canvasUsage(limited);
+    const failed = terminal.usage(limited);
     try std.testing.expectEqual(@as(u64, 0), failed.revision);
     try std.testing.expectEqual(@as(u64, 0), failed.resource_generation);
 
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(command_count));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(command_count));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
     try std.testing.expectEqual(command_count, frame.commands.len);
     try std.testing.expectEqual(@as(u64, 1), frame.revision);
 }
 
-test "terminal Canvas borrowed rich and owned view produce identical final frame" {
+test "terminal renderer borrowed rich and owned view produce identical final frame" {
     var scalar_zero = [_]u32{'='};
     var scalar_one = [_]u32{'>'};
     var scalar_two = [_]u32{'A'};
@@ -1115,9 +1115,9 @@ test "terminal Canvas borrowed rich and owned view produce identical final frame
 
     const font = try terminalFont();
     defer font.deinit();
-    var owned_host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    var owned_host = try Harness.init(std.testing.allocator, font, rendererConfig(128));
     defer owned_host.deinit();
-    var rich_host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    var rich_host = try Harness.init(std.testing.allocator, font, rendererConfig(128));
     defer rich_host.deinit();
 
     const owned_presented = try owned_host.presentWithBindings(owned, &.{binding});
@@ -1126,7 +1126,7 @@ test "terminal Canvas borrowed rich and owned view produce identical final frame
     try std.testing.expectEqualDeep(owned_presented.frame, rich_presented.frame);
 }
 
-test "terminal Canvas incremental rows equal complete final commands" {
+test "terminal renderer incremental rows equal complete final commands" {
     var baseline_scalars = [_][1]u32{ .{'A'}, .{'B'}, .{'C'}, .{'D'}, .{'E'}, .{'F'} };
     var baseline_cells: [6][1]client.rich.Cell = undefined;
     var baseline_rows: [6]client.rich.Row = undefined;
@@ -1141,12 +1141,12 @@ test "terminal Canvas incremental rows equal complete final commands" {
     defer client.view.deinit(baseline_view);
     const font = try terminalFont();
     defer font.deinit();
-    var cached_config = canvasConfig(64);
+    var cached_config = rendererConfig(64);
     cached_config.incremental_row_capacity = 6;
     cached_config.incremental_command_capacity = 32;
     var cached = try Harness.init(std.testing.allocator, font, cached_config);
     defer cached.deinit();
-    var complete = try Harness.init(std.testing.allocator, font, canvasConfig(64));
+    var complete = try Harness.init(std.testing.allocator, font, rendererConfig(64));
     defer complete.deinit();
     const cached_base = try cached.present(baseline_view);
     const complete_base = try complete.present(baseline_view);
@@ -1179,21 +1179,21 @@ test "terminal Canvas incremental rows equal complete final commands" {
         .generation = 1,
         .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(1) },
     };
-    try std.testing.expectError(error.InvalidImageBinding, terminal.updateWithImageBinding(cached.canvas, shifted_view, unused_binding));
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateWithImageBinding(cached.renderer, shifted_view, unused_binding));
     try std.testing.expectError(error.InvalidView, cached.finishPresent());
     const retried = try cached.present(shifted_view);
     try std.testing.expectEqualDeep(complete_shifted.frame.commands, retried.frame.commands);
 }
 
-test "terminal Canvas construction releases every staged allocation and validates bounds" {
+test "terminal renderer construction releases every staged allocation and validates bounds" {
     const font = try terminalFont();
     defer font.deinit();
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, constructTerminalCanvas, .{font});
-    var invalid = canvasConfig(64);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, constructTerminalrenderer, .{font});
+    var invalid = rendererConfig(64);
     invalid.cell_size.width = 0;
-    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
-    invalid = canvasConfig(0);
-    try std.testing.expectError(error.InvalidCanvasConfig, terminal.initCanvas(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
+    try std.testing.expectError(error.InvalidConfig, terminal.init(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
+    invalid = rendererConfig(0);
+    try std.testing.expectError(error.InvalidConfig, terminal.init(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
 }
 
 const VT = @import("howl_vt").Terminal;
@@ -1319,8 +1319,8 @@ fn fixtureRgba(color: VT.Rgb) client.rich.Rgba {
     return .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a };
 }
 
-fn directConfig() terminal.CanvasConfig {
-    var config = canvasConfig(2048);
+fn directConfig() terminal.Config {
+    var config = rendererConfig(2048);
     config.shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 1024, .glyph_capacity = 1024, .max_sequence_scalars = 24 };
     config.atlas = .{ .width = 512, .height = 512, .entry_capacity = 128 };
     config.shaped_capacity = 128;
@@ -1354,7 +1354,7 @@ fn expectDirectEquivalent(bytes: []const u8, history: u32) !void {
     };
     const bound = bindings[0..fixture.graphics.images.len];
     for (0..2) |pass| {
-        try terminal.updateObservation(direct.canvas, owner.observation(), history, bound);
+        try terminal.updateObservation(direct.renderer, owner.observation(), history, bound);
         // On the second pass the frame is built AFTER VT mutation. This must not change the
         // commands, scalar keys, atlas pixels, or external generation metadata.
         if (pass == 1) try feedCanonical(&owner, "\x1bcZ");
@@ -1367,31 +1367,31 @@ fn expectDirectEquivalent(bytes: []const u8, history: u32) !void {
     }
 }
 
-test "terminal Canvas canonical plain and contextual text equals rich and owned final frames" {
+test "terminal renderer canonical plain and contextual text equals rich and owned final frames" {
     try expectDirectEquivalent("Hello => !=", 0);
 }
 
-test "terminal Canvas canonical combining sidecars wide continuations and DEC geometry equal rich" {
+test "terminal renderer canonical combining sidecars wide continuations and DEC geometry equal rich" {
     try expectDirectEquivalent("a\u{301}\u{302}\u{303}\u{304}\u{305} \u{754c}\r\n\x1b#6AB\r\n\x1b#3CD\r\n\x1b#4CD", 0);
     try expectDirectEquivalent("a\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}\u{308}\u{309}\u{30a}\u{30b}\u{30c}\u{30d}\u{30e}\u{30f}\u{310}\u{311}\u{312}\u{313}\u{314}\u{315}\u{316}", 0);
 }
 
-test "terminal Canvas canonical palette RGB reverse decorations and cursor equal rich" {
+test "terminal renderer canonical palette RGB reverse decorations and cursor equal rich" {
     try expectDirectEquivalent("\x1b]4;1;#123456\x07\x1b]10;#abcdee\x07\x1b]12;#654321\x07\x1b[31;44;1;2;4;9mAB\x1b[0;38;2;90;80;70;48;2;20;30;40mC\x1b[7mD\x1b[?5h\x1b[6 q", 0);
 }
 
-test "terminal Canvas canonical projected history and alternate screen equal rich" {
+test "terminal renderer canonical projected history and alternate screen equal rich" {
     try expectDirectEquivalent("A\r\nB\r\nC\r\nD\r\nE\r\nF", 2);
     try expectDirectEquivalent("old\x1b[?1049hnew", 0);
 }
 
-test "terminal Canvas canonical Kitty images retain exact bindings and equal rich" {
+test "terminal renderer canonical Kitty images retain exact bindings and equal rich" {
     try expectDirectEquivalent("A\x1b_Ga=T,f=32,s=1,v=1,i=7,c=1,r=1,z=-1;/////w==\x1b\\", 0);
     // Retained primary placements become sparse/invisible in alternate screen.
     try expectDirectEquivalent("\x1b_Ga=T,f=32,s=1,v=1,i=7;/////w==\x1b\\\x1b[?1049hB", 0);
 }
 
-test "terminal Canvas canonical image limit counts visible resources only" {
+test "terminal renderer canonical image limit counts visible resources only" {
     var owner = try VT.init(std.testing.allocator, 2, 12);
     defer owner.deinit();
     try owner.setCellPixelSize(10, 20);
@@ -1416,7 +1416,7 @@ test "terminal Canvas canonical image limit counts visible resources only" {
     var binding_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
     const bindings = try terminal.planObservationImageBindings(
         &.{},
-        terminal.canvasUsage(host.canvas),
+        terminal.usage(host.renderer),
         owner.observation(),
         0,
         &binding_storage,
@@ -1426,13 +1426,13 @@ test "terminal Canvas canonical image limit counts visible resources only" {
     try std.testing.expectEqual(visible.id, binding.image_id);
     try std.testing.expectEqual(visible.generation, binding.generation);
     try std.testing.expectEqual(@as(u64, 2), try binding.resource.resource.identity());
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, bindings);
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, bindings);
     const presented = try host.finishPresent();
     try std.testing.expectEqual(@as(usize, 1), presented.external.len);
     try std.testing.expectEqual(binding.resource, presented.external[0].resource);
 }
 
-test "terminal Canvas canonical image planner preserves identity across exact generations" {
+test "terminal renderer canonical image planner preserves identity across exact generations" {
     var owner = try VT.init(std.testing.allocator, 2, 4);
     defer owner.deinit();
     try owner.setCellPixelSize(10, 20);
@@ -1445,16 +1445,16 @@ test "terminal Canvas canonical image planner preserves identity across exact ge
     var first_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
     const first = try terminal.planObservationImageBindings(
         &.{},
-        terminal.canvasUsage(host.canvas),
+        terminal.usage(host.renderer),
         owner.observation(),
         0,
         &first_storage,
     );
     try std.testing.expectEqual(@as(usize, 1), first.len);
     try std.testing.expectEqual(@as(u64, 2), try first[0].resource.resource.identity());
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, first);
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, first);
     const first_presented = try host.finishPresent();
-    try std.testing.expectEqual(terminal.canvasUsage(host.canvas).revision, first_presented.frame.revision);
+    try std.testing.expectEqual(terminal.usage(host.renderer).revision, first_presented.frame.revision);
 
     try feedCanonical(&owner, "\x1b_Ga=t,f=32,s=1,v=1,i=7;AAAA/w==\x1b\\");
     const changed = owner.observation().images(0).image(0).?;
@@ -1462,7 +1462,7 @@ test "terminal Canvas canonical image planner preserves identity across exact ge
     var next_storage: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
     const next = try terminal.planObservationImageBindings(
         first,
-        terminal.canvasUsage(host.canvas),
+        terminal.usage(host.renderer),
         owner.observation(),
         0,
         &next_storage,
@@ -1479,7 +1479,7 @@ test "terminal Canvas canonical image planner preserves identity across exact ge
         error.InvalidImageBinding,
         terminal.planObservationImageBindings(
             &.{stale},
-            terminal.canvasUsage(host.canvas),
+            terminal.usage(host.renderer),
             owner.observation(),
             0,
             &next_storage,
@@ -1487,7 +1487,7 @@ test "terminal Canvas canonical image planner preserves identity across exact ge
     );
 }
 
-test "terminal Canvas canonical stale image generations reject atomically and retry" {
+test "terminal renderer canonical stale image generations reject atomically and retry" {
     var owner = try VT.init(std.testing.allocator, 2, 4);
     defer owner.deinit();
     try owner.setCellPixelSize(10, 20);
@@ -1506,7 +1506,7 @@ test "terminal Canvas canonical stale image generations reject atomically and re
         .generation = original.generation,
         .resource = .{ .resource = try terminal.ResourceId.init(2), .generation = @fromBackingInt(10) },
     };
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, &.{binding});
     const first = try host.finishPresent();
     const revision = first.frame.revision;
     try std.testing.expectEqual(binding.resource, firstRgba(first.frame.commands).?.resource.resource);
@@ -1515,53 +1515,53 @@ test "terminal Canvas canonical stale image generations reject atomically and re
     try std.testing.expect(changed.generation > original.generation);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, changed.pixels);
     // Stale canonical generation cannot resolve the required image.
-    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding}));
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.renderer, owner.observation(), 0, &.{binding}));
     try std.testing.expectError(error.InvalidView, host.finishPresent());
     binding.generation = changed.generation;
     // Updating the canonical generation alone cannot reuse stale GPU residency.
-    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding}));
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.renderer, owner.observation(), 0, &.{binding}));
     try std.testing.expectError(error.InvalidView, host.finishPresent());
     binding.resource.generation = @fromBackingInt(11);
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{binding});
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, &.{binding});
     const retried = try host.finishPresent();
     try std.testing.expectEqual(revision + 1, retried.frame.revision);
     try std.testing.expectEqual(@as(usize, 1), retried.external.len);
     try std.testing.expectEqual(binding.resource, retried.external[0].resource);
     try std.testing.expectEqual(binding.resource, firstRgba(retried.frame.commands).?.resource.resource);
-    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{}));
+    try std.testing.expectError(error.InvalidImageBinding, terminal.updateObservation(host.renderer, owner.observation(), 0, &.{}));
     try std.testing.expectError(error.InvalidView, host.finishPresent());
 }
 
-test "terminal Canvas canonical scalar bounds reject without truncation and recover" {
+test "terminal renderer canonical scalar bounds reject without truncation and recover" {
     var owner = try VT.init(std.testing.allocator, 1, 4);
     defer owner.deinit();
     try feedCanonical(&owner, "A");
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(128));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(128));
     defer host.deinit();
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{});
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, &.{});
     const accepted = try host.finishPresent();
     try std.testing.expect(accepted.frame.revision != 0);
     try feedCanonical(&owner, "\ra\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}");
     var scalars: [24]u21 = undefined;
     try std.testing.expectEqual(@as(usize, 9), owner.observation().semanticView(0).cellScalarsAt(0, 0, &scalars).len);
-    try std.testing.expectError(error.ShapeSequenceLimit, terminal.updateObservation(host.canvas, owner.observation(), 0, &.{}));
+    try std.testing.expectError(error.ShapeSequenceLimit, terminal.updateObservation(host.renderer, owner.observation(), 0, &.{}));
     try std.testing.expectError(error.InvalidView, host.finishPresent());
     try feedCanonical(&owner, "\x1bcA");
-    try terminal.updateObservation(host.canvas, owner.observation(), 0, &.{});
+    try terminal.updateObservation(host.renderer, owner.observation(), 0, &.{});
     const recovered = try host.finishPresent();
     try std.testing.expectEqual(@as(u64, 2), recovered.frame.revision);
 }
 
-test "terminal Canvas canonical virtual placements and OSC 66 share final projection" {
+test "terminal renderer canonical virtual placements and OSC 66 share final projection" {
     try expectDirectEquivalent("\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++
         "\x1b_Ga=p,i=56,c=1,r=1,U=1,q=2\x1b\\" ++
         "\x1b[38;5;56m\u{10eeee}\u{305}\u{305}\x1b[0m", 0);
     try expectDirectEquivalent("\x1b]66;s=2;AB\x07", 0);
 }
 
-test "terminal Canvas space owns no glyph ink while presentation layers remain" {
+test "terminal renderer space owns no glyph ink while presentation layers remain" {
     var scalar = [_]u32{' '};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     cells[0].style_bits = 0;
@@ -1574,7 +1574,7 @@ test "terminal Canvas space owns no glyph ink while presentation layers remain" 
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
 
@@ -1591,7 +1591,7 @@ test "terminal Canvas space owns no glyph ink while presentation layers remain" 
     try std.testing.expect(cursor_background);
 }
 
-test "terminal Canvas styled space keeps background and decoration without glyph ink" {
+test "terminal renderer styled space keeps background and decoration without glyph ink" {
     var scalar = [_]u32{' '};
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     cells[0].style_bits = (1 << 5) | (1 << 7) | (1 << 8);
@@ -1603,7 +1603,7 @@ test "terminal Canvas styled space keeps background and decoration without glyph
     defer client.view.deinit(view);
     const font = try terminalFont();
     defer font.deinit();
-    var host = try Harness.init(std.testing.allocator, font, canvasConfig(32));
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
     const frame = (try host.present(view)).frame;
 
@@ -1625,7 +1625,7 @@ test "terminal Canvas styled space keeps background and decoration without glyph
     try std.testing.expect(decoration_count >= 1);
 }
 
-test "terminal Canvas canonical singleton and mixed cluster cells equal rich and owned frames" {
+test "terminal renderer canonical singleton and mixed cluster cells equal rich and owned frames" {
     const cases = [_][]const u8{
         "  A B   ",
         "\x1b[7;4;9m \x1b[0m \x1b[6 q",

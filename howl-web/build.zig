@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
     wasm.max_memory = 32 * 1024 * 1024;
     b.installArtifact(wasm);
 
-    const check = b.step("check", "Run the zero-import Wasm wire and Canvas contract");
+    const check = b.step("check", "Run the zero-import Wasm wire and terminal-renderer contract");
     const test_command = b.addSystemCommand(&.{ "node", "tests/check.mjs" });
     test_command.setCwd(b.path("."));
     test_command.addFileArg(wasm.getEmittedBin());

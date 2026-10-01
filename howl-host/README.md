@@ -34,7 +34,7 @@ Current foundation:
 - current `howl-vk.surface` and `howl-wayland` packages;
 - host-local fixed-capacity tabs and tiled splits;
 - canonical Instance revisions projected live through current howl-client,
-  howl-text, terminal Canvas, and howl-vk.surface into the physical window;
+  howl-text, terminal renderer, and howl-vk.surface into the physical window;
 - three explicit-sync DMA-BUF slots rotated with exact compositor-release
   ownership before reuse; closing Window cancels a blocked Instance observation;
 - physical Wayland/xkb keyboard input delivered by a dedicated bounded Input

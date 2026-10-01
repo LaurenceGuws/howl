@@ -90,7 +90,7 @@ experimental:
     bounded shape/alpha-atlas caching, exact terminal-image resource projection,
     backend residency reconciliation, and final terminal frames of resource
     uploads/removals plus solid, alpha-mask, and RGBA commands. There is no font
-    discovery, generic multi-source Canvas compositor, or stable mobile ABI.
+    discovery, generic multi-source compositor, or stable mobile ABI.
   howl-flutter: >-
     maintained native graphical client canary with a deliberately small app shell.
     The shell may start route-less, persists only explicit labelled Server endpoints

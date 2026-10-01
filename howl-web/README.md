@@ -1,7 +1,7 @@
 # Howl Web
 
 Web is a maintained experimental browser canary, not another terminal engine and not a
-Server implementation. It pressures the same Instance client, text, Terminal Canvas and
+Server implementation. It pressures the same Instance client, text, terminal renderer and
 browser-host boundaries from Wasm/JavaScript.
 
 ## Current ownership
@@ -15,7 +15,7 @@ Instance
         ↓
 explicit client stream
         ↓
-Web wire/Wasm → shared text/render/Terminal Canvas → browser
+Web wire/Wasm → shared text/terminal renderer → browser
 ```
 
 JavaScript never parses terminal cells, shapes terminal text, or constructs terminal
@@ -41,7 +41,7 @@ zig build gateway-check
 split delivery, bounded snapshots and semantic control messages.
 
 `zig build render-check` pressure-tests the shared
-`howl-client.view -> howl-text -> howl-render.terminal.Content -> Terminal Canvas`
+`howl-client.view -> howl-text -> howl-render.terminal.Renderer -> terminal Frame`
 path in Wasm.
 
 `zig build text-check` compares target-built native/Wasm text metrics, shaping, source

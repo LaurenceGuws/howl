@@ -2,7 +2,7 @@
 //!
 //! Session geometry remains generic `u16` protocol state. These bounds are the
 //! renderer/client contract for maintained Howl presentations so native and Web
-//! cannot drift into different viewport or Canvas-capacity policies.
+//! cannot drift into different viewport or renderer-capacity policies.
 
 const std = @import("std");
 
