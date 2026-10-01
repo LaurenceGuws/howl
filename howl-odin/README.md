@@ -46,7 +46,7 @@ Current canary:
   default-profile, size, mode, and theme values have clickable selectors. Read-only
   information and built-in templates are visibly distinct. Long settings forms
   scroll while toolbar/footer controls stay reachable, with keyboard selection
-  automatically revealed. Font-family selection is still not an in-app setting;
+  automatically revealed. Appearance now edits the exact regular/style/fallback font-file recipe used by Canvas; blank fields inherit startup discovery;
 
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
@@ -106,6 +106,12 @@ Current canary:
   geometry; the exact pixel value persists across app restarts in the existing
   schema-versioned `$XDG_CONFIG_HOME/howl/odin.json` written by temporary-file
   + rename rather than in-place truncation;
+- Appearance also owns six exact font-path slots: Regular, Italic, Bold,
+  Bold italic, Fallback 1 and Fallback 2. Blank paths inherit the startup-resolved
+  recipe. If Regular is explicitly replaced, blank style slots deliberately use
+  that regular face instead of cross-mixing the discovered family. Changes persist
+  and restart only live render owners while the last accepted Canvas frame remains
+  visible until replacement acceptance;
 - Color schemes now owns the first live application-chrome themes: Howl Dark,
   Slate, and High Contrast cycle with Left/Right and persist by stable id. The
   theme changes desktop shell chrome only; terminal Canvas colors remain canonical
@@ -258,7 +264,7 @@ Current canary:
   regular/italic/bold/bold-italic face family rather than accepting replacement diamonds
   or synthetic terminal styles as desktop policy. Explicit `HOWL_FONT`,
   `HOWL_ITALIC_FONT`, `HOWL_BOLD_FONT`, `HOWL_BOLD_ITALIC_FONT`,
-  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files win on every desktop.
+  `HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` files seed the startup-resolved recipe; persisted nonblank Appearance paths override their exact slots.
   Linux otherwise requires fontconfig to resolve JetBrainsMono Nerd Font and its available
   style faces plus Noto Sans Arabic and Noto Sans CJK JP exactly. Windows searches the
   normal Windows Fonts directory for style files matching the selected regular face

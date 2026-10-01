@@ -51,6 +51,7 @@ User_Config :: struct {
     servers: []User_Server_Config `json:"servers"`,
     keybindings: []User_Key_Mapping_Config `json:"keybindings"`,
     app_theme: string `json:"app_theme"`,
+    font: User_Font_Config `json:"font"`,
 }
 
 Tab_Kind :: enum {
@@ -563,6 +564,7 @@ App :: struct {
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_fonts: Desktop_Fonts,
+    terminal_font_overrides: Desktop_Fonts,
     terminal_font_pixels: u16,
     text_scale: f32,
     app_theme: App_Theme,
@@ -632,6 +634,12 @@ App :: struct {
     settings_profile_edit_env_index: int,
     settings_profile_edit_buffer: [PROFILE_EDIT_BYTES]u8,
     settings_profile_edit_len: int,
+    settings_font_field: int,
+    settings_font_editing: bool,
+    settings_font_select_all: bool,
+    settings_font_edit_field: Font_Edit_Field,
+    settings_font_edit_buffer: [FONT_PATH_BYTES]u8,
+    settings_font_edit_len: int,
     settings_notice: [192]u8,
     settings_notice_len: int,
     settings_search_open: bool,
@@ -727,7 +735,13 @@ user_config_from_candidate :: proc(candidate: User_Config, diagnostic: []u8) -> 
         result.app_theme = candidate.app_theme
     }
     if candidate.schema >= 4 {
+        font_overrides: Desktop_Fonts
+        if message, font_ok := load_font_overrides(&font_overrides, candidate.font); !font_ok {
+            config_load_error(diagnostic, message)
+            return {}, false
+        }
         result.servers = candidate.servers
+        result.font = candidate.font
     }
     return result, true
 }
@@ -839,6 +853,7 @@ save_user_config :: proc(app: ^App) {
         servers = server_configs[:app.server_count],
         keybindings = overrides[:override_count],
         app_theme = app_theme_id(app.app_theme),
+        font = font_config_from_overrides(&app.terminal_font_overrides),
     }
     data, err := json.marshal(value, json.Marshal_Options{pretty = true, use_spaces = true, spaces = 2}, allocator=context.temp_allocator)
     if err != nil {
@@ -4470,6 +4485,7 @@ execute_action :: proc(app: ^App, action: App_Action) {
         if app.search_open do close_search(app)
         close_settings_search(app)
         cancel_profile_edit(app)
+        cancel_font_edit(app)
         app.profile_menu_open = false
         app.palette_open = false
         app.settings_open = next
@@ -4657,6 +4673,9 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
     }
     if app.settings_open {
         page := int(app.settings_page)
+        if app.settings_content_focus && app.settings_page == .Appearance {
+            return handle_font_settings_key(app, event)
+        }
         if app.settings_content_focus && app.settings_page == .Profile_Defaults {
             return handle_profile_list_key(app, event)
         }
@@ -4694,7 +4713,8 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
         }
         switch event.key.key {
         case SDL.K_TAB:
-            if app.settings_page == .Mappings || app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
+            if app.settings_page == .Appearance || app.settings_page == .Mappings ||
+               app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
                 app.settings_content_focus = true
                 if app.settings_page == .Profile_Defaults {
                     app.settings_profile_selection = clamp(app.settings_profile_selection, 0, max(0, app.profile_count - 1))
@@ -4732,21 +4752,25 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
             return false
         case SDL.K_UP:
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.settings_binding_recording = false
             app.settings_page = Settings_Page((page + 6) % 7)
             app.settings_content_focus = false
         case SDL.K_DOWN:
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.settings_binding_recording = false
             app.settings_page = Settings_Page((page + 1) % 7)
             app.settings_content_focus = false
         case SDL.K_HOME:
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.settings_binding_recording = false
             app.settings_page = .Startup
             app.settings_content_focus = false
         case SDL.K_END:
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.settings_binding_recording = false
             app.settings_page = .Profile_Home
             app.settings_content_focus = false
@@ -4819,6 +4843,7 @@ handle_click :: proc(app: ^App, x, y, width, height: f32) {
         if settings_control_click(app, x, y, width, height) do return
         if page, ok := settings_page_at(x, y, width, height); ok {
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.settings_page = page
             app.settings_content_focus = false
             app.settings_binding_recording = false
@@ -4986,7 +5011,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             }
             return
         } else if event.type == .KEY_DOWN && app.settings_open && ctrl && !shift && !alt && event.key.key == SDL.K_F &&
-                  !app.settings_profile_editing && !app.settings_binding_recording {
+                  !app.settings_profile_editing && !app.settings_font_editing && !app.settings_binding_recording {
             if app.settings_search_open {
                 close_settings_search(app)
             } else {
@@ -4995,6 +5020,9 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             return
         } else if app.settings_open && app.settings_search_open {
             _ = handle_settings_search_key(app, event)
+            return
+        } else if app.settings_open && app.settings_font_editing {
+            _ = handle_font_edit_key(app, event)
             return
         } else if app.settings_open && app.settings_profile_editing {
             _ = handle_profile_edit_key(app, event)
@@ -5007,6 +5035,7 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
         } else if event.type == .KEY_DOWN && event.key.key == SDL.K_ESCAPE && (app.profile_menu_open || app.palette_open || app.settings_open) {
             close_settings_search(app)
             cancel_profile_edit(app)
+            cancel_font_edit(app)
             app.profile_menu_open = false
             app.palette_open = false
             app.settings_open = false
@@ -5052,6 +5081,15 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
                 text := string(event.text.text)
                 if len(text) != 0 {
                     _ = append_settings_search_query(app, text)
+                }
+            }
+            return
+        }
+        if app.settings_open && app.settings_font_editing {
+            if event.text.text != nil {
+                text := string(event.text.text)
+                if len(text) != 0 {
+                    _ = append_font_edit_text(app, text)
                 }
             }
             return
@@ -5338,7 +5376,8 @@ handle_event :: proc(app: ^App, event: ^SDL.Event) {
             if SDL.GetWindowSize(app.window, &w, &h) {
                 body := settings_layout(f32(w), f32(h)).body
                 limit := settings_sync_scroll(app, body)
-                if !app.settings_profile_editing && inside(event.wheel.mouse_x, event.wheel.mouse_y, body) {
+                if !app.settings_profile_editing && !app.settings_font_editing &&
+                   inside(event.wheel.mouse_x, event.wheel.mouse_y, body) {
                     app.settings_scroll_y = clamp(app.settings_scroll_y - event.wheel.y * 48, 0, limit)
                 }
             }
@@ -6040,6 +6079,24 @@ update_text_input_area :: proc(app: ^App, width, height: f32) {
         _ = SDL.SetTextInputArea(app.window, &area, caret)
         return
     }
+    if app.settings_open && app.settings_font_editing {
+        if field, ok := font_editor_input_rect(app, width, height); ok {
+            text := string(app.settings_font_edit_buffer[:app.settings_font_edit_len])
+            input_x := min(field.x + 7 + text_width(app, app.ui_font, text), field.x + field.w - 10)
+            caret := ime_preedit_caret_pixels(app, app.ui_font)
+            available := max(c.int(2), c.int(field.x + field.w - 8 - input_x))
+            area_width := max(c.int(2), caret + 2)
+            if app.ime_preedit_len != 0 {
+                preedit := string(app.ime_preedit[:app.ime_preedit_len])
+                area_width = max(area_width, c.int(text_width(app, app.ui_font, preedit)))
+            }
+            area_width = min(area_width, available)
+            caret = min(caret, max(c.int(0), area_width - 1))
+            area := SDL.Rect{c.int(input_x), c.int(field.y + 5), area_width, c.int(field.h - 10)}
+            _ = SDL.SetTextInputArea(app.window, &area, caret)
+            return
+        }
+    }
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
             text := string(app.settings_profile_edit_buffer[:app.settings_profile_edit_len])
@@ -6110,6 +6167,19 @@ draw_ime_preedit :: proc(app: ^App, width, height: f32) {
         draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
         _ = SDL.SetRenderClipRect(app.renderer, nil)
         return
+    }
+    if app.settings_open && app.settings_font_editing {
+        if field, ok := font_editor_input_rect(app, width, height); ok {
+            text := string(app.settings_font_edit_buffer[:app.settings_font_edit_len])
+            x := min(field.x + 7 + text_width(app, app.ui_font, text), field.x + field.w - 12)
+            clip := SDL.Rect{c.int(field.x + 5), c.int(field.y), c.int(max(f32(1), field.w - 10)), c.int(field.h)}
+            _ = SDL.SetRenderClipRect(app.renderer, &clip)
+            draw_text(app, app.ui_font, preedit, x, field.y + 8, palette.accent)
+            underline_width := max(f32(4), min(text_width(app, app.ui_font, preedit), field.x + field.w - 7 - x))
+            draw_fill(app.renderer, {x, field.y + field.h - 5, underline_width, 1}, palette.accent)
+            _ = SDL.SetRenderClipRect(app.renderer, nil)
+            return
+        }
     }
     if app.settings_open && app.settings_profile_editing {
         if field, ok := profile_editor_input_rect(app, width, height); ok {
@@ -6307,7 +6377,8 @@ draw_settings :: proc(app: ^App, width, height: f32) {
     }
     settings_clipped_text(app, {body.x, panel.y + 18, max(f32(0), body.w - 78), 24},
                           settings_page_title(app.settings_page), palette.text)
-    settings_draw_button(app, {panel.x + panel.w - 76, panel.y + 10, 64, 30}, "Close", !app.settings_profile_editing)
+    settings_draw_button(app, {panel.x + panel.w - 76, panel.y + 10, 64, 30}, "Close",
+                         !app.settings_profile_editing && !app.settings_font_editing)
     if app.settings_page == .Profile_Defaults || app.settings_page == .Profile_Home {
         settings_draw_profile_toolbar(app, layout)
     } else {
@@ -6349,9 +6420,7 @@ draw_settings :: proc(app: ^App, width, height: f32) {
             app.terminal_font_pixels < TERMINAL_FONT_PIXELS_MAX,
             true,
         )
-        draw_setting_field(app, "Font family (fixed for now)", "JetBrainsMono Nerd Font", content_x, content_y + 126, available)
-        settings_draw_note(app, {content_x, content_y + 192, available, 40}, "Font family selection is not available yet.")
-        draw_setting_field(app, "Application theme (see Color schemes)", app_theme_label(app.app_theme), content_x, content_y + 246, available)
+        draw_font_settings(app, body)
     case .Color_Schemes:
         draw_text(app, app.ui_font, "Application colors", content_x, content_y + 48, palette.text_muted)
         settings_draw_stepper(app, settings_choice_rect(body, app.settings_scroll_y, 0), app_theme_label(app.app_theme), true, true)
@@ -6646,13 +6715,18 @@ main :: proc() {
         return
     }
     palette = palette_for_theme(app_theme)
+    terminal_font_overrides: Desktop_Fonts
+    if font_message, font_ok := load_font_overrides(&terminal_font_overrides, user_config.font); !font_ok {
+        fmt.eprintln("Odin config error: ", font_message)
+        return
+    }
     terminal_font_pixels := u16(user_config.terminal_font_pixels)
-    terminal_font := TTF.OpenFont(primary_font, f32(terminal_font_pixels))
+    effective_primary := effective_terminal_primary_font(&terminal_fonts, &terminal_font_overrides)
+    terminal_font := TTF.OpenFont(cstring(raw_data(effective_primary)), f32(terminal_font_pixels))
     if terminal_font == nil {
         sdl_error("TTF_OpenFont terminal failed")
         return
     }
-    defer TTF.CloseFont(terminal_font)
 
     app := App{
         window = window,
@@ -6660,6 +6734,7 @@ main :: proc() {
         ui_font = ui_font,
         terminal_font = terminal_font,
         terminal_fonts = terminal_fonts,
+        terminal_font_overrides = terminal_font_overrides,
         terminal_font_pixels = terminal_font_pixels,
         text_scale = 1,
         app_theme = app_theme,
@@ -6669,6 +6744,9 @@ main :: proc() {
         tab_drag_index = -1,
         pane_resize_tab = -1,
         startup_profile = 0,
+    }
+    defer {
+        if app.terminal_font != nil do TTF.CloseFont(app.terminal_font)
     }
     if !SDL.SetWindowMinimumSize(window, 640, 320) {
         sdl_error("SDL_SetWindowMinimumSize failed")

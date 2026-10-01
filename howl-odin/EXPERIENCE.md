@@ -550,7 +550,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 - Image pressure across split panes/history/resize and the seven-image external
   resource bound where canonical semantics permit it.
-- User-facing font family selection now that the fallback owner is explicit.
+- A searchable installed-font family picker on top of the proven exact-path editor.
 - Color-emoji support only after `howl-text` gains a color-glyph/resource contract;
   its current raster API intentionally accepts only MONO/GRAY alpha masks, so Noto
   Color Emoji is not silently admitted as an incompatible fallback.
@@ -570,6 +570,10 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 - Dark desktop shell.
 - JetBrains Mono Nerd Font canary.
 - Persistent exact 8–48 px font-size setting with one-pixel adjustment.
+- Persistent exact-path Regular/Italic/Bold/Bold italic/Fallback 1/Fallback 2
+  configuration. Blank values inherit startup discovery; a custom Regular makes
+  blank styles reuse that regular face. Live edits restart renderer ownership
+  without replacing canonical Instance state.
 - Per-profile font size is either inherited or one exact value from the same range.
 - Font zoom never mutates an attached non-owning Instance.
 - Persistent application chrome themes with live preview: Howl Dark, Slate, and
@@ -580,7 +584,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
 
 **WANTED**
 
-- Font family picker with truthful availability/error state.
+- Searchable font-family picker with truthful availability/error state; exact path configuration is already available.
 - Canonical terminal color schemes and per-profile override only through the
   appropriate Howl VT/render ownership seam; application chrome must not become
   a hidden terminal-palette override.
@@ -607,9 +611,7 @@ This is a source/bundle iteration, not an installer or new deployment channel.
   labeled templates and remain read-only. Deletion requires confirmation and
   keyboard repeat cannot supply that confirmation; in-use recipes remain protected.
 - Clickable default-profile, terminal-size, profile-size, mode, and chrome-theme
-  selectors share their draw/hit geometry. Informational fields do not look like
-  text boxes; Appearance explicitly says that the font family is fixed in this
-  UI and that the family picker is not yet available.
+  selectors share their draw/hit geometry. Informational fields do not look like text boxes. Appearance owns six bounded editable font-path fields with explicit inheritance, strict existing-file validation and live Canvas renderer restart.
 - An edited field initially selects its existing value for replacement; Ctrl+A
   selects all, End/Right allows appending, and Backspace respects UTF-8 boundaries.
   Save validation keeps rejected/unsaved input visible; other pointer navigation
@@ -1045,7 +1047,7 @@ that is already proved.
    producer, Instance/HWLS, Canvas, backend upload and presentation costs; preserve the
    near-zero idle floor and exact image/resource lifetime.
 3. Qualify remaining desktop product seams: mixed-monitor/hotplug, accessibility,
-   font-family selection, diagnostics, and installed-bundle/distribution behavior.
+   installed-font discovery/picker UX, diagnostics, and installed-bundle/distribution behavior.
 4. Add host-consequence behavior only where a concrete desktop experience earns it.
    Odin currently owns explicit consequence authority; protocol semantics remain in VT.
 5. Give transported properties deliberate consumers where useful, but keep cwd/shell

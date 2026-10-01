@@ -88,12 +88,12 @@ start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Re
     work := new(Render_Work)
     if work == nil do return nil
     endpoint := instance_endpoint(view)
-    font := terminal_primary_font(&app.terminal_fonts)
-    italic := terminal_italic_font(&app.terminal_fonts)
-    bold := terminal_bold_font(&app.terminal_fonts)
-    bold_italic := terminal_bold_italic_font(&app.terminal_fonts)
-    fallback := terminal_fallback_font(&app.terminal_fonts)
-    secondary := terminal_secondary_fallback_font(&app.terminal_fonts)
+    font := effective_terminal_primary_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    italic := effective_terminal_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold := effective_terminal_bold_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold_italic := effective_terminal_bold_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    fallback := effective_terminal_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    secondary := effective_terminal_secondary_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
     if len(endpoint) >= len(work.endpoint) || len(font) >= len(work.font) ||
        len(italic) >= len(work.italic) || len(bold) >= len(work.bold) ||
        len(bold_italic) >= len(work.bold_italic) || len(fallback) >= len(work.fallback) ||

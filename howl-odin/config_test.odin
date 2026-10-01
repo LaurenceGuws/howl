@@ -61,3 +61,38 @@ persisted_config_accepts_exact_valid_values_without_substitution :: proc(t: ^tes
     testing.expect_value(t, value.app_theme, "high_contrast")
     testing.expect_value(t, value.default_profile, "local")
 }
+
+@(test)
+persisted_font_recipe_rejects_missing_explicit_file :: proc(t: ^testing.T) {
+	diagnostic: [192]u8
+	_, ok := user_config_from_candidate(
+		{
+			schema = CONFIG_SCHEMA,
+			terminal_font_pixels = 15,
+			startup_profile = 0,
+			app_theme = "howl_dark",
+			font = {regular = "/definitely/missing/howl-font.ttf"},
+		},
+		diagnostic[:],
+	)
+	testing.expect(t, !ok)
+	testing.expect_value(t, config_diagnostic_text(&diagnostic), "font.regular must be an existing absolute path within the path limit")
+}
+
+@(test)
+persisted_font_recipe_accepts_blank_inheritance :: proc(t: ^testing.T) {
+	diagnostic: [192]u8
+	value, ok := user_config_from_candidate(
+		{
+			schema = CONFIG_SCHEMA,
+			terminal_font_pixels = 15,
+			startup_profile = 0,
+			app_theme = "howl_dark",
+			font = {},
+		},
+		diagnostic[:],
+	)
+	testing.expect(t, ok)
+	testing.expect_value(t, value.font.regular, "")
+	testing.expect_value(t, value.font.fallback, "")
+}

@@ -21,6 +21,15 @@ Desktop_Fonts :: struct {
 	secondary_len: int,
 }
 
+User_Font_Config :: struct {
+	regular: string `json:"regular"`,
+	italic: string `json:"italic"`,
+	bold: string `json:"bold"`,
+	bold_italic: string `json:"bold_italic"`,
+	fallback: string `json:"fallback"`,
+	secondary_fallback: string `json:"secondary_fallback"`,
+}
+
 font_path :: proc(storage: []u8, used: int) -> string {
 	if used <= 0 || used > len(storage) do return ""
 	return string(storage[:used])
@@ -54,6 +63,77 @@ terminal_fallback_font :: proc(fonts: ^Desktop_Fonts) -> string {
 terminal_secondary_fallback_font :: proc(fonts: ^Desktop_Fonts) -> string {
 	if fonts == nil do return ""
 	return font_path(fonts.secondary[:], fonts.secondary_len)
+}
+
+copy_optional_font_path :: proc(output: []u8, used: ^int, path: string) -> bool {
+	if used == nil || len(path) >= len(output) do return false
+	if len(path) == 0 {
+		used^ = 0
+		if len(output) != 0 do output[0] = 0
+		return true
+	}
+	if !filepath.is_abs(path) || !os.exists(path) do return false
+	copy(output[:len(path)], transmute([]u8)path)
+	output[len(path)] = 0
+	used^ = len(path)
+	return true
+}
+
+load_font_overrides :: proc(output: ^Desktop_Fonts, config: User_Font_Config) -> (message: string, ok: bool) {
+	if output == nil do return "font override storage unavailable", false
+	output^ = {}
+	if !copy_optional_font_path(output.primary[:], &output.primary_len, config.regular) do return "font.regular must be an existing absolute path within the path limit", false
+	if !copy_optional_font_path(output.italic[:], &output.italic_len, config.italic) do return "font.italic must be an existing absolute path within the path limit", false
+	if !copy_optional_font_path(output.bold[:], &output.bold_len, config.bold) do return "font.bold must be an existing absolute path within the path limit", false
+	if !copy_optional_font_path(output.bold_italic[:], &output.bold_italic_len, config.bold_italic) do return "font.bold_italic must be an existing absolute path within the path limit", false
+	if !copy_optional_font_path(output.fallback[:], &output.fallback_len, config.fallback) do return "font.fallback must be an existing absolute path within the path limit", false
+	if !copy_optional_font_path(output.secondary[:], &output.secondary_len, config.secondary_fallback) do return "font.secondary_fallback must be an existing absolute path within the path limit", false
+	return "", true
+}
+
+font_config_from_overrides :: proc(fonts: ^Desktop_Fonts) -> User_Font_Config {
+	if fonts == nil do return {}
+	return {
+		regular = terminal_primary_font(fonts),
+		italic = terminal_italic_font(fonts),
+		bold = terminal_bold_font(fonts),
+		bold_italic = terminal_bold_italic_font(fonts),
+		fallback = terminal_fallback_font(fonts),
+		secondary_fallback = terminal_secondary_fallback_font(fonts),
+	}
+}
+
+effective_terminal_primary_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.primary_len != 0 do return terminal_primary_font(overrides)
+	return terminal_primary_font(defaults)
+}
+
+effective_terminal_italic_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.italic_len != 0 do return terminal_italic_font(overrides)
+	if overrides != nil && overrides.primary_len != 0 do return ""
+	return terminal_italic_font(defaults)
+}
+
+effective_terminal_bold_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.bold_len != 0 do return terminal_bold_font(overrides)
+	if overrides != nil && overrides.primary_len != 0 do return ""
+	return terminal_bold_font(defaults)
+}
+
+effective_terminal_bold_italic_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.bold_italic_len != 0 do return terminal_bold_italic_font(overrides)
+	if overrides != nil && overrides.primary_len != 0 do return ""
+	return terminal_bold_italic_font(defaults)
+}
+
+effective_terminal_fallback_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.fallback_len != 0 do return terminal_fallback_font(overrides)
+	return terminal_fallback_font(defaults)
+}
+
+effective_terminal_secondary_fallback_font :: proc(defaults, overrides: ^Desktop_Fonts) -> string {
+	if overrides != nil && overrides.secondary_len != 0 do return terminal_secondary_fallback_font(overrides)
+	return terminal_secondary_fallback_font(defaults)
 }
 
 copy_font_path :: proc(output: []u8, used: ^int, path: string) -> bool {

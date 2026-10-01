@@ -93,7 +93,7 @@ settings_content_height :: proc(app: ^App) -> f32 {
     case .Profile_Defaults: return f32(app.profile_count) * 44
     case .Profile_Home:     return f32(PROFILE_EDIT_FIELD_COUNT) * 48
     case .Mappings:          return f32(len(KEY_MAPPING_DEFINITIONS)) * 32 + 12
-    case .Appearance:       return 330
+    case .Appearance:       return 430
     case .Startup, .Interaction: return 270
     case .Color_Schemes:    return 260
     }
@@ -131,7 +131,8 @@ settings_reveal_selection :: proc(app: ^App) {
     case .Profile_Defaults: top, size = f32(app.settings_profile_selection) * 44, 40
     case .Profile_Home: top, size = f32(app.settings_profile_field) * 48, 44
     case .Mappings: top, size = f32(app.settings_mapping_selection) * 32 + 2, 30
-    case .Startup, .Interaction, .Appearance, .Color_Schemes: return
+    case .Appearance: top, size = 82 + f32(app.settings_font_field) * 48, 44
+    case .Startup, .Interaction, .Color_Schemes: return
     }
     app.settings_scroll_y = settings_reveal_range(app.settings_scroll_y, top, size, layout.body.h, limit)
 }
@@ -139,14 +140,14 @@ settings_reveal_selection :: proc(app: ^App) {
 settings_footer_note :: proc(app: ^App) -> string {
     if app.settings_notice_len != 0 do return string(app.settings_notice[:app.settings_notice_len])
     if app.config_notice_len != 0 do return string(app.config_notice[:app.config_notice_len])
-    if app.settings_profile_editing do return "Enter saves; Esc cancels; Ctrl+A selects all."
+    if app.settings_profile_editing || app.settings_font_editing do return "Enter saves; Esc cancels; Ctrl+A selects all."
     switch app.settings_page {
     case .Profile_Defaults: return "Select a profile, then Edit or Duplicate."
     case .Profile_Home:
         profile := selected_settings_profile(app)
         if profile != nil && profile.built_in do return "Read-only template. Duplicate to customize."
         return "Click a field to edit. Launch changes apply next time."
-    case .Appearance: return "Profile sizes override this default. Family picker is not available yet."
+    case .Appearance: return "Blank paths inherit startup fonts; blank styles use a custom regular face when one is set."
     case .Startup: return "Used for new windows, tabs, and split panes."
     case .Color_Schemes: return "Application chrome only; terminal colors are unchanged."
     case .Mappings: return "Every global shortcut is listed here. Enter records; Del unbinds; R resets."
@@ -253,7 +254,7 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
             }
         }
     }
-    if app.settings_profile_editing {
+    if app.settings_profile_editing || app.settings_font_editing {
         set_settings_notice(app, "Save or Cancel the current field before leaving it")
         return true
     }
@@ -308,6 +309,19 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
     case .Appearance:
         if delta := settings_stepper_hit(settings_choice_rect(layout.body, offset, 0), x, y); delta != 0 {
             adjust_terminal_font(app, delta)
+            return true
+        }
+        for index in 0..<FONT_EDIT_FIELD_COUNT {
+            row := font_settings_row(layout.body, offset, index)
+            if !inside(x, y, row) do continue
+            app.settings_font_field = index
+            app.settings_content_focus = true
+            value := font_settings_value(row)
+            if inside(x, y, value) {
+                field, _ := font_edit_field_at(index)
+                _ = begin_font_edit(app, field)
+            }
+            settings_reveal_selection(app)
             return true
         }
     case .Color_Schemes:
