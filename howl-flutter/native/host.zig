@@ -37,7 +37,7 @@ const maximum_non_command_packet_bytes: usize = host_header_bytes + global_heade
     maximum_frame_resources * removal_record_bytes + pixel_capacity;
 // Maintained native and Web clients share one renderer-owned geometry and
 // command envelope. The private Host packet remains separately byte-bounded.
-const command_capacity: usize = limits.maximum_canvas_commands;
+const command_capacity: usize = limits.maximum_frame_commands;
 // Retain one bounded common interactive row-command window. Larger/richer
 // frames use the complete terminal projection path unchanged.
 const incremental_command_capacity: usize = 8 * 1024;
@@ -1560,7 +1560,7 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(?u16, 3), maintainedRasterScale(36, 24, 45));
     try std.testing.expectEqual(@as(?u16, 4), maintainedRasterScale(64, 40, 80));
     try std.testing.expectEqual(@as(?u16, null), maintainedRasterScale(17, 10, 20));
-    try std.testing.expectEqual(limits.maximum_canvas_commands, command_capacity);
+    try std.testing.expectEqual(limits.maximum_frame_commands, command_capacity);
     try std.testing.expect(command_capacity >= limits.maximum_cells + client.view.maximum_image_placements + 1);
     try std.testing.expectEqual(@as(u32, limits.maximum_rows), howl_native_host_maximum_rows());
     try std.testing.expectEqual(@as(u32, limits.maximum_columns), howl_native_host_maximum_columns());

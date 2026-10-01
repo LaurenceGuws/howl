@@ -8,11 +8,12 @@ const std = @import("std");
 const client = @import("howl_client");
 const local_terminal = @import("local_terminal");
 const remote_target = @import("remote_target.zig");
-const limits = @import("limits");
-const terminal = @import("terminal");
+const render = @import("howl_render");
+const limits = render.limits;
+const terminal = render.terminal;
 const canvas = terminal;
 const terminal_fast = @import("terminal_fast.zig");
-const text = @import("howl_text");
+const text = render.text;
 const vk_surface = @import("howl_vk").surface;
 
 const resource_limit: usize = terminal.maximum_external_images + 1;
@@ -20,7 +21,7 @@ const prospective_resource_limit: usize = resource_limit + terminal.maximum_exte
 const overlay_resource_limit: usize = terminal_fast.overlay_resource_limit;
 const atlas_extent: u16 = 512;
 const atlas_pixel_bytes: usize = @as(usize, atlas_extent) * atlas_extent;
-const command_capacity: usize = limits.maximum_canvas_commands;
+const command_capacity: usize = limits.maximum_frame_commands;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 
 const ExternalUpload = struct {

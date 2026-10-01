@@ -81,17 +81,16 @@ experimental:
     Instance create owns shell/command/cwd/geometry inputs. The CLI owns no PTY, VT,
     Instance, Session, Server, listener, discovery, authentication or supervision
   howl-render: >-
-    one shared Terminal Canvas consuming canonical VT Observation directly,
-    a validated borrowed howl-client.rich observation, or the owned
-    howl-client.view semantic snapshot through one presentation implementation
-    plus howl-text; it owns terminal pixel geometry, colors/decorations/cursor
-    presentation, caller-supplied regular/italic/bold/bold-italic face selection
-    with deterministic fallback, smooth atlas-backed curly underline, exact
-    terminal-image resource projection, backend residency reconciliation, and
-    final backend-neutral terminal frames; private terminal_glyph_cache owns one
-    bounded shape/alpha-atlas reuse domain across all supplied howl-text faces;
-    there is no font discovery, generic multi-source Canvas compositor, or stable
-    mobile ABI
+    backend-independent terminal-frame projection backed by howl-text. Thin source
+    adapters accept canonical VT Observation, validated borrowed howl-client.rich,
+    or owned howl-client.view storage while the source-neutral projector itself
+    knows no VT owner, client transport, window system, or graphics backend. It owns
+    terminal pixel geometry, colors/decorations/cursor projection, caller-supplied
+    regular/italic/bold/bold-italic face selection with deterministic fallback,
+    bounded shape/alpha-atlas caching, exact terminal-image resource projection,
+    backend residency reconciliation, and final terminal frames of resource
+    uploads/removals plus solid, alpha-mask, and RGBA commands. There is no font
+    discovery, generic multi-source Canvas compositor, or stable mobile ABI.
   howl-flutter: >-
     maintained native graphical client canary with a deliberately small app shell.
     The shell may start route-less, persists only explicit labelled Server endpoints

@@ -227,7 +227,7 @@ test "only validated Unix endpoints avoid same-machine text compression" {
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
-const render_command_capacity: usize = render.limits.maximum_canvas_commands;
+const render_command_capacity: usize = render.limits.maximum_frame_commands;
 const RenderImageBinding = terminal_render.ExternalImageBinding;
 
 const ExternalUpload = struct {

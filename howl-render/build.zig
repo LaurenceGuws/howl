@@ -63,22 +63,30 @@ pub fn build(b: *std.Build) void {
         module.addImport("howl_text", text.?);
         test_module.addImport("howl_text", text.?);
 
-        module.addImport("terminal", terminalNativeModule(
+        const source_semantics = b.createModule(.{
+            .root_source_file = b.path("src/source.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        const projector = projectorModule(
             b,
             target,
             optimize,
-            client.?,
+            limits,
+            source_semantics,
             text.?,
-            vt.?,
-        ));
-        test_module.addImport("terminal", terminalNativeModule(
+        );
+        const terminal = terminalModule(
             b,
             target,
             optimize,
+            projector,
+            source_semantics,
             client.?,
-            text.?,
             vt.?,
-        ));
+        );
+        module.addImport("terminal", terminal);
+        test_module.addImport("terminal", terminal);
     }
 
     const selected = b.addOptions();
@@ -134,14 +142,42 @@ pub fn build(b: *std.Build) void {
     b.default_step = check;
 }
 
-fn terminalNativeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, client: *std.Build.Module, text: *std.Build.Module, vt: *std.Build.Module) *std.Build.Module {
+fn projectorModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    limits: *std.Build.Module,
+    source: *std.Build.Module,
+    text: *std.Build.Module,
+) *std.Build.Module {
+    const projector = b.createModule(.{
+        .root_source_file = b.path("src/projector.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    projector.addImport("limits", limits);
+    projector.addImport("source", source);
+    projector.addImport("howl_text", text);
+    return projector;
+}
+
+fn terminalModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    projector: *std.Build.Module,
+    source: *std.Build.Module,
+    client: *std.Build.Module,
+    vt: *std.Build.Module,
+) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
         .optimize = optimize,
     });
+    terminal.addImport("projector", projector);
+    terminal.addImport("source", source);
     terminal.addImport("howl_client", client);
-    terminal.addImport("howl_text", text);
     terminal.addImport("howl_vt", vt);
     return terminal;
 }

@@ -1,7 +1,8 @@
 //! Starts, joins, and retires the Window, Input, and Render lifetime owners.
 
 const std = @import("std");
-const text = @import("howl_text");
+const render = @import("howl_render");
+const text = render.text;
 const input_owner = @import("input_owner.zig");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
