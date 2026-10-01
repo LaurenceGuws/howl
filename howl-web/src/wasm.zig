@@ -1,7 +1,7 @@
 //! Experimental browser byte pump. Instance protocol and rich decoding stay shared.
 const std = @import("std");
-const p = @import("howl_instance").protocol;
 const client = @import("howl_client");
+const p = client.protocol;
 const rich = client.rich;
 const render = @import("howl_render");
 const presentation = render.presentation;
