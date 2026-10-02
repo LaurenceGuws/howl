@@ -792,7 +792,7 @@ pub const Screen = struct {
     fn storeHistoryRow(self: *Screen, row: u16) void {
         if (self.history_capacity == 0) return;
         const row_start = self.rowStart(row);
-        const len = self.visibleRowContentLen(row);
+        const len = self.visibleRowStateLen(row);
         const incoming = self.cells.?[row_start..][0..len];
         const slot = self.preflightProjectedRow(
             incoming,
@@ -968,7 +968,7 @@ pub const Screen = struct {
                     @as(u32, @intCast(current_line.cells.items.len)) +
                     self.cursorOffsetInRow();
             }
-            const content_len = self.retainedRowContentLen(row);
+            const content_len = self.retainedRowStateLen(row);
             try appendLogicalCells(
                 allocator,
                 &current_line,
@@ -1028,18 +1028,34 @@ pub const Screen = struct {
     pub fn cursorTrailingBlankColumns(self: *const Screen) u16 {
         if (self.rows == 0 or self.cols == 0) return 0;
         const cursor_offset = self.cursorOffsetInRow();
-        const content_len: u32 = self.visibleRowContentLen(self.cursor.row);
+        const content_len: u32 = self.visibleRowStateLen(self.cursor.row);
         if (cursor_offset <= content_len) return 0;
         return @intCast(cursor_offset - content_len);
     }
 
-    fn visibleRowContentLen(self: *const Screen, row: u16) u16 {
-        const line_cols = self.lineColumnCount(row);
+    const RetainedExtent = enum {
+        state,
+        text,
+    };
+
+    fn retainedCellExtends(cell: Cell, extent: RetainedExtent) bool {
+        return switch (extent) {
+            .state => !std.meta.eql(cell, blank_cell),
+            .text => cell.codepoint != 0,
+        };
+    }
+
+    fn retainedCellsLen(
+        cells: []const Cell,
+        line_cols: u16,
+        wrapped: bool,
+        extent: RetainedExtent,
+    ) u16 {
         var col = line_cols;
         while (col > 0) {
             const idx = col - 1;
-            const cell = self.cellInfoAt(row, idx);
-            if (cell.codepoint != 0) {
+            const cell = cells[idx];
+            if (retainedCellExtends(cell, extent)) {
                 if (isSemanticWideLead(cell)) return @min(
                     line_cols,
                     col + @as(u16, cell.width) - 1,
@@ -1048,8 +1064,17 @@ pub const Screen = struct {
             }
             col -= 1;
         }
-        if (self.rowWrapped(row) and line_cols > 0) return line_cols;
+        if (wrapped and line_cols > 0) return line_cols;
         return 0;
+    }
+
+    fn visibleRowStateLen(self: *const Screen, row: u16) u16 {
+        return retainedCellsLen(
+            self.visibleRowCells(row),
+            self.lineColumnCount(row),
+            self.rowWrapped(row),
+            .state,
+        );
     }
 
     fn preflightProjectedRow(
@@ -3960,22 +3985,22 @@ pub const Screen = struct {
         };
     }
 
-    fn retainedRowContentLen(self: *const Screen, row: RetainedRow) u16 {
-        const line_cols = self.columnCountForGeometry(row.geometry);
-        var col = line_cols;
-        while (col > 0) {
-            const index = col - 1;
-            const cell = row.cells[index];
-            if (cell.codepoint != 0) {
-                if (isSemanticWideLead(cell)) {
-                    return @min(line_cols, col + @as(u16, cell.width) - 1);
-                }
-                return col;
-            }
-            col -= 1;
-        }
-        if (row.wrapped and line_cols > 0) return line_cols;
-        return 0;
+    fn retainedRowStateLen(self: *const Screen, row: RetainedRow) u16 {
+        return retainedCellsLen(
+            row.cells,
+            self.columnCountForGeometry(row.geometry),
+            row.wrapped,
+            .state,
+        );
+    }
+
+    fn retainedRowTextLen(self: *const Screen, row: RetainedRow) u16 {
+        return retainedCellsLen(
+            row.cells,
+            self.columnCountForGeometry(row.geometry),
+            row.wrapped,
+            .text,
+        );
     }
 
     fn currentRetainedLineRange(self: *const Screen) RetainedLineRange {
@@ -4011,7 +4036,7 @@ pub const Screen = struct {
             .total = self.history_boundary_total,
         };
         const text_writer = RetainedTextWriter{ .history_boundary = &writer };
-        const content_len = self.retainedRowContentLen(row);
+        const content_len = self.retainedRowTextLen(row);
         var col: u16 = 0;
         while (col < content_len) : (col += 1) {
             const cell = row.cells[col];
@@ -4662,7 +4687,7 @@ fn writeRetainedRowText(
     row: Screen.RetainedRow,
     writer: RetainedTextWriter,
 ) void {
-    const content_len = screen.retainedRowContentLen(row);
+    const content_len = screen.retainedRowTextLen(row);
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
         const cell = row.cells[col];
@@ -4759,7 +4784,7 @@ fn cellTextByteCount(cell: ScreenCell, external: []const u32) usize {
 
 fn retainedRowTextByteCount(screen: *const Screen, row: Screen.RetainedRow) usize {
     var count: usize = 0;
-    const content_len = screen.retainedRowContentLen(row);
+    const content_len = screen.retainedRowTextLen(row);
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
         const cell = row.cells[col];
@@ -4802,7 +4827,7 @@ fn appendRetainedRowTextBounded(
     row: Screen.RetainedRow,
     limit: usize,
 ) CopyOpenOutputLineError!void {
-    const content_len = screen.retainedRowContentLen(row);
+    const content_len = screen.retainedRowTextLen(row);
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
         const cell = row.cells[col];
@@ -7047,6 +7072,72 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
 // =============================================================================
 // Projected history and logical-output proofs
 // =============================================================================
+
+test "styled blank state survives projected history and newest restore" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        10,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    screen.current_attrs.bg = Screen.Color.rgbComponents(10, 20, 30);
+    screen.cursor.setPositionByClient(0, 5);
+    try std.testing.expect(screen.eraseChars(1));
+
+    const before = screen.cellInfoAt(0, 5);
+    try std.testing.expectEqual(@as(u32, 0), before.codepoint);
+    try std.testing.expect(!std.meta.eql(before, blank_cell));
+
+    screen.cursor.setPositionByClient(1, 0);
+    screen.lineFeed();
+
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    try std.testing.expectEqualDeep(before, screen.historyCellAt(0, 5));
+
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqualDeep(before, screen.cellInfoAt(0, 5));
+}
+
+test "resize preserves styled blank state without extending logical output text" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        10,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    screen.writeText("A");
+    screen.current_attrs.bg = Screen.Color.rgbComponents(10, 20, 30);
+    screen.cursor.setPositionByClient(0, 5);
+    try std.testing.expect(screen.eraseChars(1));
+
+    const before = screen.cellInfoAt(0, 5);
+    try std.testing.expectEqual(@as(u32, 0), before.codepoint);
+    try std.testing.expect(!std.meta.eql(before, blank_cell));
+
+    const text_before = try copyOpenOutputLine(
+        std.testing.allocator,
+        &screen,
+        64,
+    );
+    defer std.testing.allocator.free(text_before);
+    try std.testing.expectEqualStrings("A", text_before);
+
+    try screen.resize(std.testing.allocator, 2, 12);
+
+    try std.testing.expectEqualDeep(before, screen.cellInfoAt(0, 5));
+    const text_after = try copyOpenOutputLine(
+        std.testing.allocator,
+        &screen,
+        64,
+    );
+    defer std.testing.allocator.free(text_after);
+    try std.testing.expectEqualStrings("A", text_after);
+}
 
 test "projected history admission and eviction allocate nothing after initialization" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
