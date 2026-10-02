@@ -234,6 +234,14 @@ pub const Owned = struct {
         return View.graphics(snapshot);
     }
 
+    pub fn observationRevision(snapshot: *const Snapshot) u64 {
+        return View.begin(snapshot).revision;
+    }
+
+    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+        return View.changedRowsBaseRevision(snapshot);
+    }
+
     pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
         return View.changedRows(snapshot);
     }
@@ -334,6 +342,14 @@ pub const RichView = struct {
             .images = snapshot.graphics.images,
             .placements = snapshot.graphics.placements,
         };
+    }
+
+    pub fn observationRevision(snapshot: *const Snapshot) u64 {
+        return snapshot.begin.revision;
+    }
+
+    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+        return snapshot.changed_rows_base_revision;
     }
 
     pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {

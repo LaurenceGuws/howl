@@ -151,6 +151,14 @@ pub const Source = struct {
         return snapshot.images;
     }
 
+    pub fn observationRevision(_: *const Snapshot) u64 {
+        return 0;
+    }
+
+    pub fn changedRowsBaseRevision(_: *const Snapshot) ?u64 {
+        return null;
+    }
+
     pub fn changedRows(_: *const Snapshot) ?[]const bool {
         return null;
     }

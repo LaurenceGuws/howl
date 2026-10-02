@@ -101,6 +101,7 @@ pub const Snapshot = struct {
             .graphics = self.graphics,
             .properties = self.properties,
             .changed_rows = null,
+            .changed_rows_base_revision = null,
             .row_shift = null,
         };
     }
@@ -138,6 +139,9 @@ pub const View = struct {
     /// Exact changed-row mask when supplied by a reusable raw cache. `null`
     /// means callers must treat every row as potentially changed.
     changed_rows: ?[]const bool = null,
+    /// Observation revision whose retained rows were compared to produce
+    /// `changed_rows`. `null` means the mask has no reusable predecessor.
+    changed_rows_base_revision: ?u64 = null,
     /// Explicit framing-v7 upward baseline rotation applied before row reuse.
     row_shift: ?u16 = null,
 };
@@ -290,6 +294,14 @@ pub const RawCache = struct {
     ) Error!View {
         if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
+        const changed_rows_base_revision: ?u64 = if (self.baseline) |baseline|
+            if (baseline.history_offset == begin.history_offset and
+                self.rows.len == begin.rows and self.columns == begin.columns)
+                baseline.revision
+            else
+                null
+        else
+            null;
         try self.ensureGeometry(begin.rows, begin.columns);
         @memset(self.changed_rows, false);
         var cache_mutated = false;
@@ -393,6 +405,7 @@ pub const RawCache = struct {
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
             .changed_rows = self.changed_rows,
+            .changed_rows_base_revision = changed_rows_base_revision,
             .row_shift = if (rows_up == 0) null else rows_up,
         };
     }
@@ -1992,6 +2005,53 @@ test "raw cache reuses byte-identical decoded rows" {
     try std.testing.expectEqualSlices(bool, &.{ true, false }, third.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
     try std.testing.expectEqual(second_row_cells, third.rows[1].cells.ptr);
+}
+
+test "raw cache changed-row mask names its exact predecessor revision" {
+    const allocator = std.testing.allocator;
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+
+    const begin = protocol.SnapshotBegin{
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 2,
+        .columns = 1,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    const baseline_body = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(baseline_body);
+    const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
+    try std.testing.expect(baseline.changed_rows_base_revision == null);
+
+    cache.baseline = .{ .revision = begin.revision, .history_offset = begin.history_offset };
+    var next_begin = begin;
+    next_begin.revision = 2;
+    next_begin.terminal_revision = 2;
+    const changed_body = try testRawCacheBody(allocator, 'B', 'Z');
+    defer allocator.free(changed_body);
+    const changed = try cache.decodeRaw(next_begin, changed_body, .{}, false);
+    try std.testing.expectEqual(@as(?u64, 1), changed.changed_rows_base_revision);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, changed.changed_rows.?);
+
+    cache.baseline = .{ .revision = next_begin.revision, .history_offset = 3 };
+    var history_begin = next_begin;
+    history_begin.revision = 3;
+    history_begin.history_offset = 0;
+    const history_mismatch = try cache.decodeRaw(history_begin, changed_body, .{}, false);
+    try std.testing.expect(history_mismatch.changed_rows_base_revision == null);
 }
 
 test "raw cache accepts row reuse only in explicit delta bodies" {

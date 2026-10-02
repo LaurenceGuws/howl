@@ -126,6 +126,7 @@ const Impl = struct {
     image_count: usize,
     placement_count: usize,
     changed_rows_present: bool,
+    changed_rows_base_revision: ?u64,
     row_shift: ?u16,
     graphics_generation: u64,
     graphics_content_generation: u64,
@@ -201,10 +202,9 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         source.graphics.placements.len,
     );
     const changed_rows_offset = placements_end;
-    // The coarse presentation layer only retains a repair mask when v7 also
-    // supplied an explicit row rotation. RawCache may expose same-index change
-    // facts on ordinary frames, but those remain an internal decode detail.
-    const changed_rows_count = if (source.row_shift != null) source.rows.len else 0;
+    // Preserve the reusable rich observer's exact row-change facts whether
+    // the baseline moved or stayed at the same visible row indexes.
+    const changed_rows_count = if (source.changed_rows != null) source.rows.len else 0;
     const properties_offset = try sectionEnd(bool, changed_rows_offset, changed_rows_count);
     const properties_bytes = protocol.properties.encodedSize(source.properties) catch return error.InvalidRichSnapshot;
     const total_bytes = std.math.add(usize, properties_offset, properties_bytes) catch return error.ViewTooLarge;
@@ -238,7 +238,8 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         .uri_bytes = counts.uri_bytes,
         .image_count = source.graphics.images.len,
         .placement_count = source.graphics.placements.len,
-        .changed_rows_present = source.row_shift != null,
+        .changed_rows_present = source.changed_rows != null,
+        .changed_rows_base_revision = source.changed_rows_base_revision,
         .row_shift = source.row_shift,
         .graphics_generation = source.graphics.generation,
         .graphics_content_generation = source.graphics.content_generation,
@@ -320,7 +321,7 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     }
     @memcpy(output_images, source.graphics.images);
     @memcpy(output_placements, source.graphics.placements);
-    if (source.row_shift != null) @memcpy(output_changed_rows, source.changed_rows.?);
+    if (source.changed_rows) |changed| @memcpy(output_changed_rows, changed);
     const written_properties = protocol.properties.encode(bytes[properties_offset..][0..properties_bytes], source.properties) catch
         return error.InvalidRichSnapshot;
     std.debug.assert(written_properties == properties_bytes);
@@ -461,12 +462,18 @@ pub fn graphics(snapshot: *const Snapshot) Graphics {
     };
 }
 
-/// Exact row-repair mask retained from one reusable rich observation. `null`
+/// Exact changed-row mask retained from one reusable rich observation. `null`
 /// means the source did not provide incremental row facts.
 pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
     const impl = constImpl(snapshot);
     if (!impl.changed_rows_present) return null;
     return constSliceAt(bool, ownerBytes(impl), impl.changed_rows_offset, impl.row_count);
+}
+
+/// Observation revision against which `changedRows` was computed. `null` means
+/// the retained mask has no predecessor that a renderer may safely reuse.
+pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+    return constImpl(snapshot).changed_rows_base_revision;
 }
 
 /// Explicit upward baseline rotation applied before `changedRows` repairs.
@@ -690,7 +697,7 @@ fn validateAndCount(source: *const rich.View) Error!Counts {
     }
     if (source.changed_rows) |changed| {
         if (changed.len != source.rows.len) return error.InvalidRichSnapshot;
-    } else if (source.row_shift != null) {
+    } else if (source.row_shift != null or source.changed_rows_base_revision != null) {
         return error.InvalidRichSnapshot;
     }
     if (source.row_shift) |shift| {
@@ -1168,6 +1175,7 @@ test "coarse view owns exact incremental row hints" {
         .hyperlinks = &.{},
         .graphics = .{},
         .changed_rows = &changed,
+        .changed_rows_base_revision = 40,
         .row_shift = 1,
     };
     const snapshot = try projectView(std.testing.allocator, &source);
@@ -1175,7 +1183,19 @@ test "coarse view owns exact incremental row hints" {
 
     changed = .{ true, false };
     try std.testing.expectEqual(@as(?u16, 1), rowShift(snapshot));
+    try std.testing.expectEqual(@as(?u64, 40), changedRowsBaseRevision(snapshot));
     try std.testing.expectEqualSlices(bool, &.{ false, true }, changedRows(snapshot).?);
+
+    var same_index_source = source;
+    same_index_source.row_shift = null;
+    same_index_source.changed_rows = &changed;
+    same_index_source.changed_rows_base_revision = 41;
+    const same_index = try projectView(std.testing.allocator, &same_index_source);
+    defer deinit(same_index);
+    changed = .{ false, true };
+    try std.testing.expectEqual(@as(?u16, null), rowShift(same_index));
+    try std.testing.expectEqual(@as(?u64, 41), changedRowsBaseRevision(same_index));
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, changedRows(same_index).?);
 
     var malformed = source;
     malformed.changed_rows = changed[0..1];

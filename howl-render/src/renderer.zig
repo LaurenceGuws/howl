@@ -244,6 +244,7 @@ const Impl = struct {
     incremental_palette: [256]frame_vocabulary.Color = undefined,
     incremental_foreground: frame_vocabulary.Color = undefined,
     incremental_background: frame_vocabulary.Color = undefined,
+    incremental_source_revision: ?u64 = null,
     incremental_ready: bool = false,
     placement_order: [limits.maximum_image_placements]u16 = undefined,
     frame_ready: bool = false,
@@ -551,8 +552,8 @@ fn updateInnerOnce(
     errdefer impl.incremental_ready = false;
     const rows = Source.rows(snapshot);
     const surface = try contentSurfaceSize(rows, Source.columns(snapshot), impl.config.cell_size);
-    const row_shift = Source.rowShift(snapshot);
-    const wants_incremental = row_shift != null and row_shift.? != 0;
+    const changed_rows = Source.changedRows(snapshot);
+    const wants_incremental = changed_rows != null;
     const incremental_plan = if (wants_incremental)
         try planIncrementalRows(Source, owner, snapshot)
     else
@@ -1617,8 +1618,11 @@ fn planIncrementalRows(
         Source.historyOffset(snapshot) != impl.incremental_history_offset or
         Source.alternateScreen(snapshot) != impl.incremental_alternate_screen)
         return null;
-    const shift = Source.rowShift(snapshot) orelse return null;
-    if (shift == 0) return null;
+    const base_revision = Source.changedRowsBaseRevision(snapshot) orelse return null;
+    if (impl.incremental_source_revision == null or
+        impl.incremental_source_revision.? != base_revision)
+        return null;
+    const shift = Source.rowShift(snapshot) orelse 0;
     const repairs = Source.changedRows(snapshot) orelse return null;
     if (shift >= rows or repairs.len != rows or
         !sameIncrementalCellPresentation(impl, Source.presentation(snapshot)))
@@ -1628,8 +1632,10 @@ fn planIncrementalRows(
         repair_count += 1;
     };
     if (repair_count > @max(@as(usize, 1), repairs.len / 3)) return null;
-    const exposed_first = @as(usize, rows - shift);
-    for (repairs[exposed_first..]) |repair| if (!repair) return null;
+    if (shift != 0) {
+        const exposed_first = @as(usize, rows - shift);
+        for (repairs[exposed_first..]) |repair| if (!repair) return null;
+    }
     if (!try incrementalViewEligible(Source, snapshot, repairs)) return null;
     const y_delta_value = std.math.mul(usize, shift, impl.config.cell_size.height) catch
         return error.InvalidPresentationGeometry;
@@ -1699,6 +1705,7 @@ fn rememberIncrementalCommands(
         impl.incremental_palette[index] = contentRgba(value);
     impl.incremental_foreground = contentRgba(presentation.foreground);
     impl.incremental_background = contentRgba(presentation.background);
+    impl.incremental_source_revision = Source.observationRevision(snapshot);
     impl.incremental_ready = true;
 }
 
