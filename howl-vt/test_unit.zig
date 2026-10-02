@@ -3,6 +3,9 @@ test {
     // reason: The test root imports this module only to register its tests; the imported namespace itself is intentionally unused.
     _ = @import("src/howl_vt.zig");
     // zig-audit: acknowledge discard
+    // reason: The test root imports this private owner only to register its storage proofs.
+    _ = @import("src/history_store.zig");
+    // zig-audit: acknowledge discard
     // reason: The test root imports this module only to register its tests; the imported namespace itself is intentionally unused.
     _ = @import("test/unit/terminal_test.zig");
     // zig-audit: acknowledge discard
