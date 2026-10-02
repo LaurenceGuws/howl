@@ -436,6 +436,20 @@ probe_one() {
     root_pid=$(window_pid "$stable")
     printf '%s\n' "$root_pid" > "$run_dir/root.pid"
 
+    local ready_cmd
+    printf -v ready_cmd ': > %q' "$run_dir/shell.ready"
+    wmio_data type --stable-id "$stable" --text "$ready_cmd" > "$run_dir/readiness-type.json"
+    wmio_data key --stable-id "$stable" --key enter > "$run_dir/readiness-enter.json"
+    if ! wait_for_file "$run_dir/shell.ready" 5000; then
+        sleep 1
+        wmio_data type --stable-id "$stable" --text "$ready_cmd" > "$run_dir/readiness-retry-type.json"
+        wmio_data key --stable-id "$stable" --key enter > "$run_dir/readiness-retry-enter.json"
+        wait_for_file "$run_dir/shell.ready" 5000 || {
+            wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+            fail "shell did not become command-ready for $horse; evidence: $run_dir"
+        }
+    fi
+
     printf -v typed '%q __probe %q' "$SELF" "$run_dir"
     wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
     wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
@@ -508,6 +522,22 @@ run_one() {
     printf '%s\n' "$root_pid" > "$run_dir/root.pid"
     record_metadata "$run_dir" "$horse" "$dose" "$stable" "$root_pid" "$rect"
     capture_host "$run_dir"
+
+    # Prove the terminal's shell is actually accepting commands before sending
+    # the longer runner command. Window focus alone is not shell readiness.
+    local ready_cmd
+    printf -v ready_cmd ': > %q' "$run_dir/shell.ready"
+    wmio_data type --stable-id "$stable" --text "$ready_cmd" > "$run_dir/readiness-type.json"
+    wmio_data key --stable-id "$stable" --key enter > "$run_dir/readiness-enter.json"
+    if ! wait_for_file "$run_dir/shell.ready" 5000; then
+        sleep 1
+        wmio_data type --stable-id "$stable" --text "$ready_cmd" > "$run_dir/readiness-retry-type.json"
+        wmio_data key --stable-id "$stable" --key enter > "$run_dir/readiness-retry-enter.json"
+        wait_for_file "$run_dir/shell.ready" 5000 || {
+            wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+            fail "shell did not become command-ready for $horse; evidence: $run_dir"
+        }
+    fi
 
     # The terminal-side runner reports actual PTY geometry, then waits for our
     # explicit go gate. No workload bytes are emitted before sampling starts.
