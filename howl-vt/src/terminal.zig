@@ -3002,7 +3002,6 @@ const MutationObservation = struct {
     const ViewportObservation = struct {
         alternate: bool,
         history_count: u32,
-        history_write_idx: u32,
         history_row_base: u32,
         row_origin: u16,
         view_padding_rows: u16,
@@ -3035,9 +3034,8 @@ const MutationObservation = struct {
             },
             .viewport = .{
                 .alternate = terminal.screen_state.alt_active,
-                .history_count = active.history_count,
-                .history_write_idx = active.history_write_idx,
-                .history_row_base = active.history_row_base,
+                .history_count = active.historyCount(),
+                .history_row_base = active.historyRowBase(),
                 .row_origin = active.row_origin,
                 .view_padding_rows = active.view_padding_rows,
                 .scroll_top = active.scroll_top,
@@ -4411,12 +4409,12 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     const row: u64 = if (bank == .alternate)
         active.cursor.row
     else
-        @as(u64, active.history_row_base) + active.history_count + active.cursor.row;
+        @as(u64, active.historyRowBase()) + active.historyCount() + active.cursor.row;
     const cell = active.cellPixelSize();
     const result = try terminal.graphics.command(
         packet,
         bank,
-        if (bank == .alternate) 0 else @as(u64, active.history_row_base) + active.history_count,
+        if (bank == .alternate) 0 else @as(u64, active.historyRowBase()) + active.historyCount(),
         row,
         active.cursor.col,
         if (cell) |value| value.width else 1,
@@ -9781,7 +9779,7 @@ fn pixelOnlyGeometryTransaction(allocator: std.mem.Allocator) !void {
     const before_history_count = terminal.screen_state.primary.historyCount();
     const before_primary_cell = terminal.screen_state.primary.cellAt(1, 0);
     const before_primary_cells = @intFromPtr(terminal.screen_state.primary.cells.?.ptr);
-    const before_primary_history = @intFromPtr(terminal.screen_state.primary.history.?.ptr);
+    const before_primary_history = @intFromPtr(terminal.screen_state.primary.history_store.?.rows.ptr);
     const before_alternate_cells = @intFromPtr(terminal.screen_state.alternate.cells.?.ptr);
 
     var prepared = terminal.prepareResizeGeometry(2, 4, .{ .width = 11, .height = 24 }) catch |failure| {
@@ -9791,7 +9789,7 @@ fn pixelOnlyGeometryTransaction(allocator: std.mem.Allocator) !void {
         try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
         try std.testing.expectEqual(before_primary_cell, terminal.screen_state.primary.cellAt(1, 0));
         try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
-        try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+        try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history_store.?.rows.ptr));
         try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
         return failure;
     };
@@ -9801,7 +9799,7 @@ fn pixelOnlyGeometryTransaction(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("", terminal.replyBytes());
     try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
     try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
-    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history_store.?.rows.ptr));
     try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
 
     var committed = try terminal.prepareResizeGeometry(2, 4, .{ .width = 11, .height = 24 });
@@ -9817,7 +9815,7 @@ fn pixelOnlyGeometryTransaction(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
     try std.testing.expectEqual(before_primary_cell, terminal.screen_state.primary.cellAt(1, 0));
     try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
-    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history_store.?.rows.ptr));
     try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
 }
 

@@ -10,101 +10,6 @@ fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
 
 const expected_logical_output_bytes: usize = 1024 * 1024;
 
-const RuntimeAllocatorBoundary = struct {
-    parent: std.mem.Allocator,
-    forbidden: bool = false,
-
-    const vtable: std.mem.Allocator.VTable = .{
-        .alloc = alloc,
-        .resize = resize,
-        .remap = remap,
-        .free = free,
-    };
-
-    fn allocator(self: *RuntimeAllocatorBoundary) std.mem.Allocator {
-        return .{ .ptr = self, .vtable = &vtable };
-    }
-
-    fn reject(self: *const RuntimeAllocatorBoundary, operation: []const u8) void {
-        if (self.forbidden) {
-            std.debug.panic(
-                "terminal allocator used after initialization: {s}",
-                .{operation},
-            );
-        }
-    }
-
-    fn alloc(
-        // zig-audit: acknowledge anyopaque
-        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
-        context: *anyopaque,
-        len: usize,
-        alignment: std.mem.Alignment,
-        return_address: usize,
-    ) ?[*]u8 {
-        // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
-        // zig-audit: acknowledge align_cast
-        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
-        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
-        self.reject("alloc");
-        return self.parent.rawAlloc(len, alignment, return_address);
-    }
-
-    fn resize(
-        // zig-audit: acknowledge anyopaque
-        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
-        context: *anyopaque,
-        memory: []u8,
-        alignment: std.mem.Alignment,
-        new_len: usize,
-        return_address: usize,
-    ) bool {
-        // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
-        // zig-audit: acknowledge align_cast
-        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
-        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
-        self.reject("resize");
-        return self.parent.rawResize(memory, alignment, new_len, return_address);
-    }
-
-    fn remap(
-        // zig-audit: acknowledge anyopaque
-        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
-        context: *anyopaque,
-        memory: []u8,
-        alignment: std.mem.Alignment,
-        new_len: usize,
-        return_address: usize,
-    ) ?[*]u8 {
-        // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
-        // zig-audit: acknowledge align_cast
-        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
-        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
-        self.reject("remap");
-        return self.parent.rawRemap(memory, alignment, new_len, return_address);
-    }
-
-    fn free(
-        // zig-audit: acknowledge anyopaque
-        // reason: The callback ABI carries caller-owned context through void*; the concrete context type is fixed by the registration site.
-        context: *anyopaque,
-        memory: []u8,
-        alignment: std.mem.Alignment,
-        return_address: usize,
-    ) void {
-        // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
-        // zig-audit: acknowledge align_cast
-        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
-        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
-        self.reject("free");
-        self.parent.rawFree(memory, alignment, return_address);
-    }
-};
-
 test "terminal rejects zero dimensions exactly" {
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 0, 1));
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 1, 0));
@@ -257,73 +162,59 @@ test "logical output finalization is allocation-free after initialization" {
     failing.fail_index = std.math.maxInt(usize);
 }
 
-test "ordinary fixed-geometry history never crosses the terminal allocator boundary" {
-    var boundary = RuntimeAllocatorBoundary{ .parent = std.testing.allocator };
-    var terminal = try Terminal.initWithHistory(boundary.allocator(), 4, 8, 16);
-    defer {
-        boundary.forbidden = false;
-        terminal.deinit();
-    }
-    boundary.forbidden = true;
+test "lazy history backing OOM reports loss and terminal execution continues" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
+    defer terminal.deinit();
 
-    const scalar_line = "e\u{0301}\u{0302}\u{0303}\u{0304}\r\n";
-    for (0..64) |_| {
-        const summary = try terminal.feed(scalar_line);
+    failing.fail_index = failing.alloc_index;
+    const lost = try terminal.feed("AAAA\r\nBBBB\r\n");
+    try std.testing.expect(lost.stateChanged());
+    try std.testing.expect(lost.historyLost());
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
+
+    failing.fail_index = std.math.maxInt(usize);
+    const recovered = try terminal.feed("CCCC\r\n");
+    try std.testing.expect(recovered.stateChanged());
+    try std.testing.expect(!recovered.historyLost());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+
+    const printable = try terminal.feed("X");
+    try std.testing.expect(printable.stateChanged());
+    try std.testing.expect(!printable.historyLost());
+}
+
+test "warm lazy history turnover is allocation free at stable payload shape" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 29, 117, 512);
+    defer terminal.deinit();
+
+    var line = std.ArrayList(u8).empty;
+    defer line.deinit(std.testing.allocator);
+    for (0..19) |_| try line.appendSlice(
+        std.testing.allocator,
+        "e\u{0300}\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}",
+    );
+    try line.appendSlice(std.testing.allocator, "\r\n");
+
+    // Fill the logical store and rotate another complete capacity so each
+    // segmented stream has already observed its stable alignment high-water.
+    for (0..1053) |_| {
+        const summary = try terminal.feed(line.items);
         try std.testing.expect(summary.stateChanged());
         try std.testing.expect(!summary.historyLost());
     }
+    try std.testing.expectEqual(@as(u32, 512), terminal.semanticView(0).history_count);
 
-    var wrapped: [256]u8 = @splat('W');
-    const wrapped_summary = try terminal.feed(&wrapped);
-    try std.testing.expect(wrapped_summary.stateChanged());
-    try std.testing.expect(!wrapped_summary.historyLost());
-
-    const live = terminal.semanticView(0);
-    const oldest = terminal.semanticView(std.math.maxInt(u32));
-    var checksum: u64 = live.history_row_base +% live.history_count +% oldest.history_offset;
-    var row: u16 = 0;
-    while (row < oldest.rows) : (row += 1) {
-        var col: u16 = 0;
-        while (col < oldest.cols) : (col += 1) {
-            checksum +%= oldest.cellAt(row, col);
-            var scalars: [24]u21 = undefined;
-            for (oldest.cellScalarsAt(row, col, &scalars)) |scalar| checksum +%= scalar;
-        }
+    failing.fail_index = failing.alloc_index;
+    for (0..1024) |_| {
+        const summary = try terminal.feed(line.items);
+        try std.testing.expect(summary.stateChanged());
+        try std.testing.expect(!summary.historyLost());
     }
-    std.mem.doNotOptimizeAway(checksum);
-
-    const range = terminal.logicalOutputRange();
-    var output = switch (try terminal.copyLogicalOutput(
-        std.testing.allocator,
-        range.oldest -| 1,
-        16,
-        expected_logical_output_bytes,
-    )) {
-        .output => |value| value,
-        else => return error.UnexpectedOutputResult,
-    };
-    try std.testing.expectEqual(@as(usize, wrapped.len), output.open_line.len);
-    output.deinit();
-
-    const restored = try terminal.feed("\x1b[3+T");
-    try std.testing.expect(restored.stateChanged());
-    try std.testing.expect(!restored.historyLost());
-
-    const resumed = try terminal.feed("tail\r\nopen");
-    try std.testing.expect(resumed.stateChanged());
-    try std.testing.expect(!resumed.historyLost());
-
-    var resumed_output = switch (try terminal.copyLogicalOutput(
-        std.testing.allocator,
-        terminal.logicalOutputRange().oldest -| 1,
-        16,
-        expected_logical_output_bytes,
-    )) {
-        .output => |value| value,
-        else => return error.UnexpectedOutputResult,
-    };
-    defer resumed_output.deinit();
-    try std.testing.expectEqualStrings("open", resumed_output.open_line);
+    try std.testing.expect(!failing.has_induced_failure);
+    failing.fail_index = std.math.maxInt(usize);
 }
 
 test "evicted projected cells never return while current output remains exact" {

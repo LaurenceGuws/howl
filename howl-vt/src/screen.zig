@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const cell_values = @import("cell.zig");
+const history_store_mod = @import("history_store.zig");
 const scalar_storage = @import("scalar_storage.zig");
 const sized_text = @import("sized_text.zig");
 const tab_stops_mod = @import("tab_stops.zig");
@@ -106,11 +107,52 @@ pub const Screen = struct {
     // Screen-local row projection and routed mutation values.
 
     const RetainedRow = struct {
-        cells: []const Cell,
-        scalars: *const scalar_storage.Storage,
-        scalar_start: usize,
+        owner: *const Screen,
+        source: union(enum) {
+            history: u32,
+            visible: u16,
+        },
         wrapped: bool,
         geometry: LineGeometry,
+
+        fn cellInfoAt(self: RetainedRow, col: u16) Cell {
+            return switch (self.source) {
+                .history => |logical| if (self.owner.history_store) |*store|
+                    store.cellAtLogical(logical, col)
+                else
+                    blank_cell,
+                .visible => |row| self.owner.cellInfoAt(row, col),
+            };
+        }
+
+        fn cellScalarsAt(
+            self: RetainedRow,
+            col: u16,
+            output: *[scalar_storage.maximum_scalars]u32,
+        ) []const u32 {
+            return switch (self.source) {
+                .history => |logical| if (self.owner.history_store) |*store|
+                    store.scalarsAtLogical(logical, col, output)
+                else
+                    &.{},
+                .visible => |row| self.owner.cellScalarsAt(row, col, output),
+            };
+        }
+
+        fn externalScalarsAt(
+            self: RetainedRow,
+            col: u16,
+            output: *[scalar_storage.maximum_scalars]u32,
+        ) []const u32 {
+            const cell = self.cellInfoAt(col);
+            const external_count = sidecarCount(cell);
+            if (external_count == 0) return &.{};
+            const sequence = self.cellScalarsAt(col, output);
+            const direct = @min(@as(usize, cell.combining_len), cell.combining.len);
+            std.debug.assert(sequence.len == 1 + @as(usize, cell.combining_len));
+            const external_start: usize = @as(usize, 1) + direct;
+            return sequence[external_start..][0..external_count];
+        }
     };
     const RetainedLineRange = struct {
         start: u32,
@@ -205,17 +247,12 @@ pub const Screen = struct {
     row_generations: ?[]u64,
     next_row_generation: u64,
 
-    // Projected scrollback ring and its transactional scalar plans.
-    history: ?[]Cell,
-    history_scalars: ?scalar_storage.Storage,
-    history_plan: ?[]scalar_storage.Range,
-    history_plan_outgoing: ?[]u8,
-    history_plan_incoming: ?[]u8,
-    history_flags: ?[]u8,
+    // Compact projected scrollback owner and live-grid scalar restore plans.
+    history_store: ?history_store_mod.Store,
+    history_restore_plan: ?[]scalar_storage.Range,
+    history_restore_outgoing: ?[]u8,
+    history_restore_incoming: ?[]u8,
     history_capacity: u16,
-    history_count: u32,
-    history_write_idx: u32,
-    history_row_base: u32,
 
     // Bounded prefix of the one logical line cut by the oldest retained row.
     history_boundary_text: ?[]u8,
@@ -254,8 +291,6 @@ pub const Screen = struct {
         cursor_style_default: CursorStyle,
         cells: ?[]Cell,
         row_flags: ?[]u8,
-        history: ?[]Cell,
-        history_flags: ?[]u8,
         history_capacity: u16,
         tab_stops: tab_stops_mod.State,
     ) Screen {
@@ -281,16 +316,11 @@ pub const Screen = struct {
             .row_flags = row_flags,
             .row_generations = null,
             .next_row_generation = 1,
-            .history = history,
-            .history_scalars = null,
-            .history_plan = null,
-            .history_plan_outgoing = null,
-            .history_plan_incoming = null,
-            .history_flags = history_flags,
+            .history_store = null,
+            .history_restore_plan = null,
+            .history_restore_outgoing = null,
+            .history_restore_incoming = null,
             .history_capacity = history_capacity,
-            .history_count = 0,
-            .history_write_idx = 0,
-            .history_row_base = 0,
             .history_boundary_text = null,
             .history_boundary_stored = 0,
             .history_boundary_total = 0,
@@ -316,7 +346,7 @@ pub const Screen = struct {
     }
 
     fn initWithDefaultCursorStyle(rows: u16, cols: u16, cursor_style_default: CursorStyle) Screen {
-        return initBase(null, rows, cols, cursor_style_default, null, null, null, null, 0, .empty);
+        return initBase(null, rows, cols, cursor_style_default, null, null, 0, .empty);
     }
 
     /// Initialize screen with owned cell storage.
@@ -356,8 +386,6 @@ pub const Screen = struct {
             cursor_style_default,
             cells,
             row_flags,
-            null,
-            null,
             0,
             tab_stops,
         );
@@ -401,7 +429,7 @@ pub const Screen = struct {
         errdefer screen.deinit(allocator);
 
         screen.history_capacity = if (screen.cells != null) history_capacity else 0;
-        try screen.allocateHistoryAuthority(allocator);
+        try screen.allocateHistoryAuthority(allocator, 0);
         try screen.allocateOutputAuthority(allocator);
         return screen;
     }
@@ -417,18 +445,14 @@ pub const Screen = struct {
         if (self.row_generations) |buf| allocator.free(buf);
         self.row_generations = null;
         self.tab_stops.deinit(allocator);
-        if (self.history) |h| allocator.free(h);
-        self.history = null;
-        if (self.history_scalars) |*storage| storage.deinit();
-        self.history_scalars = null;
-        if (self.history_plan) |plan| allocator.free(plan);
-        self.history_plan = null;
-        if (self.history_plan_outgoing) |counts| allocator.free(counts);
-        self.history_plan_outgoing = null;
-        if (self.history_plan_incoming) |counts| allocator.free(counts);
-        self.history_plan_incoming = null;
-        if (self.history_flags) |buf| allocator.free(buf);
-        self.history_flags = null;
+        if (self.history_store) |*store| store.deinit();
+        self.history_store = null;
+        if (self.history_restore_plan) |plan| allocator.free(plan);
+        self.history_restore_plan = null;
+        if (self.history_restore_outgoing) |counts| allocator.free(counts);
+        self.history_restore_outgoing = null;
+        if (self.history_restore_incoming) |counts| allocator.free(counts);
+        self.history_restore_incoming = null;
         if (self.history_boundary_text) |text| allocator.free(text);
         self.history_boundary_text = null;
         if (self.output_text) |text| allocator.free(text);
@@ -480,6 +504,7 @@ pub const Screen = struct {
         defer reflow.deinit(allocator);
 
         const projection = projectViewport(screenCount32(lines.logical_lines.items.len), reflow, rows);
+        const history_row_base = self.historyRowBase();
         var buffers = try allocResizeBuffers(allocator, rows, cols, self.tab_stops);
         errdefer buffers.deinit(allocator);
 
@@ -488,7 +513,7 @@ pub const Screen = struct {
         replacement.installResizeState(rows, cols, buffers.take());
         replacement.markAllRowsChanged();
         errdefer replacement.deinit(allocator);
-        try replacement.allocateHistoryAuthority(allocator);
+        try replacement.allocateHistoryAuthority(allocator, history_row_base);
         try replacement.allocateOutputAuthority(allocator);
         replacement.cloneOutputAuthority(self);
         try replacement.rebuildResizeAuthority(reflow, projection);
@@ -499,38 +524,21 @@ pub const Screen = struct {
     fn allocateHistoryAuthority(
         self: *Screen,
         allocator: std.mem.Allocator,
+        row_base: u32,
     ) std.mem.Allocator.Error!void {
         if (self.history_capacity == 0) return;
-        std.debug.assert(self.history == null);
-        std.debug.assert(self.history_flags == null);
-        std.debug.assert(self.history_plan == null);
-        std.debug.assert(self.history_plan_outgoing == null);
-        std.debug.assert(self.history_plan_incoming == null);
-        std.debug.assert(self.history_scalars == null);
-        std.debug.assert(self.history_count == 0);
+        std.debug.assert(self.history_store == null);
+        std.debug.assert(self.history_restore_plan == null);
+        std.debug.assert(self.history_restore_outgoing == null);
+        std.debug.assert(self.history_restore_incoming == null);
 
-        const history_cells = std.math.mul(
-            usize,
+        var store = try history_store_mod.Store.init(
+            allocator,
             self.history_capacity,
             self.cols,
-        ) catch return error.OutOfMemory;
-        const history = try allocator.alloc(Cell, history_cells);
-        errdefer allocator.free(history);
-        // Unoccupied projected rows are unreachable through history_count and
-        // remain untouched until their first complete-row commit. Reserving the
-        // fixed owner at initialization must not fault every future row into
-        // resident memory while the terminal is idle.
-        const flags = try allocator.alloc(u8, self.history_capacity);
-        errdefer allocator.free(flags);
-        @memset(flags, 0);
-        var scalars = scalar_storage.Storage.init(
-            allocator,
-            history_cells,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.InvalidCapacity => return error.OutOfMemory,
-        };
-        errdefer scalars.deinit();
+            row_base,
+        );
+        errdefer store.deinit();
         const plan = try allocator.alloc(scalar_storage.Range, self.cols);
         errdefer allocator.free(plan);
         @memset(plan, .none);
@@ -540,13 +548,10 @@ pub const Screen = struct {
         const incoming = try allocator.alloc(u8, self.cols);
         @memset(incoming, 0);
 
-        self.history = history;
-        self.history_flags = flags;
-        self.history_scalars = scalars;
-        self.history_plan = plan;
-        self.history_plan_outgoing = outgoing;
-        self.history_plan_incoming = incoming;
-        self.history_write_idx = 0;
+        self.history_store = store;
+        self.history_restore_plan = plan;
+        self.history_restore_outgoing = outgoing;
+        self.history_restore_incoming = incoming;
     }
 
     fn allocateOutputAuthority(
@@ -582,14 +587,10 @@ pub const Screen = struct {
         replacement.row_flags = null;
         replacement.row_generations = null;
         replacement.tab_stops = .empty;
-        replacement.history = null;
-        replacement.history_scalars = null;
-        replacement.history_plan = null;
-        replacement.history_plan_outgoing = null;
-        replacement.history_plan_incoming = null;
-        replacement.history_flags = null;
-        replacement.history_count = 0;
-        replacement.history_write_idx = 0;
+        replacement.history_store = null;
+        replacement.history_restore_plan = null;
+        replacement.history_restore_outgoing = null;
+        replacement.history_restore_incoming = null;
         replacement.history_boundary_text = null;
         replacement.history_boundary_stored = 0;
         replacement.history_boundary_total = 0;
@@ -611,14 +612,10 @@ pub const Screen = struct {
         self.row_flags = buffers.row_flags;
         self.row_generations = buffers.row_generations;
         self.tab_stops = buffers.tab_stops;
-        self.history = null;
-        self.history_scalars = null;
-        self.history_plan = null;
-        self.history_plan_outgoing = null;
-        self.history_plan_incoming = null;
-        self.history_flags = null;
-        self.history_count = 0;
-        self.history_write_idx = 0;
+        self.history_store = null;
+        self.history_restore_plan = null;
+        self.history_restore_outgoing = null;
+        self.history_restore_incoming = null;
         self.row_origin = 0;
         self.view_padding_rows = 0;
         self.scroll_top = 0;
@@ -638,10 +635,7 @@ pub const Screen = struct {
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
         if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
         if (self.row_generations) |buf| std.debug.assert(buf.len == rows);
-        std.debug.assert(self.history == null);
-        std.debug.assert(self.history_flags == null);
-        std.debug.assert(self.history_count == 0);
-        std.debug.assert(self.history_write_idx == 0);
+        std.debug.assert(self.historyCount() == 0);
         std.debug.assert(self.row_origin == 0);
         std.debug.assert(self.view_padding_rows == 0);
         std.debug.assert(self.scroll_top == 0);
@@ -721,8 +715,7 @@ pub const Screen = struct {
         reflow: ReflowState,
         projection: ResizeProjection,
     ) ReflowError!void {
-        self.history_count = 0;
-        self.history_write_idx = 0;
+        std.debug.assert(self.historyCount() == 0);
         if (self.history_capacity == 0 or self.cols == 0) return;
 
         std.debug.assert(projection.visible_start <= screenCount32(reflow.rewrapped.items.len));
@@ -732,20 +725,25 @@ pub const Screen = struct {
             const row_end = row.start + self.cols;
             std.debug.assert(row.len <= self.cols);
             std.debug.assert(row_end <= screenCount32(reflow.flat_rows.items.len));
-            const projected_slot = self.preflightProjectedRow(
-                reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
-                &reflow.scalars.?,
-                row.start,
-            ) orelse return error.ScalarCapacity;
-            self.commitProjectedRow(
-                projected_slot,
-                reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
-                &reflow.scalars.?,
-                row.start,
-                row.wrapped,
-                row.geometry,
-                if (self.history_count == self.history_capacity) 1 else 0,
-            );
+            const store = if (self.history_store) |*value|
+                value
+            else
+                return error.OutOfMemory;
+            var prepared = store.preparePush(.{
+                .cells = reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
+                .scalars = &reflow.scalars.?,
+                .scalar_start = row.start,
+                .wrapped = row.wrapped,
+                .geometry = row.geometry,
+            }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Capacity => return error.ScalarCapacity,
+                // zig-audit: acknowledge panic
+                // reason: Reflow rows and scalar ownership are produced by this module and must satisfy HistoryStore's canonical source contract.
+                error.InvalidSource => @panic("resize history source invalid"),
+            };
+            if (prepared.dropsOldest()) self.recordDroppedProjectedRows(1);
+            store.commitPush(&prepared);
         }
     }
 
@@ -789,23 +787,24 @@ pub const Screen = struct {
         const row_start = self.rowStart(row);
         const len = self.visibleRowStateLen(row);
         const incoming = self.cells.?[row_start..][0..len];
-        const slot = self.preflightProjectedRow(
-            incoming,
-            &self.scalars.?,
-            row_start,
-        ) orelse {
-            self.recordHistoryLoss();
-            return;
+        const store = if (self.history_store) |*value| value else return;
+        var prepared = store.preparePush(.{
+            .cells = incoming,
+            .scalars = &self.scalars.?,
+            .scalar_start = row_start,
+            .wrapped = self.rowWrapped(row),
+            .geometry = self.lineGeometry(row),
+        }) catch |err| switch (err) {
+            error.OutOfMemory, error.Capacity => {
+                self.recordHistoryLoss();
+                return;
+            },
+            // zig-audit: acknowledge panic
+            // reason: A live Screen row and its scalar sidecar are canonical internal owners; rejection proves invariant corruption.
+            error.InvalidSource => @panic("visible history source invalid"),
         };
-        self.commitProjectedRow(
-            slot,
-            incoming,
-            &self.scalars.?,
-            row_start,
-            self.rowWrapped(row),
-            self.lineGeometry(row),
-            if (self.history_count == self.history_capacity) 1 else 0,
-        );
+        if (prepared.dropsOldest()) self.recordDroppedProjectedRows(1);
+        store.commitPush(&prepared);
     }
 
     fn recordHistoryLoss(self: *Screen) void {
@@ -953,7 +952,7 @@ pub const Screen = struct {
         var current_line = LogicalLine{};
         defer current_line.deinit(allocator);
 
-        const cursor_row = self.history_count + self.cursor.row;
+        const cursor_row = self.historyCount() + self.cursor.row;
         const total = self.retainedRowCount();
         var logical_row: u32 = 0;
         while (logical_row < total) : (logical_row += 1) {
@@ -964,12 +963,11 @@ pub const Screen = struct {
                     self.cursorOffsetInRow();
             }
             const content_len = self.retainedRowStateLen(row);
-            try appendLogicalCells(
+            try appendLogicalRetainedRow(
                 allocator,
                 &current_line,
-                row.cells[0..content_len],
-                row.scalars,
-                row.scalar_start,
+                row,
+                content_len,
             );
 
             if (!row.wrapped) {
@@ -1072,208 +1070,19 @@ pub const Screen = struct {
         );
     }
 
-    fn preflightProjectedRow(
-        self: *Screen,
-        incoming: []const Cell,
-        incoming_scalars: *const scalar_storage.Storage,
-        incoming_start: usize,
-    ) ?u32 {
-        const flags = self.history_flags orelse return null;
-        const history = self.history orelse return null;
-        const scalars = if (self.history_scalars) |*storage|
-            storage
-        else
-            return null;
-        const plans = self.history_plan orelse return null;
-        const outgoing_counts = self.history_plan_outgoing orelse return null;
-        const incoming_counts = self.history_plan_incoming orelse return null;
-        if (incoming.len > self.cols or plans.len != self.cols or
-            outgoing_counts.len != self.cols or
-            incoming_counts.len != self.cols)
-            return null;
-        const capacity = self.projectedCapacity();
-        std.debug.assert(self.history_count <= capacity);
-        const replacing_occupied = self.history_count == capacity;
-        const slot = self.projectedAppendSlot();
-        const base = slot * @as(u32, self.cols);
-        if (base + self.cols > history.len or slot >= flags.len) return null;
-        @memset(plans, .none);
-        var col: usize = 0;
-        while (col < self.cols) : (col += 1) {
-            outgoing_counts[col] = if (replacing_occupied)
-                history[base + col].combining_len
-            else
-                0;
-            incoming_counts[col] = if (col < incoming.len)
-                incoming[col].combining_len
-            else
-                0;
-            if (!scalars.validRange(base + col, outgoing_counts[col]))
-                // zig-audit: acknowledge panic
-                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                @panic("accepted projected-history scalar mismatch");
-            if (col >= incoming.len) continue;
-            if (!incoming_scalars.validRange(
-                incoming_start + col,
-                incoming_counts[col],
-                // zig-audit: acknowledge panic
-                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            )) @panic("accepted history-line scalar mismatch");
-        }
-        col = 0;
-        while (col < self.cols) : (col += 1) {
-            const count = @as(usize, incoming_counts[col]) -|
-                (scalar_storage.inline_scalars - 1);
-            if (count == 0) continue;
-            plans[col] = scalars.planFirstFit(
-                count,
-                base,
-                outgoing_counts,
-                plans[0..col],
-                incoming_counts[0..col],
-            ) catch return null;
-        }
-        return slot;
-    }
-
-    fn commitProjectedRow(
-        self: *Screen,
-        slot: u32,
-        incoming: []const Cell,
-        incoming_scalars: *const scalar_storage.Storage,
-        incoming_start: usize,
-        wrapped: bool,
-        geometry: LineGeometry,
-        rows_to_drop: u32,
-    ) void {
-        const flags = self.history_flags orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history flags disappeared after preflight");
-        const history = self.history orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history cells disappeared after preflight");
-        const scalars = if (self.history_scalars) |*storage|
-            storage
-        else
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history scalars disappeared after preflight");
-        const plans = self.history_plan orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history plan disappeared after preflight");
-        const outgoing_counts = self.history_plan_outgoing orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history counts disappeared after preflight");
-        const incoming_counts = self.history_plan_incoming orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("projected-history counts disappeared after preflight");
-        const drop = @min(rows_to_drop, self.history_count);
-        if (drop != 0) self.recordDroppedProjectedRows(drop);
-        const base = slot * @as(u32, self.cols);
-        var col: usize = 0;
-        while (col < self.cols) : (col += 1)
-            clearAcceptedTail(scalars, base + col, outgoing_counts[col]);
-        col = 0;
-        while (col < incoming.len) : (col += 1) {
-            const count = @as(usize, incoming_counts[col]) -|
-                (scalar_storage.inline_scalars - 1);
-            if (count == 0) continue;
-            const values = acceptedTail(
-                incoming_scalars,
-                incoming_start + col,
-                incoming_counts[col],
-            );
-            var prepared = scalars.prepare(values) catch
-                // zig-audit: acknowledge panic
-                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                @panic("projected-history preflight diverged");
-            prepared.commitPlanned(plans[col], base + col, 0) catch
-                // zig-audit: acknowledge panic
-                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                @panic("projected-history first-fit plan diverged");
-        }
-        @memset(history[base..][0..self.cols], blank_cell);
-        @memcpy(history[base..][0..incoming.len], incoming);
-        flags[slot] = rowFlags(wrapped, geometry);
-        if (drop != 0) {
-            var logical_row: u32 = 0;
-            while (logical_row < drop) : (logical_row += 1) {
-                const outgoing_slot = self.historySlotForLogicalRow(logical_row) orelse
-                    // zig-audit: acknowledge panic
-                    // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                    @panic("accepted projected-history row missing");
-                if (outgoing_slot != slot) self.clearProjectedSlot(outgoing_slot);
-            }
-            self.advanceOldestProjectedRows(drop);
-            if (self.history_count == 0) self.history_write_idx = slot;
-        }
-        self.history_count += 1;
-    }
-
     fn dropOldestProjectedRows(self: *Screen, row_count: u32) void {
-        if (row_count == 0 or self.history_count == 0) return;
+        const history_count = self.historyCount();
+        if (row_count == 0 or history_count == 0) return;
 
-        const drop = @min(row_count, self.history_count);
+        const drop = @min(row_count, history_count);
         self.recordDroppedProjectedRows(drop);
-        var logical_row: u32 = 0;
-        while (logical_row < drop) : (logical_row += 1) {
-            const slot = self.historySlotForLogicalRow(logical_row) orelse
-                // zig-audit: acknowledge panic
-                // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-                @panic("accepted projected-history row missing");
-            self.clearProjectedSlot(slot);
-        }
-        self.advanceOldestProjectedRows(drop);
-    }
-
-    fn advanceOldestProjectedRows(self: *Screen, row_count: u32) void {
-        if (row_count == 0 or self.history_count == 0) return;
-        const drop = @min(row_count, self.history_count);
-        const capacity = self.projectedCapacity();
-        std.debug.assert(drop <= self.history_count);
-        if (drop == self.history_count or capacity == 0) {
-            self.history_row_base += self.history_count;
-            self.history_count = 0;
-            self.history_write_idx = 0;
-            return;
-        }
-
-        std.debug.assert(self.history_write_idx < capacity);
-        self.history_write_idx = (self.history_write_idx + drop) % capacity;
-        self.history_count -= drop;
-        self.history_row_base += drop;
-    }
-
-    fn clearProjectedSlot(self: *Screen, slot: u32) void {
-        const history = self.history orelse
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("accepted projected-history cells missing");
-        const scalars = if (self.history_scalars) |*storage|
-            storage
+        const store = if (self.history_store) |*value|
+            value
         else
             // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("accepted projected-history scalars missing");
-        const base = slot * @as(u32, self.cols);
-        if (base + self.cols > history.len)
-            // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("accepted projected-history slot invalid");
-        var col: u32 = 0;
-        while (col < self.cols) : (col += 1)
-            clearAcceptedTail(
-                scalars,
-                base + col,
-                history[base + col].combining_len,
-            );
-        @memset(history[base..][0..self.cols], blank_cell);
-        if (self.history_flags) |flags| flags[slot] = 0;
+            // reason: A nonzero accepted history count requires its sole HistoryStore owner.
+            @panic("accepted projected-history store missing");
+        store.dropOldest(drop);
     }
 
     // -------------------------------------------------------------------------
@@ -1390,11 +1199,8 @@ pub const Screen = struct {
 
     /// Returns a copied history cell by recency, or a blank cell out of range.
     pub fn historyCellAt(self: *const Screen, history_idx: u32, col: u16) Cell {
-        const h = self.history orelse return blank_cell;
-        const bounded_idx: u32 = history_idx;
-        if (bounded_idx >= self.history_count or col >= self.cols) return blank_cell;
-        const slot = self.historySlotForRecency(history_idx) orelse return blank_cell;
-        return h[@intCast(slot * @as(u32, self.cols) + @as(u32, col))];
+        const store = if (self.history_store) |*value| value else return blank_cell;
+        return store.cellAtRecency(history_idx, col);
     }
 
     /// Copies one complete retained-history lead scalar sequence.
@@ -1404,22 +1210,8 @@ pub const Screen = struct {
         col: u16,
         output: *[scalar_storage.maximum_scalars]u32,
     ) []const u32 {
-        const slot = self.historySlotForRecency(history_idx) orelse return &.{};
-        if (col >= self.cols) return &.{};
-        const observed = self.historyCellAt(history_idx, col);
-        const lead_col = col -| observed.x;
-        const lead = self.historyCellAt(history_idx, lead_col);
-        if (lead.codepoint == 0) return &.{};
-        output[0] = lead.codepoint;
-        const direct: usize = @min(
-            @as(usize, lead.combining_len),
-            lead.combining.len,
-        );
-        @memcpy(output[1..][0..direct], lead.combining[0..direct]);
-        const index = slot * @as(u32, self.cols) + lead_col;
-        const tail = acceptedTail(&self.history_scalars.?, index, lead.combining_len);
-        @memcpy(output[1 + direct ..][0..tail.len], tail);
-        return output[0 .. 1 + direct + tail.len];
+        const store = if (self.history_store) |*value| value else return &.{};
+        return store.scalarsAtRecency(history_idx, col, output);
     }
 
     fn nextRowGeneration(self: *Screen) u64 {
@@ -1485,12 +1277,12 @@ pub const Screen = struct {
 
     /// Return retained history row count.
     pub fn historyCount(self: *const Screen) u32 {
-        return self.history_count;
+        return if (self.history_store) |*store| store.count() else 0;
     }
 
     /// Returns the oldest projected history row identity.
     pub fn historyRowBase(self: *const Screen) u32 {
-        return self.history_row_base;
+        return if (self.history_store) |*store| store.base() else 0;
     }
 
     /// Return configured history capacity.
@@ -1894,10 +1686,10 @@ pub const Screen = struct {
 
     /// Clears retained scrollback while preserving the visible grid.
     pub fn clearScrollback(self: *Screen) bool {
-        const changed = self.history_count != 0;
-        self.dropOldestProjectedRows(self.history_count);
-        std.debug.assert(self.history_count == 0);
-        std.debug.assert(self.history_write_idx == 0);
+        const history_count = self.historyCount();
+        const changed = history_count != 0;
+        self.dropOldestProjectedRows(history_count);
+        std.debug.assert(self.historyCount() == 0);
         return changed;
     }
 
@@ -3663,14 +3455,14 @@ pub const Screen = struct {
     // have been restored into the visible grid. The oldest retained frontier and
     // its bounded output-only prefix are unchanged.
     fn consumeNewestHistoryRow(self: *Screen) void {
-        std.debug.assert(self.history_count > 0);
-        const projected_slot = self.historySlotForRecency(0) orelse
+        std.debug.assert(self.historyCount() > 0);
+        const store = if (self.history_store) |*value|
+            value
+        else
             // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
-            @panic("accepted newest projected-history row missing");
-        self.clearProjectedSlot(projected_slot);
-        self.history_count -= 1;
-        if (self.history_count == 0) self.history_write_idx = 0;
+            // reason: A nonzero accepted history count requires its sole HistoryStore owner.
+            @panic("accepted newest projected-history store missing");
+        store.popNewest();
     }
 
     /// Reverse-scroll and restore newest primary scrollback rows when available.
@@ -3678,25 +3470,23 @@ pub const Screen = struct {
     pub fn scrollDownFromHistory(self: *Screen, count: u16) bool {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0 or count == 0) return changed;
-        const limit = @max(@as(u32, self.rows), self.history_count);
+        const limit = @max(@as(u32, self.rows), self.historyCount());
         var remaining: u32 = @min(@as(u32, count), limit);
         while (remaining > 0) : (remaining -= 1) {
-            const history_slot = self.historySlotForRecency(0);
-            const history_flags = if (history_slot) |slot| self.history_flags.?[@intCast(slot)] else 0;
-            if (history_slot) |slot| {
-                if (!self.preflightHistoryRestore(slot)) break;
-            }
+            const has_history = self.historyCount() != 0;
+            const restored_flags = if (has_history)
+                rowFlags(self.historyRowWrapped(0), self.historyLineGeometry(0))
+            else
+                0;
+            if (has_history and !self.preflightHistoryRestore()) break;
             changed = self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1) or changed;
-            if (history_slot) |slot| {
-                const history = self.history.?;
-                const source = slot * @as(u32, self.cols);
+            if (has_history) {
                 const destination = self.rowStart(self.scroll_top);
-                self.commitHistoryRestore(slot, destination);
-                @memcpy(
-                    self.cells.?[@intCast(destination)..@intCast(destination + self.cols)],
-                    history[@intCast(source)..@intCast(source + self.cols)],
-                );
-                self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = history_flags;
+                self.commitHistoryRestore(destination);
+                var col: u16 = 0;
+                while (col < self.cols) : (col += 1)
+                    self.cells.?[@intCast(destination + col)] = self.historyCellAt(0, col);
+                self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = restored_flags;
                 self.consumeNewestHistoryRow();
                 changed = true;
             }
@@ -3704,41 +3494,40 @@ pub const Screen = struct {
         return self.noteAllRowsChange(changed);
     }
 
-    fn preflightHistoryRestore(self: *Screen, slot: u32) bool {
-        const history = self.history orelse return false;
-        const history_scalars = if (self.history_scalars) |*storage|
-            storage
-        else
-            return false;
+    fn preflightHistoryRestore(self: *Screen) bool {
+        if (self.historyCount() == 0) return false;
         const visible = self.cells orelse return false;
         const visible_scalars = if (self.scalars) |*storage|
             storage
         else
             return false;
-        const plans = self.history_plan orelse return false;
-        const outgoing = self.history_plan_outgoing orelse return false;
-        const incoming = self.history_plan_incoming orelse return false;
+        const plans = self.history_restore_plan orelse return false;
+        const outgoing = self.history_restore_outgoing orelse return false;
+        const incoming = self.history_restore_incoming orelse return false;
         if (plans.len != self.cols or outgoing.len != self.cols or
             incoming.len != self.cols)
             return false;
-        const source = slot * @as(u32, self.cols);
         const released = self.rowStart(self.scrollBottom());
-        if (source + self.cols > history.len or
-            released + self.cols > visible.len)
+        if (released + self.cols > visible.len)
             return false;
         @memset(plans, .none);
         var col: usize = 0;
         while (col < self.cols) : (col += 1) {
             outgoing[col] = visible[released + col].combining_len;
-            incoming[col] = history[source + col].combining_len;
-            if (!visible_scalars.validRange(released + col, outgoing[col]) or
-                !history_scalars.validRange(source + col, incoming[col]))
+            incoming[col] = self.historyCellAt(0, @intCast(col)).combining_len;
+            if (!visible_scalars.validRange(released + col, outgoing[col]))
                 // zig-audit: acknowledge panic
                 // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("accepted history restore scalar mismatch");
             const count = @as(usize, incoming[col]) -|
                 (scalar_storage.inline_scalars - 1);
             if (count == 0) continue;
+            var retained: [scalar_storage.maximum_scalars]u32 = undefined;
+            const sequence = self.historyCellScalarsAt(0, @intCast(col), &retained);
+            if (sequence.len != 1 + @as(usize, incoming[col]))
+                // zig-audit: acknowledge panic
+                // reason: Accepted cold history must decode the exact scalar count owned by its canonical lead cell.
+                @panic("accepted cold history scalar mismatch");
             plans[col] = visible_scalars.planFirstFit(
                 count,
                 released,
@@ -3750,23 +3539,29 @@ pub const Screen = struct {
         return true;
     }
 
-    fn commitHistoryRestore(self: *Screen, slot: u32, destination: u32) void {
-        const history_scalars = &self.history_scalars.?;
+    fn commitHistoryRestore(self: *Screen, destination: u32) void {
         const visible = self.cells.?;
         const visible_scalars = &self.scalars.?;
-        const plans = self.history_plan.?;
-        const incoming = self.history_plan_incoming.?;
-        const source = slot * @as(u32, self.cols);
+        const plans = self.history_restore_plan.?;
+        const incoming = self.history_restore_incoming.?;
         var col: usize = 0;
         while (col < self.cols) : (col += 1) {
             const count = @as(usize, incoming[col]) -|
                 (scalar_storage.inline_scalars - 1);
             if (count == 0) continue;
-            const values = acceptedTail(
-                history_scalars,
-                source + col,
-                incoming[col],
+            var retained: [scalar_storage.maximum_scalars]u32 = undefined;
+            const sequence = self.historyCellScalarsAt(0, @intCast(col), &retained);
+            const direct = @min(
+                @as(usize, incoming[col]),
+                scalar_storage.inline_scalars - 1,
             );
+            if (sequence.len != 1 + @as(usize, incoming[col]))
+                // zig-audit: acknowledge panic
+                // reason: Restore commit consumes the same accepted cold row validated by preflight.
+                @panic("history restore cold scalar preflight diverged");
+            const external_start: usize = @as(usize, 1) + direct;
+            const values = sequence[external_start..];
+            std.debug.assert(values.len == count);
             var prepared = visible_scalars.prepare(values) catch
                 // zig-audit: acknowledge panic
                 // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
@@ -3926,7 +3721,7 @@ pub const Screen = struct {
     }
 
     fn retainedRowCount(self: *const Screen) u32 {
-        return std.math.add(u32, self.history_count, self.rows) catch
+        return std.math.add(u32, self.historyCount(), self.rows) catch
             // zig-audit: acknowledge panic
             // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             @panic("retained terminal row count overflow");
@@ -3934,61 +3729,65 @@ pub const Screen = struct {
 
     fn retainedRowAt(self: *const Screen, logical_row: u32) RetainedRow {
         std.debug.assert(logical_row < self.retainedRowCount());
-        if (logical_row < self.history_count) {
-            // zig-audit: acknowledge orelse_unreachable
-            // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-            const slot = self.historySlotForLogicalRow(logical_row) orelse unreachable;
-            const base = slot * @as(u32, self.cols);
-            // zig-audit: acknowledge orelse_unreachable
-            // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-            const history = self.history orelse unreachable;
-            // zig-audit: acknowledge orelse_unreachable
-            // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-            const flags = self.history_flags orelse unreachable;
-            const value = flags[@intCast(slot)];
+        const history_count = self.historyCount();
+        if (logical_row < history_count) {
+            const store = if (self.history_store) |*value|
+                value
+            else
+                // zig-audit: acknowledge panic
+                // reason: A nonzero accepted history count requires its sole HistoryStore owner.
+                @panic("accepted projected-history store missing");
             return .{
-                .cells = history[@intCast(base)..@intCast(base + self.cols)],
-                .scalars = &self.history_scalars.?,
-                .scalar_start = base,
-                .wrapped = value & row_wrapped_bit != 0,
-                .geometry = @fromBackingInt(@intCast(
-                    (value & row_geometry_mask) >> row_geometry_shift,
-                )),
+                .owner = self,
+                .source = .{ .history = logical_row },
+                .wrapped = store.wrappedLogical(logical_row),
+                .geometry = store.geometryLogical(logical_row),
             };
         }
 
-        const visible_row: u16 = @intCast(logical_row - self.history_count);
+        const visible_row: u16 = @intCast(logical_row - history_count);
         return .{
-            .cells = self.visibleRowCells(visible_row),
-            .scalars = &self.scalars.?,
-            .scalar_start = self.rowStart(visible_row),
+            .owner = self,
+            .source = .{ .visible = visible_row },
             .wrapped = self.rowWrapped(visible_row),
             .geometry = self.lineGeometry(visible_row),
         };
     }
 
     fn retainedRowStateLen(self: *const Screen, row: RetainedRow) u16 {
-        return retainedCellsLen(
-            row.cells,
-            self.columnCountForGeometry(row.geometry),
-            row.wrapped,
-            .state,
-        );
+        return self.retainedRowLen(row, .state);
     }
 
     fn retainedRowTextLen(self: *const Screen, row: RetainedRow) u16 {
-        return retainedCellsLen(
-            row.cells,
-            self.columnCountForGeometry(row.geometry),
-            row.wrapped,
-            .text,
-        );
+        return self.retainedRowLen(row, .text);
+    }
+
+    fn retainedRowLen(
+        self: *const Screen,
+        row: RetainedRow,
+        extent: RetainedExtent,
+    ) u16 {
+        const line_cols = self.columnCountForGeometry(row.geometry);
+        var col = line_cols;
+        while (col > 0) {
+            const value = row.cellInfoAt(col - 1);
+            if (retainedCellExtends(value, extent)) {
+                if (isSemanticWideLead(value)) return @min(
+                    line_cols,
+                    col + @as(u16, value.width) - 1,
+                );
+                return col;
+            }
+            col -= 1;
+        }
+        if (row.wrapped and line_cols > 0) return line_cols;
+        return 0;
     }
 
     fn currentRetainedLineRange(self: *const Screen) RetainedLineRange {
         const total = self.retainedRowCount();
         std.debug.assert(total > 0);
-        var start = self.history_count + self.cursor.row;
+        var start = self.historyCount() + self.cursor.row;
         std.debug.assert(start < total);
         while (start > 0 and self.retainedRowAt(start - 1).wrapped) start -= 1;
 
@@ -4019,13 +3818,14 @@ pub const Screen = struct {
         };
         const text_writer = RetainedTextWriter{ .history_boundary = &writer };
         const content_len = self.retainedRowTextLen(row);
+        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
         var col: u16 = 0;
         while (col < content_len) : (col += 1) {
-            const cell = row.cells[col];
+            const cell = row.cellInfoAt(col);
             writeCellText(
                 text_writer,
                 cell,
-                externalCellScalars(row.scalars, row.scalar_start + col, cell),
+                row.externalScalarsAt(col, &scalars),
             );
         }
         self.history_boundary_stored = writer.stored;
@@ -4033,7 +3833,7 @@ pub const Screen = struct {
     }
 
     fn recordDroppedProjectedRows(self: *Screen, row_count: u32) void {
-        const drop = @min(row_count, self.history_count);
+        const drop = @min(row_count, self.historyCount());
         var logical_row: u32 = 0;
         while (logical_row < drop) : (logical_row += 1) {
             const row = self.retainedRowAt(logical_row);
@@ -4045,45 +3845,16 @@ pub const Screen = struct {
         }
     }
 
-    /// Resolve an oldest-first projected history row to its physical ring slot.
-    fn historySlotForLogicalRow(self: *const Screen, logical_row: u32) ?u32 {
-        const capacity = self.projectedCapacity();
-        if (logical_row >= self.history_count or capacity == 0) return null;
-        return (self.history_write_idx + logical_row) % capacity;
-    }
-
-    /// Resolve a newest-first projected history row to its physical ring slot.
-    fn historySlotForRecency(self: *const Screen, history_idx: u32) ?u32 {
-        if (history_idx >= self.history_count) return null;
-        return self.historySlotForLogicalRow(self.history_count - 1 - history_idx);
-    }
-
     /// Returns retained DEC line geometry by newest-first history recency.
     pub fn historyLineGeometry(self: *const Screen, history_idx: u32) LineGeometry {
-        const flags = self.history_flags orelse return .single_width;
-        const slot = self.historySlotForRecency(history_idx) orelse return .single_width;
-        return @fromBackingInt(@intCast((flags[@intCast(slot)] & row_geometry_mask) >> row_geometry_shift));
+        const store = if (self.history_store) |*value| value else return .single_width;
+        return store.geometryRecency(history_idx);
     }
 
     /// Reports whether one retained history row continues into its successor.
     pub fn historyRowWrapped(self: *const Screen, history_idx: u32) bool {
-        const flags = self.history_flags orelse return false;
-        const slot = self.historySlotForRecency(history_idx) orelse return false;
-        return flags[@intCast(slot)] & row_wrapped_bit != 0;
-    }
-
-    /// Return the physical ring slot for the next projected history row.
-    fn projectedAppendSlot(self: *const Screen) u32 {
-        const capacity = self.projectedCapacity();
-        if (capacity == 0) return 0;
-        return (self.history_write_idx + self.history_count) % capacity;
-    }
-
-    /// Return allocated projected-history row capacity.
-    fn projectedCapacity(self: *const Screen) u32 {
-        const flags = self.history_flags orelse return 0;
-        std.debug.assert(flags.len <= std.math.maxInt(u32));
-        return @intCast(flags.len);
+        const store = if (self.history_store) |*value| value else return false;
+        return store.wrappedRecency(history_idx);
     }
 
     /// Fill an assumed in-bounds row range with the current erase cell.
@@ -4465,6 +4236,85 @@ fn cloneLineScalars(
     return result;
 }
 
+fn appendLogicalRetainedRow(
+    allocator: std.mem.Allocator,
+    line: *LogicalLine,
+    row: Screen.RetainedRow,
+    content_len: u16,
+) std.mem.Allocator.Error!void {
+    if (content_len == 0) return;
+    const old_len = line.cells.items.len;
+    const appended_len: usize = content_len;
+    const new_len = std.math.add(usize, old_len, appended_len) catch
+        return error.OutOfMemory;
+    var candidate = LogicalLine{
+        .cursor_offset = line.cursor_offset,
+    };
+    errdefer candidate.deinit(allocator);
+    try candidate.cells.ensureTotalCapacity(allocator, new_len);
+    candidate.cells.appendSliceAssumeCapacity(line.cells.items);
+
+    var appended_have_external_scalars = false;
+    var col: u16 = 0;
+    while (col < content_len) : (col += 1) {
+        const value = row.cellInfoAt(col);
+        candidate.cells.appendAssumeCapacity(value);
+        appended_have_external_scalars = appended_have_external_scalars or
+            sidecarCount(value) != 0;
+    }
+
+    std.debug.assert((line.scalars != null) == cellsHaveExternalScalars(line.cells.items));
+    if (line.scalars != null or appended_have_external_scalars) {
+        candidate.scalars = scalar_storage.Storage.init(
+            allocator,
+            new_len,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // zig-audit: acknowledge unreachable
+            // reason: A nonempty logical line length is already validated by the caller-owned ArrayList capacity.
+            error.InvalidCapacity => unreachable,
+        };
+        if (line.scalars) |*source| {
+            copyScalarCells(
+                source,
+                line.cells.items,
+                0,
+                &candidate.scalars.?,
+                0,
+                old_len,
+                // zig-audit: acknowledge panic
+                // reason: Existing accepted logical-line scalar ownership was validated when the line was built.
+            ) catch @panic("logical scalar clone mismatch");
+        }
+
+        if (appended_have_external_scalars) {
+            var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+            col = 0;
+            while (col < content_len) : (col += 1) {
+                const value = row.cellInfoAt(col);
+                if (sidecarCount(value) == 0) continue;
+                const external = row.externalScalarsAt(col, &scalars);
+                candidate.scalars.?.set(
+                    old_len + col,
+                    0,
+                    external,
+                ) catch |err| switch (err) {
+                    // zig-audit: acknowledge panic
+                    // reason: Retained-row scalar lookup and the fresh candidate cell index were validated before this exact copy.
+                    error.InvalidRange => @panic("retained row scalar clone mismatch"),
+                    // zig-audit: acknowledge panic
+                    // reason: The replacement preserves the same bounded scalar-per-cell contract as accepted retained rows.
+                    error.ScalarCapacity => @panic("retained row scalar capacity mismatch"),
+                };
+            }
+        }
+    }
+
+    line.deinit(allocator);
+    line.* = candidate;
+    candidate = .{};
+}
+
 fn appendLogicalCells(
     allocator: std.mem.Allocator,
     line: *LogicalLine,
@@ -4670,13 +4520,14 @@ fn writeRetainedRowText(
     writer: RetainedTextWriter,
 ) void {
     const content_len = screen.retainedRowTextLen(row);
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
-        const cell = row.cells[col];
+        const cell = row.cellInfoAt(col);
         writeCellText(
             writer,
             cell,
-            externalCellScalars(row.scalars, row.scalar_start + col, cell),
+            row.externalScalarsAt(col, &scalars),
         );
     }
 }
@@ -4767,10 +4618,11 @@ fn cellTextByteCount(cell: ScreenCell, external: []const u32) usize {
 fn retainedRowTextByteCount(screen: *const Screen, row: Screen.RetainedRow) usize {
     var count: usize = 0;
     const content_len = screen.retainedRowTextLen(row);
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
-        const cell = row.cells[col];
-        const external = externalCellScalars(row.scalars, row.scalar_start + col, cell);
+        const cell = row.cellInfoAt(col);
+        const external = row.externalScalarsAt(col, &scalars);
         count = std.math.add(usize, count, cellTextByteCount(cell, external)) catch
             // zig-audit: acknowledge panic
             // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
@@ -4810,14 +4662,15 @@ fn appendRetainedRowTextBounded(
     limit: usize,
 ) CopyOpenOutputLineError!void {
     const content_len = screen.retainedRowTextLen(row);
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
-        const cell = row.cells[col];
+        const cell = row.cellInfoAt(col);
         try appendCellTextBounded(
             allocator,
             bytes,
             cell,
-            externalCellScalars(row.scalars, row.scalar_start + col, cell),
+            row.externalScalarsAt(col, &scalars),
             limit,
         );
     }
@@ -5128,7 +4981,7 @@ test "VS16 right-edge relocation without autowrap preserves exact ownership" {
     try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
     try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expect(!screen.rowWrapped(0));
 }
 
@@ -5212,7 +5065,7 @@ test "VS16 wrapping relocation clears destination scalar and OSC 66 ownership" {
     try std.testing.expect(screen.rowWrapped(0));
     try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
     try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
-    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
 }
 
 test "VS16 semantic width survives history restoration reflow and resize" {
@@ -5337,7 +5190,7 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
     const history_before = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(history_before);
     const cursor_before = screen.cursor;
-    const history_count_before = screen.history_count;
+    const history_count_before = screen.historyCount();
 
     var discarded = try screen.prepareResize(std.testing.allocator, 4, 1);
     try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
@@ -5355,7 +5208,7 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
     defer std.testing.allocator.free(history_after_discard);
     try std.testing.expectEqualSlices(ScreenCell, history_before, history_after_discard);
     try std.testing.expectEqualDeep(cursor_before, screen.cursor);
-    try std.testing.expectEqual(history_count_before, screen.history_count);
+    try std.testing.expectEqual(history_count_before, screen.historyCount());
     discarded.deinit(std.testing.allocator);
 
     var replacement = try screen.prepareResize(std.testing.allocator, 4, 1);
@@ -5371,18 +5224,27 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
         const retained = try screen.scalars.?.validate(index, cell.combining_len);
         try std.testing.expectEqual(sidecarCount(cell), retained);
     }
-    if (screen.history_scalars) |*storage| {
-        var logical_row: u32 = 0;
-        while (logical_row < screen.history_count) : (logical_row += 1) {
-            // zig-audit: acknowledge orelse_unreachable
-            // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-            const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
-            const base = slot * @as(u32, screen.cols);
-            const row = screen.history.?[@intCast(base)..@intCast(base + screen.cols)];
-            for (row, 0..) |cell, col| {
-                const retained = try storage.validate(base + col, cell.combining_len);
-                try std.testing.expectEqual(sidecarCount(cell), retained);
+    var logical_row: u32 = 0;
+    while (logical_row < screen.historyCount()) : (logical_row += 1) {
+        const recency = screen.historyCount() - 1 - logical_row;
+        var col: u16 = 0;
+        while (col < screen.cols) : (col += 1) {
+            const cell = screen.historyCellAt(recency, col);
+            var retained: [scalar_storage.maximum_scalars]u32 = undefined;
+            const sequence = screen.historyCellScalarsAt(recency, col, &retained);
+            if (cell.codepoint == 0) {
+                try std.testing.expectEqual(@as(usize, 0), sequence.len);
+                continue;
             }
+            try std.testing.expectEqual(
+                @as(usize, 1) + @as(usize, cell.combining_len),
+                sequence.len,
+            );
+            const direct = @min(@as(usize, cell.combining_len), cell.combining.len);
+            try std.testing.expectEqual(
+                sidecarCount(cell),
+                sequence.len - @as(usize, 1) - direct,
+            );
         }
     }
 
@@ -5421,7 +5283,7 @@ fn oneColumnOmissionAllocation(allocator: std.mem.Allocator) !void {
     );
     defer std.testing.allocator.free(pages_before);
     const cursor_before = screen.cursor;
-    const history_count_before = screen.history_count;
+    const history_count_before = screen.historyCount();
 
     var candidate = screen.prepareResize(allocator, 4, 1) catch |err| {
         try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
@@ -5436,7 +5298,7 @@ fn oneColumnOmissionAllocation(allocator: std.mem.Allocator) !void {
             std.mem.sliceAsBytes(screen.scalars.?.pages),
         );
         try std.testing.expectEqualDeep(cursor_before, screen.cursor);
-        try std.testing.expectEqual(history_count_before, screen.history_count);
+        try std.testing.expectEqual(history_count_before, screen.historyCount());
         return err;
     };
     candidate.deinit(allocator);
@@ -5468,19 +5330,15 @@ fn copyProjectedHistory(
     allocator: std.mem.Allocator,
     screen: *const Screen,
 ) std.mem.Allocator.Error![]ScreenCell {
-    const cell_count = @as(usize, screen.history_count) * screen.cols;
+    const cell_count = @as(usize, screen.historyCount()) * screen.cols;
     const result = try allocator.alloc(ScreenCell, cell_count);
     var logical_row: u32 = 0;
-    while (logical_row < screen.history_count) : (logical_row += 1) {
-        // zig-audit: acknowledge orelse_unreachable
-        // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-        const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
-        const source = slot * @as(u32, screen.cols);
+    while (logical_row < screen.historyCount()) : (logical_row += 1) {
         const destination = @as(usize, logical_row) * screen.cols;
-        @memcpy(
-            result[destination..][0..screen.cols],
-            screen.history.?[@intCast(source)..@intCast(source + screen.cols)],
-        );
+        const recency = screen.historyCount() - 1 - logical_row;
+        var col: u16 = 0;
+        while (col < screen.cols) : (col += 1)
+            result[destination + col] = screen.historyCellAt(recency, col);
     }
     return result;
 }
@@ -5489,13 +5347,11 @@ fn containsCodepoint(screen: *const Screen, codepoint: u32) bool {
     for (screen.cells orelse &.{}) |cell|
         if (cell.codepoint == codepoint) return true;
     var logical_row: u32 = 0;
-    while (logical_row < screen.history_count) : (logical_row += 1) {
-        // zig-audit: acknowledge orelse_unreachable
-        // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-        const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
-        const base = slot * @as(u32, screen.cols);
-        for (screen.history.?[@intCast(base)..@intCast(base + screen.cols)]) |cell|
-            if (cell.codepoint == codepoint) return true;
+    while (logical_row < screen.historyCount()) : (logical_row += 1) {
+        const recency = screen.historyCount() - 1 - logical_row;
+        var col: u16 = 0;
+        while (col < screen.cols) : (col += 1)
+            if (screen.historyCellAt(recency, col).codepoint == codepoint) return true;
     }
     return false;
 }
@@ -5627,11 +5483,11 @@ test "first projected admission ignores untouched future slots" {
 
     screen.storeHistoryRow(0);
     try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
-    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(@as(u21, 'P'), screen.historyRowAt(0, 0));
 }
 
-test "inline combining history remains entirely in fixed projected storage" {
+test "inline combining history round trips without external scalar payload" {
     var screen = try Screen.initWithCellsAndHistory(
         std.testing.allocator,
         2,
@@ -5647,21 +5503,18 @@ test "inline combining history remains entirely in fixed projected storage" {
     screen.cells.?[@intCast(screen.rowStart(0))] = inline_cell;
 
     screen.storeHistoryRow(0);
-    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqualDeep(inline_cell, screen.historyCellAt(0, 0));
-    const slot = screen.historySlotForRecency(0).?;
-    const projected_index = slot * @as(u32, screen.cols);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        (try screen.history_scalars.?.tail(
-            projected_index,
-            inline_cell.combining_len,
-        )).len,
+    var cold_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 'a', 0x0300, 0x0301, 0x0302 },
+        screen.historyCellScalarsAt(0, 0, &cold_scalars),
     );
 
     screen.clearRowRange(0, 0, screen.cols);
     try std.testing.expect(screen.scrollDownFromHistory(1));
-    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
     try std.testing.expectEqualDeep(inline_cell, screen.cellInfoAt(0, 0));
 }
 
@@ -5686,16 +5539,20 @@ test "twenty four scalars cross projected history and reflow page boundaries" {
     screen.cells.?[lead] = cell_value;
 
     screen.storeHistoryRow(0);
-    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
-    const projected_slot = screen.historySlotForRecency(0).?;
-    const projected_lead = projected_slot * @as(u32, old_cols) + lead;
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    var projected_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    const projected = screen.historyCellScalarsAt(
+        0,
+        @intCast(lead),
+        &projected_scalars,
+    );
+    try std.testing.expectEqual(@as(usize, scalar_storage.maximum_scalars), projected.len);
+    try std.testing.expectEqual(@as(u32, 'a'), projected[0]);
+    try std.testing.expectEqualSlices(u32, &cell_value.combining, projected[1..4]);
     try std.testing.expectEqualSlices(
         u32,
         &tail,
-        try screen.history_scalars.?.tail(
-            projected_lead,
-            cell_value.combining_len,
-        ),
+        projected[4..],
     );
     screen.clearRowRange(0, 0, old_cols);
     try std.testing.expect(screen.scrollDownFromHistory(1));
@@ -5705,7 +5562,7 @@ test "twenty four scalars cross projected history and reflow page boundaries" {
         &tail,
         try screen.scalars.?.tail(restored_lead, cell_value.combining_len),
     );
-    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
 
     try screen.resize(std.testing.allocator, 3, 2048);
     var found: ?usize = null;
@@ -5758,7 +5615,7 @@ test "projected history scalar pressure preserves accepted ownership and later r
     }
     screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
-    try std.testing.expectEqual(@as(u32, screen.history_capacity), screen.history_count);
+    try std.testing.expectEqual(@as(u32, screen.history_capacity), screen.historyCount());
 
     // Replacing the scalar-free oldest row now needs six complete tails, but
     // the retained newer row leaves only eight scalar slots. Preflight must
@@ -5774,53 +5631,47 @@ test "projected history scalar pressure preserves accepted ownership and later r
         screen.cells.?[second_row + col] = value;
     }
 
-    const before_ranges = try std.testing.allocator.dupe(
-        scalar_storage.Range,
-        screen.history_scalars.?.ranges,
-    );
-    defer std.testing.allocator.free(before_ranges);
-    const before_pages = try std.testing.allocator.dupe(
-        u8,
-        std.mem.sliceAsBytes(screen.history_scalars.?.pages),
-    );
-    defer std.testing.allocator.free(before_pages);
     const before_cells = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(before_cells);
-    const before_flags = try std.testing.allocator.dupe(u8, screen.history_flags.?);
-    defer std.testing.allocator.free(before_flags);
-    const before_history_count = screen.history_count;
-    const before_history_write_idx = screen.history_write_idx;
-    const before_history_row_base = screen.history_row_base;
+    var before_scalar_storage: [scalar_storage.maximum_scalars]u32 = undefined;
+    const before_scalars = screen.historyCellScalarsAt(0, 0, &before_scalar_storage);
+    var before_scalar_copy: [scalar_storage.maximum_scalars]u32 = undefined;
+    @memcpy(before_scalar_copy[0..before_scalars.len], before_scalars);
+    const before_history_count = screen.historyCount();
+    const before_history_row_base = screen.historyRowBase();
+    const before_oldest_wrapped = screen.historyRowWrapped(1);
+    const before_newest_wrapped = screen.historyRowWrapped(0);
+    const before_oldest_geometry = screen.historyLineGeometry(1);
+    const before_newest_geometry = screen.historyLineGeometry(0);
     const before_boundary_stored = screen.history_boundary_stored;
     const before_boundary_total = screen.history_boundary_total;
     const before_boundary_active = screen.history_boundary_active;
 
     screen.storeHistoryRow(1);
     try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
-    try std.testing.expectEqualSlices(
-        scalar_storage.Range,
-        before_ranges,
-        screen.history_scalars.?.ranges,
-    );
-    try std.testing.expectEqualSlices(
-        u8,
-        before_pages,
-        std.mem.sliceAsBytes(screen.history_scalars.?.pages),
-    );
     const after_cells = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(after_cells);
     try std.testing.expectEqualSlices(ScreenCell, before_cells, after_cells);
-    try std.testing.expectEqualSlices(u8, before_flags, screen.history_flags.?);
-    try std.testing.expectEqual(before_history_count, screen.history_count);
-    try std.testing.expectEqual(before_history_write_idx, screen.history_write_idx);
-    try std.testing.expectEqual(before_history_row_base, screen.history_row_base);
+    var after_scalar_storage: [scalar_storage.maximum_scalars]u32 = undefined;
+    const after_scalars = screen.historyCellScalarsAt(0, 0, &after_scalar_storage);
+    try std.testing.expectEqualSlices(
+        u32,
+        before_scalar_copy[0..before_scalars.len],
+        after_scalars,
+    );
+    try std.testing.expectEqual(before_history_count, screen.historyCount());
+    try std.testing.expectEqual(before_history_row_base, screen.historyRowBase());
+    try std.testing.expectEqual(before_oldest_wrapped, screen.historyRowWrapped(1));
+    try std.testing.expectEqual(before_newest_wrapped, screen.historyRowWrapped(0));
+    try std.testing.expectEqual(before_oldest_geometry, screen.historyLineGeometry(1));
+    try std.testing.expectEqual(before_newest_geometry, screen.historyLineGeometry(0));
     try std.testing.expectEqual(before_boundary_stored, screen.history_boundary_stored);
     try std.testing.expectEqual(before_boundary_total, screen.history_boundary_total);
     try std.testing.expectEqual(before_boundary_active, screen.history_boundary_active);
 
     try std.testing.expect(screen.clearScrollback());
     screen.storeHistoryRow(1);
-    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
     try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
 }
 
@@ -6941,6 +6792,97 @@ test "styled blank state survives projected history and newest restore" {
     try std.testing.expectEqualDeep(before, screen.cellInfoAt(0, 5));
 }
 
+test "OSC 66 long cluster round trips through compact history" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        8,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    screen.current_attrs.bold = true;
+    screen.current_attrs.link_id = 77;
+    try std.testing.expect(screen.writeSizedText(
+        "s=2:w=2:n=3:d=4:v=2:h=1;a\xcc\x81\xcc\x82\xcc\x83\xcc\x84\xcc\x85",
+    ));
+
+    const lead = screen.cellInfoAt(0, 0);
+    const continuation = screen.cellInfoAt(0, 3);
+    try std.testing.expectEqual(@as(u32, 'a'), lead.codepoint);
+    try std.testing.expectEqual(@as(u8, 5), lead.combining_len);
+    try std.testing.expectEqual(@as(u8, 4), lead.width);
+    try std.testing.expectEqual(@as(u8, 2), lead.height);
+    try std.testing.expectEqual(@as(u4, 3), lead.subscale_n);
+    try std.testing.expectEqual(@as(u4, 4), lead.subscale_d);
+    try std.testing.expectEqual(@as(u2, 2), lead.vertical_align);
+    try std.testing.expectEqual(@as(u2, 1), lead.horizontal_align);
+    try std.testing.expect(lead.attrs.bold);
+    try std.testing.expectEqual(@as(u32, 77), lead.attrs.link_id);
+    try std.testing.expectEqual(@as(u8, 3), continuation.x);
+
+    var before_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    const before = screen.cellScalarsAt(0, 0, &before_scalars);
+    try std.testing.expectEqual(@as(usize, 6), before.len);
+
+    // Full-grid scrolling deliberately clears non-semantic multicell clusters
+    // that would be split by the scroll boundary. Exercise cold storage itself
+    // directly here so the store must preserve every rare cell field exactly.
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    try std.testing.expectEqualDeep(lead, screen.historyCellAt(0, 0));
+    try std.testing.expectEqualDeep(continuation, screen.historyCellAt(0, 3));
+
+    var cold_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        before,
+        screen.historyCellScalarsAt(0, 0, &cold_scalars),
+    );
+
+    // zig-audit: acknowledge discard
+    // reason: This test invokes the structural cleanup only to establish a blank restore target; its mutation boolean is not under test.
+    _ = screen.clearNonSemanticClustersIntersecting(0, 2, 0, screen.cols);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqualDeep(lead, screen.cellInfoAt(0, 0));
+    try std.testing.expectEqualDeep(continuation, screen.cellInfoAt(0, 3));
+    var restored_scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        before,
+        screen.cellScalarsAt(0, 0, &restored_scalars),
+    );
+}
+
+test "DEC row geometry round trips through compact history" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        8,
+        2,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    screen.writeText("AB");
+    try std.testing.expect(screen.applyLineGeometry(.double_width));
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.historyLineGeometry(0));
+    try std.testing.expectEqual(@as(u21, 'A'), screen.historyRowAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.historyRowAt(0, 1));
+
+    screen.clearRowRange(0, 0, screen.cols);
+    // zig-audit: acknowledge discard
+    // reason: This test only needs to replace the live row geometry before proving compact-history restoration; the setter's change boolean is not under test.
+    _ = screen.setLineGeometry(0, .single_width);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+}
+
 test "resize preserves styled blank state without extending logical output text" {
     var screen = try Screen.initWithCellsAndHistory(
         std.testing.allocator,
@@ -6979,26 +6921,26 @@ test "resize preserves styled blank state without extending logical output text"
     try std.testing.expectEqualStrings("A", text_after);
 }
 
-test "projected history admission and eviction allocate nothing after initialization" {
+test "lazy projected history allocation failure loses only incoming row and later succeeds" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 1, 2, 4);
     defer screen.deinit(failing.allocator());
+    var value = blank_cell;
+    value.codepoint = 'a';
+    screen.cells.?[0] = value;
+
     failing.fail_index = failing.alloc_index;
+    screen.storeHistoryRow(0);
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(@as(u32, 0), screen.historyRowBase());
 
-    var index: u8 = 0;
-    while (index < 9) : (index += 1) {
-        screen.clearRowRange(0, 0, screen.cols);
-        var value = blank_cell;
-        value.codepoint = 'a' + index;
-        screen.cells.?[0] = value;
-        screen.setRowWrapped(0, index % 3 != 2);
-        screen.storeHistoryRow(0);
-    }
-
-    try std.testing.expect(!failing.has_induced_failure);
-    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
-    try std.testing.expectEqual(@as(u32, screen.history_capacity), screen.history_count);
-    try std.testing.expectEqual(@as(u32, 5), screen.history_row_base);
+    failing.fail_index = std.math.maxInt(usize);
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    try std.testing.expectEqual(@as(u21, 'a'), screen.historyRowAt(0, 0));
 }
 
 test "history constructor releases every partially acquired scalar owner" {
@@ -7067,7 +7009,7 @@ test "projected eviction freezes only the incomplete oldest logical prefix" {
             else => {},
         }
     }
-    try std.testing.expectEqual(@as(u32, 4), screen.history_row_base);
+    try std.testing.expectEqual(@as(u32, 4), screen.historyRowBase());
 }
 
 test "logical output byte bound evicts complete oldest lines" {

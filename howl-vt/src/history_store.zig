@@ -145,6 +145,12 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
         fn releasedBlocksForPopFront(self: *const Self, count: usize) usize {
             std.debug.assert(count <= self.len());
             if (count == 0) return 0;
+            if (count == self.len()) {
+                var all: usize = 0;
+                var current = self.first;
+                while (current) |block| : (current = block.next) all += 1;
+                return all;
+            }
             const new_head = self.head + count;
             const release_before = blockNumber(new_head);
             var released: usize = 0;
@@ -211,6 +217,11 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
             var recycled = Chain{};
             if (count == 0) return recycled;
             const new_head = self.head + count;
+            if (count == self.len()) {
+                while (self.first != null) recycled.append(self.detachFirstBlock());
+                self.head = new_head;
+                return recycled;
+            }
             const release_before = blockNumber(new_head);
             while (self.first) |first| {
                 if (first.number >= release_before) break;
@@ -310,6 +321,13 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
             std.debug.assert(count <= self.len());
             if (count == 0) return;
             const new_tail = self.tail - count;
+            if (count == self.len()) {
+                var released = Chain{};
+                while (self.last != null) released.append(self.detachLastBlock());
+                self.tail = new_tail;
+                self.keepOrFree(&released);
+                return;
+            }
             const keep_number = blockNumber(new_tail);
             var released = Chain{};
             while (self.last) |last| {
@@ -940,6 +958,37 @@ test "history store evicts oldest transactionally and preserves row identity" {
     store.popNewest();
     try std.testing.expectEqual(@as(u32, 1), store.count());
     try std.testing.expectEqual(@as(u32, 41), store.base());
+}
+
+test "history store empty normalization retains at most one block per stream" {
+    const cells = try std.testing.allocator.alloc(Cell, 2048);
+    defer std.testing.allocator.free(cells);
+    @memset(cells, cell_values.blank);
+    for (cells, 0..) |*value, index| {
+        value.codepoint = 'x';
+        if (index % 2 == 0) value.attrs.bold = true;
+    }
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+
+    var store = try Store.init(std.testing.allocator, 2, 2048, 0);
+    defer store.deinit();
+    var prepared = try store.preparePush(.{
+        .cells = cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    });
+    store.commitPush(&prepared);
+    try std.testing.expect(store.cells.allocated_blocks >= 1);
+    try std.testing.expect(store.attrs.allocated_blocks >= 1);
+
+    store.popNewest();
+    try std.testing.expectEqual(@as(u32, 0), store.count());
+    try std.testing.expect(store.cells.allocated_blocks <= 1);
+    try std.testing.expect(store.attrs.allocated_blocks <= 1);
+    try std.testing.expect(store.scalars.allocated_blocks <= 1);
 }
 
 test "history store prepared allocation failure leaves accepted rows unchanged" {

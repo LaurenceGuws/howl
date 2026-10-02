@@ -15,16 +15,16 @@ test "screen history: initWithCells has no history by default" {
     var s = try Grid.initWithCells(gpa, 4, 10);
     defer s.deinit(gpa);
     try std.testing.expectEqual(@as(u16, 0), s.history_capacity);
-    try std.testing.expect(s.history == null);
+    try std.testing.expect(s.history_store == null);
 }
 
-test "screen history: initWithCellsAndHistory allocates bounded history" {
+test "screen history: initWithCellsAndHistory creates lazy bounded history" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCellsAndHistory(gpa, 4, 10, 100);
     defer s.deinit(gpa);
     try std.testing.expectEqual(@as(u16, 100), s.history_capacity);
-    try std.testing.expect(s.history != null);
-    try std.testing.expectEqual(@as(u32, 0), s.history_count);
+    try std.testing.expect(s.history_store != null);
+    try std.testing.expectEqual(@as(u32, 0), s.historyCount());
 }
 
 test "screen history: scrollUp captures row to history" {
@@ -36,11 +36,10 @@ test "screen history: scrollUp captures row to history" {
     apply(&s, Action{ .write_text = "xyz" });
     s.cursor.setColByClient(0);
     apply(&s, Action.line_feed);
-    try std.testing.expectEqual(@as(u32, 1), s.history_count);
-    const h = s.history.?;
-    try std.testing.expectEqual(@as(u21, 'a'), @as(u21, @intCast(h[0].codepoint)));
-    try std.testing.expectEqual(@as(u21, 'b'), @as(u21, @intCast(h[1].codepoint)));
-    try std.testing.expectEqual(@as(u21, 'c'), @as(u21, @intCast(h[2].codepoint)));
+    try std.testing.expectEqual(@as(u32, 1), s.historyCount());
+    try std.testing.expectEqual(@as(u21, 'a'), s.historyRowAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), s.historyRowAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'c'), s.historyRowAt(0, 2));
     try std.testing.expectEqual(@as(u21, 'x'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'y'), s.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 'z'), s.cellAt(0, 2));
@@ -61,7 +60,7 @@ test "screen history: capacity limits with wraparound" {
         }
         row_num += 1;
     }
-    try std.testing.expectEqual(@as(u32, 2), s.history_count);
+    try std.testing.expectEqual(@as(u32, 2), s.historyCount());
     try std.testing.expectEqual(@as(u21, '4'), s.historyRowAt(0, 0));
     try std.testing.expectEqual(@as(u21, '4'), s.historyRowAt(0, 1));
     try std.testing.expectEqual(@as(u21, '3'), s.historyRowAt(1, 0));
@@ -75,9 +74,9 @@ test "screen history: reset does not truncate history" {
     apply(&s, Action{ .write_text = "test1" });
     s.cursor.setRowByClient(1);
     apply(&s, Action.line_feed);
-    try std.testing.expectEqual(@as(u32, 1), s.history_count);
+    try std.testing.expectEqual(@as(u32, 1), s.historyCount());
     s.reset();
-    try std.testing.expectEqual(@as(u32, 1), s.history_count);
+    try std.testing.expectEqual(@as(u32, 1), s.historyCount());
 }
 
 test "screen history: ED 3 clears scrollback history" {
