@@ -19,6 +19,10 @@ pub const ShapeCacheInitError = renderer.ShapeCacheInitError;
 pub const ShapeCacheError = renderer.ShapeCacheError;
 pub const FontVariant = renderer.FontVariant;
 pub const FontFaces = renderer.FontFaces;
+pub const Store = renderer.Store;
+pub const StoreConfig = renderer.StoreConfig;
+pub const StoreUsage = renderer.StoreUsage;
+pub const StoreInitError = renderer.StoreInitError;
 
 pub const View = client.view;
 
@@ -47,6 +51,12 @@ pub const InitError = renderer.InitError;
 pub const Error = renderer.Error;
 
 pub const init = renderer.init;
+pub const initStore = renderer.initStore;
+pub const deinitStore = renderer.deinitStore;
+pub const storeMetrics = renderer.storeMetrics;
+pub const storeUsage = renderer.storeUsage;
+pub const resetStore = renderer.resetStore;
+pub const initWithStore = renderer.initWithStore;
 pub const deinit = renderer.deinit;
 pub const resetCaches = renderer.resetCaches;
 pub const usage = renderer.usage;

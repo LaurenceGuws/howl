@@ -76,6 +76,25 @@ pub const maximum_external_images: usize = 7;
 /// One terminal presentation owner. There is no producer/compositor layer.
 pub const Renderer = opaque {};
 
+/// Process render knowledge shared by externally serialized terminal renderers.
+///
+/// FontFaces remain caller-owned for this first ownership tranche and must
+/// outlive the Store. The Store owns retained shaping knowledge and reusable
+/// shape/raster scratch. Callers must serialize mutable Store use.
+pub const Store = opaque {};
+
+/// Bounds reusable process render knowledge for one exact font/raster lane.
+pub const StoreConfig = struct {
+    shape_cache: ShapeCacheConfig,
+    shaped_capacity: usize,
+    raster_bytes: usize,
+};
+
+/// Reports retained shared process-render knowledge without terminal-local state.
+pub const StoreUsage = struct {
+    shape: ShapeCacheUsage,
+};
+
 pub const Usage = struct {
     shape: ShapeCacheUsage,
     atlas_entries: usize,
@@ -100,6 +119,11 @@ pub const Frame = struct {
 };
 
 pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
+    InvalidConfig,
+    InvalidFontFaces,
+};
+
+pub const StoreInitError = std.mem.Allocator.Error || ShapeCacheInitError || error{
     InvalidConfig,
     InvalidFontFaces,
 };
@@ -199,13 +223,10 @@ const IncrementalPlan = struct {
 
 const Impl = struct {
     allocator: std.mem.Allocator,
-    fonts: FontFaces,
     config: Config,
-    shape_cache: *ShapeCache,
+    store: *Store,
+    owned_store: ?*Store,
     atlas: *Atlas,
-    clusters: []u32,
-    shaped: []text.Glyph,
-    raster: []u8,
     commands: []frame_vocabulary.Input,
     incremental_commands: []frame_vocabulary.Input,
     incremental_rows: []IncrementalRowCommands,
@@ -234,6 +255,16 @@ const Impl = struct {
     cursor: ?Cursor = null,
 };
 
+const StoreImpl = struct {
+    allocator: std.mem.Allocator,
+    fonts: FontFaces,
+    config: StoreConfig,
+    shape_cache: *ShapeCache,
+    clusters: []u32,
+    shaped: []text.Glyph,
+    raster: []u8,
+};
+
 const PublishedImage = struct {
     image_id: u32,
     generation: u64,
@@ -243,6 +274,86 @@ const PublishedImage = struct {
 const ProjectedPlacement = struct {
     command: frame_vocabulary.Input,
 };
+
+fn storeConfigFromRenderer(config: Config) StoreConfig {
+    return .{
+        .shape_cache = config.shape_cache,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+    };
+}
+
+fn validateStoreConfig(config: StoreConfig) error{InvalidConfig}!void {
+    if (config.shaped_capacity == 0 or config.raster_bytes == 0 or
+        config.shape_cache.entry_capacity == 0 or
+        config.shape_cache.scalar_capacity == 0 or
+        config.shape_cache.glyph_capacity == 0 or
+        config.shape_cache.max_sequence_scalars == 0)
+        return error.InvalidConfig;
+}
+
+/// Allocates one process render lane for one exact caller-owned font recipe.
+/// Mutable Store operations are externally serialized.
+pub fn initStore(
+    allocator: std.mem.Allocator,
+    fonts: FontFaces,
+    config: StoreConfig,
+) StoreInitError!*Store {
+    try validateStoreConfig(config);
+    if (!fonts.terminalMetricsCompatible()) return error.InvalidFontFaces;
+
+    const impl = try allocator.create(StoreImpl);
+    errdefer allocator.destroy(impl);
+    const shape_cache = try glyph_cache.initShapeCache(allocator, fonts, config.shape_cache);
+    errdefer glyph_cache.deinitShapeCache(shape_cache);
+    const clusters = try allocator.alloc(u32, @intCast(config.shape_cache.max_sequence_scalars));
+    errdefer allocator.free(clusters);
+    const shaped = try allocator.alloc(text.Glyph, config.shaped_capacity);
+    errdefer allocator.free(shaped);
+    const raster = try allocator.alloc(u8, config.raster_bytes);
+    errdefer allocator.free(raster);
+    impl.* = .{
+        .allocator = allocator,
+        .fonts = fonts,
+        .config = config,
+        .shape_cache = shape_cache,
+        .clusters = clusters,
+        .shaped = shaped,
+        .raster = raster,
+    };
+    return @ptrCast(impl);
+}
+
+/// Releases one process render lane. No Renderer may still borrow it.
+pub fn deinitStore(owner: *Store) void {
+    const impl = storeImpl(owner);
+    const allocator = impl.allocator;
+    const shape_cache = impl.shape_cache;
+    const clusters = impl.clusters;
+    const shaped = impl.shaped;
+    const raster = impl.raster;
+    impl.* = undefined;
+    allocator.free(raster);
+    allocator.free(shaped);
+    allocator.free(clusters);
+    glyph_cache.deinitShapeCache(shape_cache);
+    allocator.destroy(impl);
+}
+
+/// Returns exact metrics for this Store's fixed font/raster lane.
+pub fn storeMetrics(owner: *const Store) Metrics {
+    return constStoreImpl(owner).fonts.metrics();
+}
+
+/// Reports retained process-shared cache usage.
+pub fn storeUsage(owner: *const Store) StoreUsage {
+    return .{ .shape = glyph_cache.shapeCacheUsage(constStoreImpl(owner).shape_cache) };
+}
+
+/// Forgets shared shaping knowledge without invalidating terminal-local atlases.
+pub fn resetStore(owner: *Store) void {
+    glyph_cache.resetShapeCache(storeImpl(owner).shape_cache);
+}
 
 /// Allocates one bounded terminal Renderer producer.
 ///
@@ -262,18 +373,49 @@ pub fn init(
         return error.InvalidConfig;
     if (!fonts.terminalMetricsCompatible()) return error.InvalidFontFaces;
 
+    const store = try initStore(allocator, fonts, storeConfigFromRenderer(config));
+    errdefer deinitStore(store);
+    return initWithStoreOwned(allocator, store, config);
+}
+
+/// Allocates one terminal-local renderer borrowing process render knowledge.
+/// The Store must outlive this Renderer and mutable Store use must be externally serialized.
+pub fn initWithStore(
+    allocator: std.mem.Allocator,
+    store: *Store,
+    config: Config,
+) InitError!*Renderer {
+    if (config.cell_size.width == 0 or config.cell_size.height == 0 or
+        config.shaped_capacity == 0 or config.raster_bytes == 0 or
+        config.command_capacity == 0 or
+        ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
+        return error.InvalidConfig;
+    const store_impl = storeImpl(store);
+    if (!std.meta.eql(store_impl.config, storeConfigFromRenderer(config)))
+        return error.InvalidConfig;
+    return initWithStoreInner(allocator, store, null, config);
+}
+
+fn initWithStoreOwned(
+    allocator: std.mem.Allocator,
+    store: *Store,
+    config: Config,
+) InitError!*Renderer {
+    return initWithStoreInner(allocator, store, store, config);
+}
+
+fn initWithStoreInner(
+    allocator: std.mem.Allocator,
+    store: *Store,
+    owned_store: ?*Store,
+    config: Config,
+) InitError!*Renderer {
+    const store_impl = storeImpl(store);
+
     const impl = try allocator.create(Impl);
     errdefer allocator.destroy(impl);
-    const shape_cache = try glyph_cache.initShapeCache(allocator, fonts, config.shape_cache);
-    errdefer glyph_cache.deinitShapeCache(shape_cache);
-    const atlas = try glyph_cache.initAtlas(allocator, fonts, config.atlas);
+    const atlas = try glyph_cache.initAtlas(allocator, store_impl.fonts, config.atlas);
     errdefer glyph_cache.deinitAtlas(atlas);
-    const clusters = try allocator.alloc(u32, @intCast(config.shape_cache.max_sequence_scalars));
-    errdefer allocator.free(clusters);
-    const shaped = try allocator.alloc(text.Glyph, config.shaped_capacity);
-    errdefer allocator.free(shaped);
-    const raster = try allocator.alloc(u8, config.raster_bytes);
-    errdefer allocator.free(raster);
     const commands = try allocator.alloc(frame_vocabulary.Input, config.command_capacity);
     errdefer allocator.free(commands);
     const incremental_commands = try allocator.alloc(frame_vocabulary.Input, config.incremental_command_capacity);
@@ -285,13 +427,10 @@ pub fn init(
 
     impl.* = .{
         .allocator = allocator,
-        .fonts = fonts,
         .config = config,
-        .shape_cache = shape_cache,
+        .store = store,
+        .owned_store = owned_store,
         .atlas = atlas,
-        .clusters = clusters,
-        .shaped = shaped,
-        .raster = raster,
         .commands = commands,
         .incremental_commands = incremental_commands,
         .incremental_rows = incremental_rows,
@@ -304,11 +443,8 @@ pub fn init(
 pub fn deinit(owner: *Renderer) void {
     const impl = rendererImpl(owner);
     const allocator = impl.allocator;
-    const shape_cache = impl.shape_cache;
+    const owned_store = impl.owned_store;
     const atlas = impl.atlas;
-    const clusters = impl.clusters;
-    const shaped = impl.shaped;
-    const raster = impl.raster;
     const commands = impl.commands;
     const incremental_commands = impl.incremental_commands;
     const incremental_rows = impl.incremental_rows;
@@ -318,12 +454,9 @@ pub fn deinit(owner: *Renderer) void {
     allocator.free(incremental_candidate_rows);
     allocator.free(incremental_rows);
     allocator.free(incremental_commands);
-    allocator.free(raster);
-    allocator.free(shaped);
-    allocator.free(clusters);
     glyph_cache.deinitAtlas(atlas);
-    glyph_cache.deinitShapeCache(shape_cache);
     allocator.destroy(impl);
+    if (owned_store) |store| deinitStore(store);
 }
 
 /// Explicitly forgets private shaping and raster caches. The next successful
@@ -334,13 +467,13 @@ pub fn resetCaches(owner: *Renderer) AtlasError!void {
     impl.frame_ready = false;
     impl.incremental_ready = false;
     try glyph_cache.resetAtlas(impl.atlas);
-    glyph_cache.resetShapeCache(impl.shape_cache);
+    resetStore(impl.store);
 }
 
 pub fn usage(owner: *const Renderer) Usage {
     const impl = constRendererImpl(owner);
     return .{
-        .shape = glyph_cache.shapeCacheUsage(impl.shape_cache),
+        .shape = storeUsage(impl.store).shape,
         .atlas_entries = glyph_cache.atlasEntryCount(impl.atlas),
         .revision = impl.revision,
         .resource_generation = impl.resource_generation,
@@ -375,6 +508,7 @@ fn updateInnerOnce(
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
     const impl = rendererImpl(owner);
+    const store = storeImpl(impl.store);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
     const rows = Source.rows(snapshot);
@@ -393,7 +527,7 @@ fn updateInnerOnce(
         Source,
         snapshot,
         impl.atlas,
-        impl.shape_cache,
+        store.shape_cache,
         surface,
         impl.commands,
         incremental_plan,
@@ -402,9 +536,9 @@ fn updateInnerOnce(
         candidate_rows,
         impl.config.cell_size,
         impl.config.box_drawing,
-        impl.clusters,
-        impl.shaped,
-        impl.raster,
+        store.clusters,
+        store.shaped,
+        store.raster,
     );
     var command_count = projection.command_count;
     const atlas = glyph_cache.atlasView(impl.atlas);
@@ -2333,5 +2467,13 @@ fn rendererImpl(content: *Renderer) *Impl {
 }
 
 fn constRendererImpl(content: *const Renderer) *const Impl {
+    return @ptrCast(@alignCast(content));
+}
+
+fn storeImpl(content: *Store) *StoreImpl {
+    return @ptrCast(@alignCast(content));
+}
+
+fn constStoreImpl(content: *const Store) *const StoreImpl {
     return @ptrCast(@alignCast(content));
 }

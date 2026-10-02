@@ -96,6 +96,14 @@ fn rendererConfig(command_capacity: usize) terminal.Config {
     };
 }
 
+fn storeConfig(config: terminal.Config) terminal.StoreConfig {
+    return .{
+        .shape_cache = config.shape_cache,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+    };
+}
+
 fn terminalFont() !*text.FontSet {
     return text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
@@ -262,6 +270,43 @@ fn firstRgba(commands: []const terminal.Command) ?@FieldType(terminal.Command, "
 fn constructTerminalrenderer(allocator: std.mem.Allocator, font: *text.FontSet) !void {
     const owner = try terminal.init(allocator, terminal.FontFaces.single(font), rendererConfig(64));
     terminal.deinit(owner);
+}
+
+test "two terminal renderers borrow one externally serialized process store" {
+    const font = try terminalFont();
+    defer font.deinit();
+    const config = rendererConfig(64);
+    const store = try terminal.initStore(
+        std.testing.allocator,
+        terminal.FontFaces.single(font),
+        storeConfig(config),
+    );
+    defer terminal.deinitStore(store);
+    try std.testing.expectEqualDeep(font.metrics(), terminal.storeMetrics(store));
+
+    const first = try terminal.initWithStore(std.testing.allocator, store, config);
+    defer terminal.deinit(first);
+    const second = try terminal.initWithStore(std.testing.allocator, store, config);
+    defer terminal.deinit(second);
+
+    var scalar = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    try terminal.update(first, view);
+    const after_first = terminal.storeUsage(store).shape;
+    try std.testing.expect(after_first.entries != 0);
+    try terminal.update(second, view);
+    const after_second = terminal.storeUsage(store).shape;
+    try std.testing.expectEqualDeep(after_first, after_second);
+
+    // Resetting the shared shape cache is explicit process-lane behavior; the
+    // terminal-local atlases and completed command sets remain independently owned.
+    terminal.resetStore(store);
+    try std.testing.expectEqual(@as(usize, 0), terminal.storeUsage(store).shape.entries);
 }
 
 test "terminal renderer owns final atlas residency and recovers after backend loss" {
