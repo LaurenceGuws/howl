@@ -1,5 +1,6 @@
 package main
 
+import runtime "base:runtime"
 import "core:c"
 import json "core:encoding/json"
 import "core:fmt"
@@ -555,6 +556,12 @@ notify_instance_update :: proc() {
     event := SDL.Event{}
     event.type = SDL.EventType(instance_update_event_type)
     _ = SDL.PushEvent(&event)
+}
+
+instance_worker_context :: proc() -> runtime.Context {
+    result := runtime.default_context()
+    result.temp_allocator = runtime.nil_allocator()
+    return result
 }
 
 App :: struct {
@@ -2332,8 +2339,19 @@ create_target_instance_view :: proc(
         publish_initial_error(view, "Instance I/O cancellation allocation failed")
         return view
     }
-    view.control_thread = thread.create_and_start_with_data(rawptr(view), control_instance, name = "howl-odin-control")
-    view.observer_thread = thread.create_and_start_with_data(rawptr(view), observe_instance, name = "howl-odin-observe")
+    worker_context := instance_worker_context()
+    view.control_thread = thread.create_and_start_with_data(
+        rawptr(view),
+        control_instance,
+        init_context = worker_context,
+        name = "howl-odin-control",
+    )
+    view.observer_thread = thread.create_and_start_with_data(
+        rawptr(view),
+        observe_instance,
+        init_context = worker_context,
+        name = "howl-odin-observe",
+    )
     if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Instance I/O worker creation failed")
     return view
 }
