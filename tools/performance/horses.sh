@@ -34,8 +34,11 @@ usage: horses.sh COMMAND [ARGS]
 commands:
   doctor                  verify race dependencies and print track inventory
   plan                    print the deterministic poison race matrix as JSON
+  probe HORSE             report one horse PTY geometry in the canonical frame
+  calibrate               probe all horses and print their common PTY geometry
   run HORSE DOSE          run one poison trial and retain raw evidence
   sweep HORSE             run doses 1,4,16,64,256,1024,4096 for one horse
+  __probe ...             internal terminal-side geometry probe
   __runner ...            internal terminal-side workload entrypoint
 
 Environment:
@@ -353,6 +356,73 @@ raise SystemExit(1)
 PYIN
 }
 
+probe_one() {
+    local horse=$1
+    have_horse "$horse" || fail "unknown horse: $horse"
+    require_file "$WMIO"; require_file "$HOWL_BIN"
+
+    local stamp run_dir before stable rect x y width height root_pid launcher_pid typed
+    stamp=$(date +%Y%m%dT%H%M%S)
+    run_dir="$EVIDENCE_ROOT/calibration/$stamp-$horse"
+    mkdir -p "$run_dir"
+    wmio_data capabilities > "$run_dir/wmio-capabilities.json"
+    wmio_data desktop > "$run_dir/desktop-before.json"
+    before=$(window_ids)
+
+    local -a argv
+    mapfile -d '' -t argv < <(horse_argv "$horse")
+    "${argv[@]}" >"$run_dir/launcher.stdout" 2>"$run_dir/launcher.stderr" &
+    launcher_pid=$!
+    printf '%s\n' "$launcher_pid" > "$run_dir/launcher.pid"
+
+    stable=$(new_window_id "$before" 12000) || {
+        kill "$launcher_pid" 2>/dev/null || true
+        fail "could not discover exactly one fresh window for $horse; evidence: $run_dir"
+    }
+    printf '%s\n' "$stable" > "$run_dir/window.stable-id"
+    rect=$(resolved_rect) || fail "monitor not found: $MONITOR"
+    IFS=, read -r x y width height <<<"$rect"
+    wmio_data place --stable-id "$stable" --x "$x" --y "$y" --width "$width" --height "$height" --float > "$run_dir/window-place.json"
+    wmio_data focus --stable-id "$stable" > "$run_dir/window-focus.json"
+    sleep "$(python3 -c "print($SETTLE_MS/1000)")"
+    wmio_data window --stable-id "$stable" > "$run_dir/window-ready.json"
+    root_pid=$(window_pid "$stable")
+    printf '%s\n' "$root_pid" > "$run_dir/root.pid"
+
+    printf -v typed '%q __probe %q' "$SELF" "$run_dir"
+    wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
+    wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
+    wait_for_file "$run_dir/probe.json" 5000 || {
+        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+        fail "PTY probe did not start for $horse; evidence: $run_dir"
+    }
+    cat "$run_dir/probe.json"
+    touch "$run_dir/release"
+    sleep .10
+    if wmio_data window --stable-id "$stable" >/dev/null 2>&1; then
+        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+    fi
+    if ! wait_pid_exit "$launcher_pid" 3000; then kill "$launcher_pid" 2>/dev/null || true; fi
+    wait "$launcher_pid" 2>/dev/null || true
+}
+
+calibrate() {
+    local out tmp h
+    tmp=$(mktemp)
+    : > "$tmp"
+    for h in "${HORSES[@]}"; do
+        probe_one "$h" >> "$tmp"
+    done
+    python3 - "$tmp" <<'PYIN'
+import json,sys
+rows=[json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+common_rows=min(x['pty']['rows'] for x in rows)
+common_cols=min(x['pty']['cols'] for x in rows)
+print(json.dumps({"schema":"howl-performance-index/calibration-v1","horses":rows,"common":{"rows":common_rows,"cols":common_cols}},separators=(',',':')))
+PYIN
+    rm -f "$tmp"
+}
+
 run_one() {
     local horse=$1 dose=$2
     have_horse "$horse" || fail "unknown horse: $horse"
@@ -464,6 +534,18 @@ print(json.dumps({"schema":"howl-performance-index/plan-v1","track":{"backend":o
 PY
 }
 
+probe_runner() {
+    local run_dir=$1
+    mkdir -p "$run_dir"
+    local tty_rows tty_cols
+    read -r tty_rows tty_cols < <(stty size)
+    TTY_ROWS=$tty_rows TTY_COLS=$tty_cols python3 <<'PYIN' > "$run_dir/probe.json"
+import json,os,time
+print(json.dumps({"schema":"howl-performance-index/probe-v1","t_ns":time.monotonic_ns(),"pty":{"rows":int(os.environ['TTY_ROWS']),"cols":int(os.environ['TTY_COLS'])}},separators=(',',':')))
+PYIN
+    while [[ ! -e "$run_dir/release" ]]; do sleep .02; done
+}
+
 runner() {
     local run_dir=$1 cols=$2 rows=$3 fps=$4 duration_ms=$5 dose=$6 glyph_set=$7 sync=$8
     mkdir -p "$run_dir"
@@ -496,6 +578,8 @@ main() {
     case "$command" in
         doctor) [[ $# == 1 ]] || fail 'doctor takes no arguments'; doctor ;;
         plan) [[ $# == 1 ]] || fail 'plan takes no arguments'; plan ;;
+        probe) [[ $# == 2 ]] || fail 'probe requires HORSE'; probe_one "$2" ;;
+        calibrate) [[ $# == 1 ]] || fail 'calibrate takes no arguments'; calibrate ;;
         run) [[ $# == 3 ]] || fail 'run requires HORSE DOSE'; run_one "$2" "$3" ;;
         sweep)
             [[ $# == 2 ]] || fail 'sweep requires HORSE'
@@ -503,6 +587,7 @@ main() {
             local d
             for d in "${DOSES[@]}"; do run_one "$2" "$d"; done
             ;;
+        __probe) [[ $# == 2 ]] || fail 'internal probe argument mismatch'; shift; probe_runner "$@" ;;
         __runner) [[ $# == 9 ]] || fail 'internal runner argument mismatch'; shift; runner "$@" ;;
         -h|--help|help|'') usage ;;
         *) fail "unknown command: $command" ;;
