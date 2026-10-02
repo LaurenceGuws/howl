@@ -109,10 +109,9 @@ test "pty feed replay matches whole feed" {
     try std.testing.expectEqual(whole_view.cursor_col, replay_view.cursor_col);
     try std.testing.expectEqual(whole_view.cursor_visible, replay_view.cursor_visible);
     for (0..whole_view.rows) |row| {
-        try std.testing.expectEqualSlices(
-            Terminal.Cell,
-            whole_view.rowCells(@intCast(row)),
-            replay_view.rowCells(@intCast(row)),
+        for (0..whole_view.cols) |col| try std.testing.expectEqualDeep(
+            whole_view.cellInfoAt(@intCast(row), @intCast(col)),
+            replay_view.cellInfoAt(@intCast(row), @intCast(col)),
         );
     }
 }

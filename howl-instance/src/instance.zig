@@ -606,8 +606,9 @@ fn snapshotAscii(instance: *const Instance, output: []u8) error{SnapshotLimit}![
     var offset: usize = 0;
     var row: u16 = 0;
     while (row < current.rows) : (row += 1) {
-        const cells = current.rowCells(row);
-        for (cells) |cell| {
+        var column: u16 = 0;
+        while (column < current.cols) : (column += 1) {
+            const cell = current.cellInfoAt(row, column);
             if (offset == output.len) return error.SnapshotLimit;
             output[offset] = if (cell.x == 0 and cell.y == 0 and cell.codepoint >= 0x20 and cell.codepoint <= 0x7e)
                 @intCast(cell.codepoint)

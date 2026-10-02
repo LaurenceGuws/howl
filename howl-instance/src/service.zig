@@ -1814,11 +1814,10 @@ pub const Service = struct {
             try finishTextRecord(body, record);
         }
 
-        // Borrow each visible VT row directly for this synchronous observation
-        // cut. Delta retention takes the only full-row copy after comparison.
+        // Observe each visible VT cell directly for this synchronous cut. Delta
+        // retention owns the only full-row copy after comparison.
         var row: u16 = 0;
         while (row < terminal_view.rows) : (row += 1) {
-            const current_cells = terminal_view.rowCells(row);
             const wrapped = terminal_view.rowWrapped(row);
             const geometry = terminal_view.lineGeometry(row);
             const destination_cache: ?*DeltaRowCache.Entry = if (delta)
@@ -1845,12 +1844,16 @@ pub const Service = struct {
 
             // Delta rows must retain current hyperlink references even when no
             // cell bytes are emitted. Complete lanes collect links while encoding.
-            if (delta) for (current_cells) |cell| try noteSnapshotLink(machine, cell, &referenced_links);
+            if (delta) {
+                var column: u16 = 0;
+                while (column < terminal_view.cols) : (column += 1)
+                    try noteSnapshotLink(machine, terminal_view.cellInfoAt(row, column), &referenced_links);
+            }
 
             const reusable = if (source_cache) |value|
                 delta_reuse_allowed and value.valid and
                     value.wrapped == wrapped and value.geometry == geometry and
-                    rowCellsExactlyReusable(current_cells, source_cells)
+                    viewRowExactlyReusable(terminal_view, row, source_cells)
             else
                 false;
             if (reusable) {
@@ -1866,13 +1869,15 @@ pub const Service = struct {
                     @truncate(terminal_view.cols),
                 };
                 try body.appendSlice(self.allocator, &row_header);
-                for (current_cells, 0..) |cell, column| {
+                var column: u16 = 0;
+                while (column < terminal_view.cols) : (column += 1) {
+                    const cell = terminal_view.cellInfoAt(row, column);
                     if (!delta) try noteSnapshotLink(machine, cell, &referenced_links);
                     var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
                     const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
                         terminal_view.cellScalarsAt(
                             row,
-                            @intCast(column),
+                            column,
                             &scalar_storage,
                         )
                     else
@@ -1891,7 +1896,9 @@ pub const Service = struct {
             }
 
             if (destination_cache) |value| {
-                @memcpy(destination_cells, current_cells);
+                var column: u16 = 0;
+                while (column < terminal_view.cols) : (column += 1)
+                    destination_cells[column] = terminal_view.cellInfoAt(row, column);
                 value.wrapped = wrapped;
                 value.geometry = geometry;
                 value.valid = true;
@@ -2558,9 +2565,14 @@ fn finishTextRecord(output: *std.ArrayList(u8), offsets: Service.TextRecordOffse
     );
 }
 
-fn rowCellsExactlyReusable(current: []const howl.Terminal.Cell, cached: []const howl.Terminal.Cell) bool {
-    if (current.len != cached.len) return false;
-    for (current, cached) |now, before| {
+fn viewRowExactlyReusable(
+    view: howl.Terminal.SemanticView,
+    row: u16,
+    cached: []const howl.Terminal.Cell,
+) bool {
+    if (cached.len != view.cols) return false;
+    for (cached, 0..) |before, column| {
+        const now = view.cellInfoAt(row, @intCast(column));
         // Cell owns the base scalar and up to three combining scalars inline.
         // Longer clusters use a VT sidecar; conservatively re-encode such rows
         // rather than retaining a parallel scalar cache here.
@@ -2845,13 +2857,12 @@ fn semanticViewContains(view: howl.Terminal.SemanticView, needle: []const u8) bo
     if (needle.len == 0) return true;
     var row: u16 = 0;
     while (row < view.rows) : (row += 1) {
-        const cells = view.rowCells(row);
-        if (cells.len < needle.len) continue;
+        if (view.cols < needle.len) continue;
         var start: usize = 0;
-        while (start + needle.len <= cells.len) : (start += 1) {
+        while (start + needle.len <= view.cols) : (start += 1) {
             var matched = true;
             for (needle, 0..) |byte, offset| {
-                if (cells[start + offset].codepoint != byte) {
+                if (view.cellInfoAt(row, @intCast(start + offset)).codepoint != byte) {
                     matched = false;
                     break;
                 }

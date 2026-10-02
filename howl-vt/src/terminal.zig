@@ -4821,23 +4821,14 @@ pub const Terminal = struct {
             return .{ .screen = @intCast(@min(src_row - self.history_count, rowIndex(self.rows -| 1))) };
         }
 
-        /// Borrows one complete visible row until the terminal is mutated.
-        ///
-        /// `row` must be in bounds. History and active-screen storage remain
-        /// private; the returned cells share this view's mutation lifetime.
-        pub fn rowCells(self: *const SemanticView, row: u16) []const Cell {
-            std.debug.assert(row < self.rows);
-            const screen = self.backingScreen();
-            return switch (self.rowSource(row)) {
-                .history => |recency| screen.historyRowCells(recency),
-                .screen => |screen_row| screen.visibleRowCells(screen_row),
-            };
-        }
-
         /// Returns a copied view cell or the default cell for invalid coordinates.
         pub fn cellInfoAt(self: *const SemanticView, row: u16, col: u16) Cell {
             if (self.rows == 0 or row >= self.rows or col >= self.cols) return Screen.default_cell;
-            return self.rowCells(row)[col];
+            const screen = self.backingScreen();
+            return switch (self.rowSource(row)) {
+                .history => |recency| screen.historyCellAt(recency, col),
+                .screen => |screen_row| screen.cellInfoAt(screen_row, col),
+            };
         }
 
         /// Returns the codepoint of one visible cell.

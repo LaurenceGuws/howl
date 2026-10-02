@@ -120,7 +120,9 @@ fn cellDigest(terminal: *const Terminal) ![32]u8 {
     var encoded: [3]u8 = undefined;
     var row: u16 = 0;
     while (row < view.rows) : (row += 1) {
-        for (view.rowCells(row)) |cell| {
+        var col: u16 = 0;
+        while (col < view.cols) : (col += 1) {
+            const cell = view.cellInfoAt(row, col);
             if (cell.codepoint == 0) {
                 encoded = .{ 0, 0, 0 };
             } else {

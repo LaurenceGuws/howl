@@ -1,6 +1,7 @@
 //! Owns screen-bank cells, cursor, margins, history, reflow, and SGR state.
 
 const std = @import("std");
+const cell_values = @import("cell.zig");
 const scalar_storage = @import("scalar_storage.zig");
 const sized_text = @import("sized_text.zig");
 const tab_stops_mod = @import("tab_stops.zig");
@@ -75,7 +76,6 @@ pub const Screen = struct {
     pub const Baseline = ScreenBaseline;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = ScreenCellAttrs;
-    /// Distinguishes unprotected, ISO guarded-area, and DEC selective-erase cells.
     /// Uses the canonical terminal cell value.
     pub const Cell = ScreenCell;
     /// Uses the canonical cursor shape.
@@ -94,12 +94,7 @@ pub const Screen = struct {
     /// Provides the canonical blank terminal cell.
     pub const default_cell = blank_cell;
     /// Describes one row's DEC presentation geometry without prescribing caller presentation.
-    pub const LineGeometry = enum(u2) {
-        single_width,
-        double_width,
-        double_height_top,
-        double_height_bottom,
-    };
+    pub const LineGeometry = cell_values.LineGeometry;
     /// Resolved inclusive physical bounds for one rectangular operation.
     pub const RectBounds = struct {
         top: u16,
@@ -1485,19 +1480,6 @@ pub const Screen = struct {
         // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
         const cells = self.cells orelse unreachable;
         const start: usize = @intCast(self.rowStart(row));
-        return cells[start..][0..self.cols];
-    }
-
-    /// Borrows one retained history row by newest-first recency.
-    pub fn historyRowCells(self: *const Screen, history_idx: u32) []const Cell {
-        std.debug.assert(history_idx < self.history_count);
-        // zig-audit: acknowledge orelse_unreachable
-        // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-        const cells = self.history orelse unreachable;
-        // zig-audit: acknowledge orelse_unreachable
-        // reason: The owner invariant established before this lookup guarantees the value exists; absence would mean internal state corruption.
-        const slot = self.historySlotForRecency(history_idx) orelse unreachable;
-        const start: usize = @intCast(slot * @as(u32, self.cols));
         return cells[start..][0..self.cols];
     }
 
@@ -4952,66 +4934,13 @@ fn screenAnsi16Color(idx: u8) ScreenColor {
     };
 }
 
-// Identifies the supported terminal underline presentation styles.
-const ScreenUnderlineStyle = enum(u3) {
-    straight,
-    double,
-    curly,
-    dotted,
-    dashed,
-};
-
-// Identifies the baseline displacement retained for one terminal cell.
-const ScreenBaseline = enum(u2) {
-    normal,
-    raised,
-    lowered,
-};
-
+const ScreenUnderlineStyle = cell_values.UnderlineStyle;
+const ScreenBaseline = cell_values.Baseline;
 /// Distinguishes ISO guarded areas from DEC selective-erase protection.
-pub const ScreenProtection = enum(u2) {
-    none,
-    iso,
-    dec,
-};
-
-/// Stores one cell's font, baseline, style, colors, protection, and hyperlink identity.
-pub const ScreenCellAttrs = struct {
-    fg: ScreenColor,
-    bg: ScreenColor,
-    font: u4,
-    baseline: ScreenBaseline,
-    bold: bool,
-    dim: bool,
-    italic: bool,
-    blink: bool,
-    blink_fast: bool,
-    reverse: bool,
-    invisible: bool,
-    underline: bool,
-    strikethrough: bool,
-    underline_style: ScreenUnderlineStyle,
-    underline_color: ScreenColor,
-    protected: ScreenProtection,
-    link_id: u32,
-};
-
-// Stores one bounded Unicode cluster, ordinary or OSC 66 placement, and complete attributes.
-const ScreenCell = struct {
-    codepoint: u32,
-    combining_len: u8 = 0,
-    combining: [3]u32 = .{ 0, 0, 0 },
-    width: u8 = 1,
-    height: u8 = 1,
-    x: u8 = 0,
-    y: u8 = 0,
-    subscale_n: u4 = 0,
-    subscale_d: u4 = 0,
-    vertical_align: u2 = 0,
-    horizontal_align: u2 = 0,
-    semantic_width: bool = false,
-    attrs: ScreenCellAttrs,
-};
+pub const ScreenProtection = cell_values.Protection;
+/// Uses the canonical complete terminal-cell attribute value.
+pub const ScreenCellAttrs = cell_values.CellAttrs;
+const ScreenCell = cell_values.Cell;
 
 fn sidecarCount(cell: ScreenCell) usize {
     return @as(usize, cell.combining_len) -| (scalar_storage.inline_scalars - 1);
@@ -5027,45 +4956,19 @@ const LastGraphic = struct {
 };
 
 fn isCellContinuation(cell: ScreenCell) bool {
-    return cell.x != 0 or cell.y != 0;
+    return cell_values.isContinuation(cell);
 }
 
 fn isSemanticWideLead(cell: ScreenCell) bool {
-    return cell.semantic_width and cell.width == 2 and
-        cell.height == 1 and cell.x == 0 and cell.y == 0;
+    return cell_values.isSemanticWideLead(cell);
 }
 
 fn isSemanticWideCell(cell: ScreenCell) bool {
-    return cell.semantic_width and cell.width == 2 and
-        cell.height == 1 and cell.x < 2 and cell.y == 0;
+    return cell_values.isSemanticWideCell(cell);
 }
 
-// Provides immutable default terminal cell attributes.
-const initial_cell_attrs = ScreenCellAttrs{
-    .fg = default_cell_foreground,
-    .bg = default_cell_background,
-    .font = 0,
-    .baseline = .normal,
-    .bold = false,
-    .dim = false,
-    .italic = false,
-    .blink = false,
-    .blink_fast = false,
-    .reverse = false,
-    .invisible = false,
-    .underline = false,
-    .strikethrough = false,
-    .underline_style = .straight,
-    .underline_color = default_cell_underline_color,
-    .protected = .none,
-    .link_id = 0,
-};
-
-// Provides the blank default cell used for clearing and allocation.
-const blank_cell = ScreenCell{
-    .codepoint = 0,
-    .attrs = initial_cell_attrs,
-};
+const initial_cell_attrs = cell_values.default_attrs;
+const blank_cell = cell_values.blank;
 
 // =============================================================================
 // Unicode cell and projected-history proofs
@@ -5925,77 +5828,14 @@ test "projected history scalar pressure preserves accepted ownership and later r
 // Color and cursor value types
 // =============================================================================
 
-// Stores one exact 24-bit terminal color.
-const ScreenRgb = struct {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8 = 255,
-};
-
+const ScreenRgb = cell_values.Rgb;
 /// Classifies one terminal color independently from its internal storage.
-pub const ScreenColorKind = enum(u8) {
-    default,
-    indexed,
-    rgb,
-};
+pub const ScreenColorKind = cell_values.ColorKind;
+const ScreenColor = cell_values.Color;
 
-const Kind = ScreenColorKind;
-
-// Stores a default, indexed, or RGB terminal color.
-const ScreenColor = struct {
-    kind: Kind,
-    value: u32,
-
-    /// Returns the semantic terminal-color class.
-    pub fn colorKind(self: ScreenColor) ScreenColorKind {
-        return self.kind;
-    }
-
-    /// Returns zero for default, palette index for indexed, or 0xRRGGBB for RGB.
-    pub fn colorValue(self: ScreenColor) u32 {
-        return self.value;
-    }
-
-    /// Constructs an indexed terminal color.
-    pub fn indexed(idx: u8) ScreenColor {
-        return .{ .kind = .indexed, .value = idx };
-    }
-
-    /// Constructs an exact RGB terminal color.
-    pub fn rgb(rgb_value: ScreenRgb) ScreenColor {
-        return .{
-            .kind = .rgb,
-            .value = (@as(u32, rgb_value.r) << 16) | (@as(u32, rgb_value.g) << 8) | @as(u32, rgb_value.b),
-        };
-    }
-
-    /// Returns RGB components only when this color is RGB.
-    pub fn rgbComponents(r: u8, g: u8, b: u8) ScreenColor {
-        return rgb(.{ .r = r, .g = g, .b = b });
-    }
-
-    /// Resolves this cell color against one complete terminal palette and
-    /// caller-selected default without retaining either borrowed value.
-    pub fn resolve(self: ScreenColor, default_value: ScreenRgb, palette: *const [256]ScreenRgb) ScreenRgb {
-        return switch (self.kind) {
-            .default => default_value,
-            .indexed => palette[@as(u8, @intCast(self.value))],
-            .rgb => .{
-                .r = @truncate(self.value >> 16),
-                .g = @truncate(self.value >> 8),
-                .b = @truncate(self.value),
-            },
-        };
-    }
-};
-
-// Provides the immutable default foreground color.
-const default_cell_foreground = ScreenColor{ .kind = .default, .value = 0 };
-// Provides the immutable default background color.
-const default_cell_background = ScreenColor{ .kind = .default, .value = 0 };
-// Provides the immutable default underline color.
-const default_cell_underline_color = ScreenColor{ .kind = .default, .value = 0 };
+const default_cell_foreground = cell_values.default_foreground;
+const default_cell_background = cell_values.default_background;
+const default_cell_underline_color = cell_values.default_underline_color;
 
 /// Identifies block, underline, bar, or hidden cursor presentation.
 pub const ScreenCursorShape = enum {

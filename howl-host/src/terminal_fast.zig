@@ -251,9 +251,8 @@ pub const Adapter = struct {
     fn directScalarDomainSupported(view: *const VT.SemanticView) bool {
         for (0..view.rows) |row_index| {
             if (view.lineGeometry(@intCast(row_index)) != .single_width) return false;
-            const cells = view.rowCells(@intCast(row_index));
-            if (cells.len != view.cols) return false;
-            for (cells) |cell| {
+            for (0..view.cols) |column| {
+                const cell = view.cellInfoAt(@intCast(row_index), @intCast(column));
                 if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
                 const scalar = std.math.cast(u8, cell.codepoint) orelse return false;
                 const alnum = (scalar >= '0' and scalar <= '9') or
@@ -272,10 +271,9 @@ pub const Adapter = struct {
         presentation: *const VT.Presentation,
     ) !bool {
         if (view.lineGeometry(row) != .single_width) return false;
-        const cells = view.rowCells(row);
-        if (cells.len != view.cols) return false;
         const first = @as(usize, row) * @as(usize, view.cols);
-        for (cells, 0..) |cell, column| {
+        for (0..view.cols) |column| {
+            const cell = view.cellInfoAt(row, @intCast(column));
             const projected = try self.vtInstance(cell, presentation) orelse return false;
             if (projected.glyph_slot != backend.blank_glyph) {
                 const glyph_index: usize = projected.glyph_slot;

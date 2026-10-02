@@ -450,9 +450,8 @@ fn digestTerminal(terminal: *Terminal) VtDigest {
         // Rebase a copied view to each history row without exposing terminal storage.
         var history_view = view;
         history_view.start = history_count - 1 - history_idx;
-        for (history_view.rowCells(0)) |cell| {
-            hashCell(&hasher, cell);
-        }
+        for (0..history_view.cols) |col|
+            hashCell(&hasher, history_view.cellInfoAt(0, @intCast(col)));
     }
 
     return .{

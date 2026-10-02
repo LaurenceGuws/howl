@@ -1393,11 +1393,11 @@ fn incrementalRowLayerEligible(
     const row_count = Source.rowCount(snapshot);
     if (presentation.reverse_screen or row_index >= row_count) return false;
     const row = Source.rowAt(snapshot, row_index);
-    const row_cells = Source.rowCells(snapshot, row);
     if (Source.lineGeometry(snapshot, row) != .single_width or
-        row_cells.len != Source.columns(snapshot))
+        Source.rowCellCount(snapshot, row) != Source.columns(snapshot))
         return false;
-    for (row_cells) |cell| {
+    for (0..Source.columns(snapshot)) |column| {
+        const cell = Source.cellAt(snapshot, row, column);
         if (!contentUsesPlainGeometry(cell, Source.lineGeometry(snapshot, row)) or
             blk: {
                 const style = Source.cellStyle(cell);
@@ -1580,10 +1580,10 @@ fn buildContentCommands(
     var has_decorations = false;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
-        const row_cells = Source.rowCells(snapshot, row);
-        if (row_cells.len != columns) return error.InvalidView;
+        if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
-        for (row_cells[0..line_columns], 0..) |cell, column| {
+        for (0..line_columns) |column| {
+            const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
             has_decorations = has_decorations or style.underline or style.strikethrough;
             const reversed = style.reverse != presentation.reverse_screen;
@@ -1613,10 +1613,10 @@ fn buildContentCommands(
     for (0..row_count) |row_index| {
         if (!has_decorations) break;
         const row = Source.rowAt(snapshot, row_index);
-        const row_cells = Source.rowCells(snapshot, row);
-        if (row_cells.len != columns) return error.InvalidView;
+        if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
-        for (row_cells[0..line_columns], 0..) |cell, column| {
+        for (0..line_columns) |column| {
+            const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
             var scalar_scratch: [24]u32 = undefined;
             const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
@@ -1693,15 +1693,14 @@ fn buildContentCommands(
                 continue;
             }
         }
-        const all_row_cells = Source.rowCells(snapshot, row);
-        if (all_row_cells.len != columns) return error.InvalidView;
+        if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
-        const row_cells = all_row_cells[0..line_columns];
         // Evaluate only after a visible font cell reaches the original checks.
         var plain_row_clip: ?frame_vocabulary.Rect = null;
         var plain_row_baseline: ?i64 = null;
         var skip_until: usize = 0;
-        for (row_cells, 0..) |cell, column| {
+        for (0..line_columns) |column| {
+            const cell = Source.cellAt(snapshot, row, column);
             if (column < skip_until) continue;
             var scalar_scratch: [24]u32 = undefined;
             const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
@@ -1727,7 +1726,7 @@ fn buildContentCommands(
                 try contentIsContextualOperatorCell(Source, cell, sequence))
             {
                 const run_limit = @min(
-                    row_cells.len - column,
+                    line_columns - column,
                     @min(
                         maximum_operator_run_cells,
                         @as(usize, glyph_cache.maximumSequenceScalars(shape_cache)),
@@ -1737,7 +1736,7 @@ fn buildContentCommands(
                 operator_scalars[0] = sequence[0];
                 var run_end = column + 1;
                 while (run_end - column < run_limit) : (run_end += 1) {
-                    const next = row_cells[run_end];
+                    const next = Source.cellAt(snapshot, row, run_end);
                     var next_scalar_scratch: [24]u32 = undefined;
                     const next_sequence = Source.cellScalars(snapshot, row_index, run_end, next, &next_scalar_scratch);
                     if (!contentSameContextualRendition(Source, cell, next)) break;

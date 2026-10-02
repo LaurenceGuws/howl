@@ -213,12 +213,17 @@ pub const Owned = struct {
         return View.rows(snapshot)[index];
     }
 
-    pub fn rowCells(snapshot: *const Snapshot, row: Row) []const Cell {
+    pub fn rowCellCount(_: *const Snapshot, row: Row) usize {
+        return row.cell_count;
+    }
+
+    pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
         const all = View.cells(snapshot);
         const first: usize = row.cell_offset;
         const count: usize = row.cell_count;
         std.debug.assert(first <= all.len and count <= all.len - first);
-        return all[first .. first + count];
+        std.debug.assert(column < count);
+        return all[first + column];
     }
 
     pub fn cellScalars(snapshot: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {
@@ -307,8 +312,13 @@ pub const RichView = struct {
         return snapshot.rows[index];
     }
 
-    pub fn rowCells(_: *const Snapshot, row: Row) []const Cell {
-        return row.cells;
+    pub fn rowCellCount(_: *const Snapshot, row: Row) usize {
+        return row.cells.len;
+    }
+
+    pub fn cellAt(_: *const Snapshot, row: Row, column: usize) Cell {
+        std.debug.assert(column < row.cells.len);
+        return row.cells[column];
     }
 
     pub fn cellScalars(_: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {

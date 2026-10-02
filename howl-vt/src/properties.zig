@@ -1,11 +1,11 @@
 //! Persistent terminal presentation properties and bounded color state.
 
 const std = @import("std");
-const Screen = @import("screen.zig").Screen;
+const cell_values = @import("cell.zig");
 const progress = @import("progress.zig");
 
-/// Three-channel color type shared with Screen.
-pub const Rgb = Screen.Rgb;
+/// Three-channel color type shared with terminal cells.
+pub const Rgb = cell_values.Rgb;
 
 /// Default terminal foreground color.
 pub const default_foreground = Rgb{ .r = 220, .g = 220, .b = 220 };

@@ -60,8 +60,12 @@ pub const Source = struct {
         return @intCast(index);
     }
 
-    pub fn rowCells(snapshot: *const Snapshot, row: Row) []const Cell {
-        return snapshot.view.rowCells(row);
+    pub fn rowCellCount(snapshot: *const Snapshot, _: Row) usize {
+        return snapshot.view.cols;
+    }
+
+    pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
+        return snapshot.view.cellInfoAt(row, @intCast(column));
     }
 
     pub fn lineGeometry(snapshot: *const Snapshot, row: Row) semantic.LineGeometry {

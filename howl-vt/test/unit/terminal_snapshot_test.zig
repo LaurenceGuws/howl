@@ -13,10 +13,9 @@ fn expectViewsEqual(a: Terminal.SemanticView, b: Terminal.SemanticView) !void {
     try std.testing.expectEqual(a.cursor_blink, b.cursor_blink);
     try std.testing.expectEqual(a.history_count, b.history_count);
     for (0..a.rows) |row| {
-        try std.testing.expectEqualSlices(
-            Terminal.Cell,
-            a.rowCells(@intCast(row)),
-            b.rowCells(@intCast(row)),
+        for (0..a.cols) |col| try std.testing.expectEqualDeep(
+            a.cellInfoAt(@intCast(row), @intCast(col)),
+            b.cellInfoAt(@intCast(row), @intCast(col)),
         );
     }
 }

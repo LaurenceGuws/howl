@@ -1215,7 +1215,8 @@ fn richFixture(allocator: std.mem.Allocator, observation: *const VT.Observation,
             .line_geometry = @backingInt(view.lineGeometry(@intCast(y))),
             .cells = try allocator.alloc(client.rich.Cell, view.cols),
         };
-        for (row.cells, view.rowCells(@intCast(y)), 0..) |*out, value, x| {
+        for (row.cells, 0..) |*out, x| {
+            const value = view.cellInfoAt(@intCast(y), @intCast(x));
             var scalar_buffer: [24]u21 = undefined;
             const scalars = if (value.x == 0 and value.y == 0)
                 view.cellScalarsAt(@intCast(y), @intCast(x), &scalar_buffer)
