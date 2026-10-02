@@ -93,7 +93,7 @@ horse_argv() {
             printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$EVIDENCE_ROOT/konsole-xdg" \
                 /usr/bin/konsole --separate --builtin-profile --hide-menubar --hide-tabbar --hide-toolbars --notransparency \
                 -p 'Font=IosevkaTerm Nerd Font,7,-1,5,50,0,0,0,0,0' \
-                -p HistoryMode=0 -p HistorySize=4096 -p TerminalMargin=0 \
+                -p HistoryMode=1 -p HistorySize=4096 -p ScrollBarPosition=2 -p TerminalMargin=0 \
                 -p BlinkingCursorEnabled=false -p AnimatingCursorEnabled=false \
                 -p BidiRenderingEnabled=false -p SemanticHints=0 -p ShowTerminalSizeHint=false \
                 -p LineSpacing=1 -p AntiAliasFonts=true
