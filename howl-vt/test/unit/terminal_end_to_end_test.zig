@@ -806,6 +806,29 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(0));
 }
 
+test "terminal: character edits beyond shifted DEC row width are no-ops" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 10);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#6")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[2;9H")).stateChanged());
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), view.cursor_col);
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(view.cursor_row));
+
+    try std.testing.expect((try terminal.feed("\x1b[S")).stateChanged());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 8), view.cursor_col);
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, view.lineGeometry(view.cursor_row));
+
+    try std.testing.expect(!(try terminal.feed("\x1b[@")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[P")).stateChanged());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 8), view.cursor_col);
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, view.lineGeometry(view.cursor_row));
+}
+
 test "terminal: DECALN owns exact retained grid and mutation truth" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 6);
     defer terminal.deinit();

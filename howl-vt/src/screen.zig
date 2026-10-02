@@ -1949,22 +1949,24 @@ pub const Screen = struct {
         if (self.rows == 0 or self.cols == 0) return changed;
         if (self.cursor.col >= self.cols) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
+        const right = self.rightBoundary();
+        if (self.cursor.col > right) return changed;
 
-        const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
+        const amount = @min(@max(count, 1), right - self.cursor.col + 1);
         changed = self.clearClustersIntersecting(
             self.cursor.row,
             self.cursor.row + 1,
             self.cursor.col,
-            self.rightBoundary() + 1,
+            right + 1,
         ) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const src_col = screenColCount(self.cursor.col);
         const dst_col = src_col + screenColCount(amount);
-        const move_len = screenColCount(self.rightBoundary() + 1) - dst_col;
+        const move_len = screenColCount(right + 1) - dst_col;
 
         std.debug.assert(src_col <= dst_col);
-        std.debug.assert(dst_col <= screenColCount(self.rightBoundary() + 1));
-        std.debug.assert(dst_col + move_len == screenColCount(self.rightBoundary() + 1));
+        std.debug.assert(dst_col <= screenColCount(right + 1));
+        std.debug.assert(dst_col + move_len == screenColCount(right + 1));
         std.debug.assert(src_col + move_len <= row.len);
         std.debug.assert(dst_col + move_len <= row.len);
         std.debug.assert(src_col + screenColCount(amount) <= row.len);
@@ -1972,7 +1974,7 @@ pub const Screen = struct {
         const erase = self.eraseCell();
         var cells_changed = false;
         var col = src_col;
-        const end = screenColCount(self.rightBoundary() + 1);
+        const end = screenColCount(right + 1);
         while (col < end) : (col += 1) {
             const replacement = if (col < dst_col) erase else row[@intCast(col - screenColCount(amount))];
             if (!std.meta.eql(row[@intCast(col)], replacement)) cells_changed = true;
@@ -2007,20 +2009,22 @@ pub const Screen = struct {
         if (self.rows == 0 or self.cols == 0) return changed;
         if (self.cursor.col >= self.cols) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
+        const right = self.rightBoundary();
+        if (self.cursor.col > right) return changed;
 
-        const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
+        const amount = @min(@max(count, 1), right - self.cursor.col + 1);
         changed = self.clearClustersIntersecting(
             self.cursor.row,
             self.cursor.row + 1,
             self.cursor.col,
-            self.rightBoundary() + 1,
+            right + 1,
         ) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const dst_col = screenColCount(self.cursor.col);
-        const src_col = @min(dst_col + screenColCount(amount), screenColCount(self.rightBoundary() + 1));
-        const move_len = screenColCount(self.rightBoundary() + 1) - src_col;
-        const tail_start = screenColCount(self.rightBoundary() + 1) - screenColCount(amount);
-        const tail_end = screenColCount(self.rightBoundary() + 1);
+        const src_col = @min(dst_col + screenColCount(amount), screenColCount(right + 1));
+        const move_len = screenColCount(right + 1) - src_col;
+        const tail_start = screenColCount(right + 1) - screenColCount(amount);
+        const tail_end = screenColCount(right + 1);
 
         std.debug.assert(dst_col <= src_col);
         std.debug.assert(src_col <= tail_end);
