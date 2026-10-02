@@ -1091,6 +1091,14 @@ test "dense 40x120 terminal renderer is bounded and recovers from command exhaus
     try std.testing.expectEqual(@as(u64, 0), failed.revision);
     try std.testing.expectEqual(@as(u64, 0), failed.resource_generation);
 
+    var lazy_config = rendererConfig(64);
+    lazy_config.command_limit = command_count;
+    const lazy = try terminal.init(std.testing.allocator, terminal.FontFaces.single(font), lazy_config);
+    defer terminal.deinit(lazy);
+    try terminal.update(lazy, view);
+    try std.testing.expect(terminal.usage(lazy).command_capacity >= command_count);
+    try std.testing.expect(terminal.usage(lazy).command_capacity <= lazy_config.command_limit);
+
     var host = try Harness.init(std.testing.allocator, font, rendererConfig(command_count));
     defer host.deinit();
     const frame = (try host.present(view)).frame;

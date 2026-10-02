@@ -230,7 +230,8 @@ test "only validated Unix endpoints avoid same-machine text compression" {
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
-const render_command_capacity: usize = render.limits.maximum_frame_commands;
+const render_command_initial_capacity: usize = 4 * 1024;
+const render_command_limit: usize = render.limits.maximum_frame_commands;
 // One global recipe plus up to eight profile-specific font recipes can be live
 // concurrently in the Odin product.
 const render_lane_limit: usize = 9;
@@ -480,7 +481,8 @@ fn renderContentConfig(cell_size: terminal_render.Size) terminal_render.Config {
         },
         .shaped_capacity = store.shaped_capacity,
         .raster_bytes = store.raster_bytes,
-        .command_capacity = render_command_capacity,
+        .command_capacity = render_command_initial_capacity,
+        .command_limit = render_command_limit,
     };
 }
 
@@ -785,7 +787,7 @@ fn processRenderScratch(
     const owner = runtime orelse return error.RuntimeUnavailable;
     if (owner.render_scratch) |scratch| return scratch;
 
-    const commands = try allocator.alloc(terminal_render.Command, render_command_capacity);
+    const commands = try allocator.alloc(terminal_render.Command, render_command_limit);
     errdefer allocator.free(commands);
     const pixels = try allocator.alloc(u8, render_pixel_capacity);
     errdefer allocator.free(pixels);

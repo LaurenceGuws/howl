@@ -56,7 +56,11 @@ pub const Config = struct {
     atlas: AtlasConfig,
     shaped_capacity: usize,
     raster_bytes: usize,
+    /// Initial resident terminal-command slots.
     command_capacity: usize,
+    /// Maximum command slots this renderer may grow to. Zero fixes the
+    /// historical behavior where `command_capacity` is also the hard limit.
+    command_limit: usize = 0,
     /// Optional retained-row acceleration budget. Zero disables the cache.
     incremental_row_capacity: u16 = 0,
     incremental_command_capacity: usize = 0,
@@ -98,6 +102,7 @@ pub const StoreUsage = struct {
 pub const Usage = struct {
     shape: ShapeCacheUsage,
     atlas_entries: usize,
+    command_capacity: usize,
     revision: u64,
     resource_generation: u64,
     resource_high_water: u64,
@@ -275,6 +280,14 @@ const ProjectedPlacement = struct {
     command: frame_vocabulary.Input,
 };
 
+fn commandLimit(config: Config) usize {
+    return if (config.command_limit == 0) config.command_capacity else config.command_limit;
+}
+
+fn validCommandBounds(config: Config) bool {
+    return config.command_capacity != 0 and commandLimit(config) >= config.command_capacity;
+}
+
 fn storeConfigFromRenderer(config: Config) StoreConfig {
     return .{
         .shape_cache = config.shape_cache,
@@ -368,7 +381,7 @@ pub fn init(
 ) InitError!*Renderer {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
-        config.command_capacity == 0 or
+        !validCommandBounds(config) or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidConfig;
     if (!fonts.terminalMetricsCompatible()) return error.InvalidFontFaces;
@@ -387,7 +400,7 @@ pub fn initWithStore(
 ) InitError!*Renderer {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
-        config.command_capacity == 0 or
+        !validCommandBounds(config) or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidConfig;
     const store_impl = storeImpl(store);
@@ -475,6 +488,7 @@ pub fn usage(owner: *const Renderer) Usage {
     return .{
         .shape = storeUsage(impl.store).shape,
         .atlas_entries = glyph_cache.atlasEntryCount(impl.atlas),
+        .command_capacity = impl.commands.len,
         .revision = impl.revision,
         .resource_generation = impl.resource_generation,
         .resource_high_water = impl.resource_high_water,
@@ -487,18 +501,42 @@ pub fn updateSource(
     snapshot: *const Source.Snapshot,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
-    updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
-        error.CacheFull,
-        error.AtlasFull,
-        error.ShapeEntryFull,
-        error.ShapeScalarFull,
-        error.ShapeGlyphFull,
-        => {
-            try resetCaches(owner);
-            return updateInnerOnce(Source, owner, snapshot, image_bindings);
-        },
-        else => return failure,
-    };
+    var cache_retried = false;
+    while (true) {
+        updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
+            error.CommandLimit => {
+                if (!try growCommandStorage(owner)) return error.CommandLimit;
+                continue;
+            },
+            error.CacheFull,
+            error.AtlasFull,
+            error.ShapeEntryFull,
+            error.ShapeScalarFull,
+            error.ShapeGlyphFull,
+            => {
+                if (cache_retried) return failure;
+                cache_retried = true;
+                try resetCaches(owner);
+                continue;
+            },
+            else => return failure,
+        };
+        return;
+    }
+}
+
+fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
+    const impl = rendererImpl(owner);
+    const limit = commandLimit(impl.config);
+    if (impl.commands.len >= limit) return false;
+    const doubled = std.math.mul(usize, impl.commands.len, 2) catch limit;
+    const next = @min(limit, @max(impl.commands.len + 1, doubled));
+    const replacement = try impl.allocator.alloc(frame_vocabulary.Input, next);
+    impl.allocator.free(impl.commands);
+    impl.commands = replacement;
+    impl.frame_ready = false;
+    impl.incremental_ready = false;
+    return true;
 }
 
 fn updateInnerOnce(
