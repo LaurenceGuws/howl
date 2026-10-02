@@ -559,6 +559,7 @@ notify_instance_update :: proc() {
 
 App :: struct {
     clipboard_request: u64,
+    render_dispatcher: ^Render_Dispatcher,
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
     ui_font: ^TTF.Font,
@@ -1298,9 +1299,7 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         message := view.canvas_error_len > 0 ? string(view.canvas_error[:view.canvas_error_len]) : "Canvas render failed without diagnostic"
         if view.canvas_error_len == 0 do set_canvas_error(view, message)
         publish_initial_error(view, message)
-        sync.mutex_lock(&work.mutex)
-        work.ready = false
-        sync.mutex_unlock(&work.mutex)
+        release_render_ready(work)
         reset_canvas(view, false)
         return false
     }
@@ -1360,9 +1359,7 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         prepared_history_generation,
     )
     view.canvas_error_len = 0
-    sync.mutex_lock(&work.mutex)
-    work.ready = false
-    sync.mutex_unlock(&work.mutex)
+    release_render_ready(work)
     sync.mutex_lock(&view.mutex)
     latest_revision := view.revision
     latest_history := view.history_target_offset
@@ -6854,6 +6851,15 @@ main :: proc() {
     if !apply_user_keybindings(&app, user_config.keybindings) {
         fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
         return
+    }
+    app.render_dispatcher = start_render_dispatcher()
+    if app.render_dispatcher == nil {
+        fmt.eprintln("Odin process render worker creation failed")
+        return
+    }
+    defer {
+        stop_render_dispatcher(app.render_dispatcher)
+        app.render_dispatcher = nil
     }
     if intent == .Server {
         view := create_server_instance_view(

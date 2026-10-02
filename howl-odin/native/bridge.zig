@@ -23,6 +23,8 @@ const Runtime = struct {
     threaded: std.Io.Threaded,
     borrowers: std.atomic.Value(u32) = .init(0),
     local: local_platform.State = .{},
+    render_lanes: [render_lane_limit]?*RenderLane = @splat(null),
+    render_scratch: ?*RenderScratch = null,
 };
 
 fn runtimeValue(raw: ?*RuntimeHandle) ?*Runtime {
@@ -53,6 +55,8 @@ pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
     const value = runtimeValue(raw) orelse return;
     std.debug.assert(value.borrowers.load(.acquire) == 0);
     std.debug.assert(local_platform.empty(&value.local));
+    deinitRenderScratch(value);
+    deinitRenderLanes(value);
     value.threaded.deinit();
     std.heap.c_allocator.destroy(value);
 }
@@ -227,6 +231,9 @@ const render_resource_limit: usize = terminal_render.maximum_external_images + 1
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
 const render_command_capacity: usize = render.limits.maximum_frame_commands;
+// One global recipe plus up to eight profile-specific font recipes can be live
+// concurrently in the Odin product.
+const render_lane_limit: usize = 9;
 const RenderImageBinding = terminal_render.ExternalImageBinding;
 
 const ExternalUpload = struct {
@@ -351,19 +358,78 @@ const RenderFonts = struct {
     }
 };
 
+const RenderLane = struct {
+    allocator: std.mem.Allocator,
+    regular_path: []u8,
+    italic_path: []u8,
+    bold_path: []u8,
+    bold_italic_path: []u8,
+    fallback_path: []u8,
+    secondary_fallback_path: []u8,
+    font_pixels: u16,
+    fonts: RenderFonts,
+    store: *terminal_render.Store,
+    borrowers: std.atomic.Value(u32) = .init(1),
+
+    fn matches(
+        self: *const RenderLane,
+        regular: []const u8,
+        italic: []const u8,
+        bold: []const u8,
+        bold_italic: []const u8,
+        fallback: []const u8,
+        secondary_fallback: []const u8,
+        font_pixels: u16,
+    ) bool {
+        return self.font_pixels == font_pixels and
+            std.mem.eql(u8, self.regular_path, regular) and
+            std.mem.eql(u8, self.italic_path, italic) and
+            std.mem.eql(u8, self.bold_path, bold) and
+            std.mem.eql(u8, self.bold_italic_path, bold_italic) and
+            std.mem.eql(u8, self.fallback_path, fallback) and
+            std.mem.eql(u8, self.secondary_fallback_path, secondary_fallback);
+    }
+
+    fn deinit(self: *RenderLane) void {
+        std.debug.assert(self.borrowers.load(.acquire) == 0);
+        terminal_render.deinitStore(self.store);
+        self.fonts.deinit();
+        self.allocator.free(self.secondary_fallback_path);
+        self.allocator.free(self.fallback_path);
+        self.allocator.free(self.bold_italic_path);
+        self.allocator.free(self.bold_path);
+        self.allocator.free(self.italic_path);
+        self.allocator.free(self.regular_path);
+        self.* = undefined;
+    }
+};
+
+const RenderScratch = struct {
+    allocator: std.mem.Allocator,
+    frame_uploads: [render_resource_limit]terminal_render.FrameResourceUpload = undefined,
+    frame_removals: [render_resource_limit]terminal_render.ResourceRef = undefined,
+    frame_commands: []terminal_render.Command,
+    frame_pixels: []u8,
+    prepared_owner: ?*Render = null,
+
+    fn deinit(self: *RenderScratch) void {
+        std.debug.assert(self.prepared_owner == null);
+        self.allocator.free(self.frame_pixels);
+        self.allocator.free(self.frame_commands);
+        self.* = undefined;
+    }
+};
+
 const Render = struct {
     front: RenderFront = .{},
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
     connection: client.Connection,
     raw_observation: bool,
-    fonts: RenderFonts,
+    lane: *RenderLane,
     terminal_renderer: *terminal_render.Renderer,
     cell_size: terminal_render.Size,
-    frame_uploads: [render_resource_limit]terminal_render.FrameResourceUpload = undefined,
-    frame_removals: [render_resource_limit]terminal_render.ResourceRef = undefined,
-    frame_commands: []terminal_render.Command,
-    frame_pixels: []u8,
+    scratch: *RenderScratch,
     residencies: [render_resource_limit]terminal_render.Residency = undefined,
     residency_count: usize = 0,
     image_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined,
@@ -399,26 +465,35 @@ const Render = struct {
 };
 
 fn renderContentConfig(cell_size: terminal_render.Size) terminal_render.Config {
+    const store = renderStoreConfig();
     return .{
         .cell_size = cell_size,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
         },
+        .shape_cache = store.shape_cache,
+        .atlas = .{
+            .width = render_atlas_extent,
+            .height = render_atlas_extent,
+            .entry_capacity = 256,
+        },
+        .shaped_capacity = store.shaped_capacity,
+        .raster_bytes = store.raster_bytes,
+        .command_capacity = render_command_capacity,
+    };
+}
+
+fn renderStoreConfig() terminal_render.StoreConfig {
+    return .{
         .shape_cache = .{
             .entry_capacity = 256,
             .scalar_capacity = 512,
             .glyph_capacity = 512,
             .max_sequence_scalars = 16,
         },
-        .atlas = .{
-            .width = render_atlas_extent,
-            .height = render_atlas_extent,
-            .entry_capacity = 256,
-        },
         .shaped_capacity = 32,
         .raster_bytes = render_pixel_capacity,
-        .command_capacity = render_command_capacity,
     };
 }
 
@@ -485,50 +560,39 @@ pub export fn howl_odin_bridge_render_create(
         return null;
     };
     defer if (!accepted) connection.deinit();
-    var fallback_storage: [2][]const u8 = undefined;
-    var fallback_count: usize = 0;
-    if (fallback_len != 0) {
-        fallback_storage[fallback_count] = fallback_ptr[0..fallback_len];
-        fallback_count += 1;
-    }
-    if (secondary_fallback_len != 0) {
-        fallback_storage[fallback_count] = secondary_fallback_ptr[0..secondary_fallback_len];
-        fallback_count += 1;
-    }
-    var fonts = initRenderFonts(
+    const lane = acquireRenderLane(
         runtime,
         allocator,
         font_ptr[0..font_len],
         italic_ptr[0..italic_len],
         bold_ptr[0..bold_len],
         bold_italic_ptr[0..bold_italic_len],
-        fallback_storage[0..fallback_count],
+        fallback_ptr[0..fallback_len],
+        secondary_fallback_ptr[0..secondary_fallback_len],
         font_pixels,
     ) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    defer if (!accepted) fonts.deinit();
-    const metrics = fonts.metrics();
+    defer if (!accepted) releaseRenderLane(lane);
+    const metrics = lane.fonts.metrics();
     const cell_size = terminal_render.Size{
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const terminal_renderer = terminal_render.init(allocator, fonts.faces(), renderContentConfig(cell_size)) catch |failure| {
+    const terminal_renderer = terminal_render.initWithStore(
+        allocator,
+        lane.store,
+        renderContentConfig(cell_size),
+    ) catch |failure| {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
     defer if (!accepted) terminal_render.deinit(terminal_renderer);
-    const frame_commands = allocator.alloc(terminal_render.Command, render_command_capacity) catch {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
+    const scratch = processRenderScratch(runtime, allocator) catch |failure| {
+        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
         return null;
     };
-    defer if (!accepted) allocator.free(frame_commands);
-    const frame_pixels = allocator.alloc(u8, render_pixel_capacity) catch {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
-        return null;
-    };
-    defer if (!accepted) allocator.free(frame_pixels);
     const value = allocator.create(Render) catch {
         writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "out_of_memory");
         return null;
@@ -538,11 +602,10 @@ pub export fn howl_odin_bridge_render_create(
         .runtime = runtime,
         .connection = connection,
         .raw_observation = rawObservationTarget(target),
-        .fonts = fonts,
+        .lane = lane,
         .terminal_renderer = terminal_renderer,
         .cell_size = cell_size,
-        .frame_commands = frame_commands,
-        .frame_pixels = frame_pixels,
+        .scratch = scratch,
     };
     retainRuntime(runtime);
     accepted = true;
@@ -570,6 +633,177 @@ fn initRenderFonts(
     if (bold_italic_path.len != 0)
         result.bold_italic = try initRenderFont(runtime, allocator, bold_italic_path, fallbacks, font_pixels);
     return result;
+}
+
+fn initRenderLane(
+    runtime: *Runtime,
+    allocator: std.mem.Allocator,
+    regular_path: []const u8,
+    italic_path: []const u8,
+    bold_path: []const u8,
+    bold_italic_path: []const u8,
+    fallback_path: []const u8,
+    secondary_fallback_path: []const u8,
+    font_pixels: u16,
+) !*RenderLane {
+    const regular = try allocator.dupe(u8, regular_path);
+    errdefer allocator.free(regular);
+    const italic = try allocator.dupe(u8, italic_path);
+    errdefer allocator.free(italic);
+    const bold = try allocator.dupe(u8, bold_path);
+    errdefer allocator.free(bold);
+    const bold_italic = try allocator.dupe(u8, bold_italic_path);
+    errdefer allocator.free(bold_italic);
+    const fallback = try allocator.dupe(u8, fallback_path);
+    errdefer allocator.free(fallback);
+    const secondary = try allocator.dupe(u8, secondary_fallback_path);
+    errdefer allocator.free(secondary);
+
+    var fallback_storage: [2][]const u8 = undefined;
+    var fallback_count: usize = 0;
+    if (fallback_path.len != 0) {
+        fallback_storage[fallback_count] = fallback_path;
+        fallback_count += 1;
+    }
+    if (secondary_fallback_path.len != 0) {
+        fallback_storage[fallback_count] = secondary_fallback_path;
+        fallback_count += 1;
+    }
+    var fonts = try initRenderFonts(
+        runtime,
+        allocator,
+        regular_path,
+        italic_path,
+        bold_path,
+        bold_italic_path,
+        fallback_storage[0..fallback_count],
+        font_pixels,
+    );
+    errdefer fonts.deinit();
+    const store = try terminal_render.initStore(
+        allocator,
+        fonts.faces(),
+        renderStoreConfig(),
+    );
+    errdefer terminal_render.deinitStore(store);
+    const lane = try allocator.create(RenderLane);
+    lane.* = .{
+        .allocator = allocator,
+        .regular_path = regular,
+        .italic_path = italic,
+        .bold_path = bold,
+        .bold_italic_path = bold_italic,
+        .fallback_path = fallback,
+        .secondary_fallback_path = secondary,
+        .font_pixels = font_pixels,
+        .fonts = fonts,
+        .store = store,
+    };
+    return lane;
+}
+
+fn acquireRenderLane(
+    runtime: ?*Runtime,
+    allocator: std.mem.Allocator,
+    regular_path: []const u8,
+    italic_path: []const u8,
+    bold_path: []const u8,
+    bold_italic_path: []const u8,
+    fallback_path: []const u8,
+    secondary_fallback_path: []const u8,
+    font_pixels: u16,
+) !*RenderLane {
+    const owner = runtime orelse return error.RuntimeUnavailable;
+    for (owner.render_lanes) |maybe_lane| {
+        const lane = maybe_lane orelse continue;
+        if (!lane.matches(
+            regular_path,
+            italic_path,
+            bold_path,
+            bold_italic_path,
+            fallback_path,
+            secondary_fallback_path,
+            font_pixels,
+        )) continue;
+        const before = lane.borrowers.fetchAdd(1, .monotonic);
+        std.debug.assert(before < 1024);
+        return lane;
+    }
+
+    var slot: ?usize = null;
+    for (owner.render_lanes, 0..) |maybe_lane, index| {
+        if (maybe_lane) |lane| {
+            if (lane.borrowers.load(.acquire) == 0) {
+                slot = index;
+                break;
+            }
+        } else if (slot == null) {
+            slot = index;
+        }
+    }
+    const index = slot orelse return error.RenderLaneLimit;
+    if (owner.render_lanes[index]) |retired| {
+        std.debug.assert(retired.borrowers.load(.acquire) == 0);
+        retired.deinit();
+        allocator.destroy(retired);
+        owner.render_lanes[index] = null;
+    }
+    const lane = try initRenderLane(
+        owner,
+        allocator,
+        regular_path,
+        italic_path,
+        bold_path,
+        bold_italic_path,
+        fallback_path,
+        secondary_fallback_path,
+        font_pixels,
+    );
+    owner.render_lanes[index] = lane;
+    return lane;
+}
+
+fn releaseRenderLane(lane: *RenderLane) void {
+    const before = lane.borrowers.fetchSub(1, .release);
+    std.debug.assert(before > 0);
+}
+
+fn deinitRenderLanes(runtime: *Runtime) void {
+    for (&runtime.render_lanes) |*slot| {
+        const lane = slot.* orelse continue;
+        std.debug.assert(lane.borrowers.load(.acquire) == 0);
+        lane.deinit();
+        std.heap.c_allocator.destroy(lane);
+        slot.* = null;
+    }
+}
+
+fn processRenderScratch(
+    runtime: ?*Runtime,
+    allocator: std.mem.Allocator,
+) !*RenderScratch {
+    const owner = runtime orelse return error.RuntimeUnavailable;
+    if (owner.render_scratch) |scratch| return scratch;
+
+    const commands = try allocator.alloc(terminal_render.Command, render_command_capacity);
+    errdefer allocator.free(commands);
+    const pixels = try allocator.alloc(u8, render_pixel_capacity);
+    errdefer allocator.free(pixels);
+    const scratch = try allocator.create(RenderScratch);
+    scratch.* = .{
+        .allocator = allocator,
+        .frame_commands = commands,
+        .frame_pixels = pixels,
+    };
+    owner.render_scratch = scratch;
+    return scratch;
+}
+
+fn deinitRenderScratch(runtime: *Runtime) void {
+    const scratch = runtime.render_scratch orelse return;
+    scratch.deinit();
+    std.heap.c_allocator.destroy(scratch);
+    runtime.render_scratch = null;
 }
 
 fn initRenderFont(
@@ -620,10 +854,10 @@ pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     const renderer: *Render = @ptrCast(@alignCast(value));
     const allocator = renderer.allocator;
     clearExternalUploads(renderer);
-    allocator.free(renderer.frame_pixels);
-    allocator.free(renderer.frame_commands);
+    if (renderer.scratch.prepared_owner == renderer)
+        renderer.scratch.prepared_owner = null;
     terminal_render.deinit(renderer.terminal_renderer);
-    renderer.fonts.deinit();
+    releaseRenderLane(renderer.lane);
     renderer.connection.deinit();
     releaseRuntime(renderer.runtime);
     allocator.destroy(renderer);
@@ -733,6 +967,8 @@ pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
     renderer.front.background_rgba = renderer.background_rgba;
     if (renderer.begin) |begin|
         @memcpy(renderer.front.selection_rows[0..begin.rows], renderer.selection_rows[0..begin.rows]);
+    if (renderer.scratch.prepared_owner == renderer)
+        renderer.scratch.prepared_owner = null;
 }
 
 pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offset: u32) i32 {
@@ -815,16 +1051,24 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
         renderer.setError("image_refill", @errorName(failure));
         return 3;
     };
+    const scratch = renderer.scratch;
+    if (scratch.prepared_owner != null and scratch.prepared_owner != renderer) {
+        renderer.setError("frame", "process_lane_busy");
+        clearExternalUploads(renderer);
+        return 3;
+    }
+    scratch.prepared_owner = renderer;
     const frame = terminal_render.frame(
         renderer.terminal_renderer,
         prospective_residencies[0..prospective_residency_count],
         .{
-            .uploads = &renderer.frame_uploads,
-            .removals = &renderer.frame_removals,
-            .commands = renderer.frame_commands,
-            .pixels = renderer.frame_pixels,
+            .uploads = &scratch.frame_uploads,
+            .removals = &scratch.frame_removals,
+            .commands = scratch.frame_commands,
+            .pixels = scratch.frame_pixels,
         },
     ) catch |failure| {
+        scratch.prepared_owner = null;
         renderer.setError("frame", @errorName(failure));
         clearExternalUploads(renderer);
         return 3;
@@ -1049,7 +1293,8 @@ pub export fn howl_odin_bridge_render_upload_info(
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
     if (index < renderer.frame_upload_count) {
-        const upload = renderer.frame_uploads[index];
+        if (renderer.scratch.prepared_owner != renderer) return 3;
+        const upload = renderer.scratch.frame_uploads[index];
         fillRenderResourceRef(upload.resource, output);
         output.pixel_count = upload.pixel_count;
         output.stride = upload.stride;
@@ -1082,12 +1327,13 @@ pub export fn howl_odin_bridge_render_upload_copy(
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
     if (index < renderer.frame_upload_count) {
-        const upload = renderer.frame_uploads[index];
+        if (renderer.scratch.prepared_owner != renderer) return 3;
+        const upload = renderer.scratch.frame_uploads[index];
         if (upload.pixel_offset + upload.pixel_count > renderer.pixel_count) return 3;
         if (output_capacity < upload.pixel_count) return 4;
         @memcpy(
             output_ptr[0..upload.pixel_count],
-            renderer.frame_pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
+            renderer.scratch.frame_pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
         );
         output_len.* = upload.pixel_count;
         return 0;
@@ -1110,7 +1356,8 @@ pub export fn howl_odin_bridge_render_removal_info(
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.removal_count) return 2;
-    fillRenderRemovalRef(renderer.frame_removals[index], output);
+    if (renderer.scratch.prepared_owner != renderer) return 3;
+    fillRenderRemovalRef(renderer.scratch.frame_removals[index], output);
     return 0;
 }
 
@@ -1163,7 +1410,8 @@ pub export fn howl_odin_bridge_render_command_info(
     const value = raw orelse return 1;
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.command_count) return 2;
-    switch (renderer.frame_commands[index]) {
+    if (renderer.scratch.prepared_owner != renderer) return 3;
+    switch (renderer.scratch.frame_commands[index]) {
         .solid => |command| {
             output.tag = 0;
             output.color_rgba = colorBits(command.color);
@@ -2716,12 +2964,15 @@ test "pane gutter background follows accepted default color and screen reverse" 
 
 test "render headers publish metadata and selection only on acceptance" {
     var renderer: Render = undefined;
+    var scratch: RenderScratch = undefined;
+    scratch.prepared_owner = &renderer;
     renderer.front = .{};
     renderer.begin = null;
     renderer.frame_revision = 17;
     renderer.surface = .{ .width = 400, .height = 200 };
     renderer.background_rgba = 0xff123456;
     renderer.external_upload_count = 0;
+    renderer.scratch = &scratch;
     // Eligible offers fail before accessing the deliberately undefined composer.
     renderer.cell_size = .{ .width = 0, .height = 0 };
     const handle: *RenderHandle = @ptrCast(&renderer);
