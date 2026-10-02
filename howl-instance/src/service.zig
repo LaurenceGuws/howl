@@ -63,8 +63,9 @@ const pipe_nowait: u32 = 0x0000_0001;
 const maximum_clients: usize = 32;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
-// A delta mirror never admits more cells than could fit even as fixed text_v1
-// cell headers in one otherwise-empty bounded snapshot body.
+// Historical delta fallback never admits more mirrored cells than could fit
+// even as fixed text_v1 cell headers in one otherwise-empty bounded body.
+// Live history_offset=0 retains only semantic row generations instead.
 const maximum_delta_cells: usize =
     protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes;
 const client_send_buffer_bytes: c_int = 64 * 1024;
@@ -386,11 +387,14 @@ const Client = struct {
 
 const DeltaRowCache = struct {
     const Entry = struct {
+        generation: ?u64 = null,
         wrapped: bool = false,
         geometry: howl.Terminal.LineGeometry = .single_width,
         valid: bool = false,
     };
 
+    // Live views use row generations and retain no cell mirror. Historical
+    // windows lack row provenance, so they keep the previous exact-cell fallback.
     cells: []howl.Terminal.Cell = &.{},
     entries: []Entry = &.{},
     row_count: u16 = 0,
@@ -430,10 +434,12 @@ const DeltaRowCache = struct {
             return error.SnapshotTooLarge;
         if (cell_count == 0 or cell_count > maximum_delta_cells)
             return error.SnapshotTooLarge;
-        self.cells = try allocator.alloc(howl.Terminal.Cell, cell_count);
-        errdefer {
-            allocator.free(self.cells);
-            self.cells = &.{};
+        if (history_offset != 0) {
+            self.cells = try allocator.alloc(howl.Terminal.Cell, cell_count);
+            errdefer {
+                allocator.free(self.cells);
+                self.cells = &.{};
+            }
         }
         self.entries = try allocator.alloc(Entry, rows);
         errdefer {
@@ -449,6 +455,7 @@ const DeltaRowCache = struct {
     fn rowCells(self: *DeltaRowCache, row: u16, columns: u16) []howl.Terminal.Cell {
         std.debug.assert(row < self.row_count);
         std.debug.assert(columns == self.column_count);
+        std.debug.assert(self.history_offset != 0 and self.cells.len != 0);
         const start = @as(usize, row) * columns;
         std.debug.assert(start + columns <= self.cells.len);
         return self.cells[start .. start + columns];
@@ -1814,8 +1821,9 @@ pub const Service = struct {
             try finishTextRecord(body, record);
         }
 
-        // Observe each visible VT cell directly for this synchronous cut. Delta
-        // retention owns the only full-row copy after comparison.
+        // Observe each visible VT row directly for this synchronous cut. Live
+        // delta retention compares VT-owned row generations; historical windows
+        // keep the exact full-row mirror because history provenance is unavailable.
         var row: u16 = 0;
         while (row < terminal_view.rows) : (row += 1) {
             const wrapped = terminal_view.rowWrapped(row);
@@ -1824,7 +1832,12 @@ pub const Service = struct {
                 &self.delta_rows.entries[@as(usize, row)]
             else
                 null;
-            const destination_cells: []howl.Terminal.Cell = if (delta)
+            const exact_mirror = delta and self.delta_rows.cells.len != 0;
+            const generation = if (delta and !exact_mirror)
+                terminal_view.rowGeneration(row)
+            else
+                null;
+            const destination_cells: []howl.Terminal.Cell = if (exact_mirror)
                 self.delta_rows.rowCells(row, terminal_view.cols)
             else
                 &.{};
@@ -1837,10 +1850,10 @@ pub const Service = struct {
                 &self.delta_rows.entries[@as(usize, source)]
             else
                 null;
-            const source_cells: []const howl.Terminal.Cell = if (source_row) |source|
-                self.delta_rows.rowCells(source, terminal_view.cols)
-            else
-                &.{};
+            const source_cells: []const howl.Terminal.Cell = if (exact_mirror) blk: {
+                const source = source_row orelse break :blk &.{};
+                break :blk self.delta_rows.rowCells(source, terminal_view.cols);
+            } else &.{};
 
             // Delta rows must retain current hyperlink references even when no
             // cell bytes are emitted. Complete lanes collect links while encoding.
@@ -1853,7 +1866,11 @@ pub const Service = struct {
             const reusable = if (source_cache) |value|
                 delta_reuse_allowed and value.valid and
                     value.wrapped == wrapped and value.geometry == geometry and
-                    viewRowExactlyReusable(terminal_view, row, source_cells)
+                    if (exact_mirror)
+                        viewRowExactlyReusable(terminal_view, row, source_cells)
+                    else
+                        generation != null and value.generation != null and
+                            generation.? == value.generation.?
             else
                 false;
             if (reusable) {
@@ -1896,9 +1913,12 @@ pub const Service = struct {
             }
 
             if (destination_cache) |value| {
-                var column: u16 = 0;
-                while (column < terminal_view.cols) : (column += 1)
-                    destination_cells[column] = terminal_view.cellInfoAt(row, column);
+                if (exact_mirror) {
+                    var column: u16 = 0;
+                    while (column < terminal_view.cols) : (column += 1)
+                        destination_cells[column] = terminal_view.cellInfoAt(row, column);
+                }
+                value.generation = generation;
                 value.wrapped = wrapped;
                 value.geometry = geometry;
                 value.valid = true;
@@ -2871,6 +2891,143 @@ fn semanticViewContains(view: howl.Terminal.SemanticView, needle: []const u8) bo
         }
     }
     return false;
+}
+
+test "delta row cache keeps live provenance compact and historical fallback exact" {
+    var cache: DeltaRowCache = .{};
+    defer cache.deinit(std.testing.allocator);
+
+    try cache.ensure(std.testing.allocator, 4, 24, 0);
+    try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
+    try std.testing.expectEqual(@as(usize, 0), cache.cells.len);
+    cache.entries[0] = .{ .generation = 41, .valid = true };
+    cache.revision = 7;
+    try cache.ensure(std.testing.allocator, 4, 24, 0);
+    try std.testing.expectEqual(@as(?u64, 41), cache.entries[0].generation);
+    try std.testing.expect(cache.entries[0].valid);
+    try std.testing.expectEqual(@as(u64, 7), cache.revision);
+
+    try cache.ensure(std.testing.allocator, 4, 24, 1);
+    try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
+    try std.testing.expectEqual(@as(usize, 4 * 24), cache.cells.len);
+    for (cache.entries) |entry| try std.testing.expect(!entry.valid);
+}
+
+test "live delta uses row generations and reuses unchanged rows" {
+    const allocator = std.testing.allocator;
+    const instance = try howl.init(allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 4,
+        .columns = 24,
+        .history_rows = 16,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(allocator, std.testing.io, instance);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(allocator, &service);
+    defer peer.deinit();
+
+    try peer.sendFrame(&service, .hello, &.{});
+    var welcome = try awaitTestFrame(&peer, &service);
+    defer welcome.deinit(allocator);
+    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+
+    var observe: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
+    try peer.sendFrame(&service, .observe_delta, &observe);
+
+    var baseline_revision: u64 = 0;
+    var saw_raw = false;
+    var baseline_complete = false;
+    for (0..64) |_| {
+        var frame = try awaitTestFrame(&peer, &service);
+        defer frame.deinit(allocator);
+        switch (frame.kind) {
+            .snapshot_begin => baseline_revision = (try protocol.decodeSnapshotBegin(frame.payload)).revision,
+            .snapshot_raw_data => saw_raw = true,
+            .snapshot_end => {
+                try std.testing.expectEqual(baseline_revision, (try protocol.decodeSnapshotEnd(frame.payload)).revision);
+                baseline_complete = true;
+                break;
+            },
+            .snapshot_graphics, .snapshot_properties => {},
+            else => return error.TestUnexpectedFrame,
+        }
+    }
+    try std.testing.expect(baseline_complete and saw_raw and baseline_revision != 0);
+    try std.testing.expectEqual(@as(usize, 0), service.delta_rows.cells.len);
+    for (service.delta_rows.entries) |entry| {
+        try std.testing.expect(entry.valid);
+        try std.testing.expect(entry.generation != null);
+    }
+
+    var input_payload = [_]u8{ @backingInt(protocol.InputKind.bytes), 'X' };
+    try peer.sendFrame(&service, .input, &input_payload);
+    var input_result = try awaitTestFrame(&peer, &service);
+    defer input_result.deinit(allocator);
+    try std.testing.expectEqual(protocol.Kind.result, input_result.kind);
+    try std.testing.expectEqual(protocol.ResultCode.ok, (try protocol.decodeResult(input_result.payload)).code);
+
+    var turns: usize = 0;
+    while (turns < 2_000 and service.observation_revision <= baseline_revision) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(service.observation_revision > baseline_revision);
+
+    protocol.encodeObserve(&observe, .{ .after_revision = baseline_revision, .history_offset = 0 });
+    try peer.sendFrame(&service, .observe_delta, &observe);
+    var delta_body: std.ArrayList(u8) = .empty;
+    defer delta_body.deinit(allocator);
+    var saw_delta = false;
+    var saw_delta_raw = false;
+    var delta_complete = false;
+    for (0..64) |_| {
+        var frame = try awaitTestFrame(&peer, &service);
+        defer frame.deinit(allocator);
+        switch (frame.kind) {
+            .snapshot_begin => try std.testing.expect((try protocol.decodeSnapshotBegin(frame.payload)).revision > baseline_revision),
+            .snapshot_delta_data => {
+                saw_delta = true;
+                try delta_body.appendSlice(allocator, frame.payload);
+            },
+            .snapshot_raw_data => saw_delta_raw = true,
+            .snapshot_graphics, .snapshot_properties => {},
+            .snapshot_end => {
+                delta_complete = true;
+                break;
+            },
+            else => return error.TestUnexpectedFrame,
+        }
+    }
+    try std.testing.expect(delta_complete and saw_delta and !saw_delta_raw);
+    try std.testing.expectEqual(@as(usize, 0), service.delta_rows.cells.len);
+
+    var offset: usize = 0;
+    var row_records: usize = 0;
+    var reused_rows: usize = 0;
+    var row_shift_records: usize = 0;
+    while (offset < delta_body.items.len) {
+        if (delta_body.items.len - offset < protocol.text_v1.record_header_bytes)
+            return error.TestUnexpectedFrame;
+        var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, delta_body.items[offset..][0..protocol.text_v1.record_header_bytes]);
+        const header = try protocol.decodeTextRecordHeader(&encoded_header);
+        const record_len = protocol.text_v1.record_header_bytes + @as(usize, header.payload_len);
+        if (record_len > delta_body.items.len - offset) return error.TestUnexpectedFrame;
+        switch (header.kind) {
+            .row => {
+                row_records += 1;
+                if (header.payload_len == 0) reused_rows += 1;
+            },
+            .row_shift => row_shift_records += 1,
+            else => {},
+        }
+        offset += record_len;
+    }
+    try std.testing.expectEqual(delta_body.items.len, offset);
+    try std.testing.expectEqual(@as(usize, 4), row_records);
+    try std.testing.expectEqual(@as(usize, 1), row_shift_records);
+    try std.testing.expect(reused_rows >= 1);
 }
 
 test "adopted HWLS stream drives one borrowed Instance without owning its lifetime" {
