@@ -4745,9 +4745,23 @@ const Savepoint = struct {
 // Owns resize implementation state without widening Terminal's public surface
 // to Screen or reflow storage.
 const PreparedResizeState = struct {
-    primary: Screen,
-    alternate: Screen,
-    primary_savepoint_trailing_blank_columns: ?u16,
+    const CellPixels = struct {
+        width: u32,
+        height: u32,
+    };
+
+    const Replacement = union(enum) {
+        full: struct {
+            primary: Screen,
+            alternate: Screen,
+            primary_savepoint_trailing_blank_columns: ?u16,
+        },
+        geometry_only: struct {
+            cell_pixels: ?CellPixels,
+        },
+    };
+
+    replacement: Replacement,
     replies: replies.Buffer,
     semantic_sequence: u64,
     reply_len: u32,
@@ -4978,7 +4992,7 @@ pub const Terminal = struct {
         state: ?*PreparedResizeState,
         committed: bool = false,
 
-        /// Commits both prepared screens and every resize side effect exactly once.
+        /// Commits the prepared screen or geometry-only transition and every resize side effect exactly once.
         pub fn commit(self: *PreparedResize) void {
             if (self.committed or !self.terminal.resize_prepared)
                 // zig-audit: acknowledge panic
@@ -4993,17 +5007,41 @@ pub const Terminal = struct {
                 // zig-audit: acknowledge panic
                 // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
                 @panic("terminal mutated during prepared resize");
-            var primary = state.primary;
-            var alternate = state.alternate;
-            std.mem.swap(Screen, &self.terminal.screen_state.primary, &primary);
-            std.mem.swap(Screen, &self.terminal.screen_state.alternate, &alternate);
-            primary.deinit(self.terminal.allocator);
-            alternate.deinit(self.terminal.allocator);
-            if (state.primary_savepoint_trailing_blank_columns) |trailing_blank_columns|
-                self.terminal.primary_savepoint.followResizedCursor(
-                    &self.terminal.screen_state.primary,
-                    trailing_blank_columns,
-                );
+            switch (state.replacement) {
+                .full => |replacement| {
+                    var primary = replacement.primary;
+                    var alternate = replacement.alternate;
+                    std.mem.swap(Screen, &self.terminal.screen_state.primary, &primary);
+                    std.mem.swap(Screen, &self.terminal.screen_state.alternate, &alternate);
+                    primary.deinit(self.terminal.allocator);
+                    alternate.deinit(self.terminal.allocator);
+                    if (replacement.primary_savepoint_trailing_blank_columns) |trailing_blank_columns|
+                        self.terminal.primary_savepoint.followResizedCursor(
+                            &self.terminal.screen_state.primary,
+                            trailing_blank_columns,
+                        );
+                    const replacement_primary = &self.terminal.screen_state.primary;
+                    const replacement_alternate = &self.terminal.screen_state.alternate;
+                    const primary_changed = self.terminal.graphics.retainBankBounds(
+                        .primary,
+                        replacement_primary.historyRowBase(),
+                        @as(u64, replacement_primary.historyCount()) + replacement_primary.rows,
+                        replacement_primary.cols,
+                    );
+                    const alternate_changed = self.terminal.graphics.retainBankBounds(
+                        .alternate,
+                        0,
+                        replacement_alternate.rows,
+                        replacement_alternate.cols,
+                    );
+                    std.debug.assert(!primary_changed or self.terminal.graphics.generation() != 0);
+                    std.debug.assert(!alternate_changed or self.terminal.graphics.generation() != 0);
+                },
+                .geometry_only => |replacement| {
+                    if (replacement.cell_pixels) |cell|
+                        self.terminal.screen_state.setCellPixelSize(cell.width, cell.height);
+                },
+            }
             var old_replies = state.replies;
             std.mem.swap(
                 replies.Buffer,
@@ -5011,22 +5049,6 @@ pub const Terminal = struct {
                 &old_replies,
             );
             old_replies.deinit();
-            const replacement_primary = &self.terminal.screen_state.primary;
-            const replacement_alternate = &self.terminal.screen_state.alternate;
-            const primary_changed = self.terminal.graphics.retainBankBounds(
-                .primary,
-                replacement_primary.historyRowBase(),
-                @as(u64, replacement_primary.historyCount()) + replacement_primary.rows,
-                replacement_primary.cols,
-            );
-            const alternate_changed = self.terminal.graphics.retainBankBounds(
-                .alternate,
-                0,
-                replacement_alternate.rows,
-                replacement_alternate.cols,
-            );
-            std.debug.assert(!primary_changed or self.terminal.graphics.generation() != 0);
-            std.debug.assert(!alternate_changed or self.terminal.graphics.generation() != 0);
             advanceIdentity(&self.terminal.semantic_sequence);
             self.terminal.allocator.destroy(state);
             self.state = null;
@@ -5037,8 +5059,13 @@ pub const Terminal = struct {
         /// Discards uncommitted candidate ownership and ends the mutation exclusion.
         pub fn deinit(self: *PreparedResize) void {
             if (self.state) |state| {
-                state.primary.deinit(self.terminal.allocator);
-                state.alternate.deinit(self.terminal.allocator);
+                switch (state.replacement) {
+                    .full => |*replacement| {
+                        replacement.primary.deinit(self.terminal.allocator);
+                        replacement.alternate.deinit(self.terminal.allocator);
+                    },
+                    .geometry_only => {},
+                }
                 state.replies.deinit();
                 self.terminal.allocator.destroy(state);
             }
@@ -6145,8 +6172,10 @@ pub const Terminal = struct {
         return self.prepareResizeGeometry(rows, cols, self.cellPixelSize());
     }
 
-    /// Prepares both screens, replies and cell pixels as one transaction. A
-    /// pixel-only transition is observable even when cell counts are unchanged.
+    /// Prepares screen topology, replies and cell pixels as one transaction.
+    ///
+    /// Unchanged rows/columns retain both screen owners exactly; a pixel-only
+    /// transition remains observable without reflowing cells or scrollback.
     pub fn prepareResizeGeometry(
         self: *Terminal,
         rows: u16,
@@ -6165,25 +6194,42 @@ pub const Terminal = struct {
         prepared_replies.copyFramingFrom(&self.reply_buffer);
         try prepared_replies.append(self.reply_buffer.bytes());
         try prepared_replies.append(report_bytes[0..report_len]);
-        var primary = try self.screen_state.primary.prepareResize(self.allocator, rows, cols);
-        errdefer primary.deinit(self.allocator);
-        var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
-        errdefer alternate.deinit(self.allocator);
-        if (cell_pixels) |cell| {
-            primary.setCellPixelSize(cell.width, cell.height);
-            alternate.setCellPixelSize(cell.width, cell.height);
-        }
-        const primary_savepoint_trailing_blank_columns = if (self.primary_savepoint.followsCursor(
-            &self.screen_state.primary,
-        ))
-            self.screen_state.primary.cursorTrailingBlankColumns()
-        else
-            null;
         const state = try self.allocator.create(PreparedResizeState);
+        errdefer self.allocator.destroy(state);
+        std.debug.assert(self.screen_state.primary.rows == self.screen_state.alternate.rows);
+        std.debug.assert(self.screen_state.primary.cols == self.screen_state.alternate.cols);
+        const same_topology =
+            self.screen_state.primary.rows == rows and self.screen_state.primary.cols == cols;
+        const replacement: PreparedResizeState.Replacement = if (same_topology)
+            .{ .geometry_only = .{
+                .cell_pixels = if (cell_pixels) |cell|
+                    .{ .width = cell.width, .height = cell.height }
+                else
+                    null,
+            } }
+        else blk: {
+            var primary = try self.screen_state.primary.prepareResize(self.allocator, rows, cols);
+            errdefer primary.deinit(self.allocator);
+            var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
+            errdefer alternate.deinit(self.allocator);
+            if (cell_pixels) |cell| {
+                primary.setCellPixelSize(cell.width, cell.height);
+                alternate.setCellPixelSize(cell.width, cell.height);
+            }
+            const primary_savepoint_trailing_blank_columns = if (self.primary_savepoint.followsCursor(
+                &self.screen_state.primary,
+            ))
+                self.screen_state.primary.cursorTrailingBlankColumns()
+            else
+                null;
+            break :blk .{ .full = .{
+                .primary = primary,
+                .alternate = alternate,
+                .primary_savepoint_trailing_blank_columns = primary_savepoint_trailing_blank_columns,
+            } };
+        };
         state.* = .{
-            .primary = primary,
-            .alternate = alternate,
-            .primary_savepoint_trailing_blank_columns = primary_savepoint_trailing_blank_columns,
+            .replacement = replacement,
             .replies = prepared_replies,
             .semantic_sequence = self.semantic_sequence,
             .reply_len = self.reply_buffer.len(),
@@ -9724,6 +9770,64 @@ test "alternate-screen reset keeps default cursor shape for synchronized visibil
     try std.testing.expect(view.cursor_visible);
     try std.testing.expectEqual(Screen.CursorShape.block, view.cursor_shape);
     try std.testing.expect(view.cursor_blink);
+}
+
+test "pixel-only geometry prepare preserves storage through every allocation failure and discard" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, pixelOnlyGeometryTransaction, .{});
+}
+
+fn pixelOnlyGeometryTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+    const configured = try terminal.feed("\x1b[?2048hA\r\nB\r\nC");
+    try std.testing.expect(configured.stateChanged());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+
+    const before_sequence = terminal.semanticSequence();
+    const before_pixels = terminal.cellPixelSize();
+    const before_graphics_generation = terminal.graphics.generation();
+    const before_history_count = terminal.screen_state.primary.historyCount();
+    const before_primary_cell = terminal.screen_state.primary.cellAt(1, 0);
+    const before_primary_cells = @intFromPtr(terminal.screen_state.primary.cells.?.ptr);
+    const before_primary_history = @intFromPtr(terminal.screen_state.primary.history.?.ptr);
+    const before_alternate_cells = @intFromPtr(terminal.screen_state.alternate.cells.?.ptr);
+
+    var prepared = terminal.prepareResizeGeometry(2, 4, .{ .width = 11, .height = 24 }) catch |failure| {
+        try std.testing.expectEqual(before_sequence, terminal.semanticSequence());
+        try std.testing.expectEqualDeep(before_pixels, terminal.cellPixelSize());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
+        try std.testing.expectEqual(before_primary_cell, terminal.screen_state.primary.cellAt(1, 0));
+        try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
+        try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+        try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
+        return failure;
+    };
+    prepared.deinit();
+    try std.testing.expectEqual(before_sequence, terminal.semanticSequence());
+    try std.testing.expectEqualDeep(before_pixels, terminal.cellPixelSize());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
+    try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
+    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+    try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
+
+    var committed = try terminal.prepareResizeGeometry(2, 4, .{ .width = 11, .height = 24 });
+    defer committed.deinit();
+    committed.commit();
+
+    try std.testing.expectEqual(before_sequence + 1, terminal.semanticSequence());
+    try std.testing.expectEqualStrings("\x1b[48;2;4;48;44t", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u32, 11), terminal.cellPixelSize().?.width);
+    try std.testing.expectEqual(@as(u32, 24), terminal.cellPixelSize().?.height);
+    try std.testing.expectEqual(@as(u32, 11), terminal.screen_state.alternate.cellPixelSize().?.width);
+    try std.testing.expectEqual(before_graphics_generation, terminal.graphics.generation());
+    try std.testing.expectEqual(before_history_count, terminal.screen_state.primary.historyCount());
+    try std.testing.expectEqual(before_primary_cell, terminal.screen_state.primary.cellAt(1, 0));
+    try std.testing.expectEqual(before_primary_cells, @intFromPtr(terminal.screen_state.primary.cells.?.ptr));
+    try std.testing.expectEqual(before_primary_history, @intFromPtr(terminal.screen_state.primary.history.?.ptr));
+    try std.testing.expectEqual(before_alternate_cells, @intFromPtr(terminal.screen_state.alternate.cells.?.ptr));
 }
 
 test "pixel geometry prepare preserves state through every allocation failure and discard" {
