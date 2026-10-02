@@ -1,0 +1,30 @@
+{
+  "schema": 4,
+  "terminal_font_pixels": 10,
+  "startup_profile": 0,
+  "default_profile": "benchmark",
+  "profiles": [
+    {
+      "id": "benchmark",
+      "name": "Benchmark",
+      "mode": "launch",
+      "shell": "",
+      "command": "",
+      "cwd": "",
+      "endpoint": "",
+      "environment": [],
+      "font_pixels": 0
+    }
+  ],
+  "servers": [],
+  "keybindings": [],
+  "app_theme": "howl_dark",
+  "font": {
+    "regular": "/usr/share/fonts/TTF/IosevkaNerdFont-Regular.ttf",
+    "italic": "/usr/share/fonts/TTF/IosevkaNerdFont-Italic.ttf",
+    "bold": "/usr/share/fonts/TTF/IosevkaNerdFont-Bold.ttf",
+    "bold_italic": "/usr/share/fonts/TTF/IosevkaNerdFont-BoldItalic.ttf",
+    "fallback": "",
+    "secondary_fallback": ""
+  }
+}

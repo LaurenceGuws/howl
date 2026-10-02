@@ -12,8 +12,9 @@ REPO_ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
 HOME_DIR=${HOME:?HOME is required}
 WMIO=${WMIO:-"$HOME_DIR/.local/bin/wmio"}
 TUI_ZOO=${TUI_ZOO:-"$HOME_DIR/personal/tui-zoo/zig-out/bin/tui-zoo"}
-HOWL_BIN=${HOWL_BIN:-"$REPO_ROOT/howl-odin/zig-out/bin/howl-odin"}
 EVIDENCE_ROOT=${HORSES_EVIDENCE_ROOT:-"$HOME_DIR/.local/state/howl-performance-index"}
+HOWL_BIN=${HOWL_BIN:-"$EVIDENCE_ROOT/howl-fast/bin/howl-odin"}
+CONFIG_ROOT=${HORSES_CONFIG_ROOT:-"$REPO_ROOT/tools/performance/configs"}
 MONITOR=${HORSES_MONITOR:-DP-1}
 COLS=${HORSES_COLS:-192}
 ROWS=${HORSES_ROWS:-47}
@@ -24,7 +25,7 @@ SAMPLE_MS=${HORSES_SAMPLE_MS:-250}
 SETTLE_MS=${HORSES_SETTLE_MS:-1200}
 WINDOW_RECT=${HORSES_RECT:-auto}
 SYNCHRONIZED_OUTPUT=${HORSES_SYNCHRONIZED_OUTPUT:-1}
-DOSES=(1 4 16 64 256 1024 4096)
+IFS=',' read -r -a DOSES <<< "${HORSES_DOSES:-1,4,16,64,256,1024,4096,8192,16384,32768,65536}"
 HORSES=(howl kitty alacritty ghostty konsole wezterm)
 
 usage() {
@@ -52,6 +53,9 @@ Environment:
   HORSES_SETTLE_MS=1200           settle after exact placement before start
   HORSES_SYNCHRONIZED_OUTPUT=1    use CSI ?2026 frame bracketing
   HORSES_EVIDENCE_ROOT=PATH       retained run evidence root
+  HORSES_DOSES=1,4,...            comma-separated poison dose sweep
+  HORSES_CONFIG_ROOT=PATH         benchmark config pack override
+  HOWL_BIN=PATH                   benchmark Howl binary override
 USAGE
 }
 
@@ -73,12 +77,30 @@ require_file() {
 horse_argv() {
     local horse=$1
     case "$horse" in
-        howl) printf '%s\0' "$HOWL_BIN" ;;
-        kitty) printf '%s\0' /usr/bin/kitty --single-instance=no --detach=no ;;
-        alacritty) printf '%s\0' /usr/bin/alacritty ;;
-        ghostty) printf '%s\0' /usr/bin/ghostty --gtk-single-instance=false ;;
-        konsole) printf '%s\0' /usr/bin/konsole --separate ;;
-        wezterm) printf '%s\0' /usr/bin/wezterm start --always-new-process ;;
+        howl)
+            printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$CONFIG_ROOT/howl-xdg" "$HOWL_BIN"
+            ;;
+        kitty)
+            printf '%s\0' /usr/bin/kitty --config "$CONFIG_ROOT/kitty.conf" --single-instance=no --detach=no
+            ;;
+        alacritty)
+            printf '%s\0' /usr/bin/alacritty --config-file "$CONFIG_ROOT/alacritty.toml"
+            ;;
+        ghostty)
+            printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$CONFIG_ROOT/ghostty-xdg" /usr/bin/ghostty --gtk-single-instance=false
+            ;;
+        konsole)
+            printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$EVIDENCE_ROOT/konsole-xdg" \
+                /usr/bin/konsole --separate --builtin-profile --hide-menubar --hide-tabbar --hide-toolbars --notransparency \
+                -p 'Font=IosevkaTerm Nerd Font,7,-1,5,50,0,0,0,0,0' \
+                -p HistoryMode=0 -p HistorySize=4096 -p TerminalMargin=0 \
+                -p BlinkingCursorEnabled=false -p AnimatingCursorEnabled=false \
+                -p BidiRenderingEnabled=false -p SemanticHints=0 -p ShowTerminalSizeHint=false \
+                -p LineSpacing=1 -p AntiAliasFonts=true
+            ;;
+        wezterm)
+            printf '%s\0' /usr/bin/wezterm --config-file "$CONFIG_ROOT/wezterm.lua" start --always-new-process
+            ;;
         *) return 1 ;;
     esac
 }
@@ -92,6 +114,19 @@ horse_executable() {
         ghostty) printf '%s\n' /usr/bin/ghostty ;;
         konsole) printf '%s\n' /usr/bin/konsole ;;
         wezterm) printf '%s\n' /usr/bin/wezterm ;;
+        *) return 1 ;;
+    esac
+}
+
+horse_config_digest() {
+    local horse=$1
+    case "$horse" in
+        howl) sha256sum "$CONFIG_ROOT/howl-xdg/howl/odin.json" | awk '{print $1}' ;;
+        kitty) sha256sum "$CONFIG_ROOT/kitty.conf" | awk '{print $1}' ;;
+        alacritty) sha256sum "$CONFIG_ROOT/alacritty.toml" | awk '{print $1}' ;;
+        ghostty) sha256sum "$CONFIG_ROOT/ghostty-xdg/ghostty/config" | awk '{print $1}' ;;
+        wezterm) sha256sum "$CONFIG_ROOT/wezterm.lua" | awk '{print $1}' ;;
+        konsole) sha256sum "$SELF" | awk '{print $1}' ;;
         *) return 1 ;;
     esac
 }
@@ -154,15 +189,20 @@ window_pid() {
 
 record_metadata() {
     local run_dir=$1 horse=$2 dose=$3 stable=$4 root_pid=$5 rect=$6
-    local version executable executable_sha tui_head tui_sha howl_head wmio_sha
+    local version executable executable_sha config_sha tui_head tui_sha howl_head wmio_sha howl_bridge_sha
     version=$(horse_version "$horse")
     executable=$(horse_executable "$horse")
     executable_sha=$(sha256sum "$executable" | awk '{print $1}')
+    config_sha=$(horse_config_digest "$horse")
+    howl_bridge_sha=""
+    if [[ $horse == howl && -f $(dirname "$executable")/libhowl_odin_bridge.so ]]; then
+        howl_bridge_sha=$(sha256sum "$(dirname "$executable")/libhowl_odin_bridge.so" | awk '{print $1}')
+    fi
     tui_head=$(git -C "$HOME_DIR/personal/tui-zoo" rev-parse HEAD)
     tui_sha=$(sha256sum "$TUI_ZOO" | awk '{print $1}')
     howl_head=$(git -C "$REPO_ROOT" rev-parse HEAD)
     wmio_sha=$(sha256sum "$WMIO" | awk '{print $1}')
-    HORSE_VERSION=$version HORSE_EXECUTABLE=$executable HORSE_SHA=$executable_sha \
+    HORSE_VERSION=$version HORSE_EXECUTABLE=$executable HORSE_SHA=$executable_sha HORSE_CONFIG_SHA=$config_sha HOWL_BRIDGE_SHA=$howl_bridge_sha \
     TUI_HEAD=$tui_head TUI_SHA=$tui_sha HOWL_HEAD=$howl_head WMIO_SHA=$wmio_sha \
     RUN_DIR=$run_dir HORSE=$horse DOSE=$dose STABLE=$stable ROOT_PID=$root_pid RECT=$rect \
     COLS=$COLS ROWS=$ROWS FPS=$FPS DURATION_MS=$DURATION_MS GLYPH_SET=$GLYPH_SET \
@@ -176,6 +216,8 @@ print(json.dumps({
   "horse_version":os.environ["HORSE_VERSION"],
   "horse_executable":os.environ["HORSE_EXECUTABLE"],
   "horse_sha256":os.environ["HORSE_SHA"],
+  "benchmark_config_sha256":os.environ["HORSE_CONFIG_SHA"],
+  "howl_bridge_sha256":os.environ["HOWL_BRIDGE_SHA"] or None,
   "root_pid":int(os.environ["ROOT_PID"]),
   "stable_window_id":os.environ["STABLE"],
   "monitor":os.environ["MONITOR"],
@@ -525,7 +567,7 @@ doctor() {
     printf 'workload: poison cols=%s rows=%s fps=%s duration_ms=%s glyph_set=%s sync=%s\n' "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
     printf 'tui-zoo: %s head=%s sha256=%s\n' "$TUI_ZOO" "$(git -C "$HOME_DIR/personal/tui-zoo" rev-parse --short HEAD)" "$(sha256sum "$TUI_ZOO" | awk '{print $1}')"
     local h
-    for h in "${HORSES[@]}"; do printf '%-10s %s\n' "$h" "$(horse_version "$h")"; done
+    for h in "${HORSES[@]}"; do printf '%-10s %s config=%s\n' "$h" "$(horse_version "$h")" "$(horse_config_digest "$h")"; done
 }
 
 plan() {

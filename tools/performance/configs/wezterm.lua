@@ -1,0 +1,22 @@
+local wezterm = require 'wezterm'
+return {
+  font = wezterm.font('IosevkaTerm Nerd Font', { weight = 'Regular' }),
+  font_size = 7.0,
+  line_height = 1.10,
+  harfbuzz_features = { 'calt=0', 'clig=0', 'liga=0', 'dlig=0' },
+  front_end = 'OpenGL',
+  webgpu_power_preference = 'HighPerformance',
+  max_fps = 240,
+  animation_fps = 1,
+  scrollback_lines = 4096,
+  enable_tab_bar = false,
+  use_fancy_tab_bar = false,
+  window_decorations = 'NONE',
+  window_padding = { left = 0, right = 0, top = 0, bottom = 0 },
+  cursor_blink_rate = 0,
+  enable_scroll_bar = false,
+  audible_bell = 'Disabled',
+  check_for_updates = false,
+  automatically_reload_config = false,
+  window_close_confirmation = 'NeverPrompt',
+}
