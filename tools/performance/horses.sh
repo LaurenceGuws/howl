@@ -220,8 +220,13 @@ root=int(sys.argv[1]); output=Path(sys.argv[2]); stop=Path(sys.argv[3]); interva
 hz=os.sysconf(os.sysconf_names['SC_CLK_TCK']); ncpu=os.cpu_count() or 1
 
 def children(pid):
-    try:return [int(x) for x in Path(f'/proc/{pid}/task/{pid}/children').read_text().split()]
-    except:return []
+    result=set()
+    try:
+        for path in Path(f'/proc/{pid}/task').glob('*/children'):
+            try: result.update(int(x) for x in path.read_text().split())
+            except: pass
+    except: pass
+    return list(result)
 
 def tree(pid):
     out=[]; stack=[pid]; seen=set()
