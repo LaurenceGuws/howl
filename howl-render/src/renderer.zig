@@ -850,7 +850,7 @@ pub fn frame(
         if (buffers.pixels.len < atlas.pixels.len) return error.PixelLimit;
     }
 
-    var projected = try frame_vocabulary.project(
+    var projected = try frame_vocabulary.projectPrepared(
         impl.surface,
         impl.commands[0..impl.command_count],
         buffers.commands,

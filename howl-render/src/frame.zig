@@ -168,6 +168,47 @@ pub fn project(
     return commands[0..used];
 }
 
+/// Projects one already-capacity-bounded frame input list in a single pass.
+///
+/// Unlike `project`, this helper may modify `commands` before a later input
+/// validation error is returned. Callers must therefore use private scratch and
+/// publish only after success. `commands.len >= inputs.len` is required so
+/// visibility filtering can never exhaust destination storage.
+pub fn projectPrepared(
+    surface: Size,
+    inputs: []const Input,
+    commands: []Command,
+) Error![]const Command {
+    if (surface.width == 0 or surface.height == 0) return error.InvalidSurface;
+    if (commands.len < inputs.len) return error.InsufficientCommands;
+    const command_bytes = try bytesFor(commands.len, @sizeOf(Command));
+    const input_bytes = try bytesFor(inputs.len, @sizeOf(Input));
+    if (overlaps(@intFromPtr(commands.ptr), command_bytes, @intFromPtr(inputs.ptr), input_bytes))
+        return error.AliasedStorage;
+
+    var used: usize = 0;
+    for (inputs) |input| {
+        const visible = (try visibleRect(input, surface)) orelse continue;
+        commands[used] = switch (input) {
+            .solid => |value| .{ .solid = .{ .rect = visible, .color = value.color } },
+            .alpha_mask => |value| .{ .alpha_mask = .{
+                .destination = value.destination,
+                .clip = visible,
+                .resource = value.resource,
+                .color = value.color,
+                .cursor_component = value.cursor_component,
+            } },
+            .rgba => |value| .{ .rgba = .{
+                .destination = value.destination,
+                .clip = visible,
+                .resource = value.resource,
+            } },
+        };
+        used += 1;
+    }
+    return commands[0..used];
+}
+
 pub fn residencyMatches(
     residency: []const Residency,
     resource: ResourceRef,
@@ -309,4 +350,74 @@ fn overlaps(a: usize, a_len: usize, b: usize, b_len: usize) bool {
     if (a_len == 0 or b_len == 0) return false;
     if (a > std.math.maxInt(usize) - a_len or b > std.math.maxInt(usize) - b_len) return true;
     return a < b + b_len and b < a + a_len;
+}
+
+test "prepared projection equals transactional projection for valid inputs" {
+    const alpha_resource = ResourceView{
+        .resource = .{
+            .resource = try ResourceId.init(1),
+            .generation = @fromBackingInt(1),
+        },
+        .format = .alpha8,
+        .size = .{ .width = 16, .height = 16 },
+        .source = .{ .x = 1, .y = 2, .width = 4, .height = 5 },
+    };
+    const rgba_resource = ResourceView{
+        .resource = .{
+            .resource = try ResourceId.init(2),
+            .generation = @fromBackingInt(7),
+        },
+        .format = .rgba8,
+        .size = .{ .width = 8, .height = 8 },
+    };
+    var inputs = [_]Input{
+        .{ .solid = .{
+            .rect = .{ .x = -2, .y = 1, .width = 6, .height = 3 },
+            .clip = .{ .x = 0, .y = 0, .width = 8, .height = 4 },
+            .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        } },
+        .{ .alpha_mask = .{
+            .destination = .{ .x = 2, .y = -1, .width = 4, .height = 4 },
+            .clip = .{ .x = 1, .y = 0, .width = 6, .height = 4 },
+            .resource = alpha_resource,
+            .color = .{ .r = 9, .g = 8, .b = 7, .a = 255 },
+            .cursor_component = true,
+        } },
+        .{ .rgba = .{
+            .destination = .{ .x = 6, .y = 2, .width = 4, .height = 3 },
+            .clip = .{ .x = 0, .y = 0, .width = 8, .height = 4 },
+            .resource = rgba_resource,
+        } },
+        .{ .solid = .{
+            .rect = .{ .x = 20, .y = 20, .width = 2, .height = 2 },
+            .clip = .{ .x = 20, .y = 20, .width = 2, .height = 2 },
+            .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
+        } },
+    };
+    var expected: [inputs.len]Command = undefined;
+    var actual: [inputs.len]Command = undefined;
+    const surface: Size = .{ .width = 8, .height = 4 };
+    const transactional = try project(surface, &inputs, &expected);
+    const prepared = try projectPrepared(surface, &inputs, &actual);
+    try std.testing.expectEqualDeep(transactional, prepared);
+}
+
+test "prepared projection requires capacity for every input" {
+    var inputs = [_]Input{
+        .{ .solid = .{
+            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .color = .{ .r = 1, .g = 1, .b = 1, .a = 255 },
+        } },
+        .{ .solid = .{
+            .rect = .{ .x = 4, .y = 4, .width = 1, .height = 1 },
+            .clip = .{ .x = 4, .y = 4, .width = 1, .height = 1 },
+            .color = .{ .r = 2, .g = 2, .b = 2, .a = 255 },
+        } },
+    };
+    var output: [1]Command = undefined;
+    try std.testing.expectError(
+        error.InsufficientCommands,
+        projectPrepared(.{ .width = 2, .height = 2 }, &inputs, &output),
+    );
 }
