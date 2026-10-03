@@ -420,10 +420,79 @@ wait_pid_exit() {
 from pathlib import Path
 import sys,time
 pid=sys.argv[1]; deadline=time.monotonic()+int(sys.argv[2])/1000
+def live(pid):
+    path=Path('/proc/'+pid+'/stat')
+    try:
+        text=path.read_text(); end=text.rfind(')')
+        return end >= 0 and text[end+2:].split()[0] != 'Z'
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        return False
 while time.monotonic()<deadline:
-    if not Path('/proc/'+pid).exists(): raise SystemExit(0)
+    if not live(pid): raise SystemExit(0)
     time.sleep(.05)
 raise SystemExit(1)
+PYIN
+}
+
+terminate_process_tree() {
+    local root_pid=$1 receipt=$2
+    python3 - "$root_pid" "$receipt" <<'PYIN'
+import json, os, signal, sys, time
+from pathlib import Path
+
+root=int(sys.argv[1]); receipt=Path(sys.argv[2])
+
+def children(pid):
+    out=set()
+    task=Path(f'/proc/{pid}/task')
+    if not task.exists(): return out
+    for path in task.glob('*/children'):
+        try: out.update(int(x) for x in path.read_text().split())
+        except (FileNotFoundError, ProcessLookupError, ValueError): pass
+    return out
+
+def tree(pid):
+    out=[]; stack=[pid]; seen=set()
+    while stack:
+        current=stack.pop()
+        if current in seen: continue
+        seen.add(current)
+        if not Path(f'/proc/{current}').exists(): continue
+        out.append(current)
+        stack.extend(children(current))
+    return out
+
+def process_live(pid):
+    try:
+        text=Path(f'/proc/{pid}/stat').read_text(); end=text.rfind(')')
+        return end >= 0 and text[end+2:].split()[0] != 'Z'
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        return False
+
+def alive(pids):
+    return [p for p in pids if process_live(p)]
+
+captured=tree(root)
+for sig in (signal.SIGTERM, signal.SIGKILL):
+    remaining=alive(captured)
+    if not remaining: break
+    # Descendants first keeps an interactive shell from surviving a terminal
+    # parent long enough to be reparented outside the captured tree.
+    for pid in reversed(remaining):
+        try: os.kill(pid, sig)
+        except ProcessLookupError: pass
+        except PermissionError: pass
+    deadline=time.monotonic() + (1.5 if sig == signal.SIGTERM else .5)
+    while time.monotonic() < deadline and alive(captured): time.sleep(.025)
+
+remaining=alive(captured)
+receipt.write_text(json.dumps({
+    'schema':'howl-performance-index/process-tree-cleanup-v1',
+    'root_pid':root,
+    'captured_pids':captured,
+    'remaining_pids':remaining,
+},separators=(',',':'))+'\n')
+raise SystemExit(0 if not remaining else 1)
 PYIN
 }
 
@@ -483,8 +552,9 @@ probe_one() {
     cat "$run_dir/probe.json"
     touch "$run_dir/release"
     sleep .10
+    terminate_process_tree "$root_pid" "$run_dir/process-tree-cleanup.json" || true
     if wmio_data window --stable-id "$stable" >/dev/null 2>&1; then
-        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" 2> "$run_dir/window-close.stderr" || true
     fi
     if ! wait_pid_exit "$launcher_pid" 3000; then kill "$launcher_pid" 2>/dev/null || true; fi
     if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null || true; fi
@@ -595,8 +665,9 @@ run_one() {
 
     touch "$run_dir/release"
     sleep .15
+    terminate_process_tree "$root_pid" "$run_dir/process-tree-cleanup.json" || true
     if wmio_data window --stable-id "$stable" >/dev/null 2>&1; then
-        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
+        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" 2> "$run_dir/window-close.stderr" || true
     fi
     if ! wait_pid_exit "$launcher_pid" 3000; then
         kill "$launcher_pid" 2>/dev/null || true
