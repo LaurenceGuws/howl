@@ -596,6 +596,7 @@ App :: struct {
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
     canvas_geometry: ^Canvas_Geometry_Scratch,
+    flush_canvas_geometry_batches: bool,
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_fonts: Desktop_Fonts,
@@ -1488,12 +1489,17 @@ canvas_geometry_append :: proc(
     quad_count^ += 1
 }
 
+renderer_needs_bounded_geometry_queue :: proc(name: string) -> bool {
+    return name == "opengl" || name == "opengles2"
+}
+
 canvas_geometry_flush :: proc(
     renderer: ^SDL.Renderer,
     texture: ^SDL.Texture,
     clip_value: SDL.Rect,
     scratch: ^Canvas_Geometry_Scratch,
     quad_count: ^int,
+    flush_render_queue: bool,
 ) -> bool {
     if quad_count^ == 0 do return true
     clip := clip_value
@@ -1506,6 +1512,9 @@ canvas_geometry_flush :: proc(
         &scratch.indices[0],
         c.int(quad_count^ * 6),
     )
+    if ok && flush_render_queue {
+        ok = SDL.FlushRenderer(renderer)
+    }
     quad_count^ = 0
     return ok
 }
@@ -1555,7 +1564,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         }
         if command.tag == 0 {
             if geometry_active && geometry_count != 0 {
-                if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+                if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
                 geometry_active = false
             }
             _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
@@ -1593,7 +1602,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             compatible := geometry_active && geometry_resource == resource && canvas_rect_equal(geometry_clip, clip)
             if !compatible || geometry_count == CANVAS_GEOMETRY_QUADS {
                 if geometry_active && geometry_count != 0 {
-                    if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+                    if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
                     geometry_active = false
                 }
                 geometry_resource = resource
@@ -1605,7 +1614,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         }
 
         if geometry_active && geometry_count != 0 {
-            if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+            if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
             geometry_active = false
         }
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
@@ -1620,7 +1629,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         _ = SDL.RenderTexture(app.renderer, resource.texture, &source, &destination)
     }
     if geometry_active && geometry_count != 0 {
-        if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+        if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
     }
     return true
 }
@@ -6989,6 +6998,7 @@ main :: proc() {
     app := App{
         window = window,
         renderer = renderer,
+        flush_canvas_geometry_batches = renderer_needs_bounded_geometry_queue(renderer_name_text),
         ui_font = ui_font,
         terminal_font = terminal_font,
         terminal_fonts = terminal_fonts,

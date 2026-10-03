@@ -5,6 +5,16 @@ import "core:testing"
 import SDL "vendor:sdl3"
 
 @(test)
+gl_renderers_bound_canvas_geometry_submission_queue :: proc(t: ^testing.T) {
+    testing.expect(t, renderer_needs_bounded_geometry_queue("opengl"))
+    testing.expect(t, renderer_needs_bounded_geometry_queue("opengles2"))
+    testing.expect(t, !renderer_needs_bounded_geometry_queue("direct3d11"))
+    testing.expect(t, !renderer_needs_bounded_geometry_queue("vulkan"))
+    testing.expect(t, !renderer_needs_bounded_geometry_queue("gpu"))
+    testing.expect(t, !renderer_needs_bounded_geometry_queue("software"))
+}
+
+@(test)
 contained_texture_quads_share_pane_scissor_without_changing_geometry :: proc(t: ^testing.T) {
     pane := SDL.Rect{0, 46, 960, 700}
     cell := SDL.Rect{106, 102, 11, 24}
