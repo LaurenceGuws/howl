@@ -4108,19 +4108,26 @@ const TerminalStream = struct {
             'H', 'f' => {
                 const row = paramAtOrDefault1(params, 0);
                 const col = paramAtOrDefault1(params, 1);
-                const changed = self.terminal.screen_state.active().moveCursor(.{ .cursor_position = .{
-                    .row = row - 1,
-                    .col = col - 1,
-                } });
+                const changed = self.terminal.screen_state.active().moveCursorPosition(
+                    row - 1,
+                    col - 1,
+                );
                 return .{
                     .changed = changed,
                     .suppress_owner_fallback = true,
                 };
             },
             'm' => {
-                const changed = self.terminal.screen_state.active().applySgr(
-                    screenSgrOperands(params, csi.separators),
-                );
+                const screen = self.terminal.screen_state.active();
+                const changed = if (params.len == 3 and
+                    csi.separators.eql(parser_mod.CsiSeparatorList.empty) and
+                    params[0] == 38 and params[1] == 5)
+                    @call(.always_inline, Screen.applyIndexedForeground, .{ screen, params[2] })
+                else
+                    @call(.always_inline, Screen.applySgr, .{
+                        screen,
+                        screenSgrOperands(params, csi.separators),
+                    });
                 return .{
                     .changed = changed,
                     .mutations = .{ .text = changed },
@@ -4171,7 +4178,7 @@ const TerminalStream = struct {
         const mapped = self.mapCodepoint(cp);
         if (mapped <= 0x7f) {
             const ascii: [1]u8 = .{@intCast(mapped)};
-            self.terminal.screen_state.active().applyScreen(.{ .write_text = ascii[0..] });
+            self.terminal.screen_state.active().writeText(ascii[0..]);
             return .{
                 .changed = true,
                 .mutations = .{ .text = true },
@@ -8922,7 +8929,9 @@ const RouteOwnerTests = struct {
         const print_effect = try stream.applyPrint('A');
         try std.testing.expect(print_effect.changed);
         try std.testing.expect(print_effect.mutations.text);
-        try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.active().cellInfoAt(2, 4).codepoint);
+        const written = terminal.screen_state.active().cellInfoAt(2, 4);
+        try std.testing.expectEqual(@as(u21, 'A'), written.codepoint);
+        try std.testing.expectEqual(Screen.Color.indexed(196), written.attrs.fg);
 
         var rejected = cup;
         rejected.final = 'J';

@@ -1357,18 +1357,29 @@ pub const Screen = struct {
                 self.setCursorRowClamped(self.resolveAbsoluteRow(row));
                 self.cursor.markAbsolutePositionTimestamp();
             },
-            .cursor_position => |pos| {
-                const row = @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1);
-                self.cursor.setPositionByClient(
-                    row,
-                    @min(self.resolveAbsoluteCol(pos.col), self.lineRightBoundary(row)),
-                );
-                self.cursor.markAbsolutePositionTimestamp();
-            },
+            .cursor_position => |pos| self.applyCursorPosition(pos.row, pos.col),
             // zig-audit: acknowledge unreachable
             // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
             else => unreachable,
         }
+    }
+
+    fn applyCursorPosition(self: *Screen, row: u16, col: u16) void {
+        const resolved_row = @min(self.resolveAbsoluteRow(row), self.rows -| 1);
+        self.cursor.setPositionByClient(
+            resolved_row,
+            @min(self.resolveAbsoluteCol(col), self.lineRightBoundary(resolved_row)),
+        );
+        self.cursor.markAbsolutePositionTimestamp();
+    }
+
+    /// Applies one absolute cursor position and reports exact cursor or pending-wrap mutation.
+    pub inline fn moveCursorPosition(self: *Screen, row: u16, col: u16) bool {
+        const cursor_before = self.cursor;
+        const wrap_before = self.wrap_pending;
+        self.wrap_pending = false;
+        self.applyCursorPosition(row, col);
+        return !std.meta.eql(cursor_before, self.cursor) or wrap_before != self.wrap_pending;
     }
 
     // Applies one cursor-positioning event and reports exact position or pending-wrap mutation.
@@ -3002,6 +3013,13 @@ pub const Screen = struct {
     // -------------------------------------------------------------------------
     // Rendition
     // -------------------------------------------------------------------------
+
+    /// Applies one indexed foreground rendition with the same clamping as SGR 38;5;n.
+    pub inline fn applyIndexedForeground(self: *Screen, value: i32) bool {
+        const before = self.current_attrs.fg;
+        self.current_attrs.fg = .indexed(clampByte(value));
+        return !std.meta.eql(before, self.current_attrs.fg);
+    }
 
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
     pub fn applySgr(self: *Screen, operands: SgrOperands) bool {

@@ -50,10 +50,14 @@ pub const State = struct {
         if (codepoint >= 0x20 and codepoint <= 0x7e) {
             const slot = self.single_shift orelse self.gl_index;
             self.single_shift = null;
-            return mapCharset(self.designations[slot], @intCast(codepoint), false);
+            const designation = self.designations[slot];
+            if (designation == 'B') return codepoint;
+            return mapCharset(designation, @intCast(codepoint), false);
         }
         if (codepoint >= 0xa0 and codepoint <= 0xfe) {
-            return mapCharset(self.designations[self.gr_index], @intCast(codepoint - 0x80), true);
+            const designation = self.designations[self.gr_index];
+            if (designation == 'B') return codepoint;
+            return mapCharset(designation, @intCast(codepoint - 0x80), true);
         }
         return codepoint;
     }

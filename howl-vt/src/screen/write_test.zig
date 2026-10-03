@@ -81,6 +81,20 @@ test "screen write: sgr applies colors and resets for later writes" {
     try std.testing.expectEqual(Screen.default_cell_attrs.fg, r.cellInfoAt(0, 1).attrs.fg);
 }
 
+test "screen write: indexed foreground owner matches SGR clamping and change reporting" {
+    const values = [_]i32{ -12, 0, 196, 999, 196 };
+    var direct = Screen.init(1, 1);
+    var generic = Screen.init(1, 1);
+    for (values) |value| {
+        const params = [_]i32{ 38, 5, value };
+        try std.testing.expectEqual(
+            generic.applySgr(operands(params[0..])),
+            direct.applyIndexedForeground(value),
+        );
+        try std.testing.expectEqualDeep(generic.current_attrs, direct.current_attrs);
+    }
+}
+
 test "screen write: style attrs and kitty underline forms apply correctly" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCells(gpa, 1, 2);
