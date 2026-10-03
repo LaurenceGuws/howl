@@ -9,8 +9,9 @@ set -euo pipefail
 
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 REPO_ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
-HOME_DIR=${HOME:?HOME is required}
+HOME_DIR=${HORSES_HOME_DIR:-${HOME:?HOME is required}}
 WMIO=${WMIO:-"$HOME_DIR/.local/bin/wmio"}
+GRAPHICAL_ENVIRONMENT=${HORSES_ENVIRONMENT:-physical}
 TUI_ZOO=${TUI_ZOO:-"$HOME_DIR/personal/tui-zoo/zig-out/bin/tui-zoo"}
 EVIDENCE_ROOT=${HORSES_EVIDENCE_ROOT:-"$HOME_DIR/.local/state/howl-performance-index"}
 HOWL_BIN=${HOWL_BIN:-"$EVIDENCE_ROOT/howl-fast/bin/howl-odin"}
@@ -43,6 +44,8 @@ commands:
   __runner ...            internal terminal-side workload entrypoint
 
 Environment:
+  HORSES_ENVIRONMENT=physical     WMIO environment id (default physical)
+  HORSES_HOME_DIR=/home/home       real workspace home inside managed environments
   HORSES_MONITOR=DP-1             benchmark monitor (default DP-1)
   HORSES_RECT=auto|X,Y,W,H        exact WMIO frame rectangle; auto=monitor geometry
   HORSES_COLS=192 HORSES_ROWS=47  required PTY/workload geometry
@@ -105,6 +108,26 @@ horse_argv() {
     esac
 }
 
+launch_horse() {
+    local run_dir=$1
+    shift
+    local -a argv=("$@")
+    if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then
+        "${argv[@]}" >"$run_dir/launcher.stdout" 2>"$run_dir/launcher.stderr" &
+        launcher_pid=$!
+        return
+    fi
+    local launch_json="$run_dir/managed-launch.json"
+    wmio_data launch -- "${argv[@]}" > "$launch_json"
+    : > "$run_dir/launcher.stdout"
+    : > "$run_dir/launcher.stderr"
+    launcher_pid=$(python3 - "$launch_json" <<'PYIN'
+import json,sys
+print(json.load(open(sys.argv[1]))["data"]["pid"])
+PYIN
+)
+}
+
 horse_executable() {
     local horse=$1
     case "$horse" in
@@ -144,7 +167,7 @@ horse_version() {
 }
 
 wmio_data() {
-    "$WMIO" "$@"
+    "$WMIO" --environment "$GRAPHICAL_ENVIRONMENT" "$@"
 }
 
 monitor_rect() {
@@ -161,13 +184,13 @@ window_ids() {
 
 new_window_id() {
     local before=$1 timeout_ms=${2:-10000}
-    python3 - "$WMIO" "$before" "$timeout_ms" <<'PY'
+    python3 - "$WMIO" "$GRAPHICAL_ENVIRONMENT" "$before" "$timeout_ms" <<'PY'
 import json, subprocess, sys, time
-wmio, before_raw, timeout_raw = sys.argv[1:]
+wmio, environment, before_raw, timeout_raw = sys.argv[1:]
 before=set(filter(None, before_raw.splitlines()))
 deadline=time.monotonic()+int(timeout_raw)/1000
 while time.monotonic() < deadline:
-    p=subprocess.run([wmio,"windows"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    p=subprocess.run([wmio,"--environment",environment,"windows"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if p.returncode == 0:
         data=json.loads(p.stdout).get("data",[])
         fresh=[w for w in data if w.get("stable_id") not in before and w.get("mapped",True)]
@@ -206,7 +229,7 @@ record_metadata() {
     TUI_HEAD=$tui_head TUI_SHA=$tui_sha HOWL_HEAD=$howl_head WMIO_SHA=$wmio_sha \
     RUN_DIR=$run_dir HORSE=$horse DOSE=$dose STABLE=$stable ROOT_PID=$root_pid RECT=$rect \
     COLS=$COLS ROWS=$ROWS FPS=$FPS DURATION_MS=$DURATION_MS GLYPH_SET=$GLYPH_SET \
-    SYNCHRONIZED_OUTPUT=$SYNCHRONIZED_OUTPUT MONITOR=$MONITOR \
+    SYNCHRONIZED_OUTPUT=$SYNCHRONIZED_OUTPUT MONITOR=$MONITOR GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT \
     python3 <<'PY' > "$run_dir/metadata.json"
 import json, os, platform, time
 print(json.dumps({
@@ -220,6 +243,7 @@ print(json.dumps({
   "howl_bridge_sha256":os.environ["HOWL_BRIDGE_SHA"] or None,
   "root_pid":int(os.environ["ROOT_PID"]),
   "stable_window_id":os.environ["STABLE"],
+  "graphical_environment":os.environ["GRAPHICAL_ENVIRONMENT"],
   "monitor":os.environ["MONITOR"],
   "window_rect":os.environ["RECT"],
   "workload":{
@@ -418,8 +442,7 @@ probe_one() {
 
     local -a argv
     mapfile -d '' -t argv < <(horse_argv "$horse")
-    "${argv[@]}" >"$run_dir/launcher.stdout" 2>"$run_dir/launcher.stderr" &
-    launcher_pid=$!
+    launch_horse "$run_dir" "${argv[@]}"
     printf '%s\n' "$launcher_pid" > "$run_dir/launcher.pid"
 
     stable=$(new_window_id "$before" 12000) || {
@@ -450,7 +473,7 @@ probe_one() {
         }
     fi
 
-    printf -v typed '%q __probe %q' "$SELF" "$run_dir"
+    printf -v typed 'HORSES_HOME_DIR=%q %q __probe %q' "$HOME_DIR" "$SELF" "$run_dir"
     wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
     wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
     wait_for_file "$run_dir/probe.json" 5000 || {
@@ -464,7 +487,7 @@ probe_one() {
         wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" || true
     fi
     if ! wait_pid_exit "$launcher_pid" 3000; then kill "$launcher_pid" 2>/dev/null || true; fi
-    wait "$launcher_pid" 2>/dev/null || true
+    if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null || true; fi
 }
 
 calibrate() {
@@ -500,8 +523,7 @@ run_one() {
 
     local -a argv
     mapfile -d '' -t argv < <(horse_argv "$horse")
-    "${argv[@]}" >"$run_dir/launcher.stdout" 2>"$run_dir/launcher.stderr" &
-    launcher_pid=$!
+    launch_horse "$run_dir" "${argv[@]}"
     printf '%s\n' "$launcher_pid" > "$run_dir/launcher.pid"
 
     stable=$(new_window_id "$before" 12000) || {
@@ -543,8 +565,8 @@ run_one() {
     # explicit go gate. No workload bytes are emitted before sampling starts.
 
     local typed
-    printf -v typed '%q __runner %q %q %q %q %q %q %q %q' \
-        "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
+    printf -v typed 'HORSES_HOME_DIR=%q %q __runner %q %q %q %q %q %q %q %q' \
+        "$HOME_DIR" "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
     wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
     wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
 
@@ -579,7 +601,7 @@ run_one() {
     if ! wait_pid_exit "$launcher_pid" 3000; then
         kill "$launcher_pid" 2>/dev/null || true
     fi
-    wait "$launcher_pid" 2>/dev/null || true
+    if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null || true; fi
 }
 
 doctor() {
@@ -592,6 +614,7 @@ doctor() {
     [[ -z $stale_tui ]] || fail "tui-zoo binary is older than source: $stale_tui (run: cd ~/personal/tui-zoo && zig build install -Doptimize=ReleaseFast)"
     rect=$(resolved_rect) || fail "benchmark monitor not found: $MONITOR"
     backend=$(wmio_data capabilities | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d["data"]["backend"]; print("%s %s" % (b["name"],b["version"]))')
+    printf 'environment: %s\n' "$GRAPHICAL_ENVIRONMENT"
     printf 'track backend: %s\n' "$backend"
     printf 'monitor: %s rect=%s\n' "$MONITOR" "$rect"
     printf 'workload: poison cols=%s rows=%s fps=%s duration_ms=%s glyph_set=%s sync=%s\n' "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
@@ -604,10 +627,10 @@ plan() {
     local backend rect
     backend=$(wmio_data capabilities | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d["data"]["backend"]; print(b["name"]+"@"+b["version"])')
     rect=$(resolved_rect)
-    BACKEND=$backend RECT=$rect python3 - "${HORSES[*]}" "${DOSES[*]}" "$MONITOR" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" <<'PY'
+    BACKEND=$backend RECT=$rect GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT python3 - "${HORSES[*]}" "${DOSES[*]}" "$MONITOR" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" <<'PY'
 import json,os,sys
 horses=sys.argv[1].split(); doses=[int(x) for x in sys.argv[2].split()]
-print(json.dumps({"schema":"howl-performance-index/plan-v1","track":{"backend":os.environ["BACKEND"],"monitor":sys.argv[3],"window_rect":os.environ["RECT"]},"workload":{"name":"poison","cols":int(sys.argv[4]),"rows":int(sys.argv[5]),"fps":int(sys.argv[6]),"duration_ms":int(sys.argv[7]),"glyph_set":sys.argv[8],"synchronized_output":sys.argv[9]=="1","doses":doses},"horses":horses,"trials":[{"horse":h,"dose":d} for h in horses for d in doses]},separators=(",",":")))
+print(json.dumps({"schema":"howl-performance-index/plan-v1","track":{"environment":os.environ["GRAPHICAL_ENVIRONMENT"],"backend":os.environ["BACKEND"],"monitor":sys.argv[3],"window_rect":os.environ["RECT"]},"workload":{"name":"poison","cols":int(sys.argv[4]),"rows":int(sys.argv[5]),"fps":int(sys.argv[6]),"duration_ms":int(sys.argv[7]),"glyph_set":sys.argv[8],"synchronized_output":sys.argv[9]=="1","doses":doses},"horses":horses,"trials":[{"horse":h,"dose":d} for h in horses for d in doses]},separators=(",",":")))
 PY
 }
 

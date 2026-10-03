@@ -25,6 +25,45 @@ set -a; source tools/performance/tracks/kde.env; set +a
 
 Raw receipts remain authoritative. Any later scalar index must preserve cadence survival, CPU, memory and topology as separate visible dimensions.
 
+
+## Isolated visual KWin lab
+
+Autonomous Howl work should not consume Captain's physical desktop. WMIO can
+route the same marshal through a managed KWin compositor with its own Wayland,
+D-Bus/XDG roots, and private EIS seat.
+
+The persistent visual lab is created outside the repository:
+
+```bash
+wmio create-environment private-howl-lab --width 1920 --height 1080 --scale 1 --visible
+```
+
+`--visible` keeps the managed compositor isolated while nesting its output as
+one host window so Captain can watch or intervene. Input issued with
+`wmio --environment private-howl-lab ...` stays on the private seat and does
+not use Home's physical keyboard/mouse path.
+
+Source `tracks/kwin-private-visible.env` for this lane:
+
+```bash
+set -a; source tools/performance/tracks/kwin-private-visible.env; set +a
+./tools/performance/horses.sh doctor
+./tools/performance/horses.sh probe howl
+./tools/performance/horses.sh run howl 16
+```
+
+`HORSES_ENVIRONMENT` defaults to `physical`; changing it routes all WMIO
+observation/mutation and process launch through that managed environment.
+Managed clients are launched with `wmio --environment ID launch`, never by
+inheriting the caller's physical Wayland session. `HORSES_HOME_DIR` preserves
+the real workspace/evidence root inside managed environments whose own `HOME`
+is intentionally private.
+
+The visual nested client area is presently 1912x1047, with Howl probing at
+380x76, so the track retains the established 378x74 poison lattice. Treat its
+numbers as a separate KWin-private track; do not splice them into the earlier
+physical 1920x1036 KDE index without an explicit cross-track qualification.
+
 ## Benchmark Howl build
 
 `build-howl-fast.sh` creates a self-contained race binary under `~/.local/state/howl-performance-index/howl-fast`: native Zig bridge/dependency graph in ReleaseFast and Odin `-o:speed` without the daily `-debug` safety instrumentation. The normal dogfood binary is not modified.
