@@ -140,6 +140,13 @@ Canvas_Texture :: struct {
     height: u16,
 }
 
+CANVAS_GEOMETRY_QUADS :: 2048
+
+Canvas_Geometry_Scratch :: struct {
+    vertices: [CANVAS_GEOMETRY_QUADS * 4]SDL.Vertex,
+    indices: [CANVAS_GEOMETRY_QUADS * 6]c.int,
+}
+
 History_Scrollbar_Geometry :: struct {
     track: SDL.FRect,
     thumb: SDL.FRect,
@@ -569,6 +576,7 @@ App :: struct {
     render_dispatcher: ^Render_Dispatcher,
     window: ^SDL.Window,
     renderer: ^SDL.Renderer,
+    canvas_geometry: ^Canvas_Geometry_Scratch,
     ui_font: ^TTF.Font,
     terminal_font: ^TTF.Font,
     terminal_fonts: Desktop_Fonts,
@@ -1382,6 +1390,72 @@ rgba_channel :: proc(bits: u32, shift: u32) -> u8 {
     return u8((bits >> shift) & 0xff)
 }
 
+canvas_rect_equal :: proc(a, b: SDL.Rect) -> bool {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h
+}
+
+canvas_command_color :: proc(rgba: u32) -> SDL.FColor {
+    return SDL.FColor{
+        f32(rgba_channel(rgba, 0)) / 255.0,
+        f32(rgba_channel(rgba, 8)) / 255.0,
+        f32(rgba_channel(rgba, 16)) / 255.0,
+        f32(rgba_channel(rgba, 24)) / 255.0,
+    }
+}
+
+canvas_geometry_append :: proc(
+    command: Canvas_Command_Info,
+    destination: SDL.FRect,
+    scratch: ^Canvas_Geometry_Scratch,
+    quad_count: ^int,
+) {
+    vertex := quad_count^ * 4
+    index := quad_count^ * 6
+    base := c.int(vertex)
+    u0 := f32(command.source_x) / f32(command.resource_width)
+    v0 := f32(command.source_y) / f32(command.resource_height)
+    u1 := f32(command.source_x + command.source_width) / f32(command.resource_width)
+    v1 := f32(command.source_y + command.source_height) / f32(command.resource_height)
+    x0 := destination.x
+    y0 := destination.y
+    x1 := destination.x + destination.w
+    y1 := destination.y + destination.h
+    color := canvas_command_color(command.color_rgba)
+    scratch.vertices[vertex + 0] = SDL.Vertex{position = {x0, y0}, color = color, tex_coord = {u0, v0}}
+    scratch.vertices[vertex + 1] = SDL.Vertex{position = {x1, y0}, color = color, tex_coord = {u1, v0}}
+    scratch.vertices[vertex + 2] = SDL.Vertex{position = {x1, y1}, color = color, tex_coord = {u1, v1}}
+    scratch.vertices[vertex + 3] = SDL.Vertex{position = {x0, y1}, color = color, tex_coord = {u0, v1}}
+    scratch.indices[index + 0] = base + 0
+    scratch.indices[index + 1] = base + 1
+    scratch.indices[index + 2] = base + 2
+    scratch.indices[index + 3] = base + 0
+    scratch.indices[index + 4] = base + 2
+    scratch.indices[index + 5] = base + 3
+    quad_count^ += 1
+}
+
+canvas_geometry_flush :: proc(
+    renderer: ^SDL.Renderer,
+    texture: ^SDL.Texture,
+    clip_value: SDL.Rect,
+    scratch: ^Canvas_Geometry_Scratch,
+    quad_count: ^int,
+) -> bool {
+    if quad_count^ == 0 do return true
+    clip := clip_value
+    _ = SDL.SetRenderClipRect(renderer, &clip)
+    ok := SDL.RenderGeometry(
+        renderer,
+        texture,
+        &scratch.vertices[0],
+        c.int(quad_count^ * 4),
+        &scratch.indices[0],
+        c.int(quad_count^ * 6),
+    )
+    quad_count^ = 0
+    return ok
+}
+
 draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -> bool {
     if !update_canvas(app, view) && !canvas_frame_available(view) {
         return false
@@ -1412,6 +1486,12 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
     defer {
         _ = SDL.SetRenderClipRect(app.renderer, nil)
     }
+
+    geometry_count := 0
+    geometry_resource: ^Canvas_Texture = nil
+    geometry_clip: SDL.Rect
+    geometry_active := false
+
     for command in view.canvas_commands {
         destination := SDL.FRect{
             origin_x + f32(command.destination_x) / scale,
@@ -1420,6 +1500,10 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             f32(command.destination_height) / scale,
         }
         if command.tag == 0 {
+            if geometry_active && geometry_count != 0 {
+                if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+                geometry_active = false
+            }
             _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
             set_draw_color(app.renderer, SDL.Color{
                 rgba_channel(command.color_rgba, 0),
@@ -1450,6 +1534,26 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             continue
         }
         clip = canvas_effective_clip(destination, clip, pane_clip)
+
+        if command.tag == 1 {
+            compatible := geometry_active && geometry_resource == resource && canvas_rect_equal(geometry_clip, clip)
+            if !compatible || geometry_count == CANVAS_GEOMETRY_QUADS {
+                if geometry_active && geometry_count != 0 {
+                    if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+                    geometry_active = false
+                }
+                geometry_resource = resource
+                geometry_clip = clip
+                geometry_active = true
+            }
+            canvas_geometry_append(command, destination, app.canvas_geometry, &geometry_count)
+            continue
+        }
+
+        if geometry_active && geometry_count != 0 {
+            if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
+            geometry_active = false
+        }
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
         source := SDL.FRect{
             f32(command.source_x),
@@ -1457,19 +1561,12 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             f32(command.source_width),
             f32(command.source_height),
         }
-        if command.tag == 1 {
-            _ = SDL.SetTextureColorMod(
-                resource.texture,
-                rgba_channel(command.color_rgba, 0),
-                rgba_channel(command.color_rgba, 8),
-                rgba_channel(command.color_rgba, 16),
-            )
-            _ = SDL.SetTextureAlphaMod(resource.texture, rgba_channel(command.color_rgba, 24))
-        } else {
-            _ = SDL.SetTextureColorMod(resource.texture, 255, 255, 255)
-            _ = SDL.SetTextureAlphaMod(resource.texture, 255)
-        }
+        _ = SDL.SetTextureColorMod(resource.texture, 255, 255, 255)
+        _ = SDL.SetTextureAlphaMod(resource.texture, 255)
         _ = SDL.RenderTexture(app.renderer, resource.texture, &source, &destination)
+    }
+    if geometry_active && geometry_count != 0 {
+        if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count) do return false
     }
     return true
 }
@@ -6825,6 +6922,15 @@ main :: proc() {
         tab_drag_index = -1,
         pane_resize_tab = -1,
         startup_profile = 0,
+    }
+    app.canvas_geometry = new(Canvas_Geometry_Scratch)
+    if app.canvas_geometry == nil {
+        fmt.eprintln("Odin Canvas geometry scratch allocation failed")
+        return
+    }
+    defer {
+        free(app.canvas_geometry)
+        app.canvas_geometry = nil
     }
     defer {
         destroy_font_chooser(&app)

@@ -1,5 +1,6 @@
 package main
 
+import "core:c"
 import "core:testing"
 import SDL "vendor:sdl3"
 
@@ -76,4 +77,40 @@ canvas_renderer_restart_keeps_only_last_accepted_frame :: proc(t: ^testing.T) {
     testing.expect_value(t, len(view.canvas_commands), 0)
     testing.expect_value(t, view.canvas_surface_width, u16(0))
     testing.expect_value(t, view.canvas_surface_height, u16(0))
+}
+
+@(test)
+canvas_geometry_builds_exact_textured_quad :: proc(t: ^testing.T) {
+    scratch := new(Canvas_Geometry_Scratch)
+    testing.expect(t, scratch != nil)
+    defer if scratch != nil do free(scratch)
+    count := 0
+    command := Canvas_Command_Info{
+        color_rgba = 0x80402010,
+        source_x = 16,
+        source_y = 8,
+        source_width = 16,
+        source_height = 8,
+        resource_width = 64,
+        resource_height = 32,
+        tag = 1,
+    }
+    destination := SDL.FRect{10, 20, 30, 40}
+
+    canvas_geometry_append(command, destination, scratch, &count)
+
+    testing.expect_value(t, count, 1)
+    testing.expect_value(t, scratch.vertices[0].position, SDL.FPoint{10, 20})
+    testing.expect_value(t, scratch.vertices[1].position, SDL.FPoint{40, 20})
+    testing.expect_value(t, scratch.vertices[2].position, SDL.FPoint{40, 60})
+    testing.expect_value(t, scratch.vertices[3].position, SDL.FPoint{10, 60})
+    testing.expect_value(t, scratch.vertices[0].tex_coord, SDL.FPoint{0.25, 0.25})
+    testing.expect_value(t, scratch.vertices[2].tex_coord, SDL.FPoint{0.5, 0.5})
+    testing.expect_value(t, scratch.vertices[0].color, SDL.FColor{16.0 / 255.0, 32.0 / 255.0, 64.0 / 255.0, 128.0 / 255.0})
+    testing.expect_value(t, scratch.indices[0], c.int(0))
+    testing.expect_value(t, scratch.indices[1], c.int(1))
+    testing.expect_value(t, scratch.indices[2], c.int(2))
+    testing.expect_value(t, scratch.indices[3], c.int(0))
+    testing.expect_value(t, scratch.indices[4], c.int(2))
+    testing.expect_value(t, scratch.indices[5], c.int(3))
 }
