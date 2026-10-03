@@ -4098,12 +4098,44 @@ const TerminalStream = struct {
         };
     }
 
+    // Plain CUP/HVP and SGR already have exact Screen owners. Keep these
+    // common actions on that direct semantic path instead of rebuilding the
+    // same parser event through the general routing vocabulary.
+    fn applyDirectOrdinaryCsi(self: *TerminalStream, csi: parser_mod.CsiAction) ?EventEffect {
+        if (csi.private or csi.leader != 0 or csi.intermediates_len != 0) return null;
+        const params = csi.params[0..csi.count];
+        switch (csi.final) {
+            'H', 'f' => {
+                const row = paramAtOrDefault1(params, 0);
+                const col = paramAtOrDefault1(params, 1);
+                const changed = self.terminal.screen_state.active().moveCursor(.{ .cursor_position = .{
+                    .row = row - 1,
+                    .col = col - 1,
+                } });
+                return .{
+                    .changed = changed,
+                    .suppress_owner_fallback = true,
+                };
+            },
+            'm' => {
+                const changed = self.terminal.screen_state.active().applySgr(
+                    screenSgrOperands(params, csi.separators),
+                );
+                return .{
+                    .changed = changed,
+                    .mutations = .{ .text = changed },
+                };
+            },
+            else => return null,
+        }
+    }
+
     fn applyAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!EventEffect {
         return switch (action) {
             .print => |cp| self.applyPrint(cp),
             .execute => |ctrl| self.applyExecute(ctrl),
             .invalid => try self.applyEvent(.invalid_sequence),
-            .csi_dispatch => |csi| try self.applyEvent(.{ .style_change = .{
+            .csi_dispatch => |csi| self.applyDirectOrdinaryCsi(csi) orelse try self.applyEvent(.{ .style_change = .{
                 .final = csi.final,
                 .params = csi.params[0..csi.count],
                 .separators = csi.separators,
@@ -4139,7 +4171,11 @@ const TerminalStream = struct {
         const mapped = self.mapCodepoint(cp);
         if (mapped <= 0x7f) {
             const ascii: [1]u8 = .{@intCast(mapped)};
-            return try self.applyEvent(.{ .text = ascii[0..] });
+            self.terminal.screen_state.active().applyScreen(.{ .write_text = ascii[0..] });
+            return .{
+                .changed = true,
+                .mutations = .{ .text = true },
+            };
         }
         return try self.applyEvent(.{ .codepoint = mapped });
     }
@@ -8844,6 +8880,63 @@ const RouteOwnerTests = struct {
     test "actions: codepoint event maps to write_codepoint" {
         const sem = routeParserEvent(ParserEvent{ .codepoint = 0xE9 }) orelse return error.NoEvent;
         try std.testing.expectEqual(@as(u21, 0xE9), sem.write_codepoint);
+    }
+
+    test "hot ordinary stream actions keep exact owner and fallback contracts" {
+        var terminal = try Terminal.init(std.testing.allocator, 6, 12);
+        defer terminal.deinit();
+        var stream = TerminalStream.init(&terminal);
+        var params = @as([parser_mod.max_params]i32, @splat(0));
+        var intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
+
+        params[0] = 3;
+        params[1] = 5;
+        const cup = parser_mod.CsiAction{
+            .final = 'H',
+            .params = params[0..],
+            .separators = parser_mod.CsiSeparatorList.empty,
+            .count = 2,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 0,
+        };
+        const cup_effect = stream.applyDirectOrdinaryCsi(cup) orelse return error.NoEvent;
+        try std.testing.expect(cup_effect.changed);
+        try std.testing.expect(cup_effect.suppress_owner_fallback);
+        try std.testing.expect(!cup_effect.mutations.stateChanged());
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.active().cursor.row);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.active().cursor.col);
+
+        params[0] = 38;
+        params[1] = 5;
+        params[2] = 196;
+        var sgr = cup;
+        sgr.final = 'm';
+        sgr.count = 3;
+        const sgr_effect = stream.applyDirectOrdinaryCsi(sgr) orelse return error.NoEvent;
+        try std.testing.expect(sgr_effect.changed);
+        try std.testing.expect(sgr_effect.mutations.text);
+        try std.testing.expect(!sgr_effect.suppress_owner_fallback);
+
+        const print_effect = try stream.applyPrint('A');
+        try std.testing.expect(print_effect.changed);
+        try std.testing.expect(print_effect.mutations.text);
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.active().cellInfoAt(2, 4).codepoint);
+
+        var rejected = cup;
+        rejected.final = 'J';
+        try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+        rejected = cup;
+        rejected.private = true;
+        try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+        rejected = cup;
+        rejected.leader = '>';
+        try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+        intermediates[0] = ' ';
+        rejected = cup;
+        rejected.intermediates_len = 1;
+        try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
     }
 
     test "actions: DEC private application cursor enable maps true" {
