@@ -68,6 +68,8 @@ const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payloa
 // Live history_offset=0 retains only semantic row generations instead.
 const maximum_delta_cells: usize =
     protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes;
+const delta_link_word_count: usize =
+    (@as(usize, protocol.text_v1.maximum_hyperlinks) + 1 + 63) / 64;
 const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
@@ -397,6 +399,7 @@ const DeltaRowCache = struct {
     // windows lack row provenance, so they keep the previous exact-cell fallback.
     cells: []howl.Terminal.Cell = &.{},
     entries: []Entry = &.{},
+    links: []u64 = &.{},
     row_count: u16 = 0,
     column_count: u16 = 0,
     history_offset: u32 = 0,
@@ -409,6 +412,7 @@ const DeltaRowCache = struct {
     }
 
     fn clear(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
+        if (self.links.len != 0) allocator.free(self.links);
         if (self.entries.len != 0) allocator.free(self.entries);
         if (self.cells.len != 0) allocator.free(self.cells);
         self.* = .{};
@@ -426,8 +430,11 @@ const DeltaRowCache = struct {
         columns: u16,
         history_offset: u32,
     ) !void {
+        const link_word_count = std.math.mul(usize, rows, delta_link_word_count) catch
+            return error.SnapshotTooLarge;
         if (self.row_count == rows and self.column_count == columns and
-            self.history_offset == history_offset and self.entries.len == rows)
+            self.history_offset == history_offset and self.entries.len == rows and
+            self.links.len == link_word_count)
             return;
         self.clear(allocator);
         const cell_count = std.math.mul(usize, rows, columns) catch
@@ -446,6 +453,12 @@ const DeltaRowCache = struct {
             allocator.free(self.entries);
             self.entries = &.{};
         }
+        self.links = try allocator.alloc(u64, link_word_count);
+        errdefer {
+            allocator.free(self.links);
+            self.links = &.{};
+        }
+        @memset(self.links, 0);
         for (self.entries) |*entry| entry.* = .{};
         self.row_count = rows;
         self.column_count = columns;
@@ -459,6 +472,13 @@ const DeltaRowCache = struct {
         const start = @as(usize, row) * columns;
         std.debug.assert(start + columns <= self.cells.len);
         return self.cells[start .. start + columns];
+    }
+
+    fn rowLinks(self: *DeltaRowCache, row: u16) []u64 {
+        std.debug.assert(row < self.row_count);
+        const start = @as(usize, row) * delta_link_word_count;
+        std.debug.assert(start + delta_link_word_count <= self.links.len);
+        return self.links[start .. start + delta_link_word_count];
     }
 };
 
@@ -1783,7 +1803,7 @@ pub const Service = struct {
             protocol.text_v1.no_cursor_movement_age_ns
         else
             observed_ns -| terminal_view.cursor_movement_timestamp_ns;
-        var referenced_links: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+        var referenced_links: [delta_link_word_count]u64 = @splat(0);
 
         if (delta) try self.delta_rows.ensure(
             self.allocator,
@@ -1854,14 +1874,14 @@ pub const Service = struct {
                 const source = source_row orelse break :blk &.{};
                 break :blk self.delta_rows.rowCells(source, terminal_view.cols);
             } else &.{};
-
-            // Delta rows must retain current hyperlink references even when no
-            // cell bytes are emitted. Complete lanes collect links while encoding.
-            if (delta) {
-                var column: u16 = 0;
-                while (column < terminal_view.cols) : (column += 1)
-                    try noteSnapshotLink(machine, terminal_view.cellInfoAt(row, column), &referenced_links);
-            }
+            const destination_links: []u64 = if (delta)
+                self.delta_rows.rowLinks(row)
+            else
+                &.{};
+            const source_links: []const u64 = if (source_row) |source|
+                if (delta) self.delta_rows.rowLinks(source) else &.{}
+            else
+                &.{};
 
             const reusable = if (source_cache) |value|
                 delta_reuse_allowed and value.valid and
@@ -1874,10 +1894,13 @@ pub const Service = struct {
             else
                 false;
             if (reusable) {
+                if (source_row.? != row) @memcpy(destination_links, source_links);
+                mergeSnapshotLinks(&referenced_links, destination_links);
                 var unchanged_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
                 protocol.encodeTextRecordHeader(&unchanged_header, .{ .kind = .row, .payload_len = 0 });
                 try body.appendSlice(self.allocator, &unchanged_header);
             } else {
+                if (delta) @memset(destination_links, 0);
                 const record = try self.beginTextRecord(body, .row);
                 var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
                     @intFromBool(wrapped),
@@ -1889,7 +1912,10 @@ pub const Service = struct {
                 var column: u16 = 0;
                 while (column < terminal_view.cols) : (column += 1) {
                     const cell = terminal_view.cellInfoAt(row, column);
-                    if (!delta) try noteSnapshotLink(machine, cell, &referenced_links);
+                    if (delta)
+                        try noteSnapshotLink(cell, destination_links)
+                    else
+                        try noteSnapshotLink(cell, &referenced_links);
                     var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
                     const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
                         terminal_view.cellScalarsAt(
@@ -1910,6 +1936,7 @@ pub const Service = struct {
                         return error.SnapshotTooLarge;
                 }
                 try finishTextRecord(body, record);
+                if (delta) mergeSnapshotLinks(&referenced_links, destination_links);
             }
 
             if (destination_cache) |value| {
@@ -1925,23 +1952,28 @@ pub const Service = struct {
             }
         }
 
-        var link_id: usize = 1;
-        while (link_id < referenced_links.len) : (link_id += 1) {
-            if (!referenced_links[link_id]) continue;
-            const uri = machine.hyperlinkUri(@intCast(link_id)) orelse
-                return error.InvalidSnapshot;
-            if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
-                return error.InvalidSnapshot;
-            const record = try self.beginTextRecord(body, .hyperlink);
-            var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
-            encodeU32(link_header[0..4], @intCast(link_id));
-            link_header[4] = @truncate(uri.len >> 8);
-            link_header[5] = @truncate(uri.len);
-            try body.appendSlice(self.allocator, &link_header);
-            try body.appendSlice(self.allocator, uri);
-            try finishTextRecord(body, record);
-            if (body.items.len > protocol.maximum_text_snapshot_bytes)
-                return error.SnapshotTooLarge;
+        for (referenced_links, 0..) |initial_word, word_index| {
+            var word = initial_word;
+            while (word != 0) {
+                const bit: usize = @intCast(@ctz(word));
+                word &= word - 1;
+                const link_id = word_index * 64 + bit;
+                if (link_id == 0 or link_id > protocol.text_v1.maximum_hyperlinks) continue;
+                const uri = machine.hyperlinkUri(@intCast(link_id)) orelse
+                    return error.InvalidSnapshot;
+                if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
+                    return error.InvalidSnapshot;
+                const record = try self.beginTextRecord(body, .hyperlink);
+                var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
+                encodeU32(link_header[0..4], @intCast(link_id));
+                link_header[4] = @truncate(uri.len >> 8);
+                link_header[5] = @truncate(uri.len);
+                try body.appendSlice(self.allocator, &link_header);
+                try body.appendSlice(self.allocator, uri);
+                try finishTextRecord(body, record);
+                if (body.items.len > protocol.maximum_text_snapshot_bytes)
+                    return error.SnapshotTooLarge;
+            }
         }
         const body_bytes = body.items.len;
         if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
@@ -2086,21 +2118,23 @@ pub const Service = struct {
         }
     }
 
-    fn noteSnapshotLink(
-        machine: *const howl.Terminal.Observation,
-        cell: howl.Terminal.Cell,
-        referenced_links: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-    ) !void {
-        if (cell.attrs.link_id == 0) return;
-        if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
+    fn noteSnapshotLink(cell: howl.Terminal.Cell, referenced_links: []u64) !void {
+        const link_id = cell.attrs.link_id;
+        if (link_id == 0) return;
+        if (link_id > protocol.text_v1.maximum_hyperlinks or referenced_links.len != delta_link_word_count)
             return error.InvalidSnapshot;
-        const link_index: usize = @intCast(cell.attrs.link_id);
-        if (referenced_links[link_index]) return;
-        const uri = machine.hyperlinkUri(cell.attrs.link_id) orelse
-            return error.InvalidSnapshot;
-        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
-            return error.InvalidSnapshot;
-        referenced_links[link_index] = true;
+        const link_index: usize = @intCast(link_id);
+        const word_index = link_index / 64;
+        const shift: u6 = @intCast(link_index % 64);
+        referenced_links[word_index] |= @as(u64, 1) << shift;
+    }
+
+    fn mergeSnapshotLinks(
+        referenced_links: *[delta_link_word_count]u64,
+        row_links: []const u64,
+    ) void {
+        std.debug.assert(row_links.len == delta_link_word_count);
+        for (referenced_links, row_links) |*destination, source| destination.* |= source;
     }
 
     fn appendSnapshotCompressedData(
@@ -2900,6 +2934,7 @@ test "delta row cache keeps live provenance compact and historical fallback exac
     try cache.ensure(std.testing.allocator, 4, 24, 0);
     try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
     try std.testing.expectEqual(@as(usize, 0), cache.cells.len);
+    try std.testing.expectEqual(@as(usize, 4 * delta_link_word_count), cache.links.len);
     cache.entries[0] = .{ .generation = 41, .valid = true };
     cache.revision = 7;
     try cache.ensure(std.testing.allocator, 4, 24, 0);
@@ -2910,7 +2945,35 @@ test "delta row cache keeps live provenance compact and historical fallback exac
     try cache.ensure(std.testing.allocator, 4, 24, 1);
     try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
     try std.testing.expectEqual(@as(usize, 4 * 24), cache.cells.len);
+    try std.testing.expectEqual(@as(usize, 4 * delta_link_word_count), cache.links.len);
     for (cache.entries) |entry| try std.testing.expect(!entry.valid);
+}
+
+test "delta hyperlink row bits preserve bounded identities and merge exactly" {
+    var cache: DeltaRowCache = .{};
+    defer cache.deinit(std.testing.allocator);
+    try cache.ensure(std.testing.allocator, 3, 8, 0);
+
+    var terminal = try howl.Terminal.init(std.testing.allocator, 1, 1);
+    defer terminal.deinit();
+    var cell = terminal.semanticView(0).cellInfoAt(0, 0);
+
+    const first_id: u32 = 1;
+    const last_id: u32 = protocol.text_v1.maximum_hyperlinks;
+    cell.attrs.link_id = first_id;
+    try Service.noteSnapshotLink(cell, cache.rowLinks(0));
+    cell.attrs.link_id = last_id;
+    try Service.noteSnapshotLink(cell, cache.rowLinks(1));
+
+    var merged: [delta_link_word_count]u64 = @splat(0);
+    Service.mergeSnapshotLinks(&merged, cache.rowLinks(0));
+    Service.mergeSnapshotLinks(&merged, cache.rowLinks(1));
+    try std.testing.expect((merged[first_id / 64] & (@as(u64, 1) << @as(u6, @intCast(first_id % 64)))) != 0);
+    try std.testing.expect((merged[last_id / 64] & (@as(u64, 1) << @as(u6, @intCast(last_id % 64)))) != 0);
+    for (cache.rowLinks(2)) |word| try std.testing.expectEqual(@as(u64, 0), word);
+
+    cell.attrs.link_id = protocol.text_v1.maximum_hyperlinks + 1;
+    try std.testing.expectError(error.InvalidSnapshot, Service.noteSnapshotLink(cell, cache.rowLinks(2)));
 }
 
 test "live delta uses row generations and reuses unchanged rows" {
