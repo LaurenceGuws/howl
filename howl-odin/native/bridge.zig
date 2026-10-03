@@ -965,6 +965,19 @@ pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offse
     return result;
 }
 
+pub export fn howl_odin_bridge_render_discard(raw: ?*RenderHandle) void {
+    const value = raw orelse return;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    clearExternalUploads(renderer);
+    renderer.frame_upload_count = 0;
+    renderer.upload_count = 0;
+    renderer.removal_count = 0;
+    renderer.command_count = 0;
+    renderer.pixel_count = 0;
+    if (renderer.scratch.prepared_owner == renderer)
+        renderer.scratch.prepared_owner = null;
+}
+
 pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
     const value = raw orelse return;
     const renderer: *Render = @ptrCast(@alignCast(value));
@@ -1613,11 +1626,11 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 11;
+    return 12;
 }
 
-test "Odin bridge version tracks style-face render ABI" {
-    try std.testing.expectEqual(@as(u32, 11), howl_odin_bridge_version());
+test "Odin bridge version tracks prepared-frame discard ABI" {
+    try std.testing.expectEqual(@as(u32, 12), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(
@@ -2967,6 +2980,31 @@ test "pane gutter background follows accepted default color and screen reverse" 
     try std.testing.expectEqual(@as(u32, 0xff332211), paddingBackground(&presentation));
     presentation.reverse_screen = true;
     try std.testing.expectEqual(@as(u32, 0xffbbccdd), paddingBackground(&presentation));
+}
+
+test "discarding a prepared render releases shared scratch without publishing front state" {
+    var renderer: Render = undefined;
+    var scratch: RenderScratch = undefined;
+    scratch.prepared_owner = &renderer;
+    renderer.front = .{};
+    renderer.scratch = &scratch;
+    renderer.external_upload_count = 0;
+    renderer.frame_upload_count = 2;
+    renderer.upload_count = 3;
+    renderer.removal_count = 4;
+    renderer.command_count = 5;
+    renderer.pixel_count = 6;
+    const handle: *RenderHandle = @ptrCast(&renderer);
+
+    howl_odin_bridge_render_discard(handle);
+
+    try std.testing.expectEqual(@as(?*Render, null), scratch.prepared_owner);
+    try std.testing.expectEqual(@as(usize, 0), renderer.frame_upload_count);
+    try std.testing.expectEqual(@as(usize, 0), renderer.upload_count);
+    try std.testing.expectEqual(@as(usize, 0), renderer.removal_count);
+    try std.testing.expectEqual(@as(usize, 0), renderer.command_count);
+    try std.testing.expectEqual(@as(usize, 0), renderer.pixel_count);
+    try std.testing.expect(renderer.front.begin == null);
 }
 
 test "render headers publish metadata and selection only on acceptance" {

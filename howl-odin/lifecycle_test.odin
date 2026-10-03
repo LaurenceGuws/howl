@@ -58,6 +58,17 @@ lifecycle_presentation_keeps_owned_and_attached_recovery_distinct :: proc(t: ^te
 }
 
 @(test)
+terminal_local_font_state_survives_view_replacement :: proc(t: ^testing.T) {
+    source := Instance_View{terminal_font_pixels = 19, terminal_font_overridden = true}
+    destination := Instance_View{terminal_font_pixels = 12}
+
+    copy_view_terminal_font_state(&destination, &source)
+
+    testing.expect_value(t, destination.terminal_font_pixels, u16(19))
+    testing.expect(t, destination.terminal_font_overridden)
+}
+
+@(test)
 lifecycle_action_hit_stays_inside_status_bar :: proc(t: ^testing.T) {
     pane := SDL.FRect{20, 40, 800, 500}
     bar := instance_lifecycle_bar_rect(pane)

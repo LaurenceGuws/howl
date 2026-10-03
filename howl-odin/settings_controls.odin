@@ -313,7 +313,7 @@ settings_control_click :: proc(app: ^App, x, y, width, height: f32) -> bool {
         }
     case .Appearance:
         if delta := settings_stepper_hit(settings_choice_rect(layout.body, offset, 0), x, y); delta != 0 {
-            adjust_terminal_font(app, delta)
+            adjust_default_terminal_font(app, delta)
             return true
         }
         family_row := font_family_choice_row(layout.body, offset)

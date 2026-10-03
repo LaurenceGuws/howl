@@ -130,3 +130,27 @@ profile_font_pixels_accept_inherit_or_any_global_range_value :: proc(t: ^testing
 	testing.expect(t, !valid_profile_font_pixels(7))
 	testing.expect(t, !valid_profile_font_pixels(49))
 }
+
+@(test)
+profile_font_edit_resets_local_zoom_for_matching_live_terminals :: proc(t: ^testing.T) {
+    app := App{terminal_font_pixels = 15}
+    testing.expect(t, initialize_builtin_profiles(&app))
+    defer destroy_profiles(&app)
+    view := Instance_View{
+        profile_index = 1,
+        profile_font_pixels = 0,
+        terminal_font_pixels = 22,
+        terminal_font_overridden = true,
+    }
+    app.tab_count = 1
+    app.tabs[0].pane_count = 1
+    app.tabs[0].panes[0] = &view
+
+    profile := profile_at(&app, 1)
+    profile.font_pixels = 17
+    profile_apply_font_to_views(&app, 1)
+
+    testing.expect_value(t, view.profile_font_pixels, u16(17))
+    testing.expect_value(t, view.terminal_font_pixels, u16(17))
+    testing.expect(t, !view.terminal_font_overridden)
+}

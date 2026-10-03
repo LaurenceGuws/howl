@@ -73,6 +73,7 @@ foreign howl_bridge {
     render_prepare :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     render_prepare_view :: proc(handle, snapshot: rawptr) -> i32 ---
     render_accept :: proc(handle: rawptr) ---
+    render_discard :: proc(handle: rawptr) ---
     render_background_rgba :: proc(handle: rawptr) -> u32 ---
     render_surface_width  :: proc(handle: rawptr) -> u16 ---
     render_surface_height :: proc(handle: rawptr) -> u16 ---

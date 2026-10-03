@@ -16,6 +16,7 @@ Render_Dispatcher :: struct {
     stop: bool,
     works: [MAX_RENDER_WORKS]^Render_Work,
     work_count: int,
+    next_index: int,
 }
 
 // One pending/prepared frame per terminal. The dispatcher cannot overwrite a
@@ -38,7 +39,7 @@ Render_Work :: struct {
     offered_view: rawptr,
     mutex: sync.Mutex,
     cond: sync.Cond,
-    stop, created, failed, pending, ready, busy: bool,
+    stop, suspended, created, failed, pending, ready, busy: bool,
     history: u32,
     history_generation: u64,
     code: i32,
@@ -47,24 +48,30 @@ Render_Work :: struct {
 }
 
 next_render_work_locked :: proc(dispatcher: ^Render_Dispatcher) -> ^Render_Work {
-    if dispatcher == nil do return nil
-    // One process scratch lane can back exactly one prepared frame. Main must
-    // consume/accept that frame before the dispatcher derives another.
+    if dispatcher == nil || dispatcher.work_count == 0 do return nil
+    // One process scratch lane can back exactly one visible prepared frame. A
+    // hidden/suspended work must never pin that lane.
     for index in 0..<dispatcher.work_count {
         work := dispatcher.works[index]
         if work == nil do continue
         sync.mutex_lock(&work.mutex)
-        blocked := !work.stop && work.ready
+        blocked := !work.stop && !work.suspended && work.ready
         sync.mutex_unlock(&work.mutex)
         if blocked do return nil
     }
-    for index in 0..<dispatcher.work_count {
+    // Round-robin prevents one hot visible pane from monopolizing the process
+    // lane when several panes are requesting frames.
+    start := dispatcher.next_index % dispatcher.work_count
+    for offset in 0..<dispatcher.work_count {
+        index := (start + offset) % dispatcher.work_count
         work := dispatcher.works[index]
         if work == nil do continue
         sync.mutex_lock(&work.mutex)
-        actionable := !work.stop && (!work.created || (!work.failed && work.pending && !work.ready && !work.busy))
+        actionable := !work.stop && !work.suspended &&
+                      (!work.created || (!work.failed && work.pending && !work.ready && !work.busy))
         if actionable {
             work.busy = true
+            dispatcher.next_index = (index + 1) % dispatcher.work_count
             sync.mutex_unlock(&work.mutex)
             return work
         }
@@ -119,6 +126,18 @@ prepare_render_frame :: proc(work: ^Render_Work) {
     if code == 9 do code = render_prepare(work.handle, history)
 
     sync.mutex_lock(&work.mutex)
+    if work.suspended {
+        // The tab became hidden while preparation was in flight. The frame was
+        // never presented, so release process scratch without publishing it.
+        if code == 0 && work.handle != nil do render_discard(work.handle)
+        work.busy = false
+        work.ready = false
+        work.code = 0
+        work.failed = false
+        sync.cond_broadcast(&work.cond)
+        sync.mutex_unlock(&work.mutex)
+        return
+    }
     work.busy = false
     work.ready = true
     work.code = code
@@ -202,6 +221,8 @@ unregister_render_work :: proc(dispatcher: ^Render_Dispatcher, work: ^Render_Wor
         dispatcher.work_count -= 1
         dispatcher.works[index] = dispatcher.works[dispatcher.work_count]
         dispatcher.works[dispatcher.work_count] = nil
+        if dispatcher.work_count == 0 do dispatcher.next_index = 0
+        else do dispatcher.next_index %= dispatcher.work_count
         return
     }
 }
@@ -284,10 +305,48 @@ release_render_ready :: proc(work: ^Render_Work) {
     if dispatcher != nil do sync.cond_signal(&dispatcher.cond)
 }
 
+set_render_work_suspended :: proc(work: ^Render_Work, suspended: bool) {
+    if work == nil do return
+    displaced: rawptr
+    dispatcher := work.dispatcher
+    sync.mutex_lock(&work.mutex)
+    if work.suspended == suspended {
+        sync.mutex_unlock(&work.mutex)
+        return
+    }
+    work.suspended = suspended
+    if suspended {
+        if work.pending && !work.busy {
+            displaced = work.offered_view
+            work.offered_view = nil
+            work.pending = false
+        }
+        if work.ready && !work.busy {
+            if work.handle != nil do render_discard(work.handle)
+            work.ready = false
+            work.code = 0
+            work.failed = false
+        }
+    }
+    sync.mutex_unlock(&work.mutex)
+    if displaced != nil do view_destroy(displaced)
+    if dispatcher != nil do sync.cond_signal(&dispatcher.cond)
+}
+
+sync_render_visibility :: proc(app: ^App) {
+    if app == nil do return
+    for tab, tab_index in app.tabs[:app.tab_count] {
+        visible := tab_index == app.active_tab
+        for view in tab.panes {
+            if view != nil && view.render_work != nil do set_render_work_suspended(view.render_work, !visible)
+        }
+    }
+}
+
 request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, history: u32, history_generation: u64) {
     if work == nil || revision == 0 do return
     sync.mutex_lock(&work.mutex)
-    if !work.stop && !work.failed && !work.ready && !work.busy && !work.pending {
+    if !work.stop && !work.suspended && !work.failed && !work.ready && !work.busy && !work.pending {
         // Lock order is render mailbox -> pane. Observer only takes the pane lock;
         // process render dispatch never holds the pane lock across bridge work.
         if history == 0 {

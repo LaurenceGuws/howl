@@ -142,3 +142,13 @@ history_and_closed_render_jobs_do_not_consume_the_live_view :: proc(t: ^testing.
     testing.expect(t, !work.pending)
     testing.expect_value(t, view.reusable_view, owned)
 }
+
+@(test)
+instance_update_wake_token_coalesces_until_main_retires_it :: proc(t: ^testing.T) {
+    state: u32
+    testing.expect(t, claim_instance_update_wake(&state))
+    testing.expect(t, !claim_instance_update_wake(&state))
+    retire_instance_update_wake(&state)
+    testing.expect(t, claim_instance_update_wake(&state))
+    retire_instance_update_wake(&state)
+}

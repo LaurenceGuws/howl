@@ -71,3 +71,43 @@ terminal_font_pixels_are_continuous_inside_one_bounded_range :: proc(t: ^testing
     testing.expect_value(t, next_terminal_font_pixels(8, -1), u16(8))
     testing.expect_value(t, next_terminal_font_pixels(48, 1), u16(48))
 }
+
+@(test)
+terminal_zoom_is_owned_by_only_the_active_terminal :: proc(t: ^testing.T) {
+    first := Instance_View{terminal_font_pixels = 15}
+    second := Instance_View{terminal_font_pixels = 15}
+    app := App{terminal_font_pixels = 15, tab_count = 2, active_tab = 0}
+    app.tabs[0].pane_count = 1
+    app.tabs[0].panes[0] = &first
+    app.tabs[1].pane_count = 1
+    app.tabs[1].panes[0] = &second
+
+    adjust_active_terminal_font(&app, 1)
+
+    testing.expect_value(t, first.terminal_font_pixels, u16(16))
+    testing.expect(t, first.terminal_font_overridden)
+    testing.expect_value(t, second.terminal_font_pixels, u16(15))
+    testing.expect(t, !second.terminal_font_overridden)
+    testing.expect_value(t, app.terminal_font_pixels, u16(15))
+}
+
+@(test)
+global_font_default_updates_only_inheriting_unzoomed_terminals :: proc(t: ^testing.T) {
+    inherited := Instance_View{terminal_font_pixels = 15}
+    zoomed := Instance_View{terminal_font_pixels = 18, terminal_font_overridden = true}
+    profile := Instance_View{profile_font_pixels = 13, terminal_font_pixels = 13}
+    app := App{terminal_font_pixels = 15, tab_count = 3}
+    app.tabs[0].pane_count = 1
+    app.tabs[0].panes[0] = &inherited
+    app.tabs[1].pane_count = 1
+    app.tabs[1].panes[0] = &zoomed
+    app.tabs[2].pane_count = 1
+    app.tabs[2].panes[0] = &profile
+
+    apply_default_terminal_font_pixels(&app, 16)
+
+    testing.expect_value(t, app.terminal_font_pixels, u16(16))
+    testing.expect_value(t, inherited.terminal_font_pixels, u16(16))
+    testing.expect_value(t, zoomed.terminal_font_pixels, u16(18))
+    testing.expect_value(t, profile.terminal_font_pixels, u16(13))
+}

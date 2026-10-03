@@ -160,6 +160,8 @@ Instance_View :: struct {
     ownership: Instance_Ownership,
     profile_index: int,
     profile_font_pixels: u16,
+    terminal_font_pixels: u16,
+    terminal_font_overridden: bool,
     control: rawptr,
     control_pending_handle: rawptr,
     control_connect_done: bool,
@@ -410,8 +412,8 @@ KEY_MAPPING_DEFINITIONS: [50]Key_Mapping_Definition = {
     {{kind = .Select_Tab, value = 5}, "select_tab_6", "Select tab 6", "Ctrl+6", .Tab},
     {{kind = .Select_Tab, value = 6}, "select_tab_7", "Select tab 7", "Ctrl+7", .Tab},
     {{kind = .Select_Tab, value = 7}, "select_tab_8", "Select tab 8", "Ctrl+8", .Tab},
-    {{kind = .Adjust_Font, value = -1}, "font_decrease", "Decrease terminal font", "Ctrl+-", .Application},
-    {{kind = .Adjust_Font, value = 1}, "font_increase", "Increase terminal font", "Ctrl+Plus", .Application},
+    {{kind = .Adjust_Font, value = -1}, "font_decrease", "Decrease terminal font", "Ctrl+-", .Pane},
+    {{kind = .Adjust_Font, value = 1}, "font_increase", "Increase terminal font", "Ctrl+Plus", .Pane},
     {{kind = .Copy_Selection}, "copy_selection", "Copy terminal selection", "Ctrl+Shift+C", .Pane},
     {{kind = .Paste_Clipboard}, "paste_clipboard", "Paste clipboard", "Ctrl+Shift+V", .Pane},
     {{kind = .History_Oldest}, "history_oldest", "Jump to oldest history", "Ctrl+Shift+Home", .Pane},
@@ -555,14 +557,27 @@ palette := Palette{
 
 desktop_io_runtime: rawptr
 instance_update_event_type: u32
+instance_update_event_pending: u32
+
+claim_instance_update_wake :: proc(state: ^u32) -> bool {
+    _, claimed := sync.atomic_compare_exchange_strong(state, u32(0), u32(1))
+    return claimed
+}
+
+retire_instance_update_wake :: proc(state: ^u32) {
+    sync.atomic_store(state, u32(0))
+}
 
 notify_instance_update :: proc() {
-    if instance_update_event_type == 0 {
+    if instance_update_event_type == 0 || !claim_instance_update_wake(&instance_update_event_pending) {
         return
     }
     event := SDL.Event{}
     event.type = SDL.EventType(instance_update_event_type)
-    _ = SDL.PushEvent(&event)
+    if !SDL.PushEvent(&event) {
+        // A failed enqueue owns no wake token; the next worker may retry.
+        retire_instance_update_wake(&instance_update_event_pending)
+    }
 }
 
 instance_worker_context :: proc() -> runtime.Context {
@@ -916,25 +931,61 @@ font_size_label :: proc(pixels: u16, storage: []u8) -> string {
     return fmt.bprintf(storage, "%d px", pixels)
 }
 
-adjust_terminal_font :: proc(app: ^App, delta: int) {
+view_terminal_font_pixels :: proc(app: ^App, view: ^Instance_View) -> u16 {
+    if view != nil {
+        if view.terminal_font_pixels != 0 do return view.terminal_font_pixels
+        if view.profile_font_pixels != 0 do return view.profile_font_pixels
+    }
+    if app != nil && app.terminal_font_pixels != 0 do return app.terminal_font_pixels
+    return TERMINAL_FONT_PIXELS_DEFAULT
+}
+
+seed_view_terminal_font :: proc(app: ^App, view: ^Instance_View) {
+    if view == nil do return
+    view.terminal_font_pixels = view.profile_font_pixels != 0 ? view.profile_font_pixels : app.terminal_font_pixels
+    view.terminal_font_overridden = false
+}
+
+copy_view_terminal_font_state :: proc(destination, source: ^Instance_View) {
+    if destination == nil || source == nil do return
+    destination.terminal_font_pixels = source.terminal_font_pixels
+    destination.terminal_font_overridden = source.terminal_font_overridden
+}
+
+apply_default_terminal_font_pixels :: proc(app: ^App, pixels: u16) {
+    if app == nil do return
+    app.terminal_font_pixels = pixels
+    for index in 0..<app.tab_count {
+        for view in app.tabs[index].panes {
+            if view == nil || view.profile_font_pixels != 0 || view.terminal_font_overridden do continue
+            view.terminal_font_pixels = pixels
+            restart_canvas_renderer(view)
+        }
+    }
+}
+
+adjust_default_terminal_font :: proc(app: ^App, delta: int) {
     if app == nil || delta == 0 do return
     next := next_terminal_font_pixels(app.terminal_font_pixels, delta)
-    if next == app.terminal_font_pixels {
-        return
-    }
+    if next == app.terminal_font_pixels do return
     scale := app.text_scale
-    if !valid_canvas_scale(scale) {
-        scale = 1
-    }
+    if !valid_canvas_scale(scale) do scale = 1
     if set_font_display_scale(app.terminal_font, f32(next), scale) {
-        app.terminal_font_pixels = next
-        for index in 0..<app.tab_count {
-            for view in app.tabs[index].panes {
-                if view != nil do restart_canvas_renderer(view)
-            }
-        }
+        apply_default_terminal_font_pixels(app, next)
         save_user_config(app)
     }
+}
+
+adjust_active_terminal_font :: proc(app: ^App, delta: int) {
+    if app == nil || delta == 0 do return
+    view := terminal_mapping_view(app)
+    if view == nil do return
+    current := view_terminal_font_pixels(app, view)
+    next := next_terminal_font_pixels(current, delta)
+    if next == current do return
+    view.terminal_font_pixels = next
+    view.terminal_font_overridden = true
+    restart_canvas_renderer(view)
 }
 
 CANVAS_SCALE_MAX :: f32(8)
@@ -1241,8 +1292,7 @@ create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bo
 
 ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if app == nil || app.window == nil || view == nil do return false
-    logical_pixels := view.profile_font_pixels
-    if logical_pixels == 0 do logical_pixels = app.terminal_font_pixels
+    logical_pixels := view_terminal_font_pixels(app, view)
     scale := SDL.GetWindowDisplayScale(app.window)
     pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
@@ -2683,6 +2733,7 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
     if view != nil {
         view.profile_index = profile_index
         view.profile_font_pixels = profile.font_pixels
+        seed_view_terminal_font(app, view)
     }
     return view
 }
@@ -4296,6 +4347,7 @@ profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Instance_View, ti
     if view != nil {
         view.profile_index = profile_index
         view.profile_font_pixels = profile.font_pixels
+        seed_view_terminal_font(app, view)
     }
     return view, title
 }
@@ -4373,6 +4425,7 @@ recover_active_instance :: proc(app: ^App) -> bool {
         if replacement == nil do return false
         replacement.profile_index = view.profile_index
         replacement.profile_font_pixels = view.profile_font_pixels
+        copy_view_terminal_font_state(replacement, view)
         return replace_active_instance_view(app, replacement, true)
     }
     replacement: ^Instance_View
@@ -4393,6 +4446,7 @@ recover_active_instance :: proc(app: ^App) -> bool {
     if replacement == nil {
         return false
     }
+    copy_view_terminal_font_state(replacement, view)
     return replace_active_instance_view(app, replacement)
 }
 
@@ -4647,7 +4701,7 @@ execute_key_mapping :: proc(app: ^App, target: Key_Mapping_Target) {
     case .Select_Tab:
         if target.value >= 0 && target.value < app.tab_count do _ = select_tab_index(app, target.value)
     case .Adjust_Font:
-        adjust_terminal_font(app, target.value)
+        adjust_active_terminal_font(app, target.value)
     case .Copy_Selection:
         view := terminal_mapping_view(app)
         if view != nil do _ = copy_selection_to_clipboard(app, view)
@@ -4847,7 +4901,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
                 return true
             }
             if app.settings_page == .Appearance {
-                adjust_terminal_font(app, -1)
+                adjust_default_terminal_font(app, -1)
                 return true
             }
             if app.settings_page == .Color_Schemes {
@@ -4861,7 +4915,7 @@ handle_overlay_key :: proc(app: ^App, event: ^SDL.Event) -> bool {
                 return true
             }
             if app.settings_page == .Appearance {
-                adjust_terminal_font(app, 1)
+                adjust_default_terminal_font(app, 1)
                 return true
             }
             if app.settings_page == .Color_Schemes {
@@ -6661,7 +6715,9 @@ draw_settings :: proc(app: ^App, width, height: f32) {
 }
 
 draw :: proc(app: ^App) {
-    if app == nil || app.window == nil || !window_presentation_allowed(SDL.GetWindowFlags(app.window)) {
+    if app == nil do return
+    sync_render_visibility(app)
+    if app.window == nil || !window_presentation_allowed(SDL.GetWindowFlags(app.window)) {
         return
     }
     w, h: c.int
@@ -6761,7 +6817,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 11 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 12 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")
@@ -7031,12 +7087,19 @@ main :: proc() {
         } else if !SDL.WaitEvent(&event) {
             continue
         }
-        input_dirty := u32(event.type) != instance_update_event_type
+        instance_wake_seen := u32(event.type) == instance_update_event_type
+        input_dirty := !instance_wake_seen
         handle_event(&app, &event)
         for SDL.PollEvent(&event) {
-            input_dirty = input_dirty || u32(event.type) != instance_update_event_type
+            wake := u32(event.type) == instance_update_event_type
+            instance_wake_seen = instance_wake_seen || wake
+            input_dirty = input_dirty || !wake
             handle_event(&app, &event)
         }
+        // Keep the coalescing token claimed for the complete queue-drain batch.
+        // Retiring here prevents a hot worker from refilling PollEvent forever;
+        // any update that raced while claimed is included by service_desktop_io.
+        if instance_wake_seen do retire_instance_update_wake(&instance_update_event_pending)
         if app.running {
             reconcile_consequence_owners(&app)
             _ = apply_desktop_attention(&app)
