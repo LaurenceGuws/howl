@@ -432,6 +432,7 @@ service_desktop_io :: proc(app: ^App) -> bool {
     for i in 0..<app.tab_count {
         for view in app.tabs[i].panes {
             if view == nil do continue
+            if i != app.active_tab do _ = release_view_pending_rich_loan(view)
             sync.mutex_lock(&view.mutex)
             changed = changed || view.ui_dirty
             view.ui_dirty = false

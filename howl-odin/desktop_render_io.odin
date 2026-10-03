@@ -6,6 +6,12 @@ import "core:thread"
 
 MAX_RENDER_WORKS :: MAX_TABS * MAX_PANES_PER_TAB
 
+Render_Offer_Kind :: enum u8 {
+    None,
+    Owned_View,
+    Rich_Loan,
+}
+
 // One process render lane services every terminal mailbox serially. Each
 // terminal still owns its pending/prepared-frame state and render handle, but
 // thread lifetime and scheduling are process-owned.
@@ -23,6 +29,7 @@ Render_Dispatcher :: struct {
 // prepared frame before main acknowledges it.
 Render_Work :: struct {
     dispatcher: ^Render_Dispatcher,
+    owner_view: ^Instance_View,
     route_kind: Bridge_Route_Kind,
     endpoint: [PROFILE_ENDPOINT_BYTES]u8,
     endpoint_len: int,
@@ -37,6 +44,7 @@ Render_Work :: struct {
     interrupt: rawptr,
     handle: rawptr,
     offered_view: rawptr,
+    offered_kind: Render_Offer_Kind,
     mutex: sync.Mutex,
     cond: sync.Cond,
     stop, suspended, created, failed, pending, ready, busy: bool,
@@ -104,6 +112,55 @@ create_render_handle :: proc(work: ^Render_Work) {
     notify_instance_update()
 }
 
+release_render_offer :: proc(kind: Render_Offer_Kind, offer: rawptr) {
+    if offer == nil do return
+    switch kind {
+    case .Rich_Loan:
+        snapshot_release_rich_loan(offer)
+    case .Owned_View:
+        view_destroy(offer)
+    case .None:
+    }
+}
+
+complete_render_offer :: proc(work: ^Render_Work, kind: Render_Offer_Kind, offer: rawptr) {
+    release_render_offer(kind, offer)
+    if kind != .Rich_Loan || work == nil || work.owner_view == nil do return
+    owner := work.owner_view
+    sync.mutex_lock(&owner.mutex)
+    owner.render_offer_outstanding = false
+    sync.cond_broadcast(&owner.observer_cond)
+    sync.mutex_unlock(&owner.mutex)
+}
+
+detach_view_rich_loan_locked :: proc(view: ^Instance_View) -> rawptr {
+    if view == nil || view.reusable_view_kind != .Rich_Loan || view.reusable_view == nil do return nil
+    loan := view.reusable_view
+    view.reusable_view = nil
+    view.reusable_view_kind = .None
+    // Keep render_offer_outstanding set until the bridge loan itself is released.
+    // Otherwise the observer may receive again while RawCache is still borrowed.
+    return loan
+}
+
+finish_view_rich_loan_release :: proc(view: ^Instance_View, loan: rawptr) {
+    if view == nil || loan == nil do return
+    snapshot_release_rich_loan(loan)
+    sync.mutex_lock(&view.mutex)
+    view.render_offer_outstanding = false
+    sync.cond_broadcast(&view.observer_cond)
+    sync.mutex_unlock(&view.mutex)
+}
+
+release_view_pending_rich_loan :: proc(view: ^Instance_View) -> bool {
+    if view == nil do return false
+    sync.mutex_lock(&view.mutex)
+    loan := detach_view_rich_loan_locked(view)
+    sync.mutex_unlock(&view.mutex)
+    if loan != nil do finish_view_rich_loan_release(view, loan)
+    return loan != nil
+}
+
 prepare_render_frame :: proc(work: ^Render_Work) {
     sync.mutex_lock(&work.mutex)
     if work.stop {
@@ -114,14 +171,17 @@ prepare_render_frame :: proc(work: ^Render_Work) {
     }
     history := work.history
     offered := work.offered_view
+    offered_kind := work.offered_kind
     work.offered_view = nil
+    work.offered_kind = .None
     work.pending = false
     sync.mutex_unlock(&work.mutex)
 
     code: i32 = 9
     if offered != nil {
-        code = render_prepare_view(work.handle, offered)
-        view_destroy(offered)
+        if offered_kind == .Rich_Loan do code = render_prepare_rich_loan(work.handle, offered)
+        else do code = render_prepare_view(work.handle, offered)
+        complete_render_offer(work, offered_kind, offered)
     }
     if code == 9 do code = render_prepare(work.handle, history)
 
@@ -245,6 +305,7 @@ start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Re
         free(work)
         return nil
     }
+    work.owner_view = view
     work.route_kind = view.route_kind
     copy(work.endpoint[:], transmute([]u8)endpoint); work.endpoint_len = len(endpoint)
     work.server_id = view.server_id
@@ -290,7 +351,8 @@ stop_render_worker :: proc(work: ^Render_Work) {
     sync.mutex_unlock(&work.mutex)
     if dispatcher != nil do unregister_render_work(dispatcher, work)
 
-    if work.offered_view != nil do view_destroy(work.offered_view)
+    if work.offered_view != nil do complete_render_offer(work, work.offered_kind, work.offered_view)
+    if work.owner_view != nil do _ = release_view_pending_rich_loan(work.owner_view)
     if work.handle != nil do render_destroy(work.handle)
     interrupt_destroy(work.interrupt)
     free(work)
@@ -308,6 +370,7 @@ release_render_ready :: proc(work: ^Render_Work) {
 set_render_work_suspended :: proc(work: ^Render_Work, suspended: bool) {
     if work == nil do return
     displaced: rawptr
+    displaced_kind: Render_Offer_Kind
     dispatcher := work.dispatcher
     sync.mutex_lock(&work.mutex)
     if work.suspended == suspended {
@@ -318,7 +381,9 @@ set_render_work_suspended :: proc(work: ^Render_Work, suspended: bool) {
     if suspended {
         if work.pending && !work.busy {
             displaced = work.offered_view
+            displaced_kind = work.offered_kind
             work.offered_view = nil
+            work.offered_kind = .None
             work.pending = false
         }
         if work.ready && !work.busy {
@@ -329,7 +394,8 @@ set_render_work_suspended :: proc(work: ^Render_Work, suspended: bool) {
         }
     }
     sync.mutex_unlock(&work.mutex)
-    if displaced != nil do view_destroy(displaced)
+    if displaced != nil do complete_render_offer(work, displaced_kind, displaced)
+    if suspended && work.owner_view != nil do _ = release_view_pending_rich_loan(work.owner_view)
     if dispatcher != nil do sync.cond_signal(&dispatcher.cond)
 }
 
@@ -345,6 +411,7 @@ sync_render_visibility :: proc(app: ^App) {
 
 request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, history: u32, history_generation: u64) {
     if work == nil || revision == 0 do return
+    history_loan: rawptr
     sync.mutex_lock(&work.mutex)
     if !work.stop && !work.suspended && !work.failed && !work.ready && !work.busy && !work.pending {
         // Lock order is render mailbox -> pane. Observer only takes the pane lock;
@@ -352,7 +419,13 @@ request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, 
         if history == 0 {
             sync.mutex_lock(&view.mutex)
             work.offered_view = view.reusable_view
+            work.offered_kind = view.reusable_view_kind
             view.reusable_view = nil
+            view.reusable_view_kind = .None
+            sync.mutex_unlock(&view.mutex)
+        } else {
+            sync.mutex_lock(&view.mutex)
+            history_loan = detach_view_rich_loan_locked(view)
             sync.mutex_unlock(&view.mutex)
         }
         work.history_generation = history_generation
@@ -361,5 +434,6 @@ request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, 
     }
     dispatcher := work.dispatcher
     sync.mutex_unlock(&work.mutex)
+    if history_loan != nil do finish_view_rich_loan_release(view, history_loan)
     if dispatcher != nil do sync.cond_signal(&dispatcher.cond)
 }

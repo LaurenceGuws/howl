@@ -1029,6 +1029,107 @@ pub export fn howl_odin_bridge_render_prepare_view(raw: ?*RenderHandle, view: ?*
     return prepareProjectedView(renderer, snapshot);
 }
 
+pub export fn howl_odin_bridge_render_prepare_rich_loan(raw: ?*RenderHandle, loan_raw: ?*Handle) i32 {
+    const value = raw orelse return 1;
+    const renderer: *Render = @ptrCast(@alignCast(value));
+    const loan_value = loan_raw orelse return 9;
+    const bridge: *Bridge = @ptrCast(@alignCast(loan_value));
+    if (!bridge.rich_loan_active or !bridge.rich_loan_taken) return 9;
+    const snapshot = &(bridge.live_view orelse return 9);
+    const pending_revision = if (renderer.begin) |begin| begin.revision else 0;
+    if (snapshot.begin.history_offset != 0 or snapshot.graphics.images.len != 0 or snapshot.begin.revision < pending_revision)
+        return 9;
+    renderer.clearError();
+    clearExternalUploads(renderer);
+    return prepareRichView(renderer, snapshot);
+}
+
+fn prepareRichView(renderer: *Render, view: *const client.rich.View) i32 {
+    const begin = view.begin;
+    if (begin.rows > renderer.selection_rows.len) {
+        renderer.setError("selection_rows", "row_limit");
+        return 3;
+    }
+    const surface = renderSurface(begin.rows, begin.columns, renderer.cell_size) catch |failure| {
+        renderer.setError("surface", @errorName(failure));
+        return 3;
+    };
+    var candidate_bindings: [terminal_render.maximum_external_images]RenderImageBinding = undefined;
+    const bindings = terminal_render.planExternalImageBindings(
+        renderer.image_bindings[0..renderer.image_binding_count],
+        terminal_render.usage(renderer.terminal_renderer),
+        view.graphics.images,
+        &candidate_bindings,
+    ) catch |failure| {
+        renderer.setError("image_bindings", @errorName(failure));
+        return 3;
+    };
+    terminal_render.updateRichWithImageBindings(renderer.terminal_renderer, view, bindings) catch |failure| {
+        renderer.setError("terminal_canvas", @errorName(failure));
+        return 3;
+    };
+    @memcpy(renderer.image_bindings[0..bindings.len], bindings);
+    renderer.image_binding_count = bindings.len;
+    var prospective_residencies: [render_resource_limit]terminal_render.Residency = undefined;
+    @memcpy(
+        prospective_residencies[0..renderer.residency_count],
+        renderer.residencies[0..renderer.residency_count],
+    );
+    var prospective_residency_count = renderer.residency_count;
+    prepareExternalUploads(
+        renderer,
+        bindings,
+        &prospective_residencies,
+        &prospective_residency_count,
+    ) catch |failure| {
+        renderer.setError("image_refill", @errorName(failure));
+        return 3;
+    };
+    const scratch = renderer.scratch;
+    if (scratch.prepared_owner != null and scratch.prepared_owner != renderer) {
+        renderer.setError("frame", "process_lane_busy");
+        clearExternalUploads(renderer);
+        return 3;
+    }
+    scratch.prepared_owner = renderer;
+    const frame = terminal_render.frame(
+        renderer.terminal_renderer,
+        prospective_residencies[0..prospective_residency_count],
+        .{
+            .uploads = &scratch.frame_uploads,
+            .removals = &scratch.frame_removals,
+            .commands = scratch.frame_commands,
+            .pixels = scratch.frame_pixels,
+        },
+    ) catch |failure| {
+        scratch.prepared_owner = null;
+        renderer.setError("frame", @errorName(failure));
+        clearExternalUploads(renderer);
+        return 3;
+    };
+    renderer.frame_upload_count = frame.uploads.len;
+    renderer.upload_count = frame.uploads.len + renderer.external_upload_count;
+    renderer.removal_count = frame.removals.len;
+    renderer.command_count = frame.commands.len;
+    renderer.pixel_count = frame.pixels.len;
+    renderer.frame_revision = frame.revision;
+    renderer.background_rgba = paddingBackground(&view.presentation);
+    for (0..begin.rows) |row| {
+        renderer.selection_rows[row] = client.selection.rowShapeRich(view, @intCast(row)).?;
+    }
+    renderer.begin = begin;
+    renderer.surface = surface;
+    updateRenderResidency(renderer, frame.uploads, frame.removals);
+    for (renderer.external_uploads[0..renderer.external_upload_count]) |external| {
+        upsertResidency(&renderer.residencies, &renderer.residency_count, .{
+            .resource = external.external.resource,
+            .format = external.external.format,
+            .size = external.external.size,
+        }) catch unreachable;
+    }
+    return 0;
+}
+
 fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i32 {
     const begin = client.view.begin(view).*;
     if (begin.rows > renderer.selection_rows.len) {
@@ -1599,6 +1700,9 @@ const Bridge = struct {
     connection: client.Connection,
     raw_observation: bool,
     live_raw_cache: client.rich.RawCache,
+    live_view: ?client.rich.View = null,
+    rich_loan_active: bool = false,
+    rich_loan_taken: bool = false,
     last_begin: ?protocol.SnapshotBegin = null,
     reusable_view: ?*client.view.Snapshot = null,
     text_truncated: bool = false,
@@ -1626,11 +1730,11 @@ const Bridge = struct {
 };
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 12;
+    return 13;
 }
 
-test "Odin bridge version tracks prepared-frame discard ABI" {
-    try std.testing.expectEqual(@as(u32, 12), howl_odin_bridge_version());
+test "Odin bridge version tracks exclusive rich-loan ABI" {
+    try std.testing.expectEqual(@as(u32, 13), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(
@@ -1715,6 +1819,12 @@ pub export fn howl_odin_bridge_snapshot(
     const value = raw orelse return 1;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
+    if (bridge.rich_loan_active) {
+        bridge.setError("observe_loan", "active");
+        return 4;
+    }
+    bridge.live_view = null;
+    bridge.rich_loan_taken = false;
     if (bridge.reusable_view) |view| client.view.deinit(view);
     bridge.reusable_view = null;
 
@@ -1765,6 +1875,18 @@ pub export fn howl_odin_bridge_snapshot(
         break :blk owned_rich.?.view();
     };
 
+    if (use_live_delta and rich_view.begin.history_offset == 0 and rich_view.graphics.images.len == 0) {
+        const text = client.view.writeVisibleRichText(&rich_view, output_ptr[0..output_capacity]);
+        bridge.live_view = rich_view;
+        bridge.rich_loan_active = true;
+        bridge.last_begin = rich_view.begin;
+        bridge.text_truncated = text.truncated;
+        bridge.display_title_len = writeDisplayTitle(rich_view.properties.title orelse "", &bridge.display_title);
+        bridge.task_progress = rich_view.properties.progress;
+        output_len.* = text.bytes_written;
+        return 0;
+    }
+
     const projected = client.view.projectView(bridge.allocator, &rich_view) catch |failure| {
         bridge.setError("project", @errorName(failure));
         return 3;
@@ -1792,6 +1914,22 @@ fn standaloneLiveView(view: *const client.view.Snapshot) bool {
 
 /// Moves the existing allocation out. It owns no connection or runtime borrow,
 /// survives further observation/bridge teardown, and must be destroyed once.
+pub export fn howl_odin_bridge_snapshot_take_rich_loan(raw: ?*Handle) ?*Handle {
+    const value = raw orelse return null;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    if (!bridge.rich_loan_active or bridge.rich_loan_taken or bridge.live_view == null) return null;
+    bridge.rich_loan_taken = true;
+    return raw;
+}
+
+pub export fn howl_odin_bridge_snapshot_release_rich_loan(raw: ?*Handle) void {
+    const value = raw orelse return;
+    const bridge: *Bridge = @ptrCast(@alignCast(value));
+    bridge.live_view = null;
+    bridge.rich_loan_active = false;
+    bridge.rich_loan_taken = false;
+}
+
 pub export fn howl_odin_bridge_snapshot_take_view(raw: ?*Handle) ?*client.view.Snapshot {
     const value = raw orelse return null;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
@@ -3139,6 +3277,38 @@ fn testReusableProjection(history: u32, with_image: bool) !*client.view.Snapshot
         rich.graphics.placements = &placement;
     }
     return client.view.projectView(std.testing.allocator, &rich);
+}
+
+test "rich loan is single-take and release bounded without a connection" {
+    var scalar = [_]u32{'x'};
+    var cells = [_]client.rich.Cell{std.mem.zeroes(client.rich.Cell)};
+    cells[0].scalars = &scalar;
+    cells[0].width = 1;
+    cells[0].height = 1;
+    cells[0].subscale_n = 1;
+    cells[0].subscale_d = 1;
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var rich = std.mem.zeroes(client.rich.View);
+    rich.begin.revision = 11;
+    rich.begin.rows = 1;
+    rich.begin.columns = 1;
+    rich.rows = &rows;
+
+    var bridge: Bridge = undefined;
+    bridge.live_view = rich;
+    bridge.rich_loan_active = true;
+    bridge.rich_loan_taken = false;
+    const handle: *Handle = @ptrCast(&bridge);
+
+    const loan = howl_odin_bridge_snapshot_take_rich_loan(handle).?;
+    try std.testing.expectEqual(handle, loan);
+    try std.testing.expect(bridge.rich_loan_taken);
+    try std.testing.expectEqual(@as(?*Handle, null), howl_odin_bridge_snapshot_take_rich_loan(handle));
+
+    howl_odin_bridge_snapshot_release_rich_loan(loan);
+    try std.testing.expect(!bridge.rich_loan_active);
+    try std.testing.expect(!bridge.rich_loan_taken);
+    try std.testing.expect(bridge.live_view == null);
 }
 
 test "live view transfer keeps exact immutable text and metadata without a connection" {

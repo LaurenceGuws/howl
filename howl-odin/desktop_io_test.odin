@@ -111,11 +111,12 @@ selection_motion_after_copy_does_not_erase_newer_range :: proc(t: ^testing.T) {
 immutable_live_view_moves_only_into_an_available_render_request :: proc(t: ^testing.T) {
     byte: u8
     owned := rawptr(&byte)
-    view := Instance_View{reusable_view = owned}
+    view := Instance_View{reusable_view = owned, reusable_view_kind = .Owned_View}
     work: Render_Work
     request_render(&work, &view, 7, 0, 0)
     testing.expect(t, work.pending)
     testing.expect_value(t, work.offered_view, owned)
+    testing.expect_value(t, work.offered_kind, Render_Offer_Kind.Owned_View)
     testing.expect_value(t, view.reusable_view, rawptr(nil))
     view.reusable_view = owned
     request_render(&work, &view, 8, 0, 0)

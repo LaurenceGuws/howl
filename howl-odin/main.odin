@@ -186,8 +186,12 @@ Instance_View :: struct {
     selection_generation: u64,
     observer: rawptr,
     observer_thread: ^thread.Thread,
-    // Single latest immutable live projection. Main moves it to a render job.
+    observer_cond: sync.Cond,
+    render_offer_outstanding: bool,
+    // Single latest render offer. Owned views remain immutable; rich loans keep
+    // RawCache frozen until the render worker returns them.
     reusable_view: rawptr,
+    reusable_view_kind: Render_Offer_Kind,
     search: rawptr,
     search_interrupt: rawptr,
     search_failed: bool,
@@ -1750,10 +1754,19 @@ observe_instance :: proc(data: rawptr) {
         title_len := int(snapshot_title(observer, raw_data(title_bytes[:]), c.size_t(len(title_bytes))))
         progress := snapshot_progress(observer)
 
-        transferred := snapshot_take_view(observer)
+        rich_loan := snapshot_take_rich_loan(observer)
+        transferred := rich_loan
+        transferred_kind := Render_Offer_Kind.Rich_Loan
+        if transferred == nil {
+            transferred = snapshot_take_view(observer)
+            transferred_kind = transferred != nil ? Render_Offer_Kind.Owned_View : Render_Offer_Kind.None
+        }
         sync.mutex_lock(&view.mutex)
         displaced := view.reusable_view
+        displaced_kind := view.reusable_view_kind
         view.reusable_view = transferred
+        view.reusable_view_kind = transferred_kind
+        if transferred_kind == .Rich_Loan do view.render_offer_outstanding = true
         chrome_changed := view.revision == 0 || view.stream_closed != snapshot_stream_closed ||
                           view.child_exited != snapshot_child_exited || view.task_progress != progress ||
                           string(view.display_title[:view.display_title_len]) != string(title_bytes[:title_len])
@@ -1797,8 +1810,13 @@ observe_instance :: proc(data: rawptr) {
         if !view.control_failed && !view.io_failed do view.error_len = 0
         validate_search_result_locked(view)
         sync.mutex_unlock(&view.mutex)
-        if displaced != nil do view_destroy(displaced)
+        if displaced != nil do release_render_offer(displaced_kind, displaced)
         notify_instance_update()
+        if transferred_kind == .Rich_Loan {
+            sync.mutex_lock(&view.mutex)
+            for view.render_offer_outstanding && !view.worker_stop do sync.cond_wait(&view.observer_cond, &view.mutex)
+            sync.mutex_unlock(&view.mutex)
+        }
     }
 }
 
@@ -2538,6 +2556,7 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     sync.mutex_unlock(&view.mutex)
     sync.cond_signal(&view.search_cond)
     sync.cond_signal(&view.control_cond)
+    sync.cond_broadcast(&view.observer_cond)
     if view.control_interrupt != nil do _ = interrupt_cancel(view.control_interrupt)
     if view.observer_interrupt != nil do _ = interrupt_cancel(view.observer_interrupt)
     if view.search_interrupt != nil do _ = interrupt_cancel(view.search_interrupt)
@@ -2548,6 +2567,12 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     if view.observer_thread != nil {
         thread.destroy(view.observer_thread)
         view.observer_thread = nil
+    }
+    if view.reusable_view != nil {
+        release_render_offer(view.reusable_view_kind, view.reusable_view)
+        view.reusable_view = nil
+        view.reusable_view_kind = .None
+        view.render_offer_outstanding = false
     }
     if view.search_thread != nil {
         thread.destroy(view.search_thread)
@@ -2569,7 +2594,6 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     }
     if view.control_result.bytes != nil do delete(view.control_result.bytes)
     if view.clipboard_reply != nil do delete(view.clipboard_reply)
-    if view.reusable_view != nil do view_destroy(view.reusable_view)
     if retire_local && view.route_kind == .Local && view.instance_id != 0 {
         _ = local_instance_destroy(desktop_io_runtime, view.instance_id)
     }
@@ -6817,7 +6841,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 12 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 13 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")
