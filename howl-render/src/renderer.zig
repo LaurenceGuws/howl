@@ -1857,9 +1857,10 @@ fn buildContentCommands(
                 const cached = incremental_rows[source_row];
                 const cached_end = std.math.add(usize, cached.start, cached.count) catch
                     return error.InvalidView;
-                if (cached_end > incremental_commands.len or
-                    cached.count > output.len - @min(used, output.len))
+                if (cached_end > incremental_commands.len)
                     return error.InvalidView;
+                if (cached.count > output.len - @min(used, output.len))
+                    return error.CommandLimit;
                 for (incremental_commands[cached.start..cached_end]) |command| {
                     output[used] = try translateIncrementalGlyph(command, plan.y_delta);
                     used += 1;

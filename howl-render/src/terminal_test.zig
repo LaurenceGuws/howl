@@ -1255,6 +1255,67 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     try std.testing.expectEqualDeep(stale_coalesced.frame.commands, complete_coalesced.frame.commands);
 }
 
+test "incremental cached row reuse grows complete command storage instead of rejecting view" {
+    const row_count: usize = 6;
+    const column_count: usize = 4;
+    var glyph_scalar = [_]u32{'A'};
+    var changed_scalar = [_]u32{'B'};
+    var space_scalar = [_]u32{' '};
+
+    var baseline_cells: [row_count][column_count]client.rich.Cell = undefined;
+    var baseline_rows: [row_count]client.rich.Row = undefined;
+    for (&baseline_cells, &baseline_rows) |*cells, *row| {
+        cells[0] = cell(&glyph_scalar, 1, 0);
+        for (cells[1..]) |*value| value.* = cell(&space_scalar, 1, 0);
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var baseline_source = sourceSnapshot(&baseline_rows, column_count);
+    baseline_source.begin.revision = 30;
+    baseline_source.begin.terminal_revision = 30;
+    var baseline_rich = baseline_source.view();
+    var baseline_changed: [row_count]bool = @splat(true);
+    baseline_rich.changed_rows = &baseline_changed;
+    const baseline_view = try client.view.projectView(std.testing.allocator, &baseline_rich);
+    defer client.view.deinit(baseline_view);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var config = rendererConfig(row_count + 1);
+    config.command_limit = 32;
+    config.incremental_row_capacity = row_count;
+    config.incremental_command_capacity = 32;
+    var cached = try Harness.init(std.testing.allocator, font, config);
+    defer cached.deinit();
+    var complete = try Harness.init(std.testing.allocator, font, rendererConfig(32));
+    defer complete.deinit();
+
+    const baseline_cached = try cached.present(baseline_view);
+    const baseline_complete = try complete.present(baseline_view);
+    try std.testing.expectEqualDeep(baseline_complete.frame.commands, baseline_cached.frame.commands);
+    try std.testing.expectEqual(@as(usize, row_count + 1), terminal.usage(cached.renderer).command_capacity);
+
+    var changed_cells = baseline_cells;
+    for (&changed_cells[0]) |*value| value.* = cell(&changed_scalar, 1, 0);
+    var changed_rows: [row_count]client.rich.Row = undefined;
+    for (&changed_cells, &changed_rows) |*cells, *row|
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    var changed_source = sourceSnapshot(&changed_rows, column_count);
+    changed_source.begin.revision = 31;
+    changed_source.begin.terminal_revision = 31;
+    var changed_rich = changed_source.view();
+    var changed_mask = [_]bool{ true, false, false, false, false, false };
+    changed_rich.changed_rows = &changed_mask;
+    changed_rich.changed_rows_base_revision = 30;
+    const changed_view = try client.view.projectView(std.testing.allocator, &changed_rich);
+    defer client.view.deinit(changed_view);
+
+    const changed_complete = try complete.present(changed_view);
+    const changed_cached = try cached.present(changed_view);
+    try std.testing.expectEqualDeep(changed_complete.frame.commands, changed_cached.frame.commands);
+    try std.testing.expect(terminal.usage(cached.renderer).command_capacity > row_count + 1);
+    try std.testing.expect(terminal.usage(cached.renderer).command_capacity <= config.command_limit);
+}
+
 test "terminal renderer incremental rows equal complete final commands" {
     var baseline_scalars = [_][1]u32{ .{'A'}, .{'B'}, .{'C'}, .{'D'}, .{'E'}, .{'F'} };
     var baseline_cells: [6][1]client.rich.Cell = undefined;
