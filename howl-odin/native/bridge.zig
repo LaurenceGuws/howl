@@ -232,6 +232,9 @@ const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
 const render_command_initial_capacity: usize = 4 * 1024;
 const render_command_limit: usize = render.limits.maximum_frame_commands;
+// Retain one common dense interactive row-command window. Richer frames remain
+// correct by falling back to complete projection when this bounded cache fills.
+const render_incremental_command_capacity: usize = 32 * 1024;
 // One global recipe plus up to eight profile-specific font recipes can be live
 // concurrently in the Odin product.
 const render_lane_limit: usize = 9;
@@ -483,6 +486,8 @@ fn renderContentConfig(cell_size: terminal_render.Size) terminal_render.Config {
         .raster_bytes = store.raster_bytes,
         .command_capacity = render_command_initial_capacity,
         .command_limit = render_command_limit,
+        .incremental_row_capacity = render.limits.maximum_rows,
+        .incremental_command_capacity = render_incremental_command_capacity,
     };
 }
 
