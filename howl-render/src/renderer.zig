@@ -40,6 +40,7 @@ pub const Residency = frame_vocabulary.Residency;
 pub const FrameResourceUpload = frame_vocabulary.FrameResourceUpload;
 pub const FrameExternalResource = frame_vocabulary.FrameExternalResource;
 pub const Command = frame_vocabulary.Command;
+pub const Input = frame_vocabulary.Input;
 
 // File map:
 //   - bounded Content lifecycle and Renderer resource publication
@@ -121,6 +122,29 @@ pub const Frame = struct {
     removals: []const frame_vocabulary.ResourceRef,
     commands: []const frame_vocabulary.Command,
     pixels: []const u8,
+};
+
+pub const RowSceneKind = enum { baseline, patch };
+
+pub const RowSceneRow = struct {
+    start: usize = 0,
+    count: usize = 0,
+};
+
+/// Borrows the current retained plain-row glyph scene until the next Renderer mutation.
+/// `commands + rows` always describe the complete current scene. Patch metadata is
+/// an acceleration hint; a backend may rebuild all rows from this same view.
+pub const RowScene = struct {
+    kind: RowSceneKind,
+    revision: u64,
+    base_revision: ?u64,
+    shift_rows: u16,
+    surface: frame_vocabulary.Size,
+    cell_size: frame_vocabulary.Size,
+    background: frame_vocabulary.Color,
+    commands: []const frame_vocabulary.Input,
+    rows: []const RowSceneRow,
+    repairs: []const bool,
 };
 
 pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
@@ -215,10 +239,7 @@ const Cursor = struct {
     text_color: frame_vocabulary.Color,
 };
 
-const IncrementalRowCommands = struct {
-    start: usize = 0,
-    count: usize = 0,
-};
+const IncrementalRowCommands = RowSceneRow;
 
 const IncrementalPlan = struct {
     shift: u16,
@@ -236,6 +257,12 @@ const Impl = struct {
     incremental_commands: []frame_vocabulary.Input,
     incremental_rows: []IncrementalRowCommands,
     incremental_candidate_rows: []IncrementalRowCommands,
+    incremental_repairs: []bool,
+    incremental_command_count: usize = 0,
+    incremental_scene_kind: RowSceneKind = .baseline,
+    incremental_scene_revision: u64 = 0,
+    incremental_scene_base_revision: ?u64 = null,
+    incremental_scene_shift: u16 = 0,
     incremental_rows_count: u16 = 0,
     incremental_columns_count: u16 = 0,
     incremental_history_offset: u32 = 0,
@@ -438,6 +465,8 @@ fn initWithStoreInner(
     errdefer allocator.free(incremental_rows);
     const incremental_candidate_rows = try allocator.alloc(IncrementalRowCommands, config.incremental_row_capacity);
     errdefer allocator.free(incremental_candidate_rows);
+    const incremental_repairs = try allocator.alloc(bool, config.incremental_row_capacity);
+    errdefer allocator.free(incremental_repairs);
 
     impl.* = .{
         .allocator = allocator,
@@ -449,6 +478,7 @@ fn initWithStoreInner(
         .incremental_commands = incremental_commands,
         .incremental_rows = incremental_rows,
         .incremental_candidate_rows = incremental_candidate_rows,
+        .incremental_repairs = incremental_repairs,
     };
     return @ptrCast(impl);
 }
@@ -463,8 +493,10 @@ pub fn deinit(owner: *Renderer) void {
     const incremental_commands = impl.incremental_commands;
     const incremental_rows = impl.incremental_rows;
     const incremental_candidate_rows = impl.incremental_candidate_rows;
+    const incremental_repairs = impl.incremental_repairs;
     impl.* = undefined;
     allocator.free(commands);
+    allocator.free(incremental_repairs);
     allocator.free(incremental_candidate_rows);
     allocator.free(incremental_rows);
     allocator.free(incremental_commands);
@@ -480,6 +512,7 @@ pub fn resetCaches(owner: *Renderer) AtlasError!void {
     const impl = rendererImpl(owner);
     impl.frame_ready = false;
     impl.incremental_ready = false;
+    impl.incremental_command_count = 0;
     try glyph_cache.resetAtlas(impl.atlas);
     resetStore(impl.store);
 }
@@ -537,6 +570,7 @@ fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
     impl.commands = replacement;
     impl.frame_ready = false;
     impl.incremental_ready = false;
+    impl.incremental_command_count = 0;
     return true;
 }
 
@@ -666,6 +700,7 @@ fn updateInnerOnce(
 
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
+    const previous_revision = impl.revision;
     const next_revision = impl.revision + 1;
 
     const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
@@ -689,11 +724,51 @@ fn updateInnerOnce(
         impl.published_atlas_generation = atlas.generation;
         impl.published_atlas_entries = atlas_entries;
     }
-    if (incremental_eligible)
-        rememberIncrementalCommands(Source, owner, snapshot)
-    else
+    if (incremental_eligible) {
+        rememberIncrementalCommands(Source, owner, snapshot);
+        if (impl.incremental_ready) {
+            impl.incremental_scene_revision = next_revision;
+            if (incremental_plan) |plan| {
+                impl.incremental_scene_kind = .patch;
+                impl.incremental_scene_base_revision = previous_revision;
+                impl.incremental_scene_shift = plan.shift;
+                @memcpy(impl.incremental_repairs[0..Source.rows(snapshot)], plan.repairs);
+            } else {
+                impl.incremental_scene_kind = .baseline;
+                impl.incremental_scene_base_revision = null;
+                impl.incremental_scene_shift = 0;
+                @memset(impl.incremental_repairs[0..Source.rows(snapshot)], true);
+            }
+        }
+    } else {
         impl.incremental_ready = false;
+        impl.incremental_command_count = 0;
+    }
     impl.frame_ready = true;
+}
+
+/// Borrows the current bounded retained plain-row glyph scene.
+/// Returns null when the latest accepted frame is outside incremental eligibility.
+pub fn rowScene(owner: *const Renderer) ?RowScene {
+    const impl = constRendererImpl(owner);
+    if (!impl.frame_ready or !impl.incremental_ready or impl.incremental_scene_revision != impl.revision)
+        return null;
+    const rows = @as(usize, impl.incremental_rows_count);
+    if (rows == 0 or rows > impl.incremental_rows.len or rows > impl.incremental_repairs.len)
+        return null;
+    if (impl.incremental_command_count > impl.incremental_commands.len) return null;
+    return .{
+        .kind = impl.incremental_scene_kind,
+        .revision = impl.incremental_scene_revision,
+        .base_revision = impl.incremental_scene_base_revision,
+        .shift_rows = impl.incremental_scene_shift,
+        .surface = impl.surface,
+        .cell_size = impl.config.cell_size,
+        .background = impl.incremental_background,
+        .commands = impl.incremental_commands[0..impl.incremental_command_count],
+        .rows = impl.incremental_rows[0..rows],
+        .repairs = impl.incremental_repairs[0..rows],
+    };
 }
 
 /// Lists Host-owned terminal image resources required by the current frame but
@@ -1706,6 +1781,7 @@ fn rememberIncrementalCommands(
     impl.incremental_foreground = contentRgba(presentation.foreground);
     impl.incremental_background = contentRgba(presentation.background);
     impl.incremental_source_revision = Source.observationRevision(snapshot);
+    impl.incremental_command_count = used;
     impl.incremental_ready = true;
 }
 

@@ -39,6 +39,7 @@ pub const Residency = renderer.Residency;
 pub const FrameResourceUpload = renderer.FrameResourceUpload;
 pub const FrameExternalResource = renderer.FrameExternalResource;
 pub const Command = renderer.Command;
+pub const Input = renderer.Input;
 
 pub const Config = renderer.Config;
 pub const ExternalImageBinding = renderer.ExternalImageBinding;
@@ -47,6 +48,9 @@ pub const Renderer = renderer.Renderer;
 pub const Usage = renderer.Usage;
 pub const FrameBuffers = renderer.FrameBuffers;
 pub const Frame = renderer.Frame;
+pub const RowSceneKind = renderer.RowSceneKind;
+pub const RowSceneRow = renderer.RowSceneRow;
+pub const RowScene = renderer.RowScene;
 pub const InitError = renderer.InitError;
 pub const Error = renderer.Error;
 
@@ -62,6 +66,7 @@ pub const resetCaches = renderer.resetCaches;
 pub const usage = renderer.usage;
 pub const missingExternalResources = renderer.missingExternalResources;
 pub const frame = renderer.frame;
+pub const rowScene = renderer.rowScene;
 
 /// Plans exact resource bindings for one transported semantic image manifest.
 pub fn planExternalImageBindings(

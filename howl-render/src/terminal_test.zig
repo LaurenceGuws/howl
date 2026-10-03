@@ -1209,6 +1209,16 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     var complete = try Harness.init(std.testing.allocator, font, rendererConfig(64));
     defer complete.deinit();
     const cached_base = try cached.present(baseline_view);
+    const cached_scene_base = terminal.rowScene(cached.renderer) orelse return error.TestExpectedRowScene;
+    try std.testing.expectEqual(terminal.RowSceneKind.baseline, cached_scene_base.kind);
+    try std.testing.expectEqual(@as(?u64, null), cached_scene_base.base_revision);
+    try std.testing.expectEqual(@as(u64, 1), cached_scene_base.revision);
+    try std.testing.expectEqual(terminal.Size{ .width = 10, .height = 120 }, cached_scene_base.surface);
+    try std.testing.expectEqual(terminal.Size{ .width = 10, .height = 20 }, cached_scene_base.cell_size);
+    try std.testing.expectEqual(terminal.Color{ .r = 1, .g = 2, .b = 3, .a = 0xff }, cached_scene_base.background);
+    try std.testing.expectEqual(@as(usize, 6), cached_scene_base.rows.len);
+    try std.testing.expectEqual(@as(usize, 6), cached_scene_base.repairs.len);
+    for (cached_scene_base.repairs) |repair| try std.testing.expect(repair);
     const stale_base = try stale.present(baseline_view);
     const complete_base = try complete.present(baseline_view);
     try std.testing.expectEqualDeep(cached_base.frame.commands, complete_base.frame.commands);
@@ -1234,6 +1244,11 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     try std.testing.expectEqualSlices(bool, &changed_mask, client.view.changedRows(changed_view).?);
 
     const cached_changed = try cached.present(changed_view);
+    const cached_scene_changed = terminal.rowScene(cached.renderer) orelse return error.TestExpectedRowScene;
+    try std.testing.expectEqual(terminal.RowSceneKind.patch, cached_scene_changed.kind);
+    try std.testing.expectEqual(@as(?u64, 1), cached_scene_changed.base_revision);
+    try std.testing.expectEqual(@as(u64, 2), cached_scene_changed.revision);
+    try std.testing.expectEqualSlices(bool, &changed_mask, cached_scene_changed.repairs);
     const complete_changed = try complete.present(changed_view);
     try std.testing.expectEqualDeep(cached_changed.frame.commands, complete_changed.frame.commands);
 
@@ -1251,6 +1266,10 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     const coalesced_view = try client.view.projectView(std.testing.allocator, &coalesced_rich);
     defer client.view.deinit(coalesced_view);
     const stale_coalesced = try stale.present(coalesced_view);
+    const stale_scene = terminal.rowScene(stale.renderer) orelse return error.TestExpectedRowScene;
+    try std.testing.expectEqual(terminal.RowSceneKind.baseline, stale_scene.kind);
+    try std.testing.expectEqual(@as(?u64, null), stale_scene.base_revision);
+    try std.testing.expectEqual(@as(u64, 2), stale_scene.revision);
     const complete_coalesced = try complete.present(coalesced_view);
     try std.testing.expectEqualDeep(stale_coalesced.frame.commands, complete_coalesced.frame.commands);
 }
