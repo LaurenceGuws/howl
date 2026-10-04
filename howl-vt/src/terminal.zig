@@ -4175,10 +4175,23 @@ const TerminalStream = struct {
     }
 
     fn applyPrint(self: *TerminalStream, cp: u21) TerminalFeedError!EventEffect {
+        // Parser `.print` owns GL printable bytes plus DEL; Unicode/Latin-1
+        // decoded print scalars are never C0 controls. Supported charset
+        // mapping can preserve a GL byte or raise it to a Unicode scalar, but
+        // cannot lower a printable GL byte below 0x20.
+        std.debug.assert(cp >= 0x20);
         const mapped = self.mapCodepoint(cp);
         if (mapped <= 0x7f) {
             const ascii: [1]u8 = .{@intCast(mapped)};
-            self.terminal.screen_state.active().writeText(ascii[0..]);
+            const screen = self.terminal.screen_state.active();
+            if (mapped < 0x7f) {
+                if (!@call(.never_inline, Screen.tryWritePlainAscii, .{ screen, ascii[0] })) {
+                    @branchHint(.unlikely);
+                    screen.writeText(ascii[0..]);
+                }
+            } else {
+                screen.writeText(ascii[0..]);
+            }
             return .{
                 .changed = true,
                 .mutations = .{ .text = true },
@@ -8946,6 +8959,15 @@ const RouteOwnerTests = struct {
         rejected = cup;
         rejected.intermediates_len = 1;
         try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+    }
+
+    test "hot printable owner leaves DEL on the canonical byte fallback" {
+        var terminal = try Terminal.init(std.testing.allocator, 1, 2);
+        defer terminal.deinit();
+        var stream = TerminalStream.init(&terminal);
+        const effect = try stream.applyPrint(0x7f);
+        try std.testing.expect(effect.changed);
+        try std.testing.expect(effect.mutations.text);
     }
 
     test "actions: DEC private application cursor enable maps true" {

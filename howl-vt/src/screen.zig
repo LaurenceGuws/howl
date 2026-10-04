@@ -2358,6 +2358,50 @@ pub const Screen = struct {
         for (text) |byte| self.writeCell(@intCast(byte));
     }
 
+    /// Writes one printable ASCII scalar when the ordinary 1x1 cell path is exact.
+    /// Returns false when the caller must use the canonical Unicode writer.
+    pub fn tryWritePlainAscii(self: *Screen, byte: u8) bool {
+        std.debug.assert(byte >= 0x20 and byte <= 0x7e);
+        if (self.cols == 0 or self.rows == 0 or self.wrap_pending or self.insert_mode or
+            self.left_right_margin_mode) return false;
+        const cells = self.cells orelse return false;
+        const flags = self.row_flags orelse return false;
+        var physical_row = @as(u32, self.row_origin) + @as(u32, self.cursor.row);
+        if (physical_row >= self.rows) physical_row -= self.rows;
+        if (flags[physical_row] & row_geometry_mask != 0) return false;
+        const col = self.cursor.col;
+        const index = physical_row * @as(u32, self.cols) + @as(u32, col);
+        const target = cells[index];
+        if (target.width != 1 or target.height != 1 or target.x != 0 or
+            target.y != 0 or target.combining_len != 0) return false;
+
+        cells[index] = .{
+            .codepoint = byte,
+            .width = 1,
+            .attrs = self.current_attrs,
+        };
+        if (self.last_graphic) |*graphic| {
+            graphic.codepoint = byte;
+            graphic.width = 1;
+            graphic.combining_len = 0;
+        } else {
+            self.last_graphic = .{ .codepoint = byte, .width = 1 };
+        }
+        const right = self.cols - 1;
+        const after = col + 1;
+        if (after <= right) {
+            self.cursor.setColByClient(after);
+        } else if (self.auto_wrap) {
+            self.cursor.setColByClient(right);
+            self.wrap_pending = true;
+        } else {
+            self.cursor.setColByClient(right);
+        }
+        if (self.row_generations) |generations|
+            generations[physical_row] = self.nextRowGeneration();
+        return true;
+    }
+
     /// Applies one Unicode scalar and reports exact accepted semantic mutation.
     pub fn writeCodepoint(self: *Screen, codepoint: u21) bool {
         return self.writeCellDisposition(codepoint);
@@ -5420,6 +5464,38 @@ test "Unicode scalar pressure preserves wide occupancy and terminal state" {
         pages_before,
         std.mem.sliceAsBytes(screen.scalars.?.pages),
     );
+}
+
+test "printable ASCII fast owner falls back without mutation on pending wrap" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 2);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeText("ab");
+    const cells_before = try std.testing.allocator.dupe(ScreenCell, screen.cells.?);
+    defer std.testing.allocator.free(cells_before);
+    const cursor_before = screen.cursor;
+    const graphic_before = screen.last_graphic;
+    const wrap_before = screen.wrap_pending;
+    try std.testing.expect(!screen.tryWritePlainAscii('c'));
+    try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
+    try std.testing.expectEqualDeep(cursor_before, screen.cursor);
+    try std.testing.expectEqualDeep(graphic_before, screen.last_graphic);
+    try std.testing.expectEqual(wrap_before, screen.wrap_pending);
+}
+
+test "printable ASCII fast owner resets REP combining length without clearing dead storage" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell('a');
+    screen.writeCell(0x0300);
+    try std.testing.expectEqual(@as(u8, 1), screen.last_graphic.?.combining_len);
+
+    try std.testing.expect(screen.tryWritePlainAscii('B'));
+    try std.testing.expectEqual(@as(u8, 0), screen.last_graphic.?.combining_len);
+    try std.testing.expect(screen.repeatPreceding(1));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 2));
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqual(@as(usize, 1), screen.cellScalarsAt(0, 2, &scalars).len);
 }
 
 test "REP reports no preceding graphic separately from scalar pressure" {
