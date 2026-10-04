@@ -5,6 +5,26 @@ import "core:testing"
 import SDL "vendor:sdl3"
 
 @(test)
+integer_canvas_command_containment_matches_clip_contract :: proc(t: ^testing.T) {
+    command: Canvas_Command_Info
+    command.destination_x = 106
+    command.destination_y = 102
+    command.destination_width = 11
+    command.destination_height = 24
+    command.clip_x = 106
+    command.clip_y = 102
+    command.clip_width = 11
+    command.clip_height = 24
+    testing.expect(t, canvas_command_inside_clip(command))
+
+    command.destination_x = 105
+    testing.expect(t, !canvas_command_inside_clip(command))
+    command.destination_x = 106
+    command.destination_width = 12
+    testing.expect(t, !canvas_command_inside_clip(command))
+}
+
+@(test)
 gl_renderers_bound_canvas_geometry_submission_queue :: proc(t: ^testing.T) {
     testing.expect(t, renderer_needs_bounded_geometry_queue("opengl"))
     testing.expect(t, renderer_needs_bounded_geometry_queue("opengles2"))

@@ -1449,6 +1449,16 @@ canvas_rect_equal :: proc(a, b: SDL.Rect) -> bool {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h
 }
 
+canvas_command_inside_clip :: proc(command: Canvas_Command_Info) -> bool {
+    destination_right := i64(command.destination_x) + i64(command.destination_width)
+    destination_bottom := i64(command.destination_y) + i64(command.destination_height)
+    clip_right := i64(command.clip_x) + i64(command.clip_width)
+    clip_bottom := i64(command.clip_y) + i64(command.clip_height)
+    return i64(command.destination_x) >= i64(command.clip_x) &&
+           i64(command.destination_y) >= i64(command.clip_y) &&
+           destination_right <= clip_right && destination_bottom <= clip_bottom
+}
+
 canvas_command_color :: proc(rgba: u32) -> SDL.FColor {
     return SDL.FColor{
         f32(rgba_channel(rgba, 0)) / 255.0,
@@ -1554,6 +1564,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
     geometry_resource: ^Canvas_Texture = nil
     geometry_clip: SDL.Rect
     geometry_active := false
+    resolved_resource: ^Canvas_Texture = nil
 
     for command in view.canvas_commands {
         destination := SDL.FRect{
@@ -1578,25 +1589,31 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             _ = SDL.RenderFillRect(app.renderer, &draw_rect)
             continue
         }
-        resource := find_canvas_resource(view, command.resource, command.generation)
+        resource := resolved_resource
+        if resource == nil || resource.resource != command.resource || resource.generation != command.generation {
+            resource = find_canvas_resource(view, command.resource, command.generation)
+            resolved_resource = resource
+        }
         if resource == nil || resource.texture == nil {
             set_canvas_error(view, "Canvas command references missing texture")
             return false
         }
-        clip_left_f := origin_x + f32(command.clip_x) / scale
-        clip_top_f := origin_y + f32(command.clip_y) / scale
-        clip_right_f := origin_x + f32(command.clip_x + i32(command.clip_width)) / scale
-        clip_bottom_f := origin_y + f32(command.clip_y + i32(command.clip_height)) / scale
-        clip_left := c.int(math.floor(clip_left_f))
-        clip_top := c.int(math.floor(clip_top_f))
-        clip_right := c.int(math.ceil(clip_right_f))
-        clip_bottom := c.int(math.ceil(clip_bottom_f))
-        command_clip := SDL.Rect{clip_left, clip_top, clip_right - clip_left, clip_bottom - clip_top}
-        clip: SDL.Rect
-        if !SDL.GetRectIntersection(command_clip, pane_clip, &clip) {
-            continue
+        clip := pane_clip
+        if !canvas_command_inside_clip(command) {
+            clip_left_f := origin_x + f32(command.clip_x) / scale
+            clip_top_f := origin_y + f32(command.clip_y) / scale
+            clip_right_f := origin_x + f32(command.clip_x + i32(command.clip_width)) / scale
+            clip_bottom_f := origin_y + f32(command.clip_y + i32(command.clip_height)) / scale
+            clip_left := c.int(math.floor(clip_left_f))
+            clip_top := c.int(math.floor(clip_top_f))
+            clip_right := c.int(math.ceil(clip_right_f))
+            clip_bottom := c.int(math.ceil(clip_bottom_f))
+            command_clip := SDL.Rect{clip_left, clip_top, clip_right - clip_left, clip_bottom - clip_top}
+            if !SDL.GetRectIntersection(command_clip, pane_clip, &clip) {
+                continue
+            }
+            clip = canvas_effective_clip(destination, clip, pane_clip)
         }
-        clip = canvas_effective_clip(destination, clip, pane_clip)
 
         if command.tag == 1 {
             compatible := geometry_active && geometry_resource == resource && canvas_rect_equal(geometry_clip, clip)
