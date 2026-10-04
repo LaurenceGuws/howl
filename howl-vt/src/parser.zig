@@ -848,7 +848,7 @@ pub const Parser = struct {
                 self.csi_params[self.csi_count] = digit;
                 self.csi_in_param = true;
             } else {
-                self.csi_params[self.csi_count] = self.csi_params[self.csi_count] * 10 + digit;
+                self.csi_params[self.csi_count] = self.csi_params[self.csi_count] *| 10 +| digit;
             }
             return;
         }

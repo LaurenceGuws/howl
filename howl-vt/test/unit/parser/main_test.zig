@@ -65,6 +65,26 @@ test "parser: nextStep returns ordered phase actions directly" {
     try std.testing.expectEqual(@as(?Action, null), final[2]);
 }
 
+test "parser: decimal parameters saturate for CSI and DCS and reset per operand" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    const params = "2147483646;2147483647;2147483648;999999999999999999999999999;0;1";
+    const sequences = [_][]const u8{ "\x1b[" ++ params ++ "m", "\x1bP" ++ params ++ "q" };
+    const expected = [_]i32{ 2147483646, 2147483647, 2147483647, 2147483647, 0, 1 };
+    for (sequences, 0..) |bytes, index| {
+        parser.reset();
+        output.clear();
+        for (bytes) |byte| output.appendPhases(parser.next(byte));
+        try expectActionCount(output.actions.items, 1);
+        const values = if (index == 0) output.actions.items[0].csi_dispatch.params else output.actions.items[0].dcs_hook.params;
+        try std.testing.expectEqualSlices(i32, &expected, values);
+    }
+}
+
 test "parser: mixed stream exact sequence (ASCII+CSI+ASCII)" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);
