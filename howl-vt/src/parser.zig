@@ -383,6 +383,12 @@ pub const Parser = struct {
             return .{ null, action, null };
         }
 
+        if (self.state == .ground and byte == 0x1B) {
+            const entry = self.entryPhase(.escape, byte);
+            self.state = .escape;
+            return .{ null, null, entry };
+        }
+
         if (self.state == .escape and self.intermediates_len == 0 and byte == 'k') {
             self.osc.startScreenTitle();
             self.state = .screen_title_string;
@@ -906,6 +912,34 @@ fn expectPhaseTags(
             try std.testing.expectEqual(@as(?Action, null), phase);
         }
     }
+}
+
+test "parser ground escape preserves reset encoding and incomplete UTF-8 phases" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+
+    for ("\x1b[1;38;5;196") |byte|
+        try expectPhaseTags(parser.next(byte), null, null, null);
+    try expectPhaseTags(parser.next('m'), null, .csi_dispatch, null);
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try std.testing.expectEqual(ParseState.escape, parser.state);
+    try std.testing.expectEqual(@as(u8, 0), parser.csi_count);
+    try std.testing.expectEqual(@as(u8, 0), parser.intermediates_len);
+    try std.testing.expect(!parser.csi_in_param);
+    try std.testing.expect(parser.csi_separators.eql(CsiSeparatorList.empty));
+
+    parser.reset();
+    try expectPhaseTags(parser.next(0xE2), null, null, null);
+    try expectPhaseTags(parser.next(0x1B), null, .invalid, null);
+    try std.testing.expectEqual(ParseState.ground, parser.state);
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try std.testing.expectEqual(ParseState.escape, parser.state);
+
+    parser.reset();
+    try std.testing.expect(parser.selectLatin1(true));
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try std.testing.expectEqual(ParseState.escape, parser.state);
+    try std.testing.expect(parser.latin1);
 }
 
 test "parser control spine orders populated phase slots in one next call" {
