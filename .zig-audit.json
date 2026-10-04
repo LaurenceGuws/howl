@@ -15,7 +15,6 @@
     "howl-text/build.zig",
     "howl-text/bundled.zig",
     "howl-text/src",
-    "tools/json_logger.zig",
-    "local_build.zig"
+    "tools/json_logger.zig"
   ]
 }

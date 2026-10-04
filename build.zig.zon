@@ -7,8 +7,6 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "local_build.zig",
-        "howl-render",
         ".zig-audit.json",
         "howl-pty",
         "howl-instance",

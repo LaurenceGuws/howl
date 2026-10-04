@@ -22,32 +22,9 @@ pub fn build(b: *std.Build) void {
         false,
     );
     std.debug.assert(b.modules.get("howl_text") == text_module);
-    @import("local_build.zig").addModules(b, target, optimize, text_module);
 
     const check = b.step("check", "Compile the Howl core and run required audits");
     const test_step = b.step("test", "Run every Howl core proof");
-    const embedding_module = b.createModule(.{
-        .root_source_file = b.path("howl-render/test/local_embedding.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    embedding_module.addImport("howl_instance", b.modules.get("howl_instance").?);
-    embedding_module.addImport("howl_vt", b.modules.get("howl_vt").?);
-    embedding_module.addImport("howl_render", b.modules.get("howl_render").?);
-    const fonts = b.addOptions();
-    // zig-audit: acknowledge panic
-    // reason: Build graph construction has no recoverable allocator failure.
-    fonts.addOption([]const u8, "primary_font", b.root.joinString(b.allocator, "howl-text/testdata/primary.ttf") catch @panic("OOM"));
-    embedding_module.addOptions("test_fonts", fonts);
-    const embedding = b.addTest(.{
-        .name = "howl-local-embedding",
-        .root_module = embedding_module,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&embedding.step);
-    test_step.dependOn(&b.addRunArtifact(embedding).step);
 
     inline for (children) |child| {
         addChildBuild(b, check, child, "check", optimize, target, false);

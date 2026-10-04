@@ -12,7 +12,7 @@ const windows = std.os.windows;
 const posix = if (native_windows) struct {} else std.posix;
 const linux = if (native_windows) struct {} else std.os.linux;
 const howl = @import("howl_instance");
-const protocol = @import("howl_instance_protocol");
+const protocol = howl.protocol;
 
 /// Owns the Windows service side of one listener-free in-process HWLS duplex stream.
 pub const WindowsAdoptedStream = struct {

@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("howl_instance").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const layout = @import("layout.zig");

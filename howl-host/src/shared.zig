@@ -3,7 +3,7 @@
 const std = @import("std");
 const c = @import("host_c");
 const wayland = @import("howl_wayland");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("howl_instance").protocol;
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;

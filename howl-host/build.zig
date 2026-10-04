@@ -59,7 +59,6 @@ pub fn build(b: *std.Build) void {
     });
     local_terminal.addImport("host_c", host_c);
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
-    local_terminal.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const test_fonts = text_dependency.module("howl_text_test_fonts");
     const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
@@ -76,7 +75,6 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_client", client);
     root.addImport("server_client", server_client);
     root.addImport("howl_instance", instance.module("howl_instance"));
-    root.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("local_terminal", local_terminal);
     root.addImport("howl_render", render);
@@ -108,7 +106,6 @@ pub fn build(b: *std.Build) void {
     shared.addImport("host_c", host_c);
     shared.addImport("howl_wayland", wayland.module("howl_wayland"));
     shared.addImport("howl_instance", instance.module("howl_instance"));
-    shared.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     const test_module = b.createModule(.{
         .root_source_file = b.path("test/test.zig"),
         .target = target,
@@ -178,7 +175,6 @@ pub fn build(b: *std.Build) void {
     input_test_module.addImport("server_client", server_client);
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     input_test_module.addImport("howl_instance", instance.module("howl_instance"));
-    input_test_module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     input_test_module.addImport("local_terminal", local_terminal);
     input_test_module.addImport("host_c", host_c);
     const input_tests = b.addTest(.{
@@ -234,7 +230,6 @@ pub fn build(b: *std.Build) void {
     scene_test_module.addImport("howl_client", client);
     scene_test_module.addImport("server_client", server_client);
     scene_test_module.addImport("howl_instance", instance.module("howl_instance"));
-    scene_test_module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("local_terminal", local_terminal);
     scene_test_module.addImport("howl_render", render);

@@ -24,7 +24,6 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("server_protocol", protocol_module);
     module.addImport("howl_instance", instance.module("howl_instance"));
-    module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     module.addImport("howl_instance_service", instance.module("howl_instance_service"));
 
     const tests = b.addTest(.{
@@ -42,7 +41,6 @@ pub fn build(b: *std.Build) void {
     service_module.addImport("server_model", module);
     service_module.addImport("server_protocol", protocol_module);
     service_module.addImport("howl_instance", instance.module("howl_instance"));
-    service_module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     const service_tests = b.addTest(.{
         .name = "server-service",
         .root_module = service_module,
@@ -57,7 +55,6 @@ pub fn build(b: *std.Build) void {
     });
     runtime_module.addImport("server_model", module);
     runtime_module.addImport("howl_instance", instance.module("howl_instance"));
-    runtime_module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     runtime_module.addImport("server_service", service_module);
     const runtime_tests = b.addTest(.{
         .name = "server-runtime",

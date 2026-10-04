@@ -833,7 +833,7 @@ pub const Scene = struct {
 };
 
 fn preparedEnvelope(
-    begin: @import("howl_instance_protocol").SnapshotBegin,
+    begin: @import("howl_instance").protocol.SnapshotBegin,
     width: u16,
     height: u16,
     cell_pixel_width: u32,

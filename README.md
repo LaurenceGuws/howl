@@ -173,8 +173,7 @@ language-neutral protocol fixtures; it is not a Howl runtime dependency.
 
 The repository root is also the distribution boundary for downstream Zig consumers.
 It exposes maintained child recipes as named modules without duplicating their build
-logic. Local consumers can import `howl_instance`, `howl_vt`, `howl_pty`,
-`howl_render`, and `howl_text` from one dependency:
+logic. `howl_text` is currently available this way:
 
 ```zig
 const howl = b.dependency("howl", .{
@@ -183,18 +182,10 @@ const howl = b.dependency("howl", .{
 });
 
 root.addImport("howl_text", howl.module("howl_text"));
-root.addImport("howl_instance", howl.module("howl_instance"));
-root.addImport("howl_render", howl.module("howl_render"));
 ```
 
 Consumers should pin an immutable repository tag or commit. The `howl-text/` package
 continues to own its FreeType/HarfBuzz module recipe and standalone proofs.
-The local exports share VT and Text type identity. Instance imports only PTY and
-VT; the local Render facade exposes synchronous VT observation projection and
-caller-owned resources, without client, service, or transport code. Consumers
-own scheduling, fonts, graphics, and UI policy. The root embedding proof checks
-this local composition; Render remains experimental. Protocol consumers import
-`howl_instance_protocol` explicitly from the standalone Instance package.
 
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.
