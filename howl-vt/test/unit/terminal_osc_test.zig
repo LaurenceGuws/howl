@@ -1648,6 +1648,36 @@ test "kitty tui CSI save and restore colors use the same stack" {
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
 }
 
+test "color stack restores displayed cursor colors in both banks" {
+    const cases = [_]struct { push: []const u8, pop: []const u8 }{
+        .{ .push = "\x1b[#P", .pop = "\x1b[#Q" },
+        .{ .push = "\x1b[3#P", .pop = "\x1b[3#Q" },
+        .{ .push = "\x1b]30001\x1b\\", .pop = "\x1b]30101\x1b\\" },
+    };
+    for (cases) |case| {
+        for ([_]bool{ false, true }) |explicit| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+            defer terminal.deinit();
+            if (explicit) try feed(&terminal, "\x1b]12;#112233\x1b\\\x1b]21;cursor_text=#445566\x1b\\");
+            const before = terminal.presentation();
+            try feed(&terminal, case.push);
+            try feed(&terminal, "\x1b[?1049h\x1b]10;#d4be98\x1b\\\x1b]11;#282828\x1b\\\x1b]12;#995900\x1b\\\x1b]21;cursor_text=#aabbcc\x1b\\");
+            const preview = terminal.presentation();
+            try std.testing.expect(!(try terminal.feed("\x1b[11#Q")).stateChanged());
+            try std.testing.expectEqual(preview, terminal.presentation());
+            // Cancellation can split the cleanup at every control boundary.
+            for (case.pop) |byte| {
+                try feed(&terminal, &.{byte});
+            }
+            try std.testing.expectEqual(before, terminal.presentation());
+            try feed(&terminal, "\x1b[?1049l");
+            try std.testing.expectEqual(before, terminal.presentation());
+            // Re-selecting an unchanged indexed snapshot is also a no-op.
+            try std.testing.expect(!(try terminal.feed(case.pop)).stateChanged());
+        }
+    }
+}
+
 test "kitty color stack owns indexed sequential bounded and report semantics" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

@@ -2919,7 +2919,15 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!bool
 fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
     return switch (command) {
         .push => |index| vt.properties.pushColor(index),
-        .pop => |index| vt.properties.popColor(index),
+        .pop => |index| restored: {
+            if (!vt.properties.popColor(index)) break :restored false;
+            const colors = &vt.properties.colors;
+            vt.screen_state.primary.cursor.cursor_color = colors.cursor;
+            vt.screen_state.alternate.cursor.cursor_color = colors.cursor;
+            vt.screen_state.primary.cursor.cursor_text_color = colors.cursor_text;
+            vt.screen_state.alternate.cursor.cursor_text_color = colors.cursor_text;
+            break :restored true;
+        },
     };
 }
 
