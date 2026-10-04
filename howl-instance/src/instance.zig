@@ -9,6 +9,7 @@ pub const protocol = @import("howl_instance_protocol");
 
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;
+const read_calls_per_turn: u8 = 8;
 const write_bytes_per_turn: usize = 64 * 1024;
 const write_calls_per_turn: usize = 4;
 
@@ -385,23 +386,34 @@ const State = struct {
             &retained_consequence_fallback,
         );
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
-            const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
-                error.Interrupted, error.WouldBlock => 0,
-                error.EndOfStream => closed: {
-                    self.stream_closed = true;
-                    break :closed 0;
-                },
-                else => return failure,
-            };
-            self.read_start = 0;
-            self.read_end = count;
-            try self.processBuffered(
-                timestamp_ns,
-                consequence_policy,
-                &viewport_changed,
-                &synchronized_output,
-                &retained_consequence_fallback,
-            );
+            var read_calls: u8 = 0;
+            while (read_calls < read_calls_per_turn and self.read_start == self.read_end and !self.stream_closed) {
+                const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
+                    error.Interrupted, error.WouldBlock => 0,
+                    error.EndOfStream => closed: {
+                        self.stream_closed = true;
+                        break :closed 0;
+                    },
+                    else => return failure,
+                };
+                if (count == 0) break;
+                read_calls += 1;
+                self.read_start = 0;
+                self.read_end = count;
+                try self.processBuffered(
+                    timestamp_ns,
+                    consequence_policy,
+                    &viewport_changed,
+                    &synchronized_output,
+                    &retained_consequence_fallback,
+                );
+                // Yield as soon as this service turn has caller-visible work.
+                // Pure output may drain a few immediately-ready PTY reads, but
+                // replies, retained consequences, or a partial VT boundary get
+                // control back before another read is admitted.
+                if (self.read_start != self.read_end or self.writes.count != 0) break;
+                if (consequence_policy == .retain and self.terminal.consequenceHead() != null) break;
+            }
         }
         switch (try self.transport.observeChild()) {
             .running => {},
