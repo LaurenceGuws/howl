@@ -4098,9 +4098,12 @@ const TerminalStream = struct {
                 consumed += payload_bytes;
                 continue;
             }
-            summary.mutations.merge(try self.nextSummary(byte));
+            const mutations = try self.nextSummary(byte);
+            summary.mutations.merge(mutations);
             consumed += 1;
             if (self.terminal.reply_buffer.len() != replies_before) break;
+            // Retaining a consequence always reports semantic mutation.
+            if (!mutations.stateChanged()) continue;
             const consequence_count = self.terminal.consequences.count();
             if (consequence_count != consequences_before) break;
             if (consequences_before == 0) continue;
@@ -10218,10 +10221,11 @@ test "service boundary preserves reply consequence and unchanged-head cuts" {
     {
         var terminal = try Terminal.init(std.testing.allocator, 2, 24);
         defer terminal.deinit();
-        const bytes = "A\x1b[6nTAIL";
+        const bytes = "\x1b[6nTAIL";
         const progress = try terminal.feedAtServiceBoundary(bytes, 1);
         try std.testing.expect(progress.consumed < bytes.len);
-        try std.testing.expectEqualStrings("\x1b[1;2R", terminal.replyBytes());
+        try std.testing.expect(progress.summary.stateChanged());
+        try std.testing.expectEqualStrings("\x1b[1;1R", terminal.replyBytes());
         try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
     }
     {
@@ -10233,6 +10237,40 @@ test "service boundary preserves reply consequence and unchanged-head cuts" {
         try std.testing.expectEqual(@as(usize, 2), progress.consumed);
         try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
         try std.testing.expectEqual(before, terminal.consequenceHead().?.id());
+        const notification = "\x1b]9;message\x07";
+        const appended = try terminal.feedAtServiceBoundary(notification ++ "TAIL", 2);
+        try std.testing.expectEqual(notification.len, appended.consumed);
+        try std.testing.expectEqual(@as(u16, 2), terminal.consequenceCount());
+        try std.testing.expectEqual(before, terminal.consequenceHead().?.id());
+    }
+}
+
+test "service boundary stops at every retained consequence family" {
+    const prefixes = [_]struct { bytes: []const u8, kind: std.meta.Tag(Terminal.Consequence) }{
+        .{ .bytes = "\x07", .kind = .bell },
+        .{ .bytes = "\x1b]52;c;b2xk\x07", .kind = .clipboard },
+        .{ .bytes = "\x1b]9;message\x07", .kind = .notification },
+        .{ .bytes = "\x1b]22;pointer\x07", .kind = .pointer_shape },
+        .{ .bytes = "\x1b]5113;first\x1b\\", .kind = .file_transfer },
+        .{ .bytes = "\x1b]72;t=q:i=1\x1b\\", .kind = .drag_drop },
+        .{ .bytes = "\x1b[1t", .kind = .container },
+        .{ .bytes = "\x1b[?996n", .kind = .color_preference_query },
+        .{ .bytes = "\x1b[0i", .kind = .media_copy },
+        .{ .bytes = "\x1c", .kind = .legacy_control },
+        .{ .bytes = "\x1bP+pA\x1b\\", .kind = .dcs },
+        .{ .bytes = "\x1b^opaque\x1b\\", .kind = .string_control },
+    };
+    for (prefixes) |prefix| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 24);
+        defer terminal.deinit();
+        var bytes: [64]u8 = undefined;
+        const input_bytes = try std.fmt.bufPrint(&bytes, "{s}TAIL", .{prefix.bytes});
+        const progress = try terminal.feedAtServiceBoundary(input_bytes, 1);
+        try std.testing.expectEqual(prefix.bytes.len, progress.consumed);
+        try std.testing.expect(progress.summary.stateChanged());
+        try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+        try std.testing.expectEqual(@as(u64, 1), terminal.consequenceHead().?.id());
+        try std.testing.expectEqual(prefix.kind, std.meta.activeTag(terminal.consequenceHead().?));
     }
 }
 
