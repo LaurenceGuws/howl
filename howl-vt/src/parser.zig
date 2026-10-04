@@ -389,6 +389,12 @@ pub const Parser = struct {
             return .{ null, null, entry };
         }
 
+        if (self.state == .escape and self.intermediates_len == 0 and byte == '[') {
+            const entry = self.entryPhase(.csi_entry, byte);
+            self.state = .csi_entry;
+            return .{ null, null, entry };
+        }
+
         if (self.state == .escape and self.intermediates_len == 0 and byte == 'k') {
             self.osc.startScreenTitle();
             self.state = .screen_title_string;
@@ -940,6 +946,18 @@ test "parser ground escape preserves reset encoding and incomplete UTF-8 phases"
     try expectPhaseTags(parser.next(0x1B), null, null, null);
     try std.testing.expectEqual(ParseState.escape, parser.state);
     try std.testing.expect(parser.latin1);
+}
+
+test "parser CSI introducer excludes escape intermediates" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+    for ("\x1b ") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+    const phases = parser.next('[');
+    try expectPhaseTags(phases, null, .esc_dispatch, null);
+    const action = phases[1].?.esc_dispatch;
+    try std.testing.expectEqual(@as(u8, '['), action.final);
+    try std.testing.expectEqual(@as(u8, 1), action.intermediates_len);
+    try std.testing.expectEqual(@as(u8, ' '), action.intermediates[0]);
 }
 
 test "parser control spine orders populated phase slots in one next call" {
