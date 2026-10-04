@@ -375,6 +375,18 @@ pub const Parser = struct {
         return count;
     }
 
+    /// Consumes only CSI parameter scratch; dispatch and every control stay scalar.
+    /// A pending allocation failure and single-byte feeds keep the canonical path.
+    pub fn consumeCsiParamPrefix(self: *Parser, bytes: []const u8) usize {
+        if (self.state != .csi_param or bytes.len < 2 or self.osc.alloc_failed) return 0;
+        std.debug.assert(self.activeControlCount() == 0);
+        var count: usize = 0;
+        while (count < bytes.len and csiParamFastByte(bytes[count])) : (count += 1) {
+            self.feedParamByte(.csi, bytes[count]);
+        }
+        return count;
+    }
+
     /// Advance the parser by one byte and return ordered phase actions.
     pub fn next(self: *Parser, byte: u8) PhaseActions {
         std.debug.assert(self.activeControlCount() <= 1);
@@ -1071,6 +1083,53 @@ test "CSI parameter final fast bytes exactly match generated dispatch transition
         const table_fast = transition.state == .ground and transition.action == .csi_dispatch;
         try std.testing.expectEqual(table_fast, Parser.csiParamFinalFastByte(byte));
     }
+}
+
+test "CSI parameter runs match scalar phases and scratch for every following byte" {
+    var over_capacity: [csi_max_params + 4]u8 = @splat(';');
+    @memcpy(over_capacity[0..2], "\x1b[");
+    const prefixes = [_][]const u8{ "\x1b[1", "\x1b[?1", "\x1b[2147483647;", &over_capacity };
+    for (prefixes) |prefix| {
+        for (0..std.math.maxInt(u8) + 1) |raw| {
+            var scalar = try Parser.init(std.testing.allocator);
+            defer scalar.deinit();
+            var batched = try Parser.init(std.testing.allocator);
+            defer batched.deinit();
+            for (prefix) |byte| try std.testing.expectEqualDeep(scalar.next(byte), batched.next(byte));
+            const bytes = [_]u8{ @intCast(raw), '2', ';', ':', '9', 'm' };
+            const count = batched.consumeCsiParamPrefix(&bytes);
+            try std.testing.expectEqual(Parser.csiParamFastByte(bytes[0]), count != 0);
+            for (bytes[0..count]) |byte| try expectPhaseTags(scalar.next(byte), null, null, null);
+            for (bytes[count..]) |byte| try std.testing.expectEqualDeep(scalar.next(byte), batched.next(byte));
+            try std.testing.expectEqual(scalar.state, batched.state);
+            try std.testing.expectEqual(scalar.csi_count, batched.csi_count);
+            try std.testing.expectEqual(scalar.csi_in_param, batched.csi_in_param);
+            try std.testing.expectEqualDeep(scalar.csi_separators, batched.csi_separators);
+            try std.testing.expectEqualSlices(i32, &scalar.csi_params, &batched.csi_params);
+            try std.testing.expectEqual(scalar.intermediates_len, batched.intermediates_len);
+            try std.testing.expectEqualSlices(u8, &scalar.intermediates, &batched.intermediates);
+        }
+    }
+}
+
+test "CSI parameter runs leave inactive states, single bytes and failures scalar" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+    for ([_][]const u8{ "", "\x1b[", "\x1bP1" }) |prefix| {
+        parser.reset();
+        for (prefix) |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+        const state = parser.state;
+        try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("12;"));
+        try std.testing.expectEqual(state, parser.state);
+    }
+    parser.reset();
+    for ("\x1b[1") |byte| try expectPhaseTags(parser.next(byte), null, null, null);
+    try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("2"));
+    try std.testing.expectEqual(@as(i32, 1), parser.csi_params[0]);
+    parser.osc.alloc_failed = true;
+    try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("23;m"));
+    try std.testing.expect(parser.osc.alloc_failed);
+    try std.testing.expectEqual(@as(i32, 1), parser.csi_params[0]);
 }
 
 test "CSI entry colon and private leader remain on generated paths" {

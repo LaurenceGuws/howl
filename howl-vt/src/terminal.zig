@@ -4031,10 +4031,12 @@ const TerminalStream = struct {
         return mutations;
     }
 
-    // Bulk capture only parser-proven payload: no terminal mutation, reply, or
-    // consequence can occur before the ordinary parser reaches its terminator.
-    fn putApcPayloadPrefix(self: *TerminalStream, bytes: []const u8) TerminalFeedError!usize {
+    // Consume only parser-proven inert scratch/payload. Mutations, replies and
+    // consequences stay on nextSummary at their exact byte boundary.
+    fn consumeParserPrefix(self: *TerminalStream, bytes: []const u8) TerminalFeedError!usize {
         const state = &self.terminal.stream_state;
+        const param_bytes = state.parser.consumeCsiParamPrefix(bytes);
+        if (param_bytes != 0) return param_bytes;
         const count = state.parser.plainApcPayloadPrefix(bytes);
         errdefer {
             state.parser.reset();
@@ -4062,7 +4064,7 @@ const TerminalStream = struct {
                 consumed += 1;
                 continue;
             }
-            const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
+            const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
             if (payload_bytes != 0) {
                 consumed += payload_bytes;
                 continue;
@@ -4101,7 +4103,7 @@ const TerminalStream = struct {
                 consumed += 1;
                 continue;
             }
-            const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
+            const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
             if (payload_bytes != 0) {
                 consumed += payload_bytes;
                 continue;
