@@ -1,5 +1,5 @@
 const std = @import("std");
-const protocol = @import("howl_instance").protocol;
+const protocol = @import("howl_instance_protocol");
 const client = @import("howl_client");
 const rich_format = @import("rich_format.zig");
 

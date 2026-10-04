@@ -10,7 +10,7 @@ const linux = std.os.linux;
 const posix = std.posix;
 const model = @import("server_model");
 const protocol = @import("server_protocol");
-const instance_protocol = @import("howl_instance").protocol;
+const instance_protocol = @import("howl_instance_protocol");
 
 const maximum_clients: usize = 16;
 const input_bytes: usize = protocol.header_bytes + protocol.maximum_request_payload_bytes;

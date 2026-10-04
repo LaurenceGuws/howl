@@ -23,7 +23,6 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("howl_pty", pty.module("howl_pty"));
     module.addImport("howl_vt", vt.module("howl_vt"));
-    module.addImport("howl_instance_protocol", protocol);
 
     const tests = b.addTest(.{
         .name = "howl-instance",
@@ -57,6 +56,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     service_module.addImport("howl_instance", module);
+    service_module.addImport("howl_instance_protocol", protocol);
     if (linux) {
         const service_tests = b.addTest(.{
             .name = "howl-instance-service",

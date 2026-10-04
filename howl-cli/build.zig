@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addImport("howl_instance", instance.module("howl_instance"));
+    module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     module.addImport("howl_client", client.module("howl_client"));
 
     const root = b.createModule(.{
@@ -24,6 +25,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_cli", module);
     root.addImport("howl_client", client.module("howl_client"));
     root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
     root.addImport("server_client", server_client.module("server_client"));
     root.addImport("server_runtime", server.module("server_runtime"));
     const executable = b.addExecutable(.{ .name = "howl", .root_module = root });
