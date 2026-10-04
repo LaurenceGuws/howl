@@ -137,6 +137,12 @@ pub fn descriptor(instance: *const Instance) error{NotStarted}!pty.Descriptor {
     return stateConst(instance).transport.masterFd();
 }
 
+/// True while a prior service turn retains child output in its bounded read buffer.
+pub fn bufferedOutputPending(instance: *const Instance) bool {
+    const state = stateConst(instance);
+    return state.read_start < state.read_end;
+}
+
 /// Borrows the canonical VT observation capability until the next Instance mutation.
 ///
 /// Mutation remains Instance-owned so PTY writes, replies, resize and child
@@ -231,7 +237,8 @@ pub fn service(
     return serviceWithConsequencePolicy(instance, readable, writable, timestamp_ns, .headless);
 }
 
-/// Services one turn while explicitly selecting host-consequence policy.
+/// Services one turn, yielding on synchronized release and retaining any unread tail.
+/// Callers continue while bufferedOutputPending, including without PTY readiness.
 ///
 /// `.retain` leaves canonical VT consequences queued for an external authority;
 /// `.headless` applies the existing deterministic fallback policy. Switching a
@@ -387,7 +394,9 @@ const State = struct {
         );
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
             var read_calls: u8 = 0;
-            while (read_calls < read_calls_per_turn and self.read_start == self.read_end and !self.stream_closed) {
+            while (read_calls < read_calls_per_turn and self.read_start == self.read_end and
+                !self.stream_closed and !synchronized_output.ended)
+            {
                 const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
                     error.Interrupted, error.WouldBlock => 0,
                     error.EndOfStream => closed: {
@@ -409,7 +418,7 @@ const State = struct {
                 );
                 // Yield as soon as this service turn has caller-visible work.
                 // Pure output may drain a few immediately-ready PTY reads, but
-                // replies, retained consequences, or a partial VT boundary get
+                // releases, replies, consequences, or a partial VT boundary get
                 // control back before another read is admitted.
                 if (self.read_start != self.read_end or self.writes.count != 0) break;
                 if (consequence_policy == .retain and self.terminal.consequenceHead() != null) break;
@@ -463,6 +472,7 @@ const State = struct {
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
             };
+            if (progress.summary.synchronized_output.ended and self.read_start < self.read_end) return;
         }
         self.read_start = 0;
         self.read_end = 0;
@@ -1088,14 +1098,16 @@ test "write backpressure preserves reply ordering and unread PTY suffix" {
 }
 
 test "service preserves synchronized release across buffered feeds and reply boundaries" {
-    const Case = struct { bytes: []const u8, ended: bool, held: bool };
+    const Case = struct { bytes: []const u8, ended: bool, held: bool, tail: []const u8 = "" };
     const cases = [_]Case{
         .{ .bytes = "A", .ended = false, .held = false },
         .{ .bytes = "\x1b[?2026hA\x1b[?2026l", .ended = true, .held = false },
         .{ .bytes = "\x1b[?2026hA\x1b[6n\x1b[?2026l", .ended = true, .held = false },
         .{ .bytes = "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\", .ended = true, .held = false },
-        .{ .bytes = "\x1b[?2026hA\x1b[?2026l\x1b[?2026hB", .ended = true, .held = true },
-        .{ .bytes = "A\x1b[?2026l", .ended = false, .held = false },
+        .{ .bytes = "\x1b[?2026hA\x1b[?2026l\x1b[?2026hB", .ended = true, .held = false, .tail = "\x1b[?2026hB" },
+        .{ .bytes = "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\\x1b[?2026hB", .ended = true, .held = false, .tail = "\x1b[?2026hB" },
+        .{ .bytes = "\x1b[?2026hA\x1b[6n\x1b[?2026l\x1b[?2026hB", .ended = true, .held = false, .tail = "\x1b[?2026hB" },
+        .{ .bytes = "A\x1b[?2026lB", .ended = false, .held = false },
     };
     for (cases) |case| {
         const instance = try init(std.testing.allocator, std.testing.environ, .{
@@ -1112,8 +1124,18 @@ test "service preserves synchronized release across buffered feeds and reply bou
         const result = try state.service(false, false, 1, .headless);
         try std.testing.expectEqual(case.ended, result.synchronized_output.ended);
         try std.testing.expectEqual(case.held, terminal(instance).synchronizedOutput());
+        try std.testing.expectEqualStrings(case.tail, state.reads[state.read_start..state.read_end]);
+        try std.testing.expectEqual(case.tail.len != 0, bufferedOutputPending(instance));
+        if (case.tail.len != 0) {
+            const next = try state.service(false, false, 2, .headless);
+            try std.testing.expect(!next.synchronized_output.ended);
+            try std.testing.expect(terminal(instance).synchronizedOutput());
+            try std.testing.expectEqual(@as(u21, 'A'), terminal(instance).semanticView(0).cellAt(0, 0));
+            try std.testing.expectEqual(@as(u21, 'B'), terminal(instance).semanticView(0).cellAt(0, 1));
+        }
         try std.testing.expectEqual(@as(usize, 0), state.read_end);
-        const idle = try state.service(false, false, 2, .headless);
+        try std.testing.expect(!bufferedOutputPending(instance));
+        const idle = try state.service(false, false, 3, .headless);
         try std.testing.expect(!idle.synchronized_output.ended);
     }
 }

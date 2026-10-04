@@ -336,7 +336,7 @@ fn runLocalFallible(
             },
         };
         const timeout: c_int = @intCast(@min(
-            state.animation_wait_ms orelse 100,
+            if (state.read_pending and !state.write_pending) 0 else state.animation_wait_ms orelse 100,
             @as(u32, 100),
         ));
         const ready = c.poll(&descriptors, descriptors.len, timeout);

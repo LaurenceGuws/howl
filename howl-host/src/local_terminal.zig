@@ -66,6 +66,7 @@ pub const PollState = struct {
     descriptor: i32,
     stream_closed: bool,
     write_pending: bool,
+    read_pending: bool,
     animation_wait_ms: ?u32,
 };
 
@@ -115,6 +116,7 @@ pub const Owner = struct {
             .descriptor = if (self.stream_closed and !self.write_pending) -1 else self.descriptor,
             .stream_closed = self.stream_closed,
             .write_pending = self.write_pending,
+            .read_pending = instance.bufferedOutputPending(self.value),
             .animation_wait_ms = self.animation_wait_ms,
         };
     }
@@ -396,7 +398,7 @@ test "local publication withholds synchronized output until release or timeout" 
     try std.testing.expectEqual(@as(u64, 14), publication.revision);
 }
 
-fn testServiceTitle(owner: *Owner, title: []const u8, timestamp_ns: u64) !instance.Service {
+fn testServiceCut(owner: *Owner, title: ?[]const u8, timestamp_ns: u64) !instance.Service {
     for (0..2000) |_| {
         const state = owner.pollState();
         var descriptor = c.pollfd{
@@ -404,7 +406,7 @@ fn testServiceTitle(owner: *Owner, title: []const u8, timestamp_ns: u64) !instan
             .events = @intCast(c.POLLIN | c.POLLHUP | (if (state.write_pending) c.POLLOUT else 0)),
             .revents = 0,
         };
-        const ready = c.poll(&descriptor, 1, 1);
+        const ready = c.poll(&descriptor, 1, if (state.read_pending and !state.write_pending) 0 else 1);
         if (ready < 0) {
             if (std.c.errno(ready) == .INTR) continue;
             return error.Poll;
@@ -416,14 +418,17 @@ fn testServiceTitle(owner: *Owner, title: []const u8, timestamp_ns: u64) !instan
         );
         try std.testing.expect(!serviced.stream_closed and serviced.child_exit == null);
         var guard = owner.observe();
-        const matched = if (guard.value.title()) |value| std.mem.eql(u8, value, title) else false;
+        const matched = if (title) |expected|
+            (if (guard.value.title()) |value| std.mem.eql(u8, value, expected) else false)
+        else
+            serviced.synchronized_output.ended;
         guard.deinit();
         if (matched) return serviced;
     }
     return error.Timeout;
 }
 
-test "local owner end and begin in one turn renews synchronized timeout protection" {
+test "local owner yields a released cut before renewing synchronized timeout protection" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
@@ -436,26 +441,32 @@ test "local owner end and begin in one turn renews synchronized timeout protecti
         .history_rows = 8,
     });
     defer owner.deinit();
-    try std.testing.expect((try testServiceTitle(&owner, "FIRST", 10)).changed);
+    try std.testing.expect((try testServiceCut(&owner, "FIRST", 10)).changed);
     try std.testing.expect(owner.publication.synchronized_pending);
     try std.testing.expect(!(try owner.service(false, false, 10 + synchronized_output_timeout_ns)).changed);
     try std.testing.expect(owner.publication.synchronized_timed_out);
     const published = owner.publication.revision;
     try owner.drainObservationWake();
     try owner.input(.{ .bytes = "go\n" });
-    const reopened = try testServiceTitle(&owner, "SECOND", 11 + synchronized_output_timeout_ns);
-    // Prove this execution exercised the within-turn boundary, not two turns.
-    try std.testing.expect(reopened.synchronized_output.ended);
+    try std.testing.expect((try testServiceCut(&owner, null, 11 + synchronized_output_timeout_ns)).synchronized_output.ended);
+    const released = owner.publication.revision;
+    try std.testing.expect(released > published);
+    var complete = (try owner.observePublished(published)) orelse return error.ReleaseHidden;
+    try std.testing.expect(!complete.value.synchronizedOutput());
+    try std.testing.expectEqual(@as(u21, 'A'), complete.value.semanticView(0).cellAt(0, 0));
+    complete.deinit();
+    const reopened = try testServiceCut(&owner, "SECOND", 11 + synchronized_output_timeout_ns);
+    try std.testing.expect(!reopened.synchronized_output.ended);
     var guard = owner.observe();
     const synchronized = guard.value.synchronizedOutput();
     const current = guard.value.semanticSequence();
     guard.deinit();
     try std.testing.expect(synchronized and current > published);
-    try std.testing.expectEqual(published, owner.publication.revision);
+    try std.testing.expectEqual(released, owner.publication.revision);
     try std.testing.expect(!owner.publication.synchronized_timed_out);
     try std.testing.expect(owner.publication.synchronized_pending);
     try owner.input(.{ .bytes = "go\n" });
-    try std.testing.expect((try testServiceTitle(&owner, "DONE", 12 + synchronized_output_timeout_ns)).changed);
+    try std.testing.expect((try testServiceCut(&owner, "DONE", 12 + synchronized_output_timeout_ns)).changed);
     try std.testing.expect(owner.publication.revision > current);
 }
 
@@ -479,15 +490,18 @@ test "local owner new pending frame gets a fresh deadline but repeated begin doe
         .history_rows = 8,
     });
     defer owner.deinit();
-    try std.testing.expect((try testServiceTitle(&owner, "FIRST", 10)).changed);
+    try std.testing.expect((try testServiceCut(&owner, "FIRST", 10)).changed);
     const old = owner.publication.revision;
     try owner.input(.{ .bytes = "go\n" });
-    const second = try testServiceTitle(&owner, "SECOND", 500);
-    try std.testing.expect(second.synchronized_output.ended);
+    try std.testing.expect((try testServiceCut(&owner, null, 500)).synchronized_output.ended);
+    const released = owner.publication.revision;
+    try std.testing.expect(released > old);
+    const second = try testServiceCut(&owner, "SECOND", 500);
+    try std.testing.expect(!second.synchronized_output.ended);
     try std.testing.expectEqual(@as(?u64, 500), owner.publication.synchronized_started_ns);
-    try std.testing.expectEqual(old, owner.publication.revision);
+    try std.testing.expectEqual(released, owner.publication.revision);
     try owner.input(.{ .bytes = "go\n" });
-    const repeated = try testServiceTitle(&owner, "REPEATED", 700);
+    const repeated = try testServiceCut(&owner, "REPEATED", 700);
     try std.testing.expect(!repeated.synchronized_output.ended);
     try std.testing.expectEqual(@as(?u64, 500), owner.publication.synchronized_started_ns);
     try std.testing.expect(!(try owner.service(false, false, 10 + synchronized_output_timeout_ns)).changed);

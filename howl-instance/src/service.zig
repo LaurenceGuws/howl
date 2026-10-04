@@ -608,8 +608,9 @@ pub const Service = struct {
 
         const poll_now_ns = nowNs(self.io);
         self.syncConsequenceExpiry(poll_now_ns);
+        const output_buffered = howl.bufferedOutputPending(self.instance);
         const poll_timeout = boundedPollTimeout(
-            timeout_ms,
+            if (output_buffered and !self.pty_write_pending) 0 else timeout_ms,
             self.animation_wait_ms,
             self.burst_publication.waitMs(poll_now_ns),
             self.consequence_expiry.waitMs(poll_now_ns),
@@ -629,7 +630,7 @@ pub const Service = struct {
             service_now_ns,
             self.consequencePolicy(),
         );
-        self.applyServiceResult(result, service_now_ns, pty_read_ready);
+        self.applyServiceResult(result, service_now_ns, pty_read_ready or output_buffered);
         self.syncConsequenceExpiry(service_now_ns);
 
         var index: usize = 0;
@@ -689,7 +690,7 @@ pub const Service = struct {
             progressed = self.writeClient(index) or progressed;
         self.syncConsequenceExpiry(nowNs(self.io));
 
-        if (!progressed) {
+        if (!progressed and !(howl.bufferedOutputPending(self.instance) and !self.pty_write_pending)) {
             const wait_ms = boundedPollTimeout(
                 timeout_ms,
                 self.animation_wait_ms,
@@ -740,7 +741,7 @@ pub const Service = struct {
     pub fn requiresTurnWithoutPtyReadiness(self: *const Service) bool {
         // Once the stream closes, service turns still own child-exit reconciliation.
         if (self.stream_closed and !self.child_exited) return true;
-        if (self.pty_write_pending or self.clientCount() != 0) return true;
+        if (howl.bufferedOutputPending(self.instance) or self.pty_write_pending or self.clientCount() != 0) return true;
         if (self.animation_wait_ms != null) return true;
         if (self.synchronized_output_started_ns != null or self.synchronized_output_pending) return true;
         if (self.burst_publication.started_ns != null) return true;
@@ -3468,7 +3469,7 @@ test "unbracketed output retains quiet and bounded burst publication" {
     try std.testing.expectEqual(TerminalPublication.immediate, service.terminalPublication(true, false, false, .{ .ended = false }, 1));
 }
 
-test "release followed by a new held frame neither publishes nor inherits timeout permission" {
+test "synchronized release publishes before a new held frame renews timeout protection" {
     const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "printf '\\033[?2026hA\\033[?2026l\\033[?2026hB'; exec sleep 30",
@@ -3481,11 +3482,22 @@ test "release followed by a new held frame neither publishes nor inherits timeou
     defer service.deinit();
     const before = service.observation_revision;
     var turns: usize = 0;
+    while (turns < 2_000 and service.observation_revision == before) : (turns += 1)
+        try service.turn(1);
+    try std.testing.expect(turns < 2_000);
+    try std.testing.expect(!howl.terminal(instance).synchronizedOutput());
+    try std.testing.expect(semanticViewContains(howl.terminal(instance).semanticView(0), "A"));
+    try std.testing.expect(!semanticViewContains(howl.terminal(instance).semanticView(0), "AB"));
+    if (howl.bufferedOutputPending(instance)) {
+        try std.testing.expect(service.requiresTurnWithoutPtyReadiness());
+        try std.testing.expect(try service.waitDescriptor() == null);
+    }
+    turns = 0;
     while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "AB")) : (turns += 1)
         try service.turn(1);
     try std.testing.expect(turns < 2_000);
     try std.testing.expect(howl.terminal(instance).synchronizedOutput());
-    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expectEqual(before + 1, service.observation_revision);
     try std.testing.expect(service.synchronized_output_pending);
     try std.testing.expect(service.burst_publication.started_ns == null);
 
@@ -3519,7 +3531,7 @@ test "raw tail after synchronized release retains fallback burst protection" {
         try service.turn(1);
     try std.testing.expect(turns < 2_000);
     try std.testing.expect(!howl.terminal(instance).synchronizedOutput());
-    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expectEqual(before + 1, service.observation_revision);
     try std.testing.expect(service.burst_publication.started_ns != null);
 }
 
@@ -3549,7 +3561,7 @@ test "held frame release with a raw tail preserves batching across PTY turns" {
         try service.turn(1);
     try std.testing.expect(turns < 2_000);
     try std.testing.expect(!howl.terminal(instance).synchronizedOutput());
-    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expectEqual(before + 1, service.observation_revision);
     try std.testing.expect(service.burst_publication.started_ns != null);
 }
 
@@ -3610,9 +3622,10 @@ test "DCS frame with pending-wrap-only tail retains burst protection" {
     while (turns < 2_000) : (turns += 1) {
         try service.turn(1);
         if (howl.terminal(instance).semanticView(0).cellAt(0, 0) == 'A' and
-            !howl.terminal(instance).synchronizedOutput()) break;
+            !howl.terminal(instance).synchronizedOutput() and
+            service.burst_publication.started_ns != null) break;
     }
     try std.testing.expect(turns < 2_000);
-    try std.testing.expectEqual(before, service.observation_revision);
+    try std.testing.expectEqual(before + 1, service.observation_revision);
     try std.testing.expect(service.burst_publication.started_ns != null);
 }

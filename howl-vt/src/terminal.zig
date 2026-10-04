@@ -4110,6 +4110,7 @@ const TerminalStream = struct {
             summary.mutations.merge(mutations);
             consumed += 1;
             if (self.terminal.reply_buffer.len() != replies_before) break;
+            if (self.synchronized_output.ended) break;
             // Retaining a consequence always reports semantic mutation.
             if (!mutations.stateChanged()) continue;
             const consequence_count = self.terminal.consequences.count();
@@ -6151,10 +6152,10 @@ pub const Terminal = struct {
         return summary;
     }
 
-    /// Applies a nonempty borrowed prefix until new reply bytes or a host consequence appear.
+    /// Applies a nonempty prefix until a reply, host consequence, or synchronized release.
     ///
     /// Ordinary bytes may consume the complete slice. A caller that owns child replies or
-    /// host consequences can service the newly pending work, then continue at `consumed`.
+    /// host consequences can service pending work or observe the release, then continue at `consumed`.
     /// This keeps those bounded queues observable between protocol-producing events without
     /// forcing caller-side byte-at-a-time terminal feeds.
     pub fn feedAtServiceBoundary(
@@ -10348,6 +10349,47 @@ test "synchronized release fact survives every feed split and reports actual tra
             try std.testing.expect(!(try terminal.feed("")).synchronized_output.ended);
         }
     }
+}
+
+test "service boundary preserves each synchronized release cut across every split" {
+    const cases = [_][]const u8{
+        "\x1b[?2026hA\x1b[?2026l",
+        "\x1b[?25;2026hA\x1b[?25;2026l",
+        "\x1bP=1s\x1b\\A\x1bP=2s\x1b\\",
+        "\x1b[?2026hA\x1bc",
+    };
+    const tail = "\x1b[?2026hB";
+    for (cases) |frame| {
+        const bytes = try std.mem.concat(std.testing.allocator, u8, &.{ frame, tail });
+        defer std.testing.allocator.free(bytes);
+        for (0..bytes.len + 1) |split| {
+            var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+            defer terminal.deinit();
+            var offset: usize = 0;
+            var releases: u8 = 0;
+            while (offset < bytes.len) {
+                const limit = if (offset < split) split else bytes.len;
+                const progress = try terminal.feedAtServiceBoundary(bytes[offset..limit], 1);
+                try std.testing.expect(progress.consumed > 0);
+                offset += progress.consumed;
+                if (progress.summary.synchronized_output.ended) {
+                    releases += 1;
+                    try std.testing.expectEqual(frame.len, offset);
+                    try std.testing.expect(!terminal.synchronizedOutput());
+                    try std.testing.expect(!progress.summary.synchronized_output.trailing_effect);
+                }
+            }
+            try std.testing.expectEqual(@as(u8, 1), releases);
+            try std.testing.expect(terminal.synchronizedOutput());
+            try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, if (frame[frame.len - 1] == 'c') 0 else 1));
+        }
+    }
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 24, 2);
+    defer terminal.deinit();
+    const no_op = "A\x1b[?2026l\x1bP=2s\x1b\\B";
+    const progress = try terminal.feedAtServiceBoundary(no_op, 1);
+    try std.testing.expectEqual(no_op.len, progress.consumed);
+    try std.testing.expect(!progress.summary.synchronized_output.ended);
 }
 
 test "synchronized release remains observable across reply service boundaries" {
