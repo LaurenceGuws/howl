@@ -1477,10 +1477,13 @@ canvas_geometry_append :: proc(
     vertex := quad_count^ * 4
     index := quad_count^ * 6
     base := c.int(vertex)
-    u0 := f32(command.source_x) / f32(command.resource_width)
-    v0 := f32(command.source_y) / f32(command.resource_height)
-    u1 := f32(command.source_x + command.source_width) / f32(command.resource_width)
-    v1 := f32(command.source_y + command.source_height) / f32(command.resource_height)
+    u0, v0, u1, v1: f32
+    if command.tag == 1 {
+        u0 = f32(command.source_x) / f32(command.resource_width)
+        v0 = f32(command.source_y) / f32(command.resource_height)
+        u1 = f32(command.source_x + command.source_width) / f32(command.resource_width)
+        v1 = f32(command.source_y + command.source_height) / f32(command.resource_height)
+    }
     x0 := destination.x
     y0 := destination.y
     x1 := destination.x + destination.w
@@ -1561,7 +1564,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
     }
 
     geometry_count := 0
-    geometry_resource: ^Canvas_Texture = nil
+    geometry_texture: ^SDL.Texture = nil
     geometry_clip: SDL.Rect
     geometry_active := false
     resolved_resource: ^Canvas_Texture = nil
@@ -1573,30 +1576,19 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             f32(command.destination_width) / scale,
             f32(command.destination_height) / scale,
         }
-        if command.tag == 0 {
-            if geometry_active && geometry_count != 0 {
-                if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
-                geometry_active = false
+        resource: ^Canvas_Texture
+        texture: ^SDL.Texture
+        if command.tag != 0 {
+            resource = resolved_resource
+            if resource == nil || resource.resource != command.resource || resource.generation != command.generation {
+                resource = find_canvas_resource(view, command.resource, command.generation)
+                resolved_resource = resource
             }
-            _ = SDL.SetRenderClipRect(app.renderer, &pane_clip)
-            set_draw_color(app.renderer, SDL.Color{
-                rgba_channel(command.color_rgba, 0),
-                rgba_channel(command.color_rgba, 8),
-                rgba_channel(command.color_rgba, 16),
-                rgba_channel(command.color_rgba, 24),
-            })
-            draw_rect := destination
-            _ = SDL.RenderFillRect(app.renderer, &draw_rect)
-            continue
-        }
-        resource := resolved_resource
-        if resource == nil || resource.resource != command.resource || resource.generation != command.generation {
-            resource = find_canvas_resource(view, command.resource, command.generation)
-            resolved_resource = resource
-        }
-        if resource == nil || resource.texture == nil {
-            set_canvas_error(view, "Canvas command references missing texture")
-            return false
+            if resource == nil || resource.texture == nil {
+                set_canvas_error(view, "Canvas command references missing texture")
+                return false
+            }
+            texture = resource.texture
         }
         clip := pane_clip
         if !canvas_command_inside_clip(command) {
@@ -1615,14 +1607,14 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
             clip = canvas_effective_clip(destination, clip, pane_clip)
         }
 
-        if command.tag == 1 {
-            compatible := geometry_active && geometry_resource == resource && canvas_rect_equal(geometry_clip, clip)
+        if command.tag == 0 || command.tag == 1 {
+            compatible := geometry_active && geometry_texture == texture && canvas_rect_equal(geometry_clip, clip)
             if !compatible || geometry_count == CANVAS_GEOMETRY_QUADS {
                 if geometry_active && geometry_count != 0 {
-                    if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
+                    if !canvas_geometry_flush(app.renderer, geometry_texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
                     geometry_active = false
                 }
-                geometry_resource = resource
+                geometry_texture = texture
                 geometry_clip = clip
                 geometry_active = true
             }
@@ -1631,7 +1623,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         }
 
         if geometry_active && geometry_count != 0 {
-            if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
+            if !canvas_geometry_flush(app.renderer, geometry_texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
             geometry_active = false
         }
         _ = SDL.SetRenderClipRect(app.renderer, &clip)
@@ -1646,7 +1638,7 @@ draw_canvas_instance :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) -
         _ = SDL.RenderTexture(app.renderer, resource.texture, &source, &destination)
     }
     if geometry_active && geometry_count != 0 {
-        if !canvas_geometry_flush(app.renderer, geometry_resource.texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
+        if !canvas_geometry_flush(app.renderer, geometry_texture, geometry_clip, app.canvas_geometry, &geometry_count, app.flush_canvas_geometry_batches) do return false
     }
     return true
 }

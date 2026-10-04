@@ -144,3 +144,25 @@ canvas_geometry_builds_exact_textured_quad :: proc(t: ^testing.T) {
     testing.expect_value(t, scratch.indices[4], c.int(2))
     testing.expect_value(t, scratch.indices[5], c.int(3))
 }
+
+@(test)
+canvas_solid_geometry_fills_bounded_scratch_with_finite_untextured_quads :: proc(t: ^testing.T) {
+    scratch := new(Canvas_Geometry_Scratch)
+    testing.expect(t, scratch != nil)
+    defer if scratch != nil do free(scratch)
+    count := 0
+    command := Canvas_Command_Info{tag = 0, color_rgba = 0x80402010}
+    destination := SDL.FRect{-1.5, 2.25, 3.5, 4.75}
+    for _ in 0..<CANVAS_GEOMETRY_QUADS {
+        canvas_geometry_append(command, destination, scratch, &count)
+    }
+    testing.expect_value(t, count, CANVAS_GEOMETRY_QUADS)
+    untextured := true
+    for vertex in scratch.vertices {
+        untextured = untextured && vertex.tex_coord.x == 0 && vertex.tex_coord.y == 0
+    }
+    testing.expect(t, untextured)
+    testing.expect_value(t, scratch.vertices[0].color, SDL.FColor{16.0 / 255.0, 32.0 / 255.0, 64.0 / 255.0, 128.0 / 255.0})
+    testing.expect_value(t, scratch.vertices[len(scratch.vertices) - 1].position, SDL.FPoint{-1.5, 7})
+    testing.expect_value(t, scratch.indices[len(scratch.indices) - 1], c.int(len(scratch.vertices) - 1))
+}
