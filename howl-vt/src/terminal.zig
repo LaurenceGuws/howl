@@ -3969,6 +3969,17 @@ const TerminalStream = struct {
         std.debug.assert(!summary.iconChanged() or summary.stateChanged());
     }
 
+    fn nextGroundPrintableAscii(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
+        std.debug.assert(self.terminal.stream_state.parser.groundPrintableAscii(byte));
+        const effect = try self.applyPrint(byte);
+        std.debug.assert(effect.changed);
+        std.debug.assert(effect.mutations.text);
+        std.debug.assert(!effect.suppress_owner_fallback);
+        std.debug.assert(!effect.mutations.mode);
+        self.synchronized_output.trailing_effect = true;
+        return effect.mutations;
+    }
+
     fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
         var mutations: MutationSet = .{};
         const state = &self.terminal.stream_state;
@@ -4037,12 +4048,18 @@ const TerminalStream = struct {
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         var consumed: usize = 0;
         while (consumed < bytes.len) {
+            const byte = bytes[consumed];
+            if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
+                summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
+                consumed += 1;
+                continue;
+            }
             const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
             if (payload_bytes != 0) {
                 consumed += payload_bytes;
                 continue;
             }
-            summary.mutations.merge(try self.nextSummary(bytes[consumed]));
+            summary.mutations.merge(try self.nextSummary(byte));
             consumed += 1;
         }
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
@@ -4070,12 +4087,18 @@ const TerminalStream = struct {
         defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         while (consumed < bytes.len) {
+            const byte = bytes[consumed];
+            if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
+                summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
+                consumed += 1;
+                continue;
+            }
             const payload_bytes = try self.putApcPayloadPrefix(bytes[consumed..]);
             if (payload_bytes != 0) {
                 consumed += payload_bytes;
                 continue;
             }
-            summary.mutations.merge(try self.nextSummary(bytes[consumed]));
+            summary.mutations.merge(try self.nextSummary(byte));
             consumed += 1;
             if (self.terminal.reply_buffer.len() != replies_before) break;
             const consequence_count = self.terminal.consequences.count();
@@ -8959,6 +8982,18 @@ const RouteOwnerTests = struct {
         rejected = cup;
         rejected.intermediates_len = 1;
         try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+    }
+
+    test "ground printable fast path preserves charset-mapped text semantics" {
+        var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+        defer terminal.deinit();
+        var stream = TerminalStream.init(&terminal);
+        try std.testing.expect(terminal.stream_state.parser.groundPrintableAscii('q'));
+        try std.testing.expect(terminal.charset.configureCharset(0, '0'));
+        const mutations = try stream.nextGroundPrintableAscii('q');
+        try std.testing.expect(mutations.text);
+        try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.active().cellAt(0, 0));
+        try std.testing.expect(!terminal.stream_state.parser.groundPrintableAscii(0x7f));
     }
 
     test "hot printable owner leaves DEL on the canonical byte fallback" {

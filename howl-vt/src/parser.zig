@@ -352,6 +352,16 @@ pub const Parser = struct {
     // Byte advancement and ordered phase execution
     // -------------------------------------------------------------------------
 
+    /// Reports one ground-state ASCII print byte that has no parser transition.
+    /// A latched string-control allocation failure must stay on the canonical
+    /// path so its failure is observed before the byte's action is applied.
+    pub inline fn groundPrintableAscii(self: *const Parser, byte: u8) bool {
+        const eligible = self.state == .ground and self.utf8.needed == 0 and
+            !self.osc.alloc_failed and byte >= 0x20 and byte < 0x7f;
+        if (eligible) std.debug.assert(self.activeControlCount() == 0);
+        return eligible;
+    }
+
     /// Counts a leading printable-ASCII APC payload run whose scalar parser
     /// actions would all be `apc_put`, with no parser-state transition. The
     /// caller captures those bytes once; controls, escaping and non-ASCII stay
