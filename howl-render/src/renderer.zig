@@ -1426,9 +1426,7 @@ fn contentCellColors(
     var foreground = try contentColor(Source.cellColor(cell, .foreground), presentation, true);
     var background = try contentColor(Source.cellColor(cell, .background), presentation, false);
     const style = Source.cellStyle(cell);
-    if (style.reverse)
-        std.mem.swap(frame_vocabulary.Color, &foreground, &background);
-    if (presentation.reverse_screen)
+    if (style.reverse != presentation.reverse_screen)
         std.mem.swap(frame_vocabulary.Color, &foreground, &background);
     if (style.dim)
         foreground = dimContentColor(foreground);
