@@ -60,7 +60,7 @@ the real workspace/evidence root inside managed environments whose own `HOME`
 is intentionally private.
 
 The visual nested client area is presently 1912x1047, with Howl probing at
-380x76, so the track retains the established 378x74 poison lattice. Treat its
+380x76, so the track retains the established 378x74 cell lattice. Treat its
 numbers as a separate KWin-private track; do not splice them into the earlier
 physical 1920x1036 KDE index without an explicit cross-track qualification.
 
@@ -68,4 +68,13 @@ physical 1920x1036 KDE index without an explicit cross-track qualification.
 
 `build-howl-fast.sh` creates a self-contained race binary under `~/.local/state/howl-performance-index/howl-fast`: native Zig bridge/dependency graph in ReleaseFast and Odin `-o:speed` without the daily `-debug` safety instrumentation. The normal dogfood binary is not modified.
 
-The poison workload accepts doses through 65,536 at TUI Zoo head `5ed9964`; the default sweep now extends through 8,192, 16,384, 32,768 and 65,536 to find real saturation knees.
+The `cells` workload accepts doses through 65,536; the default sweep now extends through 8,192, 16,384, 32,768 and 65,536 to find real saturation knees.
+
+Select background and Unicode performance canaries without changing the track:
+
+    HORSES_GLYPH_SET=alnum HORSES_BACKGROUND=1 ./tools/performance/horses.sh run howl 4096
+    HORSES_GLYPH_SET=unicode HORSES_BACKGROUND=1 ./tools/performance/horses.sh run howl 4096
+
+The run metadata records both selectors. Producer FPS measures emitted frames
+and stdout backpressure; it does not establish displayed FPS or Unicode rendering
+correctness. Keep each configuration in its own dose curve.

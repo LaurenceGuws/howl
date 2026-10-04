@@ -22,6 +22,7 @@ ROWS=${HORSES_ROWS:-47}
 FPS=${HORSES_FPS:-240}
 DURATION_MS=${HORSES_DURATION_MS:-8000}
 GLYPH_SET=${HORSES_GLYPH_SET:-alnum}
+BACKGROUND=${HORSES_BACKGROUND:-0}
 SAMPLE_MS=${HORSES_SAMPLE_MS:-250}
 SETTLE_MS=${HORSES_SETTLE_MS:-1200}
 WINDOW_RECT=${HORSES_RECT:-auto}
@@ -35,11 +36,11 @@ usage: horses.sh COMMAND [ARGS]
 
 commands:
   doctor                  verify race dependencies and print track inventory
-  plan                    print the deterministic poison race matrix as JSON
+  plan                    print the deterministic cells race matrix as JSON
   probe HORSE             report one horse PTY geometry in the canonical frame
   calibrate               probe all horses and print their common PTY geometry
-  run HORSE DOSE          run one poison trial and retain raw evidence
-  sweep HORSE             run doses 1,4,16,64,256,1024,4096 for one horse
+  run HORSE DOSE          run one cells trial and retain raw evidence
+  sweep HORSE             run the configured dose sweep for one horse
   __probe ...             internal terminal-side geometry probe
   __runner ...            internal terminal-side workload entrypoint
 
@@ -50,13 +51,14 @@ Environment:
   HORSES_RECT=auto|X,Y,W,H        exact WMIO frame rectangle; auto=monitor geometry
   HORSES_COLS=192 HORSES_ROWS=47  required PTY/workload geometry
   HORSES_FPS=240                  semantic producer cadence
-  HORSES_DURATION_MS=8000         duration per poison dose
-  HORSES_GLYPH_SET=alnum          printable|alnum
+  HORSES_DURATION_MS=8000         duration per cells dose
+  HORSES_GLYPH_SET=alnum          printable|alnum|unicode
+  HORSES_BACKGROUND=0             random 256-color backgrounds
   HORSES_SAMPLE_MS=250            process-tree sample interval
   HORSES_SETTLE_MS=1200           settle after exact placement before start
   HORSES_SYNCHRONIZED_OUTPUT=1    use CSI ?2026 frame bracketing
   HORSES_EVIDENCE_ROOT=PATH       retained run evidence root
-  HORSES_DOSES=1,4,...            comma-separated poison dose sweep
+  HORSES_DOSES=1,4,...            comma-separated cells dose sweep
   HORSES_CONFIG_ROOT=PATH         benchmark config pack override
   HOWL_BIN=PATH                   benchmark Howl binary override
 USAGE
@@ -228,7 +230,7 @@ record_metadata() {
     HORSE_VERSION=$version HORSE_EXECUTABLE=$executable HORSE_SHA=$executable_sha HORSE_CONFIG_SHA=$config_sha HOWL_BRIDGE_SHA=$howl_bridge_sha \
     TUI_HEAD=$tui_head TUI_SHA=$tui_sha HOWL_HEAD=$howl_head WMIO_SHA=$wmio_sha \
     RUN_DIR=$run_dir HORSE=$horse DOSE=$dose STABLE=$stable ROOT_PID=$root_pid RECT=$rect \
-    COLS=$COLS ROWS=$ROWS FPS=$FPS DURATION_MS=$DURATION_MS GLYPH_SET=$GLYPH_SET \
+    COLS=$COLS ROWS=$ROWS FPS=$FPS DURATION_MS=$DURATION_MS GLYPH_SET=$GLYPH_SET BACKGROUND=$BACKGROUND \
     SYNCHRONIZED_OUTPUT=$SYNCHRONIZED_OUTPUT MONITOR=$MONITOR GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT \
     python3 <<'PY' > "$run_dir/metadata.json"
 import json, os, platform, time
@@ -247,10 +249,11 @@ print(json.dumps({
   "monitor":os.environ["MONITOR"],
   "window_rect":os.environ["RECT"],
   "workload":{
-    "name":"poison","dose":int(os.environ["DOSE"]),
+    "name":"cells","dose":int(os.environ["DOSE"]),
     "cols":int(os.environ["COLS"]),"rows":int(os.environ["ROWS"]),
     "fps":int(os.environ["FPS"]),"duration_ms":int(os.environ["DURATION_MS"]),
     "glyph_set":os.environ["GLYPH_SET"],
+    "background":os.environ["BACKGROUND"]=="1",
     "synchronized_output":os.environ["SYNCHRONIZED_OUTPUT"]=="1"
   },
   "source":{"howl":os.environ["HOWL_HEAD"],"tui_zoo":os.environ["TUI_HEAD"],
@@ -585,7 +588,7 @@ run_one() {
 
     local stamp run_dir before stable rect x y width height root_pid launcher_pid sampler_pid
     stamp=$(date +%Y%m%dT%H%M%S)
-    run_dir="$EVIDENCE_ROOT/$stamp-$horse-poison-d${dose}"
+    run_dir="$EVIDENCE_ROOT/$stamp-$horse-cells-d${dose}"
     mkdir -p "$run_dir"
     wmio_data capabilities > "$run_dir/wmio-capabilities.json"
     wmio_data desktop > "$run_dir/desktop-before.json"
@@ -635,8 +638,8 @@ run_one() {
     # explicit go gate. No workload bytes are emitted before sampling starts.
 
     local typed
-    printf -v typed 'HORSES_HOME_DIR=%q %q __runner %q %q %q %q %q %q %q %q' \
-        "$HOME_DIR" "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
+    printf -v typed 'HORSES_HOME_DIR=%q %q __runner %q %q %q %q %q %q %q %q %q' \
+        "$HOME_DIR" "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" "$BACKGROUND"
     wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
     wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
 
@@ -688,7 +691,7 @@ doctor() {
     printf 'environment: %s\n' "$GRAPHICAL_ENVIRONMENT"
     printf 'track backend: %s\n' "$backend"
     printf 'monitor: %s rect=%s\n' "$MONITOR" "$rect"
-    printf 'workload: poison cols=%s rows=%s fps=%s duration_ms=%s glyph_set=%s sync=%s\n' "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT"
+    printf 'workload: cells cols=%s rows=%s fps=%s duration_ms=%s glyph_set=%s sync=%s background=%s\n' "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" "$BACKGROUND"
     printf 'tui-zoo: %s head=%s sha256=%s\n' "$TUI_ZOO" "$(git -C "$HOME_DIR/personal/tui-zoo" rev-parse --short HEAD)" "$(sha256sum "$TUI_ZOO" | awk '{print $1}')"
     local h
     for h in "${HORSES[@]}"; do printf '%-10s %s config=%s\n' "$h" "$(horse_version "$h")" "$(horse_config_digest "$h")"; done
@@ -698,10 +701,10 @@ plan() {
     local backend rect
     backend=$(wmio_data capabilities | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d["data"]["backend"]; print(b["name"]+"@"+b["version"])')
     rect=$(resolved_rect)
-    BACKEND=$backend RECT=$rect GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT python3 - "${HORSES[*]}" "${DOSES[*]}" "$MONITOR" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" <<'PY'
+    BACKEND=$backend RECT=$rect GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT python3 - "${HORSES[*]}" "${DOSES[*]}" "$MONITOR" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" "$BACKGROUND" <<'PY'
 import json,os,sys
 horses=sys.argv[1].split(); doses=[int(x) for x in sys.argv[2].split()]
-print(json.dumps({"schema":"howl-performance-index/plan-v1","track":{"environment":os.environ["GRAPHICAL_ENVIRONMENT"],"backend":os.environ["BACKEND"],"monitor":sys.argv[3],"window_rect":os.environ["RECT"]},"workload":{"name":"poison","cols":int(sys.argv[4]),"rows":int(sys.argv[5]),"fps":int(sys.argv[6]),"duration_ms":int(sys.argv[7]),"glyph_set":sys.argv[8],"synchronized_output":sys.argv[9]=="1","doses":doses},"horses":horses,"trials":[{"horse":h,"dose":d} for h in horses for d in doses]},separators=(",",":")))
+print(json.dumps({"schema":"howl-performance-index/plan-v1","track":{"environment":os.environ["GRAPHICAL_ENVIRONMENT"],"backend":os.environ["BACKEND"],"monitor":sys.argv[3],"window_rect":os.environ["RECT"]},"workload":{"name":"cells","cols":int(sys.argv[4]),"rows":int(sys.argv[5]),"fps":int(sys.argv[6]),"duration_ms":int(sys.argv[7]),"glyph_set":sys.argv[8],"synchronized_output":sys.argv[9]=="1","background":sys.argv[10]=="1","doses":doses},"horses":horses,"trials":[{"horse":h,"dose":d} for h in horses for d in doses]},separators=(",",":")))
 PY
 }
 
@@ -718,7 +721,7 @@ PYIN
 }
 
 runner() {
-    local run_dir=$1 cols=$2 rows=$3 fps=$4 duration_ms=$5 dose=$6 glyph_set=$7 sync=$8
+    local run_dir=$1 cols=$2 rows=$3 fps=$4 duration_ms=$5 dose=$6 glyph_set=$7 sync=$8 background=$9
     mkdir -p "$run_dir"
     local tty_rows tty_cols
     read -r tty_rows tty_cols < <(stty size)
@@ -733,8 +736,9 @@ PY
         return 64
     fi
     while [[ ! -e "$run_dir/go" ]]; do sleep .02; done
-    local args=(poison --dose "$dose" --fps "$fps" --duration-ms "$duration_ms" --cols "$cols" --rows "$rows" --glyph-set "$glyph_set")
+    local args=(cells --dose "$dose" --fps "$fps" --duration-ms "$duration_ms" --cols "$cols" --rows "$rows" --glyph-set "$glyph_set")
     if [[ $sync == 1 ]]; then args+=(--synchronized-output); fi
+    if [[ $background == 1 ]]; then args+=(--background); fi
     set +e
     "$TUI_ZOO" "${args[@]}" 2> "$run_dir/producer.stderr"
     local rc=$?
@@ -759,7 +763,7 @@ main() {
             for d in "${DOSES[@]}"; do run_one "$2" "$d"; done
             ;;
         __probe) [[ $# == 2 ]] || fail 'internal probe argument mismatch'; shift; probe_runner "$@" ;;
-        __runner) [[ $# == 9 ]] || fail 'internal runner argument mismatch'; shift; runner "$@" ;;
+        __runner) [[ $# == 10 ]] || fail 'internal runner argument mismatch'; shift; runner "$@" ;;
         -h|--help|help|'') usage ;;
         *) fail "unknown command: $command" ;;
     esac
