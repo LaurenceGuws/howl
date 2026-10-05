@@ -3288,9 +3288,7 @@ pub const Screen = struct {
     fn scrollUp(self: *Screen) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
-        if (self.clearNonSemanticClustersIntersecting(0, 1, 0, self.cols)) {
-            self.setRowWrapped(0, false);
-        }
+        // The scroll-region owner clears every outgoing boundary before rotation.
         const row_len = @as(u32, self.cols);
         self.storeHistoryRow(0);
         self.row_origin = (self.row_origin + 1) % self.rows;
@@ -4112,12 +4110,18 @@ pub const Screen = struct {
         left: u16,
         right_exclusive: u16,
     ) bool {
+        const cells = self.cells orelse return false;
         var changed = false;
         var row = top;
-        while (row < bottom_exclusive) : (row += 1) {
+        while (row < @min(bottom_exclusive, self.rows)) : (row += 1) {
+            const row_start = self.rowStart(row);
             var col = left;
-            while (col < right_exclusive) : (col += 1)
+            while (col < @min(right_exclusive, self.cols)) : (col += 1) {
+                const cell = &cells[@intCast(row_start + col)];
+                if (cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0)
+                    continue;
                 changed = self.clearClusterAt(row, col, false) or changed;
+            }
         }
         return changed;
     }
@@ -4133,10 +4137,13 @@ pub const Screen = struct {
         var changed = false;
         var row = top;
         while (row < bottom_exclusive) : (row += 1) {
+            const row_start = self.rowStart(row);
             var col = left;
             while (col < right_exclusive) : (col += 1) {
-                const cell = cells[@intCast(self.rowStart(row) + col)];
-                if (isSemanticWideCell(cell)) continue;
+                const cell = &cells[@intCast(row_start + col)];
+                if (cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0)
+                    continue;
+                if (isSemanticWideCell(cell.*)) continue;
                 changed = self.clearClusterAt(row, col, false) or changed;
             }
         }
