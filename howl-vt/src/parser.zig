@@ -375,16 +375,22 @@ pub const Parser = struct {
         return count;
     }
 
-    /// Consumes only CSI parameter scratch; dispatch and every control stay scalar.
+    /// Consumes inert CSI introducer/parameter scratch; dispatch and controls stay scalar.
     /// A pending allocation failure and single-byte feeds keep the canonical path.
     pub fn consumeCsiParamPrefix(self: *Parser, bytes: []const u8) usize {
         if (bytes.len < 2 or self.osc.alloc_failed) return 0;
-        if (self.state == .csi_entry) {
-            if (!csiEntryParamFastByte(bytes[0])) return 0;
-            self.state = .csi_param;
-        } else if (self.state != .csi_param) return 0;
-        std.debug.assert(self.activeControlCount() == 0);
         var count: usize = 0;
+        if (self.state == .ground and self.utf8.needed == 0 and bytes[0] == 0x1b and bytes[1] == '[') {
+            inline for ([_]u8{ 0x1b, '[' }) |byte| {
+                for (@call(.always_inline, Parser.next, .{ self, byte })) |phase| std.debug.assert(phase == null);
+            }
+            count = 2;
+        }
+        if (self.state == .csi_entry) {
+            if (count == bytes.len or !csiEntryParamFastByte(bytes[count])) return count;
+            self.state = .csi_param;
+        } else if (self.state != .csi_param) return count;
+        std.debug.assert(self.activeControlCount() == 0);
         while (count < bytes.len and csiParamFastByte(bytes[count])) : (count += 1) {
             self.feedParamByte(.csi, bytes[count]);
         }
@@ -1115,6 +1121,58 @@ test "CSI parameter runs match scalar phases and scratch for every following byt
             try std.testing.expectEqualSlices(u8, &scalar.intermediates, &batched.intermediates);
         }
     }
+}
+
+test "ground CSI introducer prefix matches canonical scratch and all following bytes" {
+    const preludes = [_][]const u8{ "", "\x1b[?25l", "\x1b]0;title\x07", "\x1b%@" };
+    for (preludes, 0..) |prelude, prelude_index| {
+        for (0..std.math.maxInt(u8) + 1) |raw| {
+            var scalar = try Parser.init(std.testing.allocator);
+            defer scalar.deinit();
+            var batched = try Parser.init(std.testing.allocator);
+            defer batched.deinit();
+            try std.testing.expectEqual(prelude_index == 3, scalar.selectLatin1(prelude_index == 3));
+            try std.testing.expectEqual(prelude_index == 3, batched.selectLatin1(prelude_index == 3));
+            for (prelude) |byte| try std.testing.expectEqualDeep(scalar.next(byte), batched.next(byte));
+            const bytes = [_]u8{ 0x1b, '[', @intCast(raw), '2', ';', ':', '9', 'm' };
+            const count = batched.consumeCsiParamPrefix(&bytes);
+            try std.testing.expect(count >= 2);
+            for (bytes[0..count]) |byte| try expectPhaseTags(scalar.next(byte), null, null, null);
+            try std.testing.expectEqual(scalar.state, batched.state);
+            try std.testing.expectEqual(scalar.csi_count, batched.csi_count);
+            try std.testing.expectEqual(scalar.csi_in_param, batched.csi_in_param);
+            try std.testing.expectEqualDeep(scalar.csi_separators, batched.csi_separators);
+            try std.testing.expectEqualSlices(i32, &scalar.csi_params, &batched.csi_params);
+            try std.testing.expectEqual(scalar.intermediates_len, batched.intermediates_len);
+            try std.testing.expectEqualSlices(u8, &scalar.intermediates, &batched.intermediates);
+            try std.testing.expectEqual(scalar.latin1, batched.latin1);
+            for (bytes[count..]) |byte| try std.testing.expectEqualDeep(scalar.next(byte), batched.next(byte));
+            try std.testing.expectEqual(scalar.state, batched.state);
+        }
+    }
+}
+
+test "CSI introducer prefix excludes active fragmented UTF8 and latched failure states" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+    for ([_][]const u8{ "\x1b", "\xe2", "\x1b]", "\x1bP1", "\x1b_" }) |prelude| {
+        parser.reset();
+        for (prelude) |byte| {
+            const phases = parser.next(byte);
+            try std.testing.expect(phases[0] == null);
+        }
+        const state = parser.state;
+        const needed = parser.utf8.needed;
+        try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("\x1b[12"));
+        try std.testing.expectEqual(state, parser.state);
+        try std.testing.expectEqual(needed, parser.utf8.needed);
+    }
+    parser.reset();
+    try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("\x1b"));
+    parser.osc.alloc_failed = true;
+    try std.testing.expectEqual(@as(usize, 0), parser.consumeCsiParamPrefix("\x1b[12"));
+    try std.testing.expect(parser.osc.alloc_failed);
+    try std.testing.expectEqual(ParseState.ground, parser.state);
 }
 
 test "CSI parameter runs leave inactive states, single bytes and failures scalar" {
