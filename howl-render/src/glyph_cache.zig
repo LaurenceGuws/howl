@@ -708,9 +708,53 @@ pub fn resolveGeneratedAtlas(
 }
 
 fn findAtlasIndex(impl: *const AtlasImpl, key: AtlasKey) ?usize {
+    if (std.meta.activeTag(key) == .font) {
+        for (impl.entries[0..impl.entry_count], 0..) |entry, index|
+            if (std.meta.activeTag(entry.key) == .font and std.meta.eql(entry.key.font, key.font)) return index;
+        return null;
+    }
     for (impl.entries[0..impl.entry_count], 0..) |entry, index|
         if (std.meta.eql(entry.key, key)) return index;
     return null;
+}
+
+test "atlas lookup matches generic key equality and first match across all variants" {
+    const keys = [_]AtlasKey{
+        .{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 7 } },
+        .{ .font = .{ .variant = .italic, .face_index = 0, .glyph_id = 7 } },
+        .{ .font = .{ .variant = .bold, .face_index = 0, .glyph_id = 7 } },
+        .{ .font = .{ .variant = .bold_italic, .face_index = 0, .glyph_id = 7 } },
+        .{ .font = .{ .variant = .regular, .face_index = 1, .glyph_id = 7 } },
+        .{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 8 } },
+        .{ .font = .{ .variant = .regular, .face_index = 255, .glyph_id = std.math.maxInt(u32) } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{} } },
+        .{ .generated = .{ .codepoint = 0x2501, .width = 10, .height = 20, .sizing = .{} } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 11, .height = 20, .sizing = .{} } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 21, .sizing = .{} } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .scale = 2 } } },
+        .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 20 } },
+        .{ .smooth_wave = .{ .width = 11, .thickness = 1, .line_height = 20 } },
+        .{ .smooth_wave = .{ .width = 10, .thickness = 2, .line_height = 20 } },
+        .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 21 } },
+    };
+    var entries: [2]AtlasEntry = undefined;
+    // Lookup borrows only entries/count: no font or raster owner is invoked.
+    var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .entries = &entries, .pixels = &.{}, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
+    for (keys) |first| for (keys) |second| {
+        for ([_]AtlasKey{ first, second }, 0..) |key, index|
+            entries[index] = .{ .key = key, .atlas_x = 0, .atlas_y = 0, .width = 0, .height = 0, .left = 0, .top = 0 };
+        for (0..entries.len + 1) |count| {
+            impl.entry_count = count;
+            for (keys) |key| {
+                var expected: ?usize = null;
+                for (entries[0..count], 0..) |entry, index| if (std.meta.eql(entry.key, key)) {
+                    expected = index;
+                    break;
+                };
+                try std.testing.expectEqual(expected, findAtlasIndex(&impl, key));
+            }
+        }
+    };
 }
 
 fn findAtlas(impl: *const AtlasImpl, key: AtlasKey) ?AtlasEntry {
