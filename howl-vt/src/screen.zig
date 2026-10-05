@@ -110,7 +110,11 @@ pub const Screen = struct {
         owner: *const Screen,
         source: union(enum) {
             history: u32,
-            visible: u16,
+            // Borrowed for synchronous reads before the next Screen mutation.
+            visible: struct {
+                row: u16,
+                cells: []const Cell,
+            },
         },
         wrapped: bool,
         geometry: LineGeometry,
@@ -121,7 +125,7 @@ pub const Screen = struct {
                     store.cellAtLogical(logical, col)
                 else
                     blank_cell,
-                .visible => |row| self.owner.cellInfoAt(row, col),
+                .visible => |visible| if (col < visible.cells.len) visible.cells[col] else blank_cell,
             };
         }
 
@@ -135,16 +139,16 @@ pub const Screen = struct {
                     store.scalarsAtLogical(logical, col, output)
                 else
                     &.{},
-                .visible => |row| self.owner.cellScalarsAt(row, col, output),
+                .visible => |visible| self.owner.cellScalarsAt(visible.row, col, output),
             };
         }
 
-        fn externalScalarsAt(
+        fn externalScalarsForCell(
             self: RetainedRow,
             col: u16,
+            cell: Cell,
             output: *[scalar_storage.maximum_scalars]u32,
         ) []const u32 {
-            const cell = self.cellInfoAt(col);
             const external_count = sidecarCount(cell);
             if (external_count == 0) return &.{};
             const sequence = self.cellScalarsAt(col, output);
@@ -3814,7 +3818,10 @@ pub const Screen = struct {
         const visible_row: u16 = @intCast(logical_row - history_count);
         return .{
             .owner = self,
-            .source = .{ .visible = visible_row },
+            .source = .{ .visible = .{
+                .row = visible_row,
+                .cells = self.visibleRowCells(visible_row),
+            } },
             .wrapped = self.rowWrapped(visible_row),
             .geometry = self.lineGeometry(visible_row),
         };
@@ -3834,6 +3841,10 @@ pub const Screen = struct {
         extent: RetainedExtent,
     ) u16 {
         const line_cols = self.columnCountForGeometry(row.geometry);
+        switch (row.source) {
+            .visible => |visible| return retainedCellsLen(visible.cells, line_cols, row.wrapped, extent),
+            .history => {},
+        }
         var col = line_cols;
         while (col > 0) {
             const value = row.cellInfoAt(col - 1);
@@ -3891,7 +3902,7 @@ pub const Screen = struct {
             writeCellText(
                 text_writer,
                 cell,
-                row.externalScalarsAt(col, &scalars),
+                row.externalScalarsForCell(col, cell, &scalars),
             );
         }
         self.history_boundary_stored = writer.stored;
@@ -4368,7 +4379,7 @@ fn appendLogicalRetainedRow(
             while (col < content_len) : (col += 1) {
                 const value = row.cellInfoAt(col);
                 if (sidecarCount(value) == 0) continue;
-                const external = row.externalScalarsAt(col, &scalars);
+                const external = row.externalScalarsForCell(col, value, &scalars);
                 candidate.scalars.?.set(
                     old_len + col,
                     0,
@@ -4602,7 +4613,7 @@ fn writeRetainedRowText(
         writeCellText(
             writer,
             cell,
-            row.externalScalarsAt(col, &scalars),
+            row.externalScalarsForCell(col, cell, &scalars),
         );
     }
 }
@@ -4697,7 +4708,7 @@ fn retainedRowTextByteCount(screen: *const Screen, row: Screen.RetainedRow) usiz
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
         const cell = row.cellInfoAt(col);
-        const external = row.externalScalarsAt(col, &scalars);
+        const external = row.externalScalarsForCell(col, cell, &scalars);
         count = std.math.add(usize, count, cellTextByteCount(cell, external)) catch
             // zig-audit: acknowledge panic
             // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
@@ -4745,7 +4756,7 @@ fn appendRetainedRowTextBounded(
             allocator,
             bytes,
             cell,
-            row.externalScalarsAt(col, &scalars),
+            row.externalScalarsForCell(col, cell, &scalars),
             limit,
         );
     }
