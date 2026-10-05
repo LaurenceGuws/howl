@@ -2835,7 +2835,7 @@ pub const Screen = struct {
 
         var state = unicode.GraphemeState{};
         var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
-        const accepted = self.cellScalarsAt(anchor_row, anchor_col, &scalars);
+        const accepted = @call(.always_inline, Screen.cellScalarsAt, .{ self, anchor_row, anchor_col, &scalars });
         for (accepted) |scalar|
             state = state.step(unicode.properties(@intCast(scalar)));
         const next = state.step(properties);
