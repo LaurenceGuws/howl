@@ -3,8 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const repo = b.option([]const u8, "repo", "Howl repository root") orelse
-        @panic("native host requires -Drepo=/path/to/howl");
+    // Existing platform build commands may still provide this spelling.
+    // Sources now resolve through declared packages, including external builds.
+    _ = b.option([]const u8, "repo", "Deprecated: sources resolve through package dependencies");
+    const text_package = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = false });
+    const render_package = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = false });
     const ndk = b.option([]const u8, "ndk", "Android NDK root");
     const deps = b.option([]const u8, "deps", "private FreeType/HarfBuzz prefix");
     const freetype_include = b.option([]const u8, "freetype-include", "FreeType include directory");
@@ -31,6 +34,10 @@ pub fn build(b: *std.Build) void {
             translate.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
         }
     }
+    if (ndk == null and apple_sdk == null) {
+        translate.linkSystemLibrary("freetype", .{});
+        translate.linkSystemLibrary("harfbuzz", .{});
+    }
     const native_c = translate.createModule();
 
     // Reuse package-owned client/Local/Server/VT dependency wiring. Flutter keeps
@@ -53,18 +60,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }).module("howl_vt");
 
-    const text = localModule(b, target, optimize, repo, "howl-text/src/text.zig");
+    const text = localModule(b, target, optimize, text_package.path("src/text.zig"));
     text.link_libc = true;
     text.addImport("native_c", native_c);
 
-    const limits = localModule(b, target, optimize, repo, "howl-render/src/limits.zig");
-    const source = localModule(b, target, optimize, repo, "howl-render/src/source.zig");
-    const renderer = localModule(b, target, optimize, repo, "howl-render/src/renderer.zig");
+    const limits = localModule(b, target, optimize, render_package.path("src/limits.zig"));
+    const source = localModule(b, target, optimize, render_package.path("src/source.zig"));
+    const renderer = localModule(b, target, optimize, render_package.path("src/renderer.zig"));
     renderer.addImport("limits", limits);
     renderer.addImport("source", source);
     renderer.addImport("howl_text", text);
 
-    const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal.zig");
+    const terminal = localModule(b, target, optimize, render_package.path("src/terminal.zig"));
     terminal.addImport("renderer", renderer);
     terminal.addImport("source", source);
     terminal.addImport("howl_client", client);
@@ -90,9 +97,10 @@ pub fn build(b: *std.Build) void {
         .use_llvm = true,
         .use_lld = false,
     });
-    b.getInstallStep().dependOn(
-        &b.addInstallFile(object.getEmittedBin(), "howl_flutter_native_host.o").step,
-    );
+    b.getInstallStep().dependOn(&b.addInstallArtifact(object, .{
+        .dest_dir = .{ .override = .prefix },
+        .dest_sub_path = "howl_flutter_native_host.o",
+    }).step);
 
     const tests = b.addTest(.{
         .name = "howl_flutter_native_host_tests",
@@ -104,6 +112,9 @@ pub fn build(b: *std.Build) void {
         tests.root_module.linkSystemLibrary("freetype", .{});
         tests.root_module.linkSystemLibrary("harfbuzz", .{});
     }
+    const check = b.step("check", "Compile the Flutter native host and all its proofs");
+    check.dependOn(&object.step);
+    check.dependOn(&tests.step);
     const test_step = b.step("test", "Run native host presentation-lattice proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 }
@@ -112,11 +123,10 @@ fn localModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    repo: []const u8,
-    relative: []const u8,
+    source: std.Build.LazyPath,
 ) *std.Build.Module {
     return b.createModule(.{
-        .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ repo, relative }) },
+        .root_source_file = source,
         .target = target,
         .optimize = optimize,
     });

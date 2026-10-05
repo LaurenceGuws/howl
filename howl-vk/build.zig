@@ -35,10 +35,9 @@ pub fn build(b: *std.Build) void {
         "shader-reproducibility",
         "Rebuild, inspect, and validate the tracked terminal SPIR-V ABI",
     );
-    shader_receipt.dependOn(&b.addSystemCommand(&.{
-        "sh",
-        "tools/verify_terminal_shader_interface.sh",
-    }).step);
+    const shaders = b.addSystemCommand(&.{"sh"});
+    shaders.addFileArg(b.path("tools/verify_terminal_shader_interface.sh"));
+    shader_receipt.dependOn(&shaders.step);
     check.dependOn(shader_receipt);
     const run_tests = b.addRunArtifact(tests);
     const run_terminal_tests = b.addRunArtifact(terminal_tests);

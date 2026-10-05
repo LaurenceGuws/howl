@@ -5,38 +5,10 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const test_fonts = testFontModule(b);
     const bundled = b.option(bool, "bundled", "Build pinned memory-only FreeType/HarfBuzz for this target") orelse false;
-    if (bundled) {
-        const module = addModule(
-            b,
-            b.path("."),
-            target,
-            optimize,
-            true,
-        );
-        std.debug.assert(b.modules.get("howl_text") == module);
-        return;
-    }
-
-    const module = addModule(
-        b,
-        b.path("."),
-        target,
-        optimize,
-        false,
-    );
-    std.debug.assert(b.modules.get("howl_text") == module);
-    const native_c = nativeCModule(b, target, optimize);
-
-    const tested = b.createModule(.{
-        .root_source_file = b.path("src/text.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    tested.addImport("native_c", native_c);
-    tested.addImport("test_fonts", test_fonts);
-    tested.linkSystemLibrary("freetype", .{});
-    tested.linkSystemLibrary("harfbuzz", .{});
+    const module = addModule(b, b.path("."), target, optimize, bundled);
+    // Tests exercise the same module recipe exported to external consumers.
+    module.addImport("test_fonts", test_fonts);
+    const tested = module;
 
     const tests = b.addTest(.{
         .name = "howl-text",

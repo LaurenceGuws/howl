@@ -42,10 +42,10 @@ Do not turn profiling, logging, test scaffolding, or one host's presentation nee
 
 `main` is accepted integration. `release/$VERSION` is historical. Work directly on `main`; do not create worktrees or task branches unless Captain explicitly asks for one. Keep unrelated dirty work untouched, commit only coherent green checkpoints, and push important state so it does not live only in an agent session.
 
-Before a checkpoint: run the affected package proofs, root core gate, protocol validation when relevant, the required zig-audit plus Howl project audit, formatting, and `git diff --check`.
+Before a checkpoint: run the affected package proofs, root check/test graph, protocol validation when relevant, the required zig-audit plus Howl project audit, formatting, and `git diff --check`.
 
 ## Workspace
 
 This repository tracks the core and experimental client modules together. Module boundaries define semantic ownership; they do not require separate repositories. `howl-text/` is ordinary tracked source here, not a Git submodule, remote package pin, or dependency-cache editing surface. Cairn carries substantial work context.
 
-The root gate runs the owner-local checks and tests for `howl-vt`, `howl-instance`, `howl-pty`, and `howl-text`. Other local packages are experiments until explicitly promoted. QAgent and other embedders may pressure the core but never own its policy.
+Every maintained Zig build root participates in the repository check/test graph, including native clients, Web subpackages, and the versioned VT embedding example. Child builds own their complete proofs and public modules/artifacts; parent builds forward those exact graph objects. The separate external-consumer proof resolves the distribution root without importing private source paths. Build coverage does not promote experimental packages to core ownership. QAgent and other embedders may pressure the core but never own its policy.

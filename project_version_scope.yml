@@ -38,6 +38,6 @@ deferred:
   - renderer backend selection and presentation polish
 
 gates:
-  - root local-core checks/tests include the tracked howl-text module and pass
+  - root checks/tests forward all maintained Zig roots, nested Web proofs and the external consumer contract, and pass
   - VT simulation, fuzz, and protocol validation pass
   - zig-audit ruleset-2 core audit, Howl project audit, formatting, and git diff checks pass

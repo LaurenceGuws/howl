@@ -3,11 +3,11 @@ Howl Wayland provenance
 
 Protocol XML authorities:
 
-- xdg-shell: Wayland-protocols stable XML, generated with wayland-scanner 1.25.0.
-- linux-dmabuf-v1: Wayland-protocols stable XML, generated with wayland-scanner 1.25.0.
-- linux-drm-syncobj-v1: Wayland-protocols staging XML, generated with wayland-scanner 1.25.0.
-- fractional-scale-v1: Wayland-protocols staging XML, generated with wayland-scanner 1.25.0.
-- viewporter: Wayland-protocols stable XML, generated with wayland-scanner 1.25.0.
+- xdg-shell: Wayland-protocols stable XML, generated with wayland-scanner 1.26.0.
+- linux-dmabuf-v1: Wayland-protocols stable XML, generated with wayland-scanner 1.26.0.
+- linux-drm-syncobj-v1: Wayland-protocols staging XML, generated with wayland-scanner 1.26.0.
+- fractional-scale-v1: Wayland-protocols staging XML, generated with wayland-scanner 1.26.0.
+- viewporter: Wayland-protocols stable XML, generated with wayland-scanner 1.26.0.
 
 Generated output hashes are preserved from the accepted Host artifacts and are
 verified by the package's reproducibility proof command. The Wayland client

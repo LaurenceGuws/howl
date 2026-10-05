@@ -52,6 +52,7 @@ ownership:
   - Server/Session orchestration, when present, depends downward on Instances and must never become a prerequisite for local terminal composition
 
 workspace:
-  local_root_gate: [howl-vt, howl-instance, howl-pty, howl-text]
+  local_root_gate: all maintained Zig package check/test graphs, including nested Web roots and the external consumer proof
+  distribution_root: forwards child-owned modules and artifacts without reconstructing their type identities
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module

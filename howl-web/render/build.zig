@@ -80,6 +80,9 @@ pub fn build(b: *std.Build) void {
     live.max_memory = 256 * 1024 * 1024;
     live.wasi_exec_model = .reactor;
 
+    b.installArtifact(wasm);
+    b.installArtifact(live);
+
     // The accepted check compiles both the synthetic proof and the live renderer.
     check.dependOn(&live.step);
     const external_image_test = b.addSystemCommand(&.{ "node", "tests/external_image.mjs" });
@@ -200,7 +203,8 @@ pub fn build(b: *std.Build) void {
     }
     // The restricted WASI host is shared with the preceding text canary. Keep
     // one implementation while Web is still a monorepo-local experimental client.
-    web.dependOn(&b.addInstallFile(.{ .cwd_relative = "../text/web/runtime.mjs" }, "live-web/runtime.mjs").step);
+    web.dependOn(&b.addInstallFile(b.dependency("howl_web_text", .{}).path("web/runtime.mjs"), "live-web/runtime.mjs").step);
 
+    b.step("test", "Run the complete render canary proof graph").dependOn(check);
     b.default_step = check;
 }

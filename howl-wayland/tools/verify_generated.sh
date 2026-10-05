@@ -9,8 +9,8 @@ trap 'rm -rf -- "$out"' EXIT INT TERM
 
 version=$($scanner --version 2>&1)
 case "$version" in
-    *"1.25.0"*) ;;
-    *) echo "expected wayland-scanner 1.25.0, got: $version" >&2; exit 1 ;;
+    *"1.26.0"*) ;;
+    *) echo "expected wayland-scanner 1.26.0, got: $version" >&2; exit 1 ;;
 esac
 
 check() {

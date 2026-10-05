@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{ .name = "howl-web-gateway", .root_module = module });
     const check = b.step("check", "Compile and test bounded gateway policy");
+    check.dependOn(&exe.step);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run bounded gateway policy and live byte-bridge proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);

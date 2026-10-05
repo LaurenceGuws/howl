@@ -37,6 +37,9 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const check = b.step("check", "Compile the Odin bridge and all its proofs");
+    check.dependOn(&library.step);
+    check.dependOn(&tests.step);
     const test_step = b.step("test", "Run Odin bridge ownership and mapping proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 }

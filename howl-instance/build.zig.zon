@@ -7,5 +7,5 @@
         .howl_pty = .{ .path = "../howl-pty" },
         .howl_vt = .{ .path = "../howl-vt" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "tools", "protocol" },
 }

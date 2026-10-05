@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    b.installArtifact(runtime);
     const check = b.step("check", "Compile the versioned VT runtime and contract tests");
     check.dependOn(&runtime.step);
 

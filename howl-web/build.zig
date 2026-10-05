@@ -1,7 +1,9 @@
-//! Maintained WebAssembly canary; never part of the native core dependency graph.
+//! Composes the Web wire, text, render and gateway build graphs.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const native_target = b.standardTargetOptions(.{});
+    const native_optimize = b.standardOptimizeOption(.{});
     const target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = .ReleaseSafe });
     const client_module = client.module("howl_client");
@@ -51,33 +53,40 @@ pub fn build(b: *std.Build) void {
     live_command.addFileArg(wasm.getEmittedBin());
     live_command.addPassthruArgs();
     live.dependOn(&live_command.step);
-    const text_check = b.step("text-check", "Run the native/Wasm text engine and runtime parity gate");
-    const text_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-j2" });
-    text_run.setCwd(b.path("text"));
-    text_check.dependOn(&text_run.step);
-    const text_web = b.step("text-web", "Build the local-only browser font/raster canary");
-    const text_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
-    text_site.setCwd(b.path("text"));
-    text_web.dependOn(&text_site.step);
-    const render_check = b.step("render-check", "Run the shared terminal renderer in Wasm");
-    const render_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-j2" });
-    render_run.setCwd(b.path("render"));
-    render_check.dependOn(&render_run.step);
-    const render_web = b.step("render-web", "Build the local-only live browser renderer canary");
-    // The live host and wire Wasm are one browser compatibility generation.
-    // Refresh the installed wire artifact whenever the live Web site is rebuilt
-    // so a canary cannot serve a newer host against an older module.
+    const text = b.dependency("howl_web_text", .{});
+    const renderer = b.dependency("howl_web_render", .{});
+    const gateway = b.dependency("howl_web_gateway", .{
+        .target = native_target,
+        .optimize = native_optimize,
+    });
+    const tests = b.step("test", "Run every Web wire, text, renderer and gateway proof");
+    tests.dependOn(&test_command.step);
+    inline for (.{ text, renderer, gateway }) |child| {
+        check.dependOn(childStep(child, "check"));
+        tests.dependOn(childStep(child, "test"));
+        for (child.builder.getInstallStep().dependencies.items) |step| {
+            const install = step.cast(std.Build.Step.InstallArtifact) orelse continue;
+            b.installArtifact(install.artifact);
+        }
+        for (child.builder.modules.keys(), child.builder.modules.values()) |name, module| {
+            std.debug.assert(!b.modules.contains(name));
+            b.modules.put(b.allocator, name, module) catch @panic("OOM");
+        }
+        for (child.builder.named_lazy_paths.keys(), child.builder.named_lazy_paths.values()) |name, path| {
+            b.addNamedLazyPath(name, path);
+        }
+    }
+    b.step("text-check", "Run native/Wasm text parity").dependOn(childStep(text, "test"));
+    b.step("text-web", "Build the local browser text canary").dependOn(childStep(text, "web"));
+    b.step("render-check", "Run every Web renderer proof").dependOn(childStep(renderer, "test"));
+    const render_web = b.step("render-web", "Build the local live browser renderer canary");
     render_web.dependOn(b.getInstallStep());
-    const render_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
-    render_site.setCwd(b.path("render"));
-    render_web.dependOn(&render_site.step);
-    const gateway_check = b.step("gateway-check", "Run the maintained loopback WebSocket gateway proofs");
-    const gateway_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "test" });
-    gateway_tests.setCwd(b.path("gateway"));
-    gateway_check.dependOn(&gateway_tests.step);
-    const gateway_install = b.step("gateway-install", "Build the maintained loopback WebSocket gateway");
-    const gateway_build = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "install", "-Doptimize=ReleaseSafe" });
-    gateway_build.setCwd(b.path("gateway"));
-    gateway_install.dependOn(&gateway_build.step);
+    render_web.dependOn(childStep(renderer, "web"));
+    b.step("gateway-check", "Run gateway unit and integration proofs").dependOn(childStep(gateway, "test"));
+    b.step("gateway-install", "Build the loopback WebSocket gateway").dependOn(gateway.builder.getInstallStep());
     b.default_step = check;
+}
+
+fn childStep(child: *std.Build.Dependency, name: []const u8) *std.Build.Step {
+    return &child.builder.top_level_steps.get(name).?.step;
 }

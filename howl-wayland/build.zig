@@ -51,7 +51,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run Wayland ownership and input proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     const reproducibility = b.step("reproducibility", "Verify wayland-scanner output");
-    reproducibility.dependOn(&b.addSystemCommand(&.{ "sh", "tools/verify_generated.sh" }).step);
+    const generated = b.addSystemCommand(&.{"sh"});
+    generated.addFileArg(b.path("tools/verify_generated.sh"));
+    reproducibility.dependOn(&generated.step);
+    test_step.dependOn(reproducibility);
     check.dependOn(reproducibility);
     b.default_step = check;
 }

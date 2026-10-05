@@ -135,6 +135,37 @@ if ! cmp -s howl-text/testdata/primary.ttf howl-flutter/ios/Runner/NativeFonts/N
     status=1
 fi
 
+# Every tracked Zig build root must be reachable through package declarations.
+# The external consumer intentionally depends inward on the distribution root;
+# its independent invocation is owned by the root consumer gate.
+python3 - <<'PYGRAPH' || status=1
+from pathlib import Path
+import re
+import subprocess
+
+root = Path.cwd()
+tracked = subprocess.check_output(["git", "ls-files", "*build.zig"], text=True).splitlines()
+build_roots = {(root / path).parent.resolve() for path in tracked}
+visited = set()
+pending = [root]
+while pending:
+    package = pending.pop()
+    if package in visited:
+        continue
+    visited.add(package)
+    manifest = package / "build.zig.zon"
+    if not manifest.is_file():
+        continue
+    for relative in re.findall(r'\.path\s*=\s*"([^"]+)"', manifest.read_text()):
+        dependency = (package / relative).resolve()
+        if dependency.is_relative_to(root):
+            pending.append(dependency)
+missing = build_roots - visited - {root / "test/consumer"}
+for package in sorted(missing):
+    print(f"{package.relative_to(root)}/build.zig: absent from the root package graph")
+raise SystemExit(bool(missing))
+PYGRAPH
+
 # VERSION is the single current-workspace release marker. Every current package
 # and user-facing native client version must move with it; versioned embedding
 # examples remain deliberately frozen at their named historical contract.

@@ -18,7 +18,10 @@ pub fn build(b: *std.Build) void {
     wasm.max_memory = 96 * 1024 * 1024;
     wasm.wasi_exec_model = .reactor;
     const native_root = proofModule(b, b.graph.host, native_text.module("howl_text"), false);
-    const native = b.addLibrary(.{ .name = "howl-text-proof", .linkage = .dynamic, .root_module = native_root });
+    const native = b.addLibrary(.{ .name = "howl-text-native-proof", .linkage = .dynamic, .root_module = native_root });
+
+    b.installArtifact(wasm);
+    b.installArtifact(native);
 
     const reference = b.addSystemCommand(&.{ "python3", "tests/native.py" });
     reference.setCwd(b.path("."));
@@ -32,6 +35,7 @@ pub fn build(b: *std.Build) void {
     run.addDirectoryArg(expected);
     const check = b.step("check", "Verify real native/Wasm text parity and the restricted runtime");
     check.dependOn(&run.step);
+    b.step("test", "Run the complete text canary proof graph").dependOn(check);
     b.default_step = check;
 
     // Local-only test site. Do not publish its font fixture or test reference as

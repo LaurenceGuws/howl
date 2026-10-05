@@ -59,9 +59,9 @@ pub fn build(b: *std.Build) void {
     });
     local_terminal.addImport("host_c", host_c);
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
-    const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
+    const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = false });
     const test_fonts = text_dependency.module("howl_text_test_fonts");
-    const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
+    const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = false });
     const render = render_dependency.module("howl_render");
 
     const root = b.createModule(.{
@@ -121,6 +121,7 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    check.dependOn(&tests.step);
     const local_terminal_tests = b.addTest(.{
         .name = "howl-host-local-terminal",
         .root_module = local_terminal,
@@ -238,7 +239,6 @@ pub fn build(b: *std.Build) void {
     const scene_tests = b.addTest(.{
         .name = "howl-host-terminal-scene",
         .root_module = scene_test_module,
-        .filters = &.{"terminal scene"},
         .use_llvm = false,
         .use_lld = false,
     });

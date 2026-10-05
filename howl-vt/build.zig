@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
     const run_simulation = b.addRunArtifact(simulation);
     run_simulation.addPassthruArgs();
     b.step("simulate", "Run VT protocol and scrollback simulations").dependOn(&run_simulation.step);
+    test_step.dependOn(&run_simulation.step);
 
     const benchmark_module = b.createModule(.{
         .root_source_file = b.path("benchmark_m7_baseline.zig"),

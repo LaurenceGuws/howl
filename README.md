@@ -144,7 +144,7 @@ compile and audit Howl.
 
 ## Build
 
-Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`. The root core gate also requires `zig-audit` with stable ruleset 2 or newer:
+Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`. The root check gate also requires `zig-audit` with stable ruleset 3 or newer:
 
 ```sh
 test "$(zig version)" = "$(cat .zigversion)"
@@ -162,30 +162,47 @@ current `build.zig.zon` manifests, `project_version_scope.yml`, the native CLI,
 Odin app metadata, and Flutter's base version to agree with it; versioned embedding
 examples remain deliberately frozen at their named historical contract.
 
-`.zig-audit.json` uses schema 2 and ruleset 2 over the accepted core source, its build
+`.zig-audit.json` uses schema 2 and ruleset 3 over the accepted core source, its build
 glue, and the VT unit-proof root. Intentional sharp constructs are acknowledged beside
 the exact source with a reason. Experimental clients remain outside the root core audit
 until promoted; their package-local gates still own their proofs.
 
-Each tracked core module owns its own `build.zig` and proofs. Root gates curate the
-local core and frozen wire vectors. Python 3 is used only as build-time evidence for
-language-neutral protocol fixtures; it is not a Howl runtime dependency.
+Each maintained Zig package owns its complete checks, tests and public consumer
+graph. Root `check` and `test` depend directly on those child steps, including the
+native bridges, CLI/Server, Vulkan host, versioned VT example, and Web's nested
+text/render/gateway proofs. `test` includes VT simulation and protocol validation.
+Live desktop/browser sessions and benchmarks retain explicit opt-in entrypoints.
+
+Targeted child steps are available at the root, for example
+`zig build howl_odin:test` or `zig build howl_web:render-check`. Web canaries retain
+their explicit Wasm target; native packages receive the root target and optimization.
+Root execution requires the children's ordinary tools and native libraries, including
+Node, Python, Wayland's pinned scanner, SPIR-V tools, FreeType and HarfBuzz.
 
 The repository root is also the distribution boundary for downstream Zig consumers.
-It exposes maintained child recipes as named modules without duplicating their build
-logic. `howl_text` is currently available this way:
+It forwards the exact child module objects and installable artifacts; it does not
+recreate their source/module graphs. For example:
 
 ```zig
 const howl = b.dependency("howl", .{
     .target = target,
     .optimize = optimize,
 });
-
+root.addImport("howl_instance", howl.module("howl_instance"));
+root.addImport("howl_vt", howl.module("howl_vt"));
+root.addImport("howl_render", howl.module("howl_render"));
 root.addImport("howl_text", howl.module("howl_text"));
 ```
 
-Consumers should pin an immutable repository tag or commit. The `howl-text/` package
-continues to own its FreeType/HarfBuzz module recipe and standalone proofs.
+The public child names are retained, including `howl_local`, the Instance wire/service
+modules, Server modules, client transport, Vulkan and Wayland. Native binaries,
+bridge libraries/objects and Web Wasm artifacts are available through
+`howl.artifact(name)`. Importing a module does not link unrelated public modules.
+Consumers should pin an immutable repository tag or commit.
+
+`zig build consumer` runs the separate package in `test/consumer`, which imports
+the distribution root, resolves its artifacts and proves compatible VT/Instance
+and text/renderer type identities. Root checks and tests include this proof.
 
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.
