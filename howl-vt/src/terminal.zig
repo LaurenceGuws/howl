@@ -4234,7 +4234,11 @@ const TerminalStream = struct {
                 .mutations = .{ .text = true },
             };
         }
-        return try self.applyEvent(.{ .codepoint = mapped });
+        const changed = self.terminal.screen_state.active().writeCodepoint(mapped);
+        return .{
+            .changed = changed,
+            .mutations = .{ .text = changed },
+        };
     }
 
     fn applyExecute(self: *TerminalStream, ctrl: u8) TerminalFeedError!EventEffect {
@@ -9871,6 +9875,54 @@ test "OSC 11 and 111 mutate canonical presentation background" {
     const reset = try terminal.feed("\x1b]111\x1b\\");
     try std.testing.expect(reset.stateChanged());
     try std.testing.expectEqual(initial, terminal.presentation().background);
+}
+
+test "Unicode print owner matches generic effects cells and scalars across modes" {
+    const modes = [_][]const u8{
+        "",
+        "\x1b[4h",
+        "\x1b[?7l",
+        "\x1b[?1049h",
+        "\x1b[2;3r\x1b[?6h",
+        "\x1b[?69h\x1b[2;3s",
+        "\x1b(0",
+        "\x1b]8;;https://example.invalid/\x1b\\",
+    };
+    const scalars = [_]u21{ 'q', 0xa0, 0xe9, 0x03a9, 0x0301, 0x200d, 0xfe0f, 0x754c, 0x8a9e, 0x1f642, 0x1f680, 0x10ffff };
+    for (modes) |mode| {
+        var direct = try Terminal.init(std.testing.allocator, 3, 4);
+        defer direct.deinit();
+        var generic = try Terminal.init(std.testing.allocator, 3, 4);
+        defer generic.deinit();
+        const style = "\x1b[1;3;7;38;5;196;48;5;23m";
+        try std.testing.expectEqualDeep(try direct.feed(style), try generic.feed(style));
+        try std.testing.expectEqualDeep(try direct.feed(mode), try generic.feed(mode));
+        var direct_stream = TerminalStream.init(&direct);
+        var generic_stream = TerminalStream.init(&generic);
+        for (0..3) |_| {
+            for (scalars) |scalar| {
+                const expected = try generic_stream.applyEvent(.{ .codepoint = generic_stream.mapCodepoint(scalar) });
+                try std.testing.expectEqualDeep(expected, try direct_stream.applyPrint(scalar));
+                const direct_screen = direct.screen_state.activeConst();
+                const generic_screen = generic.screen_state.activeConst();
+                try std.testing.expectEqualDeep(generic_screen.cursor, direct_screen.cursor);
+                try std.testing.expectEqual(generic_screen.wrap_pending, direct_screen.wrap_pending);
+                try std.testing.expectEqualDeep(generic_screen.current_attrs, direct_screen.current_attrs);
+                const actual = direct.semanticView(0);
+                const canonical = generic.semanticView(0);
+                for (0..3) |row| {
+                    for (0..4) |col| {
+                        const r: u16 = @intCast(row);
+                        const c: u16 = @intCast(col);
+                        try std.testing.expectEqualDeep(canonical.cellInfoAt(r, c), actual.cellInfoAt(r, c));
+                        var actual_scalars: [24]u21 = undefined;
+                        var canonical_scalars: [24]u21 = undefined;
+                        try std.testing.expectEqualSlices(u21, canonical.cellScalarsAt(r, c, &canonical_scalars), actual.cellScalarsAt(r, c, &actual_scalars));
+                    }
+                }
+            }
+        }
+    }
 }
 
 test "Unicode scalar pressure does not advance terminal semantic identity" {
