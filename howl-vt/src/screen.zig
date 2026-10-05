@@ -1037,7 +1037,7 @@ pub const Screen = struct {
 
     fn retainedCellExtends(cell: Cell, extent: RetainedExtent) bool {
         return switch (extent) {
-            .state => !std.meta.eql(cell, blank_cell),
+            .state => !cell_values.cellsEqual(&cell, &blank_cell),
             .text => cell.codepoint != 0,
         };
     }
@@ -3959,7 +3959,7 @@ pub const Screen = struct {
         var col = start_col;
         while (col < end_col_exclusive) : (col += 1) {
             const cell = &cells[@intCast(start + @as(u32, col))];
-            if (std.meta.eql(cell.*, erase)) continue;
+            if (cell_values.cellsEqual(cell, &erase)) continue;
             clearAcceptedTail(&self.scalars.?, start + col, cell.combining_len);
             cell.* = erase;
             changed = true;
@@ -3992,7 +3992,7 @@ pub const Screen = struct {
                 changed = self.clearClusterAt(row, col, false) or changed;
                 continue;
             }
-            if (std.meta.eql(cell.*, erase_cell)) continue;
+            if (cell_values.cellsEqual(cell, &erase_cell)) continue;
             clearAcceptedTail(&self.scalars.?, start + col, cell.combining_len);
             cell.* = erase_cell;
             changed = true;

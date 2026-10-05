@@ -513,11 +513,11 @@ pub const Store = struct {
 
         var attrs: usize = 0;
         var scalars: usize = 0;
-        var previous: ?CellAttrs = null;
-        for (source.cells, 0..) |value, column| {
-            if (previous == null or !std.meta.eql(previous.?, value.attrs)) {
+        var previous: ?*const CellAttrs = null;
+        for (source.cells, 0..) |*value, column| {
+            if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
                 attrs += 1;
-                previous = value.attrs;
+                previous = &value.attrs;
             }
             const tail = source.scalars.tail(
                 source.scalar_start + column,
@@ -641,12 +641,12 @@ pub const Store = struct {
         else
             null;
 
-        var previous: ?CellAttrs = null;
+        var previous: ?*const CellAttrs = null;
         var current_attr: u16 = 0;
         var encoded_attrs: u16 = 0;
         var encoded_scalars: u32 = 0;
-        for (prepared.source.cells, 0..) |value, column| {
-            if (previous == null or !std.meta.eql(previous.?, value.attrs)) {
+        for (prepared.source.cells, 0..) |*value, column| {
+            if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
                 current_attr = encoded_attrs;
                 self.attrs.appendPrepared(
                     &recycled.attrs,
@@ -654,7 +654,7 @@ pub const Store = struct {
                     value.attrs,
                 );
                 encoded_attrs += 1;
-                previous = value.attrs;
+                previous = &value.attrs;
             }
 
             const tail_start = encoded_scalars;

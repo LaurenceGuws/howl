@@ -1,5 +1,7 @@
 //! Canonical terminal cell, color, and retained-row geometry value vocabulary.
 
+const std = @import("std");
+
 /// Stores one exact 24-bit terminal color.
 pub const Rgb = struct {
     r: u8,
@@ -182,4 +184,112 @@ pub fn isSemanticWideLead(value: Cell) bool {
 pub fn isSemanticWideCell(value: Cell) bool {
     return value.semantic_width and value.width == 2 and
         value.height == 1 and value.x < 2 and value.y == 0;
+}
+
+/// Compares every attribute value without inspecting object padding.
+pub fn attrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
+    inline for (@typeInfo(CellAttrs).@"struct".field_names, @typeInfo(CellAttrs).@"struct".field_types) |field_name, field_type| {
+        const a = @field(left.*, field_name);
+        const b = @field(right.*, field_name);
+        if (field_type == Color) {
+            if (a.kind != b.kind or a.value != b.value) return false;
+        } else if (a != b) return false;
+    }
+    return true;
+}
+
+/// Compares every cell value, including inactive scalar slots and rare placement fields.
+pub fn cellsEqual(left: *const Cell, right: *const Cell) bool {
+    inline for (@typeInfo(Cell).@"struct".field_names, @typeInfo(Cell).@"struct".field_types) |field_name, field_type| {
+        const a = &@field(left.*, field_name);
+        const b = &@field(right.*, field_name);
+        if (field_type == CellAttrs) {
+            if (!attrsEqual(a, b)) return false;
+        } else if (field_type == [3]u32) {
+            if (!std.mem.eql(u32, a, b)) return false;
+        } else if (a.* != b.*) return false;
+    }
+    return true;
+}
+
+fn differentScalar(comptime T: type, value: T) T {
+    return switch (@typeInfo(T)) {
+        .bool => !value,
+        .int => value ^ 1,
+        .@"enum" => if (@backingInt(value) == @typeInfo(T).@"enum".field_values[0])
+            @fromBackingInt(@intCast(@typeInfo(T).@"enum".field_values[1]))
+        else
+            @fromBackingInt(@intCast(@typeInfo(T).@"enum".field_values[0])),
+        else => @compileError("add a value-domain proof for the new cell field"),
+    };
+}
+
+fn expectDifferent(left: Cell, right: Cell) !void {
+    try std.testing.expect(!std.meta.eql(left, right));
+    try std.testing.expect(!cellsEqual(&left, &right));
+    try std.testing.expect(!cellsEqual(&right, &left));
+    try std.testing.expect(cellsEqual(&right, &right));
+    try std.testing.expectEqual(std.meta.eql(left.attrs, right.attrs), attrsEqual(&left.attrs, &right.attrs));
+}
+
+test "cell equality covers every scalar array placement and attribute field" {
+    const original = blank;
+    inline for (@typeInfo(Cell).@"struct".field_names, @typeInfo(Cell).@"struct".field_types) |field_name, field_type| {
+        if (field_type == CellAttrs) {
+            inline for (@typeInfo(CellAttrs).@"struct".field_names, @typeInfo(CellAttrs).@"struct".field_types) |attr_name, attr_type| {
+                if (attr_type == Color) {
+                    inline for (@typeInfo(Color).@"struct".field_names, @typeInfo(Color).@"struct".field_types) |component_name, component_type| {
+                        var changed = original;
+                        const value = &@field(@field(changed.attrs, attr_name), component_name);
+                        value.* = differentScalar(component_type, value.*);
+                        try expectDifferent(original, changed);
+                    }
+                } else {
+                    var changed = original;
+                    const value = &@field(changed.attrs, attr_name);
+                    value.* = differentScalar(attr_type, value.*);
+                    try expectDifferent(original, changed);
+                }
+            }
+        } else if (field_type == [3]u32) {
+            for (0..3) |index| {
+                var changed = original;
+                @field(changed, field_name)[index] = 1;
+                try expectDifferent(original, changed);
+            }
+        } else {
+            var changed = original;
+            const value = &@field(changed, field_name);
+            value.* = differentScalar(field_type, value.*);
+            try expectDifferent(original, changed);
+        }
+    }
+}
+
+test "cell equality ignores padding while preserving exact field values" {
+    var left: Cell = undefined;
+    var right: Cell = undefined;
+    @memset(std.mem.asBytes(&left), 0xa5);
+    @memset(std.mem.asBytes(&right), 0x5a);
+    inline for (@typeInfo(Cell).@"struct".field_names, @typeInfo(Cell).@"struct".field_types) |field_name, field_type| {
+        if (field_type == CellAttrs) {
+            inline for (@typeInfo(CellAttrs).@"struct".field_names, @typeInfo(CellAttrs).@"struct".field_types) |attr_name, attr_type| {
+                if (attr_type == Color) {
+                    inline for (@typeInfo(Color).@"struct".field_names) |component_name| {
+                        @field(@field(left.attrs, attr_name), component_name) = @field(@field(blank.attrs, attr_name), component_name);
+                        @field(@field(right.attrs, attr_name), component_name) = @field(@field(blank.attrs, attr_name), component_name);
+                    }
+                } else {
+                    @field(left.attrs, attr_name) = @field(blank.attrs, attr_name);
+                    @field(right.attrs, attr_name) = @field(blank.attrs, attr_name);
+                }
+            }
+        } else {
+            @field(left, field_name) = @field(blank, field_name);
+            @field(right, field_name) = @field(blank, field_name);
+        }
+    }
+    try std.testing.expect(std.meta.eql(left, right));
+    try std.testing.expect(cellsEqual(&left, &right));
+    try std.testing.expect(attrsEqual(&left.attrs, &right.attrs));
 }
