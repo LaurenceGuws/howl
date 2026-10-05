@@ -1176,6 +1176,7 @@ pub const Screen = struct {
         const lead = self.cellInfoAt(lead_row, lead_col);
         if (lead.codepoint == 0) return &.{};
         output[0] = lead.codepoint;
+        if (lead.combining_len == 0) return output[0..1];
         const direct: usize = @min(
             @as(usize, lead.combining_len),
             lead.combining.len,
