@@ -81,17 +81,23 @@ test "screen write: sgr applies colors and resets for later writes" {
     try std.testing.expectEqual(Screen.default_cell_attrs.fg, r.cellInfoAt(0, 1).attrs.fg);
 }
 
-test "screen write: indexed foreground owner matches SGR clamping and change reporting" {
-    const values = [_]i32{ -12, 0, 196, 999, 196 };
-    var direct = Screen.init(1, 1);
-    var generic = Screen.init(1, 1);
-    for (values) |value| {
-        const params = [_]i32{ 38, 5, value };
-        try std.testing.expectEqual(
-            generic.applySgr(operands(params[0..])),
-            direct.applyIndexedForeground(value),
-        );
-        try std.testing.expectEqualDeep(generic.current_attrs, direct.current_attrs);
+test "screen write: indexed color owner matches SGR clamping and change reporting" {
+    const values = [_]i32{ std.math.minInt(i32), -12, 0, 196, 196, 255, 999, std.math.maxInt(i32), 196 };
+    for ([_]i32{ 38, 48 }) |channel| {
+        var direct = Screen.init(1, 1);
+        var generic = Screen.init(1, 1);
+        const styles = [_]i32{ 1, 3, 4, 7, 58, 5, 23 };
+        try std.testing.expect(direct.applySgr(operands(&styles)));
+        try std.testing.expect(generic.applySgr(operands(&styles)));
+        for (0..values.len + 256) |index| {
+            const value: i32 = if (index < values.len) values[index] else @intCast(index - values.len);
+            const params = [_]i32{ channel, 5, value };
+            try std.testing.expectEqual(
+                generic.applySgr(operands(params[0..])),
+                direct.applyIndexedColor(value, channel == 38),
+            );
+            try std.testing.expectEqualDeep(generic.current_attrs, direct.current_attrs);
+        }
     }
 }
 

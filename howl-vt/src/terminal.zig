@@ -4158,8 +4158,8 @@ const TerminalStream = struct {
                 const screen = self.terminal.screen_state.active();
                 const changed = if (params.len == 3 and
                     csi.separators.eql(parser_mod.CsiSeparatorList.empty) and
-                    params[0] == 38 and params[1] == 5)
-                    @call(.always_inline, Screen.applyIndexedForeground, .{ screen, params[2] })
+                    (params[0] == 38 or params[0] == 48) and params[1] == 5)
+                    @call(.always_inline, Screen.applyIndexedColor, .{ screen, params[2], params[0] == 38 })
                 else
                     @call(.always_inline, Screen.applySgr, .{
                         screen,

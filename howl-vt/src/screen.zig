@@ -3058,11 +3058,12 @@ pub const Screen = struct {
     // Rendition
     // -------------------------------------------------------------------------
 
-    /// Applies one indexed foreground rendition with the same clamping as SGR 38;5;n.
-    pub inline fn applyIndexedForeground(self: *Screen, value: i32) bool {
-        const before = self.current_attrs.fg;
-        self.current_attrs.fg = .indexed(clampByte(value));
-        return !std.meta.eql(before, self.current_attrs.fg);
+    /// Applies one indexed foreground/background rendition with canonical SGR clamping.
+    pub inline fn applyIndexedColor(self: *Screen, value: i32, foreground: bool) bool {
+        const color = if (foreground) &self.current_attrs.fg else &self.current_attrs.bg;
+        const before = color.*;
+        color.* = .indexed(clampByte(value));
+        return !std.meta.eql(before, color.*);
     }
 
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
