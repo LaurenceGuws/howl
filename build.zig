@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     b.step("simulate", "Run VT simulations").dependOn(childStep(vt, "simulate"));
     b.step("fuzz:terminal", "Run VT fuzz proofs").dependOn(childStep(vt, "fuzz"));
-    b.step("benchmark:m7", "Run the VT m7 benchmark").dependOn(childStep(vt, "benchmark"));
+    b.step("benchmark:vt", "Run the VT benchmark").dependOn(childStep(vt, "benchmark"));
     b.default_step = check;
 }
 

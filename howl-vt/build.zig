@@ -98,20 +98,21 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_simulation.step);
 
     const benchmark_module = b.createModule(.{
-        .root_source_file = b.path("benchmark_m7_baseline.zig"),
+        .root_source_file = b.path("benchmark/terminal_benchmark.zig"),
         .target = target,
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
+    benchmark_module.addImport("howl_vt", module);
     const benchmark = b.addExecutable(.{
-        .name = "howl-vt-m7-baseline",
+        .name = "howl-vt-benchmark",
         .root_module = benchmark_module,
         .use_llvm = false,
         .use_lld = false,
     });
     const run_benchmark = b.addRunArtifact(benchmark);
     run_benchmark.addPassthruArgs();
-    b.step("benchmark", "Run the m7 VT benchmark").dependOn(&run_benchmark.step);
+    b.step("benchmark", "Run the VT benchmark").dependOn(&run_benchmark.step);
 
     b.default_step = check;
 }

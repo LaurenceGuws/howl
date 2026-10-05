@@ -63,10 +63,13 @@ caller-owned copy. `replyBytes`, `semanticView`, `consequenceHead`, and the
 direct metadata observers borrow or copy bounded state; `copyLogicalOutput` and
 text extraction allocate only through the allocator supplied by the caller.
 
-At fixed geometry, ordinary text feed, scrolling, projected-history eviction,
-logical-output finalization, and borrowed observation perform no terminal-owned
-allocation after successful initialization. Resize and reflow remain an explicit
-transactional reconfiguration boundary.
+At fixed geometry, ordinary screen mutation, logical-output finalization, and
+borrowed observation perform no terminal-owned allocation after successful
+initialization. Projected-history payload backing grows lazily to a bounded
+high-water mark; allocation failure records history loss without preventing
+terminal execution. Once a stable payload shape has reached its high-water,
+history turnover and eviction are allocation-free. Resize and reflow remain an
+explicit transactional reconfiguration boundary.
 
 Allocating operations state their ownership in their Zig contracts:
 

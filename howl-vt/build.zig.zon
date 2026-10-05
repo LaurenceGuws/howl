@@ -13,7 +13,6 @@
         "simulation",
         "simulation_main.zig",
         "benchmark",
-        "benchmark_m7_baseline.zig",
         "design.md",
         "examples",
     },
