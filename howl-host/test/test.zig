@@ -267,17 +267,6 @@ fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
     }
 }
 
-test "pane focus is latest-wins and wakes Input" {
-    var value = try boundary();
-    defer value.deinit();
-    try value.publishPaneFocus(0);
-    try value.publishPaneFocus(1);
-    try expectReadable(value.inputFd());
-    try value.drainInputWake();
-    try std.testing.expectEqual(@as(u8, 1), value.takePaneFocus().?);
-    try std.testing.expect(value.takePaneFocus() == null);
-}
-
 test "pointer motion coalesces while button and wheel occurrences stay ordered" {
     var value = try boundary();
     defer value.deinit();

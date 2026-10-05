@@ -85,6 +85,9 @@ experimental:
     adapters accept canonical VT Observation, validated borrowed howl-client.rich,
     or owned howl-client.view storage while the source-neutral renderer itself
     knows no VT owner, client transport, window system, or graphics backend. The
+    default package facade includes both VT and transported-client adapters;
+    client_sources=false selects the direct VT facade without constructing
+    howl-client, while preserving the same renderer/text type identities. The
     package separately exposes dependency-free `howl_render_limits` for wire-only
     consumers; its full root re-exports the exact howl-text module instance so
     caller-owned FontSet values preserve Zig type identity. It owns
@@ -108,13 +111,12 @@ experimental:
     listener-free howl_local owner; Android and iOS remain client-only. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
-    native Linux Vulkan performance canary with three Instance routes: in-process
-    howl-instance via --local, direct externally owned HWLS endpoints, or exact
-    Server Session+Instance attach through server-client followed by ordinary HWLS.
-    Input/render/geometry/history owners share one host-local target connector and do
-    not retain Server semantics after connection construction. Direct duet/split/tab
-    composition remains Host presentation state; local/direct/managed routes share
-    canonical VT/text/Canvas/Vulkan semantics; outside the core gate
+    native Linux direct-embed performance canary. It owns one in-process howl-instance,
+    services its PTY/VT lifetime directly, borrows canonical Terminal.Observation for
+    synchronous projection, and renders through howl-text/howl-render/Vulkan/Wayland.
+    Its howl-render dependency disables transported client sources. Host has no
+    howl-client, client transport, HWLS, server-client, Server, Session, endpoint or
+    remote-target route; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

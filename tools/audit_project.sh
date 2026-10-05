@@ -135,6 +135,19 @@ if ! cmp -s howl-text/testdata/primary.ttf howl-flutter/ios/Runner/NativeFonts/N
     status=1
 fi
 
+# howl-host is the direct native performance canary, not another attachment
+# frontend. Keep transport/orchestration machinery mechanically outside its
+# build and source graph.
+if grep -REn 'howl_client|server_client|remote_target' \
+    howl-host/build.zig howl-host/build.zig.zon howl-host/src >/dev/null; then
+    printf 'howl-host: direct canary depends on transported client/server machinery\n'
+    status=1
+fi
+if ! grep -Fqx '        .client_sources = false,' howl-host/build.zig; then
+    printf 'howl-host/build.zig: howl-render must disable transported client sources\n'
+    status=1
+fi
+
 # Every tracked Zig build root must be reachable through package declarations.
 # The external consumer intentionally depends inward on the distribution root;
 # its independent invocation is owned by the root consumer gate.

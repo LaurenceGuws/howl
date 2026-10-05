@@ -95,7 +95,7 @@ pub const State = struct {
             self.anchor_top_row = newest_history_end - clamped;
     }
 
-    /// Accepts the server's exact clamped history window after one observation.
+    /// Accepts the canonical VT's exact clamped history window after one observation.
     pub fn accept(
         self: *State,
         history_offset: u32,

@@ -13,17 +13,8 @@ pub const input_capacity: usize = 128;
 pub const host_command_capacity: usize = 16;
 /// Bounds ordered pointer button/wheel occurrences awaiting Render projection.
 pub const pointer_event_capacity: usize = 32;
-/// Bounds one copied private Unix endpoint handed from Render to Input.
-pub const pane_endpoint_capacity: usize = 108;
 
 pub const HostCommandKind = enum {
-    grow_focused,
-    shrink_focused,
-    split_horizontal,
-    split_vertical,
-    new_tab,
-    next_tab,
-    close_created,
     history_scroll,
 };
 
@@ -31,18 +22,6 @@ pub const HostCommand = struct {
     kind: HostCommandKind,
     pane: u8,
     amount: i16 = 0,
-};
-
-pub const PaneAttachKind = enum { split_horizontal, split_vertical, tab };
-
-pub const PaneEndpoint = struct {
-    kind: PaneAttachKind,
-    len: u8,
-    bytes: [pane_endpoint_capacity]u8,
-
-    pub fn text(self: *const PaneEndpoint) []const u8 {
-        return self.bytes[0..self.len];
-    }
 };
 
 pub const WindowSize = struct { width: u16, height: u16 };
@@ -190,9 +169,6 @@ pub const Boundary = struct {
     host_commands: [host_command_capacity]HostCommand = undefined,
     host_command_head: u8 = 0,
     host_command_count: u8 = 0,
-    pane_endpoint: ?PaneEndpoint = null,
-    pane_retired_pending: bool = false,
-    tab_switched_pending: bool = false,
     window_size: ?WindowSize = null,
     display_scale: ?DisplayScale = null,
     pointer_events: [pointer_event_capacity]SequencedPointer = undefined,
@@ -200,7 +176,6 @@ pub const Boundary = struct {
     pointer_event_count: u8 = 0,
     pointer_motion: ?SequencedPointer = null,
     pointer_sequence: u64 = 0,
-    pane_focus: ?u8 = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -504,110 +479,6 @@ pub const Boundary = struct {
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
-    }
-
-    /// Publishes one Render-committed Instance-slot focus for Input mirroring.
-    pub fn publishPaneFocus(self: *Boundary, scene_index: u8) error{Stopping}!void {
-        self.mutex.lockUncancelable(self.io);
-        if (self.stop_requested) {
-            self.mutex.unlock(self.io);
-            return error.Stopping;
-        }
-        self.pane_focus = scene_index;
-        self.mutex.unlock(self.io);
-        signal(self.input_fd);
-    }
-
-    /// Transfers one latest-wins Render-committed pane focus to Input.
-    pub fn takePaneFocus(self: *Boundary) ?u8 {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const result = self.pane_focus orelse return null;
-        self.pane_focus = null;
-        return result;
-    }
-
-    /// Publishes one fully committed new-pane endpoint for Input attachment.
-    pub fn publishPaneEndpoint(
-        self: *Boundary,
-        endpoint: []const u8,
-        kind: PaneAttachKind,
-    ) error{ Stopping, PaneEndpointPending, InvalidPaneEndpoint }!void {
-        if (endpoint.len == 0 or endpoint.len > pane_endpoint_capacity or endpoint.len > std.math.maxInt(u8))
-            return error.InvalidPaneEndpoint;
-        var copied = PaneEndpoint{ .kind = kind, .len = @intCast(endpoint.len), .bytes = @splat(0) };
-        @memcpy(copied.bytes[0..endpoint.len], endpoint);
-        self.mutex.lockUncancelable(self.io);
-        if (self.stop_requested) {
-            self.mutex.unlock(self.io);
-            return error.Stopping;
-        }
-        if (self.pane_endpoint != null) {
-            self.mutex.unlock(self.io);
-            return error.PaneEndpointPending;
-        }
-        self.pane_endpoint = copied;
-        self.mutex.unlock(self.io);
-        signal(self.input_fd);
-    }
-
-    /// Transfers one committed new-pane endpoint to Input.
-    pub fn takePaneEndpoint(self: *Boundary) ?PaneEndpoint {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const result = self.pane_endpoint orelse return null;
-        self.pane_endpoint = null;
-        return result;
-    }
-
-    /// Publishes the committed retirement of the host-created second pane.
-    pub fn publishPaneRetired(self: *Boundary) error{ Stopping, PaneRetiredPending }!void {
-        self.mutex.lockUncancelable(self.io);
-        if (self.stop_requested) {
-            self.mutex.unlock(self.io);
-            return error.Stopping;
-        }
-        if (self.pane_retired_pending) {
-            self.mutex.unlock(self.io);
-            return error.PaneRetiredPending;
-        }
-        self.pane_retired_pending = true;
-        self.mutex.unlock(self.io);
-        signal(self.input_fd);
-    }
-
-    /// Consumes one committed dynamic-pane retirement notice.
-    pub fn takePaneRetired(self: *Boundary) bool {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (!self.pane_retired_pending) return false;
-        self.pane_retired_pending = false;
-        return true;
-    }
-
-    /// Publishes one committed active-tab change for Input routing.
-    pub fn publishTabSwitched(self: *Boundary) error{ Stopping, TabSwitchPending }!void {
-        self.mutex.lockUncancelable(self.io);
-        if (self.stop_requested) {
-            self.mutex.unlock(self.io);
-            return error.Stopping;
-        }
-        if (self.tab_switched_pending) {
-            self.mutex.unlock(self.io);
-            return error.TabSwitchPending;
-        }
-        self.tab_switched_pending = true;
-        self.mutex.unlock(self.io);
-        signal(self.input_fd);
-    }
-
-    /// Consumes one committed active-tab change.
-    pub fn takeTabSwitched(self: *Boundary) bool {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (!self.tab_switched_pending) return false;
-        self.tab_switched_pending = false;
-        return true;
     }
 
     /// Appends one exact copied keyboard/focus occurrence for Input.

@@ -71,11 +71,16 @@ pub fn build(b: *std.Build) void {
     renderer.addImport("source", source);
     renderer.addImport("howl_text", text);
 
+    const terminal_vt = localModule(b, target, optimize, render_package.path("src/terminal_vt.zig"));
+    terminal_vt.addImport("renderer", renderer);
+    terminal_vt.addImport("source", source);
+    terminal_vt.addImport("howl_vt", vt);
+
     const terminal = localModule(b, target, optimize, render_package.path("src/terminal.zig"));
     terminal.addImport("renderer", renderer);
     terminal.addImport("source", source);
+    terminal.addImport("terminal_vt", terminal_vt);
     terminal.addImport("howl_client", client);
-    terminal.addImport("howl_vt", vt);
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),

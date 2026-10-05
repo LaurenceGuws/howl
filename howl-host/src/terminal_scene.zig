@@ -5,9 +5,7 @@
 //! residency and geometry. This file only composes those existing contracts.
 
 const std = @import("std");
-const client = @import("howl_client");
 const local_terminal = @import("local_terminal");
-const remote_target = @import("remote_target.zig");
 const render = @import("howl_render");
 const limits = render.limits;
 const terminal = render.terminal;
@@ -28,12 +26,6 @@ const ExternalUpload = struct {
     width: u32,
     height: u32,
     pixels: []const u8,
-    fetched: ?client.images.Resource = null,
-
-    fn deinit(self: *ExternalUpload) void {
-        if (self.fetched) |*owned| owned.deinit();
-        self.* = undefined;
-    }
 };
 
 pub const GenericPrepared = struct {
@@ -113,11 +105,6 @@ pub fn measureCellSize(
 }
 
 pub const Scene = struct {
-    const Remote = struct {
-        connection: client.Connection,
-        raw_cache: client.rich.RawCache,
-    };
-
     const Local = struct {
         owner: *local_terminal.Owner,
         // Borrowed from the Host Boundary; never drained or closed by Scene.
@@ -137,13 +124,8 @@ pub const Scene = struct {
         }
     };
 
-    const Source = union(enum) {
-        remote: Remote,
-        local: Local,
-    };
-
     allocator: std.mem.Allocator,
-    source: Source,
+    source: Local,
     fonts: *text.FontSet,
     fast: terminal_fast.Adapter,
     renderer: *terminal.Renderer,
@@ -172,25 +154,6 @@ pub const Scene = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        target: remote_target.Target,
-        font: FontPaths,
-        font_pixels: u16,
-    ) !Scene {
-        if (font_pixels == 0) return error.InvalidFontPixels;
-        var connection = try remote_target.connect(allocator, target);
-        errdefer connection.deinit();
-        var raw_cache = client.rich.RawCache.init(allocator);
-        errdefer raw_cache.deinit();
-        return initSource(
-            allocator,
-            .{ .remote = .{ .connection = connection, .raw_cache = raw_cache } },
-            font,
-            font_pixels,
-        );
-    }
-
-    pub fn initLocal(
-        allocator: std.mem.Allocator,
         owner: *local_terminal.Owner,
         font: FontPaths,
         font_pixels: u16,
@@ -198,20 +161,18 @@ pub const Scene = struct {
     ) !Scene {
         if (font_pixels == 0) return error.InvalidFontPixels;
         if (stop_descriptor < 0) return error.InvalidStopDescriptor;
-        return initSource(allocator, .{ .local = .{
+        return initSource(allocator, .{
             .owner = owner,
             .stop_descriptor = stop_descriptor,
-        } }, font, font_pixels);
+        }, font, font_pixels);
     }
 
     fn initSource(
         allocator: std.mem.Allocator,
-        source: Source,
+        source: Local,
         font: FontPaths,
         font_pixels: u16,
     ) !Scene {
-        var owned_source = source;
-        errdefer deinitSource(&owned_source);
         const fonts = try text.FontSet.init(allocator, .{
             .primary = font.primary,
             .fallbacks = font.fallbacks,
@@ -285,7 +246,7 @@ pub const Scene = struct {
 
         return .{
             .allocator = allocator,
-            .source = owned_source,
+            .source = source,
             .fonts = fonts,
             .fast = fast,
             .renderer = terminal_renderer,
@@ -321,214 +282,53 @@ pub const Scene = struct {
         terminal.deinit(self.renderer);
         self.fast.deinit();
         self.fonts.deinit();
-        deinitSource(&self.source);
         self.* = undefined;
     }
 
-    fn deinitSource(owner_source: *Source) void {
-        switch (owner_source.*) {
-            .remote => |*remote_state| {
-                remote_state.raw_cache.deinit();
-                remote_state.connection.deinit();
-            },
-            .local => {},
-        }
-    }
-
-    fn remoteSource(self: *Scene) !*Remote {
-        if (self.source != .remote) return error.LocalScene;
-        return &self.source.remote;
-    }
-
-    pub fn isLocal(self: *const Scene) bool {
-        return switch (self.source) {
-            .remote => false,
-            .local => true,
-        };
-    }
-
-    pub fn cancellation(self: *const Scene) error{ SocketDuplicateFailed, SocketOptionFailed }!client.Cancellation {
-        return switch (self.source) {
-            .remote => |source| source.connection.cancellation(),
-            .local => unreachable,
-        };
-    }
-
-    /// Replaces only the live observation stream after a host-local history
-    /// excursion. Render/text/backend state remains resident; any old pending
-    /// long-poll dies with the retired connection and cannot replay stale pixels.
-    pub fn resetObserver(self: *Scene, target: ?remote_target.Target) !void {
-        if (self.isLocal()) {
-            self.observation_pending = false;
-            return;
-        }
-        const route = target orelse return error.InvalidEndpoint;
-        var replacement = try remote_target.connect(self.allocator, route);
-        errdefer replacement.deinit();
-        const replacement_cache = client.rich.RawCache.init(self.allocator);
-
-        const remote = try self.remoteSource();
-        remote.connection.deinit();
-        remote.raw_cache.deinit();
-        remote.connection = replacement;
-        remote.raw_cache = replacement_cache;
+    /// Drops only an outstanding presentation request. Canonical Instance state
+    /// and accepted renderer/backend residency remain untouched.
+    pub fn resetObserver(self: *Scene) void {
         self.observation_pending = false;
     }
 
-    /// Arms one revision-relative delta observation without receiving it yet.
+    /// Arms one revision-relative direct observation.
     pub fn arm(self: *Scene, after_revision: u64) !void {
         if (self.observation_pending) return error.ObservationPending;
-        switch (self.source) {
-            .remote => |*source| try source.raw_cache.sendDeltaRequest(
-                &source.connection,
-                after_revision,
-                0,
-            ),
-            .local => |*source| {
-                source.after_revision = after_revision;
-                source.owner.armObservation(after_revision);
-            },
-        }
+        self.source.after_revision = after_revision;
+        self.source.owner.armObservation(after_revision);
         self.observation_pending = true;
     }
 
-    /// Borrows this Scene's socket only for readiness polling.
     pub fn readinessFd(self: *const Scene) std.posix.fd_t {
-        return switch (self.source) {
-            .remote => |source| source.connection.readinessFd(),
-            .local => |source| source.owner.observationFd(),
-        };
+        return self.source.owner.observationFd();
     }
 
-    /// Completes an armed observation; local waits also select Host cancellation.
     pub fn receivePrepared(self: *Scene) !Prepared {
         while (true) {
             if (try self.tryReceivePrepared()) |prepared| return prepared;
-            try self.source.local.wait();
+            try self.source.wait();
         }
     }
 
-    /// Local stale/held wakes return null without consuming the revision request.
-    /// Remote streams receive one previously armed delta/raw-fallback as before.
+    /// Stale or synchronized-held wakes return null without consuming the request.
     pub fn tryReceivePrepared(self: *Scene) !?Prepared {
         if (!self.observation_pending) return error.ObservationNotPending;
-        return switch (self.source) {
-            .remote => |*source| blk: {
-                const rich = try source.raw_cache.receive(&source.connection);
-                self.observation_pending = false;
-                break :blk try self.prepareRich(&rich, &source.connection);
-            },
-            .local => |source| blk: {
-                var guard = try source.owner.observePublished(source.after_revision) orelse return null;
+        var guard = try self.source.owner.observePublished(self.source.after_revision) orelse return null;
+        defer guard.deinit();
+        self.observation_pending = false;
+        return try self.prepareLocal(guard.value, 0);
+    }
+
+    /// Projects one complete historical observation directly from the Instance.
+    pub fn prepareHistory(self: *Scene, history_offset: u32) !Prepared {
+        while (true) {
+            if (try self.source.owner.observePublished(null)) |borrowed| {
+                var guard = borrowed;
                 defer guard.deinit();
-                self.observation_pending = false;
-                break :blk try self.prepareLocal(guard.value, 0);
-            },
-        };
-    }
-
-    /// Requests and projects one complete historical observation on a caller-owned
-    /// control connection. Revision zero deliberately establishes a fresh baseline
-    /// for the requested history offset without disturbing the live observer cache.
-    pub fn prepareHistory(
-        self: *Scene,
-        connection: ?*client.Connection,
-        history_offset: u32,
-    ) !Prepared {
-        switch (self.source) {
-            .local => |source| {
-                while (true) {
-                    if (try source.owner.observePublished(null)) |borrowed| {
-                        var guard = borrowed;
-                        defer guard.deinit();
-                        return self.prepareLocal(guard.value, history_offset);
-                    }
-                    try source.wait();
-                }
-            },
-            .remote => {},
-        }
-        const control = connection orelse return error.InvalidControl;
-        var snapshot = try client.rich.requestRaw(
-            control,
-            self.allocator,
-            0,
-            history_offset,
-        );
-        defer snapshot.deinit();
-        const rich = snapshot.view();
-        return self.prepareRich(&rich, control);
-    }
-
-    fn prepareRich(
-        self: *Scene,
-        rich: *const client.rich.View,
-        refill_connection: *client.Connection,
-    ) !Prepared {
-        const begin = rich.begin;
-        const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch
-            return error.InvalidGeometry;
-        const height = std.math.mul(u16, begin.rows, self.cell_size.height) catch
-            return error.InvalidGeometry;
-        if (width == 0 or height == 0) return error.InvalidGeometry;
-        if (try self.fast.prepare(rich, width, height)) |fast| {
-            var plan = empty_plan;
-            var overlay_pending = false;
-            if (fast.overlay_frame.commands.len != 0) {
-                try self.overlay_residency.stage(fast.overlay_frame);
-                errdefer self.overlay_residency.discard();
-                plan = try self.builder.build(&self.overlay_residency, fast.overlay_frame);
-                overlay_pending = true;
+                return self.prepareLocal(guard.value, history_offset);
             }
-            return preparedEnvelope(
-                begin,
-                width,
-                height,
-                rich.graphics.cell_pixel_width,
-                rich.graphics.cell_pixel_height,
-                .{ .fast = .{
-                    .terminal = fast,
-                    .plan = plan,
-                    .overlay_pending = overlay_pending,
-                } },
-            );
+            try self.source.wait();
         }
-
-        const graphics = rich.graphics;
-        var candidate_bindings: [terminal.maximum_external_images]terminal.ExternalImageBinding = undefined;
-        const bindings = try terminal.planExternalImageBindings(
-            self.image_bindings[0..self.image_binding_count],
-            terminal.usage(self.renderer),
-            graphics.images,
-            &candidate_bindings,
-        );
-        try terminal.updateRichWithImageBindings(self.renderer, rich, bindings);
-        @memcpy(self.image_bindings[0..bindings.len], bindings);
-        self.image_binding_count = bindings.len;
-
-        var renderer_residency_count = try self.acceptedRendererResidencies();
-        var external_uploads: [terminal.maximum_external_images]ExternalUpload = undefined;
-        var external_upload_count: usize = 0;
-        defer clearExternalUploads(&external_uploads, &external_upload_count);
-        try self.prepareRemoteExternalUploads(
-            refill_connection,
-            bindings,
-            &renderer_residency_count,
-            &external_uploads,
-            &external_upload_count,
-        );
-        const generic = try self.finishGeneric(
-            renderer_residency_count,
-            external_uploads[0..external_upload_count],
-        );
-        return preparedEnvelope(
-            begin,
-            width,
-            height,
-            rich.graphics.cell_pixel_width,
-            rich.graphics.cell_pixel_height,
-            .{ .generic = generic },
-        );
     }
 
     fn prepareLocal(
@@ -691,66 +491,6 @@ pub const Scene = struct {
         return .{ .plan = plan };
     }
 
-    fn prepareRemoteExternalUploads(
-        self: *Scene,
-        refill_connection: *client.Connection,
-        bindings: []const terminal.ExternalImageBinding,
-        renderer_residency_count: *usize,
-        uploads: *[terminal.maximum_external_images]ExternalUpload,
-        upload_count: *usize,
-    ) !void {
-        var missing_storage: [terminal.maximum_external_images]terminal.FrameExternalResource = undefined;
-        const missing = try terminal.missingExternalResources(
-            self.renderer,
-            self.renderer_residencies[0..renderer_residency_count.*],
-            &missing_storage,
-        );
-        if (missing.len > uploads.len) return error.Capacity;
-
-        for (missing) |external| {
-            if (external.format != .rgba8) return error.InvalidFrame;
-            const binding = findImageBindingByResource(bindings, external.resource) orelse
-                return error.InvalidFrame;
-            var fetched = try client.images.request(
-                refill_connection,
-                self.allocator,
-                binding.image_id,
-                binding.generation,
-            );
-            var fetched_owned = true;
-            errdefer if (fetched_owned) fetched.deinit();
-
-            const stride = std.math.mul(usize, @as(usize, external.size.width), 4) catch
-                return error.ArithmeticOverflow;
-            const pixel_count = std.math.mul(usize, stride, external.size.height) catch
-                return error.ArithmeticOverflow;
-            if (external.stride != stride or
-                fetched.width != external.size.width or
-                fetched.height != external.size.height or
-                fetched.pixels.len != pixel_count)
-                return error.InvalidFrame;
-
-            uploads[upload_count.*] = .{
-                .external = external,
-                .width = fetched.width,
-                .height = fetched.height,
-                .pixels = fetched.pixels,
-                .fetched = fetched,
-            };
-            upload_count.* += 1;
-            fetched_owned = false;
-            try upsertRendererResidency(
-                self.renderer_residencies,
-                renderer_residency_count,
-                .{
-                    .resource = external.resource,
-                    .format = external.format,
-                    .size = external.size,
-                },
-            );
-        }
-    }
-
     fn prepareLocalExternalUploads(
         self: *Scene,
         observation: *const @import("howl_vt").Terminal.Observation,
@@ -831,42 +571,6 @@ pub const Scene = struct {
         if (self.overlay_residency.pending) try self.overlay_residency.complete();
     }
 };
-
-fn preparedEnvelope(
-    begin: @import("howl_instance").protocol.SnapshotBegin,
-    width: u16,
-    height: u16,
-    cell_pixel_width: u32,
-    cell_pixel_height: u32,
-    mode: @FieldType(Prepared, "mode"),
-) Prepared {
-    return .{
-        .rows = begin.rows,
-        .cols = begin.columns,
-        .width = width,
-        .height = height,
-        .cell_pixel_width = cell_pixel_width,
-        .cell_pixel_height = cell_pixel_height,
-        .instance_revision = begin.revision,
-        .history_offset = begin.history_offset,
-        .history_count = begin.history_count,
-        .history_row_base = begin.history_row_base,
-        .alternate_screen = begin.alternate_screen,
-        .leader_present = begin.leader_present,
-        .you_are_leader = begin.you_are_leader,
-        .mode = mode,
-    };
-}
-
-fn clearExternalUploads(
-    uploads: *[terminal.maximum_external_images]ExternalUpload,
-    count: *usize,
-) void {
-    while (count.* != 0) {
-        count.* -= 1;
-        uploads[count.*].deinit();
-    }
-}
 
 fn findObservationImage(
     graphics: *const @import("howl_vt").Terminal.Images,
@@ -1048,17 +752,8 @@ test "terminal scene prospective residency replaces one logical image identity" 
     try std.testing.expectEqual(@as(usize, 2), count);
 }
 
-test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
-    const pixels = try std.testing.allocator.dupe(u8, &.{ 1, 2, 3, 4 });
-    var fetched = client.images.Resource{
-        .allocator = std.testing.allocator,
-        .image_id = 7,
-        .generation = 9,
-        .width = 1,
-        .height = 1,
-        .pixels = pixels,
-    };
-    defer fetched.deinit();
+test "terminal scene adapts exact RGBA image into Vulkan upload" {
+    const pixels = [_]u8{ 1, 2, 3, 4 };
 
     const resource = terminal.ResourceRef{
         .resource = try terminal.ResourceId.init(2),
@@ -1071,9 +766,9 @@ test "terminal scene adapts exact fetched RGBA image into Vulkan upload" {
             .size = .{ .width = 1, .height = 1 },
             .stride = 4,
         },
-        .width = fetched.width,
-        .height = fetched.height,
-        .pixels = fetched.pixels,
+        .width = 1,
+        .height = 1,
+        .pixels = &pixels,
     };
     const frame = terminal.Frame{
         .revision = 1,
@@ -1148,7 +843,7 @@ test "terminal scene projects one local Instance image without client transport"
     try std.testing.expect(ready);
 
     const fallbacks = [_][]const u8{@import("test_fonts").symbol_font};
-    var scene = try Scene.initLocal(
+    var scene = try Scene.init(
         std.testing.allocator,
         &owner,
         .{
@@ -1163,7 +858,7 @@ test "terminal scene projects one local Instance image without client transport"
         @as(?u8, 1),
         try scene.fonts.faceFor(&.{0xe0b0}),
     );
-    const prepared = try scene.prepareHistory(null, 0);
+    const prepared = try scene.prepareHistory(0);
     defer scene.discardPrepared(prepared);
     try std.testing.expect(prepared.mode == .generic);
     try std.testing.expectEqual(@as(usize, 1), scene.image_binding_count);
@@ -1229,7 +924,7 @@ test "terminal scene local historical frame cannot stale replay after output and
         if (ready) break;
     } else return error.Timeout;
 
-    var scene = try Scene.initLocal(
+    var scene = try Scene.init(
         std.testing.allocator,
         &owner,
         .{ .primary = @import("test_fonts").primary_font },
@@ -1238,7 +933,7 @@ test "terminal scene local historical frame cannot stale replay after output and
     );
     defer scene.deinit();
 
-    const stale_history = try scene.prepareHistory(null, 3);
+    const stale_history = try scene.prepareHistory(3);
     try std.testing.expectEqual(@as(u32, 3), stale_history.history_offset);
     try std.testing.expectEqual(@as(u16, 4), stale_history.rows);
     try std.testing.expectEqual(@as(u16, 8), stale_history.cols);
@@ -1287,7 +982,7 @@ test "terminal scene local historical frame cannot stale replay after output and
 
     scene.discardPrepared(stale_history);
 
-    const fresh_history = try scene.prepareHistory(null, 3);
+    const fresh_history = try scene.prepareHistory(3);
     try std.testing.expect(fresh_history.instance_revision >= current_revision);
     try std.testing.expect(fresh_history.instance_revision > stale_revision);
     try std.testing.expectEqual(@as(u32, 3), fresh_history.history_offset);
@@ -1295,7 +990,7 @@ test "terminal scene local historical frame cannot stale replay after output and
     try std.testing.expectEqual(@as(u16, 10), fresh_history.cols);
     scene.discardPrepared(fresh_history);
 
-    const live = try scene.prepareHistory(null, 0);
+    const live = try scene.prepareHistory(0);
     defer scene.discardPrepared(live);
     try std.testing.expectEqual(@as(u32, 0), live.history_offset);
     try std.testing.expectEqual(@as(u16, 6), live.rows);
@@ -1400,7 +1095,7 @@ test "terminal scene stale publication wake cannot expose a newer held frame" {
     var stop = try TestStop.init();
     defer stop.deinit();
     try testLocalTitle(&owner, "ZERO", 10);
-    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    var scene = try Scene.init(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
     defer scene.deinit();
     const first = try scene.prepare(0);
     try scene.complete();
@@ -1471,7 +1166,7 @@ test "terminal scene held startup geometry and history wait remain cancellable" 
     var stop = try TestStop.init();
     defer stop.deinit();
     try testLocalTitle(&owner, "HELD", 10);
-    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    var scene = try Scene.init(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
     defer scene.deinit();
     try scene.arm(0);
     try std.testing.expect((try scene.tryReceivePrepared()) == null);
@@ -1484,10 +1179,10 @@ test "terminal scene held startup geometry and history wait remain cancellable" 
     try std.testing.expect(!owner.interactionState().keyboard_action_mode);
     try stop.signal();
     try std.testing.expectError(error.Stopping, scene.receivePrepared());
-    try scene.resetObserver(null);
+    scene.resetObserver();
     try std.testing.expectError(error.Stopping, scene.prepare(0));
-    try std.testing.expectError(error.Stopping, scene.prepareHistory(null, 0));
-    try std.testing.expectError(error.Stopping, scene.prepareHistory(null, 1));
+    try std.testing.expectError(error.Stopping, scene.prepareHistory(0));
+    try std.testing.expectError(error.Stopping, scene.prepareHistory(1));
     try std.testing.expect(!scene.residency.pending);
 }
 
@@ -1505,7 +1200,7 @@ test "terminal scene idle synchronized timeout progresses without a new byte" {
     var stop = try TestStop.init();
     defer stop.deinit();
     try testLocalTitle(&owner, "HELD", 10);
-    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    var scene = try Scene.init(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
     defer scene.deinit();
     try scene.arm(0);
     try std.testing.expect((try scene.tryReceivePrepared()) == null);
@@ -1534,7 +1229,7 @@ test "terminal scene child exit releases held canonical state without an end" {
     var stop = try TestStop.init();
     defer stop.deinit();
     try testLocalTitle(&owner, "HELD", 10);
-    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    var scene = try Scene.init(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
     defer scene.deinit();
     try scene.arm(0);
     try std.testing.expect((try scene.tryReceivePrepared()) == null);
@@ -1593,7 +1288,7 @@ test "terminal scene descendant frame stays held after the leader exits" {
         const ready = try std.posix.poll(&descriptor, 1);
         try std.testing.expect(ready <= descriptor.len);
     } else return error.Timeout;
-    var scene = try Scene.initLocal(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
+    var scene = try Scene.init(std.testing.allocator, &owner, .{ .primary = @import("test_fonts").primary_font }, 16, stop.descriptor);
     defer scene.deinit();
     const first = try scene.prepare(0);
     try scene.complete();

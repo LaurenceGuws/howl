@@ -1,34 +1,17 @@
-//! Owns native-host keyboard, mouse, focus delivery and host-local pane focus.
+//! Owns direct keyboard, mouse, focus, PTY service, and Instance input.
 //!
 //! Window copies interpreted Wayland/xkb facts into Boundary. This owner alone
-//! performs potentially blocking Instance action round trips so compositor
-//! dispatch never waits on endpoint I/O. In duet mode it owns one connection
-//! per pane. F6 toggles focus, F7/F8 move the focused divider, and F9 owns
-//! bounded left/right or top/bottom split canary, and F10 closes only that
-//! host-created second pane; these keys never enter a PTY.
+//! mutates the in-process Instance and services its PTY/VT lifetime so compositor
+//! dispatch and presentation never own terminal progress.
 
 const std = @import("std");
-const client = @import("howl_client");
 const protocol = @import("howl_instance").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
-const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
-const remote_target = @import("remote_target.zig");
 const instance = @import("howl_instance");
 const scrollback = @import("scrollback.zig");
 const shared = @import("shared.zig");
-
-const next_tab_keysym: u32 = 0xffc2; // F5
-const focus_toggle_keysym: u32 = 0xffc3; // F6
-const grow_pane_keysym: u32 = 0xffc4; // F7
-const shrink_pane_keysym: u32 = 0xffc5; // F8
-const split_pane_keysym: u32 = 0xffc6; // F9
-const close_pane_keysym: u32 = 0xffc7; // F10
-const split_vertical_keysym: u32 = 0xffc8; // F11
-const new_tab_keysym: u32 = 0xffc9; // F12
-
-const CreatedKind = enum { none, split, tab };
 
 pub const Command = union(enum) {
     ignored,
@@ -40,15 +23,13 @@ pub const Command = union(enum) {
     unicode: struct { scalar: u32, action: u8, modifiers: u8 },
 };
 
+/// Owns host input and PTY/VT service for the one direct in-process Instance.
 pub fn run(
     boundary: *shared.Boundary,
-    allocator: std.mem.Allocator,
-    target: remote_target.Target,
-    target_right: ?remote_target.Target,
-    mux: layout.Mux,
+    owner: *local_terminal.Owner,
 ) void {
-    runFallible(boundary, allocator, target, target_right, mux) catch |failure| {
-        std.debug.print("Input failure: {s}\n", .{@errorName(failure)});
+    runFallible(boundary, owner) catch |failure| {
+        std.debug.print("Local input failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.input);
     };
     boundary.markStopped(.input);
@@ -56,265 +37,8 @@ pub fn run(
 
 fn runFallible(
     boundary: *shared.Boundary,
-    allocator: std.mem.Allocator,
-    target: remote_target.Target,
-    target_right: ?remote_target.Target,
-    initial_mux: layout.Mux,
-) !void {
-    var connection_count: usize = if (target_right != null) 2 else 1;
-    var connections: [2]?client.Connection = .{ null, null };
-    var initialized_count: usize = 0;
-    defer {
-        var index = initialized_count;
-        while (index != 0) {
-            index -= 1;
-            connections[index].?.deinit();
-        }
-    }
-    connections[0] = try remote_target.connect(allocator, target);
-    initialized_count = 1;
-    if (target_right) |right| {
-        connections[1] = try remote_target.connect(allocator, right);
-        initialized_count = 2;
-    }
-
-    var mux = initial_mux;
-    var projection_storage: [layout.max_panes_per_tab]layout.Placement = undefined;
-    const projected = try mux.activeLayout(.{ .width = 1024, .height = 1024 }, &projection_storage);
-    if (projected.len != connection_count) return error.InputTopologyMismatch;
-    var pane_ids: [2]layout.PaneId = undefined;
-    for (projected, 0..) |placement, index| pane_ids[index] = placement.pane;
-    const initial_focus_index = focusedConnectionIndex(
-        &mux,
-        pane_ids[0..connection_count],
-    ) orelse return error.InputTopologyMismatch;
-    if (initial_focus_index >= connection_count) return error.InputTopologyMismatch;
-
-    var window_focused = false;
-    var created_kind: CreatedKind = .none;
-    var close_pending = false;
-    var tab_switch_pending = false;
-    while (!boundary.shouldStop()) {
-        var consumed = false;
-        if (boundary.takePaneFocus()) |focus_index_u8| {
-            consumed = true;
-            const focus_index: usize = focus_index_u8;
-            if (focus_index >= connection_count) return error.InputTopologyMismatch;
-            const previous = focusedConnectionIndex(
-                &mux,
-                pane_ids[0..connection_count],
-            ) orelse return error.InputTopologyMismatch;
-            const target_pane = pane_ids[focus_index];
-            const focus_changed = mux.focusPane(target_pane) catch return error.InputTopologyMismatch;
-            if (!focus_changed and mux.focusedPane() != target_pane)
-                return error.InputTopologyMismatch;
-            if (window_focused and previous != focus_index) {
-                try deliverFocus(&connections[previous].?, false);
-                try deliverFocus(&connections[focus_index].?, true);
-            }
-        }
-        if (boundary.takePaneRetired()) {
-            consumed = true;
-            if (connection_count != 2 or connections[1] == null or created_kind == .none)
-                return error.InputTopologyMismatch;
-            connections[1].?.deinit();
-            connections[1] = null;
-            initialized_count = 1;
-            const retired_pane = pane_ids[1];
-            switch (created_kind) {
-                .split => {
-                    const focus_changed = mux.focusPane(retired_pane) catch return error.InputTopologyMismatch;
-                    if (!focus_changed and mux.focusedPane() != retired_pane)
-                        return error.InputTopologyMismatch;
-                    const retired = try mux.closeFocused();
-                    if (retired != retired_pane or mux.paneCount() != 1)
-                        return error.InputTopologyMismatch;
-                },
-                .tab => {
-                    if (mux.focusedPane() != retired_pane or mux.tabCount() != 2)
-                        return error.InputTopologyMismatch;
-                    try mux.closeActiveTab();
-                    if (mux.tabCount() != 1 or mux.paneCount() != 1)
-                        return error.InputTopologyMismatch;
-                },
-                .none => unreachable,
-            }
-            connection_count = 1;
-            created_kind = .none;
-            close_pending = false;
-            tab_switch_pending = false;
-            if (window_focused) try deliverFocus(&connections[0].?, true);
-        }
-        if (boundary.takePaneEndpoint()) |offered| {
-            consumed = true;
-            if (connection_count != 1 or connections[1] != null or created_kind != .none)
-                return error.InputTopologyMismatch;
-            const previous = focusedConnectionIndex(
-                &mux,
-                pane_ids[0..connection_count],
-            ) orelse return error.InputTopologyMismatch;
-            connections[1] = try remote_target.connect(allocator, .{ .direct = offered.text() });
-            initialized_count = 2;
-            const new_pane = switch (offered.kind) {
-                .split_horizontal => try mux.splitFocused(.horizontal),
-                .split_vertical => try mux.splitFocused(.vertical),
-                .tab => (try mux.createTab()).pane,
-            };
-            created_kind = switch (offered.kind) {
-                .split_horizontal, .split_vertical => .split,
-                .tab => .tab,
-            };
-            pane_ids[1] = new_pane;
-            connection_count = 2;
-            const next = focusedConnectionIndex(
-                &mux,
-                pane_ids[0..connection_count],
-            ) orelse return error.InputTopologyMismatch;
-            if (next != 1) return error.InputTopologyMismatch;
-            if (window_focused and previous != next) {
-                try deliverFocus(&connections[previous].?, false);
-                try deliverFocus(&connections[next].?, true);
-            }
-        }
-        if (boundary.takeTabSwitched()) {
-            consumed = true;
-            if (connection_count != 2 or created_kind != .tab or !tab_switch_pending)
-                return error.InputTopologyMismatch;
-            const previous = focusedConnectionIndex(&mux, pane_ids[0..connection_count]) orelse
-                return error.InputTopologyMismatch;
-            if (!mux.nextTab()) return error.InputTopologyMismatch;
-            const next = focusedConnectionIndex(&mux, pane_ids[0..connection_count]) orelse
-                return error.InputTopologyMismatch;
-            if (window_focused and previous != next) {
-                try deliverFocus(&connections[previous].?, false);
-                try deliverFocus(&connections[next].?, true);
-            }
-            tab_switch_pending = false;
-        }
-        if (!close_pending and !tab_switch_pending) while (boundary.takeInput()) |event| {
-            consumed = true;
-            switch (event) {
-                .focus => |focused| {
-                    if (focused != window_focused) {
-                        const active = focusedConnectionIndex(
-                            &mux,
-                            pane_ids[0..connection_count],
-                        ) orelse return error.InputTopologyMismatch;
-                        try deliverFocus(&connections[active].?, focused);
-                        window_focused = focused;
-                    }
-                },
-                .mouse => |mouse| {
-                    const scene_index: usize = mouse.scene_index;
-                    if (scene_index >= connection_count or connections[scene_index] == null)
-                        return error.InputTopologyMismatch;
-                    try deliverMouse(
-                        boundary,
-                        &connections[scene_index].?,
-                        mouse,
-                    );
-                },
-                .key => |key| {
-                    const split_topology = connection_count == 2 and mux.tabCount() == 1;
-                    const host_resize = if (split_topology) hostResizeCommand(key) else null;
-                    if (isClosePane(key)) {
-                        if (key.state == .pressed and connection_count == 2 and created_kind != .none) {
-                            const active = focusedConnectionIndex(
-                                &mux,
-                                pane_ids[0..connection_count],
-                            ) orelse return error.InputTopologyMismatch;
-                            if (active == 1) {
-                                try boundary.publishHostCommand(.{
-                                    .kind = .close_created,
-                                    .pane = 1,
-                                });
-                                close_pending = true;
-                            }
-                        }
-                    } else if (isNewTab(key)) {
-                        if (key.state == .pressed and connection_count == 1) {
-                            try boundary.publishHostCommand(.{ .kind = .new_tab, .pane = 0 });
-                        }
-                    } else if (isNextTab(key)) {
-                        if (key.state == .pressed and connection_count == 2 and created_kind == .tab) {
-                            try boundary.publishHostCommand(.{ .kind = .next_tab, .pane = 0 });
-                            tab_switch_pending = true;
-                        }
-                    } else if (hostSplitCommand(key)) |split_command| {
-                        if (key.state == .pressed and connection_count == 1) {
-                            const active = focusedConnectionIndex(
-                                &mux,
-                                pane_ids[0..connection_count],
-                            ) orelse return error.InputTopologyMismatch;
-                            try boundary.publishHostCommand(.{
-                                .kind = split_command,
-                                .pane = @intCast(active),
-                            });
-                        }
-                    } else if (split_topology and isFocusToggle(key)) {
-                        if (key.state == .pressed) {
-                            const previous = focusedConnectionIndex(
-                                &mux,
-                                pane_ids[0..connection_count],
-                            ) orelse return error.InputTopologyMismatch;
-                            const next_pane = mux.focusNext();
-                            const next = connectionIndexForPane(
-                                pane_ids[0..connection_count],
-                                next_pane,
-                            ) orelse return error.InputTopologyMismatch;
-                            if (window_focused and previous != next) {
-                                try deliverFocus(&connections[previous].?, false);
-                                try deliverFocus(&connections[next].?, true);
-                            }
-                        }
-                    } else if (host_resize) |kind| {
-                        if (key.state == .pressed) {
-                            const active = focusedConnectionIndex(
-                                &mux,
-                                pane_ids[0..connection_count],
-                            ) orelse return error.InputTopologyMismatch;
-                            try boundary.publishHostCommand(.{
-                                .kind = kind,
-                                .pane = @intCast(active),
-                            });
-                        }
-                    } else {
-                        const active = focusedConnectionIndex(
-                            &mux,
-                            pane_ids[0..connection_count],
-                        ) orelse return error.InputTopologyMismatch;
-                        try deliverKey(&connections[active].?, key);
-                    }
-                },
-            }
-            if (boundary.shouldStop()) return;
-            if (close_pending or tab_switch_pending) break;
-        };
-        if (!consumed) try waitInput(boundary);
-    }
-}
-
-/// Owns one-pane host input for an in-process Instance. The remote multi-pane
-/// runner remains unchanged; unsupported local split/tab shortcuts stay
-/// reserved rather than spawning an endpoint-backed sibling.
-pub fn runLocal(
-    boundary: *shared.Boundary,
     owner: *local_terminal.Owner,
-    mux: layout.Mux,
-) void {
-    runLocalFallible(boundary, owner, mux) catch |failure| {
-        std.debug.print("Local input failure: {s}\n", .{@errorName(failure)});
-        boundary.requestStop(.input);
-    };
-    boundary.markStopped(.input);
-}
-
-fn runLocalFallible(
-    boundary: *shared.Boundary,
-    owner: *local_terminal.Owner,
-    mux: layout.Mux,
 ) !void {
-    if (mux.tabCount() != 1 or mux.paneCount() != 1) return error.InputTopologyMismatch;
     var window_focused = false;
     while (!boundary.shouldStop()) {
         const state = owner.pollState();
@@ -358,14 +82,6 @@ fn runLocalFallible(
             pty_events & (c.POLLIN | c.POLLHUP) != 0;
 
         var consumed: usize = 0;
-        if (boundary.takePaneFocus()) |focus_index| {
-            if (focus_index != 0) return error.InputTopologyMismatch;
-        }
-        if (boundary.takePaneEndpoint() != null or
-            boundary.takePaneRetired() or
-            boundary.takeTabSwitched())
-            return error.InputTopologyMismatch;
-
         while (consumed < shared.input_capacity) : (consumed += 1) {
             const event = boundary.takeInput() orelse break;
             switch (event) {
@@ -380,16 +96,6 @@ fn runLocalFallible(
                     try deliverMouseLocal(boundary, owner, mouse);
                 },
                 .key => |key| {
-                    // Preserve the host's one-pane shortcut reservation. F6/F7/F8
-                    // were never reserved in the one-pane topology and continue
-                    // to reach the terminal.
-                    if (isClosePane(key) or
-                        isNewTab(key) or
-                        isNextTab(key) or
-                        hostSplitCommand(key) != null)
-                    {
-                        continue;
-                    }
                     try deliverKeyLocal(owner, key);
                 },
             }
@@ -609,135 +315,6 @@ fn nativeNamedKey(value: u8) ?instance.KeyName {
     };
 }
 
-fn deliverMouse(
-    boundary: *shared.Boundary,
-    connection: *client.Connection,
-    mouse: shared.RoutedMouse,
-) !void {
-    if (mouse.value.kind != .wheel) {
-        try client.actions.mouse(connection, mouse.value);
-        return;
-    }
-    const amount: i16 = switch (mouse.value.button) {
-        .wheel_up => 3,
-        .wheel_down => -3,
-        else => return error.InputTopologyMismatch,
-    };
-    const force_history =
-        mouse.value.modifiers & protocol.typed_input.modifiers.shift != 0;
-    var route = scrollback.routeWheel(
-        mouse.history_offset != 0,
-        force_history,
-        false,
-        false,
-        mouse.alternate_screen,
-        false,
-    );
-    var state: protocol.InteractionStateSnapshot = undefined;
-    if (route == .interaction_state) {
-        state = try client.state.get(connection);
-        route = scrollback.routeWheel(
-            mouse.history_offset != 0,
-            force_history,
-            true,
-            state.mouse_tracking != .off,
-            mouse.alternate_screen,
-            state.alternate_scroll,
-        );
-    }
-    switch (route) {
-        .history => boundary.publishHostCommand(.{
-            .kind = .history_scroll,
-            .pane = mouse.scene_index,
-            .amount = amount,
-        }) catch |failure| switch (failure) {
-            // Wheel intent is safely coalescible at the UX boundary. If the
-            // bounded host-control queue is full, newer pointer input will
-            // provide another opportunity instead of retiring Input.
-            error.HostCommandLimit => {},
-            else => |err| return err,
-        },
-        .terminal_mouse => try client.actions.mouse(connection, mouse.value),
-        .alternate_scroll => {
-            const key: protocol.InputKeyName = if (amount > 0) .up else .down;
-            try client.actions.namedKey(connection, key, .press, 0);
-            try client.actions.namedKey(connection, key, .release, 0);
-        },
-        .ignore => {},
-        .interaction_state => unreachable,
-    }
-}
-
-fn deliverFocus(connection: *client.Connection, focused: bool) !void {
-    try client.actions.focus(
-        connection,
-        @fromBackingInt(@as(u8, if (focused) 1 else 2)),
-    );
-}
-
-fn focusedConnectionIndex(mux: *const layout.Mux, pane_ids: []const layout.PaneId) ?usize {
-    return connectionIndexForPane(pane_ids, mux.focusedPane());
-}
-
-fn connectionIndexForPane(pane_ids: []const layout.PaneId, pane: layout.PaneId) ?usize {
-    for (pane_ids, 0..) |candidate, index| if (candidate == pane) return index;
-    return null;
-}
-
-fn isNextTab(key: wayland.input.Key) bool {
-    return @backingInt(key.keysym) == next_tab_keysym;
-}
-
-fn isNewTab(key: wayland.input.Key) bool {
-    return @backingInt(key.keysym) == new_tab_keysym;
-}
-
-fn isFocusToggle(key: wayland.input.Key) bool {
-    return @backingInt(key.keysym) == focus_toggle_keysym;
-}
-
-fn isClosePane(key: wayland.input.Key) bool {
-    return @backingInt(key.keysym) == close_pane_keysym;
-}
-
-fn hostSplitCommand(key: wayland.input.Key) ?shared.HostCommandKind {
-    return switch (@backingInt(key.keysym)) {
-        split_pane_keysym => .split_horizontal,
-        split_vertical_keysym => .split_vertical,
-        else => null,
-    };
-}
-
-fn hostResizeCommand(key: wayland.input.Key) ?shared.HostCommandKind {
-    return switch (@backingInt(key.keysym)) {
-        grow_pane_keysym => .grow_focused,
-        shrink_pane_keysym => .shrink_focused,
-        else => null,
-    };
-}
-
-fn deliverKey(connection: *client.Connection, key: wayland.input.Key) !void {
-    switch (projectKey(key)) {
-        .ignored => {},
-        .committed_text => |text| try client.actions.committedText(
-            connection,
-            text.bytes[0..text.len],
-        ),
-        .named => |named| try client.actions.namedKey(
-            connection,
-            @fromBackingInt(@intCast(named.key)),
-            @fromBackingInt(@intCast(named.action)),
-            named.modifiers,
-        ),
-        .unicode => |unicode| try client.actions.unicodeKey(
-            connection,
-            unicode.scalar,
-            @fromBackingInt(@intCast(unicode.action)),
-            unicode.modifiers,
-        ),
-    }
-}
-
 pub fn projectKey(key: wayland.input.Key) Command {
     const action: u8 = switch (key.state) {
         .pressed => 1,
@@ -817,16 +394,6 @@ fn unicodeKeysym(keysym: u32) ?u32 {
     return null;
 }
 
-fn waitInput(boundary: *shared.Boundary) !void {
-    var descriptor = c.pollfd{ .fd = boundary.inputFd(), .events = c.POLLIN, .revents = 0 };
-    while (true) {
-        const ready = c.poll(&descriptor, 1, -1);
-        if (ready > 0) return boundary.drainInputWake();
-        if (ready < 0 and std.c.errno(ready) == .INTR) continue;
-        return error.Wake;
-    }
-}
-
 fn makeKey(keysym: u32, state: wayland.input.KeyState, text: []const u8, modifiers: wayland.input.SemanticModifiers) wayland.input.Key {
     var result = wayland.input.Key{
         .keycode = 0,
@@ -841,44 +408,6 @@ fn makeKey(keysym: u32, state: wayland.input.KeyState, text: []const u8, modifie
     };
     @memcpy(result.text[0..text.len], text);
     return result;
-}
-
-test "F5 and F12 are exact tab canary keys" {
-    try std.testing.expect(isNextTab(makeKey(next_tab_keysym, .pressed, "", .{})));
-    try std.testing.expect(!isNextTab(makeKey(focus_toggle_keysym, .pressed, "", .{})));
-    try std.testing.expect(isNewTab(makeKey(new_tab_keysym, .pressed, "", .{})));
-    try std.testing.expect(!isNewTab(makeKey(split_vertical_keysym, .pressed, "", .{})));
-}
-
-test "F6 is the exact host focus toggle key" {
-    try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .pressed, "", .{})));
-    try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .released, "", .{})));
-    try std.testing.expect(!isFocusToggle(makeKey(0xffc2, .pressed, "", .{})));
-}
-
-test "F10 is the exact host-created-pane close key" {
-    try std.testing.expect(isClosePane(makeKey(close_pane_keysym, .pressed, "", .{})));
-    try std.testing.expect(isClosePane(makeKey(close_pane_keysym, .released, "", .{})));
-    try std.testing.expect(!isClosePane(makeKey(split_pane_keysym, .pressed, "", .{})));
-}
-
-test "F9 is the exact host split key" {
-    try std.testing.expect(hostSplitCommand(makeKey(split_pane_keysym, .pressed, "", .{})) == .split_horizontal);
-    try std.testing.expect(hostSplitCommand(makeKey(split_pane_keysym, .released, "", .{})) == .split_horizontal);
-    try std.testing.expect(hostSplitCommand(makeKey(split_vertical_keysym, .pressed, "", .{})) == .split_vertical);
-    try std.testing.expect(hostSplitCommand(makeKey(shrink_pane_keysym, .pressed, "", .{})) == null);
-}
-
-test "F7 and F8 are exact host divider commands" {
-    try std.testing.expectEqual(
-        shared.HostCommandKind.grow_focused,
-        hostResizeCommand(makeKey(grow_pane_keysym, .pressed, "", .{})).?,
-    );
-    try std.testing.expectEqual(
-        shared.HostCommandKind.shrink_focused,
-        hostResizeCommand(makeKey(shrink_pane_keysym, .released, "", .{})).?,
-    );
-    try std.testing.expect(hostResizeCommand(makeKey(focus_toggle_keysym, .pressed, "", .{})) == null);
 }
 
 test "plain printable key commits text only on press and repeat" {

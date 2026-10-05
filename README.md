@@ -94,10 +94,15 @@ semantics or move presentation policy into VT/PTY/Instance/Server.
 Flutter currently exercises desktop Local, direct HWLS, and Server-selected Instance
 routes. Linux and Windows Local own one listener-free in-process Instance; Android and
 iOS remain client-only. Its small app shell may persist explicit labelled Server
-endpoints, but that is application configuration, not Server discovery. The Vulkan Host
-and Odin desktop client also expose explicit Server-selected Instance startup while
-preserving their direct/local lanes; after attach their existing render/input workers
-remain ordinary HWLS clients.
+endpoints, but that is application configuration, not Server discovery. Odin also
+exposes explicit Server-selected Instance startup while preserving its Local/direct
+lanes; after attach its existing render/input workers remain ordinary HWLS clients.
+
+The Vulkan Host is deliberately different: it is the native direct-embed performance
+canary only. It owns one in-process Instance and projects canonical VT observation
+directly through text/render/Vulkan/Wayland. Its build disables transported client
+render sources and contains no howl-client, server-client, endpoint, Session, Server,
+or HWLS route.
 
 The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
 exact Server-selected Instance through `server-client` attach and then carries unchanged

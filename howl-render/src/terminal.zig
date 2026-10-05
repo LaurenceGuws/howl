@@ -4,69 +4,70 @@
 //! one source-independent renderer. Backend frame vocabulary and text behavior
 //! remain identical regardless of where terminal semantics came from.
 
-const VT = @import("howl_vt").Terminal;
 const client = @import("howl_client");
 const renderer = @import("renderer");
 const semantic = @import("source");
 const source_client = @import("source_client.zig");
-const source_vt = @import("source_vt.zig");
+const direct = @import("terminal_vt");
 
-pub const AtlasConfig = renderer.AtlasConfig;
-pub const ShapeCacheConfig = renderer.ShapeCacheConfig;
-pub const ShapeCacheUsage = renderer.ShapeCacheUsage;
-pub const AtlasError = renderer.AtlasError;
-pub const ShapeCacheInitError = renderer.ShapeCacheInitError;
-pub const ShapeCacheError = renderer.ShapeCacheError;
-pub const FontVariant = renderer.FontVariant;
-pub const FontFaces = renderer.FontFaces;
-pub const Store = renderer.Store;
-pub const StoreConfig = renderer.StoreConfig;
-pub const StoreUsage = renderer.StoreUsage;
-pub const StoreInitError = renderer.StoreInitError;
+pub const AtlasConfig = direct.AtlasConfig;
+pub const ShapeCacheConfig = direct.ShapeCacheConfig;
+pub const ShapeCacheUsage = direct.ShapeCacheUsage;
+pub const AtlasError = direct.AtlasError;
+pub const ShapeCacheInitError = direct.ShapeCacheInitError;
+pub const ShapeCacheError = direct.ShapeCacheError;
+pub const FontVariant = direct.FontVariant;
+pub const FontFaces = direct.FontFaces;
+pub const Store = direct.Store;
+pub const StoreConfig = direct.StoreConfig;
+pub const StoreUsage = direct.StoreUsage;
+pub const StoreInitError = direct.StoreInitError;
 
 pub const View = client.view;
 
-pub const Color = renderer.Color;
-pub const Size = renderer.Size;
-pub const Rect = renderer.Rect;
-pub const SourceRect = renderer.SourceRect;
-pub const ResourceId = renderer.ResourceId;
-pub const ResourceGeneration = renderer.ResourceGeneration;
-pub const ResourceFormat = renderer.ResourceFormat;
-pub const ResourceRef = renderer.ResourceRef;
-pub const ResourceView = renderer.ResourceView;
-pub const Residency = renderer.Residency;
-pub const FrameResourceUpload = renderer.FrameResourceUpload;
-pub const FrameExternalResource = renderer.FrameExternalResource;
-pub const Command = renderer.Command;
-pub const Input = renderer.Input;
+pub const Color = direct.Color;
+pub const Size = direct.Size;
+pub const Rect = direct.Rect;
+pub const SourceRect = direct.SourceRect;
+pub const ResourceId = direct.ResourceId;
+pub const ResourceGeneration = direct.ResourceGeneration;
+pub const ResourceFormat = direct.ResourceFormat;
+pub const ResourceRef = direct.ResourceRef;
+pub const ResourceView = direct.ResourceView;
+pub const Residency = direct.Residency;
+pub const FrameResourceUpload = direct.FrameResourceUpload;
+pub const FrameExternalResource = direct.FrameExternalResource;
+pub const Command = direct.Command;
+pub const Input = direct.Input;
 
-pub const Config = renderer.Config;
-pub const ExternalImageBinding = renderer.ExternalImageBinding;
-pub const maximum_external_images = renderer.maximum_external_images;
-pub const Renderer = renderer.Renderer;
-pub const Usage = renderer.Usage;
-pub const FrameBuffers = renderer.FrameBuffers;
-pub const Frame = renderer.Frame;
-pub const RowSceneKind = renderer.RowSceneKind;
-pub const RowSceneRow = renderer.RowSceneRow;
-pub const RowScene = renderer.RowScene;
-pub const InitError = renderer.InitError;
-pub const Error = renderer.Error;
+pub const Config = direct.Config;
+pub const ExternalImageBinding = direct.ExternalImageBinding;
+pub const maximum_external_images = direct.maximum_external_images;
+pub const Renderer = direct.Renderer;
+pub const Usage = direct.Usage;
+pub const FrameBuffers = direct.FrameBuffers;
+pub const Frame = direct.Frame;
+pub const RowSceneKind = direct.RowSceneKind;
+pub const RowSceneRow = direct.RowSceneRow;
+pub const RowScene = direct.RowScene;
+pub const InitError = direct.InitError;
+pub const Error = direct.Error;
 
-pub const init = renderer.init;
-pub const initStore = renderer.initStore;
-pub const deinitStore = renderer.deinitStore;
-pub const storeMetrics = renderer.storeMetrics;
-pub const storeUsage = renderer.storeUsage;
-pub const resetStore = renderer.resetStore;
-pub const initWithStore = renderer.initWithStore;
-pub const deinit = renderer.deinit;
-pub const resetCaches = renderer.resetCaches;
-pub const usage = renderer.usage;
-pub const missingExternalResources = renderer.missingExternalResources;
-pub const frame = renderer.frame;
-pub const rowScene = renderer.rowScene;
+pub const init = direct.init;
+pub const initStore = direct.initStore;
+pub const deinitStore = direct.deinitStore;
+pub const storeMetrics = direct.storeMetrics;
+pub const storeUsage = direct.storeUsage;
+pub const resetStore = direct.resetStore;
+pub const initWithStore = direct.initWithStore;
+pub const deinit = direct.deinit;
+pub const resetCaches = direct.resetCaches;
+pub const usage = direct.usage;
+pub const missingExternalResources = direct.missingExternalResources;
+pub const frame = direct.frame;
+pub const rowScene = direct.rowScene;
+pub const planObservationImageBindings = direct.planObservationImageBindings;
+pub const updateObservation = direct.updateObservation;
 
 /// Plans exact resource bindings for one transported semantic image manifest.
 pub fn planExternalImageBindings(
@@ -84,27 +85,6 @@ pub fn planExternalImageBindings(
         .height = image.height,
     };
     return renderer.planImageBindings(current, current_usage, normalized[0..images.len], output);
-}
-
-/// Plans exact resource bindings for images visible in one canonical VT view.
-pub fn planObservationImageBindings(
-    current: []const ExternalImageBinding,
-    current_usage: Usage,
-    observation: *const VT.Observation,
-    history_offset: u32,
-    output: *[maximum_external_images]ExternalImageBinding,
-) error{ ImageLimit, InvalidImageBinding, ResourceIdentityOverflow }![]const ExternalImageBinding {
-    const graphics = observation.images(history_offset);
-    var normalized: [maximum_external_images]semantic.Image = undefined;
-    var count: usize = 0;
-    for (0..source_vt.Source.graphicsImageCount(graphics)) |index| {
-        const image = source_vt.Source.graphicsImage(graphics, index);
-        if (!source_vt.Source.graphicsImageVisible(graphics, image.image_id)) continue;
-        if (count == normalized.len) return error.ImageLimit;
-        normalized[count] = image;
-        count += 1;
-    }
-    return renderer.planImageBindings(current, current_usage, normalized[0..count], output);
 }
 
 /// Replaces this renderer with one immutable owned client view.
@@ -141,19 +121,4 @@ pub fn updateRichWithImageBindings(
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
     return renderer.updateSource(source_client.RichView, owner, snapshot, image_bindings);
-}
-
-/// Presents one canonical VT observation synchronously without retaining a VT borrow.
-pub fn updateObservation(
-    owner: *Renderer,
-    observation: *const VT.Observation,
-    history_offset: u32,
-    image_bindings: []const ExternalImageBinding,
-) Error!void {
-    const snapshot: source_vt.Source.Snapshot = .{
-        .view = observation.semanticView(history_offset),
-        .colors = observation.presentation(),
-        .images = observation.images(history_offset),
-    };
-    return renderer.updateSource(source_vt.Source, owner, &snapshot, image_bindings);
 }

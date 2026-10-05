@@ -47,10 +47,6 @@ pub fn build(b: *std.Build) void {
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
-    const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
-    const client = client_dependency.module("howl_client");
-    const server_client_dependency = b.dependency("server_client", .{ .target = target, .optimize = optimize });
-    const server_client = server_client_dependency.module("server_client");
     const local_terminal = b.createModule(.{
         .root_source_file = b.path("src/local_terminal.zig"),
         .target = target,
@@ -61,7 +57,12 @@ pub fn build(b: *std.Build) void {
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = false });
     const test_fonts = text_dependency.module("howl_text_test_fonts");
-    const render_dependency = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = false });
+    const render_dependency = b.dependency("howl_render", .{
+        .target = target,
+        .optimize = optimize,
+        .bundled_text = false,
+        .client_sources = false,
+    });
     const render = render_dependency.module("howl_render");
 
     const root = b.createModule(.{
@@ -72,8 +73,6 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
-    root.addImport("howl_client", client);
-    root.addImport("server_client", server_client);
     root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("local_terminal", local_terminal);
@@ -172,8 +171,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    input_test_module.addImport("howl_client", client);
-    input_test_module.addImport("server_client", server_client);
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     input_test_module.addImport("howl_instance", instance.module("howl_instance"));
     input_test_module.addImport("local_terminal", local_terminal);
@@ -186,28 +183,12 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&input_tests.step);
 
-    const remote_target_tests_module = b.createModule(.{
-        .root_source_file = b.path("src/remote_target.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    remote_target_tests_module.addImport("howl_client", client);
-    remote_target_tests_module.addImport("server_client", server_client);
-    const remote_target_tests = b.addTest(.{
-        .name = "howl-host-remote-target",
-        .root_module = remote_target_tests_module,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&remote_target_tests.step);
-
     const fast_test_module = b.createModule(.{
         .root_source_file = b.path("src/terminal_fast.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    fast_test_module.addImport("howl_client", client);
     fast_test_module.addImport("howl_vt", vt.module("howl_vt"));
     fast_test_module.addImport("howl_render", render);
     fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
@@ -228,8 +209,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
-    scene_test_module.addImport("howl_client", client);
-    scene_test_module.addImport("server_client", server_client);
     scene_test_module.addImport("howl_instance", instance.module("howl_instance"));
     scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("local_terminal", local_terminal);
@@ -251,7 +230,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(key_repeat_tests).step);
     test_step.dependOn(&b.addRunArtifact(scrollback_tests).step);
     test_step.dependOn(&b.addRunArtifact(input_tests).step);
-    test_step.dependOn(&b.addRunArtifact(remote_target_tests).step);
     test_step.dependOn(&b.addRunArtifact(fast_tests).step);
     test_step.dependOn(&b.addRunArtifact(scene_tests).step);
     b.default_step = check;

@@ -1,75 +1,58 @@
 # howl-host
 
-`howl-host` is Howl's native Linux performance canary. It is a concrete client,
-not a shared UI framework and not part of the core gate.
+howl-host is Howl's native Linux direct-embed performance canary. Its job is
+to make the shortest owned terminal path fast, measurable, and mechanically
+obvious. It is not a remote client, Server frontend, Session browser, or shared
+UI framework.
 
-The Host has three explicit initial-Instance routes:
+    howl-host
+      |
+      +-- howl-instance
+      |     +-- howl-pty
+      |     +-- howl-vt
+      |
+      +-- howl-render   (-Dclient_sources=false)
+      |     +-- howl-text
+      |     +-- direct VT observation adapter
+      |
+      +-- howl-vk
+      +-- howl-wayland
 
-    howl-host --local FONT [--fallback FONT ...]
-    howl-host ENDPOINT FONT [--fallback FONT ...]
-    howl-host ENDPOINT_LEFT ENDPOINT_RIGHT FONT [--fallback FONT ...]
-    howl-host --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID FONT [--fallback FONT ...]
+The command line has one route:
 
-Every mode may append ordered `--fallback FONT` pairs. The primary font remains
-the sole cell-metric authority; fallbacks are consulted only when the primary
-does not cover the complete shaped cluster. The current native text atlas is an
-alpha-mask renderer, so these fallbacks must be ordinary outline/mono/gray faces;
-color-bitmap emoji fonts are not yet a supported fallback class.
+    howl-host FONT [--fallback FONT ...]
 
---local owns one howl-instance directly in the Host process. Input services its
-PTY/VT lifetime independently of presentation; Render borrows canonical VT
-observation only for synchronous Canvas projection. There is no Howl endpoint or client connection in that route. It deliberately starts as a
-one-pane generic-Canvas proof; local split/tab creation and the retained Vulkan
-fast renderer are not implied.
+The Host creates one in-process Instance. Input directly services its PTY/VT
+lifetime and submits typed Instance input. Render borrows the canonical
+Terminal.Observation only while projecting one frame, then releases the borrow
+before Vulkan/DRM or compositor waits. Geometry is an explicit direct Instance
+mutation. History is projected directly from canonical VT state.
 
-External startup remains an attached-client route: the Host consumes externally owned Instance streams and never creates their terminal processes. A direct endpoint enters HWLS immediately. `--server` uses `server-client` to attach the exact Session+Instance identity, consumes `attach_ready`, and then input/render/geometry/history owners use ordinary `howl-client` connections on that same Instance protocol. No per-Instance listener or byte proxy is introduced.
+There is deliberately no howl-client, client transport, HWLS, server-client,
+Server, Session, endpoint, socketpair, or remote-target path in this package.
+Those capabilities solve attachment, orchestration, and constrained-client
+problems elsewhere in Howl; they are not part of this performance canary.
 
-The managed route currently initializes one pane. Existing direct duet and host-created split/tab canaries remain host presentation experiments. Tabs/splits are Host state, not Session semantics; sourcing another pane still requires another explicit Instance stream. The `--local` route remains the shortest performance/dogfood path and embeds `howl-instance` directly in-process.
+The primary font is the sole cell-metric authority. Ordered
+--fallback FONT arguments are consulted only when the primary does not cover a
+complete shaped cluster. The current native text atlas is alpha-mask based, so
+fallbacks must currently be ordinary outline/mono/gray faces rather than
+color-bitmap emoji fonts.
 
 Current foundation:
 
 - one Wayland window owner;
-- one Vulkan/DRM render owner;
-- triple-buffered DMA-BUF presentation with explicit sync;
-- current `howl-vk.surface` and `howl-wayland` packages;
-- host-local fixed-capacity tabs and tiled splits;
-- canonical Instance revisions projected live through current howl-client,
-  howl-text, terminal renderer, and howl-vk.surface into the physical window;
-- three explicit-sync DMA-BUF slots rotated with exact compositor-release
-  ownership before reuse; closing Window cancels a blocked Instance observation;
-- physical Wayland/xkb keyboard input delivered by a dedicated bounded Input
-  owner so compositor dispatch never waits on Instance action acknowledgements;
-  Window owns compositor-advertised key repeat timing and re-resolves repeated
-  keys through current xkb modifiers without catch-up bursts;
-- terminal mouse tracking from Wayland motion/button/wheel facts: Window preserves
-  raw surface occurrences, Render alone resolves pane/cell/pixel geometry, and
-  Input forwards the existing canonical mouse action. Motion is latest-wins while
-  buttons and wheel remain ordered with one causal pointer sequence.
+- one in-process Instance owning one PTY and canonical VT;
+- one dedicated Input owner that services PTY/VT progress independently of
+  presentation;
+- synchronized-output publication with bounded timeout and lifecycle wakeups;
+- direct canonical observation with row-generation based retained updates;
+- howl-text shaping/rasterization and the source-neutral howl-render core;
+- Vulkan/DRM rendering with explicit-sync DMA-BUF presentation;
+- three presentation slots reused only after exact compositor release;
+- direct resize, mouse, keyboard, focus, history, graphics, and image projection.
 
-The multiplexer is intentionally small. Its job is to keep multi-Instance
-presentation an architectural invariant while Instance, VT, PTY, text, and the
-native presentation path are measured and optimized. Flutter and Web retain
-their own client UI policy.
-
-The current live loop deliberately bounds presentation backlog by compositor
-release while canonical Instance progress remains observer-independent. It is a
-correctness baseline, not the final latency scheduler.
-
-Terminal wheel policy is live on the one-pane paths. Mouse-tracking
-applications receive semantic wheel reports; an ordinary primary screen owns local
-retained-history scrollback; alternate screen + DECSET 1007 emits plain Up/Down
-key cycles. Attached history uses the existing Render control connection while
-the live long-poll remains isolated; local history projects the requested
-canonical VT window directly. Returning to live resets only the route-specific
-observer state. Split/tab scrollback remains outside this first local slice.
-
-Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
-cost, and memory slope before optimizing scheduling. The current physical typing
-proof also makes per-keystroke Instance publication/presentation churn directly
-measurable.
-
-Managed target identity includes the expected `SERVER_ID` from Server status/tree
-(or the run receipt), before Session and Instance IDs. All three are nonzero decimal
-u64 values. A reused endpoint with a different Server incarnation fails closed as
-stale; explicitly browse/select the new Server instead of silently reconnecting to
-its reused Session/Instance numbers. This is target identity, not authentication.
+The live loop bounds presentation backlog by compositor release while canonical
+Instance progress remains independently serviced. That makes Host the place to
+measure throughput, latency under throughput, CPU/GPU cost, and memory without a
+transport or orchestration layer muddying the result.

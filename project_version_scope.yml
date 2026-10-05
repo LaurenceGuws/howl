@@ -25,6 +25,7 @@ invariants:
 
 active:
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
+  - pressure the shortest native path through howl-host: one in-process Instance, direct canonical VT observation, text/render and Vulkan/Wayland with no transported client or Server route
   - pressure the same Instance/client/text/renderer owners through maintained visual canaries: Flutter over desktop Local, direct, or Server-selected native streams and Web over its Wasm/browser presentation gates
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
