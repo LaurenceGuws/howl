@@ -257,6 +257,9 @@ pub const Screen = struct {
     // with the retained cell row; observers keep their own prior identities.
     row_generations: ?[]u64,
     next_row_generation: u64,
+    // Conservative fast-path hint. Once nonsemantic multicell state is
+    // admitted, boundary cleanup remains enabled for this Screen lifetime.
+    nonsemantic_clusters_possible: bool,
 
     // Compact projected scrollback owner and live-grid scalar restore plans.
     history_store: ?history_store_mod.Store,
@@ -327,6 +330,7 @@ pub const Screen = struct {
             .row_flags = row_flags,
             .row_generations = null,
             .next_row_generation = 1,
+            .nonsemantic_clusters_possible = false,
             .history_store = null,
             .history_restore_plan = null,
             .history_restore_outgoing = null,
@@ -2732,6 +2736,8 @@ pub const Screen = struct {
             changed = self.scrollUpRegion(self.scroll_top, bottom, amount) or changed;
             self.cursor.setPositionByClient(self.cursor.row - amount, self.cursor.col);
         }
+        if (physical_width > 1 or height > 1)
+            self.nonsemantic_clusters_possible = true;
 
         const cells = self.cells orelse return changed;
         const top = self.cursor.row;
@@ -4256,6 +4262,7 @@ pub const Screen = struct {
         left: u16,
         right_exclusive: u16,
     ) bool {
+        if (!self.nonsemantic_clusters_possible) return false;
         const cells = self.cells orelse return false;
         var changed = false;
         var row = top;
@@ -7706,4 +7713,22 @@ test "complete row-ring revolution refreshes every generation" {
 
     for (before, 0..) |generation, row|
         try std.testing.expect(generation != screen.rowGeneration(@intCast(row)).?);
+}
+
+test "nonsemantic cluster hint arms only after multicell sized text" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+
+    try std.testing.expect(!screen.nonsemantic_clusters_possible);
+    screen.writeText("ABC");
+    try std.testing.expect(!screen.nonsemantic_clusters_possible);
+
+    try std.testing.expect(screen.writeSizedText("s=1;Z"));
+    try std.testing.expect(!screen.nonsemantic_clusters_possible);
+
+    screen.cursor.setPositionByClient(1, 0);
+    try std.testing.expect(screen.writeSizedText("s=2:w=2;Hi"));
+    try std.testing.expect(screen.nonsemantic_clusters_possible);
+    try std.testing.expect(screen.clearClustersIntersecting(1, 3, 0, 4));
+    try std.testing.expect(screen.nonsemantic_clusters_possible);
 }
