@@ -2377,6 +2377,7 @@ pub const Screen = struct {
 
     fn clearScalarCells(self: *Screen, start: u32, count: u32) void {
         const storage = if (self.scalars) |*value| value else return;
+        if (!storage.hasAllocatedRanges()) return;
         const cells = self.cells orelse return;
         var index = start;
         while (index < start + count) : (index += 1)

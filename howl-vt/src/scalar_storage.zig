@@ -149,6 +149,20 @@ pub const Storage = struct {
         return self.ranges.len;
     }
 
+    /// Reports whether any fixed scalar bank owns an allocated range.
+    ///
+    /// Prepared ranges count as allocated until they are released or
+    /// committed, so callers may safely skip cell-by-cell tail cleanup only
+    /// when this reports false.
+    pub fn hasAllocatedRanges(self: *const Storage) bool {
+        for (self.pages) |*page| {
+            if (page.free_count != 1) return true;
+            const free = page.free_regions[0];
+            if (free.offset != 0 or free.count != scalar_slots) return true;
+        }
+        return false;
+    }
+
     /// Plans the next deterministic first-fit range without mutating storage.
     ///
     /// The outgoing cells are treated as virtually free. Earlier plans are
@@ -599,6 +613,22 @@ test "bounded scalar storage transfers ownership across physical pages" {
         @as(usize, 0),
         (try storage.tail(page_cells - 1, 0)).len,
     );
+}
+
+test "allocated range fact follows prepared and committed scalar ownership" {
+    var storage = try Storage.init(std.testing.allocator, page_cells * 2);
+    defer storage.deinit();
+    try std.testing.expect(!storage.hasAllocatedRanges());
+
+    var prepared = try storage.prepare(&.{ 1, 2, 3, 4, 5 });
+    try std.testing.expect(storage.hasAllocatedRanges());
+    prepared.deinit();
+    try std.testing.expect(!storage.hasAllocatedRanges());
+
+    try storage.set(17, 0, &.{ 6, 7, 8, 9, 10 });
+    try std.testing.expect(storage.hasAllocatedRanges());
+    try storage.clear(17, testCombiningLen(5));
+    try std.testing.expect(!storage.hasAllocatedRanges());
 }
 
 test "cross-page move ignores full destination-associated bank" {
