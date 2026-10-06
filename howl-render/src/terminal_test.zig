@@ -217,7 +217,7 @@ const Harness = struct {
                 .pixels = self.pixels,
             },
         );
-        self.acceptFrame(frame);
+        try self.acceptFrame(frame);
         return .{ .frame = frame, .external = external };
     }
 
@@ -233,7 +233,7 @@ const Harness = struct {
         self.residency_count += 1;
     }
 
-    fn acceptFrame(self: *Harness, value: terminal.Frame) void {
+    fn acceptFrame(self: *Harness, value: terminal.Frame) !void {
         for (value.removals) |removal| {
             var index: usize = 0;
             while (index < self.residency_count) : (index += 1) {
@@ -243,11 +243,11 @@ const Harness = struct {
                 break;
             }
         }
-        for (value.uploads) |upload| self.upsert(.{
+        for (value.uploads) |upload| try self.upsert(.{
             .resource = upload.resource,
             .format = upload.format,
             .size = upload.size,
-        }) catch unreachable;
+        });
     }
 };
 
@@ -652,7 +652,8 @@ test "terminal renderer missing style variants share regular cache identity" {
     var host = try Harness.init(std.testing.allocator, regular, rendererConfig(64));
     defer host.deinit();
 
-    _ = try host.present(view);
+    const presented = try host.present(view);
+    try std.testing.expect(presented.frame.revision != 0);
     const usage = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 1), usage.shape.entries);
     try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
@@ -680,7 +681,8 @@ test "contextual operator shaping ignores non-glyph cell metadata" {
     var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
     defer host.deinit();
 
-    _ = try host.present(view);
+    const presented = try host.present(view);
+    try std.testing.expect(presented.frame.revision != 0);
     try std.testing.expectEqual(@as(usize, 0), terminal.usage(host.renderer).shape.entries);
 }
 
@@ -1714,7 +1716,7 @@ test "terminal renderer canonical image planner preserves identity across exact 
     try std.testing.expectEqual(changed.generation, @backingInt(next[0].resource.generation));
 
     var stale = next[0];
-    stale.generation = std.math.add(u64, next[0].generation, 1) catch unreachable;
+    stale.generation = try std.math.add(u64, next[0].generation, 1);
     try std.testing.expectError(
         error.InvalidImageBinding,
         terminal.planObservationImageBindings(

@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         "Include transported howl-client source adapters",
     ) orelse true;
     if (bundled_text and !renderer_enabled)
-        @panic("bundled_text requires renderer");
+        std.process.fatal("bundled_text requires renderer", .{});
 
     // Always expose the small dependency-free limits contract. The Web wire
     // client uses this without constructing the terminal renderer or text stack.
@@ -31,6 +31,9 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile maintained howl-render proofs");
     const test_step = b.step("test", "Run maintained howl-render proofs");
+    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    audit.setCwd(b.path("."));
+    check.dependOn(&audit.step);
 
     if (!renderer_enabled) {
         // Freestanding consumers need a compile proof, not std's process-backed
