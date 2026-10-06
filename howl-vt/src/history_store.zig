@@ -540,11 +540,11 @@ pub const Store = struct {
                 attrs += 1;
                 previous = &value.attrs;
             }
-            const tail = source.scalars.tail(
+            const tail_count = source.scalars.validate(
                 source.scalar_start + column,
                 value.combining_len,
             ) catch return error.InvalidSource;
-            scalars = std.math.add(usize, scalars, tail.len) catch
+            scalars = std.math.add(usize, scalars, tail_count) catch
                 return error.Capacity;
         }
         if (attrs > std.math.maxInt(u16) or scalars > std.math.maxInt(u32))
