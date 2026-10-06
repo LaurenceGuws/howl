@@ -199,6 +199,12 @@ fn ClientSource(comptime Storage: type) type {
         pub const Row = Storage.Row;
         /// One source cell record in the selected client storage representation.
         pub const Cell = Storage.Cell;
+        /// Complete decoded terminal presentation retained by the selected client view.
+        pub const Presentation = View.Presentation;
+        /// Four-channel presentation color shared by owned and borrowed client views.
+        pub const PresentationColor = Rich.Rgba;
+        /// Borrowed transported graphics manifest shared by both client storage forms.
+        pub const Graphics = View.Graphics;
         /// Client observations may carry exact revision-relative changed-row facts.
         pub const supports_incremental = true;
 

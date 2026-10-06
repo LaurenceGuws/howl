@@ -22,6 +22,12 @@ pub const Source = struct {
     pub const Row = u16;
     /// Copies one canonical VT cell value while its extended scalar tail remains view-addressed.
     pub const Cell = VT.Cell;
+    /// Copies the canonical terminal palette and dynamic presentation colors.
+    pub const Presentation = VT.Presentation;
+    /// Uses the canonical four-channel terminal color carried by Presentation.
+    pub const PresentationColor = VT.Rgb;
+    /// Borrows one coherent canonical image/placement observation.
+    pub const Graphics = VT.Images;
     /// Direct VT observations expose no revision-relative changed-row contract.
     pub const supports_incremental = false;
 

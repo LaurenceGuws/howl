@@ -12,14 +12,22 @@ const frame_vocabulary = @import("frame.zig");
 const generated = text.generated;
 const glyph_cache = @import("glyph_cache.zig");
 
+/// Re-exports terminal-local alpha-atlas bounds used by Renderer configuration.
 pub const AtlasConfig = glyph_cache.AtlasConfig;
+/// Re-exports retained shaping bounds used by Store and Renderer configuration.
 pub const ShapeCacheConfig = glyph_cache.ShapeCacheConfig;
+/// Re-exports exact retained shaping usage counters.
 pub const ShapeCacheUsage = glyph_cache.ShapeCacheUsage;
+/// Re-exports runtime rasterization and bounded atlas-capacity failures.
 pub const AtlasError = glyph_cache.AtlasError;
 const AtlasInitError = glyph_cache.AtlasInitError;
+/// Re-exports shape-cache construction failures for Store initialization.
 pub const ShapeCacheInitError = glyph_cache.ShapeCacheInitError;
+/// Re-exports runtime shaping and retained-shape capacity failures.
 pub const ShapeCacheError = glyph_cache.ShapeCacheError;
+/// Re-exports the four terminal font style variants.
 pub const FontVariant = glyph_cache.FontVariant;
+/// Re-exports one caller-owned terminal font family with deterministic fallback.
 pub const FontFaces = glyph_cache.FontFaces;
 
 const ShapeCache = glyph_cache.ShapeCache;
@@ -28,19 +36,33 @@ const Atlas = glyph_cache.Atlas;
 const TextColor = source_semantics.TextColor;
 const Metrics = text.Metrics;
 
+/// Re-exports the exact backend-independent frame color type.
 pub const Color = frame_vocabulary.Color;
+/// Re-exports one nonzero pixel extent.
 pub const Size = frame_vocabulary.Size;
+/// Re-exports one signed destination/clip rectangle.
 pub const Rect = frame_vocabulary.Rect;
+/// Re-exports one unsigned resource source rectangle.
 pub const SourceRect = frame_vocabulary.SourceRect;
+/// Re-exports one logical backend resource identity.
 pub const ResourceId = frame_vocabulary.ResourceId;
+/// Re-exports one replacement generation for a logical backend resource.
 pub const ResourceGeneration = frame_vocabulary.ResourceGeneration;
+/// Re-exports the accepted alpha-mask and RGBA resource formats.
 pub const ResourceFormat = frame_vocabulary.ResourceFormat;
+/// Re-exports one exact logical resource occurrence.
 pub const ResourceRef = frame_vocabulary.ResourceRef;
+/// Re-exports one complete or sub-region resource sampling view.
 pub const ResourceView = frame_vocabulary.ResourceView;
+/// Re-exports one exact backend residency claim.
 pub const Residency = frame_vocabulary.Residency;
+/// Re-exports one Render-owned frame upload descriptor.
 pub const FrameResourceUpload = frame_vocabulary.FrameResourceUpload;
+/// Re-exports one visible Host-owned resource missing from backend residency.
 pub const FrameExternalResource = frame_vocabulary.FrameExternalResource;
+/// Re-exports one final surface-clipped backend command.
 pub const Command = frame_vocabulary.Command;
+/// Re-exports one ordered pre-projection draw fact used by retained row scenes.
 pub const Input = frame_vocabulary.Input;
 
 // File map:
@@ -80,6 +102,8 @@ pub const ExternalImageBinding = struct {
 pub const maximum_external_images: usize = 7;
 
 /// One terminal presentation owner. There is no producer/compositor layer.
+// zig-audit: acknowledge opaque_type
+// reason: Renderer intentionally hides the allocator-owned Impl layout so callers can mutate presentation state only through bounded renderer operations.
 pub const Renderer = opaque {};
 
 /// Process render knowledge shared by externally serialized terminal renderers.
@@ -87,6 +111,8 @@ pub const Renderer = opaque {};
 /// FontFaces remain caller-owned for this first ownership tranche and must
 /// outlive the Store. The Store owns retained shaping knowledge and reusable
 /// shape/raster scratch. Callers must serialize mutable Store use.
+// zig-audit: acknowledge opaque_type
+// reason: Store intentionally hides the allocator-owned StoreImpl layout so shared shaping state remains bounded and externally serialized.
 pub const Store = opaque {};
 
 /// Bounds reusable process render knowledge for one exact font/raster lane.
@@ -101,6 +127,7 @@ pub const StoreUsage = struct {
     shape: ShapeCacheUsage,
 };
 
+/// Reports terminal-local cache, command-storage, revision, and resource identity state.
 pub const Usage = struct {
     shape: ShapeCacheUsage,
     atlas_entries: usize,
@@ -110,6 +137,7 @@ pub const Usage = struct {
     resource_high_water: u64,
 };
 
+/// Supplies caller-owned scratch receiving one backend-facing frame transaction.
 pub const FrameBuffers = struct {
     uploads: []frame_vocabulary.FrameResourceUpload,
     removals: []frame_vocabulary.ResourceRef,
@@ -117,6 +145,7 @@ pub const FrameBuffers = struct {
     pixels: []u8,
 };
 
+/// Borrows one completed backend-facing frame until the next Renderer mutation.
 pub const Frame = struct {
     revision: u64,
     uploads: []const frame_vocabulary.FrameResourceUpload,
@@ -125,8 +154,10 @@ pub const Frame = struct {
     pixels: []const u8,
 };
 
+/// Distinguishes a complete retained-row baseline from a revision-relative patch hint.
 pub const RowSceneKind = enum { baseline, patch };
 
+/// Locates one row's command span inside a retained RowScene command array.
 pub const RowSceneRow = struct {
     start: usize = 0,
     count: usize = 0,
@@ -148,16 +179,19 @@ pub const RowScene = struct {
     repairs: []const bool,
 };
 
+/// Reports allocation, cache construction, configuration, or font-family failure during Renderer initialization.
 pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasInitError || error{
     InvalidConfig,
     InvalidFontFaces,
 };
 
+/// Reports allocation, shaping-cache construction, configuration, or font-family failure during Store initialization.
 pub const StoreInitError = std.mem.Allocator.Error || ShapeCacheInitError || error{
     InvalidConfig,
     InvalidFontFaces,
 };
 
+/// Reports semantic projection, bounded cache/storage, resource-publication, or frame-production failure.
 pub const Error = AtlasError || ShapeCacheError || frame_vocabulary.Error || error{
     InvalidView,
     InvalidColor,
@@ -368,6 +402,8 @@ pub fn initStore(
         .shaped = shaped,
         .raster = raster,
     };
+    // zig-audit: acknowledge ptr_cast
+    // reason: Store is the opaque handle for this exact allocator-owned StoreImpl allocation and preserves its address.
     return @ptrCast(impl);
 }
 
@@ -491,6 +527,8 @@ fn initWithStoreInner(
         .incremental_candidate_rows = incremental_candidate_rows,
         .incremental_repairs = incremental_repairs,
     };
+    // zig-audit: acknowledge ptr_cast
+    // reason: Renderer is the opaque handle for this exact allocator-owned Impl allocation and preserves its address.
     return @ptrCast(impl);
 }
 
@@ -528,6 +566,7 @@ pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     resetStore(impl.store);
 }
 
+/// Reports current terminal-local retained usage and resource publication counters.
 pub fn usage(owner: *const Renderer) Usage {
     const impl = constRendererImpl(owner);
     return .{
@@ -540,6 +579,8 @@ pub fn usage(owner: *const Renderer) Usage {
     };
 }
 
+/// Replaces one Renderer from a synchronous source-adapter snapshot without retaining it.
+/// The source contract is compile-time only; accepted output is copied into Renderer-owned state.
 pub fn updateSource(
     comptime Source: type,
     owner: *Renderer,
@@ -995,6 +1036,8 @@ fn appendProjectedInput(
 }
 
 const maximum_operator_run_cells: usize = 4;
+const placeholder_resource_id = frame_vocabulary.ResourceId.init(1) catch
+    @compileError("renderer placeholder resource identity must remain nonzero");
 /// Kitty's deepest image layer is strictly below INT32_MIN/2. That phase is
 /// painted after the terminal default background but before non-default cell
 /// backgrounds. Ordinary negative z remains under foreground content.
@@ -1061,9 +1104,10 @@ fn contentFontVariant(style: source_semantics.CellStyle) FontVariant {
 }
 
 fn contentCellSizing(
+    comptime Source: type,
     row: usize,
     column: usize,
-    cell: anytype,
+    cell: Source.Cell,
     cell_size: frame_vocabulary.Size,
 ) Error!ContentCellSizing {
     if (cell.width == 0 or cell.height == 0 or cell.width % cell.height != 0)
@@ -1283,13 +1327,17 @@ fn contentCellVisibleClip(
     return contentIntersectRects(transformed, contentSurfaceRect(surface));
 }
 
-fn contentUsesMulticellAllocation(cell: anytype) bool {
+fn contentUsesMulticellAllocation(comptime Source: type, cell: Source.Cell) bool {
     return cell.height > 1 or cell.subscale_n != 0 or cell.subscale_d != 0 or
         cell.vertical_align != 0 or cell.horizontal_align != 0 or
         (cell.width > 1 and !cell.semantic_width);
 }
 
-fn contentUsesPlainGeometry(cell: anytype, line_geometry: source_semantics.LineGeometry) bool {
+fn contentUsesPlainGeometry(
+    comptime Source: type,
+    cell: Source.Cell,
+    line_geometry: source_semantics.LineGeometry,
+) bool {
     return line_geometry == .single_width and cell.width == 1 and cell.height == 1 and
         cell.x == 0 and cell.y == 0 and
         cell.subscale_n == 0 and cell.subscale_d == 0 and
@@ -1318,7 +1366,7 @@ fn contentIsContextualOperatorCell(
 fn contentSameContextualGlyphPresentation(
     comptime Source: type,
     cell: Source.Cell,
-    presentation: anytype,
+    presentation: *const Source.Presentation,
     font_variant: FontVariant,
     foreground: frame_vocabulary.Color,
 ) Error!bool {
@@ -1339,14 +1387,15 @@ fn contentContextualClustersPreserveCells(glyphs: []const text.Glyph, cell_count
 }
 
 fn contentFontVisibleClip(
-    cell: anytype,
+    comptime Source: type,
+    cell: Source.Cell,
     sizing: ContentCellSizing,
     row: usize,
     geometry: source_semantics.LineGeometry,
     cell_size: frame_vocabulary.Size,
     surface: frame_vocabulary.Size,
 ) Error!?frame_vocabulary.Rect {
-    if (contentUsesMulticellAllocation(cell))
+    if (contentUsesMulticellAllocation(Source, cell))
         return contentCellVisibleClip(sizing, row, geometry, cell_size, surface);
     var row_strip = try contentCellRect(row, 0, cell_size);
     row_strip.width = surface.width;
@@ -1402,20 +1451,21 @@ fn appendContentCellSolid(
     );
 }
 
-fn contentRgba(value: anytype) frame_vocabulary.Color {
+fn contentRgba(comptime Source: type, value: Source.PresentationColor) frame_vocabulary.Color {
     return .{ .r = value.r, .g = value.g, .b = value.b, .a = value.a };
 }
 
 fn contentColor(
+    comptime Source: type,
     value: TextColor,
-    presentation: anytype,
+    presentation: *const Source.Presentation,
     foreground: bool,
 ) Error!frame_vocabulary.Color {
     return switch (value.kind) {
-        .default => contentRgba(if (foreground) presentation.foreground else presentation.background),
+        .default => contentRgba(Source, if (foreground) presentation.foreground else presentation.background),
         .indexed => blk: {
             if (value.value >= presentation.palette.len) return error.InvalidColor;
-            break :blk contentRgba(presentation.palette[value.value]);
+            break :blk contentRgba(Source, presentation.palette[value.value]);
         },
         .rgb => .{
             .r = @intCast((value.value >> 16) & 0xff),
@@ -1435,10 +1485,10 @@ fn dimContentColor(value: frame_vocabulary.Color) frame_vocabulary.Color {
 fn contentCellColors(
     comptime Source: type,
     cell: Source.Cell,
-    presentation: anytype,
+    presentation: *const Source.Presentation,
 ) Error!ContentCellColors {
-    var foreground = try contentColor(Source.cellColor(cell, .foreground), presentation, true);
-    var background = try contentColor(Source.cellColor(cell, .background), presentation, false);
+    var foreground = try contentColor(Source, Source.cellColor(cell, .foreground), presentation, true);
+    var background = try contentColor(Source, Source.cellColor(cell, .background), presentation, false);
     const style = Source.cellStyle(cell);
     if (style.reverse != presentation.reverse_screen)
         std.mem.swap(frame_vocabulary.Color, &foreground, &background);
@@ -1447,7 +1497,7 @@ fn contentCellColors(
     return .{
         .foreground = foreground,
         .background = background,
-        .underline = try contentColor(Source.cellColor(cell, .underline_color), presentation, true),
+        .underline = try contentColor(Source, Source.cellColor(cell, .underline_color), presentation, true),
     };
 }
 
@@ -1631,15 +1681,16 @@ fn contentLineOffset(metrics: Metrics, cell_size: frame_vocabulary.Size) i64 {
 }
 
 fn sameIncrementalCellPresentation(
+    comptime Source: type,
     impl: *const Impl,
-    presentation: anytype,
+    presentation: *const Source.Presentation,
 ) bool {
     if (impl.incremental_reverse_screen != presentation.reverse_screen or
-        !std.meta.eql(impl.incremental_foreground, contentRgba(presentation.foreground)) or
-        !std.meta.eql(impl.incremental_background, contentRgba(presentation.background)))
+        !std.meta.eql(impl.incremental_foreground, contentRgba(Source, presentation.foreground)) or
+        !std.meta.eql(impl.incremental_background, contentRgba(Source, presentation.background)))
         return false;
     for (impl.incremental_palette, presentation.palette) |retained, candidate| {
-        if (!std.meta.eql(retained, contentRgba(candidate))) return false;
+        if (!std.meta.eql(retained, contentRgba(Source, candidate))) return false;
     }
     return true;
 }
@@ -1658,7 +1709,7 @@ fn incrementalRowLayerEligible(
         return false;
     for (0..Source.columns(snapshot)) |column| {
         const cell = Source.cellAt(snapshot, row, column);
-        if (!contentUsesPlainGeometry(cell, Source.lineGeometry(snapshot, row)) or
+        if (!contentUsesPlainGeometry(Source, cell, Source.lineGeometry(snapshot, row)) or
             blk: {
                 const style = Source.cellStyle(cell);
                 break :blk style.reverse or style.underline or style.strikethrough;
@@ -1712,7 +1763,7 @@ fn planIncrementalRows(
     const shift = Source.rowShift(snapshot) orelse 0;
     const repairs = Source.changedRows(snapshot) orelse return null;
     if (shift >= rows or repairs.len != rows or
-        !sameIncrementalCellPresentation(impl, Source.presentation(snapshot)))
+        !sameIncrementalCellPresentation(Source, impl, Source.presentation(snapshot)))
         return null;
     var repair_count: usize = 0;
     for (repairs) |repair| if (repair) {
@@ -1789,9 +1840,9 @@ fn rememberIncrementalCommands(
     impl.incremental_alternate_screen = Source.alternateScreen(snapshot);
     impl.incremental_reverse_screen = presentation.reverse_screen;
     for (presentation.palette, 0..) |value, index|
-        impl.incremental_palette[index] = contentRgba(value);
-    impl.incremental_foreground = contentRgba(presentation.foreground);
-    impl.incremental_background = contentRgba(presentation.background);
+        impl.incremental_palette[index] = contentRgba(Source, value);
+    impl.incremental_foreground = contentRgba(Source, presentation.foreground);
+    impl.incremental_background = contentRgba(Source, presentation.background);
     impl.incremental_source_revision = Source.observationRevision(snapshot);
     impl.incremental_command_count = used;
     impl.incremental_ready = true;
@@ -1841,7 +1892,7 @@ fn buildContentCommands(
 
     const metrics = fonts.metrics();
     const whole = contentSurfaceRect(surface);
-    const default_background = contentRgba(presentation.background);
+    const default_background = contentRgba(Source, presentation.background);
     const line_offset = contentLineOffset(metrics, cell_size);
     var used: usize = 0;
     try appendContentSolid(output, &used, whole, whole, default_background);
@@ -1899,7 +1950,7 @@ fn buildContentCommands(
                 continue;
             const colors = try contentCellColors(Source, cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
-            const sizing = try contentCellSizing(row_index, column, cell, cell_size);
+            const sizing = try contentCellSizing(Source, row_index, column, cell, cell_size);
             const clip = sizing.origin;
             if (style.underline) {
                 const line_y = std.math.add(i64, @as(i64, physical.y), line_offset) catch
@@ -2059,11 +2110,11 @@ fn buildContentCommands(
                 }
             }
             const physical = try contentCellRect(row_index, column, cell_size);
-            const plain_geometry = contentUsesPlainGeometry(cell, Source.lineGeometry(snapshot, row));
+            const plain_geometry = contentUsesPlainGeometry(Source, cell, Source.lineGeometry(snapshot, row));
             const sizing: ?ContentCellSizing = if (plain_geometry)
                 null
             else
-                try contentCellSizing(row_index, column, cell, cell_size);
+                try contentCellSizing(Source, row_index, column, cell, cell_size);
             const allocation_clip = if (plain_geometry)
                 physical
             else
@@ -2085,7 +2136,7 @@ fn buildContentCommands(
                     sequence[0],
                     sized_frame.width,
                     sized_frame.height,
-                    generatedSizing(cell),
+                    generatedSizing(Source, cell),
                     raster_scratch,
                 );
                 has_raster = true;
@@ -2145,6 +2196,7 @@ fn buildContentCommands(
                     surface,
                 ) orelse continue;
             } else try contentFontVisibleClip(
+                Source,
                 cell,
                 sizing.?,
                 row_index,
@@ -2256,7 +2308,7 @@ fn buildContentCommands(
     };
 }
 
-fn generatedSizing(cell: anytype) generated.BoxDrawingSizing {
+fn generatedSizing(comptime Source: type, cell: Source.Cell) generated.BoxDrawingSizing {
     const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and
         cell.subscale_n < cell.subscale_d;
     return .{
@@ -2275,7 +2327,7 @@ fn bindContentResource(commands: []frame_vocabulary.Input, resource: frame_vocab
 
 fn placeholderContentResource() frame_vocabulary.ResourceRef {
     return .{
-        .resource = frame_vocabulary.ResourceId.init(1) catch unreachable,
+        .resource = placeholder_resource_id,
         .generation = @fromBackingInt(1),
     };
 }
@@ -2365,7 +2417,7 @@ fn publishedImage(
 
 fn findImage(
     comptime Source: type,
-    graphics: anytype,
+    graphics: Source.Graphics,
     image_id: u32,
 ) ?source_semantics.Image {
     for (0..Source.graphicsImageCount(graphics)) |index| {
@@ -2377,7 +2429,7 @@ fn findImage(
 
 fn externalPlacementLessThan(
     comptime Source: type,
-    graphics: anytype,
+    graphics: Source.Graphics,
     lhs_index: u16,
     rhs_index: u16,
 ) bool {
@@ -2457,6 +2509,7 @@ fn insertExternalPlacements(
             image.generation,
         ) orelse return error.InvalidImageBinding;
         const projected = try projectExternalPlacement(
+            Source,
             graphics,
             image,
             placement,
@@ -2479,7 +2532,8 @@ fn insertExternalPlacements(
 }
 
 fn projectExternalPlacement(
-    graphics: anytype,
+    comptime Source: type,
+    graphics: Source.Graphics,
     image: source_semantics.Image,
     placement: source_semantics.ImagePlacement,
     binding: ExternalImageBinding,
@@ -2603,23 +2657,39 @@ fn contentCursor(
         .rect = rect,
         .clip = contentSurfaceRect(surface),
         .shape = cursor_shape,
-        .color = contentRgba(presentation.cursor orelse presentation.foreground),
-        .text_color = contentRgba(presentation.cursor_text orelse presentation.background),
+        .color = contentRgba(Source, presentation.cursor orelse presentation.foreground),
+        .text_color = contentRgba(Source, presentation.cursor_text orelse presentation.background),
     };
 }
 
 fn rendererImpl(content: *Renderer) *Impl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every mutable Renderer originates from an Impl allocation in initWithStoreInner at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating Impl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
 }
 
 fn constRendererImpl(content: *const Renderer) *const Impl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every borrowed Renderer originates from an Impl allocation in initWithStoreInner at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating Impl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
 }
 
 fn storeImpl(content: *Store) *StoreImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every mutable Store originates from a StoreImpl allocation in initStore at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating StoreImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
 }
 
 fn constStoreImpl(content: *const Store) *const StoreImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every borrowed Store originates from a StoreImpl allocation in initStore at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating StoreImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
 }
