@@ -1035,9 +1035,9 @@ pub const Screen = struct {
         text,
     };
 
-    fn retainedCellExtends(cell: Cell, extent: RetainedExtent) bool {
+    inline fn retainedCellExtends(cell: *const Cell, extent: RetainedExtent) bool {
         return switch (extent) {
-            .state => !cell_values.cellsEqual(&cell, &blank_cell),
+            .state => !cell_values.cellsEqual(cell, &blank_cell),
             .text => cell.codepoint != 0,
         };
     }
@@ -1051,9 +1051,9 @@ pub const Screen = struct {
         var col = line_cols;
         while (col > 0) {
             const idx = col - 1;
-            const cell = cells[idx];
+            const cell = &cells[idx];
             if (retainedCellExtends(cell, extent)) {
-                if (isSemanticWideLead(cell)) return @min(
+                if (isSemanticWideLead(cell.*)) return @min(
                     line_cols,
                     col + @as(u16, cell.width) - 1,
                 );
@@ -3848,7 +3848,7 @@ pub const Screen = struct {
         var col = line_cols;
         while (col > 0) {
             const value = row.cellInfoAt(col - 1);
-            if (retainedCellExtends(value, extent)) {
+            if (retainedCellExtends(&value, extent)) {
                 if (isSemanticWideLead(value)) return @min(
                     line_cols,
                     col + @as(u16, value.width) - 1,
@@ -3893,18 +3893,7 @@ pub const Screen = struct {
             .stored = self.history_boundary_stored,
             .total = self.history_boundary_total,
         };
-        const text_writer = RetainedTextWriter{ .history_boundary = &writer };
-        const content_len = self.retainedRowTextLen(row);
-        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
-        var col: u16 = 0;
-        while (col < content_len) : (col += 1) {
-            const cell = row.cellInfoAt(col);
-            writeCellText(
-                text_writer,
-                cell,
-                row.externalScalarsForCell(col, cell, &scalars),
-            );
-        }
+        writeRetainedRowText(self, row, .{ .history_boundary = &writer });
         self.history_boundary_stored = writer.stored;
         self.history_boundary_total = writer.total;
     }
@@ -4606,16 +4595,41 @@ fn writeRetainedRowText(
     writer: RetainedTextWriter,
 ) void {
     const content_len = screen.retainedRowTextLen(row);
+    const visible_cells = switch (row.source) {
+        .visible => |visible| visible.cells,
+        .history => null,
+    };
     var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    var ascii: [256]u8 = undefined;
+    var ascii_len: usize = 0;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
-        const cell = row.cellInfoAt(col);
+        var decoded: ScreenCell = undefined;
+        const cell = if (visible_cells) |cells| &cells[col] else blk: {
+            decoded = row.cellInfoAt(col);
+            break :blk &decoded;
+        };
+        if (cell.x != 0 or cell.y != 0) continue;
+        if (cell.codepoint < 0x80 and cell.combining_len == 0) {
+            ascii[ascii_len] = if (cell.codepoint == 0) ' ' else @intCast(cell.codepoint);
+            ascii_len += 1;
+            if (ascii_len == ascii.len) {
+                writer.write(&ascii);
+                ascii_len = 0;
+            }
+            continue;
+        }
+        if (ascii_len != 0) {
+            writer.write(ascii[0..ascii_len]);
+            ascii_len = 0;
+        }
         writeCellText(
             writer,
-            cell,
-            row.externalScalarsForCell(col, cell, &scalars),
+            cell.*,
+            row.externalScalarsForCell(col, cell.*, &scalars),
         );
     }
+    if (ascii_len != 0) writer.write(ascii[0..ascii_len]);
 }
 
 fn writeOpenOutputLine(screen: *const Screen, writer: *OutputTextWriter) void {
@@ -4704,12 +4718,26 @@ fn cellTextByteCount(cell: ScreenCell, external: []const u32) usize {
 fn retainedRowTextByteCount(screen: *const Screen, row: Screen.RetainedRow) usize {
     var count: usize = 0;
     const content_len = screen.retainedRowTextLen(row);
+    const visible_cells = switch (row.source) {
+        .visible => |visible| visible.cells,
+        .history => null,
+    };
     var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
     var col: u16 = 0;
     while (col < content_len) : (col += 1) {
-        const cell = row.cellInfoAt(col);
-        const external = row.externalScalarsForCell(col, cell, &scalars);
-        count = std.math.add(usize, count, cellTextByteCount(cell, external)) catch
+        var decoded: ScreenCell = undefined;
+        const cell = if (visible_cells) |cells| &cells[col] else blk: {
+            decoded = row.cellInfoAt(col);
+            break :blk &decoded;
+        };
+        if (cell.x != 0 or cell.y != 0) continue;
+        // One row has at most maxInt(u16) cells, so these byte increments are bounded.
+        if (cell.codepoint < 0x80 and cell.combining_len == 0) {
+            count += 1;
+            continue;
+        }
+        const external = row.externalScalarsForCell(col, cell.*, &scalars);
+        count = std.math.add(usize, count, cellTextByteCount(cell.*, external)) catch
             // zig-audit: acknowledge panic
             // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
             @panic("resident logical output byte count overflow");
@@ -7390,4 +7418,57 @@ test "vertical absolute cursor movement clamps to the retained grid" {
     try std.testing.expect(screen.moveCursor(.{ .cursor_vertical_absolute = 21 }));
     try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+}
+
+test "bulk retained text matches scalar projection across batches ring wrap and geometry" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 768, 4);
+    defer screen.deinit(std.testing.allocator);
+    for (screen.rowCells(0).?, 0..) |*cell, index| {
+        cell.* = blank_cell;
+        cell.codepoint = 'A' + @as(u32, @intCast(index % 26));
+    }
+    screen.cursor.setPositionByClient(0, 253);
+    try std.testing.expect(screen.writeCodepoint(0xe9));
+    try std.testing.expect(screen.writeCodepoint(0x4e2d));
+    try std.testing.expect(screen.writeCodepoint('a'));
+    for (0..23) |_| try std.testing.expect(screen.writeCodepoint(0x301));
+    screen.cursor.setPositionByClient(0, 510);
+    try std.testing.expect(screen.writeSizedText("s=2:w=2;X"));
+    for (screen.rowCells(0).?[300..305]) |*cell| {
+        cell.codepoint = 0;
+        cell.attrs.bg = .indexed(2);
+    }
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+
+    for (0..3) |projection| {
+        if (projection == 2) {
+            screen.cursor.setPositionByClient(0, 0);
+            try std.testing.expect(screen.applyLineGeometry(.double_width));
+        }
+        const row = screen.retainedRowAt(if (projection == 1) 0 else screen.historyCount());
+        var expected: std.ArrayList(u8) = .empty;
+        defer expected.deinit(std.testing.allocator);
+        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+        var col: u16 = 0;
+        const content_len = screen.retainedRowTextLen(row);
+        while (col < content_len) : (col += 1) {
+            const cell = row.cellInfoAt(col);
+            try appendCellTextBounded(std.testing.allocator, &expected, cell, row.externalScalarsForCell(col, cell, &scalars), 4096);
+        }
+        try std.testing.expectEqual(expected.items.len, retainedRowTextByteCount(&screen, row));
+        const start: u32 = Screen.retained_output_bytes_max - 150;
+        var output = OutputTextWriter.init(screen.output_text.?, start);
+        writeRetainedRowText(&screen, row, .{ .output = &output });
+        try std.testing.expectEqual(expected.items.len, output.count);
+        const first_len = @min(expected.items.len, screen.output_text.?.len - start);
+        try std.testing.expectEqualSlices(u8, expected.items[0..first_len], screen.output_text.?[start..][0..first_len]);
+        try std.testing.expectEqualSlices(u8, expected.items[first_len..], screen.output_text.?[0 .. expected.items.len - first_len]);
+        var boundary: [300]u8 = undefined;
+        var prefix = HistoryBoundaryWriter{ .storage = &boundary, .stored = 0, .total = 0 };
+        writeRetainedRowText(&screen, row, .{ .history_boundary = &prefix });
+        try std.testing.expectEqual(expected.items.len, prefix.total);
+        try std.testing.expectEqual(@min(expected.items.len, boundary.len), prefix.stored);
+        try std.testing.expectEqualSlices(u8, expected.items[0..prefix.stored], boundary[0..prefix.stored]);
+    }
 }
