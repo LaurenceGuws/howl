@@ -531,6 +531,24 @@ pub const Store = struct {
             source.scalar_start > source.scalars.cellCapacity() or
             source.cells.len > source.scalars.cellCapacity() - source.scalar_start)
             return error.InvalidSource;
+        if (!source.scalars.hasAllocatedRanges()) {
+            var attrs: usize = 0;
+            var previous: ?*const CellAttrs = null;
+            for (source.cells) |*value| {
+                if (value.combining_len >= scalar_storage.inline_scalars)
+                    return error.InvalidSource;
+                if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
+                    attrs += 1;
+                    previous = &value.attrs;
+                }
+            }
+            if (attrs > std.math.maxInt(u16)) return error.Capacity;
+            return .{
+                .cells = @intCast(source.cells.len),
+                .attrs = @intCast(attrs),
+                .scalars = 0,
+            };
+        }
 
         var attrs: usize = 0;
         var scalars: usize = 0;
@@ -1149,4 +1167,22 @@ test "history capacity one prepares detached tail blocks before eviction and pre
         try std.testing.expectEqual(@as(u32, 1), store.count());
         try std.testing.expectEqual(before_base + 1 + @as(u32, @intCast(sequence)), store.base());
     }
+}
+
+test "history shape rejects external scalar claim when scalar owner is empty" {
+    var cells: [4]Cell = @splat(cell_values.blank);
+    cells[0].codepoint = 'A';
+    cells[0].combining_len = scalar_storage.inline_scalars;
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+    try std.testing.expect(!scalars.hasAllocatedRanges());
+    var store = try Store.init(std.testing.allocator, 2, cells.len, 0);
+    defer store.deinit();
+    try std.testing.expectError(error.InvalidSource, store.preparePush(.{
+        .cells = &cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    }));
 }
