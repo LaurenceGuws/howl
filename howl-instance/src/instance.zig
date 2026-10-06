@@ -2089,3 +2089,75 @@ test "presentation reconfigure invalidates late old-generation residency" {
         try std.testing.expect(upload.format != .alpha8);
     try settled.release(current_residency[0..current_count]);
 }
+
+test "presentation surface reconfigure derives canonical grid from new font metrics" {
+    const fonts = @import("test_fonts");
+    const first_font = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    };
+    const second_font = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 24 },
+    };
+    const base_config = PresentationConfig{
+        .fonts = .{ .regular = .{ .path = first_font } },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .shape_cache = .{
+            .entry_capacity = 32,
+            .scalar_capacity = 128,
+            .glyph_capacity = 128,
+            .max_sequence_scalars = 16,
+        },
+        .atlas = .{
+            .width = 256,
+            .height = 256,
+            .entry_capacity = 128,
+        },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+    };
+    const value = try initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+            .rows = 2,
+            .columns = 8,
+            .history_rows = 8,
+        },
+        base_config,
+    );
+    defer deinit(value);
+
+    var next_config = base_config;
+    next_config.fonts = .{ .regular = .{ .path = second_font } };
+    const surface = terminal_render.Size{ .width = 640, .height = 360 };
+    const geometry = try reconfigurePresentationSurface(
+        value,
+        next_config,
+        surface,
+    );
+    try std.testing.expectEqual(
+        surface.width / geometry.cell_size.width,
+        geometry.columns,
+    );
+    try std.testing.expectEqual(
+        surface.height / geometry.cell_size.height,
+        geometry.rows,
+    );
+
+    const observation = terminal(value);
+    const view = observation.semanticView(0);
+    const pixels = observation.cellPixelSize() orelse
+        return error.MissingCellPixels;
+    try std.testing.expectEqual(geometry.rows, view.rows);
+    try std.testing.expectEqual(geometry.columns, view.cols);
+    try std.testing.expectEqual(@as(u32, geometry.cell_size.width), pixels.width);
+    try std.testing.expectEqual(@as(u32, geometry.cell_size.height), pixels.height);
+}
