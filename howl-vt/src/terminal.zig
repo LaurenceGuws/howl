@@ -3977,6 +3977,15 @@ const TerminalStream = struct {
         std.debug.assert(!summary.iconChanged() or summary.stateChanged());
     }
 
+    fn nextGroundPrintableAsciiPrefix(self: *TerminalStream, bytes: []const u8) usize {
+        std.debug.assert(bytes.len != 0 and self.terminal.stream_state.parser.groundPrintableAscii(bytes[0]));
+        const charset = &self.terminal.charset;
+        if (charset.single_shift != null or charset.designations[charset.gl_index] != 'B') return 0;
+        const count = self.terminal.screen_state.active().writePlainAsciiPrefix(bytes);
+        if (count != 0) self.synchronized_output.trailing_effect = true;
+        return count;
+    }
+
     fn nextGroundPrintableAscii(self: *TerminalStream, byte: u8) TerminalFeedError!MutationSet {
         std.debug.assert(self.terminal.stream_state.parser.groundPrintableAscii(byte));
         const effect = try self.applyPrint(byte);
@@ -4060,8 +4069,14 @@ const TerminalStream = struct {
         while (consumed < bytes.len) {
             const byte = bytes[consumed];
             if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
-                summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
-                consumed += 1;
+                const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
+                if (count != 0) {
+                    summary.mutations.text = true;
+                    consumed += count;
+                } else {
+                    summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
+                    consumed += 1;
+                }
                 continue;
             }
             const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
@@ -4099,8 +4114,14 @@ const TerminalStream = struct {
         while (consumed < bytes.len) {
             const byte = bytes[consumed];
             if (self.terminal.stream_state.parser.groundPrintableAscii(byte)) {
-                summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
-                consumed += 1;
+                const count = self.nextGroundPrintableAsciiPrefix(bytes[consumed..]);
+                if (count != 0) {
+                    summary.mutations.text = true;
+                    consumed += count;
+                } else {
+                    summary.mutations.merge(try self.nextGroundPrintableAscii(byte));
+                    consumed += 1;
+                }
                 continue;
             }
             const payload_bytes = try self.consumeParserPrefix(bytes[consumed..]);
@@ -10530,4 +10551,85 @@ test "post-release pending-wrap cancellation is a trailing semantic effect" {
     try std.testing.expect(tail.mutations.cursor);
     try std.testing.expect(tail.stateChanged());
     try std.testing.expect(tail.synchronized_output.trailing_effect);
+}
+
+test "ASCII row prefixes preserve fragmented feed semantics cursor identities and retained payloads" {
+    const scalar_limit = @import("scalar_storage.zig").maximum_scalars;
+    const modes = [_][]const u8{
+        "",                  "\x1b[4h",                                "\x1b[?7l",        "\x1b[?1049h",
+        "\x1b[2;3r\x1b[?6h", "\x1b[?69h\x1b[2;6s",                     "\x1b(0",          "\x1b)0\x0e",
+        "\x1b*0\x1bN",       "\x1b[?2026h",                            "\x1b[2;1H\x1b#6", "\x1b]66;s=2:w=2;XY\x1b\\",
+        "a\xcc\x81\r",       "\x1b]8;;https://example.invalid/\x1b\\", "\xe4",            "\x1b[",
+        "\x1b]2;pending",
+    };
+    const payload = "abCDEFGHIJK\r\nopqé中áxyz\r\n\x1b[6n\x1b[?2026l0123456789\r\n";
+    for (modes) |mode| {
+        var direct = try Terminal.initWithHistory(std.testing.allocator, 3, 7, 8);
+        defer direct.deinit();
+        var fragmented = try Terminal.initWithHistory(std.testing.allocator, 3, 7, 8);
+        defer fragmented.deinit();
+        try std.testing.expectEqualDeep(try fragmented.feed("\x1b[1;38;5;196m"), try direct.feed("\x1b[1;38;5;196m"));
+        try std.testing.expectEqualDeep(try fragmented.feed(mode), try direct.feed(mode));
+        for (0..3) |_| {
+            const before = MutationObservation.capture(&fragmented);
+            var expected = TerminalFeedSummary{ .mutations = .{} };
+            for (payload) |byte| {
+                const part = try fragmented.feedAt(&.{byte}, 77);
+                var mutations = part.mutations;
+                // Cursor and viewport describe net state over one feed boundary.
+                mutations.cursor = false;
+                mutations.viewport = false;
+                expected.mutations.merge(mutations);
+                expected.synchronized_output.merge(part.synchronized_output);
+            }
+            before.mergeInto(MutationObservation.capture(&fragmented), &expected.mutations);
+            try std.testing.expectEqualDeep(expected, try direct.feedAt(payload, 77));
+            const actual = direct.screen_state.activeConst();
+            const reference = fragmented.screen_state.activeConst();
+            try std.testing.expectEqualDeep(reference.cursor, actual.cursor);
+            try std.testing.expectEqual(reference.wrap_pending, actual.wrap_pending);
+            try std.testing.expectEqualDeep(reference.last_graphic, actual.last_graphic);
+            try std.testing.expectEqual(reference.next_row_generation, actual.next_row_generation);
+            try std.testing.expectEqualSlices(u64, reference.row_generations.?, actual.row_generations.?);
+            try std.testing.expectEqualDeep(fragmented.charset, direct.charset);
+            try std.testing.expectEqualSlices(u8, fragmented.replyBytes(), direct.replyBytes());
+            for (0..3) |row| {
+                for (0..7) |col| {
+                    const r: u16 = @intCast(row);
+                    const c: u16 = @intCast(col);
+                    try std.testing.expectEqualDeep(reference.cellInfoAt(r, c), actual.cellInfoAt(r, c));
+                    var a: [scalar_limit]u32 = undefined;
+                    var b: [scalar_limit]u32 = undefined;
+                    try std.testing.expectEqualSlices(u32, reference.cellScalarsAt(r, c, &a), actual.cellScalarsAt(r, c, &b));
+                }
+            }
+            try std.testing.expectEqual(reference.historyCount(), actual.historyCount());
+            try std.testing.expectEqual(reference.historyRowBase(), actual.historyRowBase());
+            for (0..actual.historyCount()) |row| {
+                for (0..7) |col|
+                    try std.testing.expectEqualDeep(reference.historyCellAt(@intCast(row), @intCast(col)), actual.historyCellAt(@intCast(row), @intCast(col)));
+            }
+        }
+    }
+}
+
+test "ASCII row prefixes preserve exact reply and synchronized service boundaries" {
+    for ([_][]const u8{ "\x1b[6n", "\x1b[?2026l" }) |boundary| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 7, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[?2026h")).stateChanged());
+        var payload_buffer: std.ArrayList(u8) = .empty;
+        defer payload_buffer.deinit(std.testing.allocator);
+        const prefix = "abcdefghijklmnop";
+        try payload_buffer.appendSlice(std.testing.allocator, prefix);
+        try payload_buffer.appendSlice(std.testing.allocator, boundary);
+        try payload_buffer.appendSlice(std.testing.allocator, "remaining");
+        const progress = try terminal.feedAtServiceBoundary(payload_buffer.items, 77);
+        try std.testing.expectEqual(prefix.len + boundary.len, progress.consumed);
+        try std.testing.expect(progress.summary.mutations.text);
+        if (std.mem.eql(u8, boundary, "\x1b[6n"))
+            try std.testing.expect(terminal.replyBytes().len != 0)
+        else
+            try std.testing.expect(progress.summary.synchronized_output.ended);
+    }
 }

@@ -2367,44 +2367,60 @@ pub const Screen = struct {
     /// Returns false when the caller must use the canonical Unicode writer.
     pub fn tryWritePlainAscii(self: *Screen, byte: u8) bool {
         std.debug.assert(byte >= 0x20 and byte <= 0x7e);
+        return self.writePlainAsciiPrefix(&.{byte}) == 1;
+    }
+
+    /// Writes an ordinary printable prefix within the current physical row.
+    /// Stops before controls, Unicode, wrapping or any cell requiring the canonical writer.
+    pub fn writePlainAsciiPrefix(self: *Screen, bytes: []const u8) usize {
         if (self.cols == 0 or self.rows == 0 or self.wrap_pending or self.insert_mode or
-            self.left_right_margin_mode) return false;
-        const cells = self.cells orelse return false;
-        const flags = self.row_flags orelse return false;
+            self.left_right_margin_mode) return 0;
+        const cells = self.cells orelse return 0;
+        const flags = self.row_flags orelse return 0;
         var physical_row = @as(u32, self.row_origin) + @as(u32, self.cursor.row);
         if (physical_row >= self.rows) physical_row -= self.rows;
-        if (flags[physical_row] & row_geometry_mask != 0) return false;
+        if (flags[physical_row] & row_geometry_mask != 0) return 0;
         const col = self.cursor.col;
-        const index = physical_row * @as(u32, self.cols) + @as(u32, col);
-        const target = cells[index];
-        if (target.width != 1 or target.height != 1 or target.x != 0 or
-            target.y != 0 or target.combining_len != 0) return false;
-
-        cells[index] = .{
-            .codepoint = byte,
-            .width = 1,
-            .attrs = self.current_attrs,
-        };
+        const start = physical_row * @as(u32, self.cols) + @as(u32, col);
+        const limit = @min(bytes.len, self.cols - col);
+        var count: usize = 0;
+        while (count < limit) : (count += 1) {
+            const byte = bytes[count];
+            if (byte < 0x20 or byte > 0x7e) break;
+            const target = &cells[start + count];
+            if (target.width != 1 or target.height != 1 or target.x != 0 or
+                target.y != 0 or target.combining_len != 0) break;
+            target.* = .{
+                .codepoint = byte,
+                .width = 1,
+                .attrs = self.current_attrs,
+            };
+        }
+        if (count == 0) return 0;
+        const last = bytes[count - 1];
         if (self.last_graphic) |*graphic| {
-            graphic.codepoint = byte;
+            graphic.codepoint = last;
             graphic.width = 1;
             graphic.combining_len = 0;
         } else {
-            self.last_graphic = .{ .codepoint = byte, .width = 1 };
+            self.last_graphic = .{ .codepoint = last, .width = 1 };
         }
         const right = self.cols - 1;
-        const after = col + 1;
-        if (after <= right) {
-            self.cursor.setColByClient(after);
-        } else if (self.auto_wrap) {
-            self.cursor.setColByClient(right);
-            self.wrap_pending = true;
-        } else {
-            self.cursor.setColByClient(right);
+        const after = col + @as(u16, @intCast(count));
+        // Every scalar write moves one column except the final right-edge write.
+        self.cursor.position_changed_by_client_at +|= @intCast(@min(count, right - col));
+        self.cursor.setPositionStructural(self.cursor.row, @min(after, right));
+        if (after > right and self.auto_wrap) self.wrap_pending = true;
+        // Preserve the exact identities allocated by the scalar ASCII path.
+        if (self.row_generations) |generations| {
+            const next = std.math.add(u64, self.next_row_generation, @intCast(count)) catch
+                // zig-audit: acknowledge panic
+                // reason: Row mutation identities are non-wrapping; this bounded batch reserves exactly one per accepted scalar.
+                @panic("row mutation identity exhausted");
+            generations[physical_row] = next - 1;
+            self.next_row_generation = next;
         }
-        if (self.row_generations) |generations|
-            generations[physical_row] = self.nextRowGeneration();
-        return true;
+        return count;
     }
 
     /// Applies one Unicode scalar and reports exact accepted semantic mutation.
