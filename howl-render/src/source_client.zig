@@ -9,8 +9,8 @@ const semantic = @import("source");
 const View = client.view;
 const Rich = client.rich;
 
-fn style(cell: anytype) semantic.CellStyle {
-    const value = View.cellStyleFromBits(cell.style_bits);
+fn style(style_bits: u16) semantic.CellStyle {
+    const value = View.cellStyleFromBits(style_bits);
     return .{
         .bold = value.bold,
         .dim = value.dim,
@@ -22,12 +22,7 @@ fn style(cell: anytype) semantic.CellStyle {
     };
 }
 
-fn color(cell: anytype, role: semantic.ColorRole) semantic.TextColor {
-    const value = switch (role) {
-        .foreground => cell.foreground,
-        .background => cell.background,
-        .underline_color => cell.underline_color,
-    };
+fn color(value: View.TextColor) semantic.TextColor {
     return .{
         .kind = switch (value.kind) {
             .default => .default,
@@ -83,125 +78,28 @@ fn cursorShapeValue(value: View.CursorShape) semantic.CursorShape {
     };
 }
 
-fn SourceMixin(comptime SnapshotType: type, comptime RowType: type, comptime CellType: type) type {
-    return struct {
-        pub const Snapshot = SnapshotType;
-        pub const Row = RowType;
-        pub const Cell = CellType;
-        pub const supports_incremental = true;
+const OwnedStorage = struct {
+    const Snapshot = View.Snapshot;
+    const Row = View.Row;
+    const Cell = View.Cell;
 
-        pub fn cellStyle(cell: Cell) semantic.CellStyle {
-            return style(cell);
-        }
-
-        pub fn cellFont(cell: Cell) u8 {
-            return cell.font;
-        }
-
-        pub fn cellBaseline(cell: Cell) u8 {
-            return cell.baseline;
-        }
-
-        pub fn cellUnderlineStyle(cell: Cell) u8 {
-            return cell.underline_style;
-        }
-
-        pub fn cellColor(cell: Cell, role: semantic.ColorRole) semantic.TextColor {
-            return color(cell, role);
-        }
-
-        pub fn isImagePlaceholder(_: *const Snapshot, _: usize, _: usize, sequence: []const u32) bool {
-            return View.isImagePlaceholder(sequence);
-        }
-
-        pub fn graphicsImageCount(graphics: View.Graphics) usize {
-            return graphics.images.len;
-        }
-
-        pub fn graphicsImage(graphics: View.Graphics, index: usize) semantic.Image {
-            return image(graphics.images[index]);
-        }
-
-        pub fn graphicsPlacementCount(graphics: View.Graphics) usize {
-            return graphics.placements.len;
-        }
-
-        pub fn graphicsPlacement(graphics: View.Graphics, index: usize) ?semantic.ImagePlacement {
-            return placement(graphics.placements[index]);
-        }
-
-        pub fn graphicsImageVisible(_: View.Graphics, _: u32) bool {
-            // Transported manifests retain only images referenced by this view.
-            return true;
-        }
-    };
-}
-
-/// Adapts one owned immutable howl-client view.
-pub const Owned = struct {
-    const Mixin = SourceMixin(View.Snapshot, View.Row, View.Cell);
-    pub const Snapshot = Mixin.Snapshot;
-    pub const Row = Mixin.Row;
-    pub const Cell = Mixin.Cell;
-    pub const supports_incremental = Mixin.supports_incremental;
-
-    pub const cellStyle = Mixin.cellStyle;
-    pub const cellFont = Mixin.cellFont;
-    pub const cellBaseline = Mixin.cellBaseline;
-    pub const cellUnderlineStyle = Mixin.cellUnderlineStyle;
-    pub const cellColor = Mixin.cellColor;
-    pub const isImagePlaceholder = Mixin.isImagePlaceholder;
-    pub const graphicsImageCount = Mixin.graphicsImageCount;
-    pub const graphicsImage = Mixin.graphicsImage;
-    pub const graphicsPlacementCount = Mixin.graphicsPlacementCount;
-    pub const graphicsPlacement = Mixin.graphicsPlacement;
-    pub const graphicsImageVisible = Mixin.graphicsImageVisible;
-
-    pub fn rows(snapshot: *const Snapshot) u16 {
-        return View.begin(snapshot).rows;
+    fn begin(snapshot: *const Snapshot) *const View.Begin {
+        return View.begin(snapshot);
     }
 
-    pub fn columns(snapshot: *const Snapshot) u16 {
-        return View.begin(snapshot).columns;
-    }
-
-    pub fn cursorRow(snapshot: *const Snapshot) u16 {
-        return View.begin(snapshot).cursor_row;
-    }
-
-    pub fn cursorColumn(snapshot: *const Snapshot) u16 {
-        return View.begin(snapshot).cursor_column;
-    }
-
-    pub fn cursorVisible(snapshot: *const Snapshot) bool {
-        return View.begin(snapshot).cursor_visible;
-    }
-
-    pub fn historyOffset(snapshot: *const Snapshot) u32 {
-        return View.begin(snapshot).history_offset;
-    }
-
-    pub fn alternateScreen(snapshot: *const Snapshot) bool {
-        return View.begin(snapshot).alternate_screen;
-    }
-
-    pub fn presentation(snapshot: *const Snapshot) *const View.Presentation {
+    fn presentation(snapshot: *const Snapshot) *const View.Presentation {
         return View.presentation(snapshot);
     }
 
-    pub fn rowCount(snapshot: *const Snapshot) usize {
-        return View.rows(snapshot).len;
+    fn rowRecords(snapshot: *const Snapshot) []const Row {
+        return View.rows(snapshot);
     }
 
-    pub fn rowAt(snapshot: *const Snapshot, index: usize) Row {
-        return View.rows(snapshot)[index];
-    }
-
-    pub fn rowCellCount(_: *const Snapshot, row: Row) usize {
+    fn rowCellCount(row: Row) usize {
         return row.cell_count;
     }
 
-    pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
+    fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
         const all = View.cells(snapshot);
         const first: usize = row.cell_offset;
         const count: usize = row.cell_count;
@@ -210,113 +108,62 @@ pub const Owned = struct {
         return all[first + column];
     }
 
-    pub fn cellScalars(snapshot: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {
+    fn cellScalars(snapshot: *const Snapshot, cell: Cell) []const u32 {
         return View.cellScalars(snapshot, cell);
     }
 
-    pub fn graphics(snapshot: *const Snapshot) View.Graphics {
+    fn graphics(snapshot: *const Snapshot) View.Graphics {
         return View.graphics(snapshot);
     }
 
-    pub fn observationRevision(snapshot: *const Snapshot) u64 {
-        return View.begin(snapshot).revision;
-    }
-
-    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+    fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
         return View.changedRowsBaseRevision(snapshot);
     }
 
-    pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
+    fn changedRows(snapshot: *const Snapshot) ?[]const bool {
         return View.changedRows(snapshot);
     }
 
-    pub fn rowShift(snapshot: *const Snapshot) ?u16 {
+    fn rowShift(snapshot: *const Snapshot) ?u16 {
         return View.rowShift(snapshot);
     }
 
-    pub fn lineGeometry(_: *const Snapshot, row: Row) semantic.LineGeometry {
-        return normalizeLineGeometry(View.lineGeometry(row));
-    }
-
-    pub fn cursorShape(snapshot: *const Snapshot) semantic.CursorShape {
-        return cursorShapeValue(View.cursorShape(snapshot));
+    fn lineGeometry(row: Row) View.LineGeometry {
+        return View.lineGeometry(row);
     }
 };
 
-/// Adapts one already-validated borrowed howl-client rich view.
-pub const RichView = struct {
-    const Mixin = SourceMixin(Rich.View, Rich.Row, Rich.Cell);
-    pub const Snapshot = Mixin.Snapshot;
-    pub const Row = Mixin.Row;
-    pub const Cell = Mixin.Cell;
-    pub const supports_incremental = Mixin.supports_incremental;
+const RichStorage = struct {
+    const Snapshot = Rich.View;
+    const Row = Rich.Row;
+    const Cell = Rich.Cell;
 
-    pub const cellStyle = Mixin.cellStyle;
-    pub const cellFont = Mixin.cellFont;
-    pub const cellBaseline = Mixin.cellBaseline;
-    pub const cellUnderlineStyle = Mixin.cellUnderlineStyle;
-    pub const cellColor = Mixin.cellColor;
-    pub const isImagePlaceholder = Mixin.isImagePlaceholder;
-    pub const graphicsImageCount = Mixin.graphicsImageCount;
-    pub const graphicsImage = Mixin.graphicsImage;
-    pub const graphicsPlacementCount = Mixin.graphicsPlacementCount;
-    pub const graphicsPlacement = Mixin.graphicsPlacement;
-    pub const graphicsImageVisible = Mixin.graphicsImageVisible;
-
-    pub fn rows(snapshot: *const Snapshot) u16 {
-        return snapshot.begin.rows;
+    fn begin(snapshot: *const Snapshot) *const View.Begin {
+        return &snapshot.begin;
     }
 
-    pub fn columns(snapshot: *const Snapshot) u16 {
-        return snapshot.begin.columns;
-    }
-
-    pub fn cursorRow(snapshot: *const Snapshot) u16 {
-        return snapshot.begin.cursor_row;
-    }
-
-    pub fn cursorColumn(snapshot: *const Snapshot) u16 {
-        return snapshot.begin.cursor_column;
-    }
-
-    pub fn cursorVisible(snapshot: *const Snapshot) bool {
-        return snapshot.begin.cursor_visible;
-    }
-
-    pub fn historyOffset(snapshot: *const Snapshot) u32 {
-        return snapshot.begin.history_offset;
-    }
-
-    pub fn alternateScreen(snapshot: *const Snapshot) bool {
-        return snapshot.begin.alternate_screen;
-    }
-
-    pub fn presentation(snapshot: *const Snapshot) *const View.Presentation {
+    fn presentation(snapshot: *const Snapshot) *const View.Presentation {
         return &snapshot.presentation;
     }
 
-    pub fn rowCount(snapshot: *const Snapshot) usize {
-        return snapshot.rows.len;
+    fn rowRecords(snapshot: *const Snapshot) []const Row {
+        return snapshot.rows;
     }
 
-    pub fn rowAt(snapshot: *const Snapshot, index: usize) Row {
-        return snapshot.rows[index];
-    }
-
-    pub fn rowCellCount(_: *const Snapshot, row: Row) usize {
+    fn rowCellCount(row: Row) usize {
         return row.cells.len;
     }
 
-    pub fn cellAt(_: *const Snapshot, row: Row, column: usize) Cell {
+    fn cellAt(_: *const Snapshot, row: Row, column: usize) Cell {
         std.debug.assert(column < row.cells.len);
         return row.cells[column];
     }
 
-    pub fn cellScalars(_: *const Snapshot, _: usize, _: usize, cell: Cell, _: *[24]u32) []const u32 {
+    fn cellScalars(_: *const Snapshot, cell: Cell) []const u32 {
         return cell.scalars;
     }
 
-    pub fn graphics(snapshot: *const Snapshot) View.Graphics {
+    fn graphics(snapshot: *const Snapshot) View.Graphics {
         return .{
             .generation = snapshot.graphics.generation,
             .content_generation = snapshot.graphics.content_generation,
@@ -327,27 +174,207 @@ pub const RichView = struct {
         };
     }
 
-    pub fn observationRevision(snapshot: *const Snapshot) u64 {
-        return snapshot.begin.revision;
-    }
-
-    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+    fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
         return snapshot.changed_rows_base_revision;
     }
 
-    pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
+    fn changedRows(snapshot: *const Snapshot) ?[]const bool {
         return snapshot.changed_rows;
     }
 
-    pub fn rowShift(snapshot: *const Snapshot) ?u16 {
+    fn rowShift(snapshot: *const Snapshot) ?u16 {
         return snapshot.row_shift;
     }
 
-    pub fn lineGeometry(_: *const Snapshot, row: Row) semantic.LineGeometry {
-        return normalizeLineGeometry(View.lineGeometryFromValue(row.line_geometry));
-    }
-
-    pub fn cursorShape(snapshot: *const Snapshot) semantic.CursorShape {
-        return cursorShapeValue(View.cursorShapeFromValue(snapshot.begin.cursor_shape));
+    fn lineGeometry(row: Row) View.LineGeometry {
+        return View.lineGeometryFromValue(row.line_geometry);
     }
 };
+
+fn ClientSource(comptime Storage: type) type {
+    return struct {
+        /// Exact snapshot storage consumed synchronously by this adapter specialization.
+        pub const Snapshot = Storage.Snapshot;
+        /// One source row record in the selected client storage representation.
+        pub const Row = Storage.Row;
+        /// One source cell record in the selected client storage representation.
+        pub const Cell = Storage.Cell;
+        /// Client observations may carry exact revision-relative changed-row facts.
+        pub const supports_incremental = true;
+
+        /// Returns the declared visible terminal row count.
+        pub fn rows(snapshot: *const Snapshot) u16 {
+            return Storage.begin(snapshot).rows;
+        }
+
+        /// Returns the declared physical terminal column count.
+        pub fn columns(snapshot: *const Snapshot) u16 {
+            return Storage.begin(snapshot).columns;
+        }
+
+        /// Returns the canonical cursor row in the current client view.
+        pub fn cursorRow(snapshot: *const Snapshot) u16 {
+            return Storage.begin(snapshot).cursor_row;
+        }
+
+        /// Returns the canonical cursor column in the current client view.
+        pub fn cursorColumn(snapshot: *const Snapshot) u16 {
+            return Storage.begin(snapshot).cursor_column;
+        }
+
+        /// Reports canonical cursor visibility before renderer surface clipping.
+        pub fn cursorVisible(snapshot: *const Snapshot) bool {
+            return Storage.begin(snapshot).cursor_visible;
+        }
+
+        /// Returns the client-selected retained-history offset for incremental identity.
+        pub fn historyOffset(snapshot: *const Snapshot) u32 {
+            return Storage.begin(snapshot).history_offset;
+        }
+
+        /// Reports which canonical screen bank this observation represents.
+        pub fn alternateScreen(snapshot: *const Snapshot) bool {
+            return Storage.begin(snapshot).alternate_screen;
+        }
+
+        /// Borrows the decoded presentation state from the selected client storage.
+        pub fn presentation(snapshot: *const Snapshot) *const View.Presentation {
+            return Storage.presentation(snapshot);
+        }
+
+        /// Returns the number of physically exposed row records for geometry validation.
+        pub fn rowCount(snapshot: *const Snapshot) usize {
+            return Storage.rowRecords(snapshot).len;
+        }
+
+        /// Returns one dense row record by validated source index.
+        pub fn rowAt(snapshot: *const Snapshot, index: usize) Row {
+            return Storage.rowRecords(snapshot)[index];
+        }
+
+        /// Returns the number of physically exposed cells in one row record.
+        pub fn rowCellCount(_: *const Snapshot, row: Row) usize {
+            return Storage.rowCellCount(row);
+        }
+
+        /// Copies one cell from the selected client storage representation.
+        pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
+            return Storage.cellAt(snapshot, row, column);
+        }
+
+        /// Borrows the complete scalar cluster already owned by client storage.
+        pub fn cellScalars(
+            snapshot: *const Snapshot,
+            _: usize,
+            _: usize,
+            cell: Cell,
+            _: *[24]u32,
+        ) []const u32 {
+            return Storage.cellScalars(snapshot, cell);
+        }
+
+        /// Copies only rendition bits that directly affect this untimed frame projection.
+        pub fn cellStyle(cell: Cell) semantic.CellStyle {
+            return style(cell.style_bits);
+        }
+
+        /// Returns the terminal font slot independently of client storage layout.
+        pub fn cellFont(cell: Cell) u8 {
+            return cell.font;
+        }
+
+        /// Returns the normalized baseline selector retained by the client view.
+        pub fn cellBaseline(cell: Cell) u8 {
+            return cell.baseline;
+        }
+
+        /// Returns the normalized underline style retained by the client view.
+        pub fn cellUnderlineStyle(cell: Cell) u8 {
+            return cell.underline_style;
+        }
+
+        /// Normalizes one requested cell color role without leaking client protocol types.
+        pub fn cellColor(cell: Cell, role: semantic.ColorRole) semantic.TextColor {
+            return color(switch (role) {
+                .foreground => cell.foreground,
+                .background => cell.background,
+                .underline_color => cell.underline_color,
+            });
+        }
+
+        /// Recognizes Kitty's reserved Unicode placement scalar through client semantics.
+        pub fn isImagePlaceholder(
+            _: *const Snapshot,
+            _: usize,
+            _: usize,
+            sequence: []const u32,
+        ) bool {
+            return View.isImagePlaceholder(sequence);
+        }
+
+        /// Copies the client graphics manifest into one common borrowed view shape.
+        pub fn graphics(snapshot: *const Snapshot) View.Graphics {
+            return Storage.graphics(snapshot);
+        }
+
+        /// Returns the exact observation revision published by this client view.
+        pub fn observationRevision(snapshot: *const Snapshot) u64 {
+            return Storage.begin(snapshot).revision;
+        }
+
+        /// Returns the predecessor revision used to derive changed-row facts, when any.
+        pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+            return Storage.changedRowsBaseRevision(snapshot);
+        }
+
+        /// Borrows the exact changed-row repair mask, when the observation provides one.
+        pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
+            return Storage.changedRows(snapshot);
+        }
+
+        /// Returns the upward baseline row rotation preceding changed-row repairs.
+        pub fn rowShift(snapshot: *const Snapshot) ?u16 {
+            return Storage.rowShift(snapshot);
+        }
+
+        /// Normalizes one client DEC line-geometry value into renderer-private semantics.
+        pub fn lineGeometry(_: *const Snapshot, row: Row) semantic.LineGeometry {
+            return normalizeLineGeometry(Storage.lineGeometry(row));
+        }
+
+        /// Normalizes canonical cursor geometry without carrying client enum identity.
+        pub fn cursorShape(snapshot: *const Snapshot) semantic.CursorShape {
+            return cursorShapeValue(View.cursorShapeFromValue(Storage.begin(snapshot).cursor_shape));
+        }
+
+        /// Returns every image record in the transported visible manifest.
+        pub fn graphicsImageCount(state: View.Graphics) usize {
+            return state.images.len;
+        }
+
+        /// Normalizes one transported image manifest entry.
+        pub fn graphicsImage(state: View.Graphics, index: usize) semantic.Image {
+            return image(state.images[index]);
+        }
+
+        /// Returns every placement record in the transported visible manifest.
+        pub fn graphicsPlacementCount(state: View.Graphics) usize {
+            return state.placements.len;
+        }
+
+        /// Normalizes one transported image placement.
+        pub fn graphicsPlacement(state: View.Graphics, index: usize) ?semantic.ImagePlacement {
+            return placement(state.placements[index]);
+        }
+
+        /// Transported manifests contain only images referenced by this observation.
+        pub fn graphicsImageVisible(_: View.Graphics, _: u32) bool {
+            return true;
+        }
+    };
+}
+
+/// Adapts one independently owned immutable howl-client view.
+pub const Owned = ClientSource(OwnedStorage);
+/// Adapts one already-validated borrowed howl-client rich view.
+pub const RichView = ClientSource(RichStorage);
