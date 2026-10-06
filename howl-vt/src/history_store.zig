@@ -292,6 +292,24 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
             };
         }
 
+        fn writableTailPrepared(
+            self: *Self,
+            recycled: *Chain,
+            stage: *Stage,
+            count: usize,
+        ) []T {
+            std.debug.assert(count != 0 and count <= self.max_items - self.len());
+            const block = self.ensureTailBlockPrepared(recycled, stage);
+            const index: usize = @intCast(self.tail % block_items);
+            return block.items[index..][0..@min(count, block_items - index)];
+        }
+
+        fn advanceTailPrepared(self: *Self, count: usize) void {
+            std.debug.assert(count != 0 and count <= self.max_items - self.len());
+            std.debug.assert(count <= block_items - self.tail % block_items);
+            self.tail += count;
+        }
+
         fn appendPrepared(
             self: *Self,
             recycled: *Chain,
@@ -645,39 +663,50 @@ pub const Store = struct {
         var current_attr: u16 = 0;
         var encoded_attrs: u16 = 0;
         var encoded_scalars: u32 = 0;
-        for (prepared.source.cells, 0..) |*value, column| {
-            if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
-                current_attr = encoded_attrs;
-                self.attrs.appendPrepared(
-                    &recycled.attrs,
-                    &prepared.attr_stage,
-                    value.attrs,
-                );
-                encoded_attrs += 1;
-                previous = &value.attrs;
-            }
-
-            const tail_start = encoded_scalars;
-            const tail = prepared.source.scalars.tail(
-                prepared.source.scalar_start + column,
-                value.combining_len,
-            ) catch
-                // zig-audit: acknowledge panic
-                // reason: Prepared admission validated this unchanged borrowed scalar source before commit.
-                @panic("prepared history scalar source changed before commit");
-            for (tail) |scalar| {
-                self.scalars.appendPrepared(
-                    &recycled.scalars,
-                    &prepared.scalar_stage,
-                    scalar,
-                );
-                encoded_scalars += 1;
-            }
-
-            self.cells.appendPrepared(
+        // Preparation proved these facts for the immutable borrowed row.
+        const uniform_attrs = prepared.shape.attrs == 1;
+        const no_tails = prepared.shape.scalars == 0;
+        if (uniform_attrs) {
+            self.attrs.appendPrepared(&recycled.attrs, &prepared.attr_stage, prepared.source.cells[0].attrs);
+            encoded_attrs = 1;
+        }
+        var column: usize = 0;
+        while (column < prepared.source.cells.len) {
+            const destination = self.cells.writableTailPrepared(
                 &recycled.cells,
                 &prepared.cell_stage,
-                .{
+                prepared.source.cells.len - column,
+            );
+            for (destination, prepared.source.cells[column..][0..destination.len], 0..) |*cold, *value, offset| {
+                if (!uniform_attrs and (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs))) {
+                    current_attr = encoded_attrs;
+                    self.attrs.appendPrepared(
+                        &recycled.attrs,
+                        &prepared.attr_stage,
+                        value.attrs,
+                    );
+                    encoded_attrs += 1;
+                    previous = &value.attrs;
+                }
+
+                const tail_start = encoded_scalars;
+                const tail = if (no_tails) &.{} else prepared.source.scalars.tail(
+                    prepared.source.scalar_start + column + offset,
+                    value.combining_len,
+                ) catch
+                    // zig-audit: acknowledge panic
+                    // reason: Prepared admission validated this unchanged borrowed scalar source before commit.
+                    @panic("prepared history scalar source changed before commit");
+                for (tail) |scalar| {
+                    self.scalars.appendPrepared(
+                        &recycled.scalars,
+                        &prepared.scalar_stage,
+                        scalar,
+                    );
+                    encoded_scalars += 1;
+                }
+
+                cold.* = .{
                     .codepoint = value.codepoint,
                     .combining = value.combining,
                     .attr_index = current_attr,
@@ -694,8 +723,10 @@ pub const Store = struct {
                         .horizontal_align = value.horizontal_align,
                         .semantic_width = value.semantic_width,
                     },
-                },
-            );
+                };
+            }
+            self.cells.advanceTailPrepared(destination.len);
+            column += destination.len;
         }
         std.debug.assert(encoded_attrs == prepared.shape.attrs);
         std.debug.assert(encoded_scalars == prepared.shape.scalars);
@@ -1028,4 +1059,69 @@ test "history store prepared allocation failure leaves accepted rows unchanged" 
     try std.testing.expectEqual(before_count, store.count());
     try std.testing.expectEqual(before_base, store.base());
     try std.testing.expectEqualDeep(before_cell, store.cellAtLogical(0, 0));
+}
+
+test "history store uniform attributes preserve inline scalars and validate admission" {
+    var cells: [4]Cell = @splat(cell_values.blank);
+    for (&cells, 0..) |*value, index| {
+        value.codepoint = @intCast('A' + index);
+        value.attrs.bold = true;
+        value.attrs.bg = cell_values.Color.rgbComponents(10, 20, 30);
+        value.combining_len = @intCast(index);
+        value.combining = .{ 0x301, 0x302, 0x303 };
+    }
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+    var store = try Store.init(std.testing.allocator, 2, 4, 10);
+    defer store.deinit();
+    const source = Source{ .cells = &cells, .scalars = &scalars, .scalar_start = 0, .wrapped = true, .geometry = .single_width };
+    var prepared = try store.preparePush(source);
+    store.commitPush(&prepared);
+    for (cells, 0..) |expected, column| {
+        try std.testing.expectEqualDeep(expected, store.cellAtLogical(0, @intCast(column)));
+        var output: [scalar_storage.maximum_scalars]u32 = undefined;
+        const actual = store.scalarsAtLogical(0, @intCast(column), &output);
+        try std.testing.expectEqual(expected.codepoint, actual[0]);
+        try std.testing.expectEqualSlices(u32, expected.combining[0..expected.combining_len], actual[1..]);
+    }
+    try scalars.set(0, 0, &.{0x304});
+    try std.testing.expectError(error.InvalidSource, store.preparePush(source));
+    try std.testing.expectEqual(@as(u32, 1), store.count());
+    try std.testing.expectEqual(@as(u32, 10), store.base());
+    for (cells, 0..) |expected, column|
+        try std.testing.expectEqualDeep(expected, store.cellAtLogical(0, @intCast(column)));
+}
+
+test "history store bulk cell spans preserve block crossings and evicted row payloads" {
+    const cells = try std.testing.allocator.alloc(Cell, 2053);
+    defer std.testing.allocator.free(cells);
+    @memset(cells, cell_values.blank);
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+    for (cells, 0..) |*value, index| {
+        value.codepoint = 'x';
+        value.attrs.bg = .indexed(@intCast(index % 7));
+        if (index % 8 == 0) {
+            value.combining_len = 6;
+            value.combining = .{ 0x301, 0x302, 0x303 };
+            try scalars.set(index, 0, &.{ 0x304, 0x305, 0x306 });
+        }
+    }
+    var store = try Store.init(std.testing.allocator, 3, @intCast(cells.len), 0);
+    defer store.deinit();
+    for (0..9) |sequence| {
+        cells[0].codepoint = @intCast('A' + sequence);
+        var prepared = try store.preparePush(.{ .cells = cells, .scalars = &scalars, .scalar_start = 0, .wrapped = false, .geometry = .single_width });
+        store.commitPush(&prepared);
+        const newest = store.count() - 1;
+        for (cells, 0..) |expected, column|
+            try std.testing.expectEqualDeep(expected, store.cellAtLogical(newest, @intCast(column)));
+        for (0..store.count()) |logical|
+            try std.testing.expectEqual(@as(u32, 'A') + store.base() + @as(u32, @intCast(logical)), store.cellAtLogical(@intCast(logical), 0).codepoint);
+        var output: [scalar_storage.maximum_scalars]u32 = undefined;
+        const actual = store.scalarsAtLogical(newest, 2048, &output);
+        try std.testing.expectEqualSlices(u32, &.{ 'x', 0x301, 0x302, 0x303, 0x304, 0x305, 0x306 }, actual);
+    }
+    try std.testing.expectEqual(@as(u32, 3), store.count());
+    try std.testing.expectEqual(@as(u32, 6), store.base());
 }
