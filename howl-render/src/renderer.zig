@@ -16,6 +16,7 @@ pub const AtlasConfig = glyph_cache.AtlasConfig;
 pub const ShapeCacheConfig = glyph_cache.ShapeCacheConfig;
 pub const ShapeCacheUsage = glyph_cache.ShapeCacheUsage;
 pub const AtlasError = glyph_cache.AtlasError;
+const AtlasInitError = glyph_cache.AtlasInitError;
 pub const ShapeCacheInitError = glyph_cache.ShapeCacheInitError;
 pub const ShapeCacheError = glyph_cache.ShapeCacheError;
 pub const FontVariant = glyph_cache.FontVariant;
@@ -147,7 +148,7 @@ pub const RowScene = struct {
     repairs: []const bool,
 };
 
-pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
+pub const InitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasInitError || error{
     InvalidConfig,
     InvalidFontFaces,
 };
@@ -163,6 +164,8 @@ pub const Error = AtlasError || ShapeCacheError || frame_vocabulary.Error || err
     InvalidImageBinding,
     ImageLimit,
     InvalidPresentationGeometry,
+    FontSetMismatch,
+    GenerationOverflow,
     CommandLimit,
     MissingExternalResource,
     ResourceLimit,
@@ -458,7 +461,12 @@ fn initWithStoreInner(
 
     const impl = try allocator.create(Impl);
     errdefer allocator.destroy(impl);
-    const atlas = try glyph_cache.initAtlas(allocator, store_impl.fonts, config.atlas);
+    const atlas = try glyph_cache.initAtlas(
+        allocator,
+        store_impl.fonts,
+        config.box_drawing,
+        config.atlas,
+    );
     errdefer glyph_cache.deinitAtlas(atlas);
     const commands = try allocator.alloc(frame_vocabulary.Input, config.command_capacity);
     errdefer allocator.free(commands);
@@ -511,7 +519,7 @@ pub fn deinit(owner: *Renderer) void {
 /// Explicitly forgets private shaping and raster caches. The next successful
 /// update which uses glyphs publishes a newer atlas generation. Frames and
 /// refill queries are invalid until that successful update.
-pub fn resetCaches(owner: *Renderer) AtlasError!void {
+pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     const impl = rendererImpl(owner);
     impl.frame_ready = false;
     impl.incremental_ready = false;
@@ -611,7 +619,6 @@ fn updateInnerOnce(
         impl.incremental_rows,
         candidate_rows,
         impl.config.cell_size,
-        impl.config.box_drawing,
         store.clusters,
         store.shaped,
         store.raster,
@@ -1817,7 +1824,6 @@ fn buildContentCommands(
     incremental_rows: []const IncrementalRowCommands,
     row_ranges: ?[]IncrementalRowCommands,
     cell_size: frame_vocabulary.Size,
-    box_drawing: generated.BoxDrawingConfig,
     cluster_scratch: []u32,
     shaped_scratch: []text.Glyph,
     raster_scratch: []u8,
@@ -2080,7 +2086,6 @@ fn buildContentCommands(
                     sized_frame.width,
                     sized_frame.height,
                     generatedSizing(cell),
-                    box_drawing,
                     raster_scratch,
                 );
                 has_raster = true;

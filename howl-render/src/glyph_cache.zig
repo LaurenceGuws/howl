@@ -27,10 +27,12 @@ pub const FontFaces = struct {
     bold: ?*text.FontSet = null,
     bold_italic: ?*text.FontSet = null,
 
+    /// Constructs one face family whose missing style variants resolve to regular.
     pub fn single(regular: *text.FontSet) FontFaces {
         return .{ .regular = regular };
     }
 
+    /// Selects the caller-owned FontSet after deterministic variant fallback.
     pub fn select(self: FontFaces, variant: FontVariant) *text.FontSet {
         return switch (self.resolveVariant(variant)) {
             .regular => self.regular,
@@ -40,6 +42,7 @@ pub const FontFaces = struct {
         };
     }
 
+    /// Returns the concrete available variant used for one requested style.
     pub fn resolveVariant(self: FontFaces, variant: FontVariant) FontVariant {
         return switch (variant) {
             .regular => .regular,
@@ -56,10 +59,12 @@ pub const FontFaces = struct {
         };
     }
 
+    /// Returns the canonical terminal metrics fixed by the required regular face.
     pub fn metrics(self: FontFaces) text.Metrics {
         return self.regular.metrics();
     }
 
+    /// Reports whether every supplied style variant preserves identical terminal metrics.
     pub fn terminalMetricsCompatible(self: FontFaces) bool {
         const regular = self.regular.metrics();
         if (self.italic) |value| if (!std.meta.eql(regular, value.metrics())) return false;
@@ -97,8 +102,11 @@ pub const ShapeCacheConfig = struct {
 ///
 /// No returned frame borrows this storage. `resetShapeCache` may therefore forget
 /// retained runs without invalidating atlas generations or prior frame placements.
+// zig-audit: acknowledge opaque_type
+// reason: The public handle intentionally hides the allocator-owned ShapeCacheImpl layout so callers cannot bypass bounded cache operations.
 pub const ShapeCache = opaque {};
 
+/// Reports exact retained shaped-run storage currently occupied by one cache.
 pub const ShapeCacheUsage = struct {
     entries: usize,
     scalars: usize,
@@ -109,6 +117,8 @@ pub const ShapeCacheUsage = struct {
 ///
 /// The cache never evicts or recycles storage implicitly. `resetAtlas` is the
 /// only operation that invalidates atlas references returned by prior frames.
+// zig-audit: acknowledge opaque_type
+// reason: The public handle intentionally hides the allocator-owned AtlasImpl layout so callers cannot mutate packing or generation state directly.
 pub const Atlas = opaque {};
 
 /// Read-only borrowed atlas image for one cache generation.
@@ -120,21 +130,24 @@ pub const AtlasView = struct {
     pixels: []const u8,
 };
 
-pub const AtlasError = std.mem.Allocator.Error || text.RasterError || generated.Error || error{
-    InvalidAtlasConfig,
+/// Reports allocation or configuration failure before an Atlas owner exists.
+pub const AtlasInitError = std.mem.Allocator.Error || error{InvalidAtlasConfig};
+
+/// Reports runtime rasterization, packing, or bounded atlas-capacity failures.
+pub const AtlasError = text.RasterError || generated.Error || error{
     CacheFull,
     AtlasFull,
     GlyphTooLarge,
     RasterExtentMismatch,
-    GenerationOverflow,
 };
 
+/// Reports allocation or configuration failure before a ShapeCache owner exists.
 pub const ShapeCacheInitError = std.mem.Allocator.Error || text.ShapeBufferInitError || error{
     InvalidShapeCacheConfig,
 };
 
+/// Reports runtime shaping or bounded retained-shape capacity failures.
 pub const ShapeCacheError = text.ShapeError || error{
-    FontSetMismatch,
     ShapeSequenceLimit,
     ShapeEntryFull,
     ShapeScalarFull,
@@ -184,6 +197,7 @@ const printable_ascii_first: u32 = 0x20;
 const printable_ascii_last: u32 = 0x7e;
 const printable_ascii_count: usize = printable_ascii_last - printable_ascii_first + 1;
 
+/// Maps one printable single-scalar ASCII sequence to its dense fast-cache slot.
 pub fn printableAsciiIndex(sequence: []const u32) ?usize {
     if (sequence.len != 1) return null;
     const scalar = sequence[0];
@@ -208,6 +222,7 @@ const ShapeCacheImpl = struct {
 const AtlasImpl = struct {
     allocator: std.mem.Allocator,
     fonts: FontFaces,
+    box_drawing: generated.BoxDrawingConfig,
     entries: []AtlasEntry,
     pixels: []u8,
     config: AtlasConfig,
@@ -227,6 +242,7 @@ const AtlasPack = struct {
     shelf_height: usize,
 };
 
+/// Locates one cached alpha raster and its baseline-relative native placement.
 pub const AtlasRaster = struct {
     atlas_x: u16,
     atlas_y: u16,
@@ -236,6 +252,7 @@ pub const AtlasRaster = struct {
     top: i16,
 };
 
+/// Reports the fixed pixel extent of one atlas owner.
 pub const AtlasSize = struct {
     width: u16,
     height: u16,
@@ -275,9 +292,12 @@ pub fn initShapeCache(
         .glyphs = glyphs,
         .max_sequence_scalars = config.max_sequence_scalars,
     };
+    // zig-audit: acknowledge ptr_cast
+    // reason: ShapeCache is the opaque handle for this exact allocator-owned ShapeCacheImpl allocation and preserves its address.
     return @ptrCast(impl);
 }
 
+/// Releases the shaping buffer and every fixed retained-shape allocation.
 pub fn deinitShapeCache(cache: *ShapeCache) void {
     const impl = shapeCacheImpl(cache);
     const allocator = impl.allocator;
@@ -302,6 +322,7 @@ pub fn resetShapeCache(cache: *ShapeCache) void {
     impl.ascii_entries = @splat(@splat(null));
 }
 
+/// Reports current retained shape/scalar/glyph counts without exposing cache storage.
 pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
     const impl = constShapeCacheImpl(cache);
     return .{
@@ -316,8 +337,9 @@ pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
 pub fn initAtlas(
     allocator: std.mem.Allocator,
     fonts: FontFaces,
+    box_drawing: generated.BoxDrawingConfig,
     config: AtlasConfig,
-) AtlasError!*Atlas {
+) AtlasInitError!*Atlas {
     if (config.width == 0 or config.height == 0 or config.entry_capacity == 0)
         return error.InvalidAtlasConfig;
     const pixel_count = std.math.mul(
@@ -336,10 +358,13 @@ pub fn initAtlas(
     impl.* = .{
         .allocator = allocator,
         .fonts = fonts,
+        .box_drawing = box_drawing,
         .entries = entries,
         .pixels = pixels,
         .config = config,
     };
+    // zig-audit: acknowledge ptr_cast
+    // reason: Atlas is the opaque handle for this exact allocator-owned AtlasImpl allocation and preserves its address.
     return @ptrCast(impl);
 }
 
@@ -356,7 +381,7 @@ pub fn deinitAtlas(atlas: *Atlas) void {
 }
 
 /// Explicitly invalidates every cached glyph and begins a new zeroed generation.
-pub fn resetAtlas(atlas: *Atlas) AtlasError!void {
+pub fn resetAtlas(atlas: *Atlas) error{GenerationOverflow}!void {
     const impl = atlasImpl(atlas);
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
@@ -368,6 +393,7 @@ pub fn resetAtlas(atlas: *Atlas) AtlasError!void {
     @memset(impl.pixels, 0);
 }
 
+/// Borrows the complete alpha image and private reset epoch until atlas mutation.
 pub fn atlasView(atlas: *const Atlas) AtlasView {
     const impl = constAtlasImpl(atlas);
     return .{
@@ -378,6 +404,7 @@ pub fn atlasView(atlas: *const Atlas) AtlasView {
     };
 }
 
+/// Returns the number of currently retained atlas entries.
 pub fn atlasEntryCount(atlas: *const Atlas) usize {
     return constAtlasImpl(atlas).entry_count;
 }
@@ -403,6 +430,9 @@ pub fn atlasSize(atlas: *const Atlas) AtlasSize {
     return .{ .width = impl.config.width, .height = impl.config.height };
 }
 
+/// Shapes one short multi-scalar operator run without retaining it in ShapeCache.
+/// Returns null when the sequence is ineligible, exceeds caller scratch, or does
+/// not resolve wholly through the selected variant's primary face.
 pub fn shapeContextualPrimary(
     cache: *ShapeCache,
     variant: FontVariant,
@@ -435,6 +465,10 @@ fn shapeEntryRun(impl: *const ShapeCacheImpl, entry_index: usize) text.Run {
     };
 }
 
+/// Resolves one exact scalar sequence through deterministic style fallback and
+/// retains the resulting shape for allocation-free reuse until cache reset.
+/// Missing glyphs are retried as one U+FFFD replacement while preserving the
+/// original sequence as the cache identity.
 pub fn resolveShape(
     cache: *ShapeCache,
     variant: FontVariant,
@@ -514,6 +548,9 @@ pub fn resolveShape(
     return shapeEntryRun(impl, entry_index);
 }
 
+/// Resolves one native font glyph into the fixed alpha atlas, rasterizing into
+/// caller scratch only on cache miss. `ascii_index` is an optional dense lookup
+/// hint derived from the source scalar and never changes atlas identity.
 pub fn resolveFontAtlas(
     atlas: *Atlas,
     variant: FontVariant,
@@ -640,13 +677,15 @@ pub fn resolveSmoothWaveAtlas(
     return cacheAtlas(impl, key, width, height, 0, top, pixels);
 }
 
+/// Resolves one implemented code-defined glyph into the fixed alpha atlas.
+/// The Atlas owns the immutable box-drawing raster policy; per-entry identity is
+/// therefore only codepoint, pixel extent, and OSC 66 sizing.
 pub fn resolveGeneratedAtlas(
     atlas: *Atlas,
     codepoint: u32,
     width: u16,
     height: u16,
     sizing: generated.BoxDrawingSizing,
-    box_drawing: generated.BoxDrawingConfig,
     raster_scratch: []u8,
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
@@ -669,7 +708,7 @@ pub fn resolveGeneratedAtlas(
             width,
             height,
             codepoint,
-            box_drawing,
+            impl.box_drawing,
             sizing,
         ),
         .progress => try generated.rasterizeProgress(
@@ -677,7 +716,7 @@ pub fn resolveGeneratedAtlas(
             width,
             height,
             codepoint,
-            box_drawing,
+            impl.box_drawing,
             sizing,
         ),
         .branch => if (codepoint == 0xf5ee)
@@ -688,7 +727,7 @@ pub fn resolveGeneratedAtlas(
                 width,
                 height,
                 codepoint,
-                box_drawing,
+                impl.box_drawing,
                 sizing,
             ),
         .powerline => generated.rasterize(pixels, width, height, codepoint) catch |failure| switch (failure) {
@@ -697,7 +736,7 @@ pub fn resolveGeneratedAtlas(
                 width,
                 height,
                 codepoint,
-                box_drawing,
+                impl.box_drawing,
                 sizing,
             ),
             else => return failure,
@@ -781,17 +820,12 @@ fn cacheAtlas(
         const pixel_width = @as(usize, width);
         const pixel_height = @as(usize, height);
         const atlas_width = @as(usize, impl.config.width);
+        const atlas_height = @as(usize, impl.config.height);
+        std.debug.assert(pack.x + pixel_width <= atlas_width);
+        std.debug.assert(pack.y + pixel_height <= atlas_height);
         for (0..pixel_height) |row| {
             const source_start = row * pixel_width;
-            const destination_row = std.math.add(usize, pack.y, row) catch
-                return error.AtlasFull;
-            const destination_start = std.math.mul(
-                usize,
-                destination_row,
-                atlas_width,
-            ) catch return error.AtlasFull;
-            const destination = std.math.add(usize, destination_start, pack.x) catch
-                return error.AtlasFull;
+            const destination = (pack.y + row) * atlas_width + pack.x;
             @memcpy(
                 impl.pixels[destination .. destination + pixel_width],
                 pixels[source_start .. source_start + pixel_width],
@@ -872,17 +906,33 @@ fn planAtlas(impl: *const AtlasImpl, width: u16, height: u16) AtlasError!AtlasPa
 }
 
 fn shapeCacheImpl(cache: *ShapeCache) *ShapeCacheImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every mutable ShapeCache originates from a ShapeCacheImpl allocation in initShapeCache at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating ShapeCacheImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(cache));
 }
 
 fn constShapeCacheImpl(cache: *const ShapeCache) *const ShapeCacheImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every borrowed ShapeCache originates from a ShapeCacheImpl allocation in initShapeCache at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating ShapeCacheImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(cache));
 }
 
 fn atlasImpl(atlas: *Atlas) *AtlasImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every mutable Atlas originates from an AtlasImpl allocation in initAtlas at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating AtlasImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(atlas));
 }
 
 fn constAtlasImpl(atlas: *const Atlas) *const AtlasImpl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every borrowed Atlas originates from an AtlasImpl allocation in initAtlas at the same address.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating AtlasImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(atlas));
 }
