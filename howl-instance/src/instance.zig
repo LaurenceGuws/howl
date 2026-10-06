@@ -5,6 +5,7 @@ const pty = @import("howl_pty");
 const howl_render = @import("howl_render");
 const vt = @import("howl_vt");
 const terminal_render = howl_render.terminal;
+const publication = @import("publication.zig");
 
 /// Shared-instance wire and geometry-authority contract.
 pub const protocol = @import("howl_instance_protocol");
@@ -12,6 +13,14 @@ pub const protocol = @import("howl_instance_protocol");
 pub const render = howl_render;
 /// Exact text package instance used by this Instance package's Render owner.
 pub const text = howl_render.text;
+/// Opaque SPSC exchange shared with one embedding backend thread.
+pub const RenderExchange = publication.Exchange;
+/// One immutable backend-facing Render publication lease.
+pub const RenderLease = publication.Lease;
+/// One immutable self-contained Render transaction.
+pub const PublishedFrame = publication.PublishedFrame;
+/// Acquires only the newest unread Render publication.
+pub const acquirePublishedFrame = publication.acquireLatest;
 
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;
@@ -135,6 +144,8 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
 /// Reports a backend-frame request before presentation exists, or Render failure.
 pub const RenderError = terminal_render.Error || error{PresentationUnavailable};
+/// Reports publication preparation or bounded exchange failure.
+pub const PublishError = RenderError || std.mem.Allocator.Error || error{PublicationBusy};
 
 /// Summarizes one bounded service turn without exposing PTY or VT ownership.
 pub const Service = struct {
@@ -259,6 +270,27 @@ pub fn missingRenderResources(
     const presentation = state.presentation orelse return error.PresentationUnavailable;
     try presentation.refresh(state.terminal.observation());
     return terminal_render.missingExternalResources(presentation.renderer, residency, output);
+}
+
+/// Borrows the backend-only exchange handle owned by this presented Instance.
+///
+/// The embedding render thread may retain this handle until Instance teardown,
+/// but must not retain the Instance itself. All leases must be released before
+/// the terminal thread destroys the Instance.
+pub fn renderExchange(instance: *const Instance) error{PresentationUnavailable}!*RenderExchange {
+    const presentation = stateConst(instance).presentation orelse return error.PresentationUnavailable;
+    return presentation.exchange;
+}
+
+/// Publishes the newest canonical VT cut as one immutable backend transaction.
+///
+/// This is a terminal-thread operation. It never waits for the backend: an
+/// unread older frame is replaceable, while a frame currently leased by the
+/// backend remains immutable until release.
+pub fn publishRender(instance: *Instance) PublishError!void {
+    const state = stateMut(instance);
+    const presentation = state.presentation orelse return error.PresentationUnavailable;
+    try presentation.publish(state.terminal.observation());
 }
 
 /// Borrows the canonical VT observation capability until the next Instance mutation.
@@ -454,9 +486,13 @@ const OwnedFonts = struct {
 const PresentationState = struct {
     renderer: *terminal_render.Renderer,
     fonts: OwnedFonts,
+    exchange: *publication.Exchange,
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     terminal_revision: ?u64 = null,
+    backend_residency: [publication.maximum_residencies]terminal_render.Residency = undefined,
+    backend_residency_count: usize = 0,
+    atlas_pixel_capacity: usize,
 
     fn initWithFonts(
         allocator: std.mem.Allocator,
@@ -485,12 +521,24 @@ const PresentationState = struct {
             },
         );
         errdefer terminal_render.deinit(renderer);
+        const exchange = publication.init(allocator, config.command_capacity) catch |failure| switch (failure) {
+            error.InvalidCapacity => return error.InvalidConfig,
+            else => |err| return err,
+        };
+        errdefer publication.deinit(exchange);
+        const atlas_pixel_capacity = std.math.mul(
+            usize,
+            @as(usize, config.atlas.width),
+            @as(usize, config.atlas.height),
+        ) catch return error.InvalidConfig;
 
         const state = try allocator.create(PresentationState);
         errdefer allocator.destroy(state);
         state.* = .{
             .renderer = renderer,
             .fonts = fonts.*,
+            .exchange = exchange,
+            .atlas_pixel_capacity = atlas_pixel_capacity,
         };
         state.refresh(observation) catch |failure| {
             allocator.destroy(state);
@@ -500,6 +548,7 @@ const PresentationState = struct {
     }
 
     fn deinit(self: *PresentationState, allocator: std.mem.Allocator) void {
+        publication.deinit(self.exchange);
         terminal_render.deinit(self.renderer);
         self.fonts.deinit();
         self.* = undefined;
@@ -530,7 +579,177 @@ const PresentationState = struct {
         self.image_binding_count = bindings.len;
         self.terminal_revision = revision;
     }
+
+    fn publish(
+        self: *PresentationState,
+        observation: *const Terminal.Observation,
+    ) PublishError!void {
+        try self.refresh(observation);
+        if (publication.takeLatestResidency(self.exchange, &self.backend_residency)) |accepted|
+            self.backend_residency_count = accepted.len;
+
+        var missing_storage: [terminal_render.maximum_external_images]terminal_render.FrameExternalResource = undefined;
+        const missing = try terminal_render.missingExternalResources(
+            self.renderer,
+            self.backend_residency[0..self.backend_residency_count],
+            &missing_storage,
+        );
+
+        var prospective: [publication.maximum_prospective_residencies]terminal_render.Residency = undefined;
+        @memcpy(
+            prospective[0..self.backend_residency_count],
+            self.backend_residency[0..self.backend_residency_count],
+        );
+        var prospective_count = self.backend_residency_count;
+        var external_pixel_count: usize = 0;
+        var graphics = observation.images(0);
+
+        for (missing) |external| {
+            if (external.format != .rgba8) return error.FormatMismatch;
+            const binding = findImageBinding(
+                self.image_bindings[0..self.image_binding_count],
+                external.resource,
+            ) orelse return error.InvalidImageBinding;
+            const image = findTerminalImage(&graphics, binding.image_id, binding.generation) orelse
+                return error.InvalidImageBinding;
+            const stride = std.math.mul(
+                usize,
+                @as(usize, external.size.width),
+                4,
+            ) catch return error.ArithmeticOverflow;
+            const bytes = std.math.mul(
+                usize,
+                stride,
+                @as(usize, external.size.height),
+            ) catch return error.ArithmeticOverflow;
+            if (external.stride != stride or
+                image.width != external.size.width or
+                image.height != external.size.height)
+                return error.ExtentMismatch;
+            if (image.pixels.len != bytes) return error.InvalidPixels;
+            external_pixel_count = std.math.add(
+                usize,
+                external_pixel_count,
+                bytes,
+            ) catch return error.ArithmeticOverflow;
+            try upsertResidency(&prospective, &prospective_count, .{
+                .resource = external.resource,
+                .format = external.format,
+                .size = external.size,
+            });
+        }
+
+        var writer = publication.beginWrite(self.exchange) orelse
+            return error.PublicationBusy;
+        defer writer.abort();
+        const pixel_capacity = std.math.add(
+            usize,
+            external_pixel_count,
+            self.atlas_pixel_capacity,
+        ) catch return error.ArithmeticOverflow;
+        const pixels = try writer.pixelStorage(pixel_capacity);
+        const uploads = writer.uploadStorage();
+
+        var pixel_at: usize = 0;
+        for (missing, 0..) |external, index| {
+            const binding = findImageBinding(
+                self.image_bindings[0..self.image_binding_count],
+                external.resource,
+            ).?;
+            const image = findTerminalImage(&graphics, binding.image_id, binding.generation).?;
+            const end = std.math.add(usize, pixel_at, image.pixels.len) catch
+                return error.ArithmeticOverflow;
+            @memcpy(pixels[pixel_at..end], image.pixels);
+            uploads[index] = .{
+                .resource = external.resource,
+                .format = external.format,
+                .size = external.size,
+                .pixel_offset = pixel_at,
+                .pixel_count = image.pixels.len,
+                .stride = external.stride,
+            };
+            pixel_at = end;
+        }
+        std.debug.assert(pixel_at == external_pixel_count);
+
+        const frame = try terminal_render.frame(
+            self.renderer,
+            prospective[0..prospective_count],
+            .{
+                .uploads = uploads[missing.len..],
+                .removals = writer.removalStorage(),
+                .commands = writer.commandStorage(),
+                .pixels = pixels[external_pixel_count..],
+            },
+        );
+        for (uploads[missing.len..][0..frame.uploads.len]) |*upload|
+            upload.pixel_offset = std.math.add(
+                usize,
+                upload.pixel_offset,
+                external_pixel_count,
+            ) catch return error.ArithmeticOverflow;
+
+        const cell_size = self.cellSize();
+        const view = observation.semanticView(0);
+        const surface = terminal_render.Size{
+            .width = std.math.mul(u16, view.cols, cell_size.width) catch
+                return error.InvalidPresentationGeometry,
+            .height = std.math.mul(u16, view.rows, cell_size.height) catch
+                return error.InvalidPresentationGeometry,
+        };
+        writer.finish(
+            frame.revision,
+            surface,
+            cell_size,
+            missing.len + frame.uploads.len,
+            frame.removals.len,
+            frame.commands.len,
+            external_pixel_count + frame.pixels.len,
+        );
+    }
 };
+
+fn findImageBinding(
+    bindings: []const terminal_render.ExternalImageBinding,
+    resource: terminal_render.ResourceRef,
+) ?terminal_render.ExternalImageBinding {
+    for (bindings) |binding| {
+        if (binding.resource.resource == resource.resource and
+            binding.resource.generation == resource.generation)
+            return binding;
+    }
+    return null;
+}
+
+fn findTerminalImage(
+    images: *const Terminal.Images,
+    image_id: u32,
+    generation: u64,
+) ?Terminal.Image {
+    var index: usize = 0;
+    while (index < images.imageCount()) : (index += 1) {
+        const image = images.image(index) orelse continue;
+        if (image.id == image_id and image.generation == generation) return image;
+    }
+    return null;
+}
+
+fn upsertResidency(
+    storage: *[publication.maximum_prospective_residencies]terminal_render.Residency,
+    count: *usize,
+    value: terminal_render.Residency,
+) terminal_render.Error!void {
+    var index: usize = 0;
+    while (index < count.*) : (index += 1) {
+        if (storage[index].resource.resource == value.resource.resource) {
+            storage[index] = value;
+            return;
+        }
+    }
+    if (count.* == storage.len) return error.ResourceLimit;
+    storage[count.*] = value;
+    count.* += 1;
+}
 
 const State = struct {
     allocator: std.mem.Allocator,
@@ -1466,4 +1685,93 @@ test "presented Instance owns direct VT to Render progression" {
     try std.testing.expect(after.revision > before.revision);
     try std.testing.expect(frame.commands.len != 0);
     try std.testing.expectEqual(after.revision, frame.revision);
+}
+
+test "presented publication owns canonical VT image bytes and consumes residency feedback" {
+    const fonts = @import("test_fonts");
+    const font_config = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    };
+    const instance = try initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+            .rows = 3,
+            .columns = 8,
+            .history_rows = 8,
+        },
+        .{
+            .fonts = .{ .regular = .{ .path = font_config } },
+            .box_drawing = .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .shape_cache = .{
+                .entry_capacity = 32,
+                .scalar_capacity = 128,
+                .glyph_capacity = 128,
+                .max_sequence_scalars = 16,
+            },
+            .atlas = .{
+                .width = 256,
+                .height = 256,
+                .entry_capacity = 128,
+            },
+            .shaped_capacity = 128,
+            .raster_bytes = 256 * 256,
+            .command_capacity = 256,
+        },
+    );
+    defer deinit(instance);
+
+    const state = stateMut(instance);
+    try std.testing.expect((try state.terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1,q=2;/wAA/w==\x1b\\",
+    )).stateChanged());
+
+    try publishRender(instance);
+    const exchange = try renderExchange(instance);
+    var lease = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+
+    var rgba_upload: ?terminal_render.FrameResourceUpload = null;
+    for (lease.value.uploads) |upload| {
+        if (upload.format == .rgba8) {
+            rgba_upload = upload;
+            break;
+        }
+    }
+    const image_upload = rgba_upload orelse return error.MissingImageUpload;
+    try std.testing.expectEqualDeep(
+        terminal_render.Size{ .width = 1, .height = 1 },
+        image_upload.size,
+    );
+    try std.testing.expectEqual(@as(usize, 4), image_upload.pixel_count);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        lease.value.pixels[image_upload.pixel_offset..][0..image_upload.pixel_count],
+    );
+
+    var accepted: [publication.maximum_residencies]terminal_render.Residency = undefined;
+    var accepted_count: usize = 0;
+    for (lease.value.uploads) |upload| {
+        accepted[accepted_count] = .{
+            .resource = upload.resource,
+            .format = upload.format,
+            .size = upload.size,
+        };
+        accepted_count += 1;
+    }
+    try lease.release(accepted[0..accepted_count]);
+
+    // No terminal mutation occurred. The next terminal-side publication consumes
+    // only the residency feedback and therefore does not resend the image.
+    try publishRender(instance);
+    var settled = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    for (settled.value.uploads) |upload|
+        try std.testing.expect(upload.format != .rgba8);
+    try settled.release(accepted[0..accepted_count]);
 }

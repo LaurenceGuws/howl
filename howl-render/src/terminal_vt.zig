@@ -86,6 +86,8 @@ pub const RowScene = renderer.RowScene;
 pub const InitError = renderer.InitError;
 /// Uses the source-neutral Renderer operation errors.
 pub const Error = renderer.Error;
+/// Validates exact backend residency without mutating terminal Render state.
+pub const validateResidencies = renderer.validateResidencies;
 
 /// Allocates one bounded terminal Renderer and private Store.
 pub const init = renderer.init;

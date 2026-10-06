@@ -209,6 +209,11 @@ pub const Error = AtlasError || ShapeCacheError || frame_vocabulary.Error || err
     ResourceGenerationOverflow,
 };
 
+/// Validates one exact backend residency set without mutating Render state.
+pub fn validateResidencies(residency: []const frame_vocabulary.Residency) frame_vocabulary.Error!void {
+    return frame_vocabulary.validateResidencies(residency);
+}
+
 /// Plans exact image generations in this renderer's local resource identity space.
 /// Identities never recycle below the accepted high-water mark.
 pub fn planImageBindings(
