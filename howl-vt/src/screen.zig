@@ -1640,9 +1640,14 @@ pub const Screen = struct {
     }
 
     fn cursorRightBoundary(self: *const Screen) u16 {
-        const line_right = self.lineRightBoundary(self.cursor.row);
+        return self.cursorRightBoundaryAt(self.cursor.row, self.cursor.col);
+    }
+
+    // CUP beyond the right margin uses the row edge until wrapping re-enters the region.
+    inline fn cursorRightBoundaryAt(self: *const Screen, row: u16, col: u16) u16 {
+        const line_right = self.lineRightBoundary(row);
         if (!self.left_right_margin_mode) return line_right;
-        return if (self.cursor.col <= self.right_margin) @min(self.right_margin, line_right) else line_right;
+        return if (col <= self.right_margin) @min(self.right_margin, line_right) else line_right;
     }
 
     /// Clears visible cells and marks the complete screen dirty.
@@ -2464,7 +2469,8 @@ pub const Screen = struct {
         }
         defer if (prepared) |*range| range.deinit();
 
-        const right = self.rightBoundary();
+        const right = self.cursorRightBoundary();
+        if (graphic.width > right - self.leftBoundary() + 1) return false;
         if (self.wrap_pending) {
             self.wrap_pending = false;
             if (self.cursor.col == right) {
@@ -2748,7 +2754,7 @@ pub const Screen = struct {
             return changed;
         if (properties.width() == 0) return false;
 
-        const right = self.rightBoundary();
+        const right = self.cursorRightBoundary();
         const width: u8 = if (properties.width() == 2) 2 else 1;
         if (width > right - self.leftBoundary() + 1) return false;
         if (self.wrap_pending) {
@@ -2866,7 +2872,7 @@ pub const Screen = struct {
             unicode.properties(@intCast(accepted[accepted.len - 1]))
                 .isEmojiPresentationBase();
         if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
-            self.rightBoundary() - self.leftBoundary() + 1 < 2)
+            self.cursorRightBoundaryAt(anchor_row, anchor_col) - self.leftBoundary() + 1 < 2)
         {
             return false;
         }
@@ -2911,7 +2917,7 @@ pub const Screen = struct {
     }
 
     fn widenPresentation(self: *Screen, row: u16, col: u16) void {
-        const right = self.rightBoundary();
+        const right = self.cursorRightBoundaryAt(row, col);
         const cells = self.cells orelse return;
         if (col == right) {
             const lead_index = self.rowStart(row) + col;
@@ -3059,7 +3065,7 @@ pub const Screen = struct {
     }
 
     fn previousLeadCellPos(self: *const Screen) ?struct { row: u16, col: u16 } {
-        const right = self.rightBoundary();
+        const right = self.cursorRightBoundary();
         if (self.wrap_pending) return .{ .row = self.cursor.row, .col = right };
         if (!self.auto_wrap and self.cursor.col == right) {
             const cells = self.cells orelse return null;

@@ -2106,3 +2106,98 @@ test "terminal: failed bulk APC allocation resets capture and accepts ordinary t
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
+
+test "terminal: wide printing boundaries preserve margins and physical rows through reflow" {
+    const cases = [_]struct {
+        primer: []const u8,
+        bytes: []const u8,
+        scalars: []const u21,
+    }{
+        .{ .primer = "", .bytes = "\u{754c}", .scalars = &.{0x754c} },
+        .{ .primer = "\x1b[1;2H\u{754c}\u{301}", .bytes = "\x1b[b", .scalars = &.{ 0x754c, 0x301 } },
+        .{ .primer = "", .bytes = "\u{263a}\u{fe0f}", .scalars = &.{ 0x263a, 0xfe0f } },
+    };
+    for (cases) |case| {
+        for ([_]bool{ true, false }) |auto_wrap| {
+            for ([_]u16{ 6, 7 }) |start_col| {
+                var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 2);
+                defer terminal.deinit();
+                try feed(&terminal, "\x1b[3;1HZ\x1b[?69h\x1b[2;7s");
+                if (!auto_wrap) try feed(&terminal, "\x1b[?7l");
+                try feed(&terminal, case.primer);
+                try feed(&terminal, if (start_col == 6) "\x1b[2;7H" else "\x1b[2;8H");
+                try std.testing.expect((try terminal.feed(case.bytes)).stateChanged());
+
+                const view = terminal.semanticView(0);
+                const row: u16 = if (auto_wrap) 2 else 1;
+                const col: u16 = if (auto_wrap) 1 else start_col - 1;
+                const lead = view.cellInfoAt(row, col);
+                const continuation = view.cellInfoAt(row, col + 1);
+                try std.testing.expectEqual(@as(u21, 'Z'), view.cellAt(2, 0));
+                try std.testing.expectEqual(@as(u32, case.scalars[0]), lead.codepoint);
+                try std.testing.expectEqual(@as(u8, 2), lead.width);
+                try std.testing.expect(lead.semantic_width);
+                try std.testing.expectEqual(@as(u8, 0), lead.x);
+                try std.testing.expectEqual(@as(u8, 2), continuation.width);
+                try std.testing.expect(continuation.semantic_width);
+                try std.testing.expectEqual(@as(u8, 1), continuation.x);
+                var scalars: [24]u21 = undefined;
+                try std.testing.expectEqualSlices(u21, case.scalars, view.cellScalarsAt(row, col, &scalars));
+                try std.testing.expectEqual(row, view.cursor_row);
+                try std.testing.expectEqual(if (auto_wrap) @as(u16, 3) else start_col, view.cursor_col);
+
+                try terminal.resize(3, 9);
+                const resized = terminal.semanticView(0);
+                var leads: usize = 0;
+                for (0..resized.rows) |r| {
+                    for (0..resized.cols) |c| {
+                        const cell = resized.cellInfoAt(@intCast(r), @intCast(c));
+                        if (!cell.semantic_width) continue;
+                        try std.testing.expectEqual(@as(u8, 2), cell.width);
+                        if (cell.x == 0) {
+                            leads += 1;
+                            try std.testing.expect(c + 1 < resized.cols);
+                            const tail = resized.cellInfoAt(@intCast(r), @intCast(c + 1));
+                            try std.testing.expect(tail.semantic_width);
+                            try std.testing.expectEqual(@as(u8, 1), tail.x);
+                            try std.testing.expectEqual(@as(u8, 2), tail.width);
+                        } else {
+                            try std.testing.expectEqual(@as(u8, 1), cell.x);
+                            try std.testing.expect(c > 0);
+                            const head = resized.cellInfoAt(@intCast(r), @intCast(c - 1));
+                            try std.testing.expect(head.semantic_width);
+                            try std.testing.expectEqual(@as(u8, 0), head.x);
+                        }
+                    }
+                }
+                try std.testing.expectEqual(if (case.primer.len == 0) @as(usize, 1) else 2, leads);
+            }
+        }
+    }
+}
+
+test "terminal: wide printing boundaries keep text beyond the right margin in place" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 10, 2);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?69h\x1b[2;7s\x1b[2;8H\u{754c}X");
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0x754c), view.cellAt(1, 7));
+    try std.testing.expectEqual(@as(u8, 1), view.cellInfoAt(1, 8).x);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(1, 9));
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(1, 6));
+    try std.testing.expectEqual(@as(u16, 9), view.cursor_col);
+    try feed(&terminal, "Y");
+    try std.testing.expectEqual(@as(u21, 'Y'), terminal.semanticView(0).cellAt(2, 1));
+}
+
+test "terminal: wide printing boundaries reject REP on a one-column row" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try feed(&terminal, "\u{754c}");
+    try terminal.resize(2, 1);
+    const before = terminal.semanticView(0).cellInfoAt(0, 0);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b[b")).stateChanged());
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
+}
