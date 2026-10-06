@@ -97,7 +97,7 @@ pub const Storage = struct {
     }
 
     /// Validates one cell's sole scalar-count authority against its range.
-    pub fn validate(
+    pub inline fn validate(
         self: *const Storage,
         cell: usize,
         combining_len: u8,
@@ -268,7 +268,7 @@ pub const Storage = struct {
     }
 
     /// Releases one exact cell range and restores canonical zero ownership.
-    pub fn clear(
+    pub inline fn clear(
         self: *Storage,
         cell: usize,
         combining_len: u8,
@@ -277,7 +277,7 @@ pub const Storage = struct {
         self.clearValidated(cell, count);
     }
 
-    fn clearValidated(self: *Storage, cell: usize, count: usize) void {
+    inline fn clearValidated(self: *Storage, cell: usize, count: usize) void {
         const old = self.ranges[cell];
         if (old == .none) return;
         self.ranges[cell] = .none;

@@ -30,7 +30,7 @@ fn acceptedTail(
         @panic("accepted scalar range/count mismatch");
 }
 
-fn clearAcceptedTail(
+inline fn clearAcceptedTail(
     storage: *scalar_storage.Storage,
     cell: usize,
     combining_len: u8,
