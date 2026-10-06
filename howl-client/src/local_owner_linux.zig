@@ -14,6 +14,7 @@ const posix = std.posix;
 const service_wait_ms: i32 = 20;
 const maximum_pending_admissions: usize = 8;
 
+/// Reports local Instance, service, socketpair, and admission failures.
 pub const Error = client.Error || instance.InitError || instance_service.Service.InitError || error{
     SocketPairFailed,
     ServiceThreadFailed,
@@ -27,6 +28,7 @@ const Admission = struct {
     accepted: bool = false,
 };
 
+/// Owns one Linux Local Instance plus its listener-free HWLS service thread.
 pub const Owner = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -38,6 +40,7 @@ pub const Owner = struct {
     failed: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
 
+    /// Creates the canonical Instance and starts its private service worker.
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -62,6 +65,7 @@ pub const Owner = struct {
         return owner;
     }
 
+    /// Stops the service worker and destroys the canonical Instance.
     pub fn deinit(self: *Owner) void {
         self.admissions.close(self.io);
         self.stop.store(true, .release);
@@ -73,6 +77,7 @@ pub const Owner = struct {
         allocator.destroy(self);
     }
 
+    /// Creates one unnamed socketpair connection and hands its peer to the service.
     pub fn connect(
         self: *Owner,
         diagnostic: *client.ConnectDiagnostic,

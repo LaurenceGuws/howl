@@ -8,35 +8,45 @@ const posix = std.posix;
 const protocol = @import("howl_instance_protocol");
 const transport = @import("client_transport");
 
+/// Exact native transport setup stage used by connection diagnostics.
 pub const ConnectStage = transport.ConnectStage;
+/// Bounded transport diagnostic retained across Instance handshake setup.
 pub const ConnectDiagnostic = transport.ConnectDiagnostic;
+/// Independently owned duplicate used to wake one blocked connection receive.
 pub const Cancellation = transport.Cancellation;
+/// Caller-owned interrupt token that can cancel connection setup and I/O.
 pub const Interrupt = transport.Interrupt;
+/// Reports allocation, transport, framing, payload, and handshake failures.
 pub const Error = std.mem.Allocator.Error || transport.Error || protocol.HeaderError || protocol.PayloadError || error{
     UnexpectedHandshakeFrame,
 };
 
+/// Owns one decoded HWLS frame payload.
 pub const Frame = struct {
     allocator: std.mem.Allocator,
     kind: protocol.Kind,
     payload: []u8,
 
+    /// Releases this frame's owned payload bytes.
     pub fn deinit(self: *Frame) void {
         self.allocator.free(self.payload);
         self.* = undefined;
     }
 };
 
+/// Owns one established HWLS connection and its canonical attached client id.
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     stream: transport.Stream,
     client_id: protocol.ClientId,
 
+    /// Connects one explicit endpoint and completes the HWLS handshake.
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
         var diagnostic: ConnectDiagnostic = .{};
         return connectDiagnosed(allocator, endpoint, &diagnostic);
     }
 
+    /// Connects one endpoint while retaining the exact failing setup stage.
     pub fn connectDiagnosed(
         allocator: std.mem.Allocator,
         endpoint: []const u8,
@@ -46,6 +56,7 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
+    /// Connects one endpoint with an optional caller-owned interrupt token.
     pub fn connectCancelable(
         allocator: std.mem.Allocator,
         endpoint: []const u8,
@@ -56,6 +67,7 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
+    /// Closes the ordered stream and invalidates this connection owner.
     pub fn deinit(self: *Connection) void {
         self.stream.deinit();
         self.* = undefined;
@@ -71,6 +83,7 @@ pub const Connection = struct {
         return self.stream.cancellation();
     }
 
+    /// Sends one complete bounded HWLS request frame.
     pub fn send(self: *Connection, kind: protocol.Kind, payload: []const u8) Error!void {
         if (payload.len > protocol.maximum_request_payload_bytes) return error.PayloadTooLarge;
         var header: [protocol.header_bytes]u8 = undefined;
@@ -92,6 +105,7 @@ pub const Connection = struct {
         return header.payload_len;
     }
 
+    /// Receives and owns one complete HWLS frame.
     pub fn receive(self: *Connection) Error!Frame {
         var header_bytes: [protocol.header_bytes]u8 = undefined;
         try self.stream.read(&header_bytes);
@@ -155,6 +169,8 @@ test "unsupported route schemes are rejected" {
 fn testSocketPair() [2]posix.fd_t {
     var pair: [2]posix.fd_t = undefined;
     const result = posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
+    // zig-audit: acknowledge panic
+    // reason: This test-only helper cannot construct any meaningful fixture after socketpair creation fails.
     if (posix.errno(result) != .SUCCESS) @panic("test socketpair failed");
     return pair;
 }
@@ -198,31 +214,57 @@ fn testWriteAll(fd: posix.fd_t, bytes: []const u8) !void {
 fn testHandshakePeer(fd: posix.fd_t) void {
     defer testClose(fd);
     var header: [protocol.header_bytes]u8 = undefined;
+    // zig-audit: acknowledge panic
+    // reason: A fixture peer cannot continue coherently after the expected fixed hello header cannot be read.
     testReadExact(fd, &header) catch @panic("hello header");
+    // zig-audit: acknowledge panic
+    // reason: Bytes produced by the client handshake must decode as one valid protocol header in this test fixture.
     const decoded = protocol.decodeHeader(&header) catch @panic("hello frame");
+    // zig-audit: acknowledge panic
+    // reason: This fixture exists only to model the exact hello/welcome handshake and cannot recover from a different first frame.
     if (decoded.kind != .hello or decoded.payload_len != 0) @panic("wrong hello");
     var welcome: [protocol.payload_bytes.welcome]u8 = undefined;
     protocol.encodeWelcome(&welcome, .{ .client_id = 71 });
     var response: [protocol.header_bytes]u8 = undefined;
+    // zig-audit: acknowledge panic
+    // reason: response has exactly protocol.header_bytes capacity for this fixed welcome header.
     protocol.encodeHeader(&response, .{ .kind = .welcome, .payload_len = welcome.len }) catch @panic("welcome header");
+    // zig-audit: acknowledge panic
+    // reason: The fixture thread has no useful recovery after its peer closes while writing the expected welcome header.
     testWriteAll(fd, &response) catch @panic("welcome header write");
+    // zig-audit: acknowledge panic
+    // reason: The fixture thread has no useful recovery after its peer closes while writing the expected welcome payload.
     testWriteAll(fd, &welcome) catch @panic("welcome write");
 }
 
 fn testHandshakePeerUntilClosed(fd: posix.fd_t) void {
     defer testClose(fd);
     var header: [protocol.header_bytes]u8 = undefined;
+    // zig-audit: acknowledge panic
+    // reason: A fixture peer cannot continue coherently after the expected fixed hello header cannot be read.
     testReadExact(fd, &header) catch @panic("hello header");
+    // zig-audit: acknowledge panic
+    // reason: Bytes produced by the client handshake must decode as one valid protocol header in this test fixture.
     const decoded = protocol.decodeHeader(&header) catch @panic("hello frame");
+    // zig-audit: acknowledge panic
+    // reason: This fixture exists only to model the exact hello/welcome handshake and cannot recover from a different first frame.
     if (decoded.kind != .hello or decoded.payload_len != 0) @panic("wrong hello");
     var welcome: [protocol.payload_bytes.welcome]u8 = undefined;
     protocol.encodeWelcome(&welcome, .{ .client_id = 72 });
     var response: [protocol.header_bytes]u8 = undefined;
+    // zig-audit: acknowledge panic
+    // reason: response has exactly protocol.header_bytes capacity for this fixed welcome header.
     protocol.encodeHeader(&response, .{ .kind = .welcome, .payload_len = welcome.len }) catch @panic("welcome header");
+    // zig-audit: acknowledge panic
+    // reason: The fixture thread has no useful recovery after its peer closes while writing the expected welcome header.
     testWriteAll(fd, &response) catch @panic("welcome header write");
+    // zig-audit: acknowledge panic
+    // reason: The fixture thread has no useful recovery after its peer closes while writing the expected welcome payload.
     testWriteAll(fd, &welcome) catch @panic("welcome write");
     var byte: [1]u8 = undefined;
     testReadExact(fd, &byte) catch return;
+    // zig-audit: acknowledge panic
+    // reason: Receiving data proves the cancellation/ownership test violated its required no-write invariant.
     @panic("peer unexpectedly received data");
 }
 
@@ -383,6 +425,8 @@ test "receiveInto cancellation wakes blocked body and retains owner cleanup" {
 fn testFragmentedFramePeer(fd: posix.fd_t) void {
     defer testClose(fd);
     var header: [protocol.header_bytes]u8 = undefined;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: header has exactly protocol.header_bytes capacity and the fixed image-data payload length is protocol-valid.
     protocol.encodeHeader(&header, .{ .kind = .image_data, .payload_len = 3 }) catch unreachable;
     for (0..2) |_| {
         for (header) |byte| testWriteAll(fd, &.{byte}) catch return;

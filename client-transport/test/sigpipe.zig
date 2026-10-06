@@ -2,6 +2,7 @@
 const std = @import("std");
 const transport = @import("client_transport");
 const posix = std.posix;
+/// Runs the isolated default-SIGPIPE transport fixture.
 pub fn main() !void {
     const action: posix.Sigaction = .{ .handler = .{ .handler = posix.SIG.DFL }, .mask = posix.sigemptyset(), .flags = 0 };
     posix.sigaction(.PIPE, &action, null);

@@ -35,7 +35,8 @@ experimental:
     protocol-neutral native Unix/numeric-IPv4 TCP ordered-stream module shared by
     the Instance client and Server control client. Owns cancellation, descriptor
     lifetime, bounded connect deadlines and transport diagnostics only; no protocol,
-    Instance/Session/Server, discovery, authentication or route-selection policy
+    Instance/Session/Server, discovery, authentication or route-selection policy.
+    Its package check includes its complete ruleset-3 zig-audit source gate
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,
     owns only bounded adopted control streams and long-poll state, decodes
@@ -71,7 +72,8 @@ experimental:
     Server, SSH subprocess, discovery, routing, authentication or supervision policy.
     The separate optional howl_local module owns one listener-free desktop Local
     Instance backed by Linux PTY or Windows ConPTY and admits ordinary HWLS streams;
-    importing howl_client never opts a consumer into that process lifetime
+    importing howl_client never opts a consumer into that process lifetime. Its
+    package check includes its complete ruleset-3 zig-audit source gate
   howl-cli: >-
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
@@ -88,6 +90,9 @@ experimental:
     default package facade includes both VT and transported-client adapters;
     client_sources=false selects the direct VT facade without constructing
     howl-client, while preserving the same renderer/text type identities. The
+    repository distribution root forwards this direct-VT configuration; consumers
+    that explicitly need transported-client adapters opt into the child package's
+    default facade instead. The
     package separately exposes dependency-free `howl_render_limits` for wire-only
     consumers; its full root re-exports the exact howl-text module instance so
     caller-owned FontSet values preserve Zig type identity. It owns

@@ -8,8 +8,10 @@ const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 const rich = @import("rich.zig");
 
+/// Reports lossless rich-snapshot or projection allocation failures.
 pub const Error = rich.Error || std.mem.Allocator.Error;
 
+/// Counts rich facts intentionally summarized out of the compact text projection.
 pub const Detail = struct {
     styled_cells: u32 = 0,
     linked_cells: u32 = 0,
@@ -19,12 +21,14 @@ pub const Detail = struct {
     image_placements: u32 = 0,
 };
 
+/// Names one non-default DEC line geometry in the compact projection.
 pub const LineGeometry = struct {
     row: u16,
     value: []const u8,
     value_id: u8,
 };
 
+/// Owns one compact text-first projection of a lossless rich snapshot.
 pub const Snapshot = struct {
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
@@ -33,6 +37,7 @@ pub const Snapshot = struct {
     line_geometry: []LineGeometry,
     detail: Detail,
 
+    /// Releases every owned projected line and metadata array.
     pub fn deinit(self: *Snapshot) void {
         for (self.lines) |line| self.allocator.free(line);
         self.allocator.free(self.lines);
@@ -42,6 +47,7 @@ pub const Snapshot = struct {
     }
 };
 
+/// Requests one rich snapshot and immediately projects it into compact owned form.
 pub fn request(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -53,6 +59,7 @@ pub fn request(
     return project(allocator, &full);
 }
 
+/// Projects one already-owned rich snapshot into compact text and detail counts.
 pub fn project(allocator: std.mem.Allocator, full: *const rich.Snapshot) std.mem.Allocator.Error!Snapshot {
     const lines = try allocator.alloc([]const u8, full.rows.len);
     errdefer allocator.free(lines);
@@ -113,6 +120,8 @@ fn projectRow(allocator: std.mem.Allocator, row: rich.Row, detail: *Detail) std.
         }
         for (cell.scalars) |scalar| {
             var encoded: [4]u8 = undefined;
+            // zig-audit: acknowledge catch_unreachable
+            // reason: Rich-snapshot decoding validates every retained scalar before compact projection.
             const length = std.unicode.utf8Encode(@intCast(scalar), &encoded) catch unreachable;
             try line.appendSlice(allocator, encoded[0..length]);
         }
@@ -130,6 +139,7 @@ fn lineGeometryName(value: u8) []const u8 {
     };
 }
 
+/// Returns a stable human-readable name for one encoded cursor shape value.
 pub fn cursorShapeName(value: u8) []const u8 {
     return switch (value) {
         0 => "block",
@@ -142,7 +152,7 @@ pub fn cursorShapeName(value: u8) []const u8 {
 
 test "compact projection preserves readable grapheme and reports omitted detail" {
     const scalars = [_]u32{'A'};
-    const cells = [_]rich.Cell{
+    var cells = [_]rich.Cell{
         .{
             .scalars = &scalars,
             .width = 1,
@@ -190,7 +200,7 @@ test "compact projection preserves readable grapheme and reports omitted detail"
     const text = try projectRow(std.testing.allocator, .{
         .wrapped = true,
         .line_geometry = 0,
-        .cells = @constCast(&cells),
+        .cells = &cells,
     }, &detail);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("A", text);

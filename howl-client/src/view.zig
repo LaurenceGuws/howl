@@ -8,17 +8,25 @@ const std = @import("std");
 const protocol = @import("howl_instance_protocol");
 const rich = @import("rich.zig");
 
+/// Reports projection allocation or rich-snapshot validation failures.
 pub const Error = std.mem.Allocator.Error || error{
     InvalidRichSnapshot,
     ViewTooLarge,
 };
 
+/// Snapshot framing metadata retained by the immutable projected view.
 pub const Begin = protocol.SnapshotBegin;
+/// Complete terminal presentation colors and cursor state.
 pub const Presentation = rich.Presentation;
+/// Canonical terminal text-color representation.
 pub const TextColor = protocol.TextColor;
+/// One terminal image manifest entry.
 pub const Image = protocol.SnapshotImage;
+/// One terminal image placement manifest entry.
 pub const ImagePlacement = protocol.SnapshotImagePlacement;
+/// Maximum retained terminal images admitted by the frozen protocol.
 pub const maximum_images = protocol.graphics_v2.maximum_images;
+/// Maximum retained terminal image placements admitted by the frozen protocol.
 pub const maximum_image_placements = protocol.graphics_v2.maximum_placements;
 
 /// Semantic cell rendition exported by the projected client view.
@@ -54,8 +62,11 @@ pub const LineGeometry = enum {
 const kitty_image_placeholder: u32 = 0x10eeee;
 
 /// Opaque owner of one immutable projected revision.
+// zig-audit: acknowledge opaque_type
+// reason: The projection owns one packed allocation whose private offsets and backing layout must not become caller-visible ABI.
 pub const Snapshot = opaque {};
 
+/// One projected terminal row indexing the shared cell array.
 pub const Row = struct {
     cell_offset: u32,
     cell_count: u32,
@@ -63,6 +74,7 @@ pub const Row = struct {
     line_geometry: u8,
 };
 
+/// One projected terminal cell indexing the shared scalar array.
 pub const Cell = struct {
     scalar_offset: u32,
     scalar_count: u8,
@@ -86,12 +98,14 @@ pub const Cell = struct {
     link_id: u32,
 };
 
+/// One projected hyperlink identity indexing the shared URI byte array.
 pub const Hyperlink = struct {
     link_id: u32,
     uri_offset: u32,
     uri_len: u32,
 };
 
+/// Borrowed graphics manifest and canonical cell-pixel lattice for one snapshot.
 pub const Graphics = struct {
     generation: u64,
     content_generation: u64,
@@ -210,12 +224,16 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     const total_bytes = std.math.add(usize, properties_offset, properties_bytes) catch return error.ViewTooLarge;
     if (total_bytes > maximum_view_bytes) return error.ViewTooLarge;
 
+    // zig-audit: acknowledge catch_unreachable
+    // reason: @sizeOf(u128) is a fixed nonzero divisor, so divCeil cannot report division by zero.
     const word_count = std.math.divCeil(usize, total_bytes, @sizeOf(u128)) catch unreachable;
     const storage = try allocator.alloc(u128, word_count);
     errdefer allocator.free(storage);
     const bytes = std.mem.sliceAsBytes(storage);
     @memset(bytes, 0);
 
+    // zig-audit: acknowledge ptr_cast
+    // reason: storage is an aligned u128 allocation sized to hold Impl plus every packed section; Impl begins at byte zero.
     const impl: *Impl = @ptrCast(storage.ptr);
     impl.* = .{
         .allocator = allocator,
@@ -326,6 +344,8 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         return error.InvalidRichSnapshot;
     std.debug.assert(written_properties == properties_bytes);
 
+    // zig-audit: acknowledge ptr_cast
+    // reason: Snapshot is the opaque public handle for this exact packed Impl allocation and preserves the same address.
     return @ptrCast(impl);
 }
 
@@ -334,10 +354,15 @@ pub fn deinit(snapshot: *Snapshot) void {
     const impl = mutableImpl(snapshot);
     const allocator = impl.allocator;
     const word_count = impl.word_count;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The packed owner was allocated as []u128 and Impl occupies its first bytes, so teardown recovers that exact allocation base.
+    // zig-audit: acknowledge align_cast
+    // reason: The original []u128 allocation guarantees u128 alignment for the recovered storage base.
     const storage: [*]u128 = @ptrCast(@alignCast(impl));
     allocator.free(storage[0..word_count]);
 }
 
+/// Borrows the immutable snapshot framing metadata.
 pub fn begin(snapshot: *const Snapshot) *const Begin {
     return &constImpl(snapshot).begin;
 }
@@ -345,23 +370,29 @@ pub fn begin(snapshot: *const Snapshot) *const Begin {
 /// Borrows coherent terminal properties from the accepted immutable snapshot.
 pub fn properties(snapshot: *const Snapshot) protocol.properties.View {
     const impl = constImpl(snapshot);
+    // zig-audit: acknowledge catch_unreachable
+    // reason: Projection accepted and re-encoded these properties transactionally before publishing the Snapshot.
     return protocol.properties.decode(ownerBytes(impl)[impl.properties_offset..][0..impl.properties_bytes]) catch unreachable;
 }
 
+/// Borrows the immutable presentation state for this revision.
 pub fn presentation(snapshot: *const Snapshot) *const Presentation {
     return &constImpl(snapshot).presentation;
 }
 
+/// Borrows the complete projected row array.
 pub fn rows(snapshot: *const Snapshot) []const Row {
     const impl = constImpl(snapshot);
     return constSliceAt(Row, ownerBytes(impl), impl.rows_offset, impl.row_count);
 }
 
+/// Borrows the complete projected cell array.
 pub fn cells(snapshot: *const Snapshot) []const Cell {
     const impl = constImpl(snapshot);
     return constSliceAt(Cell, ownerBytes(impl), impl.cells_offset, impl.cell_count);
 }
 
+/// Borrows the shared projected Unicode scalar array.
 pub fn scalars(snapshot: *const Snapshot) []const u32 {
     const impl = constImpl(snapshot);
     return constSliceAt(u32, ownerBytes(impl), impl.scalars_offset, impl.scalar_count);
@@ -394,6 +425,8 @@ pub fn cursorShapeFromValue(value: u8) CursorShape {
         1 => .underline,
         2 => .bar,
         3 => .none,
+        // zig-audit: acknowledge unreachable
+        // reason: Rich projection validates cursor_shape to the frozen four-value protocol domain before publishing the view.
         else => unreachable,
     };
 }
@@ -410,6 +443,8 @@ pub fn lineGeometryFromValue(value: u8) LineGeometry {
         1 => .double_width,
         2 => .double_height_top,
         3 => .double_height_bottom,
+        // zig-audit: acknowledge unreachable
+        // reason: Rich projection validates line_geometry to the frozen four-value protocol domain before publishing the view.
         else => unreachable,
     };
 }
@@ -434,16 +469,19 @@ pub fn isImagePlaceholder(sequence: []const u32) bool {
     return sequence.len != 0 and sequence[0] == kitty_image_placeholder;
 }
 
+/// Borrows the projected hyperlink metadata array.
 pub fn hyperlinks(snapshot: *const Snapshot) []const Hyperlink {
     const impl = constImpl(snapshot);
     return constSliceAt(Hyperlink, ownerBytes(impl), impl.hyperlinks_offset, impl.hyperlink_count);
 }
 
+/// Borrows the shared hyperlink URI byte storage.
 pub fn uris(snapshot: *const Snapshot) []const u8 {
     const impl = constImpl(snapshot);
     return ownerBytes(impl)[impl.uris_offset .. impl.uris_offset + impl.uri_bytes];
 }
 
+/// Borrows the complete terminal graphics manifest for this revision.
 pub fn graphics(snapshot: *const Snapshot) Graphics {
     const impl = constImpl(snapshot);
     const bytes = ownerBytes(impl);
@@ -481,6 +519,7 @@ pub fn rowShift(snapshot: *const Snapshot) ?u16 {
     return constImpl(snapshot).row_shift;
 }
 
+/// Reports bounded visible/accessibility text projection progress.
 pub const TextProjection = struct {
     bytes_written: usize,
     truncated: bool,
@@ -643,6 +682,8 @@ const TextWriter = struct {
 
     fn writeScalar(self: *TextWriter, scalar: u32) bool {
         var encoded: [4]u8 = undefined;
+        // zig-audit: acknowledge catch_unreachable
+        // reason: All projected scalars were validated by rich decoding before entering immutable view storage.
         const len = std.unicode.utf8Encode(@intCast(scalar), &encoded) catch unreachable;
         if (len > self.bytes.len - self.offset) {
             self.truncated = true;
@@ -847,25 +888,39 @@ fn sectionEnd(comptime T: type, offset: usize, count: usize) Error!usize {
 
 fn mutableSliceAt(comptime T: type, bytes: []u8, offset: usize, count: usize) []T {
     const end = offset + @sizeOf(T) * count;
+    // zig-audit: acknowledge align_cast
+    // reason: section offsets are constructed with alignForward(@alignOf(T)) inside a u128-aligned owner allocation.
     const aligned: []align(@alignOf(T)) u8 = @alignCast(bytes[offset..end]);
     return std.mem.bytesAsSlice(T, aligned);
 }
 
 fn constSliceAt(comptime T: type, bytes: []const u8, offset: usize, count: usize) []const T {
     const end = offset + @sizeOf(T) * count;
+    // zig-audit: acknowledge align_cast
+    // reason: section offsets are constructed with alignForward(@alignOf(T)) inside a u128-aligned owner allocation.
     const aligned: []align(@alignOf(T)) const u8 = @alignCast(bytes[offset..end]);
     return std.mem.bytesAsSlice(T, aligned);
 }
 
 fn constImpl(snapshot: *const Snapshot) *const Impl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every Snapshot is published from an Impl at the same address by projectView.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating u128 allocation provides at least Impl alignment; the opaque handle preserves that address.
     return @ptrCast(@alignCast(snapshot));
 }
 
 fn mutableImpl(snapshot: *Snapshot) *Impl {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Every mutable Snapshot owner is the same packed Impl allocation published by projectView.
+    // zig-audit: acknowledge align_cast
+    // reason: The originating u128 allocation provides at least Impl alignment; the opaque handle preserves that address.
     return @ptrCast(@alignCast(snapshot));
 }
 
 fn ownerBytes(impl: *const Impl) []const u8 {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Impl is byte zero of the packed owner allocation and total_bytes bounds the complete live allocation.
     const base: [*]const u8 = @ptrCast(impl);
     return base[0..impl.total_bytes];
 }

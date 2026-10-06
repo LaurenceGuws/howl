@@ -7,6 +7,7 @@ const std = @import("std");
 const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
+/// Reports transport, framing, allocation, and rich-snapshot validation failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     UnexpectedFrame,
     SnapshotTooLarge,
@@ -15,8 +16,10 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     DeltaBaselineMismatch,
 };
 
+/// One exact 8-bit RGBA color value from terminal presentation state.
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: u8 };
 
+/// Complete decoded terminal presentation colors, palette, cursor age, and flags.
 pub const Presentation = struct {
     cursor_age_ns: ?u64,
     presence_bits: u8,
@@ -31,6 +34,7 @@ pub const Presentation = struct {
     selection_foreground: ?Rgba,
 };
 
+/// One lossless decoded terminal cell and its scalar/rendition metadata.
 pub const Cell = struct {
     scalars: []const u32,
     width: u8,
@@ -53,6 +57,7 @@ pub const Cell = struct {
     link_id: u32,
 };
 
+/// One decoded terminal row plus its retained scalar storage.
 pub const Row = struct {
     wrapped: bool,
     line_geometry: u8,
@@ -62,11 +67,13 @@ pub const Row = struct {
     scalar_storage: []u32 = &.{},
 };
 
+/// One retained OSC 8 hyperlink identity and owned URI bytes.
 pub const Hyperlink = struct {
     link_id: u32,
     uri_bytes: []u8,
 };
 
+/// One decoded terminal graphics manifest and canonical cell-pixel lattice.
 pub const Graphics = struct {
     generation: u64 = 0,
     content_generation: u64 = 0,
@@ -82,6 +89,7 @@ pub const Graphics = struct {
     }
 };
 
+/// Owns one complete lossless rich terminal snapshot.
 pub const Snapshot = struct {
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
@@ -92,6 +100,7 @@ pub const Snapshot = struct {
     properties: protocol.properties.View = .{},
     properties_storage: []u8 = &.{},
 
+    /// Borrows this owned snapshot through the common immutable rich-view contract.
     pub fn view(self: *const Snapshot) View {
         return .{
             .begin = self.begin,
@@ -106,6 +115,7 @@ pub const Snapshot = struct {
         };
     }
 
+    /// Releases every row, scalar, hyperlink, graphics, and property allocation.
     pub fn deinit(self: *Snapshot) void {
         for (self.rows) |row| {
             if (row.scalar_storage.len != 0) {
@@ -177,10 +187,12 @@ pub const RawCache = struct {
     graphics: Graphics = .{},
     properties_storage: []u8 = &.{},
 
+    /// Creates an empty reusable raw/delta observation cache.
     pub fn init(allocator: std.mem.Allocator) RawCache {
         return .{ .allocator = allocator };
     }
 
+    /// Releases all cached rows, hyperlinks, graphics, and framing scratch.
     pub fn deinit(self: *RawCache) void {
         self.clearRows();
         self.clearHyperlinks();
@@ -199,6 +211,8 @@ pub const RawCache = struct {
         return self.receiveFrom(connection);
     }
 
+    // zig-audit: acknowledge anytype
+    // reason: One decoder body is shared by the real Connection and deterministic frame fixtures implementing the same receive contract.
     fn receiveFrom(self: *RawCache, connection: anytype) Error!View {
         self.text_body.clearRetainingCapacity();
         const pending_delta = self.pending_delta;
@@ -245,6 +259,8 @@ pub const RawCache = struct {
                 .snapshot_properties => {
                     if (next_graphics == null or next_properties != null) return error.InvalidSnapshot;
                     const value = protocol.properties.decode(frame.payload) catch return error.InvalidSnapshot;
+                    // zig-audit: acknowledge catch_unreachable
+                    // reason: properties.decode just validated this exact payload, so recomputing its encoded size cannot fail for the same value.
                     std.debug.assert((protocol.properties.encodedSize(value) catch unreachable) == frame.payload.len);
                     next_properties = try self.allocator.dupe(u8, frame.payload);
                 },
@@ -272,6 +288,8 @@ pub const RawCache = struct {
                     self.allocator.free(self.properties_storage);
                     self.properties_storage = next_properties.?;
                     next_properties = null;
+                    // zig-audit: acknowledge catch_unreachable
+                    // reason: properties_storage is an owned copy of bytes successfully decoded earlier in this same transaction.
                     result.properties = protocol.properties.decode(self.properties_storage) catch unreachable;
                     self.baseline = .{
                         .revision = begin.revision,
@@ -610,6 +628,7 @@ pub fn sendPackedRequest(
     try connection.send(.observe_packed, &payload);
 }
 
+/// Requests one ordinary compressed rich observation and owns the complete decoded snapshot.
 pub fn request(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -692,6 +711,8 @@ const BufferedFrames = struct {
 };
 
 // One decoder body, specialized only for owned socket frames or borrowed bytes.
+// zig-audit: acknowledge anytype
+// reason: The same decoder is exercised by the real Connection and the bounded in-memory frame reader used for exact offline decoding.
 fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
     var total_bytes: usize = 0;
     var begin_frame = try connection.receive();
@@ -737,6 +758,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                     .snapshot_data => .compressed,
                     .snapshot_raw_data => .raw,
                     .snapshot_packed_data => .packed_text,
+                    // zig-audit: acknowledge unreachable
+                    // reason: The enclosing switch admits only the three snapshot body frame kinds handled above.
                     else => unreachable,
                 };
                 if (body_encoding != .none and body_encoding != encoding)
@@ -753,6 +776,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
             .snapshot_properties => {
                 if (graphics == null or property_bytes != null) return error.InvalidSnapshot;
                 const value = protocol.properties.decode(frame.payload) catch return error.InvalidSnapshot;
+                // zig-audit: acknowledge catch_unreachable
+                // reason: properties.decode just validated this exact payload, so recomputing its encoded size cannot fail for the same value.
                 std.debug.assert((protocol.properties.encodedSize(value) catch unreachable) == frame.payload.len);
                 property_bytes = try allocator.dupe(u8, frame.payload);
             },
@@ -816,6 +841,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                     .hyperlinks = try hyperlinks.toOwnedSlice(allocator),
                     .graphics = graphics.?,
                     .properties_storage = property_bytes.?,
+                    // zig-audit: acknowledge catch_unreachable
+                    // reason: property_bytes owns the exact payload successfully decoded earlier in this observation transaction.
                     .properties = protocol.properties.decode(property_bytes.?) catch unreachable,
                 };
             },
@@ -1267,16 +1294,19 @@ fn sameCellAttributes(
 ) bool {
     // Byte identity is endian-neutral; align(1) keeps these native word loads
     // valid for arbitrary record offsets without paying a generic slice loop.
-    return @as(*align(1) const u64, @ptrCast(left[0..8].ptr)).* ==
-        @as(*align(1) const u64, @ptrCast(right[0..8].ptr)).* and
-        @as(*align(1) const u64, @ptrCast(left[8..16].ptr)).* ==
-            @as(*align(1) const u64, @ptrCast(right[8..16].ptr)).* and
-        @as(*align(1) const u64, @ptrCast(left[16..24].ptr)).* ==
-            @as(*align(1) const u64, @ptrCast(right[16..24].ptr)).* and
-        @as(*align(1) const u64, @ptrCast(left[24..32].ptr)).* ==
-            @as(*align(1) const u64, @ptrCast(right[24..32].ptr)).* and
-        @as(*align(1) const u16, @ptrCast(left[32..34].ptr)).* ==
-            @as(*align(1) const u16, @ptrCast(right[32..34].ptr)).*;
+    return unalignedValue(u64, left[0..8]) == unalignedValue(u64, right[0..8]) and
+        unalignedValue(u64, left[8..16]) == unalignedValue(u64, right[8..16]) and
+        unalignedValue(u64, left[16..24]) == unalignedValue(u64, right[16..24]) and
+        unalignedValue(u64, left[24..32]) == unalignedValue(u64, right[24..32]) and
+        unalignedValue(u16, left[32..34]) == unalignedValue(u16, right[32..34]);
+}
+
+fn unalignedValue(comptime T: type, bytes: []const u8) T {
+    std.debug.assert(bytes.len == @sizeOf(T));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The explicit align(1) load preserves arbitrary record offsets while bytes.len proves exactly one T is available.
+    const value: *align(1) const T = @ptrCast(bytes.ptr);
+    return value.*;
 }
 
 fn decodeRow(
@@ -1316,6 +1346,8 @@ fn decodeRow(
         const encoded = payload[offset..][0..protocol.text_v1.cell_header_bytes];
         const scalar_count = encoded[0];
         if (scalar_count > protocol.text_v1.maximum_cell_scalars) return error.InvalidSnapshot;
+        // zig-audit: acknowledge ptr_cast
+        // reason: encoded is a validated fixed-width cell header whose tail is exactly text_cell_attribute_bytes long for this comparison borrow.
         const attributes: *const [text_cell_attribute_bytes]u8 = @ptrCast(encoded[1..].ptr);
         var decoded: Cell = undefined;
         if (previous_attributes) |previous| {

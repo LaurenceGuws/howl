@@ -11,11 +11,13 @@ const rich = @import("rich.zig");
 const view = @import("view.zig");
 const selection = @import("selection.zig");
 
+/// Reports invalid search input or selection/projection failures.
 pub const Error = selection.Error || error{
     InvalidQuery,
     RowTooLarge,
 };
 
+/// One exact viewport-local match and its canonical selection range.
 pub const Match = struct {
     range: selection.Range,
     viewport_row: u16,
@@ -90,6 +92,8 @@ pub fn rowFrom(
         const scalar_end = scalar_begin + cell.scalar_count;
         for (scalars[scalar_begin..scalar_end]) |scalar| {
             var encoded: [4]u8 = undefined;
+            // zig-audit: acknowledge catch_unreachable
+            // reason: Rich-view scalar validation guarantees every retained value is a valid Unicode scalar before search projection.
             const encoded_len = std.unicode.utf8Encode(@intCast(scalar), &encoded) catch unreachable;
             @memcpy(text[offset .. offset + encoded_len], encoded[0..encoded_len]);
             @memset(byte_columns[offset .. offset + encoded_len], @as(u16, @intCast(column)));

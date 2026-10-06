@@ -151,6 +151,7 @@ const pipe_write_chunk_bytes: usize = 16 * 1024;
 /// transport readiness into an external event loop.
 pub const Handle = SOCKET;
 
+/// Enumerates transport construction, cancellation, I/O, and endpoint failures.
 pub const Error = error{
     ConnectionCanceled,
     InvalidEndpoint,
@@ -166,6 +167,7 @@ pub const Error = error{
     SocketPathTooLong,
 };
 
+/// Identifies the exact connection/setup phase for bounded diagnostics.
 pub const ConnectStage = enum(u8) {
     start,
     endpoint,
@@ -185,6 +187,7 @@ pub const ConnectStage = enum(u8) {
     ready,
 };
 
+/// Retains bounded connection setup diagnostics without owning protocol state.
 pub const ConnectDiagnostic = struct {
     stage: ConnectStage = .start,
     os_error: i32 = 0,
@@ -197,10 +200,12 @@ pub const ConnectDiagnostic = struct {
 /// checkpoint. Odin uses Interrupt; callers requiring duplicated readiness
 /// ownership receive an explicit construction error.
 pub const Cancellation = struct {
+    /// Reports that duplicated-socket cancellation is unavailable on this Windows path.
     pub fn cancel(_: *const Cancellation) error{SocketShutdownFailed}!void {
         return error.SocketShutdownFailed;
     }
 
+    /// Releases the empty compatibility cancellation value.
     pub fn deinit(self: *Cancellation) void {
         self.* = undefined;
     }
@@ -208,7 +213,10 @@ pub const Cancellation = struct {
 
 /// Single-use caller-owned wake token. Every blocking Windows transport wait
 /// includes this event, so cancellation never depends on a polling interval.
+// zig-audit: acknowledge opaque_type
+// reason: Callers need only the cancellation lifetime/API; the private Windows event state must remain layout-inaccessible.
 pub const Interrupt = opaque {
+    /// Creates one independently owned Windows cancellation event.
     pub fn init(allocator: std.mem.Allocator) (std.mem.Allocator.Error || error{ SocketCreateFailed, SocketOptionFailed })!*Interrupt {
         try startWinsock();
         errdefer stopWinsock();
@@ -216,15 +224,19 @@ pub const Interrupt = opaque {
         errdefer closeEvent(event);
         const value = try allocator.create(InterruptState);
         value.* = .{ .allocator = allocator, .event = event };
+        // zig-audit: acknowledge ptr_cast
+        // reason: Interrupt is the opaque public handle for this exact allocator-owned InterruptState allocation.
         return @ptrCast(value);
     }
 
+    /// Marks the interrupt canceled and signals its wake event.
     pub fn cancel(self: *Interrupt) error{SocketShutdownFailed}!void {
         const value = self.state();
         value.canceled.store(true, .release);
         if (WSASetEvent(value.event) == 0) return error.SocketShutdownFailed;
     }
 
+    /// Releases the Windows event, Winsock lifetime, and opaque owner allocation.
     pub fn deinit(self: *Interrupt) void {
         const value = self.state();
         closeEvent(value.event);
@@ -233,6 +245,10 @@ pub const Interrupt = opaque {
     }
 
     fn state(self: *Interrupt) *InterruptState {
+        // zig-audit: acknowledge ptr_cast
+        // reason: Every Interrupt originates from an InterruptState allocation in init and retains that exact address.
+        // zig-audit: acknowledge align_cast
+        // reason: Recovering the concrete owner asserts the alignment guaranteed by the originating InterruptState allocation.
         return @ptrCast(@alignCast(self));
     }
 };
@@ -248,6 +264,7 @@ fn checkInterrupted(interrupt: ?*Interrupt) error{ConnectionCanceled}!void {
         return error.ConnectionCanceled;
 }
 
+/// Owns one Windows socket or adopted pipe ordered byte stream.
 pub const Stream = struct {
     kind: union(enum) {
         socket: SocketState,
@@ -256,10 +273,12 @@ pub const Stream = struct {
     interrupt: ?*Interrupt = null,
     handshake_deadline_ms: ?i64 = null,
 
+    /// Connects one supported endpoint while reporting the exact setup stage on failure.
     pub fn connectDiagnosed(endpoint: []const u8, diagnostic: *ConnectDiagnostic) Error!Stream {
         return connectCancelable(endpoint, diagnostic, null);
     }
 
+    /// Connects one supported endpoint with an optional caller-owned interrupt token.
     pub fn connectCancelable(
         endpoint: []const u8,
         diagnostic: *ConnectDiagnostic,
@@ -301,6 +320,8 @@ pub const Stream = struct {
             .addr = @bitCast(parsed.address),
         };
         diagnostic.stage = .socket_connect;
+        // zig-audit: acknowledge ptr_cast
+        // reason: Winsock connect consumes this live sockaddr.in through the generic sockaddr ABI for exactly this call.
         const connected = connect(socket_value, @ptrCast(&address), @sizeOf(@TypeOf(address)));
         if (connected == socket_error) {
             const failure = WSAGetLastError();
@@ -375,6 +396,7 @@ pub const Stream = struct {
         };
     }
 
+    /// Starts bounded handshake policy for one adopted raw stream.
     pub fn beginHandshake(self: *Stream, diagnostic: *ConnectDiagnostic) Error!void {
         if (self.handshake_deadline_ms != null) return;
         try checkInterrupted(self.interrupt);
@@ -382,6 +404,7 @@ pub const Stream = struct {
         diagnostic.stage = .nonblocking_enable;
     }
 
+    /// Closes the owned socket or pipe state.
     pub fn deinit(self: *Stream) void {
         switch (self.kind) {
             .socket => |state| {
@@ -398,6 +421,7 @@ pub const Stream = struct {
         self.* = undefined;
     }
 
+    /// Borrows the native readiness handle for caller-owned event integration.
     pub fn readinessFd(self: *const Stream) Handle {
         return switch (self.kind) {
             .socket => |state| state.socket,
@@ -405,28 +429,34 @@ pub const Stream = struct {
         };
     }
 
+    /// Reports that duplicated-socket cancellation is unavailable on this Windows path.
     pub fn cancellation(_: *const Stream) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
         return error.SocketDuplicateFailed;
     }
 
+    /// Writes one complete handshake payload under the current setup deadline.
     pub fn handshakeWrite(self: *Stream, bytes: []const u8) Error!void {
         return writeInterrupt(self, bytes, self.handshake_deadline_ms);
     }
 
+    /// Reads one complete handshake payload under the current setup deadline.
     pub fn handshakeRead(self: *Stream, output: []u8) Error!void {
         return readInterrupt(self, output, self.handshake_deadline_ms);
     }
 
+    /// Completes setup policy and clears the temporary handshake deadline.
     pub fn finishHandshake(self: *Stream, diagnostic: *ConnectDiagnostic) Error!void {
         try checkInterrupted(self.interrupt);
         self.handshake_deadline_ms = null;
         diagnostic.stage = .ready;
     }
 
+    /// Writes the complete byte slice or returns an exact transport failure.
     pub fn write(self: *Stream, bytes: []const u8) Error!void {
         return writeInterrupt(self, bytes, self.handshake_deadline_ms);
     }
 
+    /// Reads exactly output.len bytes or returns an exact transport failure.
     pub fn read(self: *Stream, output: []u8) Error!void {
         return readInterrupt(self, output, self.handshake_deadline_ms);
     }
@@ -585,6 +615,8 @@ fn readPipeInterrupt(stream: *Stream, state: PipeState, output: []u8, deadline_m
             @as(usize, std.math.maxInt(u32)),
         ));
         var read_count: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: ReadFile accepts an untyped writable buffer; this slice provides count live bytes for exactly this call.
         if (!ReadFile(state.read, @ptrCast(output[offset..].ptr), count, &read_count, null).toBool()) {
             return switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .PIPE_NOT_CONNECTED => error.ConnectionClosed,
@@ -609,6 +641,8 @@ fn writePipeInterrupt(stream: *Stream, state: PipeState, bytes: []const u8, dead
             @min(pipe_write_chunk_bytes, @as(usize, std.math.maxInt(u32))),
         ));
         var written: u32 = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: WriteFile accepts an untyped input buffer; this slice provides count live bytes for exactly this call.
         if (!WriteFile(state.write, @ptrCast(bytes[offset..].ptr), count, &written, null).toBool()) {
             switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .PIPE_NOT_CONNECTED => return error.ConnectionClosed,

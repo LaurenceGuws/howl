@@ -11,8 +11,10 @@ const client = @import("client.zig");
 const rich = @import("rich.zig");
 const view = @import("view.zig");
 
+/// Stable canonical text point used by selection and extraction requests.
 pub const Point = protocol.TextPoint;
 
+/// Reports invalid selection geometry, extraction framing, or allocation failures.
 pub const Error = client.Error || protocol.PayloadError || std.mem.Allocator.Error || error{
     ContextChanged,
     InvalidPoint,
@@ -21,8 +23,10 @@ pub const Error = client.Error || protocol.PayloadError || std.mem.Allocator.Err
     UnexpectedFrame,
 };
 
+/// Classifies whether one retained canonical range still belongs to the current text domain.
 pub const Validity = enum { valid, context_changed, evicted };
 
+/// Inclusive painted column span within one displayed row.
 pub const Span = struct {
     start_column: u16,
     end_column: u16,
@@ -37,6 +41,7 @@ pub const RowShape = struct {
     wrapped: bool,
 };
 
+/// Stable inclusive selection endpoints plus the geometry/bank context that names them.
 pub const Range = struct {
     anchor: Point,
     focus: Point,
@@ -105,6 +110,7 @@ pub const Range = struct {
         };
     }
 
+    /// Converts this client-local range into the canonical extraction request payload.
     pub fn request(self: Range) protocol.TextExtract {
         return .{
             .start = self.anchor,
@@ -114,6 +120,7 @@ pub const Range = struct {
         };
     }
 
+    /// Returns endpoints ordered in canonical text order without mutating anchor/focus identity.
     pub fn ordered(self: Range) struct { start: Point, end: Point } {
         if (pointBeforeOrEqual(self.anchor, self.focus))
             return .{ .start = self.anchor, .end = self.focus };

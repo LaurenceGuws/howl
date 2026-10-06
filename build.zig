@@ -13,7 +13,12 @@ pub fn build(b: *std.Build) void {
         const child = if (std.mem.eql(u8, name, "howl_text"))
             b.dependency(name, .{ .target = target, .optimize = optimize, .bundled = false })
         else if (std.mem.eql(u8, name, "howl_render"))
-            b.dependency(name, .{ .target = target, .optimize = optimize, .bundled_text = false })
+            b.dependency(name, .{
+                .target = target,
+                .optimize = optimize,
+                .bundled_text = false,
+                .client_sources = false,
+            })
         else
             b.dependency(name, .{ .target = target, .optimize = optimize });
         forward(b, name, child, check, tests);

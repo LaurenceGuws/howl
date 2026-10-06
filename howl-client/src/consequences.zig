@@ -8,10 +8,14 @@ const std = @import("std");
 const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
+/// Canonical consequence kind carried by one retained occurrence.
 pub const Kind = protocol.ConsequenceKind;
+/// Canonical typed reply kind for a consequence requiring host input.
 pub const ReplyKind = protocol.ConsequenceReplyKind;
+/// Metadata beginning one coherent consequence snapshot.
 pub const Begin = protocol.ConsequenceBegin;
 
+/// Reports transport, framing, authority, and snapshot failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     UnexpectedFrame,
     InvalidSnapshot,
@@ -19,11 +23,13 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     NotAuthority,
 };
 
+/// Owns one coherent consequence snapshot payload and its generation metadata.
 pub const Snapshot = struct {
     allocator: std.mem.Allocator,
     begin: Begin,
     payload: []u8,
 
+    /// Releases the owned snapshot payload.
     pub fn deinit(self: *Snapshot) void {
         self.allocator.free(self.payload);
         self.* = undefined;
@@ -54,6 +60,8 @@ pub fn observe(connection: *client.Connection, allocator: std.mem.Allocator) Err
     return receiveFrom(connection, allocator);
 }
 
+// zig-audit: acknowledge anytype
+// reason: The receiver is shared by the real Connection and a narrow test framing fixture with the same receive contract.
 fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
     var begin_frame = try connection.receive();
     defer begin_frame.deinit();

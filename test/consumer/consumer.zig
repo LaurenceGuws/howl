@@ -8,6 +8,7 @@ const text = @import("howl_text");
 test "VT and renderer compose through root exports" {
     try std.testing.expect(instance.Terminal == vt.Terminal);
     try std.testing.expect(render.text.FontSet == text.FontSet);
+    try std.testing.expect(!@hasDecl(render.terminal, "View"));
     var terminal = try vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
     _ = try terminal.feed("Howl");

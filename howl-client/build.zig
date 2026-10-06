@@ -47,6 +47,9 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile the reusable native Howl client");
     check.dependOn(&tests.step);
     check.dependOn(&local_tests.step);
+    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    audit.setCwd(b.path("."));
+    check.dependOn(&audit.step);
     const test_step = b.step("test", "Run native Howl client framing proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(local_tests).step);

@@ -7,6 +7,7 @@ const std = @import("std");
 const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
+/// Reports local validation, transport, framing, and server action failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     InvalidText,
     InvalidResize,
@@ -16,18 +17,21 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     NotGeometryLeader,
 };
 
+/// Sends one validated committed UTF-8 text input event.
 pub fn committedText(connection: *client.Connection, bytes: []const u8) Error!void {
     if (bytes.len == 0 or !std.unicode.utf8ValidateSlice(bytes)) return error.InvalidText;
     try sendBytesInput(connection, .bytes, bytes);
     try expectOk(connection, .input);
 }
 
+/// Sends one nonempty paste payload for terminal-side paste semantics.
 pub fn paste(connection: *client.Connection, bytes: []const u8) Error!void {
     if (bytes.len == 0) return error.InvalidText;
     try sendBytesInput(connection, .paste, bytes);
     try expectOk(connection, .input);
 }
 
+/// Sends one named physical-key transition with exact modifier bits.
 pub fn namedKey(
     connection: *client.Connection,
     key: protocol.InputKeyName,
@@ -41,6 +45,8 @@ pub fn namedKey(
         .action = action,
         .modifiers = modifiers,
     }) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: body_storage is exactly protocol.typed_input.key_header_bytes, the encoder's required fixed size.
         error.OutputTooSmall => unreachable,
         else => |err| return err,
     };
@@ -51,6 +57,7 @@ pub fn namedKey(
     try expectOk(connection, .input);
 }
 
+/// Sends one Unicode physical-key transition with exact modifier bits.
 pub fn unicodeKey(
     connection: *client.Connection,
     scalar: u32,
@@ -64,6 +71,8 @@ pub fn unicodeKey(
         .action = action,
         .modifiers = modifiers,
     }) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: body_storage is exactly protocol.typed_input.key_header_bytes, the encoder's required fixed size.
         error.OutputTooSmall => unreachable,
         else => |err| return err,
     };
@@ -74,6 +83,7 @@ pub fn unicodeKey(
     try expectOk(connection, .input);
 }
 
+/// Sends one canonical terminal mouse input event.
 pub fn mouse(connection: *client.Connection, value: protocol.MouseInput) Error!void {
     var body: [protocol.typed_input.mouse_bytes]u8 = undefined;
     try protocol.encodeMouseInput(&body, value);
@@ -84,6 +94,7 @@ pub fn mouse(connection: *client.Connection, value: protocol.MouseInput) Error!v
     try expectOk(connection, .input);
 }
 
+/// Sends one canonical terminal focus transition.
 pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!void {
     var body: [protocol.typed_input.focus_bytes]u8 = undefined;
     protocol.encodeFocusInput(&body, value);
@@ -94,6 +105,7 @@ pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!v
     try expectOk(connection, .input);
 }
 
+/// Acquires geometry authority and applies rows/columns with unchanged cell pixels.
 pub fn resize(connection: *client.Connection, rows: u16, columns: u16) Error!void {
     return resizeGeometry(connection, .{ .rows = rows, .columns = columns });
 }
@@ -127,6 +139,7 @@ pub fn resizeGeometryOwned(connection: *client.Connection, geometry: protocol.Re
     try expectOk(connection, .resize);
 }
 
+/// Sends one process-group signal request to the attached Instance.
 pub fn signal(connection: *client.Connection, value: protocol.Signal) Error!void {
     var payload: [protocol.payload_bytes.signal]u8 = undefined;
     protocol.encodeSignal(&payload, value);

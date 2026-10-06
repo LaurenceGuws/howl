@@ -16,6 +16,7 @@ const unix_prefix = "unix:";
 /// transport readiness into an external event loop.
 pub const Handle = posix.fd_t;
 
+/// Enumerates transport construction, cancellation, I/O, and endpoint failures.
 pub const Error = error{
     ConnectionCanceled,
     InvalidEndpoint,
@@ -31,6 +32,7 @@ pub const Error = error{
     SocketPathTooLong,
 };
 
+/// Identifies the exact connection/setup phase for bounded diagnostics.
 pub const ConnectStage = enum(u8) {
     start,
     endpoint,
@@ -50,6 +52,7 @@ pub const ConnectStage = enum(u8) {
     ready,
 };
 
+/// Retains bounded connection setup diagnostics without owning protocol state.
 pub const ConnectDiagnostic = struct {
     stage: ConnectStage = .start,
     os_error: i32 = 0,
@@ -63,21 +66,25 @@ pub const ConnectDiagnostic = struct {
 pub const Cancellation = struct {
     fd: posix.fd_t,
 
+    /// Wakes a blocking operation by shutting down the duplicated socket.
     pub fn cancel(self: *const Cancellation) error{SocketShutdownFailed}!void {
         return shutdownFd(self.fd);
     }
 
+    /// Closes the independently owned duplicate socket.
     pub fn deinit(self: *Cancellation) void {
         closeFd(self.fd);
         self.* = undefined;
     }
 };
 
-// A single-use cancellation lifetime, created before connection setup. The
-// native caller retains it until every borrowing connection/worker has stopped.
-// Its private wake stream can interrupt a partial handshake, a full write buffer
-// or an idle observation without a periodic polling timer or FD-reuse race.
+/// Single-use cancellation lifetime created before connection setup.
+/// The caller retains it until every borrowing connection/worker has stopped;
+/// its private wake stream interrupts blocking work without FD-reuse races.
+// zig-audit: acknowledge opaque_type
+// reason: Callers need only the cancellation lifetime/API; the private socketpair state must remain layout-inaccessible.
 pub const Interrupt = opaque {
+    /// Creates one independently owned interrupt socketpair.
     pub fn init(allocator: std.mem.Allocator) (std.mem.Allocator.Error || error{ SocketCreateFailed, SocketOptionFailed })!*Interrupt {
         var pair: [2]posix.fd_t = undefined;
         if (posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)) != .SUCCESS)
@@ -88,15 +95,19 @@ pub const Interrupt = opaque {
         try setCloseOnExec(pair[1]);
         const value = try allocator.create(InterruptState);
         value.* = .{ .allocator = allocator, .pair = pair };
+        // zig-audit: acknowledge ptr_cast
+        // reason: Interrupt is the opaque public handle for this exact allocator-owned InterruptState allocation.
         return @ptrCast(value);
     }
 
+    /// Marks the interrupt canceled and wakes every blocking borrower.
     pub fn cancel(self: *Interrupt) error{SocketShutdownFailed}!void {
         const value = self.state();
         value.canceled.store(true, .release);
         try shutdownFd(value.pair[1]);
     }
 
+    /// Releases the wake socketpair and opaque owner allocation.
     pub fn deinit(self: *Interrupt) void {
         const value = self.state();
         closeFd(value.pair[1]);
@@ -105,6 +116,10 @@ pub const Interrupt = opaque {
     }
 
     fn state(self: *Interrupt) *InterruptState {
+        // zig-audit: acknowledge ptr_cast
+        // reason: Every Interrupt originates from an InterruptState allocation in init and retains that exact address.
+        // zig-audit: acknowledge align_cast
+        // reason: Recovering the concrete owner asserts the alignment guaranteed by the originating InterruptState allocation.
         return @ptrCast(@alignCast(self));
     }
 };
@@ -120,6 +135,7 @@ fn checkInterrupted(interrupt: ?*Interrupt) error{ConnectionCanceled}!void {
         return error.ConnectionCanceled;
 }
 
+/// Owns one connected or adopted ordered byte stream and optional interrupt borrow.
 pub const Stream = struct {
     fd: posix.fd_t,
     interrupt: ?*Interrupt = null,
@@ -127,10 +143,12 @@ pub const Stream = struct {
     original_flags: usize = 0,
     restore_flags_after_handshake: bool = false,
 
+    /// Connects one supported endpoint while reporting the exact setup stage on failure.
     pub fn connectDiagnosed(endpoint: []const u8, diagnostic: *ConnectDiagnostic) Error!Stream {
         return connectCancelable(endpoint, diagnostic, null);
     }
 
+    /// Connects one supported endpoint with an optional caller-owned interrupt token.
     pub fn connectCancelable(
         endpoint: []const u8,
         diagnostic: *ConnectDiagnostic,
@@ -172,15 +190,18 @@ pub const Stream = struct {
         diagnostic.stage = .nonblocking_enable;
     }
 
+    /// Closes this stream's owned descriptor.
     pub fn deinit(self: *Stream) void {
         closeFd(self.fd);
         self.* = undefined;
     }
 
+    /// Borrows the native descriptor for caller-owned readiness integration.
     pub fn readinessFd(self: *const Stream) posix.fd_t {
         return self.fd;
     }
 
+    /// Duplicates the socket into a separately owned blocking-I/O cancellation handle.
     pub fn cancellation(self: *const Stream) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
         const raw = system.dup(self.fd);
         if (posix.errno(raw) != .SUCCESS) return error.SocketDuplicateFailed;
@@ -190,14 +211,17 @@ pub const Stream = struct {
         return .{ .fd = fd };
     }
 
+    /// Writes one complete handshake payload under the current setup deadline.
     pub fn handshakeWrite(self: *Stream, bytes: []const u8) Error!void {
         return writeInterrupt(self.fd, bytes, self.handshake_deadline_ms, self.interrupt);
     }
 
+    /// Reads one complete handshake payload under the current setup deadline.
     pub fn handshakeRead(self: *Stream, output: []u8) Error!void {
         return readInterrupt(self.fd, output, self.handshake_deadline_ms, self.interrupt);
     }
 
+    /// Completes setup policy and clears the temporary handshake deadline.
     pub fn finishHandshake(self: *Stream, diagnostic: *ConnectDiagnostic) Error!void {
         if (self.restore_flags_after_handshake) {
             diagnostic.stage = .blocking_restore;
@@ -208,10 +232,12 @@ pub const Stream = struct {
         diagnostic.stage = .ready;
     }
 
+    /// Writes the complete byte slice or returns an exact transport failure.
     pub fn write(self: *Stream, bytes: []const u8) Error!void {
         return writeInterrupt(self.fd, bytes, self.handshake_deadline_ms, self.interrupt);
     }
 
+    /// Reads exactly output.len bytes or returns an exact transport failure.
     pub fn read(self: *Stream, output: []u8) Error!void {
         return readInterrupt(self.fd, output, self.handshake_deadline_ms, self.interrupt);
     }
@@ -302,6 +328,8 @@ fn connectTcp(
     diagnostic.stage = .socket_connect;
     while (true) {
         try checkSetup(deadline_ms, interrupt);
+        // zig-audit: acknowledge ptr_cast
+        // reason: POSIX connect consumes this live sockaddr.in through the generic sockaddr ABI for exactly this call.
         const result = system.connect(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in));
         const connect_errno = posix.errno(result);
         switch (connect_errno) {
@@ -455,6 +483,8 @@ fn verifySocketConnected(
         fd,
         posix.SOL.SOCKET,
         posix.SO.ERROR,
+        // zig-audit: acknowledge ptr_cast
+        // reason: getsockopt exposes an untyped option buffer; socket_error is the exact SO_ERROR c_int storage for this call.
         @ptrCast(&socket_error),
         &length,
     );
@@ -492,6 +522,8 @@ fn connectUnix(path: []const u8, diagnostic: *ConnectDiagnostic, deadline_ms: i6
     diagnostic.stage = .socket_connect;
     while (true) {
         try checkSetup(deadline_ms, interrupt);
+        // zig-audit: acknowledge ptr_cast
+        // reason: POSIX connect consumes this live sockaddr.un through the generic sockaddr ABI for exactly this call.
         const result = system.connect(fd, @ptrCast(&address), length);
         switch (posix.errno(result)) {
             .SUCCESS, .ISCONN => break,
@@ -523,12 +555,11 @@ fn suppressSigpipe(fd: posix.fd_t) error{SocketOptionFailed}!void {
 }
 
 fn ipv4Address(bytes: [4]u8, port: u16) posix.sockaddr.in {
-    const address: *align(1) const u32 = @ptrCast(&bytes);
     var result: posix.sockaddr.in = undefined;
     if (@hasField(posix.sockaddr.in, "len")) result.len = @sizeOf(posix.sockaddr.in);
     result.family = posix.AF.INET;
     result.port = std.mem.nativeToBig(u16, port);
-    result.addr = address.*;
+    result.addr = @bitCast(bytes);
     if (@hasField(posix.sockaddr.in, "zero")) result.zero = @splat(0);
     return result;
 }
@@ -629,6 +660,8 @@ fn testInterruptedIo(probe: *InterruptProbe) void {
 fn testSocketPair() [2]posix.fd_t {
     var pair: [2]posix.fd_t = undefined;
     const result = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
+    // zig-audit: acknowledge panic
+    // reason: This test-only helper cannot produce a meaningful fixture after the host refuses socketpair construction.
     if (posix.errno(result) != .SUCCESS) @panic("test socketpair failed");
     return pair;
 }
@@ -643,11 +676,15 @@ const TestTcpListener = struct {
         const fd: posix.fd_t = @intCast(raw);
         errdefer closeFd(fd);
         var address = ipv4Address(.{ 127, 0, 0, 1 }, 0);
+        // zig-audit: acknowledge ptr_cast
+        // reason: POSIX bind consumes this live sockaddr.in through the generic sockaddr ABI for exactly this call.
         if (posix.errno(system.bind(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in))) != .SUCCESS)
             return error.SocketConnectFailed;
         if (posix.errno(system.listen(fd, 4)) != .SUCCESS) return error.SocketConnectFailed;
         var bound: posix.sockaddr.in = undefined;
         var length: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        // zig-audit: acknowledge ptr_cast
+        // reason: getsockname fills this sockaddr.in through the generic sockaddr ABI while length bounds the destination.
         if (posix.errno(system.getsockname(fd, @ptrCast(&bound), &length)) != .SUCCESS or
             length != @sizeOf(posix.sockaddr.in))
             return error.SocketConnectFailed;
@@ -820,6 +857,8 @@ test "Unix connect is nonblocking with full backlog and respects setup cancellat
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(raw));
     const listener: posix.fd_t = @intCast(raw);
     defer closeFd(listener);
+    // zig-audit: acknowledge ptr_cast
+    // reason: POSIX bind consumes this test-owned sockaddr.un through the generic sockaddr ABI for exactly this call.
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.bind(listener, @ptrCast(&address), length)));
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.listen(listener, 0)));
     var diagnostic: ConnectDiagnostic = .{};

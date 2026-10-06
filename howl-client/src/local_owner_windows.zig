@@ -39,6 +39,7 @@ extern "kernel32" fn DuplicateHandle(
     options: u32,
 ) callconv(.winapi) windows.BOOL;
 
+/// Reports local Instance, service, anonymous-stream, and admission failures.
 pub const Error = client.Error || instance.InitError || instance_service.Service.InitError || error{
     StreamPairFailed,
     ServiceThreadFailed,
@@ -124,6 +125,7 @@ const Admission = struct {
     accepted: bool = false,
 };
 
+/// Owns one Windows Local Instance plus its listener-free HWLS service thread.
 pub const Owner = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -135,6 +137,7 @@ pub const Owner = struct {
     failed: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
 
+    /// Creates the canonical Instance and starts its private service worker.
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -159,6 +162,7 @@ pub const Owner = struct {
         return owner;
     }
 
+    /// Stops the service worker and destroys the canonical Instance.
     pub fn deinit(self: *Owner) void {
         self.admissions.close(self.io);
         self.stop.store(true, .release);
@@ -170,6 +174,7 @@ pub const Owner = struct {
         allocator.destroy(self);
     }
 
+    /// Creates one anonymous duplex stream and hands its service side downward.
     pub fn connect(
         self: *Owner,
         diagnostic: *client.ConnectDiagnostic,

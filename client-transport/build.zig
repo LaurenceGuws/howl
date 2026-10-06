@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
     });
     const check = b.step("check", "Compile native Unix/TCP client transport");
     check.dependOn(&tests.step);
+    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    audit.setCwd(b.path("."));
+    check.dependOn(&audit.step);
     const test_step = b.step("test", "Run native Unix/TCP client transport proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     if (!windows) {

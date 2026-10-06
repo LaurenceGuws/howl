@@ -203,6 +203,10 @@ The public child names are retained, including `howl_local`, the Instance wire/s
 modules, Server modules, client transport, Vulkan and Wayland. Native binaries,
 bridge libraries/objects and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
+The distribution root forwards `howl_render` in its direct-VT configuration, without
+transported `howl-client` source adapters. Consumers that explicitly need Render's
+transported-client facade depend on the `howl-render` child package with
+`client_sources=true` instead.
 Consumers should pin an immutable repository tag or commit.
 
 `zig build consumer` runs the separate package in `test/consumer`, which imports

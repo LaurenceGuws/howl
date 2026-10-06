@@ -8,12 +8,14 @@ const std = @import("std");
 const protocol = @import("howl_instance_protocol");
 const client = @import("client.zig");
 
+/// Reports transport, framing, allocation, and exact-resource validation failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     UnexpectedFrame,
     ServerRejected,
     InvalidResource,
 };
 
+/// Owns one exact decoded RGBA8 terminal-image generation.
 pub const Resource = struct {
     allocator: std.mem.Allocator,
     image_id: u32,
@@ -22,6 +24,7 @@ pub const Resource = struct {
     height: u32,
     pixels: []u8,
 
+    /// Releases this resource's owned pixel buffer.
     pub fn deinit(self: *Resource) void {
         self.allocator.free(self.pixels);
         self.* = undefined;
@@ -45,6 +48,8 @@ pub fn request(
 }
 
 fn receiveFrom(
+    // zig-audit: acknowledge anytype
+    // reason: The receiver is shared by the real Connection and a narrow deterministic framing fixture with receive/receiveInto.
     connection: anytype,
     allocator: std.mem.Allocator,
     image_id: u32,
@@ -306,6 +311,8 @@ test "canceling real image receive releases owned frames and pixels" {
     const worker = try std.Thread.spawn(.{}, testCanceledImageReceive, .{&probe});
     {
         defer {
+            // zig-audit: acknowledge empty_catch
+            // reason: Deferred test cleanup is best-effort after the primary cancellation result; worker.join still guarantees teardown completion.
             cancellation.cancel() catch {};
             worker.join();
         }
