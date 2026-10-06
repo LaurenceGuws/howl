@@ -3551,7 +3551,12 @@ pub const Screen = struct {
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
             while (remaining > 0) : (remaining -= 1) self.scrollUp();
-            self.markAllRowsChanged();
+            // A partial physical-row rotation already changes the generation
+            // observed at every logical row and preserves shifted-row
+            // provenance for consumers. A complete revolution returns each
+            // physical generation to its original logical index, so that
+            // degenerate full clear still requires fresh identities.
+            if (amount == self.rows) self.markAllRowsChanged();
             return true;
         }
 
@@ -7668,4 +7673,36 @@ test "row scan hints preserve canonical state and text extents" {
     // Wrapping changes retained extent semantics but never depends on the hint.
     screen.setRowWrapped(screen.rows - 1, true);
     try Oracle.expectAll(&screen);
+}
+
+test "full scroll rotation carries unique row generations with physical rows" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+
+    var before: [4]u64 = undefined;
+    for (&before, 0..) |*generation, row|
+        generation.* = screen.rowGeneration(@intCast(row)).?;
+    for (before, 0..) |generation, row|
+        for (before[row + 1 ..]) |other| try std.testing.expect(generation != other);
+
+    try std.testing.expect(screen.scrollUpRegion(0, screen.rows - 1, 2));
+
+    try std.testing.expectEqual(before[2], screen.rowGeneration(0).?);
+    try std.testing.expectEqual(before[3], screen.rowGeneration(1).?);
+    try std.testing.expectEqual(before[0], screen.rowGeneration(2).?);
+    try std.testing.expectEqual(before[1], screen.rowGeneration(3).?);
+}
+
+test "complete row-ring revolution refreshes every generation" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+
+    var before: [3]u64 = undefined;
+    for (&before, 0..) |*generation, row|
+        generation.* = screen.rowGeneration(@intCast(row)).?;
+
+    try std.testing.expect(screen.scrollUpRegion(0, screen.rows - 1, screen.rows));
+
+    for (before, 0..) |generation, row|
+        try std.testing.expect(generation != screen.rowGeneration(@intCast(row)).?);
 }
