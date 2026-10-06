@@ -658,6 +658,32 @@ test "terminal renderer missing style variants share regular cache identity" {
     try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
 }
 
+test "contextual operator shaping ignores non-glyph cell metadata" {
+    var equal = [_]u32{'='};
+    var greater = [_]u32{'>'};
+    var cells = [_]client.rich.Cell{
+        cell(&equal, 1, 0),
+        cell(&greater, 1, 0),
+    };
+    cells[1].protection = 1;
+    var rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &cells,
+    }};
+    const source = sourceSnapshot(&rows, 2);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const font = try terminalFont();
+    defer font.deinit();
+    var host = try Harness.init(std.testing.allocator, font, rendererConfig(32));
+    defer host.deinit();
+
+    _ = try host.present(view);
+    try std.testing.expectEqual(@as(usize, 0), terminal.usage(host.renderer).shape.entries);
+}
+
 test "terminal renderer routes bold italic combinations through independent font owners" {
     var scalar = [_]u32{'A'};
     var cells = [_]client.rich.Cell{

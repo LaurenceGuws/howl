@@ -3,71 +3,79 @@
 //! The snapshot exists only for one synchronous projection call. No VT storage
 //! or observation borrow survives the update.
 
-const std = @import("std");
 const VT = @import("howl_vt").Terminal;
 const semantic = @import("source");
 
 const kitty_image_placeholder: u32 = 0x10eeee;
 
+/// Implements the source-neutral renderer contract over one borrowed canonical VT cut.
 pub const Source = struct {
+    /// Copies small view/presentation handles for one synchronous projection.
+    /// `images` and the SemanticView backing screen remain VT-borrowed until mutation.
     pub const Snapshot = struct {
         view: VT.SemanticView,
         colors: VT.Presentation,
         images: VT.Images,
     };
 
+    /// Identifies one visible canonical VT row by its bounded numeric index.
     pub const Row = u16;
+    /// Copies one canonical VT cell value while its extended scalar tail remains view-addressed.
     pub const Cell = VT.Cell;
+    /// Direct VT observations expose no revision-relative changed-row contract.
     pub const supports_incremental = false;
 
+    /// Returns the declared visible terminal row count.
     pub fn rows(snapshot: *const Snapshot) u16 {
         return snapshot.view.rows;
     }
 
+    /// Returns the declared physical terminal column count.
     pub fn columns(snapshot: *const Snapshot) u16 {
         return snapshot.view.cols;
     }
 
+    /// Returns the canonical cursor row in the current visible view.
     pub fn cursorRow(snapshot: *const Snapshot) u16 {
         return snapshot.view.cursor_row;
     }
 
+    /// Returns the canonical cursor column in the current visible view.
     pub fn cursorColumn(snapshot: *const Snapshot) u16 {
         return snapshot.view.cursor_col;
     }
 
+    /// Reports canonical cursor visibility before renderer surface clipping.
     pub fn cursorVisible(snapshot: *const Snapshot) bool {
         return snapshot.view.cursor_visible;
     }
 
-    pub fn historyOffset(snapshot: *const Snapshot) u32 {
-        return snapshot.view.history_offset;
-    }
-
-    pub fn alternateScreen(snapshot: *const Snapshot) bool {
-        return snapshot.view.is_alternate_screen;
-    }
-
+    /// Borrows the presentation copy retained by this synchronous adapter snapshot.
     pub fn presentation(snapshot: *const Snapshot) *const VT.Presentation {
         return &snapshot.colors;
     }
 
+    /// Returns the number of physically exposed row records for geometry validation.
     pub fn rowCount(snapshot: *const Snapshot) usize {
         return snapshot.view.rows;
     }
 
+    /// Maps one validated dense row-record index to its canonical VT row identity.
     pub fn rowAt(_: *const Snapshot, index: usize) Row {
         return @intCast(index);
     }
 
+    /// Returns the number of physically exposed cells for one canonical row.
     pub fn rowCellCount(snapshot: *const Snapshot, _: Row) usize {
         return snapshot.view.cols;
     }
 
+    /// Copies one canonical cell at already-validated physical row/column coordinates.
     pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
         return snapshot.view.cellInfoAt(row, @intCast(column));
     }
 
+    /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
     pub fn lineGeometry(snapshot: *const Snapshot, row: Row) semantic.LineGeometry {
         return switch (snapshot.view.lineGeometry(row)) {
             .single_width => .single_width,
@@ -77,6 +85,8 @@ pub const Source = struct {
         };
     }
 
+    /// Borrows/copies one lead cell's complete scalar cluster into caller scratch.
+    /// Continuation and blank cells intentionally expose an empty sequence.
     pub fn cellScalars(
         snapshot: *const Snapshot,
         row: usize,
@@ -95,6 +105,7 @@ pub const Source = struct {
         return output[0..sequence.len];
     }
 
+    /// Copies only rendition bits that directly affect this untimed frame projection.
     pub fn cellStyle(cell: Cell) semantic.CellStyle {
         return .{
             .bold = cell.attrs.bold,
@@ -107,18 +118,22 @@ pub const Source = struct {
         };
     }
 
+    /// Returns the terminal font slot independently of VT's packed field width.
     pub fn cellFont(cell: Cell) u8 {
         return cell.attrs.font;
     }
 
+    /// Returns the encoded baseline selector independently of VT's enum type.
     pub fn cellBaseline(cell: Cell) u8 {
         return @backingInt(cell.attrs.baseline);
     }
 
+    /// Returns the encoded underline style independently of VT's enum type.
     pub fn cellUnderlineStyle(cell: Cell) u8 {
         return @backingInt(cell.attrs.underline_style);
     }
 
+    /// Normalizes one requested cell color role without leaking VT color types.
     pub fn cellColor(cell: Cell, role: semantic.ColorRole) semantic.TextColor {
         const value = switch (role) {
             .foreground => cell.attrs.fg,
@@ -135,36 +150,19 @@ pub const Source = struct {
         };
     }
 
-    pub fn sameCellRendition(left: Cell, right: Cell) bool {
-        return std.meta.eql(left.attrs, right.attrs);
-    }
-
+    /// Recognizes Kitty's reserved Unicode placement scalar at the source boundary.
     pub fn isImagePlaceholder(_: *const Snapshot, _: usize, _: usize, sequence: []const u32) bool {
         // The adapter recognizes Kitty's reserved Unicode placeholder scalar;
         // the renderer itself remains unaware of that protocol encoding.
         return sequence.len != 0 and sequence[0] == kitty_image_placeholder;
     }
 
+    /// Borrows the coherent VT image/placement view captured for this history cut.
     pub fn graphics(snapshot: *const Snapshot) VT.Images {
         return snapshot.images;
     }
 
-    pub fn observationRevision(_: *const Snapshot) u64 {
-        return 0;
-    }
-
-    pub fn changedRowsBaseRevision(_: *const Snapshot) ?u64 {
-        return null;
-    }
-
-    pub fn changedRows(_: *const Snapshot) ?[]const bool {
-        return null;
-    }
-
-    pub fn rowShift(_: *const Snapshot) ?u16 {
-        return null;
-    }
-
+    /// Normalizes canonical cursor geometry without carrying source enum identity.
     pub fn cursorShape(snapshot: *const Snapshot) semantic.CursorShape {
         return switch (snapshot.view.cursor_shape) {
             .block => .block,
@@ -174,10 +172,12 @@ pub const Source = struct {
         };
     }
 
+    /// Returns every retained canonical image record, including currently hidden images.
     pub fn graphicsImageCount(state: VT.Images) usize {
         return state.imageCount();
     }
 
+    /// Normalizes one retained VT image into renderer-private identity and extent.
     pub fn graphicsImage(state: VT.Images, index: usize) semantic.Image {
         const value = state.image(index).?;
         return .{
@@ -188,10 +188,12 @@ pub const Source = struct {
         };
     }
 
+    /// Returns the bounded placement index space for this visible VT cut.
     pub fn graphicsPlacementCount(state: VT.Images) usize {
         return state.placementCount();
     }
 
+    /// Copies one visible physical or virtual placement, skipping absent index slots.
     pub fn graphicsPlacement(state: VT.Images, index: usize) ?semantic.ImagePlacement {
         const value = state.placement(index) orelse return null;
         return .{
@@ -211,6 +213,7 @@ pub const Source = struct {
         };
     }
 
+    /// Reports whether any visible placement currently references one retained image.
     pub fn graphicsImageVisible(state: VT.Images, image_id: u32) bool {
         var index: usize = 0;
         while (index < state.placementCount()) : (index += 1) {

@@ -38,15 +38,6 @@ fn color(cell: anytype, role: semantic.ColorRole) semantic.TextColor {
     };
 }
 
-fn sameRendition(left: anytype, right: @TypeOf(left)) bool {
-    return left.style_bits == right.style_bits and left.font == right.font and
-        left.baseline == right.baseline and left.underline_style == right.underline_style and
-        left.protection == right.protection and left.link_id == right.link_id and
-        std.meta.eql(left.foreground, right.foreground) and
-        std.meta.eql(left.background, right.background) and
-        std.meta.eql(left.underline_color, right.underline_color);
-}
-
 fn image(value: View.Image) semantic.Image {
     return .{
         .image_id = value.image_id,
@@ -119,10 +110,6 @@ fn SourceMixin(comptime SnapshotType: type, comptime RowType: type, comptime Cel
             return color(cell, role);
         }
 
-        pub fn sameCellRendition(left: Cell, right: Cell) bool {
-            return sameRendition(left, right);
-        }
-
         pub fn isImagePlaceholder(_: *const Snapshot, _: usize, _: usize, sequence: []const u32) bool {
             return View.isImagePlaceholder(sequence);
         }
@@ -163,7 +150,6 @@ pub const Owned = struct {
     pub const cellBaseline = Mixin.cellBaseline;
     pub const cellUnderlineStyle = Mixin.cellUnderlineStyle;
     pub const cellColor = Mixin.cellColor;
-    pub const sameCellRendition = Mixin.sameCellRendition;
     pub const isImagePlaceholder = Mixin.isImagePlaceholder;
     pub const graphicsImageCount = Mixin.graphicsImageCount;
     pub const graphicsImage = Mixin.graphicsImage;
@@ -270,7 +256,6 @@ pub const RichView = struct {
     pub const cellBaseline = Mixin.cellBaseline;
     pub const cellUnderlineStyle = Mixin.cellUnderlineStyle;
     pub const cellColor = Mixin.cellColor;
-    pub const sameCellRendition = Mixin.sameCellRendition;
     pub const isImagePlaceholder = Mixin.isImagePlaceholder;
     pub const graphicsImageCount = Mixin.graphicsImageCount;
     pub const graphicsImage = Mixin.graphicsImage;

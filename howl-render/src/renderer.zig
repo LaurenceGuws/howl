@@ -589,7 +589,7 @@ fn updateInnerOnce(
     errdefer impl.incremental_ready = false;
     const rows = Source.rows(snapshot);
     const surface = try contentSurfaceSize(rows, Source.columns(snapshot), impl.config.cell_size);
-    const changed_rows = Source.changedRows(snapshot);
+    const changed_rows = sourceChangedRows(Source, snapshot);
     const wants_incremental = changed_rows != null;
     const incremental_plan = if (wants_incremental)
         try planIncrementalRows(Source, owner, snapshot)
@@ -1308,12 +1308,16 @@ fn contentIsContextualOperatorCell(
         value >= 0x7b and value <= 0x7e;
 }
 
-fn contentSameContextualRendition(
+fn contentSameContextualGlyphPresentation(
     comptime Source: type,
-    left: Source.Cell,
-    right: Source.Cell,
-) bool {
-    return Source.sameCellRendition(left, right);
+    cell: Source.Cell,
+    presentation: anytype,
+    font_variant: FontVariant,
+    foreground: frame_vocabulary.Color,
+) Error!bool {
+    if (contentFontVariant(Source.cellStyle(cell)) != font_variant) return false;
+    const colors = try contentCellColors(Source, cell, presentation);
+    return std.meta.eql(colors.foreground, foreground);
 }
 
 fn contentContextualClustersPreserveCells(glyphs: []const text.Glyph, cell_count: usize) bool {
@@ -1682,7 +1686,7 @@ fn planIncrementalRows(
     content: *Renderer,
     snapshot: *const Source.Snapshot,
 ) Error!?IncrementalPlan {
-    if (!Source.supports_incremental) return null;
+    if (comptime !Source.supports_incremental) return null;
     const impl = rendererImpl(content);
     if (!impl.incremental_ready or impl.incremental_commands.len == 0 or
         impl.incremental_rows.len == 0)
@@ -1745,7 +1749,7 @@ fn rememberIncrementalCommands(
     content: *Renderer,
     snapshot: *const Source.Snapshot,
 ) void {
-    if (!Source.supports_incremental) return;
+    if (comptime !Source.supports_incremental) return;
     const impl = rendererImpl(content);
     const rows = Source.rows(snapshot);
     if (rows == 0 or rows > impl.incremental_rows.len) {
@@ -1784,6 +1788,14 @@ fn rememberIncrementalCommands(
     impl.incremental_source_revision = Source.observationRevision(snapshot);
     impl.incremental_command_count = used;
     impl.incremental_ready = true;
+}
+
+fn sourceChangedRows(
+    comptime Source: type,
+    snapshot: *const Source.Snapshot,
+) ?[]const bool {
+    if (comptime Source.supports_incremental) return Source.changedRows(snapshot);
+    return null;
 }
 
 const ContentProjection = struct {
@@ -1996,8 +2008,14 @@ fn buildContentCommands(
                     const next = Source.cellAt(snapshot, row, run_end);
                     var next_scalar_scratch: [24]u32 = undefined;
                     const next_sequence = Source.cellScalars(snapshot, row_index, run_end, next, &next_scalar_scratch);
-                    if (!contentSameContextualRendition(Source, cell, next)) break;
                     if (!try contentIsContextualOperatorCell(Source, next, next_sequence)) break;
+                    if (!try contentSameContextualGlyphPresentation(
+                        Source,
+                        next,
+                        presentation,
+                        font_variant,
+                        colors.foreground,
+                    )) break;
                     operator_scalars[run_end - column] = next_sequence[0];
                 }
                 if (run_end - column >= 2) {
