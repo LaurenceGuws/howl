@@ -15,8 +15,6 @@ fn style(cell: anytype) semantic.CellStyle {
         .bold = value.bold,
         .dim = value.dim,
         .italic = value.italic,
-        .blink = value.blink,
-        .blink_fast = value.blink_fast,
         .reverse = value.reverse,
         .invisible = value.invisible,
         .underline = value.underline,
