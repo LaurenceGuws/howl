@@ -4154,13 +4154,12 @@ pub const Screen = struct {
         var row = top;
         while (row < bottom_exclusive) : (row += 1) {
             const row_start = self.rowStart(row);
-            var col = left;
-            while (col < right_exclusive) : (col += 1) {
-                const cell = &cells[@intCast(row_start + col)];
+            const boundary = cells[@intCast(row_start + left)..@intCast(row_start + right_exclusive)];
+            for (boundary, left..) |*cell, col| {
                 if (cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0)
                     continue;
                 if (isSemanticWideCell(cell.*)) continue;
-                changed = self.clearClusterAt(row, col, false) or changed;
+                changed = self.clearClusterAt(row, @intCast(col), false) or changed;
             }
         }
         return changed;
