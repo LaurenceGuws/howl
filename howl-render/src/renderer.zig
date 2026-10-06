@@ -164,6 +164,9 @@ pub const Error = AtlasError || ShapeCacheError || frame_vocabulary.Error || err
     ImageLimit,
     InvalidPresentationGeometry,
     CommandLimit,
+    MissingExternalResource,
+    ResourceLimit,
+    PixelLimit,
     RevisionOverflow,
     ResourceIdentityOverflow,
     ResourceGenerationOverflow,
@@ -980,7 +983,7 @@ fn appendProjectedInput(
 ) Error!void {
     if (used.* == commands.len) return error.CommandLimit;
     var one = [_]frame_vocabulary.Input{input};
-    const projected = try frame_vocabulary.project(surface, &one, commands[used.*..]);
+    const projected = try frame_vocabulary.projectPrepared(surface, &one, commands[used.*..]);
     if (projected.len == 1) used.* += 1;
 }
 

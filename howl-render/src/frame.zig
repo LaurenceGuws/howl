@@ -7,6 +7,7 @@
 const std = @import("std");
 const validation = @import("frame_validation.zig");
 
+/// Reports malformed frame geometry, resource syntax, residency, or caller storage.
 pub const Error = error{
     InvalidSurface,
     InvalidRectangle,
@@ -19,53 +20,66 @@ pub const Error = error{
     AliasedStorage,
     InsufficientCommands,
     InvalidResidency,
-    MissingExternalResource,
-    ResourceLimit,
-    PixelLimit,
 };
 
+/// Carries exact 8-bit RGBA channels without choosing backend sampling representation.
 pub const Color = packed struct(u32) { r: u8, g: u8, b: u8, a: u8 };
+/// Names a pixel extent; accepting frame boundaries require both dimensions nonzero.
 pub const Size = struct { width: u16, height: u16 };
+/// Names a signed destination/clip rectangle with an unsigned pixel extent.
 pub const Rect = struct { x: i32, y: i32, width: u16, height: u16 };
+/// Selects one unsigned pixel sub-rectangle inside a complete retained resource.
 pub const SourceRect = struct { x: u16, y: u16, width: u16, height: u16 };
 
+/// Identifies one logical resource in this Renderer's collision-free resource space.
+/// Zero is reserved so malformed/uninitialized identities never name residency.
 pub const ResourceId = enum(u64) {
     _,
+    /// Largest logical identity representable in the resource space.
     pub const max_identity: u64 = std.math.maxInt(u64);
-    pub const InitError = error{InvalidIdentity};
+    const InitError = error{InvalidIdentity};
 
+    /// Constructs one nonzero logical resource identity.
     pub fn init(value: u64) InitError!ResourceId {
         if (value == 0) return error.InvalidIdentity;
         return @fromBackingInt(value);
     }
 
+    /// Validates an identity recovered from an encoded/backend representation.
     pub fn fromEncoded(value: u64) InitError!ResourceId {
         return init(value);
     }
 
+    /// Rejects the reserved zero identity.
     pub fn validate(self: ResourceId) InitError!void {
         if (@backingInt(self) == 0) return error.InvalidIdentity;
     }
 
+    /// Returns the validated nonzero logical identity value.
     pub fn identity(self: ResourceId) InitError!u64 {
         try self.validate();
         return @backingInt(self);
     }
 };
 
+/// Orders replacement content for one logical resource identity; zero is reserved.
 pub const ResourceGeneration = enum(u64) { _ };
+/// Selects the exact pixel representation required by one retained resource.
 pub const ResourceFormat = enum(u8) { alpha8, rgba8 };
 
+/// Names one exact occurrence of a logical resource.
 pub const ResourceRef = struct {
     resource: ResourceId,
     generation: ResourceGeneration,
 
+    /// Rejects reserved identity or generation values.
     pub fn validate(self: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
         try self.resource.validate();
         try validation.localIdentity(try self.resource.identity(), @backingInt(self.generation));
     }
 };
 
+/// Selects one complete resource or contained source region for sampling.
 pub const ResourceView = struct {
     resource: ResourceRef,
     format: ResourceFormat,
@@ -74,6 +88,7 @@ pub const ResourceView = struct {
     source: ?SourceRect = null,
 };
 
+/// Retains metadata for one Host-owned resource whose recovery bytes stay outside Render.
 pub const ExternalResource = struct {
     resource: ResourceRef,
     format: ResourceFormat,
@@ -81,12 +96,15 @@ pub const ExternalResource = struct {
     stride: usize,
 };
 
+/// Reports one exact backend resource occurrence available for drawing.
+/// Upload stride and backing bytes are intentionally backend-private here.
 pub const Residency = struct {
     resource: ResourceRef,
     format: ResourceFormat,
     size: Size,
 };
 
+/// Locates one Render-owned upload in caller-provided frame pixel storage.
 pub const FrameResourceUpload = struct {
     resource: ResourceRef,
     format: ResourceFormat,
@@ -96,6 +114,7 @@ pub const FrameResourceUpload = struct {
     stride: usize,
 };
 
+/// Names one visible Host-owned resource that exact backend residency does not satisfy.
 pub const FrameExternalResource = struct {
     resource: ResourceRef,
     format: ResourceFormat,
@@ -103,6 +122,7 @@ pub const FrameExternalResource = struct {
     stride: usize,
 };
 
+/// Supplies one ordered pre-projection draw fact with its caller-space clip.
 pub const Input = union(enum) {
     solid: struct { rect: Rect, clip: Rect, color: Color },
     alpha_mask: struct {
@@ -115,6 +135,8 @@ pub const Input = union(enum) {
     rgba: struct { destination: Rect, clip: Rect, resource: ResourceView },
 };
 
+/// Supplies one final surface-clipped backend draw command.
+/// Sampled commands retain destination plus visible clip so source mapping is unchanged.
 pub const Command = union(enum) {
     solid: struct { rect: Rect, color: Color },
     alpha_mask: struct {
@@ -127,7 +149,7 @@ pub const Command = union(enum) {
     rgba: struct { destination: Rect, clip: Rect, resource: ResourceView },
 };
 
-pub fn project(
+fn project(
     surface: Size,
     inputs: []const Input,
     commands: []Command,
@@ -209,6 +231,7 @@ pub fn projectPrepared(
     return commands[0..used];
 }
 
+/// Reports whether backend residency contains this exact occurrence, format, and extent.
 pub fn residencyMatches(
     residency: []const Residency,
     resource: ResourceRef,
@@ -223,6 +246,7 @@ pub fn residencyMatches(
     return false;
 }
 
+/// Validates nonzero exact residency and rejects duplicate logical resource identities.
 pub fn validateResidencies(residency: []const Residency) Error!void {
     for (residency, 0..) |value, index| {
         value.resource.validate() catch return error.InvalidResidency;
@@ -234,6 +258,7 @@ pub fn validateResidencies(residency: []const Residency) Error!void {
     }
 }
 
+/// Validates metadata for one Host-owned resource without requiring its recovery bytes.
 pub fn validateExternal(value: ExternalResource) Error!void {
     value.resource.validate() catch |err| return err;
     try validateExtent(value.size, null);
@@ -245,6 +270,7 @@ pub fn validateExternal(value: ExternalResource) Error!void {
     if (value.stride < row_bytes) return error.InvalidPixels;
 }
 
+/// Reports whether current pre-projection drawing references this exact resource occurrence.
 pub fn resourceVisible(inputs: []const Input, resource: ResourceRef) bool {
     for (inputs) |input| switch (input) {
         .solid => {},
@@ -254,14 +280,7 @@ pub fn resourceVisible(inputs: []const Input, resource: ResourceRef) bool {
     return false;
 }
 
-pub fn resourceReferencedByCommand(command: Command) ?ResourceView {
-    return switch (command) {
-        .solid => null,
-        .alpha_mask => |value| value.resource,
-        .rgba => |value| value.resource,
-    };
-}
-
+/// Intersects two checked nonzero rectangles without clipping to a surface.
 pub fn intersectRects(left: Rect, right: Rect) Error!?Rect {
     const a = try edges(left);
     const b = try edges(right);

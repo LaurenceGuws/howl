@@ -11,11 +11,6 @@ pub const Error = error{
     ArithmeticOverflow,
 };
 
-/// Rejects the reserved zero terminal source identity.
-pub fn sourceIdentity(value: u64) error{InvalidIdentity}!void {
-    if (value == 0) return error.InvalidIdentity;
-}
-
 /// Rejects reserved zero local identity or generation values.
 pub fn localIdentity(resource: u64, generation: u64) error{
     InvalidIdentity,
