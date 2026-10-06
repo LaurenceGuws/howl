@@ -125,7 +125,7 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
             return position / block_items;
         }
 
-        fn missingBlocksForAppend(self: *const Self, count: usize) error{Capacity}!usize {
+        fn missingBlocksForAppend(self: *const Self, count: usize, pop_count: usize) error{Capacity}!usize {
             if (count == 0) return 0;
             if (count > self.max_items) return error.Capacity;
             const last_position = std.math.add(
@@ -136,6 +136,8 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
             const first_number = blockNumber(self.tail);
             const last_number = blockNumber(last_position);
             const total: usize = @intCast(last_number - first_number + 1);
+            // Evicting every item detaches even the block containing the current tail.
+            if (pop_count != 0 and pop_count == self.len()) return total;
             const last = self.last orelse return total;
             if (last.number < first_number) return total;
             std.debug.assert(last.number == first_number);
@@ -165,10 +167,11 @@ fn Stream(comptime T: type, comptime block_items: usize) type {
         fn prepareAppend(
             self: *Self,
             count: usize,
-            future_reusable: usize,
+            pop_count: usize,
         ) error{ OutOfMemory, Capacity }!Stage {
-            const missing = try self.missingBlocksForAppend(count);
-            const available = future_reusable + @intFromBool(self.spare != null);
+            std.debug.assert(pop_count <= self.len());
+            const missing = try self.missingBlocksForAppend(count, pop_count);
+            const available = self.releasedBlocksForPopFront(pop_count) + @intFromBool(self.spare != null);
             var fresh = missing -| available;
             var stage = Stage{};
             errdefer stage.deinit(self);
@@ -576,24 +579,11 @@ pub const Store = struct {
         if (!self.canAppend(shape_value, drop_oldest)) return error.Capacity;
 
         const outgoing = if (drop_oldest) self.rowAtLogical(0) else null;
-        const cell_reusable = if (outgoing) |row|
-            self.cells.releasedBlocksForPopFront(row.cell_count)
-        else
-            0;
-        const attr_reusable = if (outgoing) |row|
-            self.attrs.releasedBlocksForPopFront(row.attr_count)
-        else
-            0;
-        const scalar_reusable = if (outgoing) |row|
-            self.scalars.releasedBlocksForPopFront(row.scalar_count)
-        else
-            0;
-
-        var cell_stage = try self.cells.prepareAppend(shape_value.cells, cell_reusable);
+        var cell_stage = try self.cells.prepareAppend(shape_value.cells, if (outgoing) |row| row.cell_count else 0);
         errdefer self.cells.discardStage(&cell_stage);
-        var attr_stage = try self.attrs.prepareAppend(shape_value.attrs, attr_reusable);
+        var attr_stage = try self.attrs.prepareAppend(shape_value.attrs, if (outgoing) |row| row.attr_count else 0);
         errdefer self.attrs.discardStage(&attr_stage);
-        var scalar_stage = try self.scalars.prepareAppend(shape_value.scalars, scalar_reusable);
+        var scalar_stage = try self.scalars.prepareAppend(shape_value.scalars, if (outgoing) |row| row.scalar_count else 0);
         errdefer self.scalars.discardStage(&scalar_stage);
 
         return .{
@@ -1124,4 +1114,39 @@ test "history store bulk cell spans preserve block crossings and evicted row pay
     }
     try std.testing.expectEqual(@as(u32, 3), store.count());
     try std.testing.expectEqual(@as(u32, 6), store.base());
+}
+
+test "history capacity one prepares detached tail blocks before eviction and preserves allocation failure" {
+    var cells: [80]Cell = @splat(cell_values.blank);
+    for (&cells, 0..) |*value, index| {
+        value.codepoint = 'x';
+        value.attrs.bg = .indexed(@intCast(index % 3));
+    }
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var store = try Store.init(failing.allocator(), 1, 80, 0);
+    defer store.deinit();
+    const source = Source{ .cells = &cells, .scalars = &scalars, .scalar_start = 0, .wrapped = false, .geometry = .single_width };
+    for (0..12) |_| {
+        var prepared = try store.preparePush(source);
+        store.commitPush(&prepared);
+    }
+    const before_base = store.base();
+    cells[0].codepoint = 'A';
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, store.preparePush(source));
+    try std.testing.expectEqual(@as(u32, 1), store.count());
+    try std.testing.expectEqual(before_base, store.base());
+    try std.testing.expectEqual(@as(u32, 'x'), store.cellAtLogical(0, 0).codepoint);
+    failing.fail_index = std.math.maxInt(usize);
+    for (0..64) |sequence| {
+        cells[0].codepoint = @intCast('A' + sequence % 26);
+        var prepared = try store.preparePush(source);
+        store.commitPush(&prepared);
+        for (cells, 0..) |expected, column|
+            try std.testing.expectEqualDeep(expected, store.cellAtLogical(0, @intCast(column)));
+        try std.testing.expectEqual(@as(u32, 1), store.count());
+        try std.testing.expectEqual(before_base + 1 + @as(u32, @intCast(sequence)), store.base());
+    }
 }
