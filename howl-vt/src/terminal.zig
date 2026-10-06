@@ -4264,6 +4264,13 @@ const TerminalStream = struct {
 
     fn applyExecute(self: *TerminalStream, ctrl: u8) TerminalFeedError!EventEffect {
         switch (ctrl) {
+            0x0D => {
+                self.terminal.screen_state.active().applyScreen(.carriage_return);
+                return .{
+                    .changed = true,
+                    .suppress_owner_fallback = true,
+                };
+            },
             0x0E, 0x0F, 0x8E, 0x8F => {
                 const slot: u8 = switch (ctrl) {
                     0x0E => 1,
@@ -9021,6 +9028,31 @@ const RouteOwnerTests = struct {
         rejected = cup;
         rejected.intermediates_len = 1;
         try std.testing.expect(stream.applyDirectOrdinaryCsi(rejected) == null);
+    }
+
+    test "hot carriage return matches generic control semantics" {
+        var direct = try Terminal.init(std.testing.allocator, 2, 4);
+        defer direct.deinit();
+        var generic = try Terminal.init(std.testing.allocator, 2, 4);
+        defer generic.deinit();
+
+        try std.testing.expectEqualDeep(try direct.feed("ABCD"), try generic.feed("ABCD"));
+        var direct_stream = TerminalStream.init(&direct);
+        var generic_stream = TerminalStream.init(&generic);
+        const direct_effect = try direct_stream.applyExecute(0x0d);
+        const generic_effect = try generic_stream.applyEvent(.{ .control = 0x0d });
+
+        try std.testing.expectEqualDeep(generic_effect, direct_effect);
+        try std.testing.expectEqualDeep(
+            generic.screen_state.activeConst().cursor,
+            direct.screen_state.activeConst().cursor,
+        );
+        try std.testing.expectEqual(
+            generic.screen_state.activeConst().wrap_pending,
+            direct.screen_state.activeConst().wrap_pending,
+        );
+        try std.testing.expectEqual(@as(u16, 0), direct.screen_state.activeConst().cursor.col);
+        try std.testing.expect(!direct.screen_state.activeConst().wrap_pending);
     }
 
     test "ground printable fast path preserves charset-mapped text semantics" {
