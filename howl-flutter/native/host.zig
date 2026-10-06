@@ -4,9 +4,9 @@ const client = @import("howl_client");
 const local = @import("howl_local");
 const server_client = @import("server_client");
 const protocol = client.protocol;
-const text = @import("howl_text");
 const terminal = @import("terminal");
-const limits = @import("limits");
+const text = terminal.text;
+const limits = terminal.limits;
 
 const host_header_bytes: usize = 64;
 const global_header_bytes: usize = 16;

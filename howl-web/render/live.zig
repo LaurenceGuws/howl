@@ -1,7 +1,8 @@
 //! Live browser renderer: framed Howl snapshot bytes -> shared view/text/terminal-renderer state.
 const std = @import("std");
 const client = @import("howl_client");
-const render = @import("howl_render");
+const terminal = @import("howl_client_render");
+const render = terminal;
 const text = render.text;
 const p = client.protocol;
 
@@ -15,7 +16,7 @@ const command_record_bytes: usize = 64;
 const command_wire_bytes: usize = command_capacity * command_record_bytes;
 const metadata_capacity: usize = 32 * 1024 * 1024;
 const atlas_bytes = 1024 * 1024;
-const maximum_terminal_images: usize = render.terminal.maximum_external_images;
+const maximum_terminal_images: usize = terminal.maximum_external_images;
 const residency_capacity = maximum_terminal_images + 1;
 
 comptime {
@@ -41,15 +42,15 @@ var published_projection: usize = 0;
 var pending_projection: usize = 1;
 var pixels: [atlas_bytes]u8 = undefined;
 var pixels_used: usize = 0;
-var frame_uploads: [residency_capacity]render.terminal.FrameResourceUpload = undefined;
-var frame_removals: [residency_capacity]render.terminal.ResourceRef = undefined;
-var frame_commands: [command_capacity]render.terminal.Command = undefined;
-var accepted_residency: [residency_capacity]render.terminal.Residency = undefined;
+var frame_uploads: [residency_capacity]terminal.FrameResourceUpload = undefined;
+var frame_removals: [residency_capacity]terminal.ResourceRef = undefined;
+var frame_commands: [command_capacity]terminal.Command = undefined;
+var accepted_residency: [residency_capacity]terminal.Residency = undefined;
 var accepted_residency_count: usize = 0;
-var pending_residency: [residency_capacity]render.terminal.Residency = undefined;
+var pending_residency: [residency_capacity]terminal.Residency = undefined;
 var pending_residency_count: usize = 0;
-var missing_external_storage: [maximum_terminal_images]render.terminal.FrameExternalResource = undefined;
-var missing_external: ?render.terminal.FrameExternalResource = null;
+var missing_external_storage: [maximum_terminal_images]terminal.FrameExternalResource = undefined;
+var missing_external: ?terminal.FrameExternalResource = null;
 var image_bindings: [maximum_terminal_images]ImageBinding = undefined;
 var image_binding_count: usize = 0;
 var missing_image_binding: ?ImageBinding = null;
@@ -59,21 +60,21 @@ var failure: []const u8 = "";
 var persistent = std.heap.FixedBufferAllocator.init(&persistent_heap);
 var transient = std.heap.FixedBufferAllocator.init(&transient_heap);
 var fonts: ?*text.FontSet = null;
-var terminal_renderer: ?*render.terminal.Renderer = null;
+var terminal_renderer: ?*terminal.Renderer = null;
 var renderer_ready = false;
-var cell_size: render.terminal.Size = .{ .width = 1, .height = 1 };
-var surface: render.terminal.Size = .{ .width = 1, .height = 1 };
+var cell_size: terminal.Size = .{ .width = 1, .height = 1 };
+var surface: terminal.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
 const FrameFormat = enum(u32) { v2 = 2, v3 = 3, v4 = 4 };
 // Boot in the last deployed format so an old host may safely consume a newer
 // renderer. A v3-aware host opts in before it opens its observation streams.
 var frame_format: FrameFormat = .v2;
 
-const ImageBinding = render.terminal.ExternalImageBinding;
+const ImageBinding = terminal.ExternalImageBinding;
 
 const PendingExternal = struct {
     binding: ImageBinding,
-    external: render.terminal.FrameExternalResource,
+    external: terminal.FrameExternalResource,
 };
 
 const RenderResult = enum {
@@ -233,7 +234,7 @@ fn initRenderer(
     fallback_font_length: usize,
     symbol_font_length: usize,
     font_pixels: u32,
-    requested_cell: ?render.terminal.Size,
+    requested_cell: ?terminal.Size,
 ) u32 {
     if (renderer_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
         fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
@@ -271,11 +272,11 @@ fn initRenderer(
     @memset(fallback_font_input[0..fallback_font_length], 0x5a);
     @memset(symbol_font_input[0..symbol_font_length], 0x3c);
     const metrics = new_fonts.metrics();
-    const presentation_cell = requested_cell orelse render.terminal.Size{
+    const presentation_cell = requested_cell orelse terminal.Size{
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const new_renderer = render.terminal.init(allocator, render.terminal.FontFaces.single(new_fonts), .{
+    const new_renderer = terminal.init(allocator, terminal.FontFaces.single(new_fonts), .{
         .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
@@ -292,7 +293,7 @@ fn initRenderer(
         .raster_bytes = 256 * 1024,
         .command_capacity = command_capacity,
     }) catch |err| return fail(@errorName(err));
-    errdefer render.terminal.deinit(new_renderer);
+    errdefer terminal.deinit(new_renderer);
 
     fonts = new_fonts;
     terminal_renderer = new_renderer;
@@ -303,7 +304,7 @@ fn initRenderer(
 
 export fn rv_reset() u32 {
     if (renderer_ready) {
-        render.terminal.deinit(terminal_renderer.?);
+        terminal.deinit(terminal_renderer.?);
         fonts.?.deinit();
     }
     fonts = null;
@@ -360,7 +361,7 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
         .width = std.math.mul(u16, begin.columns, cell_size.width) catch return error.SurfaceOverflow,
         .height = std.math.mul(u16, begin.rows, cell_size.height) catch return error.SurfaceOverflow,
     };
-    const frame = render.terminal.frame(terminal_renderer.?, accepted_residency[0..accepted_residency_count], .{
+    const frame = terminal.frame(terminal_renderer.?, accepted_residency[0..accepted_residency_count], .{
         .uploads = &frame_uploads,
         .removals = &frame_removals,
         .commands = &frame_commands,
@@ -389,7 +390,7 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
 export fn rv_accept_external() u32 {
     if (!renderer_ready or pending_ack) return 0;
     const value = missing_external orelse return 0;
-    const residency = render.terminal.Residency{
+    const residency = terminal.Residency{
         .resource = value.resource,
         .format = value.format,
         .size = value.size,
@@ -415,23 +416,23 @@ fn updateRenderer(view: *const client.view.Snapshot) !void {
     if (graphics.images.len > maximum_terminal_images)
         return error.UnsupportedGraphics;
     var candidate: [maximum_terminal_images]ImageBinding = undefined;
-    const bindings = render.terminal.planExternalImageBindings(
+    const bindings = terminal.planExternalImageBindings(
         image_bindings[0..image_binding_count],
-        render.terminal.usage(terminal_renderer.?),
+        terminal.usage(terminal_renderer.?),
         graphics.images,
         &candidate,
     ) catch |err| switch (err) {
         error.ImageLimit => return error.UnsupportedGraphics,
         else => return err,
     };
-    try render.terminal.updateWithImageBindings(terminal_renderer.?, view, bindings);
+    try terminal.updateWithImageBindings(terminal_renderer.?, view, bindings);
     @memcpy(image_bindings[0..bindings.len], bindings);
     image_binding_count = bindings.len;
 }
 
 fn findImageBindingByResource(
     bindings: []const ImageBinding,
-    resource: render.terminal.ResourceRef,
+    resource: terminal.ResourceRef,
 ) ?ImageBinding {
     for (bindings) |binding| {
         if (binding.resource.resource == resource.resource and
@@ -441,7 +442,7 @@ fn findImageBindingByResource(
     return null;
 }
 
-fn selectMissingExternal(missing: []const render.terminal.FrameExternalResource) !PendingExternal {
+fn selectMissingExternal(missing: []const terminal.FrameExternalResource) !PendingExternal {
     if (missing.len == 0 or missing.len > image_binding_count)
         return error.InvalidExternalResource;
     var selected: ?PendingExternal = null;
@@ -457,7 +458,7 @@ fn selectMissingExternal(missing: []const render.terminal.FrameExternalResource)
 }
 
 fn prepareMissingExternal() !void {
-    const missing = try render.terminal.missingExternalResources(
+    const missing = try terminal.missingExternalResources(
         terminal_renderer.?,
         accepted_residency[0..accepted_residency_count],
         &missing_external_storage,
@@ -477,15 +478,15 @@ export fn rv_ack() u32 {
     return 1;
 }
 
-fn exactResourceEqual(a: render.terminal.ResourceRef, b: render.terminal.ResourceRef) bool {
+fn exactResourceEqual(a: terminal.ResourceRef, b: terminal.ResourceRef) bool {
     return @backingInt(a.resource) == @backingInt(b.resource) and
         @backingInt(a.generation) == @backingInt(b.generation);
 }
 
-fn collectPendingResidency(commands: []const render.terminal.Command) error{ResidencyLimit}!void {
+fn collectPendingResidency(commands: []const terminal.Command) error{ResidencyLimit}!void {
     pending_residency_count = 0;
     for (commands) |command| {
-        const view: ?render.terminal.ResourceView = switch (command) {
+        const view: ?terminal.ResourceView = switch (command) {
             .solid => null,
             .alpha_mask => |value| value.resource,
             .rgba => |value| value.resource,
@@ -510,7 +511,7 @@ fn collectPendingResidency(commands: []const render.terminal.Command) error{Resi
 }
 
 fn writeFrame(
-    frame: render.terminal.Frame,
+    frame: terminal.Frame,
     snapshot: *const client.view.Snapshot,
     observation_revision: u64,
     terminal_revision: u64,
@@ -524,7 +525,7 @@ fn writeFrame(
 }
 
 fn writeFrameV2(
-    frame: render.terminal.Frame,
+    frame: terminal.Frame,
     snapshot: *const client.view.Snapshot,
     observation_revision: u64,
     terminal_revision: u64,
@@ -608,7 +609,7 @@ fn writeFrameV2(
 }
 
 fn writeFrameV3(
-    frame: render.terminal.Frame,
+    frame: terminal.Frame,
     snapshot: *const client.view.Snapshot,
     observation_revision: u64,
     terminal_revision: u64,
@@ -698,7 +699,7 @@ fn writeFrameV3(
 }
 
 fn writeFrameV4(
-    frame: render.terminal.Frame,
+    frame: terminal.Frame,
     snapshot: *const client.view.Snapshot,
     observation_revision: u64,
     terminal_revision: u64,
@@ -744,7 +745,7 @@ fn writeFrameV4(
     metadata_used = writer.end;
 }
 
-fn writeCommandWire(commands: []const render.terminal.Command) !void {
+fn writeCommandWire(commands: []const terminal.Command) !void {
     if (commands.len > command_capacity) return error.InvalidSnapshot;
     for (commands, 0..) |command, index| {
         const record = metadata[index * command_record_bytes ..][0..command_record_bytes];
@@ -778,75 +779,75 @@ fn writeCommandWire(commands: []const render.terminal.Command) !void {
     command_wire_count = commands.len;
 }
 
-fn writeWireRect(record: []u8, offset: usize, value: render.terminal.Rect) void {
+fn writeWireRect(record: []u8, offset: usize, value: terminal.Rect) void {
     std.mem.writeInt(i32, record[offset..][0..4], value.x, .little);
     std.mem.writeInt(i32, record[offset + 4 ..][0..4], value.y, .little);
     std.mem.writeInt(u16, record[offset + 8 ..][0..2], value.width, .little);
     std.mem.writeInt(u16, record[offset + 10 ..][0..2], value.height, .little);
 }
 
-fn writeWireResource(record: []u8, value: render.terminal.ResourceView) void {
+fn writeWireResource(record: []u8, value: terminal.ResourceView) void {
     std.mem.writeInt(u64, record[32..40], @backingInt(value.resource.resource), .little);
     std.mem.writeInt(u64, record[40..48], @backingInt(value.resource.generation), .little);
     std.mem.writeInt(u16, record[48..50], value.size.width, .little);
     std.mem.writeInt(u16, record[50..52], value.size.height, .little);
 }
 
-fn writeWireSource(record: []u8, source: ?render.terminal.SourceRect, size: render.terminal.Size) void {
-    const value = source orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeWireSource(record: []u8, source: ?terminal.SourceRect, size: terminal.Size) void {
+    const value = source orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     std.mem.writeInt(u16, record[52..54], value.x, .little);
     std.mem.writeInt(u16, record[54..56], value.y, .little);
     std.mem.writeInt(u16, record[56..58], value.width, .little);
     std.mem.writeInt(u16, record[58..60], value.height, .little);
 }
 
-fn writeWireColor(record: []u8, value: render.terminal.Color) void {
+fn writeWireColor(record: []u8, value: terminal.Color) void {
     record[60] = value.r;
     record[61] = value.g;
     record[62] = value.b;
     record[63] = value.a;
 }
 
-fn writeQualified(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
+fn writeQualified(writer: *std.Io.Writer, value: terminal.ResourceRef) !void {
     try writer.print("[{d},{d}]", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeQualifiedStrings(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
+fn writeQualifiedStrings(writer: *std.Io.Writer, value: terminal.ResourceRef) !void {
     try writer.print("[\"{d}\",\"{d}\"]", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeQualifiedFields(writer: *std.Io.Writer, value: render.terminal.ResourceRef) !void {
+fn writeQualifiedFields(writer: *std.Io.Writer, value: terminal.ResourceRef) !void {
     try writer.print("{d},{d}", .{
         @backingInt(value.resource), @backingInt(value.generation),
     });
 }
 
-fn writeRect(writer: *std.Io.Writer, value: render.terminal.Rect) !void {
+fn writeRect(writer: *std.Io.Writer, value: terminal.Rect) !void {
     try writer.print("[{d},{d},{d},{d}]", .{ value.x, value.y, value.width, value.height });
 }
 
-fn writeColor(writer: *std.Io.Writer, value: render.terminal.Color) !void {
+fn writeColor(writer: *std.Io.Writer, value: terminal.Color) !void {
     try writer.print("[{d},{d},{d},{d}]", .{ value.r, value.g, value.b, value.a });
 }
 
-fn writeSourceRect(writer: *std.Io.Writer, value: ?render.terminal.SourceRect, size: render.terminal.Size) !void {
-    const source = value orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeSourceRect(writer: *std.Io.Writer, value: ?terminal.SourceRect, size: terminal.Size) !void {
+    const source = value orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     try writer.print("[{d},{d},{d},{d}]", .{ source.x, source.y, source.width, source.height });
 }
 
-fn writeRectFields(writer: *std.Io.Writer, value: render.terminal.Rect) !void {
+fn writeRectFields(writer: *std.Io.Writer, value: terminal.Rect) !void {
     try writer.print("{d},{d},{d},{d}", .{ value.x, value.y, value.width, value.height });
 }
 
-fn writeColorFields(writer: *std.Io.Writer, value: render.terminal.Color) !void {
+fn writeColorFields(writer: *std.Io.Writer, value: terminal.Color) !void {
     try writer.print("{d},{d},{d},{d}", .{ value.r, value.g, value.b, value.a });
 }
 
-fn writeSourceFields(writer: *std.Io.Writer, value: ?render.terminal.SourceRect, size: render.terminal.Size) !void {
-    const source = value orelse render.terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+fn writeSourceFields(writer: *std.Io.Writer, value: ?terminal.SourceRect, size: terminal.Size) !void {
+    const source = value orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
     try writer.print("{d},{d},{d},{d}", .{ source.x, source.y, source.width, source.height });
 }

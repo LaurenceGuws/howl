@@ -7,5 +7,7 @@ pub const limits = @import("limits");
 /// Embedders construct caller-owned FontSet values through this namespace so
 /// Renderer FontFaces and the caller share one Zig type identity.
 pub const text = @import("howl_text");
+/// Transitional compile-time source-adapter seam for edge packages being retired.
+pub const adapter = @import("adapter");
 /// Owns semantic terminal-to-frame rendering, resources, and final frames.
 pub const terminal = @import("terminal");

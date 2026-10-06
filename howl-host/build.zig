@@ -44,7 +44,6 @@ pub fn build(b: *std.Build) void {
     const host_c = host_translate.createModule();
 
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
-    const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     const local_terminal = b.createModule(.{
@@ -57,13 +56,6 @@ pub fn build(b: *std.Build) void {
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
     const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = false });
     const test_fonts = text_dependency.module("howl_text_test_fonts");
-    const render_dependency = b.dependency("howl_render", .{
-        .target = target,
-        .optimize = optimize,
-        .bundled_text = false,
-        .client_sources = false,
-    });
-    const render = render_dependency.module("howl_render");
 
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -74,9 +66,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("howl_instance", instance.module("howl_instance"));
-    root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("local_terminal", local_terminal);
-    root.addImport("howl_render", render);
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);
     root.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
@@ -189,8 +179,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    fast_test_module.addImport("howl_vt", vt.module("howl_vt"));
-    fast_test_module.addImport("howl_render", render);
+    fast_test_module.addImport("howl_instance", instance.module("howl_instance"));
     fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
     fast_test_module.addImport("test_fonts", test_fonts);
     fast_test_module.linkSystemLibrary("vulkan", .{});
@@ -210,9 +199,7 @@ pub fn build(b: *std.Build) void {
     });
     scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
     scene_test_module.addImport("howl_instance", instance.module("howl_instance"));
-    scene_test_module.addImport("howl_vt", vt.module("howl_vt"));
     scene_test_module.addImport("local_terminal", local_terminal);
-    scene_test_module.addImport("howl_render", render);
     scene_test_module.addImport("test_fonts", test_fonts);
     scene_test_module.linkSystemLibrary("vulkan", .{});
     const scene_tests = b.addTest(.{

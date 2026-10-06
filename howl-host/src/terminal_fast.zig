@@ -7,8 +7,9 @@
 //! back to terminal renderer.
 
 const std = @import("std");
-const VT = @import("howl_vt").Terminal;
-const render = @import("howl_render");
+const instance = @import("howl_instance");
+const VT = instance.Terminal;
+const render = instance.render;
 const text = render.text;
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;

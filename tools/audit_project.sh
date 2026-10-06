@@ -143,8 +143,8 @@ if grep -REn 'howl_client|server_client|remote_target' \
     printf 'howl-host: direct canary depends on transported client/server machinery\n'
     status=1
 fi
-if ! grep -Fqx '        .client_sources = false,' howl-host/build.zig; then
-    printf 'howl-host/build.zig: howl-render must disable transported client sources\n'
+if grep -REn 'howl_render|howl_vt' howl-host/build.zig howl-host/build.zig.zon >/dev/null; then
+    printf 'howl-host: direct canary must consume VT/Render through howl-instance composition\n'
     status=1
 fi
 

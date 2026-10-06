@@ -5,8 +5,9 @@
 //! residency and geometry. This file only composes those existing contracts.
 
 const std = @import("std");
+const instance = @import("howl_instance");
 const local_terminal = @import("local_terminal");
-const render = @import("howl_render");
+const render = instance.render;
 const limits = render.limits;
 const terminal = render.terminal;
 const terminal_fast = @import("terminal_fast.zig");
@@ -333,7 +334,7 @@ pub const Scene = struct {
 
     fn prepareLocal(
         self: *Scene,
-        observation: *const @import("howl_vt").Terminal.Observation,
+        observation: *const instance.Terminal.Observation,
         history_offset: u32,
     ) !Prepared {
         const cell_pixels = observation.cellPixelSize() orelse
@@ -493,7 +494,7 @@ pub const Scene = struct {
 
     fn prepareLocalExternalUploads(
         self: *Scene,
-        observation: *const @import("howl_vt").Terminal.Observation,
+        observation: *const instance.Terminal.Observation,
         history_offset: u32,
         bindings: []const terminal.ExternalImageBinding,
         renderer_residency_count: *usize,
@@ -573,10 +574,10 @@ pub const Scene = struct {
 };
 
 fn findObservationImage(
-    graphics: *const @import("howl_vt").Terminal.Images,
+    graphics: *const instance.Terminal.Images,
     image_id: u32,
     generation: u64,
-) ?@import("howl_vt").Terminal.Image {
+) ?instance.Terminal.Image {
     var index: usize = 0;
     while (index < graphics.imageCount()) : (index += 1) {
         const image = graphics.image(index) orelse continue;

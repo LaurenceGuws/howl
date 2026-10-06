@@ -10,18 +10,13 @@ pub fn build(b: *std.Build) void {
     // configuration; public modules/artifacts are forwarded from their owners.
     for (b.available_deps) |entry| {
         const name = entry[0];
-        const child = if (std.mem.eql(u8, name, "howl_text"))
-            b.dependency(name, .{ .target = target, .optimize = optimize, .bundled = false })
-        else if (std.mem.eql(u8, name, "howl_render"))
-            b.dependency(name, .{
-                .target = target,
-                .optimize = optimize,
-                .bundled_text = false,
-                .client_sources = false,
-            })
-        else
-            b.dependency(name, .{ .target = target, .optimize = optimize });
-        forward(b, name, child, check, tests);
+        const child = b.dependency(name, .{ .target = target, .optimize = optimize });
+        const composition_leaf =
+            std.mem.eql(u8, name, "howl_vt") or
+            std.mem.eql(u8, name, "howl_pty") or
+            std.mem.eql(u8, name, "howl_text") or
+            std.mem.eql(u8, name, "howl_render");
+        forward(b, name, child, check, tests, !composition_leaf);
     }
 
     const logger_tests = b.addTest(.{
@@ -91,6 +86,7 @@ fn forward(
     child: *std.Build.Dependency,
     check: *std.Build.Step,
     tests: *std.Build.Step,
+    publish_modules: bool,
 ) void {
     check.dependOn(childStep(child, "check"));
     tests.dependOn(childStep(child, "test"));
@@ -99,11 +95,13 @@ fn forward(
         if (std.mem.eql(u8, step_name, "uninstall")) continue;
         b.step(b.fmt("{s}:{s}", .{ name, step_name }), step.description).dependOn(&step.step);
     }
-    for (child.builder.modules.keys(), child.builder.modules.values()) |module_name, module| {
-        std.debug.assert(!b.modules.contains(module_name));
-        // zig-audit: acknowledge panic
-        // reason: Build configuration cannot recover from allocation failure.
-        b.modules.put(b.allocator, module_name, module) catch @panic("OOM");
+    if (publish_modules) {
+        for (child.builder.modules.keys(), child.builder.modules.values()) |module_name, module| {
+            std.debug.assert(!b.modules.contains(module_name));
+            // zig-audit: acknowledge panic
+            // reason: Build configuration cannot recover from allocation failure.
+            b.modules.put(b.allocator, module_name, module) catch @panic("OOM");
+        }
     }
     for (child.builder.named_lazy_paths.keys(), child.builder.named_lazy_paths.values()) |path_name, path| {
         b.addNamedLazyPath(path_name, path);

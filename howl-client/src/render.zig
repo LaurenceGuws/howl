@@ -1,14 +1,18 @@
-//! Public terminal-rendering facade.
+//! Transitional transported-client adapter for canonical Howl Render.
 //!
-//! Local VT observation and transported client views are source adapters around
-//! one source-independent renderer. Backend frame vocabulary and text behavior
-//! remain identical regardless of where terminal semantics came from.
+//! The renderer itself remains direct-VT and source-neutral internally. This
+//! client-owned edge exists only while HWLS consumers are being removed.
 
 const client = @import("howl_client");
-const renderer = @import("renderer");
-const semantic = @import("source");
-const source_client = @import("source_client.zig");
-const direct = @import("terminal_vt");
+const canonical = @import("howl_instance").render;
+const semantic = canonical.adapter;
+const source_client = @import("render_source.zig");
+const direct = canonical.terminal;
+
+/// Exact text package instance used by this transported Render adapter.
+pub const text = canonical.text;
+/// Exact shared Render limits used by this transported Render adapter.
+pub const limits = canonical.limits;
 
 /// Uses the direct renderer atlas configuration.
 pub const AtlasConfig = direct.AtlasConfig;
@@ -138,17 +142,17 @@ pub fn planExternalImageBindings(
         .width = image.width,
         .height = image.height,
     };
-    return renderer.planImageBindings(current, current_usage, normalized[0..images.len], output);
+    return semantic.planImageBindings(current, current_usage, normalized[0..images.len], output);
 }
 
 /// Replaces this renderer with one immutable owned client view.
 pub fn update(owner: *Renderer, snapshot: *const View.Snapshot) Error!void {
-    return renderer.updateSource(source_client.Owned, owner, snapshot, &.{});
+    return semantic.updateSource(source_client.Owned, owner, snapshot, &.{});
 }
 
 /// Replaces this renderer with one already-validated borrowed rich client view.
 pub fn updateRich(owner: *Renderer, snapshot: *const client.rich.View) Error!void {
-    return renderer.updateSource(source_client.RichView, owner, snapshot, &.{});
+    return semantic.updateSource(source_client.RichView, owner, snapshot, &.{});
 }
 
 /// Replaces this renderer with one owned client view and one exact image binding.
@@ -166,7 +170,7 @@ pub fn updateWithImageBindings(
     snapshot: *const View.Snapshot,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
-    return renderer.updateSource(source_client.Owned, owner, snapshot, image_bindings);
+    return semantic.updateSource(source_client.Owned, owner, snapshot, image_bindings);
 }
 
 /// Borrowed-rich equivalent of updateWithImageBindings.
@@ -175,5 +179,5 @@ pub fn updateRichWithImageBindings(
     snapshot: *const client.rich.View,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
-    return renderer.updateSource(source_client.RichView, owner, snapshot, image_bindings);
+    return semantic.updateSource(source_client.RichView, owner, snapshot, image_bindings);
 }

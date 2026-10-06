@@ -13,11 +13,6 @@ pub fn build(b: *std.Build) void {
         "bundled_text",
         "Build howl-text with its pinned target FreeType/HarfBuzz sources",
     ) orelse false;
-    const client_sources = b.option(
-        bool,
-        "client_sources",
-        "Include transported howl-client source adapters",
-    ) orelse true;
     if (bundled_text and !renderer_enabled)
         std.process.fatal("bundled_text requires renderer", .{});
 
@@ -77,13 +72,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }).module("howl_vt");
-    const text_dependency = b.dependency("howl_text", .{
+    const text = b.dependency("howl_text", .{
         .target = target,
         .optimize = optimize,
         .bundled = bundled_text,
-    });
-    const text = text_dependency.module("howl_text");
-    const text_test_fonts = text_dependency.module("howl_text_test_fonts");
+    }).module("howl_text");
     module.addImport("howl_text", text);
     test_module.addImport("howl_text", text);
 
@@ -100,6 +93,13 @@ pub fn build(b: *std.Build) void {
         source_semantics,
         text,
     );
+    const adapter = adapterModule(
+        b,
+        target,
+        optimize,
+        renderer,
+        source_semantics,
+    );
     const terminal_vt = terminalVtModule(
         b,
         target,
@@ -108,59 +108,19 @@ pub fn build(b: *std.Build) void {
         source_semantics,
         vt,
     );
-    const terminal = if (client_sources) client_terminal: {
-        const client = b.dependency("howl_client", .{
-            .target = target,
-            .optimize = optimize,
-        }).module("howl_client");
-        break :client_terminal terminalModule(
-            b,
-            target,
-            optimize,
-            renderer,
-            source_semantics,
-            terminal_vt,
-            client,
-        );
-    } else terminal_vt;
-    module.addImport("terminal", terminal);
-    test_module.addImport("terminal", terminal);
+    module.addImport("adapter", adapter);
+    module.addImport("terminal", terminal_vt);
+    test_module.addImport("adapter", adapter);
+    test_module.addImport("terminal", terminal_vt);
 
-    if (!client_sources) {
-        const direct_tests = b.addTest(.{
-            .name = "howl-render-direct",
-            .root_module = test_module,
-            .use_llvm = false,
-            .use_lld = false,
-        });
-        check.dependOn(&direct_tests.step);
-        test_step.dependOn(&b.addRunArtifact(direct_tests).step);
-        b.default_step = check;
-        return;
-    }
-
-    const client = b.dependency("howl_client", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("howl_client");
-    const terminal_test_module = b.createModule(.{
-        .root_source_file = b.path("src/terminal_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    terminal_test_module.addImport("howl_render", test_module);
-    terminal_test_module.addImport("howl_client", client);
-    terminal_test_module.addImport("howl_vt", vt);
-    terminal_test_module.addImport("howl_text", text);
-    terminal_test_module.addImport("test_fonts", text_test_fonts);
-    const terminal_tests = b.addTest(.{
-        .name = "howl-render-terminal",
-        .root_module = terminal_test_module,
+    const direct_tests = b.addTest(.{
+        .name = "howl-render-direct",
+        .root_module = test_module,
         .use_llvm = false,
         .use_lld = false,
     });
-    check.dependOn(&terminal_tests.step);
-    test_step.dependOn(&b.addRunArtifact(terminal_tests).step);
+    check.dependOn(&direct_tests.step);
+    test_step.dependOn(&b.addRunArtifact(direct_tests).step);
 
     b.default_step = check;
 }
@@ -184,25 +144,21 @@ fn rendererModule(
     return renderer;
 }
 
-fn terminalModule(
+fn adapterModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     renderer: *std.Build.Module,
     source: *std.Build.Module,
-    terminal_vt: *std.Build.Module,
-    client: *std.Build.Module,
 ) *std.Build.Module {
-    const terminal = b.createModule(.{
-        .root_source_file = b.path("src/terminal.zig"),
+    const adapter = b.createModule(.{
+        .root_source_file = b.path("src/adapter.zig"),
         .target = target,
         .optimize = optimize,
     });
-    terminal.addImport("renderer", renderer);
-    terminal.addImport("source", source);
-    terminal.addImport("terminal_vt", terminal_vt);
-    terminal.addImport("howl_client", client);
-    return terminal;
+    adapter.addImport("renderer", renderer);
+    adapter.addImport("source", source);
+    return adapter;
 }
 
 fn terminalVtModule(

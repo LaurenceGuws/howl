@@ -2,10 +2,16 @@
 
 const std = @import("std");
 const pty = @import("howl_pty");
+const howl_render = @import("howl_render");
 const vt = @import("howl_vt");
+const terminal_render = howl_render.terminal;
 
 /// Shared-instance wire and geometry-authority contract.
 pub const protocol = @import("howl_instance_protocol");
+/// Exact backend-neutral Render package composed by this Instance package.
+pub const render = howl_render;
+/// Exact text package instance used by this Instance package's Render owner.
+pub const text = howl_render.text;
 
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;
@@ -65,6 +71,39 @@ pub const ContainerReplyError = vt.Terminal.ContainerReplyError;
 pub const ConsequencePolicy = enum { headless, retain };
 /// Exact child-process termination observation.
 pub const ChildExit = pty.ChildExit;
+/// Exact generated box-drawing configuration consumed by Instance-owned Render.
+pub const BoxDrawingConfig = @FieldType(terminal_render.Config, "box_drawing");
+
+/// Selects one owned font source for presented Instance construction.
+pub const FontConfig = union(enum) {
+    path: text.Config,
+    memory: text.MemoryConfig,
+};
+
+/// Supplies one required regular font and optional style variants.
+pub const FontFamilyConfig = struct {
+    regular: FontConfig,
+    italic: ?FontConfig = null,
+    bold: ?FontConfig = null,
+    bold_italic: ?FontConfig = null,
+};
+
+/// Supplies bounded text and renderer policy for one presented Instance.
+///
+/// The canonical cell lattice is derived from the regular font metrics. The
+/// caller does not separately choose PTY/VT and Render pixel geometry.
+pub const PresentationConfig = struct {
+    fonts: FontFamilyConfig,
+    box_drawing: BoxDrawingConfig,
+    shape_cache: terminal_render.ShapeCacheConfig,
+    atlas: terminal_render.AtlasConfig,
+    shaped_capacity: usize,
+    raster_bytes: usize,
+    command_capacity: usize,
+    command_limit: usize = 0,
+    incremental_row_capacity: u16 = 0,
+    incremental_command_capacity: usize = 0,
+};
 
 /// Supplies one local shell launch and bounded canonical terminal geometry.
 pub const Launch = struct {
@@ -83,15 +122,19 @@ pub const Launch = struct {
 
 /// Reports construction failure before a instance becomes observable.
 pub const InitError = pty.InitError || pty.StartError || vt.Terminal.InitError;
+/// Reports construction failure before a presented Instance becomes observable.
+pub const PresentedInitError = InitError || text.InitError || terminal_render.InitError || terminal_render.Error;
 /// Reports terminal input encoding, signal, or bounded write admission failure.
 pub const InputError = vt.Terminal.InputError || pty.TermiosSignalError || error{WriteQueueFull};
 /// Reports atomic PTY and VT geometry transition failure.
 pub const ResizeError = pty.ResizeError || vt.Terminal.ResizeError;
-/// Reports PTY, VT, reply, or headless environment progress failure.
+/// Reports PTY, VT, reply, or headless policy progress failure.
 pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.FeedError || vt.Terminal.ClipboardReplyError ||
     vt.Terminal.ColorPreferenceReplyError || vt.Terminal.ContainerReplyError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
+/// Reports a backend-frame request before presentation exists, or Render failure.
+pub const RenderError = terminal_render.Error || error{PresentationUnavailable};
 
 /// Summarizes one bounded service turn without exposing PTY or VT ownership.
 pub const Service = struct {
@@ -124,6 +167,43 @@ pub fn init(
     return @ptrCast(state);
 }
 
+/// Constructs one PTY -> VT -> Render owner on one caller-serialized thread.
+///
+/// Instance owns the supplied font family, canonical VT and Howl Renderer.
+/// Initial PTY/VT pixel geometry comes from the regular font metrics.
+pub fn initPresented(
+    allocator: std.mem.Allocator,
+    inherited_environment: std.process.Environ,
+    launch: Launch,
+    presentation: PresentationConfig,
+) PresentedInitError!*Instance {
+    var fonts = try OwnedFonts.init(allocator, presentation.fonts);
+    var fonts_live = true;
+    defer if (fonts_live) fonts.deinit();
+
+    const metrics = fonts.regular.metrics();
+    var canonical_launch = launch;
+    canonical_launch.cell_pixel_width = metrics.advance_width;
+    canonical_launch.cell_pixel_height = metrics.line_height;
+
+    const state = try allocator.create(State);
+    errdefer allocator.destroy(state);
+    try state.initInto(allocator, inherited_environment, canonical_launch);
+    errdefer state.deinit();
+
+    state.presentation = try PresentationState.initWithFonts(
+        allocator,
+        &fonts,
+        presentation,
+        state.terminal.observation(),
+    );
+    fonts_live = false;
+
+    // zig-audit: acknowledge ptr_cast
+    // reason: This boundary owns the concrete State allocation and adapts it to the stable opaque Instance handle without changing address or lifetime.
+    return @ptrCast(state);
+}
+
 /// Stops the child, releases VT state, and destroys the opaque owner.
 pub fn deinit(instance: *Instance) void {
     const state = stateMut(instance);
@@ -141,6 +221,44 @@ pub fn descriptor(instance: *const Instance) error{NotStarted}!pty.Descriptor {
 pub fn bufferedOutputPending(instance: *const Instance) bool {
     const state = stateConst(instance);
     return state.read_start < state.read_end;
+}
+
+/// Reports whether this Instance owns canonical text/Render presentation state.
+pub fn presented(instance: *const Instance) bool {
+    return stateConst(instance).presentation != null;
+}
+
+/// Reports current Instance-owned Render usage without exposing mutable Renderer state.
+pub fn renderUsage(instance: *const Instance) error{PresentationUnavailable}!terminal_render.Usage {
+    const presentation = stateConst(instance).presentation orelse return error.PresentationUnavailable;
+    return terminal_render.usage(presentation.renderer);
+}
+
+/// Derives one backend-neutral frame from the current Instance-owned Render state.
+///
+/// Returned slices borrow caller buffers and remain valid until those buffers or
+/// this Instance's Render state are mutated.
+pub fn renderFrame(
+    instance: *Instance,
+    residency: []const terminal_render.Residency,
+    buffers: terminal_render.FrameBuffers,
+) RenderError!terminal_render.Frame {
+    const state = stateMut(instance);
+    const presentation = state.presentation orelse return error.PresentationUnavailable;
+    try presentation.refresh(state.terminal.observation());
+    return terminal_render.frame(presentation.renderer, residency, buffers);
+}
+
+/// Reports visible Host-owned terminal-image resources missing from backend residency.
+pub fn missingRenderResources(
+    instance: *Instance,
+    residency: []const terminal_render.Residency,
+    output: []terminal_render.FrameExternalResource,
+) RenderError![]const terminal_render.FrameExternalResource {
+    const state = stateMut(instance);
+    const presentation = state.presentation orelse return error.PresentationUnavailable;
+    try presentation.refresh(state.terminal.observation());
+    return terminal_render.missingExternalResources(presentation.renderer, residency, output);
 }
 
 /// Borrows the canonical VT observation capability until the next Instance mutation.
@@ -213,6 +331,16 @@ pub fn resize(instance: *Instance, rows: u16, columns: u16) ResizeError!void {
 pub fn resizeGeometry(instance: *Instance, rows: u16, columns: u16, cell_width: u16, cell_height: u16) ResizeError!void {
     const state = stateMut(instance);
     if ((cell_width == 0) != (cell_height == 0)) return error.InvalidDimensions;
+    if (state.presentation) |presentation| {
+        const expected = presentation.cellSize();
+        if (cell_width != 0 and
+            (cell_width != expected.width or cell_height != expected.height))
+            return error.InvalidDimensions;
+        return state.resizeGeometry(rows, columns, .{
+            .width = expected.width,
+            .height = expected.height,
+        });
+    }
     const cell = if (cell_width == 0) state.terminal.cellPixelSize().? else vt.Terminal.CellPixelSize{ .width = cell_width, .height = cell_height };
     return state.resizeGeometry(rows, columns, cell);
 }
@@ -275,10 +403,140 @@ const WriteQueue = struct {
     }
 };
 
+fn initFont(allocator: std.mem.Allocator, config: FontConfig) text.InitError!*text.FontSet {
+    return switch (config) {
+        .path => |value| text.FontSet.init(allocator, value),
+        .memory => |value| text.FontSet.initMemory(allocator, value),
+    };
+}
+
+const OwnedFonts = struct {
+    regular: *text.FontSet,
+    italic: ?*text.FontSet,
+    bold: ?*text.FontSet,
+    bold_italic: ?*text.FontSet,
+
+    fn init(allocator: std.mem.Allocator, config: FontFamilyConfig) text.InitError!OwnedFonts {
+        const regular = try initFont(allocator, config.regular);
+        errdefer regular.deinit();
+        const italic = if (config.italic) |value| try initFont(allocator, value) else null;
+        errdefer if (italic) |value| value.deinit();
+        const bold = if (config.bold) |value| try initFont(allocator, value) else null;
+        errdefer if (bold) |value| value.deinit();
+        const bold_italic = if (config.bold_italic) |value| try initFont(allocator, value) else null;
+        errdefer if (bold_italic) |value| value.deinit();
+        return .{
+            .regular = regular,
+            .italic = italic,
+            .bold = bold,
+            .bold_italic = bold_italic,
+        };
+    }
+
+    fn faces(self: *const OwnedFonts) terminal_render.FontFaces {
+        return .{
+            .regular = self.regular,
+            .italic = self.italic,
+            .bold = self.bold,
+            .bold_italic = self.bold_italic,
+        };
+    }
+
+    fn deinit(self: *OwnedFonts) void {
+        if (self.bold_italic) |value| value.deinit();
+        if (self.bold) |value| value.deinit();
+        if (self.italic) |value| value.deinit();
+        self.regular.deinit();
+        self.* = undefined;
+    }
+};
+
+const PresentationState = struct {
+    renderer: *terminal_render.Renderer,
+    fonts: OwnedFonts,
+    image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
+    image_binding_count: usize = 0,
+    terminal_revision: ?u64 = null,
+
+    fn initWithFonts(
+        allocator: std.mem.Allocator,
+        fonts: *OwnedFonts,
+        config: PresentationConfig,
+        observation: *const Terminal.Observation,
+    ) (terminal_render.InitError || terminal_render.Error)!*PresentationState {
+        const metrics = fonts.regular.metrics();
+        const renderer = try terminal_render.init(
+            allocator,
+            fonts.faces(),
+            .{
+                .cell_size = .{
+                    .width = metrics.advance_width,
+                    .height = metrics.line_height,
+                },
+                .box_drawing = config.box_drawing,
+                .shape_cache = config.shape_cache,
+                .atlas = config.atlas,
+                .shaped_capacity = config.shaped_capacity,
+                .raster_bytes = config.raster_bytes,
+                .command_capacity = config.command_capacity,
+                .command_limit = config.command_limit,
+                .incremental_row_capacity = config.incremental_row_capacity,
+                .incremental_command_capacity = config.incremental_command_capacity,
+            },
+        );
+        errdefer terminal_render.deinit(renderer);
+
+        const state = try allocator.create(PresentationState);
+        errdefer allocator.destroy(state);
+        state.* = .{
+            .renderer = renderer,
+            .fonts = fonts.*,
+        };
+        state.refresh(observation) catch |failure| {
+            allocator.destroy(state);
+            return failure;
+        };
+        return state;
+    }
+
+    fn deinit(self: *PresentationState, allocator: std.mem.Allocator) void {
+        terminal_render.deinit(self.renderer);
+        self.fonts.deinit();
+        self.* = undefined;
+        allocator.destroy(self);
+    }
+
+    fn cellSize(self: *const PresentationState) terminal_render.Size {
+        const metrics = self.fonts.regular.metrics();
+        return .{ .width = metrics.advance_width, .height = metrics.line_height };
+    }
+
+    fn refresh(
+        self: *PresentationState,
+        observation: *const Terminal.Observation,
+    ) terminal_render.Error!void {
+        const revision = observation.semanticSequence();
+        if (self.terminal_revision != null and self.terminal_revision.? == revision) return;
+        var candidate: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
+        const bindings = try terminal_render.planObservationImageBindings(
+            self.image_bindings[0..self.image_binding_count],
+            terminal_render.usage(self.renderer),
+            observation,
+            0,
+            &candidate,
+        );
+        try terminal_render.updateObservation(self.renderer, observation, 0, bindings);
+        @memcpy(self.image_bindings[0..bindings.len], bindings);
+        self.image_binding_count = bindings.len;
+        self.terminal_revision = revision;
+    }
+};
+
 const State = struct {
     allocator: std.mem.Allocator,
     transport: pty.Owned,
     terminal: vt.Terminal,
+    presentation: ?*PresentationState = null,
     writes: WriteQueue = .{},
     reads: [read_buffer_bytes]u8 = undefined,
     read_start: usize = 0,
@@ -315,6 +573,7 @@ const State = struct {
         self.read_end = 0;
         self.child_exit = null;
         self.stream_closed = false;
+        self.presentation = null;
         try vt.Terminal.initWithHistoryInto(
             &self.terminal,
             allocator,
@@ -327,6 +586,7 @@ const State = struct {
     }
 
     fn deinit(self: *State) void {
+        if (self.presentation) |presentation| presentation.deinit(self.allocator);
         self.terminal.deinit();
         self.transport.deinit();
         self.* = undefined;
@@ -663,12 +923,12 @@ fn sleepOneMillisecond() void {
 }
 
 fn serviceUntilContains(instance: *Instance, needle: []const u8) !void {
-    var text: [4096]u8 = undefined;
+    var snapshot_text: [4096]u8 = undefined;
     var attempts: u16 = 0;
     while (attempts < 2000) : (attempts += 1) {
         const serviced = try service(instance, true, true, 0);
         if (serviced.stream_closed and serviced.child_exit != null) return error.ChildExited;
-        if (std.mem.indexOf(u8, try snapshotAscii(instance, &text), needle) != null) return;
+        if (std.mem.indexOf(u8, try snapshotAscii(instance, &snapshot_text), needle) != null) return;
         sleepOneMillisecond();
     }
     return error.Timeout;
@@ -716,9 +976,9 @@ test "service separates in-place text from viewport mutation" {
     state.reads[0] = 'A';
     state.read_start = 0;
     state.read_end = 1;
-    const text = try state.service(false, false, 1, .headless);
-    try std.testing.expect(text.changed);
-    try std.testing.expect(!text.viewport_changed);
+    const text_service = try state.service(false, false, 1, .headless);
+    try std.testing.expect(text_service.changed);
+    try std.testing.expect(!text_service.viewport_changed);
 
     @memcpy(state.reads[0..2], "\n\n");
     state.read_start = 0;
@@ -797,8 +1057,8 @@ test "retained host query falls back headlessly when external authority disappea
     try std.testing.expectEqualStrings("c", pending.clipboard.selection);
     try std.testing.expect(pending.clipboard.kind == .query);
 
-    var text: [4096]u8 = undefined;
-    try std.testing.expect(std.mem.indexOf(u8, try snapshotAscii(instance, &text), "RESULT:") == null);
+    var snapshot_text: [4096]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try snapshotAscii(instance, &snapshot_text), "RESULT:") == null);
 
     // Losing explicit external authority restores today's deterministic
     // headless reply policy on the next turn, without waiting for new PTY bytes.
@@ -1138,4 +1398,72 @@ test "service preserves synchronized release across buffered feeds and reply bou
         const idle = try state.service(false, false, 3, .headless);
         try std.testing.expect(!idle.synchronized_output.ended);
     }
+}
+
+test "presented Instance owns direct VT to Render progression" {
+    const fonts = @import("test_fonts");
+    const font_config = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    };
+    const expected_font = try text.FontSet.init(std.testing.allocator, font_config);
+    defer expected_font.deinit();
+    const expected_metrics = expected_font.metrics();
+
+    const instance = try initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "printf 'DIRECT_RENDER'; sleep 30",
+            .rows = 2,
+            .columns = 16,
+            .history_rows = 8,
+        },
+        .{
+            .fonts = .{ .regular = .{ .path = font_config } },
+            .box_drawing = .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .shape_cache = .{
+                .entry_capacity = 32,
+                .scalar_capacity = 128,
+                .glyph_capacity = 128,
+                .max_sequence_scalars = 16,
+            },
+            .atlas = .{
+                .width = 256,
+                .height = 256,
+                .entry_capacity = 128,
+            },
+            .shaped_capacity = 128,
+            .raster_bytes = 256 * 256,
+            .command_capacity = 256,
+        },
+    );
+    defer deinit(instance);
+
+    try std.testing.expect(presented(instance));
+    const pixels = terminal(instance).cellPixelSize() orelse return error.MissingCellPixels;
+    try std.testing.expectEqual(expected_metrics.advance_width, pixels.width);
+    try std.testing.expectEqual(expected_metrics.line_height, pixels.height);
+
+    const before = try renderUsage(instance);
+    try serviceUntilContains(instance, "DIRECT_RENDER");
+
+    var uploads: [terminal_render.maximum_external_images + 1]terminal_render.FrameResourceUpload = undefined;
+    var removals: [terminal_render.maximum_external_images + 1]terminal_render.ResourceRef = undefined;
+    var commands: [512]terminal_render.Command = undefined;
+    var frame_pixels: [256 * 256]u8 = undefined;
+    const frame = try renderFrame(instance, &.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &frame_pixels,
+    });
+    const after = try renderUsage(instance);
+    try std.testing.expect(after.revision > before.revision);
+    try std.testing.expect(frame.commands.len != 0);
+    try std.testing.expectEqual(after.revision, frame.revision);
 }

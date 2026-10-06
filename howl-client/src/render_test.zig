@@ -1,12 +1,11 @@
 //! Proves one bounded terminal renderer through the final backend-facing frame.
 
 const std = @import("std");
-const render = @import("howl_render");
 const client = @import("howl_client");
 const fonts = @import("test_fonts");
-const text = @import("howl_text");
+const terminal = @import("howl_client_render");
+const text = terminal.text;
 const generated = text.generated;
-const terminal = render.terminal;
 
 fn presentation() client.rich.Presentation {
     return .{
@@ -1437,7 +1436,7 @@ test "terminal renderer construction releases every staged allocation and valida
     try std.testing.expectError(error.InvalidConfig, terminal.init(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
 }
 
-const VT = @import("howl_vt").Terminal;
+const VT = @import("howl_instance").Terminal;
 
 // Independent test-only rich fixture. Production never constructs client rows,
 // cells, scalar banks, or a snapshot envelope for the direct observation path.

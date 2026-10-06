@@ -1,7 +1,8 @@
 //! Exercises client.view -> howl-text -> the shared terminal renderer in Wasm.
 const std = @import("std");
 const client = @import("howl_client");
-const render = @import("howl_render");
+const terminal = @import("howl_client_render");
+const render = terminal;
 const text = render.text;
 
 pub const panic = std.debug.FullPanic(trapPanic);
@@ -149,7 +150,7 @@ fn execute(font_input: []u8) !void {
     const view = try client.view.project(allocator, &source);
     defer client.view.deinit(view);
 
-    const terminal_renderer = try render.terminal.init(allocator, render.terminal.FontFaces.single(fonts), .{
+    const terminal_renderer = try terminal.init(allocator, terminal.FontFaces.single(fonts), .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
@@ -161,16 +162,16 @@ fn execute(font_input: []u8) !void {
         .raster_bytes = 65536,
         .command_capacity = 128,
     });
-    defer render.terminal.deinit(terminal_renderer);
-    try render.terminal.update(terminal_renderer, view);
-    const surface = render.terminal.Size{
+    defer terminal.deinit(terminal_renderer);
+    try terminal.update(terminal_renderer, view);
+    const surface = terminal.Size{
         .width = @intCast(@as(u32, metrics.advance_width) * cells.len),
         .height = metrics.line_height,
     };
-    var uploads: [2]render.terminal.FrameResourceUpload = undefined;
-    var removals: [2]render.terminal.ResourceRef = undefined;
-    var commands: [128]render.terminal.Command = undefined;
-    const frame = try render.terminal.frame(terminal_renderer, &.{}, .{
+    var uploads: [2]terminal.FrameResourceUpload = undefined;
+    var removals: [2]terminal.ResourceRef = undefined;
+    var commands: [128]terminal.Command = undefined;
+    const frame = try terminal.frame(terminal_renderer, &.{}, .{
         .uploads = &uploads,
         .removals = &removals,
         .commands = &commands,
@@ -189,9 +190,9 @@ fn execute(font_input: []u8) !void {
         .schema = "howl.web-render-proof/v1",
         .surface = surface,
         .metrics = metrics,
-        .producer_revision = render.terminal.usage(terminal_renderer).revision,
-        .shape_entries = render.terminal.usage(terminal_renderer).shape.entries,
-        .atlas_entries = render.terminal.usage(terminal_renderer).atlas_entries,
+        .producer_revision = terminal.usage(terminal_renderer).revision,
+        .shape_entries = terminal.usage(terminal_renderer).shape.entries,
+        .atlas_entries = terminal.usage(terminal_renderer).atlas_entries,
         .uploads = frame.uploads.len,
         .commands = frame.commands.len,
         .alpha_commands = alpha_commands,

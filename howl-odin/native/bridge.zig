@@ -11,8 +11,8 @@ const local_platform = @import("howl_local");
 const server_client = @import("server_client");
 const protocol = client.protocol;
 
-const render = @import("howl_render");
-const terminal_render = render.terminal;
+const terminal_render = @import("howl_client_render");
+const render = terminal_render;
 
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;

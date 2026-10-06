@@ -3,15 +3,12 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const client_dependency = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
-    const server_client_dependency = b.dependency("server_client", .{ .target = target, .optimize = optimize });
-    const render_dependency = b.dependency("howl_render", .{
+    const client_dependency = b.dependency("howl_client", .{
         .target = target,
         .optimize = optimize,
-        // Linux uses the installed text stack. Cross-target clients use the
-        // pinned memory-only FreeType/HarfBuzz sources already owned by Howl.
-        .bundled_text = target.result.os.tag != .linux,
+        .bundled_render_text = target.result.os.tag != .linux,
     });
+    const server_client_dependency = b.dependency("server_client", .{ .target = target, .optimize = optimize });
     const root = b.createModule(.{
         .root_source_file = b.path("bridge.zig"),
         .target = target,
@@ -20,9 +17,9 @@ pub fn build(b: *std.Build) void {
         .pic = true,
     });
     root.addImport("howl_client", client_dependency.module("howl_client"));
+    root.addImport("howl_client_render", client_dependency.module("howl_client_render"));
     root.addImport("howl_local", client_dependency.module("howl_local"));
     root.addImport("server_client", server_client_dependency.module("server_client"));
-    root.addImport("howl_render", render_dependency.module("howl_render"));
 
     const library = b.addLibrary(.{
         .name = "howl_odin_bridge",

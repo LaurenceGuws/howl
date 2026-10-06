@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const client = @import("howl_client");
-const semantic = @import("source");
+const semantic = @import("howl_instance").render.adapter;
 const View = client.view;
 const Rich = client.rich;
 
