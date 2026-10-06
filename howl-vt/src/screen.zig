@@ -3411,12 +3411,12 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
         // The scroll-region owner clears every outgoing boundary before rotation.
-        const row_len = @as(u32, self.cols);
+        const clear_cols = self.rowScanEnd(0);
         self.storeHistoryRow(0);
         self.row_origin = (self.row_origin + 1) % self.rows;
         const bottom_start = self.rowStart(self.rows - 1);
-        self.clearScalarCells(bottom_start, row_len);
-        @memset(cells[@intCast(bottom_start)..@intCast(bottom_start + row_len)], blank_cell);
+        self.clearScalarCells(bottom_start, clear_cols);
+        @memset(cells[@intCast(bottom_start)..@intCast(bottom_start + clear_cols)], blank_cell);
         self.setRowWrapped(self.rows - 1, false);
         self.resetLineGeometry(self.rows - 1);
         if (self.history_capacity != 0)
@@ -7731,4 +7731,26 @@ test "nonsemantic cluster hint arms only after multicell sized text" {
     try std.testing.expect(screen.nonsemantic_clusters_possible);
     try std.testing.expect(screen.clearClustersIntersecting(1, 3, 0, 4));
     try std.testing.expect(screen.nonsemantic_clusters_possible);
+}
+
+test "full scroll clears only conservative retained-state prefix and preserves blank suffix" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 16, 8);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.reset();
+    screen.establishEmptyRowScanEnd(0);
+    try std.testing.expectEqual(@as(usize, 3), screen.writePlainAsciiPrefix("ABC"));
+    try std.testing.expect(screen.rowScanEnd(0) >= 3);
+    try std.testing.expect(screen.rowScanEnd(0) < screen.cols);
+
+    const outgoing_physical = screen.row_origin;
+    const suffix_start = @as(u32, outgoing_physical) * @as(u32, screen.cols) + screen.rowScanEnd(0);
+    for (screen.cells.?[@intCast(suffix_start)..@intCast((@as(u32, outgoing_physical) + 1) * screen.cols)]) |cell|
+        try std.testing.expectEqualDeep(blank_cell, cell);
+
+    try std.testing.expect(screen.scrollUpRegion(0, screen.rows - 1, 1));
+    const bottom = screen.rows - 1;
+    for (screen.visibleRowCells(bottom)) |cell|
+        try std.testing.expectEqualDeep(blank_cell, cell);
+    try std.testing.expectEqual(@as(u16, 0), screen.rowScanEnd(bottom));
 }
