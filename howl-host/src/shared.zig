@@ -9,20 +9,8 @@ const protocol = @import("howl_instance").protocol;
 pub const slot_count: usize = 3;
 /// Bounds copied keyboard/focus occurrences awaiting Instance delivery.
 pub const input_capacity: usize = 128;
-/// Bounds host-local control requests awaiting Render ownership.
-pub const host_command_capacity: usize = 16;
 /// Bounds ordered pointer button/wheel occurrences awaiting Render projection.
 pub const pointer_event_capacity: usize = 32;
-
-pub const HostCommandKind = enum {
-    history_scroll,
-};
-
-pub const HostCommand = struct {
-    kind: HostCommandKind,
-    pane: u8,
-    amount: i16 = 0,
-};
 
 pub const WindowSize = struct { width: u16, height: u16 };
 
@@ -51,15 +39,22 @@ const SequencedPointer = struct {
 /// Routes one Render-projected semantic terminal mouse occurrence to Input.
 pub const RoutedMouse = struct {
     scene_index: u8,
-    history_offset: u32,
-    alternate_screen: bool,
     value: protocol.MouseInput,
+};
+
+/// Requests one canonical terminal surface, optionally replacing presentation scale.
+pub const GeometryRequest = struct {
+    width: u16,
+    height: u16,
+    /// Null keeps current Instance-owned font/Render presentation.
+    font_pixels: ?u16 = null,
 };
 
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
     mouse: RoutedMouse,
+    geometry: GeometryRequest,
 };
 
 /// Projects xkb-resolved semantic modifiers into the frozen typed-input bits.
@@ -166,9 +161,6 @@ pub const Boundary = struct {
     inputs: [input_capacity]InputEvent = undefined,
     input_head: u16 = 0,
     input_count: u16 = 0,
-    host_commands: [host_command_capacity]HostCommand = undefined,
-    host_command_head: u8 = 0,
-    host_command_count: u8 = 0,
     window_size: ?WindowSize = null,
     display_scale: ?DisplayScale = null,
     pointer_events: [pointer_event_capacity]SequencedPointer = undefined,
@@ -252,6 +244,33 @@ pub const Boundary = struct {
         try drain(self.render_fd);
     }
 
+    /// Waits for the first compositor scale before terminal presentation exists.
+    ///
+    /// Other retained Window facts may share this eventfd. Draining their wake
+    /// is safe because the facts themselves remain in Boundary until consumed.
+    pub fn waitInitialDisplayScale(self: *Boundary) !DisplayScale {
+        var wakes: u8 = 0;
+        while (wakes < 16) : (wakes += 1) {
+            if (self.takeDisplayScale()) |scale| return scale;
+            if (self.shouldStop()) return error.Stopping;
+            var descriptor = c.pollfd{
+                .fd = self.render_fd,
+                .events = c.POLLIN,
+                .revents = 0,
+            };
+            while (true) {
+                const ready = c.poll(&descriptor, 1, 2_000);
+                if (ready > 0) {
+                    try self.drainRenderWake();
+                    break;
+                }
+                if (ready == 0) return error.DisplayScaleTimeout;
+                if (std.c.errno(ready) != .INTR) return error.Signal;
+            }
+        }
+        return error.DisplayScaleTimeout;
+    }
+
     /// Drains all pending Window wakes without blocking.
     pub fn drainWindowWake(self: *Boundary) error{Signal}!void {
         try drain(self.window_fd);
@@ -293,46 +312,11 @@ pub const Boundary = struct {
         try drain(self.control_fd);
     }
 
-    /// Appends one bounded host-local command for Render.
-    pub fn publishHostCommand(self: *Boundary, command: HostCommand) error{ Stopping, HostCommandLimit }!void {
-        self.mutex.lockUncancelable(self.io);
-        if (self.stop_requested) {
-            self.mutex.unlock(self.io);
-            return error.Stopping;
-        }
-        if (self.host_command_count == host_command_capacity) {
-            self.mutex.unlock(self.io);
-            return error.HostCommandLimit;
-        }
-        const tail = (@as(usize, self.host_command_head) + self.host_command_count) % host_command_capacity;
-        self.host_commands[tail] = command;
-        self.host_command_count += 1;
-        self.mutex.unlock(self.io);
-        signal(self.control_fd);
-    }
-
     fn renderControlPendingLocked(self: *const Boundary) bool {
-        return self.host_command_count != 0 or
-            self.window_size != null or
+        return self.window_size != null or
             self.display_scale != null or
             self.pointer_event_count != 0 or
             self.pointer_motion != null;
-    }
-
-    /// Removes and copies the oldest pending host-local Render command.
-    pub fn takeHostCommand(self: *Boundary) ?HostCommand {
-        self.mutex.lockUncancelable(self.io);
-        if (self.host_command_count == 0) {
-            self.mutex.unlock(self.io);
-            return null;
-        }
-        const result = self.host_commands[self.host_command_head];
-        self.host_command_head = @intCast((@as(usize, self.host_command_head) + 1) % host_command_capacity);
-        self.host_command_count -= 1;
-        const more = self.renderControlPendingLocked();
-        self.mutex.unlock(self.io);
-        if (more) signal(self.control_fd);
-        return result;
     }
 
     /// Replaces the latest compositor-requested logical surface size and wakes Render.

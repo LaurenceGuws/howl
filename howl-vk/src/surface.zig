@@ -834,6 +834,18 @@ pub const ResidencyStore = struct {
         self.* = undefined;
     }
 
+    /// Forgets accepted and pending logical resources without reallocating storage.
+    ///
+    /// Presentation owners use this when a producer replaces its complete
+    /// resource namespace. Physical atlas storage remains backend-owned and is
+    /// overwritten by the replacement frame's ordinary uploads.
+    pub fn reset(self: *ResidencyStore) void {
+        self.active_count = 0;
+        self.candidate_count = 0;
+        self.candidate_pixel_count = 0;
+        self.pending = false;
+    }
+
     /// Builds a complete candidate without changing active residency.
     pub fn stage(self: *ResidencyStore, frame: Frame) StoreError!void {
         if (frame.revision == 0) return error.InvalidFrame;
@@ -1876,4 +1888,49 @@ test "record prelude rejects malformed plans without changing atlas state" {
         .commands = &.{.{ .kind = .solid, .first_index = 0, .index_count = 3, .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 } }},
         .atlas_changed = false,
     }, 1, 1);
+}
+
+test "residency reset forgets an accepted resource namespace without reallocating" {
+    var store = try ResidencyStore.init(
+        std.testing.allocator,
+        .{ .resources = 1, .pixel_bytes = 1 },
+    );
+    defer store.deinit();
+    const resource = try ResourceGeneration.init(1, 1);
+    try store.stage(.{
+        .revision = 1,
+        .uploads = &.{.{
+            .resource = resource,
+            .kind = .alpha_mask,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+            .pixels = &.{0xff},
+        }},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    try store.complete();
+
+    var before: [1]Residency = undefined;
+    try std.testing.expectEqual(@as(usize, 1), (try store.enumerate(&before)).len);
+    store.reset();
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&before)).len);
+
+    // The same logical Render identity is valid again in the replacement
+    // presentation namespace.
+    try store.stage(.{
+        .revision = 1,
+        .uploads = &.{.{
+            .resource = resource,
+            .kind = .alpha_mask,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+            .pixels = &.{0x7f},
+        }},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    try store.complete();
 }

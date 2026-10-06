@@ -6,6 +6,7 @@ const text = render.text;
 const input_owner = @import("input_owner.zig");
 const layout = @import("layout.zig");
 const local_terminal = @import("local_terminal");
+const presentation = @import("host_presentation");
 const renderer = @import("renderer.zig");
 const shared = @import("shared.zig");
 const window = @import("window.zig");
@@ -55,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
-    const font = renderer.FontPaths{
+    const font = presentation.FontPaths{
         .primary = std.mem.span(argv[1]),
         .fallbacks = fallback_storage[0..fallback_count],
     };
@@ -65,19 +66,32 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     var boundary = try shared.Boundary.init(threaded.io());
     defer boundary.deinit();
-    var local_owner = try local_terminal.Owner.init(
+
+    const window_thread = try std.Thread.spawn(.{}, window.run, .{&boundary});
+    var window_joined = false;
+    defer if (!window_joined) {
+        boundary.requestStop(null);
+        window_thread.join();
+    };
+    const initial_scale = try boundary.waitInitialDisplayScale();
+    const font_pixels = try presentation.fontPixels(initial_scale.scale_120);
+    const logical_cell_size = try presentation.measureCellSize(
         std.heap.c_allocator,
-        threaded.io(),
+        font,
+        presentation.base_font_pixels,
+    );
+    var local_owner = try local_terminal.Owner.initPresented(
+        std.heap.c_allocator,
         init.minimal.environ,
         .{
             .shell = shell,
             .rows = 24,
             .columns = 80,
         },
+        font,
+        font_pixels,
     );
     defer local_owner.deinit();
-
-    const window_thread = try std.Thread.spawn(.{}, window.run, .{&boundary});
     const input_thread = std.Thread.spawn(.{}, input_owner.run, .{
         &boundary,
         &local_owner,
@@ -86,11 +100,14 @@ pub fn main(init: std.process.Init) !void {
         window_thread.join();
         return failure;
     };
+    const render_exchange = try local_owner.renderExchange();
     const render_thread = std.Thread.spawn(.{}, renderer.run, .{
         &boundary,
         std.heap.c_allocator,
-        &local_owner,
-        font,
+        render_exchange,
+        local_owner.publicationFd(),
+        logical_cell_size,
+        initial_scale,
         mux,
     }) catch |failure| {
         boundary.requestStop(.render);
@@ -102,6 +119,7 @@ pub fn main(init: std.process.Init) !void {
     boundary.requestStop(null);
     input_thread.join();
     window_thread.join();
+    window_joined = true;
 
     const stopped = boundary.stopped();
     if (!stopped.window or !stopped.render or !stopped.input) return error.OwnerDidNotStop;

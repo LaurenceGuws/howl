@@ -7,7 +7,6 @@
         .howl_instance = .{ .path = "../howl-instance" },
         .howl_vk = .{ .path = "../howl-vk" },
         .howl_wayland = .{ .path = "../howl-wayland" },
-        .howl_text = .{ .path = "../howl-text" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "test" },
 }

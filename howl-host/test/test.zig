@@ -368,8 +368,6 @@ test "routed mouse input preserves target pane and canonical coordinates" {
 
     const routed = shared.RoutedMouse{
         .scene_index = 1,
-        .history_offset = 7,
-        .alternate_screen = false,
         .value = .{
             .kind = .press,
             .button = .right,

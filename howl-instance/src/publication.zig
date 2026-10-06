@@ -29,6 +29,7 @@ fn stateValue(value: SlotState) u8 {
 /// Borrows one immutable self-contained Render transaction from a leased publication slot.
 pub const PublishedFrame = struct {
     sequence: u64,
+    presentation_generation: u64,
     revision: u64,
     surface: terminal.Size,
     cell_size: terminal.Size,
@@ -46,6 +47,7 @@ pub const Exchange = opaque {};
 const FrameSlot = struct {
     state: std.atomic.Value(u8) = .init(stateValue(.free)),
     sequence: std.atomic.Value(u64) = .init(0),
+    presentation_generation: u64 = 1,
     revision: u64 = 0,
     surface: terminal.Size = .{ .width = 1, .height = 1 },
     cell_size: terminal.Size = .{ .width = 1, .height = 1 },
@@ -81,6 +83,7 @@ const FrameSlot = struct {
     fn frame(self: *const FrameSlot) PublishedFrame {
         return .{
             .sequence = self.sequence.load(.acquire),
+            .presentation_generation = self.presentation_generation,
             .revision = self.revision,
             .surface = self.surface,
             .cell_size = self.cell_size,
@@ -95,6 +98,7 @@ const FrameSlot = struct {
 const ResidencySlot = struct {
     state: std.atomic.Value(u8) = .init(stateValue(.free)),
     sequence: std.atomic.Value(u64) = .init(0),
+    presentation_generation: u64 = 0,
     values: [maximum_residencies]terminal.Residency = undefined,
     count: usize = 0,
 };
@@ -186,6 +190,7 @@ pub const Writer = struct {
     /// Atomically publishes the completed slot and retires older unread candidates.
     pub fn finish(
         self: *Writer,
+        presentation_generation: u64,
         revision: u64,
         surface: terminal.Size,
         cell_size: terminal.Size,
@@ -197,6 +202,7 @@ pub const Writer = struct {
         const impl = exchangeImpl(self.exchange);
         const value = self.slot();
         std.debug.assert(!self.finished);
+        std.debug.assert(presentation_generation != 0);
         std.debug.assert(upload_count <= value.uploads.len);
         std.debug.assert(removal_count <= value.removals.len);
         std.debug.assert(command_count <= value.commands.len);
@@ -206,6 +212,7 @@ pub const Writer = struct {
 
         impl.producer_sequence +%= 1;
         if (impl.producer_sequence == 0) impl.producer_sequence = 1;
+        value.presentation_generation = presentation_generation;
         value.revision = revision;
         value.surface = surface;
         value.cell_size = cell_size;
@@ -301,7 +308,23 @@ pub const Lease = struct {
         }
         if (residency.len > maximum_residencies) return error.ResidencyLimit;
         try terminal.validateResidencies(residency);
-        if (!reportResidency(impl, residency)) return error.ResidencyMailboxBusy;
+        if (!reportResidency(
+            impl,
+            self.value.presentation_generation,
+            residency,
+        )) return error.ResidencyMailboxBusy;
+    }
+
+    /// Releases a failed backend candidate without publishing residency feedback.
+    ///
+    /// This is only for adapter failure before a candidate could establish any
+    /// new accepted backend state.
+    pub fn abandon(self: *Lease) void {
+        if (self.released) return;
+        const impl = exchangeImpl(self.exchange);
+        impl.frames[self.index].state.store(stateValue(.free), .release);
+        impl.reader_active.store(false, .release);
+        self.released = true;
     }
 };
 
@@ -350,6 +373,7 @@ pub fn acquireLatest(exchange: *Exchange) ?Lease {
 /// residency remains current.
 pub fn takeLatestResidency(
     exchange: *Exchange,
+    presentation_generation: u64,
     output: *[maximum_residencies]terminal.Residency,
 ) ?[]const terminal.Residency {
     const impl = exchangeImpl(exchange);
@@ -374,15 +398,17 @@ pub fn takeLatestResidency(
         ) != null)
             continue;
 
-        @memcpy(output[0..slot.count], slot.values[0..slot.count]);
-        const count = slot.count;
+        const matches = slot.presentation_generation == presentation_generation;
+        if (matches)
+            @memcpy(output[0..slot.count], slot.values[0..slot.count]);
+        const count = if (matches) slot.count else 0;
         slot.state.store(stateValue(.free), .release);
 
         for (&impl.residency, 0..) |*other, other_index| {
             if (other_index == index) continue;
             retireReady(&other.state);
         }
-        return output[0..count];
+        return if (matches) output[0..count] else null;
     }
 }
 
@@ -396,7 +422,11 @@ fn retireReady(state: *std.atomic.Value(u8)) void {
     if (previous == null) return;
 }
 
-fn reportResidency(impl: *Impl, residency: []const terminal.Residency) bool {
+fn reportResidency(
+    impl: *Impl,
+    presentation_generation: u64,
+    residency: []const terminal.Residency,
+) bool {
     std.debug.assert(residency.len <= maximum_residencies);
     var index: ?usize = null;
     for (&impl.residency, 0..) |*slot, candidate| {
@@ -425,6 +455,7 @@ fn reportResidency(impl: *Impl, residency: []const terminal.Residency) bool {
     }
     const selected = index orelse return false;
     const slot = &impl.residency[selected];
+    slot.presentation_generation = presentation_generation;
     @memcpy(slot.values[0..residency.len], residency);
     slot.count = residency.len;
     impl.residency_sequence +%= 1;
@@ -451,7 +482,7 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    first.finish(1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    first.finish(1, 1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var lease = acquireLatest(exchange).?;
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
@@ -461,14 +492,14 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
         .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
     } };
-    second.finish(2, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    second.finish(1, 2, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var third = beginWrite(exchange).?;
     third.commandStorage()[0] = .{ .solid = .{
         .rect = .{ .x = 0, .y = 0, .width = 3, .height = 1 },
         .color = .{ .r = 7, .g = 8, .b = 9, .a = 255 },
     } };
-    third.finish(3, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    third.finish(1, 3, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     // Held payload cannot be overwritten by producer coalescing.
     try std.testing.expectEqual(@as(u16, 1), lease.value.commands[0].solid.rect.width);
@@ -485,7 +516,7 @@ test "lease feedback publishes only newest exact residency" {
     defer deinit(exchange);
 
     var writer = beginWrite(exchange).?;
-    writer.finish(1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
     var lease = acquireLatest(exchange).?;
 
     const resource = try terminal.ResourceId.init(9);
@@ -497,7 +528,7 @@ test "lease feedback publishes only newest exact residency" {
     try lease.release(&.{accepted});
 
     var storage: [maximum_residencies]terminal.Residency = undefined;
-    const feedback = takeLatestResidency(exchange, &storage).?;
+    const feedback = takeLatestResidency(exchange, 1, &storage).?;
     try std.testing.expectEqual(@as(usize, 1), feedback.len);
     try std.testing.expectEqualDeep(accepted, feedback[0]);
 }
@@ -549,6 +580,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
     } };
     initial.finish(
         1,
+        1,
         .{ .width = 1, .height = 1 },
         .{ .width = 1, .height = 1 },
         0,
@@ -571,6 +603,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
             .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
         } };
         writer.finish(
+            1,
             revision,
             .{ .width = width, .height = 1 },
             .{ .width = 1, .height = 1 },

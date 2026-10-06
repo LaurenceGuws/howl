@@ -1,12 +1,14 @@
 //! Host-local owner for one in-process Howl Instance.
 //!
-//! Main owns the lifetime. Input owns the PTY service schedule. Render may resize
-//! or borrow the opaque VT observation only while holding this owner's mutex.
-//! No observation survives a mutation, and no GPU/display wait holds the lock.
+//! Main owns the lifetime. Input is the sole terminal thread: it services PTY,
+//! mutates Instance/VT/Render state, applies geometry/history policy, and publishes
+//! immutable Render frames. The GPU thread receives only the exchange and wake fd.
 
 const std = @import("std");
 const c = @import("host_c");
 const instance = @import("howl_instance");
+const presentation = @import("host_presentation");
+const scrollback = @import("host_scrollback");
 
 const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 
@@ -56,10 +58,6 @@ const Publication = struct {
         if (publish) self.revision = current_revision;
         return publish;
     }
-
-    fn arm(self: *const Publication, after_revision: u64) bool {
-        return self.revision > after_revision;
-    }
 };
 
 pub const PollState = struct {
@@ -70,22 +68,29 @@ pub const PollState = struct {
     animation_wait_ms: ?u32,
 };
 
+/// Reports canonical service or Instance-owned Render publication failure.
+pub const ServiceError = instance.ServiceError || instance.PublishError;
+/// Copies only terminal-thread interaction facts needed to route pointer input.
+pub const PointerContext = struct {
+    history_active: bool,
+    alternate_screen: bool,
+    interaction: instance.Terminal.InteractionState,
+};
+
 pub const Owner = struct {
-    allocator: std.mem.Allocator,
-    io: std.Io,
     value: *instance.Instance,
-    mutex: std.Io.Mutex = .init,
     descriptor: i32,
-    observation_fd: i32,
+    publication_fd: i32,
     stream_closed: bool = false,
     child_exit: ?instance.ChildExit = null,
     write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
     publication: Publication,
+    font: ?presentation.FontPaths = null,
+    history: scrollback.State = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
-        io: std.Io,
         inherited_environment: std.process.Environ,
         launch: instance.Launch,
     ) !Owner {
@@ -93,20 +98,49 @@ pub const Owner = struct {
         errdefer instance.deinit(value);
         const descriptor = try instance.descriptor(value);
         const initial_revision = instance.terminal(value).semanticSequence();
-        const observation_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (observation_fd < 0) return error.Signal;
+        const publication_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (publication_fd < 0) return error.Signal;
         return .{
-            .allocator = allocator,
-            .io = io,
             .value = value,
             .descriptor = descriptor,
-            .observation_fd = observation_fd,
+            .publication_fd = publication_fd,
             .publication = .{ .revision = initial_revision },
         };
     }
 
+    /// Creates one presented Instance and publishes its initial immutable frame.
+    pub fn initPresented(
+        allocator: std.mem.Allocator,
+        inherited_environment: std.process.Environ,
+        launch: instance.Launch,
+        font: presentation.FontPaths,
+        font_pixels: u16,
+    ) !Owner {
+        const value = try instance.initPresented(
+            allocator,
+            inherited_environment,
+            launch,
+            presentation.config(font, font_pixels),
+        );
+        errdefer instance.deinit(value);
+        const descriptor = try instance.descriptor(value);
+        const initial_revision = instance.terminal(value).semanticSequence();
+        const publication_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (publication_fd < 0) return error.Signal;
+        errdefer closeDescriptor(publication_fd);
+        try instance.publishRender(value);
+        signal(publication_fd);
+        return .{
+            .value = value,
+            .descriptor = descriptor,
+            .publication_fd = publication_fd,
+            .publication = .{ .revision = initial_revision },
+            .font = font,
+        };
+    }
+
     pub fn deinit(self: *Owner) void {
-        closeDescriptor(self.observation_fd);
+        closeDescriptor(self.publication_fd);
         instance.deinit(self.value);
         self.* = undefined;
     }
@@ -121,24 +155,19 @@ pub const Owner = struct {
         };
     }
 
-    /// Services one canonical PTY/VT turn. Polling remains Input-owned and never
-    /// holds this mutex.
+    /// Services one canonical PTY/VT turn on the sole terminal thread.
     pub fn service(
         self: *Owner,
         readable: bool,
         writable: bool,
         timestamp_ns: u64,
-    ) instance.ServiceError!instance.Service {
-        self.mutex.lockUncancelable(self.io);
-        const serviced = instance.service(
+    ) ServiceError!instance.Service {
+        const serviced = try instance.service(
             self.value,
             readable,
             writable,
             timestamp_ns,
-        ) catch |failure| {
-            self.mutex.unlock(self.io);
-            return failure;
-        };
+        );
         const current_revision = instance.terminal(self.value).semanticSequence();
         const synchronized = instance.terminal(self.value).synchronizedOutput();
         // A complete end/begin in this turn starts a new hold, even when the
@@ -164,103 +193,136 @@ pub const Owner = struct {
         if (serviced.child_exit) |value| self.child_exit = value;
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
-        self.mutex.unlock(self.io);
-        if (publish or lifecycle_changed) signal(self.observation_fd);
+        if ((publish or lifecycle_changed) and
+            instance.presented(self.value) and
+            !self.history.active())
+        {
+            try instance.publishRender(self.value);
+        }
+        if (publish or lifecycle_changed) signal(self.publication_fd);
         return serviced;
     }
 
-    pub fn observationFd(self: *const Owner) i32 {
-        return self.observation_fd;
+    pub fn publicationFd(self: *const Owner) i32 {
+        return self.publication_fd;
     }
 
-    pub fn drainObservationWake(self: *Owner) error{Signal}!void {
-        try drain(self.observation_fd);
+    /// Borrows the backend-only Render exchange from a presented local Instance.
+    pub fn renderExchange(self: *const Owner) error{PresentationUnavailable}!*instance.RenderExchange {
+        return instance.renderExchange(self.value);
     }
 
-    /// Ensures Render observes a semantic mutation which raced its arm operation.
-    pub fn armObservation(self: *Owner, after_revision: u64) void {
-        self.mutex.lockUncancelable(self.io);
-        const ready = !self.presentationHeld() and self.publication.arm(after_revision);
-        self.mutex.unlock(self.io);
-        if (ready) signal(self.observation_fd);
+    /// Applies one copied font-scale to a physical terminal surface.
+    pub fn reconfigurePresentationSurface(
+        self: *Owner,
+        font_pixels: u16,
+        width: u16,
+        height: u16,
+    ) !instance.PresentationGeometry {
+        const font = self.font orelse return error.PresentationUnavailable;
+        const geometry = try instance.reconfigurePresentationSurface(
+            self.value,
+            presentation.config(font, font_pixels),
+            .{ .width = width, .height = height },
+        );
+        self.history.reset();
+        self.publication.revision = instance.terminal(self.value).semanticSequence();
+        try instance.publishRender(self.value);
+        signal(self.publication_fd);
+        return geometry;
     }
 
-    pub const ObservationGuard = struct {
-        owner: *Owner,
-        value: *const instance.Terminal.Observation,
-
-        pub fn deinit(self: *ObservationGuard) void {
-            self.owner.mutex.unlock(self.owner.io);
-            self.* = undefined;
+    /// Derives rows/columns from the current cell lattice and physical surface.
+    pub fn resizeSurface(
+        self: *Owner,
+        width: u16,
+        height: u16,
+    ) !instance.PresentationGeometry {
+        const cell = instance.terminal(self.value).cellPixelSize().?;
+        const rows_u32 = @as(u32, height) / cell.height;
+        const columns_u32 = @as(u32, width) / cell.width;
+        if (rows_u32 == 0 or columns_u32 < 2 or
+            rows_u32 > std.math.maxInt(u16) or
+            columns_u32 > std.math.maxInt(u16))
+            return error.InvalidDimensions;
+        const rows: u16 = @intCast(rows_u32);
+        const columns: u16 = @intCast(columns_u32);
+        try instance.resize(self.value, rows, columns);
+        self.history.reset();
+        self.publication.revision = instance.terminal(self.value).semanticSequence();
+        if (instance.presented(self.value)) {
+            try instance.publishRender(self.value);
         }
-    };
-
-    /// Holds Instance mutation serialization for one synchronous observation use.
-    pub fn observe(self: *Owner) ObservationGuard {
-        self.mutex.lockUncancelable(self.io);
-        return .{ .owner = self, .value = instance.terminal(self.value) };
+        signal(self.publication_fd);
+        return .{
+            .cell_size = .{
+                .width = @intCast(cell.width),
+                .height = @intCast(cell.height),
+            },
+            .rows = rows,
+            .columns = columns,
+        };
     }
 
-    /// Consumes a wake and borrows only the currently publishable cut. Null
-    /// preserves the caller's request; it must wait for a later wake, not rearm.
-    /// A null revision requests the current cut for explicit history/geometry.
-    pub fn observePublished(self: *Owner, after_revision: ?u64) error{Signal}!?ObservationGuard {
-        var guard = self.observe();
-        errdefer guard.deinit();
-        try drain(self.observation_fd);
-        if (self.presentationHeld() or
-            guard.value.semanticSequence() != self.publication.revision or
-            (if (after_revision) |after| !self.publication.arm(after) else false))
-        {
-            guard.deinit();
-            return null;
+    /// Applies one wheel history delta on the terminal thread and publishes that cut.
+    pub fn scrollHistory(self: *Owner, amount: i16) !bool {
+        if (amount == 0) return false;
+        if (!instance.presented(self.value) or self.presentationHeld())
+            return false;
+        const observation = instance.terminal(self.value);
+        const live = observation.semanticView(0);
+        var candidate = self.history;
+        if (candidate.active())
+            candidate.follow(
+                live.history_count,
+                live.history_row_base,
+                live.is_alternate_screen,
+            );
+        const before = candidate.offset;
+        candidate.scroll(
+            amount,
+            live.history_count,
+            live.history_row_base,
+            live.is_alternate_screen,
+        );
+        if (candidate.offset == before) {
+            self.history = candidate;
+            return false;
         }
-        return guard;
+        const accepted = observation.semanticView(candidate.offset);
+        candidate.accept(
+            accepted.history_offset,
+            accepted.history_count,
+            accepted.history_row_base,
+            accepted.is_alternate_screen,
+        );
+        self.history = candidate;
+        try instance.publishRenderAt(self.value, candidate.offset);
+        signal(self.publication_fd);
+        return true;
     }
 
-    /// Called only under the canonical mutation mutex.
+    /// Copies current pointer-routing facts while Input owns the terminal thread.
+    pub fn pointerContext(self: *Owner) PointerContext {
+        const observation = instance.terminal(self.value);
+        return .{
+            .history_active = self.history.active(),
+            .alternate_screen = observation.semanticView(0).is_alternate_screen,
+            .interaction = observation.interactionState(),
+        };
+    }
+
+    /// True while synchronized output intentionally withholds a live publication.
     fn presentationHeld(self: *const Owner) bool {
         return instance.terminal(self.value).synchronizedOutput() and
             !self.publication.synchronized_timed_out and
-            self.publication.lifecycle_revision != instance.terminal(self.value).semanticSequence();
+            self.publication.lifecycle_revision !=
+                instance.terminal(self.value).semanticSequence();
     }
 
+    /// Delivers one canonical input event on the sole terminal thread.
     pub fn input(self: *Owner, event: instance.Input) instance.InputError!void {
-        self.mutex.lockUncancelable(self.io);
-        instance.input(self.value, event) catch |failure| {
-            self.mutex.unlock(self.io);
-            return failure;
-        };
-        self.mutex.unlock(self.io);
-    }
-
-    pub fn resizeGeometry(
-        self: *Owner,
-        rows: u16,
-        columns: u16,
-        cell_width: u16,
-        cell_height: u16,
-    ) instance.ResizeError!void {
-        self.mutex.lockUncancelable(self.io);
-        instance.resizeGeometry(
-            self.value,
-            rows,
-            columns,
-            cell_width,
-            cell_height,
-        ) catch |failure| {
-            self.mutex.unlock(self.io);
-            return failure;
-        };
-        self.publication.revision = instance.terminal(self.value).semanticSequence();
-        self.mutex.unlock(self.io);
-        signal(self.observation_fd);
-    }
-
-    pub fn interactionState(self: *Owner) instance.Terminal.InteractionState {
-        var guard = self.observe();
-        defer guard.deinit();
-        return guard.value.interactionState();
+        return instance.input(self.value, event);
     }
 };
 
@@ -302,7 +364,7 @@ fn closeDescriptor(descriptor: i32) void {
 test "local terminal owner serializes service input and observation without an endpoint" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    var owner = try Owner.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "printf '\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"",
         .rows = 4,
@@ -326,10 +388,8 @@ test "local terminal owner serializes service input and observation without an e
             try monotonicNs(),
         );
         try std.testing.expectEqual(serviced.write_pending, owner.pollState().write_pending);
-        var guard = owner.observe();
-        const title = guard.value.title();
+        const title = instance.terminal(owner.value).title();
         const ready_title = if (title) |value| std.mem.eql(u8, value, "READY") else false;
-        guard.deinit();
         if (ready_title) break;
     } else return error.Timeout;
 
@@ -350,10 +410,8 @@ test "local terminal owner serializes service input and observation without an e
             try monotonicNs(),
         );
         try std.testing.expectEqual(serviced.write_pending, owner.pollState().write_pending);
-        var guard = owner.observe();
-        const title = guard.value.title();
+        const title = instance.terminal(owner.value).title();
         const acknowledged = if (title) |value| std.mem.eql(u8, value, "ACK") else false;
-        guard.deinit();
         if (acknowledged) return;
     }
     return error.Timeout;
@@ -363,7 +421,6 @@ test "local publication withholds synchronized output until release or timeout" 
     var publication = Publication{ .revision = 10 };
     try std.testing.expect(!publication.note(11, true, 100));
     try std.testing.expectEqual(@as(u64, 10), publication.revision);
-    try std.testing.expect(!publication.arm(10));
     try std.testing.expect(publication.synchronized_pending);
 
     try std.testing.expect(!publication.note(
@@ -417,12 +474,11 @@ fn testServiceCut(owner: *Owner, title: ?[]const u8, timestamp_ns: u64) !instanc
             timestamp_ns,
         );
         try std.testing.expect(!serviced.stream_closed and serviced.child_exit == null);
-        var guard = owner.observe();
+        const observation = instance.terminal(owner.value);
         const matched = if (title) |expected|
-            (if (guard.value.title()) |value| std.mem.eql(u8, value, expected) else false)
+            (if (observation.title()) |value| std.mem.eql(u8, value, expected) else false)
         else
             serviced.synchronized_output.ended;
-        guard.deinit();
         if (matched) return serviced;
     }
     return error.Timeout;
@@ -431,7 +487,7 @@ fn testServiceCut(owner: *Owner, title: ?[]const u8, timestamp_ns: u64) !instanc
 test "local owner yields a released cut before renewing synchronized timeout protection" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    var owner = try Owner.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf '\\033[?2026hA\\033]0;FIRST\\007'; read step; " ++
             "printf '\\033[?2026l\\033[?2026hB\\033]0;SECOND\\007'; read step; " ++
@@ -446,21 +502,21 @@ test "local owner yields a released cut before renewing synchronized timeout pro
     try std.testing.expect(!(try owner.service(false, false, 10 + synchronized_output_timeout_ns)).changed);
     try std.testing.expect(owner.publication.synchronized_timed_out);
     const published = owner.publication.revision;
-    try owner.drainObservationWake();
     try owner.input(.{ .bytes = "go\n" });
     try std.testing.expect((try testServiceCut(&owner, null, 11 + synchronized_output_timeout_ns)).synchronized_output.ended);
     const released = owner.publication.revision;
     try std.testing.expect(released > published);
-    var complete = (try owner.observePublished(published)) orelse return error.ReleaseHidden;
-    try std.testing.expect(!complete.value.synchronizedOutput());
-    try std.testing.expectEqual(@as(u21, 'A'), complete.value.semanticView(0).cellAt(0, 0));
-    complete.deinit();
+    const complete = instance.terminal(owner.value);
+    try std.testing.expect(!complete.synchronizedOutput());
+    try std.testing.expectEqual(
+        @as(u21, 'A'),
+        complete.semanticView(0).cellAt(0, 0),
+    );
     const reopened = try testServiceCut(&owner, "SECOND", 11 + synchronized_output_timeout_ns);
     try std.testing.expect(!reopened.synchronized_output.ended);
-    var guard = owner.observe();
-    const synchronized = guard.value.synchronizedOutput();
-    const current = guard.value.semanticSequence();
-    guard.deinit();
+    const current_observation = instance.terminal(owner.value);
+    const synchronized = current_observation.synchronizedOutput();
+    const current = current_observation.semanticSequence();
     try std.testing.expect(synchronized and current > published);
     try std.testing.expectEqual(released, owner.publication.revision);
     try std.testing.expect(!owner.publication.synchronized_timed_out);
@@ -470,17 +526,10 @@ test "local owner yields a released cut before renewing synchronized timeout pro
     try std.testing.expect(owner.publication.revision > current);
 }
 
-test "local publication never rearms an already consumed or newer revision" {
-    const publication = Publication{ .revision = 10 };
-    try std.testing.expect(publication.arm(9));
-    try std.testing.expect(!publication.arm(10));
-    try std.testing.expect(!publication.arm(11));
-}
-
 test "local owner new pending frame gets a fresh deadline but repeated begin does not" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    var owner = try Owner.init(std.testing.allocator, threaded.io(), std.testing.environ, .{
+    var owner = try Owner.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf '\\033[?2026hA\\033]0;FIRST\\007'; read step; " ++
             "printf '\\033[?2026l\\033[?2026hB\\033]0;SECOND\\007'; read step; " ++

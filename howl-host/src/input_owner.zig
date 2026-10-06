@@ -10,7 +10,7 @@ const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const local_terminal = @import("local_terminal");
 const instance = @import("howl_instance");
-const scrollback = @import("scrollback.zig");
+const scrollback = @import("host_scrollback");
 const shared = @import("shared.zig");
 
 pub const Command = union(enum) {
@@ -93,7 +93,24 @@ fn runFallible(
                 },
                 .mouse => |mouse| {
                     if (mouse.scene_index != 0) return error.InputTopologyMismatch;
-                    try deliverMouseLocal(boundary, owner, mouse);
+                    try deliverMouseLocal(owner, mouse);
+                },
+                .geometry => |geometry| {
+                    if (geometry.width == 0 or geometry.height == 0)
+                        return error.InputTopologyMismatch;
+                    if (geometry.font_pixels) |pixels| {
+                        if (pixels == 0) return error.InputTopologyMismatch;
+                        _ = try owner.reconfigurePresentationSurface(
+                            pixels,
+                            geometry.width,
+                            geometry.height,
+                        );
+                    } else {
+                        _ = try owner.resizeSurface(
+                            geometry.width,
+                            geometry.height,
+                        );
+                    }
                 },
                 .key => |key| {
                     try deliverKeyLocal(owner, key);
@@ -120,7 +137,6 @@ fn runFallible(
 }
 
 fn deliverMouseLocal(
-    boundary: *shared.Boundary,
     owner: *local_terminal.Owner,
     mouse: shared.RoutedMouse,
 ) !void {
@@ -135,34 +151,17 @@ fn deliverMouseLocal(
     };
     const force_history =
         mouse.value.modifiers & protocol.typed_input.modifiers.shift != 0;
-    var route = scrollback.routeWheel(
-        mouse.history_offset != 0,
+    const context = owner.pointerContext();
+    const route = scrollback.routeWheel(
+        context.history_active,
         force_history,
-        false,
-        false,
-        mouse.alternate_screen,
-        false,
+        true,
+        context.interaction.mouse_tracking != .off,
+        context.alternate_screen,
+        context.interaction.alternate_scroll,
     );
-    if (route == .interaction_state) {
-        const state = owner.interactionState();
-        route = scrollback.routeWheel(
-            mouse.history_offset != 0,
-            force_history,
-            true,
-            state.mouse_tracking != .off,
-            mouse.alternate_screen,
-            state.alternate_scroll,
-        );
-    }
     switch (route) {
-        .history => boundary.publishHostCommand(.{
-            .kind = .history_scroll,
-            .pane = 0,
-            .amount = amount,
-        }) catch |failure| switch (failure) {
-            error.HostCommandLimit => {},
-            else => |err| return err,
-        },
+        .history => _ = try owner.scrollHistory(amount),
         .terminal_mouse => try owner.input(.{ .mouse = nativeMouse(mouse.value) }),
         .alternate_scroll => {
             const key: instance.KeyName = if (amount > 0) .up else .down;
@@ -170,7 +169,7 @@ fn deliverMouseLocal(
             try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .release } });
         },
         .ignore => {},
-        .interaction_state => unreachable,
+        .interaction_state => return error.InputTopologyMismatch,
     }
 }
 

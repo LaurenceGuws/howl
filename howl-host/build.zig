@@ -52,11 +52,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    const presentation = b.createModule(.{
+        .root_source_file = b.path("src/presentation.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const scrollback = b.createModule(.{
+        .root_source_file = b.path("src/scrollback.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    presentation.addImport("howl_instance", instance.module("howl_instance"));
     local_terminal.addImport("host_c", host_c);
     local_terminal.addImport("howl_instance", instance.module("howl_instance"));
-    const text_dependency = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = false });
-    const test_fonts = text_dependency.module("howl_text_test_fonts");
-
+    local_terminal.addImport("host_presentation", presentation);
+    local_terminal.addImport("host_scrollback", scrollback);
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -67,6 +77,8 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("local_terminal", local_terminal);
+    root.addImport("host_presentation", presentation);
+    root.addImport("host_scrollback", scrollback);
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);
     root.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
@@ -145,11 +157,7 @@ pub fn build(b: *std.Build) void {
 
     const scrollback_tests = b.addTest(.{
         .name = "howl-host-scrollback",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/scrollback.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = scrollback,
         .use_llvm = false,
         .use_lld = false,
     });
@@ -164,6 +172,7 @@ pub fn build(b: *std.Build) void {
     input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     input_test_module.addImport("howl_instance", instance.module("howl_instance"));
     input_test_module.addImport("local_terminal", local_terminal);
+    input_test_module.addImport("host_scrollback", scrollback);
     input_test_module.addImport("host_c", host_c);
     const input_tests = b.addTest(.{
         .name = "howl-host-input",
@@ -173,42 +182,23 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&input_tests.step);
 
-    const fast_test_module = b.createModule(.{
-        .root_source_file = b.path("src/terminal_fast.zig"),
+    const published_scene_module = b.createModule(.{
+        .root_source_file = b.path("src/published_scene.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    fast_test_module.addImport("howl_instance", instance.module("howl_instance"));
-    fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
-    fast_test_module.addImport("test_fonts", test_fonts);
-    fast_test_module.linkSystemLibrary("vulkan", .{});
-    const fast_tests = b.addTest(.{
-        .name = "howl-host-terminal-fast",
-        .root_module = fast_test_module,
+    published_scene_module.addImport("host_c", host_c);
+    published_scene_module.addImport("howl_vk", vk.module("howl_vk"));
+    published_scene_module.addImport("howl_instance", instance.module("howl_instance"));
+    published_scene_module.linkSystemLibrary("vulkan", .{});
+    const published_scene_tests = b.addTest(.{
+        .name = "howl-host-published-scene",
+        .root_module = published_scene_module,
         .use_llvm = false,
         .use_lld = false,
     });
-    check.dependOn(&fast_tests.step);
-
-    const scene_test_module = b.createModule(.{
-        .root_source_file = b.path("src/terminal_scene.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    scene_test_module.addImport("howl_vk", vk.module("howl_vk"));
-    scene_test_module.addImport("howl_instance", instance.module("howl_instance"));
-    scene_test_module.addImport("local_terminal", local_terminal);
-    scene_test_module.addImport("test_fonts", test_fonts);
-    scene_test_module.linkSystemLibrary("vulkan", .{});
-    const scene_tests = b.addTest(.{
-        .name = "howl-host-terminal-scene",
-        .root_module = scene_test_module,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&scene_tests.step);
+    check.dependOn(&published_scene_tests.step);
 
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -217,7 +207,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(key_repeat_tests).step);
     test_step.dependOn(&b.addRunArtifact(scrollback_tests).step);
     test_step.dependOn(&b.addRunArtifact(input_tests).step);
-    test_step.dependOn(&b.addRunArtifact(fast_tests).step);
-    test_step.dependOn(&b.addRunArtifact(scene_tests).step);
+    test_step.dependOn(&b.addRunArtifact(published_scene_tests).step);
     b.default_step = check;
 }

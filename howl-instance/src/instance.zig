@@ -114,6 +114,13 @@ pub const PresentationConfig = struct {
     incremental_command_capacity: usize = 0,
 };
 
+/// Reports the exact grid and cell lattice chosen for one presented surface.
+pub const PresentationGeometry = struct {
+    cell_size: terminal_render.Size,
+    rows: u16,
+    columns: u16,
+};
+
 /// Supplies one local shell launch and bounded canonical terminal geometry.
 pub const Launch = struct {
     shell: []const u8,
@@ -146,6 +153,14 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
 pub const RenderError = terminal_render.Error || error{PresentationUnavailable};
 /// Reports publication preparation or bounded exchange failure.
 pub const PublishError = RenderError || std.mem.Allocator.Error || error{PublicationBusy};
+/// Reports transactional font/renderer replacement or canonical geometry failure.
+pub const ReconfigurePresentationError =
+    text.InitError || terminal_render.InitError || terminal_render.Error ||
+    ResizeError || error{
+        PresentationUnavailable,
+        PublicationCapacityMismatch,
+        GenerationOverflow,
+    };
 
 /// Summarizes one bounded service turn without exposing PTY or VT ownership.
 pub const Service = struct {
@@ -256,7 +271,7 @@ pub fn renderFrame(
 ) RenderError!terminal_render.Frame {
     const state = stateMut(instance);
     const presentation = state.presentation orelse return error.PresentationUnavailable;
-    try presentation.refresh(state.terminal.observation());
+    try presentation.refresh(state.terminal.observation(), 0);
     return terminal_render.frame(presentation.renderer, residency, buffers);
 }
 
@@ -268,7 +283,7 @@ pub fn missingRenderResources(
 ) RenderError![]const terminal_render.FrameExternalResource {
     const state = stateMut(instance);
     const presentation = state.presentation orelse return error.PresentationUnavailable;
-    try presentation.refresh(state.terminal.observation());
+    try presentation.refresh(state.terminal.observation(), 0);
     return terminal_render.missingExternalResources(presentation.renderer, residency, output);
 }
 
@@ -288,9 +303,65 @@ pub fn renderExchange(instance: *const Instance) error{PresentationUnavailable}!
 /// unread older frame is replaceable, while a frame currently leased by the
 /// backend remains immutable until release.
 pub fn publishRender(instance: *Instance) PublishError!void {
+    return publishRenderAt(instance, 0);
+}
+
+/// Publishes one canonical history cut through the same Instance-owned Renderer.
+///
+/// The history offset is clamped by VT observation semantics. View selection
+/// stays on the terminal thread; the backend still receives only final Render work.
+pub fn publishRenderAt(instance: *Instance, history_offset: u32) PublishError!void {
     const state = stateMut(instance);
     const presentation = state.presentation orelse return error.PresentationUnavailable;
-    try presentation.publish(state.terminal.observation());
+    try presentation.publish(state.terminal.observation(), history_offset);
+}
+
+/// Transactionally replaces Instance-owned fonts and Renderer on the terminal thread.
+///
+/// The publication exchange survives the replacement. Its presentation generation
+/// advances so a backend may safely release an older lease without making stale
+/// residency visible to the new Renderer.
+pub fn reconfigurePresentation(
+    instance: *Instance,
+    config: PresentationConfig,
+) ReconfigurePresentationError!terminal_render.Size {
+    const state = stateMut(instance);
+    const view = state.terminal.semanticView(0);
+    return (try state.reconfigurePresentationTarget(
+        config,
+        .{ .grid = .{ .rows = view.rows, .columns = view.cols } },
+    )).cell_size;
+}
+
+/// Transactionally replaces presentation and canonical terminal geometry.
+///
+/// Font/Renderer construction and validation complete before PTY/VT geometry
+/// commits, so after the resize succeeds the remaining owner swap is infallible.
+pub fn reconfigurePresentationGeometry(
+    instance: *Instance,
+    config: PresentationConfig,
+    rows: u16,
+    columns: u16,
+) ReconfigurePresentationError!terminal_render.Size {
+    return (try stateMut(instance).reconfigurePresentationTarget(
+        config,
+        .{ .grid = .{ .rows = rows, .columns = columns } },
+    )).cell_size;
+}
+
+/// Replaces presentation and derives the canonical grid from a physical surface.
+///
+/// Font metrics, rows/columns, PTY pixels, VT pixels and Render cell geometry
+/// are chosen on the same terminal-thread transaction.
+pub fn reconfigurePresentationSurface(
+    instance: *Instance,
+    config: PresentationConfig,
+    surface: terminal_render.Size,
+) ReconfigurePresentationError!PresentationGeometry {
+    return stateMut(instance).reconfigurePresentationTarget(
+        config,
+        .{ .surface = surface },
+    );
 }
 
 /// Borrows the canonical VT observation capability until the next Instance mutation.
@@ -490,9 +561,12 @@ const PresentationState = struct {
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     terminal_revision: ?u64 = null,
+    terminal_history_offset: u32 = 0,
     backend_residency: [publication.maximum_residencies]terminal_render.Residency = undefined,
     backend_residency_count: usize = 0,
     atlas_pixel_capacity: usize,
+    command_capacity: usize,
+    presentation_generation: u64 = 1,
 
     fn initWithFonts(
         allocator: std.mem.Allocator,
@@ -539,8 +613,9 @@ const PresentationState = struct {
             .fonts = fonts.*,
             .exchange = exchange,
             .atlas_pixel_capacity = atlas_pixel_capacity,
+            .command_capacity = config.command_capacity,
         };
-        state.refresh(observation) catch |failure| {
+        state.refresh(observation, 0) catch |failure| {
             allocator.destroy(state);
             return failure;
         };
@@ -563,29 +638,45 @@ const PresentationState = struct {
     fn refresh(
         self: *PresentationState,
         observation: *const Terminal.Observation,
+        history_offset: u32,
     ) terminal_render.Error!void {
         const revision = observation.semanticSequence();
-        if (self.terminal_revision != null and self.terminal_revision.? == revision) return;
+        const view = observation.semanticView(history_offset);
+        if (self.terminal_revision != null and
+            self.terminal_revision.? == revision and
+            self.terminal_history_offset == view.history_offset)
+            return;
         var candidate: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = try terminal_render.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
             terminal_render.usage(self.renderer),
             observation,
-            0,
+            view.history_offset,
             &candidate,
         );
-        try terminal_render.updateObservation(self.renderer, observation, 0, bindings);
+        try terminal_render.updateObservation(
+            self.renderer,
+            observation,
+            view.history_offset,
+            bindings,
+        );
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
         self.terminal_revision = revision;
+        self.terminal_history_offset = view.history_offset;
     }
 
     fn publish(
         self: *PresentationState,
         observation: *const Terminal.Observation,
+        history_offset: u32,
     ) PublishError!void {
-        try self.refresh(observation);
-        if (publication.takeLatestResidency(self.exchange, &self.backend_residency)) |accepted|
+        try self.refresh(observation, history_offset);
+        if (publication.takeLatestResidency(
+            self.exchange,
+            self.presentation_generation,
+            &self.backend_residency,
+        )) |accepted|
             self.backend_residency_count = accepted.len;
 
         var missing_storage: [terminal_render.maximum_external_images]terminal_render.FrameExternalResource = undefined;
@@ -602,7 +693,8 @@ const PresentationState = struct {
         );
         var prospective_count = self.backend_residency_count;
         var external_pixel_count: usize = 0;
-        var graphics = observation.images(0);
+        const view = observation.semanticView(history_offset);
+        var graphics = observation.images(view.history_offset);
 
         for (missing) |external| {
             if (external.format != .rgba8) return error.FormatMismatch;
@@ -690,7 +782,6 @@ const PresentationState = struct {
             ) catch return error.ArithmeticOverflow;
 
         const cell_size = self.cellSize();
-        const view = observation.semanticView(0);
         const surface = terminal_render.Size{
             .width = std.math.mul(u16, view.cols, cell_size.width) catch
                 return error.InvalidPresentationGeometry,
@@ -698,6 +789,7 @@ const PresentationState = struct {
                 return error.InvalidPresentationGeometry,
         };
         writer.finish(
+            self.presentation_generation,
             frame.revision,
             surface,
             cell_size,
@@ -809,6 +901,124 @@ const State = struct {
         self.terminal.deinit();
         self.transport.deinit();
         self.* = undefined;
+    }
+
+    const PresentationTarget = union(enum) {
+        grid: struct {
+            rows: u16,
+            columns: u16,
+        },
+        surface: terminal_render.Size,
+    };
+
+    fn reconfigurePresentationTarget(
+        self: *State,
+        config: PresentationConfig,
+        target: PresentationTarget,
+    ) ReconfigurePresentationError!PresentationGeometry {
+        const presentation = self.presentation orelse
+            return error.PresentationUnavailable;
+        if (config.command_capacity != presentation.command_capacity)
+            return error.PublicationCapacityMismatch;
+
+        var fonts = try OwnedFonts.init(self.allocator, config.fonts);
+        var fonts_live = true;
+        defer if (fonts_live) fonts.deinit();
+
+        const metrics = fonts.regular.metrics();
+        const cell_size = terminal_render.Size{
+            .width = metrics.advance_width,
+            .height = metrics.line_height,
+        };
+        const rows, const columns = switch (target) {
+            .grid => |grid| .{ grid.rows, grid.columns },
+            .surface => |surface| choose: {
+                if (surface.width == 0 or surface.height == 0)
+                    return error.InvalidDimensions;
+                const rows = surface.height / cell_size.height;
+                const columns = surface.width / cell_size.width;
+                if (rows == 0 or columns < 2) return error.InvalidDimensions;
+                break :choose .{ rows, columns };
+            },
+        };
+        const renderer = try terminal_render.init(
+            self.allocator,
+            fonts.faces(),
+            .{
+                .cell_size = cell_size,
+                .box_drawing = config.box_drawing,
+                .shape_cache = config.shape_cache,
+                .atlas = config.atlas,
+                .shaped_capacity = config.shaped_capacity,
+                .raster_bytes = config.raster_bytes,
+                .command_capacity = config.command_capacity,
+                .command_limit = config.command_limit,
+                .incremental_row_capacity = config.incremental_row_capacity,
+                .incremental_command_capacity = config.incremental_command_capacity,
+            },
+        );
+        var renderer_live = true;
+        defer if (renderer_live) terminal_render.deinit(renderer);
+
+        const observation = self.terminal.observation();
+        const old_revision = observation.semanticSequence();
+        var candidate_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
+        const bindings = try terminal_render.planObservationImageBindings(
+            &.{},
+            terminal_render.usage(renderer),
+            observation,
+            0,
+            &candidate_bindings,
+        );
+        try terminal_render.updateObservation(
+            renderer,
+            observation,
+            0,
+            bindings,
+        );
+        const atlas_pixel_capacity = std.math.mul(
+            usize,
+            @as(usize, config.atlas.width),
+            @as(usize, config.atlas.height),
+        ) catch return error.InvalidConfig;
+
+        const next_generation = std.math.add(
+            u64,
+            presentation.presentation_generation,
+            1,
+        ) catch return error.GenerationOverflow;
+
+        const previous_cell = self.terminal.cellPixelSize().?;
+        const current = observation.semanticView(0);
+        if (current.rows != rows or current.cols != columns or
+            previous_cell.width != cell_size.width or
+            previous_cell.height != cell_size.height)
+        {
+            try self.resizeGeometry(
+                rows,
+                columns,
+                .{ .width = cell_size.width, .height = cell_size.height },
+            );
+        }
+
+        terminal_render.deinit(presentation.renderer);
+        presentation.fonts.deinit();
+        presentation.renderer = renderer;
+        renderer_live = false;
+        presentation.fonts = fonts;
+        fonts_live = false;
+        @memcpy(presentation.image_bindings[0..bindings.len], bindings);
+        presentation.image_binding_count = bindings.len;
+        presentation.terminal_revision = old_revision;
+        presentation.terminal_history_offset = 0;
+        presentation.backend_residency_count = 0;
+        presentation.atlas_pixel_capacity = atlas_pixel_capacity;
+        presentation.presentation_generation = next_generation;
+        return .{
+            .cell_size = cell_size,
+            .rows = rows,
+            .columns = columns,
+        };
     }
 
     fn input(self: *State, event: Input) InputError!void {
@@ -1774,4 +1984,108 @@ test "presented publication owns canonical VT image bytes and consumes residency
     for (settled.value.uploads) |upload|
         try std.testing.expect(upload.format != .rgba8);
     try settled.release(accepted[0..accepted_count]);
+}
+
+test "presentation reconfigure invalidates late old-generation residency" {
+    const fonts = @import("test_fonts");
+    const first_font = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    };
+    const second_font = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 24 },
+    };
+    const base_config = PresentationConfig{
+        .fonts = .{ .regular = .{ .path = first_font } },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .shape_cache = .{
+            .entry_capacity = 32,
+            .scalar_capacity = 128,
+            .glyph_capacity = 128,
+            .max_sequence_scalars = 16,
+        },
+        .atlas = .{
+            .width = 256,
+            .height = 256,
+            .entry_capacity = 128,
+        },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+    };
+    const instance = try initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "printf 'A'; sleep 30",
+            .rows = 2,
+            .columns = 8,
+            .history_rows = 8,
+        },
+        base_config,
+    );
+    defer deinit(instance);
+
+    try serviceUntilContains(instance, "A");
+    try publishRender(instance);
+    const exchange = try renderExchange(instance);
+    var old = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    try std.testing.expectEqual(@as(u64, 1), old.value.presentation_generation);
+
+    var old_residency: [publication.maximum_residencies]terminal_render.Residency = undefined;
+    var old_count: usize = 0;
+    var old_had_alpha = false;
+    for (old.value.uploads) |upload| {
+        if (upload.format == .alpha8) old_had_alpha = true;
+        old_residency[old_count] = .{
+            .resource = upload.resource,
+            .format = upload.format,
+            .size = upload.size,
+        };
+        old_count += 1;
+    }
+    try std.testing.expect(old_had_alpha);
+
+    var next_config = base_config;
+    next_config.fonts = .{ .regular = .{ .path = second_font } };
+    const next_cell = try reconfigurePresentation(instance, next_config);
+    const canonical_cell = terminal(instance).cellPixelSize() orelse
+        return error.MissingCellPixels;
+    try std.testing.expectEqual(next_cell.width, canonical_cell.width);
+    try std.testing.expectEqual(next_cell.height, canonical_cell.height);
+
+    // The old backend finishes after the presentation swap. Its generation-1
+    // residency must not satisfy generation-2 Render resources.
+    try old.release(old_residency[0..old_count]);
+    try publishRender(instance);
+
+    var current = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    try std.testing.expectEqual(@as(u64, 2), current.value.presentation_generation);
+    try std.testing.expectEqualDeep(next_cell, current.value.cell_size);
+    var current_had_alpha = false;
+    var current_residency: [publication.maximum_residencies]terminal_render.Residency = undefined;
+    var current_count: usize = 0;
+    for (current.value.uploads) |upload| {
+        if (upload.format == .alpha8) current_had_alpha = true;
+        current_residency[current_count] = .{
+            .resource = upload.resource,
+            .format = upload.format,
+            .size = upload.size,
+        };
+        current_count += 1;
+    }
+    try std.testing.expect(current_had_alpha);
+    try current.release(current_residency[0..current_count]);
+
+    // Exact current-generation acceptance now suppresses the atlas upload.
+    try publishRender(instance);
+    var settled = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    for (settled.value.uploads) |upload|
+        try std.testing.expect(upload.format != .alpha8);
+    try settled.release(current_residency[0..current_count]);
 }

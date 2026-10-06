@@ -2,19 +2,16 @@
 
 const std = @import("std");
 const c = @import("renderer_c");
+const host_presentation = @import("host_presentation");
 const host_layout = @import("layout.zig");
-const local_terminal = @import("local_terminal");
-const scrollback = @import("scrollback.zig");
+const howl_instance = @import("howl_instance");
+const published_scene = @import("published_scene.zig");
 const shared = @import("shared.zig");
-const terminal_scene = @import("terminal_scene.zig");
-pub const FontPaths = terminal_scene.FontPaths;
-const terminal_fast = @import("terminal_fast.zig");
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const surface = howl_vk.surface;
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
-const base_font_pixels: u16 = 16;
 const scale_denominator: u32 = 120;
 const empty_plan = surface.Plan{
     .vertices = &.{},
@@ -23,16 +20,8 @@ const empty_plan = surface.Plan{
     .atlas_changed = false,
 };
 
-const FastDraw = struct {
-    gpu: *terminal_fast.Gpu,
-    frame: terminal_fast.Prepared,
-    placement: terminal_fast.Placement,
-    changed: bool,
-};
-
 const Ready = union(enum) {
-    scene: struct { index: usize, prepared: terminal_scene.Prepared },
-    command: shared.HostCommand,
+    scene: struct { index: usize, prepared: published_scene.Prepared },
     window_size: shared.WindowSize,
     display_scale: shared.DisplayScale,
 };
@@ -41,24 +30,11 @@ const PointerProjection = struct {
     display_scale_120: u32,
     mux: *host_layout.Mux,
     scene_panes: *const [2]?host_layout.PaneId,
-    prepared: *const [2]terminal_scene.Prepared,
-    history: *const [2]scrollback.State,
     scene_count: usize,
     workspace_rows: u16,
     workspace_cols: u16,
     cell_width: u16,
     cell_height: u16,
-};
-
-const GenericDraw = struct {
-    context: *surface.Context,
-    plan: surface.Plan,
-    placement: surface.Placement,
-    alpha_pixels: []const u8,
-    image_pixels: []const u8,
-    residency: *surface.ResidencyStore,
-    stage: bool,
-    residency_changed: bool,
 };
 
 const Slot = struct {
@@ -109,11 +85,21 @@ const RenderRing = struct {
 pub fn run(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    owner: *local_terminal.Owner,
-    font: terminal_scene.FontPaths,
+    exchange: *howl_instance.RenderExchange,
+    publication_fd: i32,
+    logical_cell_size: howl_instance.render.terminal.Size,
+    initial_scale: shared.DisplayScale,
     mux: host_layout.Mux,
 ) void {
-    runFallible(boundary, allocator, owner, font, mux) catch |failure| {
+    runFallible(
+        boundary,
+        allocator,
+        exchange,
+        publication_fd,
+        logical_cell_size,
+        initial_scale,
+        mux,
+    ) catch |failure| {
         if (failure == error.Stopping and boundary.shouldStop()) {
             boundary.markStopped(.render);
             return;
@@ -127,31 +113,29 @@ pub fn run(
 fn runFallible(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
-    owner: *local_terminal.Owner,
-    font: terminal_scene.FontPaths,
+    exchange: *howl_instance.RenderExchange,
+    publication_fd: i32,
+    logical_cell_size: howl_instance.render.terminal.Size,
+    initial_scale: shared.DisplayScale,
     initial_mux: host_layout.Mux,
 ) !void {
     var mux = initial_mux;
     const feedback = try waitFeedback(boundary);
-    var display_scale_120 = (try waitDisplayScale(boundary)).scale_120;
-    var font_pixels = try scaledFontPixels(display_scale_120);
-    const logical_cell_size = try terminal_scene.measureCellSize(allocator, font, base_font_pixels);
+    var display_scale_120 = initial_scale.scale_120;
     const scene_count: usize = 1;
-    var scenes: [2]?terminal_scene.Scene = .{ null, null };
-    scenes[0] = try terminal_scene.Scene.init(
+    var scenes: [2]?published_scene.Scene = .{ null, null };
+    scenes[0] = try published_scene.Scene.init(
         allocator,
-        owner,
-        font,
-        font_pixels,
+        exchange,
+        publication_fd,
         boundary.stopFd(),
     );
     defer scenes[0].?.deinit();
-    var prepared: [2]terminal_scene.Prepared = undefined;
-    var instance_revisions: [2]u64 = @splat(0);
-    var history: [2]scrollback.State = @splat(.{});
+    var prepared: [2]published_scene.Prepared = undefined;
+    var render_revisions: [2]u64 = @splat(0);
     for (0..scene_count) |scene_index| {
-        prepared[scene_index] = try scenes[scene_index].?.prepare(0);
-        instance_revisions[scene_index] = prepared[scene_index].instance_revision;
+        prepared[scene_index] = try scenes[scene_index].?.prepare();
+        render_revisions[scene_index] = prepared[scene_index].render_revision;
     }
     const initial_logical_width = std.math.mul(u16, prepared[0].cols, logical_cell_size.width) catch
         return error.InvalidGeometry;
@@ -161,7 +145,7 @@ fn runFallible(
     var surface_logical_height = initial_logical_height;
     var surface_width = try scaledExtent(surface_logical_width, display_scale_120);
     var surface_height = try scaledExtent(surface_logical_height, display_scale_120);
-    var cell_size = scenes[0].?.cellSize();
+    var cell_size = prepared[0].cell_size;
     var workspace_cols: u16 = @max(2, surface_width / cell_size.width);
     var workspace_rows: u16 = @max(1, surface_height / cell_size.height);
 
@@ -174,13 +158,11 @@ fn runFallible(
     if (initial_panes.len != scene_count) return error.SceneTopologyMismatch;
     for (initial_panes, 0..) |placement, scene_index| scene_panes[scene_index] = placement.pane;
     var projected_layout: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-    const established = try establishLocalInitialGeometry(
+    const established = try establishInitialGeometry(
         boundary,
-        owner,
         &scenes[0].?,
         mux,
         &prepared[0],
-        &instance_revisions[0],
         workspace_rows,
         workspace_cols,
         surface_width,
@@ -265,23 +247,6 @@ fn runFallible(
     var gpu_bytes: u64 = 0;
     var graphics = try surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
-    var fast_gpus: [2]?terminal_fast.Gpu = .{ null, null };
-    defer {
-        var gpu_index = scene_count;
-        while (gpu_index != 0) {
-            gpu_index -= 1;
-            if (fast_gpus[gpu_index]) |*value| value.deinit(device, &gpu_bytes);
-        }
-    }
-    var generic_contexts: [2]?surface.Context = .{ null, null };
-    defer {
-        var context_index = scene_count;
-        while (context_index != 0) {
-            context_index -= 1;
-            if (generic_contexts[context_index]) |*value|
-                value.deinit(device, &gpu_bytes);
-        }
-    }
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -330,12 +295,8 @@ fn runFallible(
     queue_active = true;
     var present_revision: u64 = 0;
     var acquire_point: u64 = 0;
-    var changed: [2]bool = .{ true, scene_count == 2 };
-    var surface_restage = false;
-    var retained_draw_count: u64 = 0;
+    var changed: [2]bool = .{ true, false };
     var generic_draw_count_total: u64 = 0;
-    var observation_armed: [2]bool = @splat(false);
-    var next_ready_start: usize = 0;
 
     while (!boundary.shouldStop()) {
         var wait_semaphore: ?vk.VkSemaphore = null;
@@ -363,154 +324,28 @@ fn runFallible(
             cell_size.height,
             &projected_layout,
         );
-        if (visible.len == 0 or visible.len > scene_count) return error.SceneTopologyMismatch;
-        var plan = empty_plan;
-        var clear_color = [4]f32{ 0, 0, 0, 1 };
-        var residency_commit: ?*surface.ResidencyStore = null;
-        var primary_alpha_pixels = scenes[0].?.builder.alpha_pixels;
-        var primary_image_pixels = scenes[0].?.builder.rgba_pixels;
-        var fast_draw_storage: [2]FastDraw = undefined;
-        var fast_draw_count: usize = 0;
-        var generic_draw_storage: [2]GenericDraw = undefined;
-        var generic_draw_count: usize = 0;
-        if (visible.len == 1) {
-            const scene_index = sceneIndexForPane(&scene_panes, scene_count, visible[0].pane) orelse
-                return error.SceneTopologyMismatch;
-            primary_alpha_pixels = scenes[scene_index].?.builder.alpha_pixels;
-            primary_image_pixels = scenes[scene_index].?.builder.rgba_pixels;
-            switch (prepared[scene_index].mode) {
-                .generic => |generic| {
-                    generic_draw_count_total += 1;
-                    plan = generic.plan;
-                    if (changed[scene_index]) residency_commit = &scenes[scene_index].?.residency;
-                },
-                .fast => |frame| {
-                    retained_draw_count += 1;
-                    if (changed[scene_index] and fast_gpus[scene_index] != null and
-                        !fast_gpus[scene_index].?.geometryMatches(frame.terminal))
-                    {
-                        fast_gpus[scene_index].?.deinit(device, &gpu_bytes);
-                        fast_gpus[scene_index] = null;
-                    }
-                    if (fast_gpus[scene_index] == null)
-                        fast_gpus[scene_index] = try terminal_fast.Gpu.init(
-                            allocator,
-                            device,
-                            memory_properties,
-                            graphics.render_pass,
-                            &gpu_bytes,
-                            gpu_memory_limit,
-                            frame.terminal,
-                        );
-                    if (changed[scene_index]) try fast_gpus[scene_index].?.prepare(frame.terminal);
-                    fast_draw_storage[0] = .{
-                        .gpu = &fast_gpus[scene_index].?,
-                        .frame = frame.terminal,
-                        .placement = fastPlacement(visible[0]),
-                        .changed = changed[scene_index],
-                    };
-                    fast_draw_count = 1;
-                    clear_color = frame.terminal.clear_color;
-                    plan = frame.plan;
-                    if (changed[scene_index] and frame.overlay_pending)
-                        residency_commit = &scenes[scene_index].?.overlay_residency;
-                },
-            }
-        } else {
-            for (visible) |placed| {
-                const scene_index = sceneIndexForPane(&scene_panes, scene_count, placed.pane) orelse
-                    return error.SceneTopologyMismatch;
-                const placement = surfacePlacement(placed);
-                switch (prepared[scene_index].mode) {
-                    .generic => |frame| {
-                        generic_draw_count_total += 1;
-                        if (generic_contexts[scene_index] == null)
-                            generic_contexts[scene_index] = try surface.Context.init(
-                                device,
-                                memory_properties,
-                                &gpu_bytes,
-                                gpu_memory_limit,
-                            );
-                        generic_draw_storage[generic_draw_count] = .{
-                            .context = &generic_contexts[scene_index].?,
-                            .plan = frame.plan,
-                            .placement = placement,
-                            .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
-                            .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
-                            .residency = &scenes[scene_index].?.residency,
-                            .stage = changed[scene_index] or surface_restage,
-                            .residency_changed = changed[scene_index],
-                        };
-                        generic_draw_count += 1;
-                    },
-                    .fast => |frame| {
-                        retained_draw_count += 1;
-                        if (changed[scene_index] and fast_gpus[scene_index] != null and
-                            !fast_gpus[scene_index].?.geometryMatches(frame.terminal))
-                        {
-                            fast_gpus[scene_index].?.deinit(device, &gpu_bytes);
-                            fast_gpus[scene_index] = null;
-                        }
-                        if (fast_gpus[scene_index] == null)
-                            fast_gpus[scene_index] = try terminal_fast.Gpu.init(
-                                allocator,
-                                device,
-                                memory_properties,
-                                graphics.render_pass,
-                                &gpu_bytes,
-                                gpu_memory_limit,
-                                frame.terminal,
-                            );
-                        if (changed[scene_index]) try fast_gpus[scene_index].?.prepare(frame.terminal);
-                        fast_draw_storage[fast_draw_count] = .{
-                            .gpu = &fast_gpus[scene_index].?,
-                            .frame = frame.terminal,
-                            .placement = fastPlacement(placed),
-                            .changed = changed[scene_index],
-                        };
-                        fast_draw_count += 1;
-                        if (frame.overlay_pending) {
-                            if (generic_contexts[scene_index] == null)
-                                generic_contexts[scene_index] = try surface.Context.init(
-                                    device,
-                                    memory_properties,
-                                    &gpu_bytes,
-                                    gpu_memory_limit,
-                                );
-                            generic_draw_storage[generic_draw_count] = .{
-                                .context = &generic_contexts[scene_index].?,
-                                .plan = frame.plan,
-                                .placement = placement,
-                                .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
-                                .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
-                                .residency = &scenes[scene_index].?.overlay_residency,
-                                .stage = changed[scene_index] or surface_restage,
-                                .residency_changed = changed[scene_index],
-                            };
-                            generic_draw_count += 1;
-                        }
-                    },
-                }
-            }
-        }
-        const fast_draws = fast_draw_storage[0..fast_draw_count];
-        const generic_draws = generic_draw_storage[0..generic_draw_count];
-        errdefer for (fast_draws) |draw| if (draw.changed) draw.gpu.discard();
-        errdefer for (generic_draws) |draw| if (draw.residency_changed) draw.residency.discard();
+        if (visible.len != 1 or scene_count != 1) return error.SceneTopologyMismatch;
+        const scene_index = sceneIndexForPane(
+            &scene_panes,
+            scene_count,
+            visible[0].pane,
+        ) orelse return error.SceneTopologyMismatch;
+        if (scene_index != 0) return error.SceneTopologyMismatch;
+
+        const plan = prepared[0].plan;
+        generic_draw_count_total += 1;
+        errdefer if (changed[0]) discardPending(&scenes[0].?, prepared[0]);
         try render(
             &graphics,
             plan,
-            primary_alpha_pixels,
-            primary_image_pixels,
+            scenes[0].?.builder.alpha_pixels,
+            scenes[0].?.builder.rgba_pixels,
             device,
             queue,
             family,
             command,
             slot,
-            clear_color,
-            residency_commit,
-            fast_draws,
-            generic_draws,
+            .{ 0, 0, 0, 1 },
             wait_semaphore,
             get_semaphore_fd.?,
             drm_fd,
@@ -519,11 +354,14 @@ fn runFallible(
             surface_width,
             surface_height,
         );
+        if (changed[0]) {
+            try scenes[0].?.complete();
+            changed[0] = false;
+        }
         if (wait_semaphore) |value| {
             vk.vkDestroySemaphore(device, value, null);
             wait_semaphore = null;
         }
-        surface_restage = false;
         try boundary.publishCompletion(.{
             .ring_revision = ring.revision,
             .revision = present_revision,
@@ -551,32 +389,15 @@ fn runFallible(
         }
         ring.previous_slot = ring.slot_index;
         ring.slot_index = (ring.slot_index + 1) % shared.slot_count;
-        for (0..scene_count) |scene_index| changed[scene_index] = false;
 
-        var active_grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-        const active_grid = try mux.activeLayout(
-            .{ .width = workspace_cols, .height = workspace_rows },
-            &active_grid_storage,
-        );
-        for (0..scene_count) |scene_index| {
-            if (!observation_armed[scene_index] and
-                sceneIsVisible(&scene_panes, scene_count, active_grid, scene_index))
-            {
-                try scenes[scene_index].?.arm(instance_revisions[scene_index]);
-                observation_armed[scene_index] = true;
-            }
-        }
         const ready = waitReady(
             boundary,
             &scenes,
             scene_count,
-            next_ready_start,
             .{
                 .display_scale_120 = display_scale_120,
                 .mux = &mux,
                 .scene_panes = &scene_panes,
-                .prepared = &prepared,
-                .history = &history,
                 .scene_count = scene_count,
                 .workspace_rows = workspace_rows,
                 .workspace_cols = workspace_cols,
@@ -589,115 +410,49 @@ fn runFallible(
         };
         switch (ready) {
             .scene => |received| {
-                const ready_index = received.index;
-                next_ready_start = (ready_index + 1) % scene_count;
+                if (received.index != 0) return error.SceneTopologyMismatch;
                 const next = received.prepared;
-                observation_armed[ready_index] = false;
-                if (next.width != prepared[ready_index].width or
-                    next.height != prepared[ready_index].height)
+                if (next.width != prepared[0].width or
+                    next.height != prepared[0].height or
+                    !std.meta.eql(next.cell_size, cell_size))
+                {
+                    try scenes[0].?.discardPrepared(next);
                     return error.GeometryChanged;
-                instance_revisions[ready_index] = next.instance_revision;
-                var current_grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-                const current_grid = try mux.activeLayout(
-                    .{ .width = workspace_cols, .height = workspace_rows },
-                    &current_grid_storage,
-                );
-                if (sceneIsVisible(&scene_panes, scene_count, current_grid, ready_index)) {
-                    prepared[ready_index] = next;
-                    changed[ready_index] = true;
-                    try scenes[ready_index].?.arm(instance_revisions[ready_index]);
-                    observation_armed[ready_index] = true;
-                } else {
-                    scenes[ready_index].?.discardPrepared(next);
                 }
-            },
-            .command => |host_command| {
-                if (host_command.kind != .history_scroll or
-                    host_command.pane != 0 or host_command.amount == 0)
-                    continue;
-                try applyHistoryScroll(
-                    host_command.amount,
-                    &scenes[0].?,
-                    &prepared[0],
-                    &instance_revisions[0],
-                    &observation_armed[0],
-                    &history[0],
-                    &changed[0],
-                );
+                prepared[0] = next;
+                render_revisions[0] = next.render_revision;
+                changed[0] = true;
             },
             .display_scale => |scale| {
                 if (scale.scale_120 == display_scale_120) continue;
-                if (scene_count == 1 and history[0].active()) {
-                    try restoreHistoryLive(
-                        &scenes[0].?,
-                        &prepared[0],
-                        &instance_revisions[0],
-                        &observation_armed[0],
-                        &history[0],
-                        &changed[0],
-                    );
-                }
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
-                const next_cell_size = try terminal_scene.measureCellSize(
-                    allocator,
-                    font,
-                    next_font_pixels,
+                const next_surface_width = try scaledExtent(
+                    surface_logical_width,
+                    scale.scale_120,
                 );
-                const next_surface_width = try scaledExtent(surface_logical_width, scale.scale_120);
-                const next_surface_height = try scaledExtent(surface_logical_height, scale.scale_120);
-                const target_cols: u16 = @max(2, next_surface_width / next_cell_size.width);
-                const target_rows: u16 = @max(1, next_surface_height / next_cell_size.height);
-                const resized = try applyLocalWindowGeometry(
+                const next_surface_height = try scaledExtent(
+                    surface_logical_height,
+                    scale.scale_120,
+                );
+                const geometry_changed = try requestSceneSurface(
                     boundary,
-                    owner,
                     &scenes[0].?,
                     &prepared[0],
-                    &instance_revisions[0],
-                    &changed[0],
-                    &observation_armed[0],
-                    target_rows,
-                    target_cols,
-                    next_cell_size.width,
-                    next_cell_size.height,
-                );
-                if (!resized) continue;
-                workspace_rows = target_rows;
-                workspace_cols = target_cols;
-                try rebuildLocalSceneForScale(
-                    boundary.stopFd(),
-                    allocator,
-                    owner,
-                    font,
+                    next_surface_width,
+                    next_surface_height,
                     next_font_pixels,
-                    &scenes[0].?,
-                    &prepared[0],
-                    &instance_revisions[0],
-                    &observation_armed[0],
-                    &changed[0],
-                    &fast_gpus[0],
-                    &generic_contexts[0],
-                    &graphics,
-                    device,
-                    &gpu_bytes,
                 );
-                const rebuilt_cell_size = scenes[0].?.cellSize();
-                if (!std.meta.eql(rebuilt_cell_size, next_cell_size)) return error.InvalidGeometry;
-                for (1..scene_count) |scene_index|
-                    if (!std.meta.eql(rebuilt_cell_size, scenes[scene_index].?.cellSize()))
-                        return error.InvalidGeometry;
-                var scale_visible_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-                const scale_visible = try mux.activeLayout(
-                    .{ .width = workspace_cols, .height = workspace_rows },
-                    &scale_visible_storage,
-                );
-                for (0..scene_count) |scene_index| {
-                    if (sceneIsVisible(&scene_panes, scene_count, scale_visible, scene_index)) continue;
-                    scenes[scene_index].?.discardPrepared(prepared[scene_index]);
-                    changed[scene_index] = false;
-                    observation_armed[scene_index] = false;
-                }
+                changed[0] = geometry_changed;
+                errdefer if (geometry_changed)
+                    discardPending(&scenes[0].?, prepared[0]);
+                render_revisions[0] = prepared[0].render_revision;
+                workspace_rows = prepared[0].rows;
+                workspace_cols = prepared[0].cols;
+                cell_size = prepared[0].cell_size;
+
                 if (retiring_ring != null) return error.RingRetirementPending;
-                const next_revision = std.math.add(u64, ring.revision, 1) catch return error.RevisionOverflow;
+                const next_revision = std.math.add(u64, ring.revision, 1) catch
+                    return error.RevisionOverflow;
                 var replacement = try createRenderRing(
                     boundary,
                     &graphics,
@@ -720,48 +475,41 @@ fn runFallible(
                 ring = replacement;
                 replacement = undefined;
                 display_scale_120 = scale.scale_120;
-                font_pixels = next_font_pixels;
-                cell_size = rebuilt_cell_size;
                 surface_width = next_surface_width;
                 surface_height = next_surface_height;
-                surface_restage = true;
             },
             .window_size => |requested| {
-                if (requested.width == surface_logical_width and requested.height == surface_logical_height) continue;
-                if (scene_count == 1 and history[0].active()) {
-                    try restoreHistoryLive(
-                        &scenes[0].?,
-                        &prepared[0],
-                        &instance_revisions[0],
-                        &observation_armed[0],
-                        &history[0],
-                        &changed[0],
-                    );
+                if (requested.width == surface_logical_width and
+                    requested.height == surface_logical_height)
+                    continue;
+                const requested_physical_width = try scaledExtent(
+                    requested.width,
+                    display_scale_120,
+                );
+                const requested_physical_height = try scaledExtent(
+                    requested.height,
+                    display_scale_120,
+                );
+                const geometry_changed = try requestSceneSurface(
+                    boundary,
+                    &scenes[0].?,
+                    &prepared[0],
+                    requested_physical_width,
+                    requested_physical_height,
+                    null,
+                );
+                if (geometry_changed) {
+                    changed[0] = true;
+                    errdefer discardPending(&scenes[0].?, prepared[0]);
+                    render_revisions[0] = prepared[0].render_revision;
+                    workspace_rows = prepared[0].rows;
+                    workspace_cols = prepared[0].cols;
+                    cell_size = prepared[0].cell_size;
                 }
-                const requested_physical_width = try scaledExtent(requested.width, display_scale_120);
-                const requested_physical_height = try scaledExtent(requested.height, display_scale_120);
-                const target_cols: u16 = @max(2, requested_physical_width / cell_size.width);
-                const target_rows: u16 = @max(1, requested_physical_height / cell_size.height);
-                if (target_cols != workspace_cols or target_rows != workspace_rows) {
-                    const resized = try applyLocalWindowGeometry(
-                        boundary,
-                        owner,
-                        &scenes[0].?,
-                        &prepared[0],
-                        &instance_revisions[0],
-                        &changed[0],
-                        &observation_armed[0],
-                        target_rows,
-                        target_cols,
-                        cell_size.width,
-                        cell_size.height,
-                    );
-                    if (!resized) continue;
-                    workspace_rows = target_rows;
-                    workspace_cols = target_cols;
-                }
+
                 if (retiring_ring != null) return error.RingRetirementPending;
-                const next_revision = std.math.add(u64, ring.revision, 1) catch return error.RevisionOverflow;
+                const next_revision = std.math.add(u64, ring.revision, 1) catch
+                    return error.RevisionOverflow;
                 var replacement = try createRenderRing(
                     boundary,
                     &graphics,
@@ -787,7 +535,6 @@ fn runFallible(
                 surface_height = requested_physical_height;
                 surface_logical_width = requested.width;
                 surface_logical_height = requested.height;
-                surface_restage = true;
             },
         }
     }
@@ -795,151 +542,21 @@ fn runFallible(
     queue_active = false;
     try waitWindowStopped(boundary);
     std.debug.print(
-        "Render live loop retired at present={d} instance={d} retained_draws={d} generic_draws={d}\n",
+        "Render live loop retired at present={d} render={d} generic_draws={d}\n",
         .{
             present_revision,
-            instance_revisions[0],
-            retained_draw_count,
+            render_revisions[0],
             generic_draw_count_total,
         },
     );
 }
 
-fn rebuildLocalSceneForScale(
-    stop_descriptor: i32,
-    allocator: std.mem.Allocator,
-    owner: *local_terminal.Owner,
-    font: terminal_scene.FontPaths,
-    font_pixels: u16,
-    scene: *terminal_scene.Scene,
-    prepared: *terminal_scene.Prepared,
-    instance_revision: *u64,
-    observation_armed: *bool,
-    changed: *bool,
-    fast_gpu: *?terminal_fast.Gpu,
-    generic_context: *?surface.Context,
-    primary_graphics: *surface.Context,
-    device: vk.VkDevice,
-    gpu_bytes: *u64,
-) !void {
-    if (font_pixels == 0) return error.SceneTopologyMismatch;
-    var replacement = try terminal_scene.Scene.init(
-        allocator,
-        owner,
-        font,
-        font_pixels,
-        stop_descriptor,
-    );
-    errdefer replacement.deinit();
-    const next = try replacement.prepare(0);
-    if (fast_gpu.*) |*value| value.deinit(device, gpu_bytes);
-    fast_gpu.* = null;
-    if (generic_context.*) |*value| value.deinit(device, gpu_bytes);
-    generic_context.* = null;
-    scene.deinit();
-    scene.* = replacement;
-    replacement = undefined;
-    prepared.* = next;
-    instance_revision.* = next.instance_revision;
-    observation_armed.* = false;
-    changed.* = true;
-    primary_graphics.invalidateAtlases();
-}
-
-fn restoreHistoryLive(
-    scene: *terminal_scene.Scene,
-    prepared: *terminal_scene.Prepared,
-    live_revision: *u64,
-    observation_armed: *bool,
-    history: *scrollback.State,
-    changed: *bool,
-) !void {
-    if (!history.active()) return;
-    const live = try scene.prepareHistory(0);
-    if (live.width != prepared.width or live.height != prepared.height) {
-        scene.discardPrepared(live);
-        return error.GeometryChanged;
-    }
-    prepared.* = live;
-    history.reset();
-    changed.* = true;
-    try resetLiveObserver(scene, live_revision, observation_armed);
-}
-
-fn applyHistoryScroll(
-    amount: i16,
-    scene: *terminal_scene.Scene,
-    prepared: *terminal_scene.Prepared,
-    live_revision: *u64,
-    observation_armed: *bool,
-    history: *scrollback.State,
-    changed: *bool,
-) !void {
-    if (amount == 0) return;
-    var candidate = history.*;
-
-    if (candidate.active()) {
-        const live = try scene.prepareHistory(0);
-        if (live.width != prepared.width or live.height != prepared.height) {
-            scene.discardPrepared(live);
-            return error.GeometryChanged;
-        }
-        candidate.follow(
-            live.history_count,
-            live.history_row_base,
-            live.alternate_screen,
-        );
-        candidate.scroll(
-            amount,
-            live.history_count,
-            live.history_row_base,
-            live.alternate_screen,
-        );
-        if (!candidate.active()) {
-            prepared.* = live;
-            history.* = candidate;
-            changed.* = true;
-            try resetLiveObserver(scene, live_revision, observation_armed);
-            return;
-        }
-        scene.discardPrepared(live);
-    } else {
-        const previous_offset = candidate.offset;
-        candidate.scroll(
-            amount,
-            prepared.history_count,
-            prepared.history_row_base,
-            prepared.alternate_screen,
-        );
-        if (candidate.offset == previous_offset) return;
-    }
-
-    const historical = try scene.prepareHistory(candidate.offset);
-    if (historical.width != prepared.width or historical.height != prepared.height) {
-        scene.discardPrepared(historical);
-        return error.GeometryChanged;
-    }
-    candidate.accept(
-        historical.history_offset,
-        historical.history_count,
-        historical.history_row_base,
-        historical.alternate_screen,
-    );
-    prepared.* = historical;
-    history.* = candidate;
-    changed.* = true;
-}
-
-fn resetLiveObserver(
-    scene: *terminal_scene.Scene,
-    live_revision: *u64,
-    observation_armed: *bool,
-) !void {
-    scene.resetObserver();
-    live_revision.* = 0;
-    observation_armed.* = false;
-    try scene.arm(0);
-    observation_armed.* = true;
+fn discardPending(
+    scene: *published_scene.Scene,
+    prepared: published_scene.Prepared,
+) void {
+    scene.discardPrepared(prepared) catch |failure|
+        @panic(@errorName(failure));
 }
 
 fn routePointerEvent(
@@ -948,14 +565,14 @@ fn routePointerEvent(
     scale_120: u32,
     mux: *host_layout.Mux,
     scene_panes: *const [2]?host_layout.PaneId,
-    prepared: *const [2]terminal_scene.Prepared,
     scene_count: usize,
     workspace_rows: u16,
     workspace_cols: u16,
     cell_width: u16,
     cell_height: u16,
 ) !void {
-    if (scale_120 == 0 or cell_width == 0 or cell_height == 0) return error.InvalidDisplayScale;
+    if (scale_120 == 0 or cell_width == 0 or cell_height == 0)
+        return error.InvalidDisplayScale;
     const x = try scaledPointerCoordinate(event.point.x, scale_120);
     const y = try scaledPointerCoordinate(event.point.y, scale_120);
     var storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
@@ -972,19 +589,22 @@ fn routePointerEvent(
             return error.InvalidGeometry;
         const bottom = std.math.add(u32, placement.rect.y, placement.rect.height) catch
             return error.InvalidGeometry;
-        if (x < placement.rect.x or x >= right or y < placement.rect.y or y >= bottom) continue;
-        const scene_index = sceneIndexForPane(scene_panes, scene_count, placement.pane) orelse
-            return error.SceneTopologyMismatch;
+        if (x < placement.rect.x or x >= right or y < placement.rect.y or y >= bottom)
+            continue;
+        const scene_index = sceneIndexForPane(
+            scene_panes,
+            scene_count,
+            placement.pane,
+        ) orelse return error.SceneTopologyMismatch;
         const pixel_x = x - placement.rect.x;
         const pixel_y = y - placement.rect.y;
         const row_u32 = pixel_y / cell_height;
         const column_u32 = pixel_x / cell_width;
-        if (row_u32 > std.math.maxInt(i32) or column_u32 > std.math.maxInt(u16))
+        if (row_u32 > std.math.maxInt(i32) or
+            column_u32 > std.math.maxInt(u16))
             return error.InvalidGeometry;
         try boundary.publishInput(.{ .mouse = .{
             .scene_index = @intCast(scene_index),
-            .history_offset = prepared[scene_index].history_offset,
-            .alternate_screen = prepared[scene_index].alternate_screen,
             .value = .{
                 .kind = event.kind,
                 .button = event.button,
@@ -1007,14 +627,7 @@ fn scaledPointerCoordinate(logical: u16, scale_120: u32) !u32 {
 }
 
 fn scaledFontPixels(scale_120: u32) !u16 {
-    if (scale_120 == 0) return error.InvalidDisplayScale;
-    const numerator = std.math.mul(u32, base_font_pixels, scale_120) catch
-        return error.InvalidDisplayScale;
-    const rounded = std.math.add(u32, numerator, scale_denominator / 2) catch
-        return error.InvalidDisplayScale;
-    const pixels = rounded / scale_denominator;
-    if (pixels == 0 or pixels > std.math.maxInt(u16)) return error.InvalidDisplayScale;
-    return @intCast(pixels);
+    return host_presentation.fontPixels(scale_120);
 }
 
 fn scaledExtent(logical: u16, scale_120: u32) !u16 {
@@ -1024,7 +637,8 @@ fn scaledExtent(logical: u16, scale_120: u32) !u16 {
     const rounded = std.math.add(u32, numerator, scale_denominator - 1) catch
         return error.InvalidDisplayScale;
     const value = rounded / scale_denominator;
-    if (value == 0 or value > std.math.maxInt(u16)) return error.InvalidDisplayScale;
+    if (value == 0 or value > std.math.maxInt(u16))
+        return error.InvalidDisplayScale;
     return @intCast(value);
 }
 
@@ -1035,20 +649,19 @@ const InitialGeometry = struct {
     grid_cols: u16,
 };
 
-fn establishLocalInitialGeometry(
+fn establishInitialGeometry(
     boundary: *shared.Boundary,
-    owner: *local_terminal.Owner,
-    scene: *terminal_scene.Scene,
+    scene: *published_scene.Scene,
     mux: host_layout.Mux,
-    prepared: *terminal_scene.Prepared,
-    instance_revision: *u64,
+    prepared: *published_scene.Prepared,
     total_rows: u16,
     total_cols: u16,
     surface_width: u16,
     surface_height: u16,
     pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
 ) !InitialGeometry {
-    if (total_rows == 0 or total_cols == 0 or surface_width == 0 or surface_height == 0)
+    if (total_rows == 0 or total_cols == 0 or
+        surface_width == 0 or surface_height == 0)
         return error.InvalidGeometry;
     var grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
     const grid = try mux.activeLayout(
@@ -1058,22 +671,27 @@ fn establishLocalInitialGeometry(
     if (grid.len != 1) return error.InvalidGeometry;
     const target = grid[0].rect;
     if (target.width == 0 or target.height == 0 or
-        target.width > std.math.maxInt(u16) or target.height > std.math.maxInt(u16))
+        target.width > std.math.maxInt(u16) or
+        target.height > std.math.maxInt(u16))
         return error.InvalidGeometry;
     const rows: u16 = @intCast(target.height);
     const cols: u16 = @intCast(target.width);
-    const cell_size = scene.cellSize();
-    if (prepared.rows != rows or prepared.cols != cols) {
-        scene.discardPrepared(prepared.*);
-        try owner.resizeGeometry(rows, cols, cell_size.width, cell_size.height);
-        boundary.wakeInput();
-        const next = try scene.prepare(instance_revision.*);
-        if (next.rows != rows or next.cols != cols) {
-            scene.discardPrepared(next);
-            return error.ResizeResultMismatch;
-        }
-        prepared.* = next;
-        instance_revision.* = next.instance_revision;
+    const cell_size = prepared.cell_size;
+    if (!published_scene.preparedMatchesGeometry(
+        prepared.*,
+        rows,
+        cols,
+        cell_size,
+    )) {
+        try scene.discardPrepared(prepared.*);
+        _ = try requestSceneSurface(
+            boundary,
+            scene,
+            prepared,
+            surface_width,
+            surface_height,
+            null,
+        );
     }
     const width = std.math.mul(u32, target.width, cell_size.width) catch
         return error.InvalidGeometry;
@@ -1092,6 +710,56 @@ fn establishLocalInitialGeometry(
         .grid_rows = total_rows,
         .grid_cols = total_cols,
     };
+}
+
+fn requestSceneSurface(
+    boundary: *shared.Boundary,
+    scene: *published_scene.Scene,
+    prepared: *published_scene.Prepared,
+    width: u16,
+    height: u16,
+    font_pixels: ?u16,
+) !bool {
+    if (width == 0 or height == 0) return error.InvalidGeometry;
+    const previous_generation = prepared.presentation_generation;
+    if (font_pixels == null and preparedFitsSurface(prepared.*, width, height))
+        return false;
+
+    try boundary.publishInput(.{ .geometry = .{
+        .width = width,
+        .height = height,
+        .font_pixels = font_pixels,
+    } });
+    var attempts: u8 = 0;
+    while (attempts < 8) : (attempts += 1) {
+        const next = try scene.prepare();
+        const generation_matches = if (font_pixels != null)
+            next.presentation_generation != previous_generation
+        else
+            next.presentation_generation == previous_generation;
+        if (generation_matches and preparedFitsSurface(next, width, height)) {
+            prepared.* = next;
+            return true;
+        }
+        try scene.discardPrepared(next);
+    }
+    return error.GeometryObservationTimeout;
+}
+
+fn preparedFitsSurface(
+    prepared: published_scene.Prepared,
+    width: u16,
+    height: u16,
+) bool {
+    if (prepared.cell_size.width == 0 or prepared.cell_size.height == 0)
+        return false;
+    const rows = height / prepared.cell_size.height;
+    const columns = width / prepared.cell_size.width;
+    if (rows == 0 or columns < 2) return false;
+    return prepared.rows == rows and
+        prepared.cols == columns and
+        prepared.width == columns * prepared.cell_size.width and
+        prepared.height == rows * prepared.cell_size.height;
 }
 
 fn sceneIndexForPane(
@@ -1132,172 +800,38 @@ fn projectActivePixels(
     return output[0..grid.len];
 }
 
-fn sceneIsVisible(
-    scene_panes: *const [2]?host_layout.PaneId,
-    scene_count: usize,
-    visible: []const host_layout.Placement,
-    scene_index: usize,
-) bool {
-    if (scene_index >= scene_count or scene_panes[scene_index] == null) return false;
-    const pane = scene_panes[scene_index].?;
-    for (visible) |placement| if (placement.pane == pane) return true;
-    return false;
-}
-
-fn fastPlacement(value: host_layout.Placement) terminal_fast.Placement {
-    return .{
-        .x = @intCast(value.rect.x),
-        .y = @intCast(value.rect.y),
-        .width = value.rect.width,
-        .height = value.rect.height,
-    };
-}
-
-fn surfacePlacement(value: host_layout.Placement) surface.Placement {
-    return .{
-        .x = @intCast(value.rect.x),
-        .y = @intCast(value.rect.y),
-        .width = value.rect.width,
-        .height = value.rect.height,
-    };
-}
-
-fn settleSceneGeometry(
-    scene: *terminal_scene.Scene,
-    target_rows: u16,
-    target_cols: u16,
-    target_cell_width: u16,
-    target_cell_height: u16,
-    keep_prepared: bool,
-    prepared: *terminal_scene.Prepared,
-    instance_revision: *u64,
-    changed: *bool,
-    observation_armed: *bool,
-) !void {
-    if (!observation_armed.*) {
-        try scene.arm(instance_revision.*);
-        observation_armed.* = true;
-    }
-    var attempts: u8 = 0;
-    while (attempts < 8) : (attempts += 1) {
-        const next = try scene.receivePrepared();
-        observation_armed.* = false;
-        instance_revision.* = next.instance_revision;
-        if (terminal_scene.preparedMatchesGeometry(
-            next,
-            target_rows,
-            target_cols,
-            .{ .width = target_cell_width, .height = target_cell_height },
-        )) {
-            prepared.* = next;
-            if (keep_prepared) {
-                changed.* = true;
-                try scene.arm(instance_revision.*);
-                observation_armed.* = true;
-            } else {
-                scene.discardPrepared(next);
-                changed.* = false;
-            }
-            return;
-        }
-        scene.discardPrepared(next);
-        try scene.arm(instance_revision.*);
-        observation_armed.* = true;
-    }
-    return error.GeometryObservationTimeout;
-}
-
-fn applyLocalWindowGeometry(
-    boundary: *shared.Boundary,
-    owner: *local_terminal.Owner,
-    scene: *terminal_scene.Scene,
-    prepared: *terminal_scene.Prepared,
-    instance_revision: *u64,
-    changed: *bool,
-    observation_armed: *bool,
-    target_rows: u16,
-    target_cols: u16,
-    target_cell_width: u16,
-    target_cell_height: u16,
-) !bool {
-    if (target_rows == 0 or target_cols < 2 or
-        target_cell_width == 0 or target_cell_height == 0)
-        return error.InvalidGeometry;
-    if (terminal_scene.preparedMatchesGeometry(
-        prepared.*,
-        target_rows,
-        target_cols,
-        .{ .width = target_cell_width, .height = target_cell_height },
-    )) return true;
-    try owner.resizeGeometry(
-        target_rows,
-        target_cols,
-        target_cell_width,
-        target_cell_height,
-    );
-    boundary.wakeInput();
-    try settleSceneGeometry(
-        scene,
-        target_rows,
-        target_cols,
-        target_cell_width,
-        target_cell_height,
-        true,
-        prepared,
-        instance_revision,
-        changed,
-        observation_armed,
-    );
-    return true;
-}
-
 fn waitReady(
     boundary: *shared.Boundary,
-    scenes: *[2]?terminal_scene.Scene,
+    scenes: *[2]?published_scene.Scene,
     scene_count: usize,
-    start: usize,
     pointer: PointerProjection,
 ) !Ready {
-    if (scene_count == 0 or scene_count > scenes.len or start >= scene_count)
-        return error.InvalidGeometry;
-    var descriptors: [3]c.pollfd = undefined;
-    for (0..scene_count) |index| descriptors[index] = .{
-        .fd = scenes[index].?.readinessFd(),
-        .events = if (pointer.history[index].active()) 0 else c.POLLIN,
-        .revents = 0,
-    };
-    descriptors[scene_count] = .{
-        .fd = boundary.controlFd(),
-        .events = c.POLLIN,
-        .revents = 0,
+    if (scene_count != 1 or scenes[0] == null) return error.InvalidGeometry;
+    var descriptors = [_]c.pollfd{
+        .{ .fd = scenes[0].?.readinessFd(), .events = c.POLLIN, .revents = 0 },
+        .{ .fd = boundary.controlFd(), .events = c.POLLIN, .revents = 0 },
     };
     var prefer_scene = false;
     while (true) {
-        for (descriptors[0 .. scene_count + 1]) |*descriptor| descriptor.revents = 0;
-        const ready = c.poll(&descriptors, scene_count + 1, -1);
+        for (&descriptors) |*descriptor| descriptor.revents = 0;
+        const ready = c.poll(&descriptors, descriptors.len, -1);
         if (ready < 0) {
             if (std.c.errno(ready) == .INTR) continue;
             return error.ScenePoll;
         }
         if (boundary.shouldStop()) return error.Stopping;
-        if (ready == 0) continue;
-        const control_events = descriptors[scene_count].revents;
-        if (control_events & (c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
+        if (descriptors[0].revents &
+            (c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0 or
+            descriptors[1].revents &
+                (c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
             return error.ScenePoll;
 
-        // Once pointer input has been routed, repoll and give the terminal
-        // response first chance before accepting another pointer sample. This
-        // prevents drag traffic from starving application redraws while keeping
-        // motion coalesced at the Boundary.
-        if (prefer_scene) {
-            if (readyScene(descriptors[0..scene_count], start)) |index| {
-                if (try scenes[index].?.tryReceivePrepared()) |prepared|
-                    return .{ .scene = .{ .index = index, .prepared = prepared } };
-            }
+        if (prefer_scene and descriptors[0].revents & c.POLLIN != 0) {
+            if (try scenes[0].?.tryReceivePrepared()) |prepared|
+                return .{ .scene = .{ .index = 0, .prepared = prepared } };
         }
-        if (control_events & c.POLLIN != 0) {
+        if (descriptors[1].revents & c.POLLIN != 0) {
             try boundary.drainControlWake();
-            if (boundary.takeHostCommand()) |command| return .{ .command = command };
             if (boundary.takeWindowSize()) |size| return .{ .window_size = size };
             if (boundary.takeDisplayScale()) |scale| return .{ .display_scale = scale };
             if (boundary.takePointer()) |event| {
@@ -1307,7 +841,6 @@ fn waitReady(
                     pointer.display_scale_120,
                     pointer.mux,
                     pointer.scene_panes,
-                    pointer.prepared,
                     pointer.scene_count,
                     pointer.workspace_rows,
                     pointer.workspace_cols,
@@ -1318,31 +851,11 @@ fn waitReady(
                 continue;
             }
         }
-        if (readyScene(descriptors[0..scene_count], start)) |index| {
-            if (try scenes[index].?.tryReceivePrepared()) |prepared|
-                return .{ .scene = .{ .index = index, .prepared = prepared } };
+        if (descriptors[0].revents & c.POLLIN != 0) {
+            if (try scenes[0].?.tryReceivePrepared()) |prepared|
+                return .{ .scene = .{ .index = 0, .prepared = prepared } };
         }
     }
-}
-
-fn readyScene(descriptors: []const c.pollfd, start: usize) ?usize {
-    if (descriptors.len == 0 or start >= descriptors.len) return null;
-    for (0..descriptors.len) |offset| {
-        const index = (start + offset) % descriptors.len;
-        if (descriptors[index].revents & (c.POLLIN | c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
-            return index;
-    }
-    return null;
-}
-
-fn waitDisplayScale(boundary: *shared.Boundary) !shared.DisplayScale {
-    var wakes: u8 = 0;
-    while (wakes < 16) : (wakes += 1) {
-        if (boundary.takeDisplayScale()) |value| return value;
-        if (boundary.shouldStop()) return error.Stopping;
-        try waitRenderWake(boundary);
-    }
-    return error.DisplayScaleTimeout;
 }
 
 fn waitFeedback(boundary: *shared.Boundary) !shared.Feedback {
@@ -1646,9 +1159,6 @@ fn render(
     command: vk.VkCommandBuffer,
     slot: *Slot,
     clear_color: [4]f32,
-    residency_commit: ?*surface.ResidencyStore,
-    fast_draws: []const FastDraw,
-    generic_draws: []const GenericDraw,
     wait_semaphore: ?vk.VkSemaphore,
     get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR,
     drm_fd: i32,
@@ -1658,19 +1168,13 @@ fn render(
     height: u16,
 ) !void {
     try graphics.stage(plan, alpha_pixels, image_pixels, width, height);
-    for (generic_draws) |draw| if (draw.stage) try draw.context.stagePlaced(
-        draw.plan,
-        draw.alpha_pixels,
-        draw.image_pixels,
-        width,
-        height,
-        draw.placement,
-    );
 
-    if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
+    if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS)
+        return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
     begin.sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    if (vk.vkBeginCommandBuffer(command, &begin) != vk.VK_SUCCESS) return error.Command;
+    if (vk.vkBeginCommandBuffer(command, &begin) != vk.VK_SUCCESS)
+        return error.Command;
     const target = surface.FrameTarget{
         .image = slot.image,
         .attachment = slot.attachment,
@@ -1678,34 +1182,16 @@ fn render(
         .attachment_height = height,
         .coordinate_width = width,
         .coordinate_height = height,
-        .source_queue_family = if (slot.external) vk.VK_QUEUE_FAMILY_EXTERNAL else vk.VK_QUEUE_FAMILY_IGNORED,
+        .source_queue_family = if (slot.external)
+            vk.VK_QUEUE_FAMILY_EXTERNAL
+        else
+            vk.VK_QUEUE_FAMILY_IGNORED,
         .graphics_queue_family = family,
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
     const recording = try graphics.recordPrelude(command, target, plan);
-    var auxiliary_recordings: [2]surface.Recording = undefined;
-    var auxiliary_recorded: [2]bool = @splat(false);
-    for (generic_draws, 0..) |draw, draw_index| if (draw.stage) {
-        auxiliary_recordings[draw_index] = try draw.context.recordAuxiliaryPrelude(
-            command,
-            target,
-            draw.plan,
-            draw.placement,
-        );
-        auxiliary_recorded[draw_index] = true;
-    };
-    for (fast_draws) |draw| if (draw.changed) try draw.gpu.recordTransfers(command);
     graphics.beginPass(command, target, clear_color);
-    for (fast_draws) |draw| try draw.gpu.recordDraw(
-        command,
-        draw.frame,
-        draw.placement,
-        width,
-        height,
-    );
     graphics.recordGenericDraws(command, target, plan);
-    for (generic_draws) |draw|
-        draw.context.recordGenericDrawsPlaced(command, target, draw.plan, draw.placement);
     const completed_recording = graphics.endPass(command, target, recording);
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
 
@@ -1716,9 +1202,13 @@ fn render(
     semaphore_info.sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     semaphore_info.pNext = @ptrCast(&export_info);
     var completion: vk.VkSemaphore = undefined;
-    if (vk.vkCreateSemaphore(device, &semaphore_info, null, &completion) != vk.VK_SUCCESS) return error.Semaphore;
+    if (vk.vkCreateSemaphore(device, &semaphore_info, null, &completion) !=
+        vk.VK_SUCCESS)
+        return error.Semaphore;
     defer vk.vkDestroySemaphore(device, completion, null);
-    const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    const wait_stage: vk.VkPipelineStageFlags =
+        vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     var submit = std.mem.zeroes(vk.VkSubmitInfo);
     submit.sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO;
     if (wait_semaphore) |wait| {
@@ -1730,31 +1220,44 @@ fn render(
     submit.pCommandBuffers = &command;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &completion;
-    if (vk.vkQueueSubmit(queue, 1, &submit, null) != vk.VK_SUCCESS) return error.Submit;
+    if (vk.vkQueueSubmit(queue, 1, &submit, null) != vk.VK_SUCCESS)
+        return error.Submit;
+
     var fd_info = std.mem.zeroes(vk.VkSemaphoreGetFdInfoKHR);
     fd_info.sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
     fd_info.semaphore = completion;
     fd_info.handleType = vk.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
     var sync_fd: i32 = -1;
-    if (get_semaphore_fd.?(device, &fd_info, &sync_fd) != vk.VK_SUCCESS or sync_fd < 0) return error.Semaphore;
+    if (get_semaphore_fd.?(device, &fd_info, &sync_fd) != vk.VK_SUCCESS or
+        sync_fd < 0)
+        return error.Semaphore;
     defer closeDescriptor(sync_fd);
+
     var temporary: u32 = 0;
-    if (c.drmSyncobjCreate(drm_fd, 0, &temporary) != 0) return error.Syncobj;
+    if (c.drmSyncobjCreate(drm_fd, 0, &temporary) != 0)
+        return error.Syncobj;
     defer destroySyncobj(drm_fd, temporary);
-    if (c.drmSyncobjImportSyncFile(drm_fd, temporary, sync_fd) != 0) return error.Syncobj;
+    if (c.drmSyncobjImportSyncFile(drm_fd, temporary, sync_fd) != 0)
+        return error.Syncobj;
     var handles = [_]u32{temporary};
-    if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
+    if (c.drmSyncobjWait(
+        drm_fd,
+        &handles,
+        1,
+        try deadline(),
+        0,
+        null,
+    ) != 0) return error.RenderTimeout;
+
     graphics.complete(completed_recording);
-    for (fast_draws) |draw| if (draw.changed) try draw.gpu.complete();
-    for (generic_draws, 0..) |draw, draw_index| {
-        if (draw.stage) {
-            std.debug.assert(auxiliary_recorded[draw_index]);
-            draw.context.complete(auxiliary_recordings[draw_index]);
-        }
-        if (draw.residency_changed) try draw.residency.complete();
-    }
-    if (residency_commit) |value| try value.complete();
-    if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
+    if (c.drmSyncobjTransfer(
+        drm_fd,
+        acquire_handle,
+        acquire_point,
+        temporary,
+        0,
+        0,
+    ) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;
 }
