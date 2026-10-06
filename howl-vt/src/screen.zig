@@ -219,6 +219,13 @@ pub const Screen = struct {
     const row_wrapped_bit: u8 = 1;
     const row_geometry_shift: u3 = 1;
     const row_geometry_mask: u8 = 0b110;
+    // Five spare physical-row flag bits hold a non-semantic scan hint.
+    // Zero means unknown and therefore falls back to the complete row scan.
+    const row_scan_shift: u3 = 3;
+    const row_scan_mask: u8 = 0b1111_1000;
+    const row_scan_known_empty: u8 = 1;
+    const row_scan_positive_buckets: u8 = 30;
+    const row_semantic_mask: u8 = row_wrapped_bit | row_geometry_mask;
 
     // -------------------------------------------------------------------------
     // Retained screen-bank owners
@@ -1065,13 +1072,79 @@ pub const Screen = struct {
         return 0;
     }
 
-    fn visibleRowStateLen(self: *const Screen, row: u16) u16 {
-        return retainedCellsLen(
+    fn encodeRowScanEnd(end: u16, line_cols: u16) u8 {
+        if (end == 0 or line_cols == 0) return row_scan_known_empty;
+        const bounded = @min(end, line_cols);
+        const scaled = @as(u32, bounded) * row_scan_positive_buckets;
+        const bucket = (scaled + line_cols - 1) / line_cols;
+        return row_scan_known_empty + @as(u8, @intCast(bucket));
+    }
+
+    fn decodeRowScanEnd(code: u8, line_cols: u16) u16 {
+        std.debug.assert(code != 0);
+        if (code == row_scan_known_empty or line_cols == 0) return 0;
+        const bucket: u32 = code - row_scan_known_empty;
+        const scaled = bucket * line_cols;
+        return @intCast((scaled + row_scan_positive_buckets - 1) / row_scan_positive_buckets);
+    }
+
+    fn rowScanEnd(self: *const Screen, row: u16) u16 {
+        const line_cols = self.lineColumnCount(row);
+        const flags = self.row_flags orelse return line_cols;
+        const physical = self.rowWrapIndex(row) orelse return line_cols;
+        const code = (flags[@intCast(physical)] & row_scan_mask) >> row_scan_shift;
+        return if (code == 0) line_cols else decodeRowScanEnd(code, line_cols);
+    }
+
+    fn retainedVisibleCellsLen(
+        self: *const Screen,
+        row: u16,
+        extent: RetainedExtent,
+    ) u16 {
+        const line_cols = self.lineColumnCount(row);
+        const found = retainedCellsLen(
             self.visibleRowCells(row),
-            self.lineColumnCount(row),
-            self.rowWrapped(row),
-            .state,
+            self.rowScanEnd(row),
+            false,
+            extent,
         );
+        if (found != 0) return found;
+        return if (self.rowWrapped(row) and line_cols != 0) line_cols else 0;
+    }
+
+    fn extendKnownRowScanEnd(self: *Screen, row: u16, end: u16) void {
+        const flags = self.row_flags orelse return;
+        const physical = self.rowWrapIndex(row) orelse return;
+        const slot = &flags[@intCast(physical)];
+        const current = (slot.* & row_scan_mask) >> row_scan_shift;
+        if (current == 0) return;
+        const next = encodeRowScanEnd(end, self.lineColumnCount(row));
+        if (next <= current) return;
+        slot.* = (slot.* & ~row_scan_mask) | (next << row_scan_shift);
+    }
+
+    fn forgetRowScanEnd(self: *Screen, row: u16) void {
+        if (self.history_capacity == 0) return;
+        const flags = self.row_flags orelse return;
+        const physical = self.rowWrapIndex(row) orelse return;
+        flags[@intCast(physical)] &= ~row_scan_mask;
+    }
+
+    fn forgetAllRowScanEnds(self: *Screen) void {
+        if (self.history_capacity == 0) return;
+        const flags = self.row_flags orelse return;
+        for (flags) |*value| value.* &= ~row_scan_mask;
+    }
+
+    fn establishEmptyRowScanEnd(self: *Screen, row: u16) void {
+        const flags = self.row_flags orelse return;
+        const physical = self.rowWrapIndex(row) orelse return;
+        const slot = &flags[@intCast(physical)];
+        slot.* = (slot.* & ~row_scan_mask) | (row_scan_known_empty << row_scan_shift);
+    }
+
+    fn visibleRowStateLen(self: *const Screen, row: u16) u16 {
+        return self.retainedVisibleCellsLen(row, .state);
     }
 
     fn dropOldestProjectedRows(self: *Screen, row_count: u32) void {
@@ -1250,7 +1323,10 @@ pub const Screen = struct {
     }
 
     fn noteRowChange(self: *Screen, row: u16, changed: bool) bool {
-        if (changed) self.markRowChanged(row);
+        if (changed) {
+            self.forgetRowScanEnd(row);
+            self.markRowChanged(row);
+        }
         return changed;
     }
 
@@ -1259,6 +1335,7 @@ pub const Screen = struct {
         var row = top;
         const bottom = @min(bottom_inclusive, self.rows - 1);
         while (row <= bottom) : (row += 1) {
+            self.forgetRowScanEnd(row);
             self.markRowChanged(row);
             if (row == bottom) break;
         }
@@ -1266,7 +1343,10 @@ pub const Screen = struct {
     }
 
     fn noteAllRowsChange(self: *Screen, changed: bool) bool {
-        if (changed) self.markAllRowsChanged();
+        if (changed) {
+            self.forgetAllRowScanEnds();
+            self.markAllRowsChanged();
+        }
         return changed;
     }
 
@@ -2412,6 +2492,8 @@ pub const Screen = struct {
         }
         const right = self.cols - 1;
         const after = col + @as(u16, @intCast(count));
+        if (self.history_capacity != 0)
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
         // Every scalar write moves one column except the final right-edge write.
         self.cursor.position_changed_by_client_at +|= @intCast(@min(count, right - col));
         self.cursor.setPositionStructural(self.cursor.row, @min(after, right));
@@ -2561,6 +2643,8 @@ pub const Screen = struct {
         }
         self.last_graphic = graphic;
         const after = self.cursor.col + graphic.width;
+        if (self.history_capacity != 0)
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
         if (after <= right) {
             self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
@@ -2833,6 +2917,8 @@ pub const Screen = struct {
         }
         self.last_graphic = .{ .codepoint = cp, .width = width };
         const after = self.cursor.col + width;
+        if (self.history_capacity != 0)
+            @call(.never_inline, Screen.extendKnownRowScanEnd, .{ self, self.cursor.row, after });
         if (after <= right) {
             self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
@@ -2912,6 +2998,9 @@ pub const Screen = struct {
                 graphic.width = final_width;
             }
         }
+        // Combining and presentation-width edits are uncommon enough that the
+        // scan hint can safely fall back to the canonical full-row calculation.
+        self.forgetRowScanEnd(anchor_row);
         self.markRowChanged(anchor_row);
         return true;
     }
@@ -3323,6 +3412,8 @@ pub const Screen = struct {
         @memset(cells[@intCast(bottom_start)..@intCast(bottom_start + row_len)], blank_cell);
         self.setRowWrapped(self.rows - 1, false);
         self.resetLineGeometry(self.rows - 1);
+        if (self.history_capacity != 0)
+            self.establishEmptyRowScanEnd(self.rows - 1);
     }
 
     /// Returns the effective lower vertical margin.
@@ -3705,6 +3796,7 @@ pub const Screen = struct {
         if (previous == geometry) return false;
         flags[@intCast(idx)] = (flags[@intCast(idx)] & ~row_geometry_mask) |
             (@as(u8, @backingInt(geometry)) << row_geometry_shift);
+        self.forgetRowScanEnd(logical_row);
         const width = self.lineColumnCount(logical_row);
         if (self.cells != null and width < self.cols) self.clearRowRange(logical_row, width, self.cols);
         if (self.cursor.row == logical_row) {
@@ -3864,7 +3956,10 @@ pub const Screen = struct {
     ) u16 {
         const line_cols = self.columnCountForGeometry(row.geometry);
         switch (row.source) {
-            .visible => |visible| return retainedCellsLen(visible.cells, line_cols, row.wrapped, extent),
+            .visible => |visible| {
+                std.debug.assert(line_cols == self.lineColumnCount(visible.row));
+                return self.retainedVisibleCellsLen(visible.row, extent);
+            },
             .history => {},
         }
         var col = line_cols;
@@ -4247,7 +4342,7 @@ pub const Screen = struct {
     fn rowFlagsValue(self: *const Screen, row: u16) u8 {
         const flags = self.row_flags orelse return 0;
         const idx = self.rowWrapIndex(row) orelse return 0;
-        return flags[@intCast(idx)];
+        return flags[@intCast(idx)] & row_semantic_mask;
     }
 
     fn copyRowFlags(self: *Screen, dst_row: u16, src_row: u16) void {
@@ -7492,4 +7587,85 @@ test "bulk retained text matches scalar projection across batches ring wrap and 
         try std.testing.expectEqual(@min(expected.items.len, boundary.len), prefix.stored);
         try std.testing.expectEqualSlices(u8, expected.items[0..prefix.stored], boundary[0..prefix.stored]);
     }
+}
+
+test "row scan buckets are conservative upper bounds" {
+    var line_cols: u16 = 1;
+    while (line_cols <= 512) : (line_cols += 1) {
+        try std.testing.expectEqual(
+            @as(u16, 0),
+            Screen.decodeRowScanEnd(
+                Screen.encodeRowScanEnd(0, line_cols),
+                line_cols,
+            ),
+        );
+        var end: u16 = 1;
+        while (end <= line_cols) : (end += 1) {
+            const code = Screen.encodeRowScanEnd(end, line_cols);
+            try std.testing.expect(code > Screen.row_scan_known_empty);
+            const decoded = Screen.decodeRowScanEnd(code, line_cols);
+            try std.testing.expect(decoded >= end);
+            try std.testing.expect(decoded <= line_cols);
+        }
+    }
+}
+
+test "row scan hints preserve canonical state and text extents" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 3, 16, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    const Oracle = struct {
+        fn expectRow(value: *const Screen, row: u16) !void {
+            const cells = value.visibleRowCells(row);
+            const line_cols = value.lineColumnCount(row);
+            const wrapped = value.rowWrapped(row);
+            try std.testing.expectEqual(
+                Screen.retainedCellsLen(cells, line_cols, wrapped, .state),
+                value.retainedVisibleCellsLen(row, .state),
+            );
+            try std.testing.expectEqual(
+                Screen.retainedCellsLen(cells, line_cols, wrapped, .text),
+                value.retainedVisibleCellsLen(row, .text),
+            );
+        }
+
+        fn expectAll(value: *const Screen) !void {
+            var row: u16 = 0;
+            while (row < value.rows) : (row += 1)
+                try expectRow(value, row);
+        }
+    };
+
+    // Fresh rows are deliberately unknown. Even direct internal mutation that
+    // bypasses hint maintenance therefore falls back to the canonical scan.
+    screen.cells.?[@intCast(screen.rowStart(0) + 14)].codepoint = 'Z';
+    try std.testing.expectEqual(@as(u16, 16), screen.rowScanEnd(0));
+    try Oracle.expectAll(&screen);
+
+    screen.clearVisibleCells();
+    screen.cursor.setPositionByClient(screen.rows - 1, 0);
+    screen.scrollUp();
+
+    // The newly reused physical row is canonical blank and therefore becomes
+    // the only kind of row allowed to start with a known-empty hint.
+    try std.testing.expectEqual(@as(u16, 0), screen.rowScanEnd(screen.rows - 1));
+    try Oracle.expectAll(&screen);
+
+    try std.testing.expectEqual(
+        @as(usize, 5),
+        screen.writePlainAsciiPrefix("HELLO"),
+    );
+    try std.testing.expect(screen.rowScanEnd(screen.rows - 1) >= 5);
+    try std.testing.expect(screen.rowScanEnd(screen.rows - 1) < screen.cols);
+    try Oracle.expectAll(&screen);
+
+    // Shrinking/structural mutation discards the hint instead of repairing it.
+    screen.cursor.setPositionByClient(screen.rows - 1, 2);
+    try std.testing.expect(screen.eraseChars(3));
+    try std.testing.expectEqual(screen.cols, screen.rowScanEnd(screen.rows - 1));
+    try Oracle.expectAll(&screen);
+
+    // Wrapping changes retained extent semantics but never depends on the hint.
+    screen.setRowWrapped(screen.rows - 1, true);
+    try Oracle.expectAll(&screen);
 }
