@@ -206,7 +206,7 @@ pub fn cellsEqual(left: *const Cell, right: *const Cell) bool {
         if (field_type == CellAttrs) {
             if (!attrsEqual(a, b)) return false;
         } else if (field_type == [3]u32) {
-            if (!std.mem.eql(u32, a, b)) return false;
+            if (((a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2])) != 0) return false;
         } else if (a.* != b.*) return false;
     }
     return true;
