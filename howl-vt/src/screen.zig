@@ -835,12 +835,27 @@ pub const Screen = struct {
     /// Finalizes the primary screen's current logical output line.
     pub fn finalizeOutputLine(self: *Screen) void {
         if (self.history_capacity == 0) return;
-        const byte_count = openOutputLineByteCount(self);
-        if (byte_count > logical_output_line_bytes_max) {
-            self.retainOutputLoss(byte_count);
+        if (self.output_lines_count == self.history_capacity)
+            self.evictOldestOutputLine();
+        const start = self.outputTextTail();
+        var writer = StagedOutputTextWriter.init(
+            self.output_text.?,
+            start,
+            retained_output_bytes_max - self.output_bytes,
+        );
+        writeOpenOutputLineStaged(self, &writer);
+        if (writer.total > logical_output_line_bytes_max) {
+            self.retainOutputLoss(writer.total);
             return;
         }
-        self.retainOpenOutputText(byte_count);
+        if (writer.stored == writer.total) {
+            self.commitOutputLine(.{ .text = .{
+                .start = start,
+                .len = @intCast(writer.total),
+            } });
+            return;
+        }
+        self.retainOpenOutputText(writer.total);
     }
 
     // Finalized output is copied separately because logical-history rows are
@@ -4658,14 +4673,48 @@ const OutputTextWriter = struct {
     }
 };
 
+const StagedOutputTextWriter = struct {
+    storage: []u8,
+    start: u32,
+    capacity: usize,
+    stored: usize = 0,
+    total: usize = 0,
+
+    fn init(storage: []u8, start: u32, capacity: usize) StagedOutputTextWriter {
+        std.debug.assert(storage.len == Screen.retained_output_bytes_max);
+        std.debug.assert(start < storage.len);
+        std.debug.assert(capacity <= storage.len);
+        return .{ .storage = storage, .start = start, .capacity = capacity };
+    }
+
+    fn write(self: *StagedOutputTextWriter, bytes: []const u8) void {
+        if (self.stored < self.capacity) {
+            const copied = @min(bytes.len, self.capacity - self.stored);
+            const offset = (@as(usize, self.start) + self.stored) % self.storage.len;
+            const first_len = @min(copied, self.storage.len - offset);
+            @memcpy(self.storage[offset..][0..first_len], bytes[0..first_len]);
+            const second_len = copied - first_len;
+            if (second_len != 0)
+                @memcpy(self.storage[0..second_len], bytes[first_len..][0..second_len]);
+            self.stored += copied;
+        }
+        self.total = std.math.add(usize, self.total, bytes.len) catch
+            // zig-audit: acknowledge panic
+            // reason: A bounded terminal logical line cannot exhaust process usize identity.
+            @panic("staged logical output byte count overflow");
+    }
+};
+
 const RetainedTextWriter = union(enum) {
     history_boundary: *HistoryBoundaryWriter,
     output: *OutputTextWriter,
+    staged_output: *StagedOutputTextWriter,
 
     fn write(self: RetainedTextWriter, bytes: []const u8) void {
         switch (self) {
             .history_boundary => |writer| writer.write(bytes),
             .output => |writer| writer.write(bytes),
+            .staged_output => |writer| writer.write(bytes),
         }
     }
 };
@@ -4773,6 +4822,23 @@ fn writeOpenOutputLine(screen: *const Screen, writer: *OutputTextWriter) void {
     while (row_index < range.end) : (row_index += 1) {
         writeRetainedRowText(screen, screen.retainedRowAt(row_index), text_writer);
     }
+}
+
+fn writeOpenOutputLineStaged(screen: *const Screen, writer: *StagedOutputTextWriter) void {
+    const text_writer = RetainedTextWriter{ .staged_output = writer };
+    const range = screen.currentRetainedLineRange();
+    if (range.start == 0 and screen.history_boundary_active) {
+        std.debug.assert(screen.history_boundary_stored == @min(
+            screen.history_boundary_total,
+            Screen.retained_output_bytes_max,
+        ));
+        writer.write(screen.history_boundary_text.?[0..screen.history_boundary_stored]);
+        if (screen.history_boundary_total > screen.history_boundary_stored)
+            writer.total += screen.history_boundary_total - screen.history_boundary_stored;
+    }
+    var row_index = range.start;
+    while (row_index < range.end) : (row_index += 1)
+        writeRetainedRowText(screen, screen.retainedRowAt(row_index), text_writer);
 }
 
 fn appendScalarTextBounded(
@@ -7753,4 +7819,74 @@ test "full scroll clears only conservative retained-state prefix and preserves b
     for (screen.visibleRowCells(bottom)) |cell|
         try std.testing.expectEqualDeep(blank_cell, cell);
     try std.testing.expectEqual(@as(u16, 0), screen.rowScanEnd(bottom));
+}
+
+test "staged output writer wraps physical storage without publishing metadata" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    const start: u32 = Screen.retained_output_bytes_max - 2;
+    var writer = StagedOutputTextWriter.init(
+        screen.output_text.?,
+        start,
+        4,
+    );
+    writer.write("ABCD");
+
+    try std.testing.expectEqual(@as(usize, 4), writer.stored);
+    try std.testing.expectEqual(@as(usize, 4), writer.total);
+    try std.testing.expectEqualStrings(
+        "AB",
+        screen.output_text.?[Screen.retained_output_bytes_max - 2 ..],
+    );
+    try std.testing.expectEqualStrings("CD", screen.output_text.?[0..2]);
+    try std.testing.expectEqual(@as(u16, 0), screen.output_lines_count);
+    try std.testing.expectEqual(@as(usize, 0), screen.output_bytes);
+}
+
+test "staged output under byte pressure preserves retained owner until fallback" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    const line_len = 600 * 1024;
+    const first = try std.testing.allocator.alloc(u8, line_len);
+    defer std.testing.allocator.free(first);
+    @memset(first, 'a');
+    const second = try std.testing.allocator.alloc(u8, line_len);
+    defer std.testing.allocator.free(second);
+    @memset(second, 'b');
+
+    screen.retainOutputText(first);
+    const start = screen.outputTextTail();
+    var writer = StagedOutputTextWriter.init(
+        screen.output_text.?,
+        start,
+        Screen.retained_output_bytes_max - screen.output_bytes,
+    );
+    writer.write(second);
+
+    try std.testing.expect(writer.stored < writer.total);
+    try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
+    try std.testing.expectEqual(line_len, screen.output_bytes);
+    const retained = screen.output_lines.?[@intCast(screen.output_lines_start)];
+    const retained_text = switch (retained.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const retained_slices = retained_text.slices(screen.output_text.?);
+    try std.testing.expectEqualSlices(u8, first, retained_slices[0]);
+    try std.testing.expectEqual(@as(usize, 0), retained_slices[1].len);
+
+    screen.retainOutputText(second);
+    try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
+    try std.testing.expectEqual(line_len, screen.output_bytes);
+    const replacement = screen.output_lines.?[@intCast(screen.output_lines_start)];
+    try std.testing.expectEqual(@as(u64, 2), replacement.id);
+    const replacement_text = switch (replacement.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const replacement_slices = replacement_text.slices(screen.output_text.?);
+    try std.testing.expectEqualSlices(u8, second, replacement_slices[0]);
+    try std.testing.expectEqual(@as(usize, 0), replacement_slices[1].len);
 }
