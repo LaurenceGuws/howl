@@ -334,7 +334,7 @@ def ticks(pid):
     except:return 0
 
 keys=['Rss','Pss','Pss_Anon','Pss_File','Private_Clean','Private_Dirty','Anonymous','AnonHugePages','Swap']
-prev_ticks=None; prev_t=None; target=time.monotonic()
+prev_ticks=None; prev_t=None; prev_pids=None; target=time.monotonic()
 with output.open('w') as f:
     while True:
         now=time.monotonic(); pids=tree(root)
@@ -344,7 +344,9 @@ with output.open('w') as f:
             for k in keys: total[k]+=m.get(k,0)
             th,v,nv=status(p); threads+=th; vol+=v; nvol+=nv; cpu_ticks+=ticks(p)
         core_pct=machine_pct=None
-        if prev_ticks is not None and now>prev_t:
+        # Lifetime tick sums are comparable only while the same processes exist.
+        # An exited producer otherwise subtracts its entire lifetime from this interval.
+        if prev_ticks is not None and now>prev_t and set(pids)==prev_pids and cpu_ticks>=prev_ticks:
             core_pct=(cpu_ticks-prev_ticks)/hz/(now-prev_t)*100
             machine_pct=core_pct/ncpu
         row={"t_ns":time.monotonic_ns(),"processes":len(pids),"threads":threads,
@@ -352,7 +354,7 @@ with output.open('w') as f:
              "voluntary_ctxt_switches":vol,"nonvoluntary_ctxt_switches":nvol}
         row.update({k.lower()+"_kib":v for k,v in total.items()})
         f.write(json.dumps(row,separators=(',',':'))+'\n'); f.flush()
-        prev_ticks=cpu_ticks; prev_t=now
+        prev_ticks=cpu_ticks; prev_t=now; prev_pids=set(pids)
         if stop.exists() or not Path(f'/proc/{root}').exists(): break
         target += interval
         delay=target-time.monotonic()

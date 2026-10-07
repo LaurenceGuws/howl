@@ -25,6 +25,12 @@ set -a; source tools/performance/tracks/kde.env; set +a
 
 Raw receipts remain authoritative. Any later scalar index must preserve cadence survival, CPU, memory and topology as separate visible dimensions.
 
+CPU summaries cover the complete terminal process tree, including TUI Zoo.
+Intervals in which the process set changes have no CPU sample: subtracting
+lifetime ticks across producer exit would create a negative interval. Older
+captures can contain that error; recalculate stable intervals or rerun before
+comparing their average CPU.
+
 
 ## Isolated visual KWin lab
 
