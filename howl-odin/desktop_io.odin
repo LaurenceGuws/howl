@@ -115,7 +115,11 @@ queue_control :: proc(view: ^Instance_View, task: Control_Task) -> i32 {
     sync.mutex_unlock(&view.mutex)
     switch admission {
     case .Accepted:
-        sync.cond_signal(&view.control_cond)
+        if view.route_kind == .Local && view.native_terminal != nil {
+            native_terminal_wake(view.native_terminal)
+        } else {
+            sync.cond_signal(&view.control_cond)
+        }
         return 0
     case .Busy:
         publish_control_notice(view, "Input queue busy; newest operation dropped")
@@ -142,7 +146,11 @@ queue_named_key_cycle :: proc(view: ^Instance_View, key, modifiers: u8) -> i32 {
     sync.mutex_unlock(&view.mutex)
     switch admission {
     case .Accepted:
-        sync.cond_signal(&view.control_cond)
+        if view.route_kind == .Local && view.native_terminal != nil {
+            native_terminal_wake(view.native_terminal)
+        } else {
+            sync.cond_signal(&view.control_cond)
+        }
         return 0
     case .Busy:
         publish_control_notice(view, "Input queue busy; scroll cycle dropped")
@@ -219,6 +227,645 @@ execute_control :: proc(handle: rawptr, task: Control_Task, result: ^Control_Res
         return code
     }
     return 1
+}
+
+
+copy_native_terminal_error :: proc(handle: rawptr, output: ^[160]u8, output_len: ^int) {
+    output_len^ = 0
+    if handle == nil do return
+    count: c.size_t
+    native_terminal_copy_error(
+        handle,
+        raw_data(output[:]),
+        c.size_t(len(output)),
+        &count,
+    )
+    output_len^ = min(int(count), len(output))
+}
+
+execute_native_control :: proc(handle: rawptr, task: Control_Task, result: ^Control_Result) -> i32 {
+    switch task.kind {
+    case .Text:
+        return native_terminal_send_text(handle, raw_data(task.payload), c.size_t(len(task.payload)))
+    case .Paste:
+        return native_terminal_send_paste(handle, raw_data(task.payload), c.size_t(len(task.payload)))
+    case .Named:
+        return native_terminal_send_named_key(handle, task.key, task.action, task.modifiers)
+    case .Unicode:
+        return native_terminal_send_unicode_key(handle, task.scalar, task.action, task.modifiers)
+    case .Mouse:
+        return native_terminal_send_mouse(
+            handle,
+            task.action,
+            task.button,
+            task.modifiers,
+            task.buttons,
+            task.row,
+            task.column,
+            task.alternate,
+            task.pixel_x,
+            task.pixel_y,
+        )
+    case .Focus:
+        return native_terminal_send_focus(handle, task.action)
+    case .Resize:
+        return native_terminal_send_resize(
+            handle,
+            task.rows,
+            task.columns,
+            task.cell_width,
+            task.cell_height,
+            task.action,
+        )
+    case .Expand:
+        return native_terminal_selection_expand(
+            handle,
+            task.action,
+            task.history,
+            task.row,
+            task.column,
+            task.columns,
+            task.alternate,
+            &result.range,
+        )
+    case .Extract, .Link:
+        capacity := task.kind == .Extract ? SELECTION_TEXT_BYTES : HYPERLINK_URI_BYTES
+        result.bytes = make([]u8, capacity + 1)
+        if result.bytes == nil do return 3
+        count: c.size_t
+        code: i32
+        if task.kind == .Extract {
+            code = native_terminal_selection_extract(
+                handle,
+                task.row,
+                task.column,
+                task.end_row,
+                task.end_column,
+                task.columns,
+                task.alternate,
+                raw_data(result.bytes),
+                c.size_t(capacity),
+                &count,
+            )
+        } else {
+            code = native_terminal_hyperlink_copy(
+                handle,
+                task.history,
+                task.row,
+                task.column,
+                task.columns,
+                task.alternate,
+                raw_data(result.bytes),
+                c.size_t(capacity),
+                &count,
+            )
+        }
+        result.length = int(count)
+        result.bytes[result.length] = 0
+        return code
+    case .Clipboard:
+        return 1
+    }
+    return 1
+}
+
+publish_native_control_failure :: proc(view: ^Instance_View, handle: rawptr, prefix: string = "") {
+    if view == nil || handle == nil do return
+    message: [160]u8
+    count := 0
+    copy_native_terminal_error(handle, &message, &count)
+    if count == 0 {
+        fallback := "native_terminal_failed"
+        count = min(len(fallback), len(message))
+        copy(message[:count], transmute([]u8)fallback[:count])
+    }
+    sync.mutex_lock(&view.mutex)
+    if len(prefix) == 0 {
+        n := min(count, len(view.error))
+        copy(view.error[:n], message[:n])
+        view.error_len = n
+    } else {
+        p := min(len(prefix), len(view.error))
+        copy(view.error[:p], transmute([]u8)prefix[:p])
+        n := min(count, len(view.error) - p)
+        copy(view.error[p:p+n], message[:n])
+        view.error_len = p + n
+    }
+    view.ui_dirty = true
+    sync.mutex_unlock(&view.mutex)
+}
+
+apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offset: u32) -> bool {
+    if view == nil || handle == nil do return false
+    info: Native_Terminal_Info
+    text_len: c.size_t
+    title: [1024]u8
+    title_len: c.size_t
+    row_shape_count: c.size_t
+    rc := native_terminal_snapshot(
+        handle,
+        history_offset,
+        &info,
+        raw_data(view.scratch),
+        c.size_t(len(view.scratch)),
+        &text_len,
+        raw_data(title[:]),
+        c.size_t(len(title)),
+        &title_len,
+        raw_data(view.native_row_shapes_scratch),
+        c.size_t(len(view.native_row_shapes_scratch)),
+        &row_shape_count,
+    )
+    if rc != 0 {
+        publish_native_control_failure(view, handle)
+        sync.mutex_lock(&view.mutex)
+        view.io_failed = true
+        view.control_failed = true
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+
+    interaction := Interaction_State_Info{
+        terminal_revision = info.terminal_revision,
+        flags = info.interaction_flags,
+        mouse_tracking = info.mouse_tracking,
+        mouse_protocol = info.mouse_protocol,
+        pointer_mode = info.pointer_mode,
+    }
+    sync.mutex_lock(&view.mutex)
+    changed := view.revision != info.revision ||
+               view.terminal_revision != info.terminal_revision ||
+               view.rows != info.rows ||
+               view.columns != info.columns ||
+               view.cursor_row != info.cursor_row ||
+               view.cursor_column != info.cursor_column ||
+               view.cursor_visible != (info.cursor_visible != 0) ||
+               view.cursor_shape != info.cursor_shape ||
+               view.history_count != info.history_count ||
+               view.history_row_base != info.history_row_base ||
+               view.alternate_screen != (info.alternate_screen != 0) ||
+               view.stream_closed != (info.stream_closed != 0) ||
+               view.child_exited != (info.child_exited != 0) ||
+               view.task_progress != info.task_progress ||
+               view.display_title_len != int(title_len) ||
+               string(view.display_title[:view.display_title_len]) != string(title[:int(title_len)]) ||
+               view.text_len != int(text_len)
+
+    validate_selection_context_locked(
+        view,
+        info.columns,
+        info.rows,
+        info.history_count,
+        info.history_row_base,
+        info.alternate_screen != 0,
+    )
+    apply_history_geometry_locked(view, info.columns)
+    copy(view.text[:int(text_len)], view.scratch[:int(text_len)])
+    view.text_len = int(text_len)
+    view.interaction_state = interaction
+    view.interaction_state_valid = true
+    view.revision = info.revision
+    view.terminal_revision = info.terminal_revision
+    view.rows = info.rows
+    view.columns = info.columns
+    view.cursor_row = info.cursor_row
+    view.cursor_column = info.cursor_column
+    view.cursor_visible = info.cursor_visible != 0
+    view.cursor_shape = info.cursor_shape
+    follow_history_locked(
+        view,
+        info.history_count,
+        info.history_row_base,
+        info.alternate_screen != 0,
+    )
+    view.history_count = info.history_count
+    view.history_row_base = info.history_row_base
+    view.alternate_screen = info.alternate_screen != 0
+    view.stream_closed = info.stream_closed != 0
+    view.child_exited = info.child_exited != 0
+    view.text_truncated = info.text_truncated != 0
+    copy(view.display_title[:int(title_len)], title[:int(title_len)])
+    view.display_title_len = int(title_len)
+    view.task_progress = info.task_progress
+    view.native_row_shape_count = int(row_shape_count)
+    copy(
+        view.native_row_shapes[:view.native_row_shape_count],
+        view.native_row_shapes_scratch[:view.native_row_shape_count],
+    )
+    view.native_row_shape_terminal_revision = info.terminal_revision
+    if info.alternate_screen != 0 {
+        view.native_row_shape_history_offset = 0
+    } else {
+        view.native_row_shape_history_offset = min(history_offset, info.history_count)
+    }
+    view.ui_dirty = view.ui_dirty || changed
+    if !view.control_failed && !view.io_failed do view.error_len = 0
+    validate_search_result_locked(view)
+    sync.mutex_unlock(&view.mutex)
+    return changed
+}
+
+process_native_search :: proc(view: ^Instance_View, handle: rawptr) -> bool {
+    local_query: [SEARCH_QUERY_BYTES]u8
+    sync.mutex_lock(&view.mutex)
+    if !view.search_pending || view.search_running {
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+    generation := view.search_generation
+    query_len := view.search_query_len
+    copy(local_query[:query_len], view.search_query[:query_len])
+    reverse := view.search_reverse
+    origin_present := view.search_origin_present
+    origin_row := view.search_origin_row
+    origin_column := view.search_origin_column
+    view.search_pending = false
+    view.search_running = true
+    view.search_running_generation = generation
+    sync.mutex_unlock(&view.mutex)
+
+    result: Search_Match_Info
+    rc := native_terminal_search_find(
+        handle,
+        raw_data(local_query[:]),
+        c.size_t(query_len),
+        reverse ? u8(1) : u8(0),
+        origin_present ? u8(1) : u8(0),
+        origin_row,
+        origin_column,
+        &result,
+    )
+    error_message: [160]u8
+    error_len := 0
+    if rc != 0 do copy_native_terminal_error(handle, &error_message, &error_len)
+
+    sync.mutex_lock(&view.mutex)
+    view.search_running = false
+    view.ui_dirty = true
+    if !view.worker_stop && generation == view.search_generation {
+        view.search_last_reverse = reverse
+        view.search_last_complete = rc == 0 && result.complete != 0
+        view.search_error_len = 0
+        if rc != 0 {
+            count := min(error_len, len(view.search_error))
+            copy(view.search_error[:count], error_message[:count])
+            view.search_error_len = count
+            view.search_state = .Error
+            view.search_failed = true
+        } else if result.found == 0 {
+            view.search_state = .Not_Found
+        } else if apply_search_result_locked(view, result) {
+            view.search_state = .Found
+        } else {
+            message := "search_result_stale"
+            copy(view.search_error[:len(message)], transmute([]u8)message)
+            view.search_error_len = len(message)
+            view.search_state = .Error
+            view.search_result_active = false
+        }
+    }
+    sync.mutex_unlock(&view.mutex)
+    notify_instance_update()
+    return true
+}
+
+process_native_presentation :: proc(view: ^Instance_View, handle: rawptr) -> bool {
+    if view == nil || handle == nil do return false
+    sync.mutex_lock(&view.mutex)
+    if !view.native_presentation.pending {
+        sync.mutex_unlock(&view.mutex)
+        return false
+    }
+    request := view.native_presentation
+    view.native_presentation.pending = false
+    sync.mutex_unlock(&view.mutex)
+
+    code := native_terminal_reconfigure_presentation(
+        handle,
+        raw_data(request.font[:request.font_len]), c.size_t(request.font_len),
+        raw_data(request.italic[:request.italic_len]), c.size_t(request.italic_len),
+        raw_data(request.bold[:request.bold_len]), c.size_t(request.bold_len),
+        raw_data(request.bold_italic[:request.bold_italic_len]), c.size_t(request.bold_italic_len),
+        raw_data(request.fallback[:request.fallback_len]), c.size_t(request.fallback_len),
+        raw_data(request.secondary_fallback[:request.secondary_fallback_len]), c.size_t(request.secondary_fallback_len),
+        request.font_pixels,
+    )
+
+    sync.mutex_lock(&view.mutex)
+    current := request.generation == view.native_presentation.generation
+    if current {
+        view.native_presentation.waiting = code == 0
+        view.native_presentation.failed = code != 0
+        view.ui_dirty = true
+    }
+    sync.mutex_unlock(&view.mutex)
+    if code != 0 && current {
+        message: [160]u8
+        count := 0
+        copy_native_terminal_error(handle, &message, &count)
+        if count != 0 {
+            publish_control_notice(view, string(message[:count]))
+        } else {
+            publish_control_notice(view, "Terminal presentation reconfigure failed")
+        }
+    }
+    notify_instance_update()
+    return true
+}
+
+native_consequence_reply_empty :: proc(handle: rawptr, generation: u64, kind: Bridge_Consequence_Reply) -> bool {
+    dummy: [1]u8
+    return native_terminal_consequence_reply(
+        handle,
+        generation,
+        u8(kind),
+        raw_data(dummy[:]),
+        0,
+    ) == 0
+}
+
+native_consequence_reply_bytes :: proc(handle: rawptr, generation: u64, kind: Bridge_Consequence_Reply, body: []u8) -> bool {
+    if len(body) == 0 do return native_consequence_reply_empty(handle, generation, kind)
+    return native_terminal_consequence_reply(
+        handle,
+        generation,
+        u8(kind),
+        raw_data(body),
+        c.size_t(len(body)),
+    ) == 0
+}
+
+process_native_consequences :: proc(view: ^Instance_View, handle: rawptr) -> bool {
+    if view == nil || handle == nil do return false
+    payload: [CONSEQUENCE_PAYLOAD_SCRATCH]u8
+    changed := false
+    for {
+        info: Consequence_Info
+        copied: c.size_t
+        if native_terminal_consequence_observe(
+            handle,
+            &info,
+            raw_data(payload[:]),
+            c.size_t(len(payload)),
+            &copied,
+        ) != 0 {
+            publish_control_notice(view, "Host consequence policy observation failed")
+            return changed
+        }
+        if Bridge_Consequence_Kind(info.kind) == .None do return changed
+        action := consequence_action_for(info)
+        ok := true
+        switch action {
+        case .Consume:
+            ok = native_terminal_consequence_consume(handle, info.generation) == 0
+        case .Attention:
+            ok = native_terminal_consequence_consume(handle, info.generation) == 0
+            if ok {
+                sync.mutex_lock(&view.mutex)
+                view.native_attention_pending = true
+                view.ui_dirty = true
+                sync.mutex_unlock(&view.mutex)
+                notify_instance_update()
+            }
+        case .Reply_Clipboard_Empty:
+            ok = native_consequence_reply_empty(handle, info.generation, .Clipboard)
+        case .Reply_Pointer_Default:
+            body := []u8{'d','e','f','a','u','l','t'}
+            ok = native_consequence_reply_bytes(handle, info.generation, .Pointer_Shape, body)
+        case .Reply_Color_Dark:
+            body := []u8{1}
+            ok = native_consequence_reply_bytes(handle, info.generation, .Color_Preference, body)
+        case .Reply_Container_Screen:
+            sync.mutex_lock(&view.mutex)
+            rows, columns := view.rows, view.columns
+            sync.mutex_unlock(&view.mutex)
+            body: [8]u8
+            _ = write_u32_be(body[0:4], u32(rows))
+            _ = write_u32_be(body[4:8], u32(columns))
+            ok = native_consequence_reply_bytes(handle, info.generation, .Container_Screen_Cells, body[:])
+        case .Reply_Container_Decline:
+            ok = native_consequence_reply_empty(handle, info.generation, .Container_Decline)
+        }
+        if !ok {
+            publish_control_notice(view, "Host consequence policy failed")
+            return changed
+        }
+        changed = true
+    }
+}
+
+process_native_control :: proc(view: ^Instance_View, handle: rawptr) -> (worked: bool, fatal: bool) {
+    sync.mutex_lock(&view.mutex)
+    if view.control_count == 0 || view.control_result_ready {
+        sync.mutex_unlock(&view.mutex)
+        return false, false
+    }
+    task, ok := control_queue_pop_locked(view)
+    sync.mutex_unlock(&view.mutex)
+    if !ok do return false, false
+
+    if task.kind == .Resize {
+        sync.mutex_lock(&view.mutex)
+        current := size_task_current(&view.size_control, task)
+        if !current {
+            view.size_control.pending = false
+            view.ui_dirty = true
+        }
+        sync.mutex_unlock(&view.mutex)
+        if !current {
+            if task.payload != nil do delete(task.payload)
+            notify_instance_update()
+            return true, false
+        }
+    }
+
+    result := Control_Result{kind = task.kind, generation = task.generation, request = task.request}
+    clipboard_failed := false
+    if task.kind == .Clipboard {
+        sync.mutex_lock(&view.mutex)
+        view.control_result = result
+        view.control_result_ready = true
+        sync.mutex_unlock(&view.mutex)
+        notify_instance_update()
+        sync.mutex_lock(&view.mutex)
+        for !view.worker_stop && view.control_result_ready do sync.cond_wait(&view.control_cond, &view.mutex)
+        reply := view.clipboard_reply
+        view.clipboard_reply = nil
+        reply_code := view.clipboard_reply_code
+        stopped := view.worker_stop
+        sync.mutex_unlock(&view.mutex)
+        if stopped {
+            if reply != nil do delete(reply)
+            if task.payload != nil do delete(task.payload)
+            return true, true
+        }
+        if reply_code != 0 {
+            clipboard_failed = true
+            result.code = BRIDGE_QUERY_DECLINED
+            publish_control_notice(view, "Paste not sent: preceding copy did not complete")
+        } else if len(reply) != 0 {
+            result.code = native_terminal_send_paste(handle, raw_data(reply), c.size_t(len(reply)))
+        }
+        if reply != nil do delete(reply)
+    } else {
+        result.code = execute_native_control(handle, task, &result)
+    }
+    if task.payload != nil do delete(task.payload)
+
+    size_result_current := true
+    if task.kind == .Resize {
+        sync.mutex_lock(&view.mutex)
+        size_result_current = size_task_current(&view.size_control, task)
+        _ = finish_size_task(&view.size_control, task, result.code)
+        view.ui_dirty = true
+        sync.mutex_unlock(&view.mutex)
+        notify_instance_update()
+    }
+
+    failed_fatal := control_failure_is_fatal(task.kind, result.code)
+    if result.code != 0 && !failed_fatal && !clipboard_failed && size_result_current {
+        if task.kind == .Resize {
+            publish_control_notice(view, "Instance rejected the size; auto-sizing stopped here")
+        } else {
+            message: [160]u8
+            count := 0
+            copy_native_terminal_error(handle, &message, &count)
+            if count != 0 do publish_control_notice(view, string(message[:count]))
+        }
+    }
+    if failed_fatal {
+        if !clipboard_failed {
+            prefix := ""
+            if task.kind != .Expand && task.kind != .Extract && task.kind != .Link {
+                prefix = "Input failed/unconfirmed; not replayed: "
+            }
+            publish_native_control_failure(
+                view,
+                handle,
+                prefix,
+            )
+        }
+        sync.mutex_lock(&view.mutex)
+        view.control_failed = true
+        sync.mutex_unlock(&view.mutex)
+    }
+    if task.kind == .Expand || task.kind == .Extract || task.kind == .Link {
+        sync.mutex_lock(&view.mutex)
+        view.control_result = result
+        view.control_result_ready = true
+        sync.mutex_unlock(&view.mutex)
+        notify_instance_update()
+    }
+    return true, failed_fatal
+}
+
+native_terminal_instance :: proc(data: rawptr) {
+    view := (^Instance_View)(data)
+    diagnostic: [160]u8
+    count: c.size_t
+    handle := native_terminal_claim(
+        desktop_io_runtime,
+        view.instance_id,
+        raw_data(diagnostic[:]),
+        c.size_t(len(diagnostic)),
+        &count,
+    )
+    if handle == nil {
+        sync.mutex_lock(&view.mutex)
+        view.control_connect_done = true
+        view.control_connect_applied = true
+        view.control_failed = true
+        view.io_failed = true
+        n := min(int(count), len(view.error))
+        copy(view.error[:n], diagnostic[:n])
+        view.error_len = n
+        view.ui_dirty = true
+        sync.mutex_unlock(&view.mutex)
+        notify_instance_update()
+        return
+    }
+    exchange := native_terminal_render_exchange(handle)
+    if exchange == nil {
+        native_terminal_release(handle)
+        publish_initial_error(view, "Native terminal Render exchange unavailable")
+        return
+    }
+
+    sync.mutex_lock(&view.mutex)
+    view.native_terminal = handle
+    view.native_render_exchange = exchange
+    view.control = handle
+    view.control_connect_done = true
+    view.control_connect_applied = true
+    view.control_failed = false
+    view.io_failed = false
+    sync.mutex_unlock(&view.mutex)
+    notify_instance_update()
+
+    defer {
+        sync.mutex_lock(&view.mutex)
+        view.control = nil
+        view.native_render_exchange = nil
+        view.native_terminal = nil
+        sync.mutex_unlock(&view.mutex)
+        native_terminal_release(handle)
+    }
+
+    published_history: u32 = 0
+    _ = native_terminal_wait(handle, 0)
+    for {
+        sync.mutex_lock(&view.mutex)
+        stop := view.worker_stop
+        requested_history := view.history_target_offset
+        sync.mutex_unlock(&view.mutex)
+        if stop do break
+
+        worked := false
+        if requested_history != published_history {
+            if native_terminal_publish_history(handle, requested_history) != 0 {
+                publish_native_control_failure(view, handle)
+                sync.mutex_lock(&view.mutex)
+                view.control_failed = true
+                view.io_failed = true
+                sync.mutex_unlock(&view.mutex)
+                notify_instance_update()
+                break
+            }
+            published_history = requested_history
+            worked = true
+        }
+
+        if process_native_presentation(view, handle) do worked = true
+
+        control_worked, fatal := process_native_control(view, handle)
+        worked = worked || control_worked
+        if fatal do break
+        if process_native_search(view, handle) do worked = true
+        if process_native_consequences(view, handle) do worked = true
+
+        if worked {
+            if native_terminal_wait(handle, 0) != 0 {
+                publish_native_control_failure(view, handle)
+                break
+            }
+        }
+
+        sync.mutex_lock(&view.mutex)
+        snapshot_history := view.history_target_offset
+        sync.mutex_unlock(&view.mutex)
+        _ = apply_native_snapshot(view, handle, snapshot_history)
+        notify_instance_update()
+
+        if !worked {
+            if native_terminal_wait(handle, -1) != 0 {
+                sync.mutex_lock(&view.mutex)
+                stopped := view.worker_stop
+                sync.mutex_unlock(&view.mutex)
+                if !stopped do publish_native_control_failure(view, handle)
+                break
+            }
+        }
+    }
 }
 
 control_instance :: proc(data: rawptr) {

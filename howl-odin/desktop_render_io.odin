@@ -288,7 +288,11 @@ unregister_render_work :: proc(dispatcher: ^Render_Dispatcher, work: ^Render_Wor
 }
 
 start_render_worker :: proc(app: ^App, view: ^Instance_View, pixels: u16) -> ^Render_Work {
-    if app == nil || app.render_dispatcher == nil do return nil
+    if app == nil do return nil
+    if app.render_dispatcher == nil {
+        app.render_dispatcher = start_render_dispatcher()
+        if app.render_dispatcher == nil do return nil
+    }
     work := new(Render_Work)
     if work == nil do return nil
     endpoint := instance_endpoint(view)

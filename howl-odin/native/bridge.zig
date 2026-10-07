@@ -1,28 +1,615 @@
-//! Tiny C-shaped seam from the Odin desktop shell to the existing Howl client.
+//! C-shaped seam from the Odin desktop shell to canonical Howl owners.
 //!
-//! This bridge deliberately exports no wire structs or client backing layouts.
-//! `howl-client` remains the sole decoder/action owner; Odin gets bounded UTF-8
-//! presentation text, scalar snapshot metadata, and semantic input operations.
+//! Transported Direct/Server routes retain `howl-client` as decoder/action owner.
+//! Local instead claims one in-process Instance on one terminal thread and publishes
+//! immutable Render frames. Odin gets bounded presentation facts and semantic
+//! operations without importing Zig backing layouts.
 
 const std = @import("std");
 const builtin = @import("builtin");
+const posix = std.posix;
 const client = @import("howl_client");
-const local_platform = @import("howl_local");
 const server_client = @import("server_client");
 const protocol = client.protocol;
 
 const terminal_render = @import("howl_client_render");
 const render = terminal_render;
+const native_instance = terminal_render.instance;
 
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;
+const size_rejected: i32 = 8;
+const native_local_limit: usize = 64;
+
+const NativeLocalSlot = struct {
+    id: u64,
+    value: *native_instance.Instance,
+    claimed: bool = false,
+};
+
+/// Owns only process-local Instance identity and exclusive terminal-thread claim.
+///
+/// The mutex protects catalogue pointer handoff. Once claimed, the Instance is
+/// mutated only by that terminal owner; no service/client worker shares it.
+const NativeLocalState = struct {
+    mutex: std.Io.Mutex = .init,
+    instances: [native_local_limit]?NativeLocalSlot = @splat(null),
+    next_id: u64 = 1,
+
+    fn insert(
+        self: *NativeLocalState,
+        io: std.Io,
+        value: *native_instance.Instance,
+    ) error{ LocalInstanceCapacity, LocalIdentityExhausted }!u64 {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        var free: ?usize = null;
+        for (self.instances, 0..) |slot, index| {
+            if (slot == null) {
+                free = index;
+                break;
+            }
+        }
+        const index = free orelse return error.LocalInstanceCapacity;
+        const id = self.next_id;
+        if (id == 0) return error.LocalIdentityExhausted;
+        self.next_id +%= 1;
+        self.instances[index] = .{ .id = id, .value = value };
+        return id;
+    }
+
+    fn createPresented(
+        self: *NativeLocalState,
+        io: std.Io,
+        environ: std.process.Environ,
+        launch: native_instance.Launch,
+        presentation: native_instance.PresentationConfig,
+    ) (native_instance.PresentedInitError || error{
+        LocalInstanceCapacity,
+        LocalIdentityExhausted,
+    })!u64 {
+        const value = try native_instance.initPresented(
+            std.heap.c_allocator,
+            environ,
+            launch,
+            presentation,
+        );
+        errdefer native_instance.deinit(value);
+        return self.insert(io, value);
+    }
+
+    fn claim(
+        self: *NativeLocalState,
+        io: std.Io,
+        id: u64,
+    ) error{ LocalInstanceUnavailable, LocalInstanceClaimed }!*native_instance.Instance {
+        if (id == 0) return error.LocalInstanceUnavailable;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        for (&self.instances) |*slot| {
+            if (slot.*) |*active| {
+                if (active.id != id) continue;
+                if (active.claimed) return error.LocalInstanceClaimed;
+                active.claimed = true;
+                return active.value;
+            }
+        }
+        return error.LocalInstanceUnavailable;
+    }
+
+    fn release(
+        self: *NativeLocalState,
+        io: std.Io,
+        id: u64,
+        value: *native_instance.Instance,
+    ) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        for (&self.instances) |*slot| {
+            if (slot.*) |*active| {
+                if (active.id != id) continue;
+                std.debug.assert(active.value == value);
+                std.debug.assert(active.claimed);
+                active.claimed = false;
+                return;
+            }
+        }
+        std.debug.assert(false);
+    }
+
+    fn destroy(self: *NativeLocalState, io: std.Io, id: u64) bool {
+        if (id == 0) return false;
+        var value: ?*native_instance.Instance = null;
+        self.mutex.lockUncancelable(io);
+        for (&self.instances) |*slot| {
+            if (slot.*) |active| {
+                if (active.id != id) continue;
+                if (active.claimed) {
+                    self.mutex.unlock(io);
+                    return false;
+                }
+                value = active.value;
+                slot.* = null;
+                break;
+            }
+        }
+        self.mutex.unlock(io);
+        if (value) |owned| native_instance.deinit(owned);
+        return value != null;
+    }
+
+    fn empty(self: *const NativeLocalState) bool {
+        for (self.instances) |slot| if (slot != null) return false;
+        return true;
+    }
+};
+
+const native_synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
+
+const NativePublication = struct {
+    revision: u64,
+    synchronized_started_ns: ?u64 = null,
+    synchronized_pending: bool = false,
+    synchronized_timed_out: bool = false,
+
+    fn note(
+        self: *NativePublication,
+        current_revision: u64,
+        synchronized: bool,
+        release_ended: bool,
+        now_ns: u64,
+    ) bool {
+        if (release_ended) {
+            self.synchronized_started_ns = null;
+            self.synchronized_timed_out = false;
+        }
+        if (!synchronized) {
+            const release_pending = self.synchronized_pending;
+            self.synchronized_started_ns = null;
+            self.synchronized_pending = false;
+            self.synchronized_timed_out = false;
+            if (current_revision == self.revision and !release_pending)
+                return false;
+            self.revision = current_revision;
+            return true;
+        }
+        if (self.synchronized_timed_out) {
+            if (current_revision == self.revision) return false;
+            self.revision = current_revision;
+            return true;
+        }
+        if (self.synchronized_started_ns == null)
+            self.synchronized_started_ns = now_ns;
+        const elapsed_ns = now_ns -| self.synchronized_started_ns.?;
+        if (elapsed_ns < native_synchronized_output_timeout_ns) {
+            self.synchronized_pending =
+                self.synchronized_pending or current_revision != self.revision;
+            return false;
+        }
+        self.synchronized_started_ns = null;
+        self.synchronized_timed_out = true;
+        const publish =
+            self.synchronized_pending or current_revision != self.revision;
+        self.synchronized_pending = false;
+        if (publish) self.revision = current_revision;
+        return publish;
+    }
+};
+
+const NativeTerminalHandle = opaque {};
+const NativeCanvasHandle = opaque {};
+
+/// One claimed local Instance. Exactly one Odin terminal worker owns this value.
+const NativeTerminal = struct {
+    runtime: *Runtime,
+    id: u64,
+    value: *native_instance.Instance,
+    publication: NativePublication,
+    stream_closed: bool = false,
+    child_exit: ?native_instance.ChildExit = null,
+    history_offset: u32 = 0,
+    write_pending: bool = false,
+    animation_wait_ms: ?u32 = null,
+    wake_read: posix.fd_t = -1,
+    wake_write: posix.fd_t = -1,
+    last_error: [160]u8 = undefined,
+    last_error_len: usize = 0,
+
+    fn clearError(self: *NativeTerminal) void {
+        self.last_error_len = 0;
+    }
+
+    fn setError(
+        self: *NativeTerminal,
+        stage: []const u8,
+        failure_name: []const u8,
+    ) void {
+        const rendered = std.fmt.bufPrint(
+            &self.last_error,
+            "{s}:{s}",
+            .{ stage, failure_name },
+        ) catch {
+            self.last_error_len = 0;
+            return;
+        };
+        self.last_error_len = rendered.len;
+    }
+
+    fn publishCurrent(self: *NativeTerminal) !void {
+        if (!native_instance.presented(self.value)) return;
+        const view = native_instance.terminal(self.value).semanticView(
+            self.history_offset,
+        );
+        self.history_offset = view.history_offset;
+        try native_instance.publishRenderAt(
+            self.value,
+            self.history_offset,
+        );
+    }
+
+    fn service(self: *NativeTerminal, timestamp_ns: u64) !native_instance.Service {
+        self.clearError();
+        const serviced = native_instance.serviceWithConsequencePolicy(
+            self.value,
+            true,
+            true,
+            timestamp_ns,
+            .retain,
+        ) catch |failure| {
+            self.setError("service", @errorName(failure));
+            return failure;
+        };
+        const observation = native_instance.terminal(self.value);
+        const revision = observation.semanticSequence();
+        const publish = self.publication.note(
+            revision,
+            observation.synchronizedOutput(),
+            serviced.synchronized_output.ended,
+            timestamp_ns,
+        );
+        const lifecycle_changed =
+            serviced.stream_closed != self.stream_closed or
+            (serviced.child_exit != null and self.child_exit == null);
+        self.stream_closed = serviced.stream_closed;
+        if (serviced.child_exit) |value| self.child_exit = value;
+        self.write_pending = serviced.write_pending;
+        self.animation_wait_ms = serviced.animation_wait_ms;
+        if (publish or lifecycle_changed)
+            self.publishCurrent() catch |failure| {
+                self.setError("publish", @errorName(failure));
+                return failure;
+            };
+        return serviced;
+    }
+
+    fn wake(self: *NativeTerminal) void {
+        if (comptime builtin.os.tag == .windows) return;
+        if (self.wake_write < 0) return;
+        const byte = [_]u8{1};
+        while (true) {
+            const result = posix.system.write(
+                self.wake_write,
+                &byte,
+                byte.len,
+            );
+            switch (posix.errno(result)) {
+                .SUCCESS => return,
+                .INTR => continue,
+                .AGAIN => return,
+                else => return,
+            }
+        }
+    }
+
+    fn drainWake(self: *NativeTerminal) void {
+        if (comptime builtin.os.tag == .windows) return;
+        if (self.wake_read < 0) return;
+        var bytes: [64]u8 = undefined;
+        while (true) {
+            const result = posix.system.read(
+                self.wake_read,
+                &bytes,
+                bytes.len,
+            );
+            switch (posix.errno(result)) {
+                .SUCCESS => {
+                    if (result == 0 or result < bytes.len) return;
+                },
+                .INTR => continue,
+                .AGAIN => return,
+                else => return,
+            }
+        }
+    }
+
+    fn waitAndService(
+        self: *NativeTerminal,
+        timeout_ms: i32,
+    ) !native_instance.Service {
+        if (comptime builtin.os.tag == .windows) {
+            if (timeout_ms > 0)
+                try std.Io.sleep(
+                    self.runtime.threaded.io(),
+                    .fromMilliseconds(@intCast(timeout_ms)),
+                    .awake,
+                );
+            return self.service(nativeNowNs(self.runtime.threaded.io()));
+        }
+
+        const descriptor = try native_instance.descriptor(self.value);
+        const write_pending =
+            self.write_pending or native_instance.writePending(self.value);
+        const animation_timeout: i32 = if (self.animation_wait_ms) |value|
+            @intCast(@min(value, @as(u32, @intCast(std.math.maxInt(i32)))))
+        else
+            timeout_ms;
+        const effective_timeout = if (native_instance.bufferedOutputPending(self.value))
+            @as(i32, 0)
+        else if (timeout_ms < 0)
+            animation_timeout
+        else
+            @min(timeout_ms, animation_timeout);
+        var pty_events: i16 = posix.POLL.IN | posix.POLL.HUP;
+        if (write_pending) pty_events |= posix.POLL.OUT;
+        var descriptors = [_]posix.pollfd{
+            .{
+                .fd = descriptor,
+                .events = pty_events,
+                .revents = 0,
+            },
+            .{
+                .fd = self.wake_read,
+                .events = posix.POLL.IN,
+                .revents = 0,
+            },
+        };
+        _ = try posix.poll(&descriptors, effective_timeout);
+        if (descriptors[1].revents & posix.POLL.IN != 0)
+            self.drainWake();
+        const readable =
+            descriptors[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or
+            native_instance.bufferedOutputPending(self.value);
+        const writable =
+            write_pending and descriptors[0].revents & posix.POLL.OUT != 0;
+        const timestamp_ns = nativeNowNs(self.runtime.threaded.io());
+
+        self.clearError();
+        const serviced = native_instance.serviceWithConsequencePolicy(
+            self.value,
+            readable,
+            writable,
+            timestamp_ns,
+            .retain,
+        ) catch |failure| {
+            self.setError("service", @errorName(failure));
+            return failure;
+        };
+        const observation = native_instance.terminal(self.value);
+        const revision = observation.semanticSequence();
+        const publish = self.publication.note(
+            revision,
+            observation.synchronizedOutput(),
+            serviced.synchronized_output.ended,
+            timestamp_ns,
+        );
+        const lifecycle_changed =
+            serviced.stream_closed != self.stream_closed or
+            (serviced.child_exit != null and self.child_exit == null);
+        self.stream_closed = serviced.stream_closed;
+        if (serviced.child_exit) |value| self.child_exit = value;
+        self.write_pending = serviced.write_pending;
+        self.animation_wait_ms = serviced.animation_wait_ms;
+        if (publish or lifecycle_changed)
+            self.publishCurrent() catch |failure| {
+                self.setError("publish", @errorName(failure));
+                return failure;
+            };
+        return serviced;
+    }
+};
+
+fn nativeNowNs(io: std.Io) u64 {
+    return @intCast(std.Io.Clock.awake.now(io).toNanoseconds());
+}
+
+fn createNativeWakePair() error{WakeFailed}![2]posix.fd_t {
+    if (comptime builtin.os.tag == .windows) return .{ -1, -1 };
+    var pair: [2]posix.fd_t = undefined;
+    const result = posix.system.socketpair(
+        posix.AF.UNIX,
+        posix.SOCK.STREAM | posix.SOCK.NONBLOCK | posix.SOCK.CLOEXEC,
+        0,
+        &pair,
+    );
+    if (posix.errno(result) != .SUCCESS) return error.WakeFailed;
+    return pair;
+}
+
+fn closeNativeWake(fd: posix.fd_t) void {
+    if (comptime builtin.os.tag == .windows) return;
+    if (fd < 0) return;
+    const result = posix.system.close(fd);
+    const status = posix.errno(result);
+    std.debug.assert(status == .SUCCESS or status == .INTR);
+}
+
+fn nativeTerminalValue(raw: ?*NativeTerminalHandle) ?*NativeTerminal {
+    return if (raw) |value| @ptrCast(@alignCast(value)) else null;
+}
+
+const NativeCanvasFront = struct {
+    presentation_generation: u64 = 0,
+    frame_revision: u64 = 0,
+    terminal_revision: u64 = 0,
+    history_offset: u32 = 0,
+    history_count: u32 = 0,
+    history_row_base: u32 = 0,
+    alternate_screen: bool = false,
+    background_rgba: u32 = 0xff211918,
+    // No backend-visible geometry exists until one publication is accepted.
+    // Zero keeps UI sizing from manufacturing a fake pre-frame cell lattice.
+    surface: terminal_render.Size = .{ .width = 0, .height = 0 },
+    cell_size: terminal_render.Size = .{ .width = 0, .height = 0 },
+};
+
+/// Backend-thread owner around one immutable Instance Render publication lease.
+///
+/// It owns no Instance, VT, Text, or Renderer state. Exact Render residency is
+/// the only feedback returned to the terminal producer.
+const NativeCanvas = struct {
+    allocator: std.mem.Allocator,
+    exchange: *native_instance.RenderExchange,
+    lease: ?native_instance.RenderLease = null,
+    accepted: [render_resource_limit]terminal_render.Residency = undefined,
+    accepted_count: usize = 0,
+    accepted_generation: u64 = 0,
+    candidate: [render_resource_limit]terminal_render.Residency = undefined,
+    candidate_count: usize = 0,
+    front: NativeCanvasFront = .{},
+    last_error: [160]u8 = undefined,
+    last_error_len: usize = 0,
+
+    fn clearError(self: *NativeCanvas) void {
+        self.last_error_len = 0;
+    }
+
+    fn setError(
+        self: *NativeCanvas,
+        stage_name: []const u8,
+        failure_name: []const u8,
+    ) void {
+        const rendered = std.fmt.bufPrint(
+            &self.last_error,
+            "{s}:{s}",
+            .{ stage_name, failure_name },
+        ) catch {
+            self.last_error_len = 0;
+            return;
+        };
+        self.last_error_len = rendered.len;
+    }
+
+    fn deinit(self: *NativeCanvas) void {
+        if (self.lease) |*lease| lease.abandon();
+        const allocator = self.allocator;
+        self.* = undefined;
+        allocator.destroy(self);
+    }
+
+    fn removeCandidate(
+        self: *NativeCanvas,
+        resource: terminal_render.ResourceRef,
+    ) void {
+        var index: usize = 0;
+        while (index < self.candidate_count) : (index += 1) {
+            const current = self.candidate[index];
+            if (current.resource.resource != resource.resource or
+                current.resource.generation != resource.generation)
+                continue;
+            const trailing = self.candidate_count - index - 1;
+            if (trailing != 0)
+                std.mem.copyForwards(
+                    terminal_render.Residency,
+                    self.candidate[index .. index + trailing],
+                    self.candidate[index + 1 .. index + 1 + trailing],
+                );
+            self.candidate_count -= 1;
+            return;
+        }
+    }
+
+    fn stage(self: *NativeCanvas) !void {
+        if (self.lease != null) return error.PendingFrame;
+        var lease = native_instance.acquirePublishedFrame(self.exchange) orelse
+            return error.NoFrame;
+        var owned = true;
+        errdefer if (owned) lease.abandon();
+
+        const frame = lease.value;
+        if (self.accepted_generation != frame.presentation_generation) {
+            self.accepted_generation = frame.presentation_generation;
+            self.accepted_count = 0;
+        }
+        @memcpy(
+            self.candidate[0..self.accepted_count],
+            self.accepted[0..self.accepted_count],
+        );
+        self.candidate_count = self.accepted_count;
+        for (frame.removals) |resource| self.removeCandidate(resource);
+        for (frame.uploads) |upload|
+            try upsertResidency(
+                &self.candidate,
+                &self.candidate_count,
+                .{
+                    .resource = upload.resource,
+                    .format = upload.format,
+                    .size = upload.size,
+                },
+            );
+        self.lease = lease;
+        owned = false;
+    }
+
+    fn accept(self: *NativeCanvas) !void {
+        var lease = self.lease orelse return error.NoPendingFrame;
+        self.lease = null;
+        const frame = lease.value;
+        @memcpy(
+            self.accepted[0..self.candidate_count],
+            self.candidate[0..self.candidate_count],
+        );
+        self.accepted_count = self.candidate_count;
+        self.front = .{
+            .presentation_generation = frame.presentation_generation,
+            .frame_revision = frame.revision,
+            .terminal_revision = frame.terminal_revision,
+            .history_offset = frame.history_offset,
+            .history_count = frame.history_count,
+            .history_row_base = frame.history_row_base,
+            .alternate_screen = frame.alternate_screen,
+            .background_rgba = publicationBackground(frame),
+            .surface = frame.surface,
+            .cell_size = frame.cell_size,
+        };
+        try lease.release(self.accepted[0..self.accepted_count]);
+    }
+
+    fn discard(self: *NativeCanvas) !void {
+        var lease = self.lease orelse return;
+        self.lease = null;
+        self.candidate_count = 0;
+        try lease.release(self.accepted[0..self.accepted_count]);
+    }
+
+    fn pending(self: *NativeCanvas) ?*const native_instance.PublishedFrame {
+        if (self.lease) |*lease| return &lease.value;
+        return null;
+    }
+};
+
+fn nativeCanvasValue(raw: ?*NativeCanvasHandle) ?*NativeCanvas {
+    return if (raw) |value| @ptrCast(@alignCast(value)) else null;
+}
+
+fn publicationBackground(frame: native_instance.PublishedFrame) u32 {
+    for (frame.commands) |command| switch (command) {
+        .solid => |solid| {
+            if (solid.rect.x == 0 and solid.rect.y == 0 and
+                solid.rect.width == frame.surface.width and
+                solid.rect.height == frame.surface.height)
+                return colorBits(solid.color);
+        },
+        else => {},
+    };
+    return 0xff211918;
+}
 
 // One explicit desktop lifetime, constructed/destroyed by the application.
 // Process and route owners borrow its I/O; no per-connection signal handlers.
 const Runtime = struct {
     threaded: std.Io.Threaded,
     borrowers: std.atomic.Value(u32) = .init(0),
-    local: local_platform.State = .{},
+    native_local: NativeLocalState = .{},
     render_lanes: [render_lane_limit]?*RenderLane = @splat(null),
     render_scratch: ?*RenderScratch = null,
 };
@@ -54,14 +641,15 @@ pub export fn howl_odin_bridge_runtime_create() ?*RuntimeHandle {
 pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
     const value = runtimeValue(raw) orelse return;
     std.debug.assert(value.borrowers.load(.acquire) == 0);
-    std.debug.assert(local_platform.empty(&value.local));
+    std.debug.assert(value.native_local.empty());
     deinitRenderScratch(value);
     deinitRenderLanes(value);
     value.threaded.deinit();
     std.heap.c_allocator.destroy(value);
 }
 
-pub export fn howl_odin_bridge_local_instance_create(
+/// Creates one fully presented local Instance with no HWLS or service worker.
+pub export fn howl_odin_bridge_native_local_instance_create(
     runtime_raw: ?*RuntimeHandle,
     shell_ptr: [*]const u8,
     shell_len: usize,
@@ -72,41 +660,1715 @@ pub export fn howl_odin_bridge_local_instance_create(
     rows: u16,
     columns: u16,
     history_rows: u16,
+    font_ptr: [*]const u8,
+    font_len: usize,
+    italic_ptr: [*]const u8,
+    italic_len: usize,
+    bold_ptr: [*]const u8,
+    bold_len: usize,
+    bold_italic_ptr: [*]const u8,
+    bold_italic_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: [*]const u8,
+    secondary_fallback_len: usize,
+    font_pixels: u16,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
 ) u64 {
     diagnostic_len.* = 0;
     const runtime = runtimeValue(runtime_raw) orelse {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "runtime_unavailable");
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "runtime_unavailable",
+        );
         return 0;
     };
-    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0) {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
+    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0 or
+        font_len == 0 or font_pixels == 0)
+    {
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "invalid_native_local_launch",
+        );
         return 0;
     }
-    return local_platform.create(
-        &runtime.local,
+    const launch = native_instance.Launch{
+        .shell = shell_ptr[0..shell_len],
+        .command = if (command_len == 0) null else command_ptr[0..command_len],
+        .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
+        .rows = rows,
+        .columns = columns,
+        .history_rows = history_rows,
+    };
+    var fallback_storage: [2][]const u8 = undefined;
+    const config = nativePresentationConfig(
+        &fallback_storage,
+        font_ptr[0..font_len],
+        italic_ptr[0..italic_len],
+        bold_ptr[0..bold_len],
+        bold_italic_ptr[0..bold_italic_len],
+        fallback_ptr[0..fallback_len],
+        secondary_fallback_ptr[0..secondary_fallback_len],
+        font_pixels,
+    );
+    return runtime.native_local.createPresented(
         runtime.threaded.io(),
         currentProcessEnviron(),
-        shell_ptr[0..shell_len],
-        command_ptr[0..command_len],
-        cwd_ptr[0..cwd_len],
-        rows,
-        columns,
-        history_rows,
+        launch,
+        config,
     ) catch |failure| {
-        writeDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, @errorName(failure));
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+        );
         return 0;
     };
 }
 
-pub export fn howl_odin_bridge_local_instance_destroy(
+pub export fn howl_odin_bridge_native_local_instance_destroy(
     runtime_raw: ?*RuntimeHandle,
     id: u64,
 ) i32 {
     const runtime = runtimeValue(runtime_raw) orelse return 1;
-    return if (local_platform.destroy(&runtime.local, runtime.threaded.io(), id)) 0 else 2;
+    return if (runtime.native_local.destroy(runtime.threaded.io(), id)) 0 else 2;
+}
+
+pub export fn howl_odin_bridge_native_terminal_claim(
+    runtime_raw: ?*RuntimeHandle,
+    id: u64,
+    diagnostic_ptr: [*]u8,
+    diagnostic_capacity: usize,
+    diagnostic_len: *usize,
+) ?*NativeTerminalHandle {
+    diagnostic_len.* = 0;
+    const runtime = runtimeValue(runtime_raw) orelse {
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "runtime_unavailable",
+        );
+        return null;
+    };
+    const value = runtime.native_local.claim(
+        runtime.threaded.io(),
+        id,
+    ) catch |failure| {
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+        );
+        return null;
+    };
+    const owner = std.heap.c_allocator.create(NativeTerminal) catch {
+        runtime.native_local.release(runtime.threaded.io(), id, value);
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "out_of_memory",
+        );
+        return null;
+    };
+    const wake = createNativeWakePair() catch {
+        runtime.native_local.release(runtime.threaded.io(), id, value);
+        std.heap.c_allocator.destroy(owner);
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            "wake_failed",
+        );
+        return null;
+    };
+    owner.* = .{
+        .runtime = runtime,
+        .id = id,
+        .value = value,
+        .publication = .{
+            .revision = native_instance.terminal(value).semanticSequence(),
+        },
+        .wake_read = wake[0],
+        .wake_write = wake[1],
+    };
+    owner.publishCurrent() catch |failure| {
+        runtime.native_local.release(runtime.threaded.io(), id, value);
+        closeNativeWake(wake[1]);
+        closeNativeWake(wake[0]);
+        std.heap.c_allocator.destroy(owner);
+        writeDiagnostic(
+            diagnostic_ptr,
+            diagnostic_capacity,
+            diagnostic_len,
+            @errorName(failure),
+        );
+        return null;
+    };
+    retainRuntime(runtime);
+    return @ptrCast(owner);
+}
+
+pub export fn howl_odin_bridge_native_terminal_release(
+    raw: ?*NativeTerminalHandle,
+) void {
+    const owner = nativeTerminalValue(raw) orelse return;
+    const runtime = owner.runtime;
+    runtime.native_local.release(
+        runtime.threaded.io(),
+        owner.id,
+        owner.value,
+    );
+    closeNativeWake(owner.wake_write);
+    closeNativeWake(owner.wake_read);
+    releaseRuntime(runtime);
+    std.heap.c_allocator.destroy(owner);
+}
+
+/// Services one nonblocking PTY/VT turn and publishes an eligible Render cut.
+pub export fn howl_odin_bridge_native_terminal_service(
+    raw: ?*NativeTerminalHandle,
+    timestamp_ns: u64,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    _ = owner.service(timestamp_ns) catch return 2;
+    return 0;
+}
+
+/// Blocks until PTY/control/animation work or timeout, then services one turn.
+pub export fn howl_odin_bridge_native_terminal_wait(
+    raw: ?*NativeTerminalHandle,
+    timeout_ms: i32,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    _ = owner.waitAndService(timeout_ms) catch return 2;
+    return 0;
+}
+
+/// Wakes a terminal worker after another thread enqueues copied control work.
+pub export fn howl_odin_bridge_native_terminal_wake(
+    raw: ?*NativeTerminalHandle,
+) void {
+    const owner = nativeTerminalValue(raw) orelse return;
+    owner.wake();
+}
+
+/// Wakes child-directed writes by admitting one exact byte sequence.
+pub export fn howl_odin_bridge_native_terminal_send_text(
+    raw: ?*NativeTerminalHandle,
+    bytes_ptr: [*]const u8,
+    bytes_len: usize,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_instance.input(
+        owner.value,
+        .{ .bytes = bytes_ptr[0..bytes_len] },
+    ) catch |failure| {
+        owner.setError("input", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+fn nativeModifiers(value: u8) native_instance.InputModifier {
+    return @bitCast(value);
+}
+
+fn nativeNamedKey(value: u8) ?native_instance.KeyName {
+    const wire = std.enums.fromInt(protocol.InputKeyName, value) orelse
+        return null;
+    return std.meta.stringToEnum(native_instance.KeyName, @tagName(wire));
+}
+
+fn nativeKeyAction(value: u8) ?native_instance.KeyAction {
+    return std.enums.fromInt(native_instance.KeyAction, value);
+}
+
+fn nativeMouseKind(value: u8) ?native_instance.MouseEventKind {
+    const wire = std.enums.fromInt(protocol.InputMouseKind, value) orelse
+        return null;
+    return std.meta.stringToEnum(native_instance.MouseEventKind, @tagName(wire));
+}
+
+fn nativeMouseButton(value: u8) ?native_instance.MouseButton {
+    return std.enums.fromInt(native_instance.MouseButton, value);
+}
+
+const NativeViewportPosition = struct {
+    row: u16,
+    column: u16,
+};
+
+fn nativeStableRow(
+    view: *const native_instance.Terminal.SemanticView,
+    viewport_row: u16,
+) ?i32 {
+    if (viewport_row >= view.rows) return null;
+    if (view.is_alternate_screen) return @intCast(viewport_row);
+    if (view.history_offset > view.history_count) return null;
+    const row = @as(u64, view.history_row_base) +
+        view.history_count - view.history_offset + viewport_row;
+    if (row > std.math.maxInt(i32)) return null;
+    return @intCast(row);
+}
+
+fn nativeViewportRow(
+    view: *const native_instance.Terminal.SemanticView,
+    stable_row: i32,
+) ?u16 {
+    if (view.rows == 0) return null;
+    if (view.is_alternate_screen) {
+        if (stable_row < 0 or stable_row >= view.rows) return null;
+        return @intCast(stable_row);
+    }
+    const top = @as(i64, view.history_row_base) +
+        view.history_count - view.history_offset;
+    const relative = @as(i64, stable_row) - top;
+    if (relative < 0 or relative >= view.rows) return null;
+    return @intCast(relative);
+}
+
+fn nativeLeadPosition(
+    view: *const native_instance.Terminal.SemanticView,
+    row: u16,
+    column: u16,
+) ?NativeViewportPosition {
+    if (row >= view.rows or column >= view.cols) return null;
+    const cell = view.cellInfoAt(row, column);
+    if (cell.x > column or cell.y > row) return null;
+    return .{
+        .row = row - cell.y,
+        .column = column - cell.x,
+    };
+}
+
+fn nativeSelectableLead(
+    view: *const native_instance.Terminal.SemanticView,
+    position: NativeViewportPosition,
+) bool {
+    const cell = view.cellInfoAt(position.row, position.column);
+    if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) return false;
+    var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+    const values = view.cellScalarsAt(
+        position.row,
+        position.column,
+        &scalars,
+    );
+    return values.len != 0 and values[0] != ' ';
+}
+
+fn nativePreviousLead(
+    view: *const native_instance.Terminal.SemanticView,
+    position: NativeViewportPosition,
+) ?NativeViewportPosition {
+    if (position.column > 0)
+        return nativeLeadPosition(view, position.row, position.column - 1);
+    if (position.row == 0 or !view.rowWrapped(position.row - 1)) return null;
+    return nativeLeadPosition(view, position.row - 1, view.cols - 1);
+}
+
+fn nativeNextLead(
+    view: *const native_instance.Terminal.SemanticView,
+    position: NativeViewportPosition,
+) ?NativeViewportPosition {
+    const cell = view.cellInfoAt(position.row, position.column);
+    const next_column = @as(u32, position.column) + @max(@as(u32, cell.width), 1);
+    if (next_column < view.cols)
+        return nativeLeadPosition(view, position.row, @intCast(next_column));
+    if (!view.rowWrapped(position.row) or position.row + 1 >= view.rows)
+        return null;
+    return nativeLeadPosition(view, position.row + 1, 0);
+}
+
+fn nativeLastContentColumn(
+    view: *const native_instance.Terminal.SemanticView,
+    row: u16,
+) ?u16 {
+    if (row >= view.rows) return null;
+    var column: usize = view.cols;
+    while (column != 0) {
+        column -= 1;
+        const cell = view.cellInfoAt(row, @intCast(column));
+        if (cell.x != 0 or cell.y != 0) continue;
+        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+        const values = view.cellScalarsAt(row, @intCast(column), &scalars);
+        if (values.len == 0 or values[0] == ' ') continue;
+        const end = @min(
+            @as(u32, view.cols - 1),
+            @as(u32, @intCast(column)) + @max(@as(u32, cell.width), 1) - 1,
+        );
+        return @intCast(end);
+    }
+    return null;
+}
+
+fn nativeLastSearchColumn(
+    view: *const native_instance.Terminal.SemanticView,
+    row: u16,
+) ?u16 {
+    if (row >= view.rows) return null;
+    var column: usize = view.cols;
+    while (column != 0) {
+        column -= 1;
+        const cell = view.cellInfoAt(row, @intCast(column));
+        if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) continue;
+        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+        if (view.cellScalarsAt(row, @intCast(column), &scalars).len != 0)
+            return @intCast(column);
+    }
+    return null;
+}
+
+fn nativeExpandSelection(
+    owner: *NativeTerminal,
+    kind: u8,
+    history_offset: u32,
+    target_row: i32,
+    target_column: u16,
+    expected_columns: u16,
+    expected_alternate: bool,
+    output: *SelectionRangeInfo,
+) i32 {
+    output.* = .{};
+    const observation = native_instance.terminal(owner.value);
+    const view = observation.semanticView(history_offset);
+    if (view.cols != expected_columns or
+        view.is_alternate_screen != expected_alternate)
+    {
+        owner.setError("selection_expand", "context_changed");
+        return query_declined;
+    }
+    const viewport_row = nativeViewportRow(&view, target_row) orelse {
+        owner.setError("selection_expand", "target_moved");
+        return query_declined;
+    };
+    if (target_column >= view.cols) {
+        owner.setError("selection_expand", "target_column");
+        return query_declined;
+    }
+
+    if (kind == 2) {
+        const last = nativeLastContentColumn(&view, viewport_row) orelse return 0;
+        var first: ?u16 = null;
+        var column: u16 = 0;
+        while (column < view.cols) : (column += 1) {
+            const cell = view.cellInfoAt(viewport_row, column);
+            if (cell.x == 0 and cell.y == 0) {
+                first = column;
+                break;
+            }
+        }
+        const start_column = first orelse return 0;
+        const stable = nativeStableRow(&view, viewport_row) orelse
+            return query_declined;
+        output.* = .{
+            .start_row = stable,
+            .end_row = stable,
+            .start_column = start_column,
+            .end_column = last,
+            .columns = view.cols,
+            .found = 1,
+            .alternate_screen = @intFromBool(view.is_alternate_screen),
+        };
+        return 0;
+    }
+    if (kind != 1) return 2;
+
+    const start = nativeLeadPosition(
+        &view,
+        viewport_row,
+        target_column,
+    ) orelse return query_declined;
+    if (!nativeSelectableLead(&view, start)) return 0;
+
+    var first = start;
+    while (nativePreviousLead(&view, first)) |candidate| {
+        if (!nativeSelectableLead(&view, candidate)) break;
+        first = candidate;
+    }
+    var last = start;
+    while (nativeNextLead(&view, last)) |candidate| {
+        if (!nativeSelectableLead(&view, candidate)) break;
+        last = candidate;
+    }
+    const first_row = nativeStableRow(&view, first.row) orelse
+        return query_declined;
+    const last_row = nativeStableRow(&view, last.row) orelse
+        return query_declined;
+    const last_cell = view.cellInfoAt(last.row, last.column);
+    const end_column = @min(
+        @as(u32, view.cols - 1),
+        @as(u32, last.column) + @max(@as(u32, last_cell.width), 1) - 1,
+    );
+    output.* = .{
+        .start_row = first_row,
+        .end_row = last_row,
+        .start_column = first.column,
+        .end_column = @intCast(end_column),
+        .columns = view.cols,
+        .found = 1,
+        .alternate_screen = @intFromBool(view.is_alternate_screen),
+    };
+    return 0;
+}
+
+fn nativeViewForStableRow(
+    observation: *const native_instance.Terminal.Observation,
+    stable_row: i32,
+) ?struct {
+    view: native_instance.Terminal.SemanticView,
+    viewport_row: u16,
+} {
+    const live = observation.semanticView(0);
+    if (live.is_alternate_screen) {
+        if (stable_row < 0 or stable_row >= live.rows) return null;
+        return .{ .view = live, .viewport_row = @intCast(stable_row) };
+    }
+    const live_top = @as(i64, live.history_row_base) + live.history_count;
+    const last = live_top + live.rows - 1;
+    if (stable_row < live.history_row_base or stable_row > last) return null;
+    if (stable_row >= live_top)
+        return .{
+            .view = live,
+            .viewport_row = @intCast(@as(i64, stable_row) - live_top),
+        };
+    const offset: u32 = @intCast(live_top - stable_row);
+    return .{
+        .view = observation.semanticView(offset),
+        .viewport_row = 0,
+    };
+}
+
+fn nativeSearchRow(
+    owner: *NativeTerminal,
+    query: []const u8,
+    stable_row: i32,
+    column_bound: u16,
+    reverse: bool,
+) !?struct { start: u16, end: u16 } {
+    const observation = native_instance.terminal(owner.value);
+    const located = nativeViewForStableRow(observation, stable_row) orelse
+        return null;
+    const view = located.view;
+    const row = located.viewport_row;
+    const last = nativeLastSearchColumn(&view, row) orelse return null;
+    const maximum_bytes = try std.math.mul(
+        usize,
+        @as(usize, last) + 1,
+        native_instance.maximum_cell_scalars * 4,
+    );
+    const text = try std.heap.c_allocator.alloc(u8, maximum_bytes);
+    defer std.heap.c_allocator.free(text);
+    const columns = try std.heap.c_allocator.alloc(u16, maximum_bytes);
+    defer std.heap.c_allocator.free(columns);
+
+    var used: usize = 0;
+    var column: u16 = 0;
+    while (column <= last) : (column += 1) {
+        const cell = view.cellInfoAt(row, column);
+        if (cell.x != 0 or cell.y != 0) continue;
+        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+        const values = view.cellScalarsAt(row, column, &scalars);
+        if (cell.attrs.invisible or values.len == 0) {
+            text[used] = ' ';
+            columns[used] = column;
+            used += 1;
+            continue;
+        }
+        for (values) |scalar| {
+            var encoded: [4]u8 = undefined;
+            const count = try std.unicode.utf8Encode(scalar, &encoded);
+            @memcpy(text[used .. used + count], encoded[0..count]);
+            @memset(columns[used .. used + count], column);
+            used += count;
+        }
+    }
+    if (query.len > used) return null;
+    const haystack = text[0..used];
+    if (reverse) {
+        var end_at = haystack.len;
+        while (end_at >= query.len) {
+            const found = std.mem.lastIndexOf(
+                u8,
+                haystack[0..end_at],
+                query,
+            ) orelse return null;
+            const start_column = columns[found];
+            const end_lead = columns[found + query.len - 1];
+            if (end_lead <= column_bound) {
+                const cell = view.cellInfoAt(row, end_lead);
+                const end_column = @min(
+                    @as(u32, view.cols - 1),
+                    @as(u32, end_lead) + @max(@as(u32, cell.width), 1) - 1,
+                );
+                return .{
+                    .start = start_column,
+                    .end = @intCast(end_column),
+                };
+            }
+            if (found == 0) return null;
+            end_at = found;
+        }
+        return null;
+    }
+
+    var start_at: usize = 0;
+    while (start_at + query.len <= haystack.len) {
+        const relative = std.mem.indexOf(
+            u8,
+            haystack[start_at..],
+            query,
+        ) orelse return null;
+        const found = start_at + relative;
+        const start_column = columns[found];
+        if (start_column >= column_bound) {
+            const end_lead = columns[found + query.len - 1];
+            const cell = view.cellInfoAt(row, end_lead);
+            const end_column = @min(
+                @as(u32, view.cols - 1),
+                @as(u32, end_lead) + @max(@as(u32, cell.width), 1) - 1,
+            );
+            return .{
+                .start = start_column,
+                .end = @intCast(end_column),
+            };
+        }
+        start_at = found + 1;
+    }
+    return null;
+}
+
+fn nativeSearch(
+    owner: *NativeTerminal,
+    query: []const u8,
+    reverse: bool,
+    origin_present: bool,
+    origin_row: i32,
+    origin_column: u16,
+    output: *SearchMatchInfo,
+) i32 {
+    output.* = .{};
+    if (query.len == 0 or query.len > maximum_search_query_bytes or
+        !std.unicode.utf8ValidateSlice(query))
+        return 2;
+
+    const observation = native_instance.terminal(owner.value);
+    const live = observation.semanticView(0);
+    output.cut_revision = observation.semanticSequence();
+    output.columns = live.cols;
+    output.alternate_screen = @intFromBool(live.is_alternate_screen);
+    output.complete = 1;
+    if (live.rows == 0 or live.cols == 0) return 0;
+    if (origin_present and origin_column >= live.cols) return 4;
+
+    const first: i64 = if (live.is_alternate_screen)
+        0
+    else
+        live.history_row_base;
+    const last: i64 = if (live.is_alternate_screen)
+        live.rows - 1
+    else
+        @as(i64, live.history_row_base) + live.history_count + live.rows - 1;
+
+    var row: i64 = if (origin_present)
+        origin_row
+    else if (reverse)
+        last
+    else
+        first;
+    var column: u16 = if (origin_present)
+        origin_column
+    else if (reverse)
+        live.cols - 1
+    else
+        0;
+
+    if (origin_present) {
+        if (reverse) {
+            if (column == 0) {
+                row -= 1;
+                column = live.cols - 1;
+            } else column -= 1;
+        } else if (column + 1 >= live.cols) {
+            row += 1;
+            column = 0;
+        } else column += 1;
+    }
+
+    while (row >= first and row <= last) {
+        output.scanned_snapshots += 1;
+        const found = nativeSearchRow(
+            owner,
+            query,
+            @intCast(row),
+            column,
+            reverse,
+        ) catch |failure| {
+            owner.setError("search", @errorName(failure));
+            return 4;
+        };
+        if (found) |match| {
+            output.found = 1;
+            output.row = @intCast(row);
+            output.start_column = match.start;
+            output.end_column = match.end;
+            return 0;
+        }
+        if (reverse) {
+            row -= 1;
+            column = live.cols - 1;
+        } else {
+            row += 1;
+            column = 0;
+        }
+    }
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_paste(
+    raw: ?*NativeTerminalHandle,
+    bytes_ptr: [*]const u8,
+    bytes_len: usize,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_instance.input(
+        owner.value,
+        .{ .paste = bytes_ptr[0..bytes_len] },
+    ) catch |failure| {
+        owner.setError("paste", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_named_key(
+    raw: ?*NativeTerminalHandle,
+    key_value: u8,
+    action_value: u8,
+    modifiers: u8,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const key = nativeNamedKey(key_value) orelse return 3;
+    const action = nativeKeyAction(action_value) orelse return 3;
+    native_instance.input(owner.value, .{ .key = .{
+        .key = .{ .named = key },
+        .mods = nativeModifiers(modifiers),
+        .action = action,
+    } }) catch |failure| {
+        owner.setError("key", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_unicode_key(
+    raw: ?*NativeTerminalHandle,
+    scalar: u32,
+    action_value: u8,
+    modifiers: u8,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (scalar > std.math.maxInt(u21)) return 3;
+    const key = native_instance.Key.initUnicode(@intCast(scalar)) catch
+        return 3;
+    const action = nativeKeyAction(action_value) orelse return 3;
+    native_instance.input(owner.value, .{ .key = .{
+        .key = key,
+        .mods = nativeModifiers(modifiers),
+        .action = action,
+    } }) catch |failure| {
+        owner.setError("unicode_key", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_mouse(
+    raw: ?*NativeTerminalHandle,
+    kind_value: u8,
+    button_value: u8,
+    modifiers: u8,
+    buttons_down: u8,
+    row: i32,
+    column: u16,
+    pixels_present: u8,
+    pixel_x: u32,
+    pixel_y: u32,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (pixels_present > 1) return 3;
+    const kind = nativeMouseKind(kind_value) orelse return 3;
+    const button = nativeMouseButton(button_value) orelse return 3;
+    native_instance.input(owner.value, .{ .mouse = .{
+        .kind = kind,
+        .button = button,
+        .row = row,
+        .col = column,
+        .pixel_x = if (pixels_present != 0) pixel_x else null,
+        .pixel_y = if (pixels_present != 0) pixel_y else null,
+        .mod = nativeModifiers(modifiers),
+        .buttons_down = buttons_down,
+    } }) catch |failure| {
+        owner.setError("mouse", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_focus(
+    raw: ?*NativeTerminalHandle,
+    focus_value: u8,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const wire = std.enums.fromInt(protocol.InputFocus, focus_value) orelse
+        return 3;
+    const focus: native_instance.Terminal.InputEvent = .{
+        .focus = if (wire == .in) .in else .out,
+    };
+    native_instance.input(owner.value, focus) catch |failure| {
+        owner.setError("focus", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_send_resize(
+    raw: ?*NativeTerminalHandle,
+    rows: u16,
+    columns: u16,
+    cell_width: u16,
+    cell_height: u16,
+    claim: u8,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (claim > 1) return 3;
+    native_instance.resizeGeometry(
+        owner.value,
+        rows,
+        columns,
+        cell_width,
+        cell_height,
+    ) catch |failure| {
+        owner.setError("resize", @errorName(failure));
+        return if (failure == error.InvalidDimensions) size_rejected else 2;
+    };
+    owner.publication.revision =
+        native_instance.terminal(owner.value).semanticSequence();
+    owner.publishCurrent() catch |failure| {
+        owner.setError("publish", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_selection_expand(
+    raw: ?*NativeTerminalHandle,
+    kind: u8,
+    history_offset: u32,
+    target_row: i32,
+    target_column: u16,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    output: *SelectionRangeInfo,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (expected_alternate_screen > 1) return 2;
+    return nativeExpandSelection(
+        owner,
+        kind,
+        history_offset,
+        target_row,
+        target_column,
+        expected_columns,
+        expected_alternate_screen != 0,
+        output,
+    );
+}
+
+pub export fn howl_odin_bridge_native_terminal_selection_extract(
+    raw: ?*NativeTerminalHandle,
+    start_row: i32,
+    start_column: u16,
+    end_row: i32,
+    end_column: u16,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (expected_columns == 0 or expected_alternate_screen > 1) return 2;
+    const observation = native_instance.terminal(owner.value);
+    const current = observation.semanticView(0);
+    if (current.cols != expected_columns or
+        current.is_alternate_screen != (expected_alternate_screen != 0))
+        return query_declined;
+    const text = observation.copyText(
+        std.heap.c_allocator,
+        .{
+            .start = .{ .row = start_row, .col = start_column },
+            .end = .{ .row = end_row, .col = end_column },
+        },
+        output_capacity,
+    ) catch |failure| {
+        owner.setError("selection_extract", @errorName(failure));
+        return query_declined;
+    };
+    defer std.heap.c_allocator.free(text);
+    if (text.len > output_capacity) return query_declined;
+    @memcpy(output_ptr[0..text.len], text);
+    output_len.* = text.len;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_hyperlink_copy(
+    raw: ?*NativeTerminalHandle,
+    history_offset: u32,
+    target_row: i32,
+    target_column: u16,
+    expected_columns: u16,
+    expected_alternate_screen: u8,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (expected_columns == 0 or expected_alternate_screen > 1) return 2;
+    const observation = native_instance.terminal(owner.value);
+    const view = observation.semanticView(history_offset);
+    if (view.cols != expected_columns or
+        view.is_alternate_screen != (expected_alternate_screen != 0))
+        return query_declined;
+    const viewport_row = nativeViewportRow(&view, target_row) orelse
+        return query_declined;
+    if (target_column >= view.cols) return query_declined;
+    const cell = view.cellInfoAt(viewport_row, target_column);
+    if (cell.attrs.link_id == 0) return 0;
+    const uri = observation.hyperlinkUri(cell.attrs.link_id) orelse return 0;
+    if (uri.len > output_capacity) return query_declined;
+    @memcpy(output_ptr[0..uri.len], uri);
+    output_len.* = uri.len;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_search_find(
+    raw: ?*NativeTerminalHandle,
+    query_ptr: [*]const u8,
+    query_len: usize,
+    reverse_value: u8,
+    origin_present: u8,
+    origin_row: i32,
+    origin_column: u16,
+    output: *SearchMatchInfo,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (reverse_value > 1 or origin_present > 1) return 2;
+    return nativeSearch(
+        owner,
+        query_ptr[0..query_len],
+        reverse_value != 0,
+        origin_present != 0,
+        origin_row,
+        origin_column,
+        output,
+    );
+}
+
+const NativeConsequenceView = struct {
+    kind: protocol.ConsequenceKind = .none,
+    reply_required: bool = false,
+    metadata: [protocol.consequence_metadata_bytes]u8 = @splat(0),
+    payload: []const u8 = &.{},
+};
+
+fn nativeWriteU16(output: []u8, value: u16) void {
+    std.debug.assert(output.len == 2);
+    output[0] = @truncate(value >> 8);
+    output[1] = @truncate(value);
+}
+
+fn nativeWriteU32(output: []u8, value: u32) void {
+    std.debug.assert(output.len == 4);
+    output[0] = @truncate(value >> 24);
+    output[1] = @truncate(value >> 16);
+    output[2] = @truncate(value >> 8);
+    output[3] = @truncate(value);
+}
+
+fn nativeWriteU64(output: []u8, value: u64) void {
+    std.debug.assert(output.len == 8);
+    for (0..8) |index|
+        output[index] = @truncate(value >> @intCast((7 - index) * 8));
+}
+
+fn nativeReadU32(input: []const u8) u32 {
+    std.debug.assert(input.len == 4);
+    return (@as(u32, input[0]) << 24) |
+        (@as(u32, input[1]) << 16) |
+        (@as(u32, input[2]) << 8) |
+        input[3];
+}
+
+fn nativeConsequenceRequiresReply(value: native_instance.Consequence) bool {
+    return switch (value) {
+        .clipboard => |request| request.kind == .query,
+        .pointer_shape => |request| request.payload.len != 0 and
+            request.payload[0] == '?',
+        .container => |occurrence| switch (occurrence.request) {
+            .report_state,
+            .report_position,
+            .report_screen_cells,
+            .report_icon_title,
+            => true,
+            else => false,
+        },
+        .color_preference_query => true,
+        else => false,
+    };
+}
+
+fn nativeConsequenceView(
+    value: ?native_instance.Consequence,
+) error{InvalidConsequence}!NativeConsequenceView {
+    const consequence = value orelse return .{};
+    var result = NativeConsequenceView{
+        .reply_required = nativeConsequenceRequiresReply(consequence),
+    };
+    switch (consequence) {
+        .clipboard => |request| {
+            if (request.selection.len >
+                protocol.consequence_clipboard_selection_bytes)
+                return error.InvalidConsequence;
+            result.kind = .clipboard;
+            result.metadata[0] = @backingInt(switch (request.protocol) {
+                .osc52 => protocol.ConsequenceClipboardProtocol.osc52,
+                .kitty_5522 => .kitty_5522,
+            });
+            result.metadata[1] = @backingInt(switch (request.kind) {
+                .set => protocol.ConsequenceClipboardKind.set,
+                .query => .query,
+                .packet => .packet,
+            });
+            result.metadata[2] = @intCast(request.selection.len);
+            @memcpy(
+                result.metadata[4..][0..request.selection.len],
+                request.selection,
+            );
+            result.payload = request.payload;
+        },
+        .notification => |notification| {
+            result.kind = .notification;
+            result.metadata[0] = @backingInt(switch (notification.kind) {
+                .message => protocol.ConsequenceNotificationKind.message,
+                .steal_focus => .steal_focus,
+                .request_attention => .request_attention,
+            });
+            nativeWriteU16(result.metadata[2..4], notification.command);
+            result.payload = notification.payload;
+        },
+        .pointer_shape => |request| {
+            result.kind = .pointer_shape;
+            nativeWriteU64(result.metadata[0..8], request.reset_generation);
+            result.metadata[8] = @intFromBool(request.alternate_screen);
+            result.payload = request.payload;
+        },
+        .file_transfer => |packet| {
+            result.kind = .file_transfer;
+            result.metadata[0] = @backingInt(switch (packet.protocol) {
+                .iterm2_1337 => protocol.ConsequenceFileTransferProtocol.iterm2_1337,
+                .kitty_5113 => .kitty_5113,
+            });
+            result.payload = packet.payload;
+        },
+        .drag_drop => |command| {
+            result.kind = .drag_drop;
+            result.metadata[0] = @backingInt(switch (command.kind) {
+                .enable => protocol.ConsequenceDragDropKind.enable,
+                .disable => .disable,
+                .accept => .accept,
+                .request => .request,
+                .complete => .complete,
+                .query => .query,
+                .continuation => .continuation,
+                .unsupported => .unsupported,
+            });
+            result.metadata[1] = command.command;
+            var flags: u8 = 0;
+            if (command.more) flags |= 0x01;
+            if (command.remote) flags |= 0x02;
+            if (command.client_id) |id| {
+                flags |= 0x04;
+                nativeWriteU32(result.metadata[4..8], id);
+            }
+            if (command.operation) |operation| {
+                flags |= 0x08;
+                nativeWriteU32(result.metadata[8..12], operation);
+            }
+            if (command.index) |index| {
+                flags |= 0x10;
+                nativeWriteU32(result.metadata[12..16], index);
+            }
+            result.metadata[2] = flags;
+            result.payload = command.payload;
+        },
+        .container => |occurrence| {
+            result.kind = .container;
+            result.metadata[0] = @backingInt(switch (occurrence.request) {
+                .deiconify => protocol.ConsequenceContainerKind.deiconify,
+                .iconify => .iconify,
+                .move => .move,
+                .resize_pixels => .resize_pixels,
+                .raise => .raise,
+                .lower => .lower,
+                .resize_rows => .resize_rows,
+                .resize_columns => .resize_columns,
+                .resize_cells => .resize_cells,
+                .report_state => .report_state,
+                .report_position => .report_position,
+                .report_screen_cells => .report_screen_cells,
+                .report_icon_title => .report_icon_title,
+            });
+            switch (occurrence.request) {
+                .move => |request| {
+                    nativeWriteU32(result.metadata[4..8], request.x);
+                    nativeWriteU32(result.metadata[8..12], request.y);
+                },
+                .resize_pixels => |request| {
+                    nativeWriteU32(result.metadata[4..8], request.height);
+                    nativeWriteU32(result.metadata[8..12], request.width);
+                },
+                .resize_rows => |rows| nativeWriteU32(result.metadata[4..8], rows),
+                .resize_columns => |columns| nativeWriteU32(
+                    result.metadata[4..8],
+                    @backingInt(columns),
+                ),
+                .resize_cells => |request| {
+                    nativeWriteU32(result.metadata[4..8], request.rows);
+                    nativeWriteU32(result.metadata[8..12], request.cols);
+                },
+                else => {},
+            }
+        },
+        .color_preference_query => {
+            result.kind = .color_preference;
+        },
+        .media_copy => |occurrence| {
+            result.kind = .media_copy;
+            result.metadata[0] = @intFromBool(occurrence.request.private);
+            nativeWriteU16(
+                result.metadata[2..4],
+                occurrence.request.parameter,
+            );
+        },
+        .bell => result.kind = .bell,
+        .legacy_control => |occurrence| {
+            result.kind = .legacy_control;
+            result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                .tek_point_plot => protocol.ConsequenceLegacyControlKind.tek_point_plot,
+                .tek_graph => .tek_graph,
+                .tek_incremental_plot => .tek_incremental_plot,
+                .tek_alpha => .tek_alpha,
+                .tek_copy => .tek_copy,
+                .tek_special_point_plot => .tek_special_point_plot,
+                .tek_write_thru_short_dashed => .tek_write_thru_short_dashed,
+                .hp_memory_lock => .hp_memory_lock,
+            });
+        },
+        .dcs => |occurrence| {
+            result.kind = .dcs;
+            result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                .xtsettcap => protocol.ConsequenceDcsKind.xtsettcap,
+                .decudk => .decudk,
+                .decaupss => .decaupss,
+                .iterm_tmux_hook => .iterm_tmux_hook,
+                .iterm_ssh_hook => .iterm_ssh_hook,
+                .iterm_tmux_wrap => .iterm_tmux_wrap,
+                .kitty_remote_command => .kitty_remote_command,
+                .kitty_overlay_ready => .kitty_overlay_ready,
+                .kitty_result => .kitty_result,
+                .kitty_print => .kitty_print,
+                .kitty_echo => .kitty_echo,
+                .kitty_ssh => .kitty_ssh,
+                .kitty_askpass => .kitty_askpass,
+                .kitty_clone => .kitty_clone,
+                .kitty_edit => .kitty_edit,
+            });
+            result.payload = occurrence.payload;
+        },
+        .string_control => |occurrence| {
+            result.kind = .string_control;
+            result.metadata[0] = @backingInt(switch (occurrence.kind) {
+                .apc => protocol.ConsequenceStringKind.apc,
+                .pm => .pm,
+                .sos => .sos,
+            });
+            result.payload = occurrence.payload;
+        },
+    }
+    if (result.payload.len > protocol.maximum_consequence_payload_bytes)
+        return error.InvalidConsequence;
+    return result;
+}
+
+pub export fn howl_odin_bridge_native_terminal_consequence_observe(
+    raw: ?*NativeTerminalHandle,
+    info: *ConsequenceInfo,
+    payload_ptr: [*]u8,
+    payload_capacity: usize,
+    copied_len: *usize,
+) i32 {
+    info.* = .{};
+    copied_len.* = 0;
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const observation = native_instance.terminal(owner.value);
+    const current = observation.consequenceHead();
+    const projected = nativeConsequenceView(current) catch |failure| {
+        owner.setError("consequence_observe", @errorName(failure));
+        return 2;
+    };
+    info.* = .{
+        .terminal_revision = observation.semanticSequence(),
+        .authority_client_id = 0,
+        .generation = if (current) |value| value.id() else 0,
+        .payload_len = @intCast(projected.payload.len),
+        .kind = @backingInt(projected.kind),
+        .reply_required = @intFromBool(projected.reply_required),
+        .metadata = projected.metadata,
+    };
+    const count = @min(payload_capacity, projected.payload.len);
+    @memcpy(payload_ptr[0..count], projected.payload[0..count]);
+    copied_len.* = count;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_consequence_consume(
+    raw: ?*NativeTerminalHandle,
+    generation: u64,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_instance.consumeConsequence(
+        owner.value,
+        generation,
+    ) catch |failure| {
+        owner.setError("consequence_consume", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_consequence_reply(
+    raw: ?*NativeTerminalHandle,
+    generation: u64,
+    kind_raw: u8,
+    body_ptr: [*]const u8,
+    body_len: usize,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const body = body_ptr[0..body_len];
+    const kind = std.enums.fromInt(
+        protocol.ConsequenceReplyKind,
+        kind_raw,
+    ) orelse return 2;
+    switch (kind) {
+        .clipboard => {
+            const replied = native_instance.replyClipboard(
+                owner.value,
+                generation,
+                body,
+            ) catch |failure| {
+                owner.setError("consequence_reply", @errorName(failure));
+                return 2;
+            };
+            if (!replied) return 2;
+        },
+        .pointer_shape => native_instance.replyPointerShape(
+            owner.value,
+            generation,
+            body,
+        ) catch |failure| {
+            owner.setError("consequence_reply", @errorName(failure));
+            return 2;
+        },
+        .color_preference => {
+            if (body.len != 1) return 2;
+            native_instance.replyColorPreference(
+                owner.value,
+                generation,
+                if (body[0] == 1) .dark else .light,
+            ) catch |failure| {
+                owner.setError("consequence_reply", @errorName(failure));
+                return 2;
+            };
+        },
+        .container_state => {
+            if (body.len != 1) return 2;
+            native_instance.replyContainer(
+                owner.value,
+                generation,
+                .{ .state = if (body[0] == 1) .normal else .iconified },
+            ) catch |failure| {
+                owner.setError("consequence_reply", @errorName(failure));
+                return 2;
+            };
+        },
+        .container_position => {
+            if (body.len != 8) return 2;
+            native_instance.replyContainer(
+                owner.value,
+                generation,
+                .{ .position = .{
+                    .x = nativeReadU32(body[0..4]),
+                    .y = nativeReadU32(body[4..8]),
+                } },
+            ) catch |failure| {
+                owner.setError("consequence_reply", @errorName(failure));
+                return 2;
+            };
+        },
+        .container_screen_cells => {
+            if (body.len != 8) return 2;
+            native_instance.replyContainer(
+                owner.value,
+                generation,
+                .{ .screen_cells = .{
+                    .rows = nativeReadU32(body[0..4]),
+                    .cols = nativeReadU32(body[4..8]),
+                } },
+            ) catch |failure| {
+                owner.setError("consequence_reply", @errorName(failure));
+                return 2;
+            };
+        },
+        .container_icon_title => native_instance.replyContainer(
+            owner.value,
+            generation,
+            .{ .icon_title = body },
+        ) catch |failure| {
+            owner.setError("consequence_reply", @errorName(failure));
+            return 2;
+        },
+        .container_decline => native_instance.declineContainerQuery(
+            owner.value,
+            generation,
+        ) catch |failure| {
+            owner.setError("consequence_reply", @errorName(failure));
+            return 2;
+        },
+    }
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_terminal_copy_error(
+    raw: ?*NativeTerminalHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) void {
+    output_len.* = 0;
+    const owner = nativeTerminalValue(raw) orelse return;
+    const count = @min(output_capacity, owner.last_error_len);
+    @memcpy(output_ptr[0..count], owner.last_error[0..count]);
+    output_len.* = count;
+}
+
+/// Borrows only the backend publication exchange; it grants no Instance access.
+pub export fn howl_odin_bridge_native_terminal_render_exchange(
+    raw: ?*NativeTerminalHandle,
+) ?*native_instance.RenderExchange {
+    const owner = nativeTerminalValue(raw) orelse return null;
+    return native_instance.renderExchange(owner.value) catch null;
+}
+
+/// Publishes one canonical live/history presentation cut from the terminal owner.
+pub export fn howl_odin_bridge_native_terminal_publish_history(
+    raw: ?*NativeTerminalHandle,
+    history_offset: u32,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const view = native_instance.terminal(owner.value).semanticView(
+        history_offset,
+    );
+    owner.history_offset = view.history_offset;
+    native_instance.publishRenderAt(
+        owner.value,
+        owner.history_offset,
+    ) catch |failure| {
+        owner.setError("publish_history", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Replaces the local Instance presentation on its sole terminal-owner thread.
+pub export fn howl_odin_bridge_native_terminal_reconfigure_presentation(
+    raw: ?*NativeTerminalHandle,
+    font_ptr: [*]const u8,
+    font_len: usize,
+    italic_ptr: [*]const u8,
+    italic_len: usize,
+    bold_ptr: [*]const u8,
+    bold_len: usize,
+    bold_italic_ptr: [*]const u8,
+    bold_italic_len: usize,
+    fallback_ptr: [*]const u8,
+    fallback_len: usize,
+    secondary_fallback_ptr: [*]const u8,
+    secondary_fallback_len: usize,
+    font_pixels: u16,
+) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    if (font_len == 0 or font_pixels == 0) return 2;
+    var fallback_storage: [2][]const u8 = undefined;
+    const config = nativePresentationConfig(
+        &fallback_storage,
+        font_ptr[0..font_len],
+        italic_ptr[0..italic_len],
+        bold_ptr[0..bold_len],
+        bold_italic_ptr[0..bold_italic_len],
+        fallback_ptr[0..fallback_len],
+        secondary_fallback_ptr[0..secondary_fallback_len],
+        font_pixels,
+    );
+    _ = native_instance.reconfigurePresentation(
+        owner.value,
+        config,
+    ) catch |failure| {
+        owner.setError("reconfigure_presentation", @errorName(failure));
+        return 3;
+    };
+    owner.publication.revision =
+        native_instance.terminal(owner.value).semanticSequence();
+    owner.publishCurrent() catch |failure| {
+        owner.setError("publish", @errorName(failure));
+        return 3;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_create(
+    exchange: ?*native_instance.RenderExchange,
+) ?*NativeCanvasHandle {
+    const value = exchange orelse return null;
+    const canvas = std.heap.c_allocator.create(NativeCanvas) catch return null;
+    canvas.* = .{
+        .allocator = std.heap.c_allocator,
+        .exchange = value,
+    };
+    return @ptrCast(canvas);
+}
+
+pub export fn howl_odin_bridge_native_canvas_destroy(
+    raw: ?*NativeCanvasHandle,
+) void {
+    const canvas = nativeCanvasValue(raw) orelse return;
+    canvas.deinit();
+}
+
+/// Claims the newest unread publication; returns 9 when no frame is ready.
+pub export fn howl_odin_bridge_native_canvas_prepare(
+    raw: ?*NativeCanvasHandle,
+) i32 {
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    canvas.clearError();
+    canvas.stage() catch |failure| {
+        if (failure == error.NoFrame) return 9;
+        canvas.setError("prepare", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_accept(
+    raw: ?*NativeCanvasHandle,
+) i32 {
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    canvas.accept() catch |failure| {
+        canvas.setError("accept", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_discard(
+    raw: ?*NativeCanvasHandle,
+) i32 {
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    canvas.discard() catch |failure| {
+        canvas.setError("discard", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_presentation_generation(
+    raw: ?*NativeCanvasHandle,
+) u64 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.presentation_generation;
+    return canvas.front.presentation_generation;
+}
+
+pub export fn howl_odin_bridge_native_canvas_background_rgba(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0xff211918;
+    return canvas.front.background_rgba;
+}
+
+pub export fn howl_odin_bridge_native_canvas_surface_width(
+    raw: ?*NativeCanvasHandle,
+) u16 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.surface.width;
+    return canvas.front.surface.width;
+}
+
+pub export fn howl_odin_bridge_native_canvas_surface_height(
+    raw: ?*NativeCanvasHandle,
+) u16 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.surface.height;
+    return canvas.front.surface.height;
+}
+
+pub export fn howl_odin_bridge_native_canvas_cell_width(
+    raw: ?*NativeCanvasHandle,
+) u16 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.cell_size.width;
+    return canvas.front.cell_size.width;
+}
+
+pub export fn howl_odin_bridge_native_canvas_cell_height(
+    raw: ?*NativeCanvasHandle,
+) u16 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.cell_size.height;
+    return canvas.front.cell_size.height;
+}
+
+pub export fn howl_odin_bridge_native_canvas_frame_revision(
+    raw: ?*NativeCanvasHandle,
+) u64 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.revision;
+    return canvas.front.frame_revision;
+}
+
+pub export fn howl_odin_bridge_native_canvas_terminal_revision(
+    raw: ?*NativeCanvasHandle,
+) u64 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.terminal_revision;
+    return canvas.front.terminal_revision;
+}
+
+pub export fn howl_odin_bridge_native_canvas_history_offset(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.history_offset;
+    return canvas.front.history_offset;
+}
+
+pub export fn howl_odin_bridge_native_canvas_history_count(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.history_count;
+    return canvas.front.history_count;
+}
+
+pub export fn howl_odin_bridge_native_canvas_history_row_base(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return frame.history_row_base;
+    return canvas.front.history_row_base;
+}
+
+pub export fn howl_odin_bridge_native_canvas_alternate_screen(
+    raw: ?*NativeCanvasHandle,
+) u8 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    if (canvas.pending()) |frame| return @intFromBool(frame.alternate_screen);
+    return @intFromBool(canvas.front.alternate_screen);
+}
+
+pub export fn howl_odin_bridge_native_canvas_upload_count(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    const frame = canvas.pending() orelse return 0;
+    return @intCast(frame.uploads.len);
+}
+
+pub export fn howl_odin_bridge_native_canvas_removal_count(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    const frame = canvas.pending() orelse return 0;
+    return @intCast(frame.removals.len);
+}
+
+pub export fn howl_odin_bridge_native_canvas_command_count(
+    raw: ?*NativeCanvasHandle,
+) u32 {
+    const canvas = nativeCanvasValue(raw) orelse return 0;
+    const frame = canvas.pending() orelse return 0;
+    return @intCast(frame.commands.len);
+}
+
+pub export fn howl_odin_bridge_native_canvas_upload_info(
+    raw: ?*NativeCanvasHandle,
+    index: u32,
+    output: *RenderResourceInfo,
+) i32 {
+    output.* = .{};
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    const frame = canvas.pending() orelse return 3;
+    if (index >= frame.uploads.len) return 2;
+    const upload = frame.uploads[index];
+    fillRenderResourceRef(upload.resource, output);
+    output.pixel_count = upload.pixel_count;
+    output.stride = upload.stride;
+    output.width = upload.size.width;
+    output.height = upload.size.height;
+    output.format = @backingInt(upload.format);
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_upload_copy(
+    raw: ?*NativeCanvasHandle,
+    index: u32,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    const frame = canvas.pending() orelse return 3;
+    if (index >= frame.uploads.len) return 2;
+    const upload = frame.uploads[index];
+    const end = std.math.add(
+        usize,
+        upload.pixel_offset,
+        upload.pixel_count,
+    ) catch return 3;
+    if (end > frame.pixels.len) return 3;
+    if (output_capacity < upload.pixel_count) return 4;
+    @memcpy(
+        output_ptr[0..upload.pixel_count],
+        frame.pixels[upload.pixel_offset..end],
+    );
+    output_len.* = upload.pixel_count;
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_removal_info(
+    raw: ?*NativeCanvasHandle,
+    index: u32,
+    output: *RenderRemovalInfo,
+) i32 {
+    output.* = .{};
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    const frame = canvas.pending() orelse return 3;
+    if (index >= frame.removals.len) return 2;
+    fillRenderRemovalRef(frame.removals[index], output);
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_command_info(
+    raw: ?*NativeCanvasHandle,
+    index: u32,
+    output: *RenderCommandInfo,
+) i32 {
+    output.* = .{};
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    const frame = canvas.pending() orelse return 3;
+    if (index >= frame.commands.len) return 2;
+    fillRenderCommandInfo(frame.commands[index], output);
+    return 0;
+}
+
+pub export fn howl_odin_bridge_native_canvas_copy_error(
+    raw: ?*NativeCanvasHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) void {
+    output_len.* = 0;
+    const canvas = nativeCanvasValue(raw) orelse return;
+    const count = @min(output_capacity, canvas.last_error_len);
+    @memcpy(output_ptr[0..count], canvas.last_error[0..count]);
+    output_len.* = count;
+}
+
+pub export fn howl_odin_bridge_native_terminal_info_size() u32 {
+    return @sizeOf(NativeTerminalInfo);
+}
+
+/// Copies one terminal-thread-owned UI cut without creating client/snapshot state.
+pub export fn howl_odin_bridge_native_terminal_snapshot(
+    raw: ?*NativeTerminalHandle,
+    history_offset: u32,
+    info: *NativeTerminalInfo,
+    text_ptr: [*]u8,
+    text_capacity: usize,
+    text_len: *usize,
+    title_ptr: [*]u8,
+    title_capacity: usize,
+    title_len: *usize,
+    row_shapes_ptr: [*]NativeRowShape,
+    row_shape_capacity: usize,
+    row_shape_count: *usize,
+) i32 {
+    info.* = .{};
+    text_len.* = 0;
+    title_len.* = 0;
+    row_shape_count.* = 0;
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    const observation = native_instance.terminal(owner.value);
+    const view = observation.semanticView(history_offset);
+    if (view.rows > row_shape_capacity) return 2;
+    fillNativeTerminalInfo(owner, history_offset, info);
+    const projected = writeNativeVisibleText(
+        observation,
+        history_offset,
+        text_ptr[0..text_capacity],
+    );
+    text_len.* = projected.used;
+    info.text_truncated = @intFromBool(projected.truncated);
+    const title = observation.title() orelse "";
+    title_len.* = writeDisplayTitle(title, title_ptr[0..title_capacity]);
+    for (0..view.rows) |row_index| {
+        const row: u16 = @intCast(row_index);
+        const last = nativeLastContentColumn(&view, row);
+        row_shapes_ptr[row_index] = .{
+            .content_end_exclusive = if (last) |column|
+                @intCast(@min(
+                    @as(u32, view.cols),
+                    @as(u32, column) + 1,
+                ))
+            else
+                0,
+            .wrapped = @intFromBool(view.rowWrapped(row)),
+        };
+    }
+    row_shape_count.* = view.rows;
+    return 0;
 }
 
 pub export fn howl_odin_bridge_interrupt_create() ?*client.Interrupt {
@@ -126,7 +2388,6 @@ pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void
 const RouteKind = enum(u8) {
     direct = 0,
     server = 1,
-    local = 2,
 };
 
 const ConnectTarget = struct {
@@ -141,7 +2402,6 @@ fn targetFromAbi(kind_raw: u8, endpoint: []const u8, server_id: u64, session_id:
     const kind: RouteKind = switch (kind_raw) {
         0 => .direct,
         1 => .server,
-        2 => .local,
         else => return error.InvalidEndpoint,
     };
     return switch (kind) {
@@ -161,11 +2421,6 @@ fn targetFromAbi(kind_raw: u8, endpoint: []const u8, server_id: u64, session_id:
                 .instance_id = instance_id,
             };
         },
-        .local => blk: {
-            if (endpoint.len != 0 or server_id != 0 or session_id != 0 or instance_id == 0)
-                return error.InvalidEndpoint;
-            break :blk .{ .kind = .local, .endpoint = "", .instance_id = instance_id };
-        },
     };
 }
 
@@ -174,7 +2429,7 @@ fn connectForHost(
     interrupt: ?*client.Interrupt,
     target: ConnectTarget,
     diagnostic: *client.ConnectDiagnostic,
-) (client.Error || server_client.Error || local_platform.Error)!client.Connection {
+) (client.Error || server_client.Error)!client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
     return switch (target.kind) {
         .direct => client.Connection.connectCancelable(
@@ -192,13 +2447,6 @@ fn connectForHost(
             }, diagnostic, interrupt);
             break :blk try client.connectTransport(std.heap.c_allocator, attached.stream, diagnostic);
         },
-        .local => local_platform.connect(
-            &runtime.?.local,
-            runtime.?.threaded.io(),
-            target.instance_id,
-            diagnostic,
-            interrupt,
-        ),
     };
 }
 
@@ -222,10 +2470,77 @@ fn requestObservation(
     return client.rich.request(connection, allocator, after_revision, history_offset);
 }
 
-test "only validated Unix endpoints avoid same-machine text compression" {
+fn nativePresentationConfig(
+    fallback_storage: *[2][]const u8,
+    regular_path: []const u8,
+    italic_path: []const u8,
+    bold_path: []const u8,
+    bold_italic_path: []const u8,
+    fallback_path: []const u8,
+    secondary_fallback_path: []const u8,
+    font_pixels: u16,
+) native_instance.PresentationConfig {
+    var fallback_count: usize = 0;
+    if (fallback_path.len != 0) {
+        fallback_storage.*[fallback_count] = fallback_path;
+        fallback_count += 1;
+    }
+    if (secondary_fallback_path.len != 0) {
+        fallback_storage.*[fallback_count] = secondary_fallback_path;
+        fallback_count += 1;
+    }
+    const fallbacks = fallback_storage.*[0..fallback_count];
+    return .{
+        .fonts = .{
+            .regular = .{ .path = .{
+                .primary = regular_path,
+                .fallbacks = fallbacks,
+                .size = .{ .pixels = font_pixels },
+            } },
+            .italic = if (italic_path.len != 0) .{ .path = .{
+                .primary = italic_path,
+                .fallbacks = fallbacks,
+                .size = .{ .pixels = font_pixels },
+            } } else null,
+            .bold = if (bold_path.len != 0) .{ .path = .{
+                .primary = bold_path,
+                .fallbacks = fallbacks,
+                .size = .{ .pixels = font_pixels },
+            } } else null,
+            .bold_italic = if (bold_italic_path.len != 0) .{ .path = .{
+                .primary = bold_italic_path,
+                .fallbacks = fallbacks,
+                .size = .{ .pixels = font_pixels },
+            } } else null,
+        },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .shape_cache = .{
+            .entry_capacity = 256,
+            .scalar_capacity = 512,
+            .glyph_capacity = 512,
+            .max_sequence_scalars = 16,
+        },
+        .atlas = .{
+            .width = render_atlas_extent,
+            .height = render_atlas_extent,
+            .entry_capacity = 256,
+        },
+        .shaped_capacity = 32,
+        .raster_bytes = render_pixel_capacity,
+        .command_capacity = render_command_initial_capacity,
+        .command_limit = render_command_limit,
+        .incremental_row_capacity = render.limits.maximum_rows,
+        .incremental_command_capacity = render_incremental_command_capacity,
+    };
+}
+
+test "only validated transported Unix endpoints avoid same-machine text compression" {
     try std.testing.expect(rawObservationTarget(try targetFromAbi(0, "unix:/run/user/1000/howl.sock", 0, 0, 0)));
     try std.testing.expect(!rawObservationTarget(try targetFromAbi(0, "tcp://127.0.0.1:43127", 0, 0, 0)));
-    try std.testing.expect(!rawObservationTarget(try targetFromAbi(2, "", 0, 0, 7)));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "", 0, 0, 7));
 }
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
@@ -318,10 +2633,46 @@ pub const InteractionStateInfo = extern struct {
     _reserved: u8 = 0,
 };
 
+pub const NativeTerminalInfo = extern struct {
+    revision: u64 = 0,
+    terminal_revision: u64 = 0,
+    history_count: u32 = 0,
+    history_row_base: u32 = 0,
+    interaction_flags: u32 = 0,
+    rows: u16 = 0,
+    columns: u16 = 0,
+    cursor_row: u16 = 0,
+    cursor_column: u16 = 0,
+    task_progress: u16 = 0,
+    cursor_shape: u8 = 0,
+    cursor_visible: u8 = 0,
+    alternate_screen: u8 = 0,
+    stream_closed: u8 = 0,
+    child_exited: u8 = 0,
+    text_truncated: u8 = 0,
+    mouse_tracking: u8 = 0,
+    mouse_protocol: u8 = 0,
+    pointer_mode: u8 = 0,
+    _reserved: [3]u8 = @splat(0),
+};
+
+pub const NativeRowShape = extern struct {
+    content_end_exclusive: u16 = 0,
+    wrapped: u8 = 0,
+    _reserved: u8 = 0,
+};
+
 const interaction_info_flags = struct {
     const alternate_scroll: u32 = 1 << 0;
     const focus_reporting: u32 = 1 << 1;
 };
+
+comptime {
+    if (@sizeOf(NativeTerminalInfo) != 56)
+        @compileError("Odin native terminal info ABI drifted");
+    if (@sizeOf(NativeRowShape) != 4)
+        @compileError("Odin native row-shape ABI drifted");
+}
 
 const maximum_search_query_bytes: usize = 4096;
 const maximum_search_retries: usize = 8;
@@ -1522,6 +3873,32 @@ fn fillRectFields(
     output.clip_height = clip.height;
 }
 
+fn fillRenderCommandInfo(
+    command: terminal_render.Command,
+    output: *RenderCommandInfo,
+) void {
+    output.* = .{};
+    switch (command) {
+        .solid => |solid| {
+            output.tag = 0;
+            output.color_rgba = colorBits(solid.color);
+            fillRectFields(solid.rect, solid.rect, output);
+        },
+        .alpha_mask => |mask| {
+            output.tag = 1;
+            output.color_rgba = colorBits(mask.color);
+            output.cursor_component = @intFromBool(mask.cursor_component);
+            fillRectFields(mask.destination, mask.clip, output);
+            fillCommandResource(output, mask.resource);
+        },
+        .rgba => |rgba| {
+            output.tag = 2;
+            fillRectFields(rgba.destination, rgba.clip, output);
+            fillCommandResource(output, rgba.resource);
+        },
+    }
+}
+
 pub export fn howl_odin_bridge_render_command_info(
     raw: ?*RenderHandle,
     index: u32,
@@ -1532,25 +3909,7 @@ pub export fn howl_odin_bridge_render_command_info(
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.command_count) return 2;
     if (renderer.scratch.prepared_owner != renderer) return 3;
-    switch (renderer.scratch.frame_commands[index]) {
-        .solid => |command| {
-            output.tag = 0;
-            output.color_rgba = colorBits(command.color);
-            fillRectFields(command.rect, command.rect, output);
-        },
-        .alpha_mask => |command| {
-            output.tag = 1;
-            output.color_rgba = colorBits(command.color);
-            output.cursor_component = @intFromBool(command.cursor_component);
-            fillRectFields(command.destination, command.clip, output);
-            fillCommandResource(output, command.resource);
-        },
-        .rgba => |command| {
-            output.tag = 2;
-            fillRectFields(command.destination, command.clip, output);
-            fillCommandResource(output, command.resource);
-        },
-    }
+    fillRenderCommandInfo(renderer.scratch.frame_commands[index], output);
     return 0;
 }
 
@@ -1729,12 +4088,156 @@ const Bridge = struct {
     }
 };
 
-pub export fn howl_odin_bridge_version() u32 {
-    return 13;
+const NativeTextWriter = struct {
+    bytes: []u8,
+    used: usize = 0,
+    truncated: bool = false,
+
+    fn byte(self: *NativeTextWriter, value: u8) bool {
+        if (self.used == self.bytes.len) {
+            self.truncated = true;
+            return false;
+        }
+        self.bytes[self.used] = value;
+        self.used += 1;
+        return true;
+    }
+
+    fn scalar(self: *NativeTextWriter, value: u32) bool {
+        var encoded: [4]u8 = undefined;
+        const count = std.unicode.utf8Encode(
+            @intCast(value),
+            &encoded,
+        ) catch {
+            self.truncated = true;
+            return false;
+        };
+        if (count > self.bytes.len - self.used) {
+            self.truncated = true;
+            return false;
+        }
+        @memcpy(
+            self.bytes[self.used .. self.used + count],
+            encoded[0..count],
+        );
+        self.used += count;
+        return true;
+    }
+};
+
+fn nativeCellHasText(
+    view: *const native_instance.Terminal.SemanticView,
+    row: u16,
+    column: u16,
+) bool {
+    const cell = view.cellInfoAt(row, column);
+    if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) return false;
+    var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+    return view.cellScalarsAt(row, column, &scalars).len != 0;
 }
 
-test "Odin bridge version tracks exclusive rich-loan ABI" {
-    try std.testing.expectEqual(@as(u32, 13), howl_odin_bridge_version());
+fn nativeLastTextCell(
+    view: *const native_instance.Terminal.SemanticView,
+    row: u16,
+) ?u16 {
+    var column: usize = view.cols;
+    while (column != 0) {
+        column -= 1;
+        if (nativeCellHasText(view, row, @intCast(column)))
+            return @intCast(column);
+    }
+    return null;
+}
+
+fn nativeLastTextRow(
+    view: *const native_instance.Terminal.SemanticView,
+) ?u16 {
+    var row: usize = view.rows;
+    while (row != 0) {
+        row -= 1;
+        if (nativeLastTextCell(view, @intCast(row)) != null)
+            return @intCast(row);
+    }
+    return null;
+}
+
+fn writeNativeVisibleText(
+    observation: *const native_instance.Terminal.Observation,
+    history_offset: u32,
+    output: []u8,
+) struct { used: usize, truncated: bool } {
+    const view = observation.semanticView(history_offset);
+    const last_row = nativeLastTextRow(&view) orelse
+        return .{ .used = 0, .truncated = false };
+    var writer = NativeTextWriter{ .bytes = output };
+    var row: u16 = 0;
+    while (row <= last_row) : (row += 1) {
+        if (row != 0 and !writer.byte('\n')) break;
+        const last_cell = nativeLastTextCell(&view, row) orelse continue;
+        var column: u16 = 0;
+        while (column <= last_cell) : (column += 1) {
+            const cell = view.cellInfoAt(row, column);
+            if (cell.x != 0 or cell.y != 0) continue;
+            var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+            const values = view.cellScalarsAt(row, column, &scalars);
+            if (cell.attrs.invisible or values.len == 0) {
+                if (!writer.byte(' ')) break;
+                continue;
+            }
+            for (values) |value| {
+                if (!writer.scalar(value)) break;
+            }
+            if (writer.truncated) break;
+        }
+        if (writer.truncated) break;
+    }
+    return .{ .used = writer.used, .truncated = writer.truncated };
+}
+
+fn fillNativeTerminalInfo(
+    owner: *const NativeTerminal,
+    history_offset: u32,
+    output: *NativeTerminalInfo,
+) void {
+    const observation = native_instance.terminal(owner.value);
+    const view = observation.semanticView(history_offset);
+    const interaction = observation.interactionState();
+    const progress = observation.taskProgress();
+    output.* = .{
+        .revision = observation.semanticSequence(),
+        .terminal_revision = observation.semanticSequence(),
+        .history_count = view.history_count,
+        .history_row_base = view.history_row_base,
+        .interaction_flags = (if (interaction.alternate_scroll)
+            interaction_info_flags.alternate_scroll
+        else
+            0) |
+            (if (interaction.focus_reporting)
+                interaction_info_flags.focus_reporting
+            else
+                0),
+        .rows = view.rows,
+        .columns = view.cols,
+        .cursor_row = view.cursor_row,
+        .cursor_column = view.cursor_col,
+        .task_progress = (@as(u16, @backingInt(progress.kind)) << 8) | progress.value,
+        .cursor_shape = @backingInt(view.cursor_shape),
+        .cursor_visible = @intFromBool(view.cursor_visible),
+        .alternate_screen = @intFromBool(view.is_alternate_screen),
+        .stream_closed = @intFromBool(owner.stream_closed),
+        .child_exited = @intFromBool(owner.child_exit != null),
+        .mouse_tracking = @backingInt(interaction.mouse_tracking),
+        .mouse_protocol = @backingInt(interaction.mouse_protocol),
+        .pointer_mode = @intCast(interaction.pointer_mode),
+    };
+}
+
+pub export fn howl_odin_bridge_version() u32 {
+    return 14;
+}
+
+test "Odin bridge version tracks native local ownership ABI" {
+    try std.testing.expectEqual(@as(u32, 14), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(
@@ -3340,7 +5843,7 @@ test "only self-contained live views may cross the observation connection bounda
     try std.testing.expect(!standaloneLiveView(image));
 }
 
-test "Odin bridge route ABI distinguishes direct and Server targets" {
+test "Odin bridge transported route ABI admits only direct and Server targets" {
     const direct = try targetFromAbi(0, "unix:/tmp/howl.sock", 0, 0, 0);
     try std.testing.expectEqual(RouteKind.direct, direct.kind);
     try std.testing.expectEqualStrings("unix:/tmp/howl.sock", direct.endpoint);
@@ -3353,14 +5856,214 @@ test "Odin bridge route ABI distinguishes direct and Server targets" {
     try std.testing.expectEqual(@as(u64, 7), managed.session_id);
     try std.testing.expectEqual(@as(u64, 3), managed.instance_id);
 
-    const local = try targetFromAbi(2, "", 0, 0, 44);
-    try std.testing.expectEqual(RouteKind.local, local.kind);
-    try std.testing.expectEqual(@as(u64, 44), local.instance_id);
-
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(0, "tcp://127.0.0.1:1", 91, 7, 3));
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(1, "tcp://127.0.0.1:1", 91, 0, 3));
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(1, "tcp://127.0.0.1:1", 0, 7, 3));
-    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "tcp://127.0.0.1:1", 0, 0, 3));
-    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "", 0, 0, 0));
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "", 0, 0, 3));
     try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(3, "", 0, 0, 3));
+}
+
+test "native local catalogue grants one terminal owner per stable identity" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{
+        .environ = std.testing.environ,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+    var state = NativeLocalState{};
+    const value = try native_instance.init(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+            .rows = 2,
+            .columns = 8,
+            .history_rows = 8,
+        },
+    );
+    var inserted = false;
+    defer if (!inserted) native_instance.deinit(value);
+    const id = try state.insert(io, value);
+    inserted = true;
+    try std.testing.expect(id != 0);
+    try std.testing.expect(!state.empty());
+
+    const claimed = try state.claim(io, id);
+    try std.testing.expect(claimed == value);
+    try std.testing.expectError(
+        error.LocalInstanceClaimed,
+        state.claim(io, id),
+    );
+    try std.testing.expect(!state.destroy(io, id));
+
+    state.release(io, id, claimed);
+    try std.testing.expect(state.destroy(io, id));
+    try std.testing.expect(state.empty());
+}
+
+test "native terminal claim services PTY directly and publishes Render" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{
+        .environ = std.testing.environ,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+    var state = NativeLocalState{};
+
+    const value = try native_instance.init(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo; printf NATIVE_READY; read line; printf DIRECT_ACK; sleep 30",
+            .rows = 2,
+            .columns = 16,
+            .history_rows = 8,
+        },
+    );
+    var inserted = false;
+    defer if (!inserted) native_instance.deinit(value);
+    const id = try state.insert(io, value);
+    inserted = true;
+
+    var runtime = Runtime{
+        .threaded = std.Io.Threaded.init(std.testing.allocator, .{
+            .environ = std.testing.environ,
+        }),
+    };
+    defer runtime.threaded.deinit();
+    runtime.native_local = state;
+
+    var diagnostic: [160]u8 = undefined;
+    var diagnostic_len: usize = 0;
+    var raw: ?*NativeTerminalHandle = howl_odin_bridge_native_terminal_claim(
+        @ptrCast(&runtime),
+        id,
+        &diagnostic,
+        diagnostic.len,
+        &diagnostic_len,
+    ) orelse return error.ClaimFailed;
+    defer {
+        if (raw) |active| howl_odin_bridge_native_terminal_release(active);
+        if (!runtime.native_local.empty())
+            _ = runtime.native_local.destroy(runtime.threaded.io(), id);
+    }
+    const owner = nativeTerminalValue(raw).?;
+
+    try std.testing.expectEqual(
+        size_rejected,
+        howl_odin_bridge_native_terminal_send_resize(
+            raw,
+            0,
+            16,
+            10,
+            20,
+            1,
+        ),
+    );
+
+    var attempts: usize = 0;
+    while (attempts < 2000) : (attempts += 1) {
+        _ = try owner.service(attempts + 1);
+        const view = native_instance.terminal(owner.value).semanticView(0);
+        if (view.cellAt(0, 0) == 'N') break;
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake);
+    } else return error.Timeout;
+
+    var info = NativeTerminalInfo{};
+    var text: [256]u8 = undefined;
+    var text_len: usize = 0;
+    var title: [64]u8 = undefined;
+    var title_len: usize = 0;
+    var row_shapes: [16]NativeRowShape = undefined;
+    var row_shape_count: usize = 0;
+    try std.testing.expectEqual(
+        @as(i32, 0),
+        howl_odin_bridge_native_terminal_snapshot(
+            raw,
+            0,
+            &info,
+            &text,
+            text.len,
+            &text_len,
+            &title,
+            title.len,
+            &title_len,
+            &row_shapes,
+            row_shapes.len,
+            &row_shape_count,
+        ),
+    );
+    try std.testing.expect(info.revision != 0);
+    try std.testing.expectEqual(info.revision, info.terminal_revision);
+    try std.testing.expectEqual(@as(u16, 2), info.rows);
+    try std.testing.expectEqual(@as(u16, 16), info.columns);
+    try std.testing.expectEqual(@as(usize, 2), row_shape_count);
+    try std.testing.expect(
+        std.mem.indexOf(u8, text[0..text_len], "NATIVE_READY") != null,
+    );
+
+    try std.testing.expectEqual(
+        @as(i32, 0),
+        howl_odin_bridge_native_terminal_send_text(
+            raw,
+            "DIRECT\n".ptr,
+            "DIRECT\n".len,
+        ),
+    );
+    attempts = 0;
+    while (attempts < 2000) : (attempts += 1) {
+        _ = try owner.waitAndService(1);
+        const view = native_instance.terminal(owner.value).semanticView(0);
+        var found = false;
+        for (0..view.rows) |row| {
+            for (0..view.cols) |column| {
+                if (view.cellAt(@intCast(row), @intCast(column)) == 'D') {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+        if (found) break;
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake);
+    } else return error.Timeout;
+
+    // This fixture is headless, so the backend exchange is intentionally absent.
+    try std.testing.expect(
+        howl_odin_bridge_native_terminal_render_exchange(raw) == null,
+    );
+
+    // Release before catalogue destruction.
+    howl_odin_bridge_native_terminal_release(raw);
+    raw = null;
+    try std.testing.expect(runtime.native_local.destroy(runtime.threaded.io(), id));
+}
+
+test "native Canvas exposes no geometry before an accepted publication" {
+    const front = NativeCanvasFront{};
+    try std.testing.expectEqual(@as(u16, 0), front.surface.width);
+    try std.testing.expectEqual(@as(u16, 0), front.surface.height);
+    try std.testing.expectEqual(@as(u16, 0), front.cell_size.width);
+    try std.testing.expectEqual(@as(u16, 0), front.cell_size.height);
+}
+
+test "native presentation config retains two caller-owned fallback paths" {
+    var fallbacks: [2][]const u8 = undefined;
+    const config = nativePresentationConfig(
+        &fallbacks,
+        "regular.ttf",
+        "",
+        "",
+        "",
+        "arabic.ttf",
+        "cjk.ttc",
+        17,
+    );
+    const regular = switch (config.fonts.regular) {
+        .path => |value| value,
+        .memory => return error.UnexpectedMemoryFont,
+    };
+    try std.testing.expectEqual(@as(usize, 2), regular.fallbacks.len);
+    try std.testing.expectEqualStrings("arabic.ttf", regular.fallbacks[0]);
+    try std.testing.expectEqualStrings("cjk.ttc", regular.fallbacks[1]);
 }

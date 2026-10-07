@@ -31,6 +31,11 @@ pub const PublishedFrame = struct {
     sequence: u64,
     presentation_generation: u64,
     revision: u64,
+    terminal_revision: u64,
+    history_offset: u32,
+    history_count: u32,
+    history_row_base: u32,
+    alternate_screen: bool,
     surface: terminal.Size,
     cell_size: terminal.Size,
     uploads: []const terminal.FrameResourceUpload,
@@ -49,6 +54,11 @@ const FrameSlot = struct {
     sequence: std.atomic.Value(u64) = .init(0),
     presentation_generation: u64 = 1,
     revision: u64 = 0,
+    terminal_revision: u64 = 0,
+    history_offset: u32 = 0,
+    history_count: u32 = 0,
+    history_row_base: u32 = 0,
+    alternate_screen: bool = false,
     surface: terminal.Size = .{ .width = 1, .height = 1 },
     cell_size: terminal.Size = .{ .width = 1, .height = 1 },
     uploads: [maximum_residencies]terminal.FrameResourceUpload = undefined,
@@ -85,6 +95,11 @@ const FrameSlot = struct {
             .sequence = self.sequence.load(.acquire),
             .presentation_generation = self.presentation_generation,
             .revision = self.revision,
+            .terminal_revision = self.terminal_revision,
+            .history_offset = self.history_offset,
+            .history_count = self.history_count,
+            .history_row_base = self.history_row_base,
+            .alternate_screen = self.alternate_screen,
             .surface = self.surface,
             .cell_size = self.cell_size,
             .uploads = self.uploads[0..self.upload_count],
@@ -192,6 +207,11 @@ pub const Writer = struct {
         self: *Writer,
         presentation_generation: u64,
         revision: u64,
+        terminal_revision: u64,
+        history_offset: u32,
+        history_count: u32,
+        history_row_base: u32,
+        alternate_screen: bool,
         surface: terminal.Size,
         cell_size: terminal.Size,
         upload_count: usize,
@@ -203,6 +223,8 @@ pub const Writer = struct {
         const value = self.slot();
         std.debug.assert(!self.finished);
         std.debug.assert(presentation_generation != 0);
+        std.debug.assert(terminal_revision != 0);
+        std.debug.assert(history_offset <= history_count or alternate_screen);
         std.debug.assert(upload_count <= value.uploads.len);
         std.debug.assert(removal_count <= value.removals.len);
         std.debug.assert(command_count <= value.commands.len);
@@ -214,6 +236,11 @@ pub const Writer = struct {
         if (impl.producer_sequence == 0) impl.producer_sequence = 1;
         value.presentation_generation = presentation_generation;
         value.revision = revision;
+        value.terminal_revision = terminal_revision;
+        value.history_offset = history_offset;
+        value.history_count = history_count;
+        value.history_row_base = history_row_base;
+        value.alternate_screen = alternate_screen;
         value.surface = surface;
         value.cell_size = cell_size;
         value.upload_count = upload_count;
@@ -482,7 +509,7 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    first.finish(1, 1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    first.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var lease = acquireLatest(exchange).?;
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
@@ -492,14 +519,14 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
         .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
     } };
-    second.finish(1, 2, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    second.finish(1, 2, 2, 0, 0, 0, false, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var third = beginWrite(exchange).?;
     third.commandStorage()[0] = .{ .solid = .{
         .rect = .{ .x = 0, .y = 0, .width = 3, .height = 1 },
         .color = .{ .r = 7, .g = 8, .b = 9, .a = 255 },
     } };
-    third.finish(1, 3, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    third.finish(1, 3, 3, 0, 0, 0, false, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     // Held payload cannot be overwritten by producer coalescing.
     try std.testing.expectEqual(@as(u16, 1), lease.value.commands[0].solid.rect.width);
@@ -516,7 +543,7 @@ test "lease feedback publishes only newest exact residency" {
     defer deinit(exchange);
 
     var writer = beginWrite(exchange).?;
-    writer.finish(1, 1, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
     var lease = acquireLatest(exchange).?;
 
     const resource = try terminal.ResourceId.init(9);
@@ -581,6 +608,11 @@ test "backend lease remains immutable while producer coalesces a burst" {
     initial.finish(
         1,
         1,
+        1,
+        0,
+        0,
+        0,
+        false,
         .{ .width = 1, .height = 1 },
         .{ .width = 1, .height = 1 },
         0,
@@ -605,6 +637,11 @@ test "backend lease remains immutable while producer coalesces a burst" {
         writer.finish(
             1,
             revision,
+            revision,
+            0,
+            0,
+            0,
+            false,
             .{ .width = width, .height = 1 },
             .{ .width = 1, .height = 1 },
             0,

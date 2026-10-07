@@ -13,8 +13,88 @@ foreign howl_bridge {
     version            :: proc() -> u32 ---
     runtime_create :: proc() -> rawptr ---
     runtime_destroy :: proc(runtime: rawptr) ---
-    local_instance_create :: proc(runtime: rawptr, shell: [^]u8, shell_len: c.size_t, command: [^]u8, command_len: c.size_t, cwd: [^]u8, cwd_len: c.size_t, rows, columns, history_rows: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> u64 ---
-    local_instance_destroy :: proc(runtime: rawptr, instance_id: u64) -> i32 ---
+    native_local_instance_create :: proc(
+        runtime: rawptr,
+        shell: [^]u8, shell_len: c.size_t,
+        command: [^]u8, command_len: c.size_t,
+        cwd: [^]u8, cwd_len: c.size_t,
+        rows, columns, history_rows: u16,
+        font: [^]u8, font_len: c.size_t,
+        italic: [^]u8, italic_len: c.size_t,
+        bold: [^]u8, bold_len: c.size_t,
+        bold_italic: [^]u8, bold_italic_len: c.size_t,
+        fallback: [^]u8, fallback_len: c.size_t,
+        secondary_fallback: [^]u8, secondary_fallback_len: c.size_t,
+        font_pixels: u16,
+        diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t,
+    ) -> u64 ---
+    native_local_instance_destroy :: proc(runtime: rawptr, instance_id: u64) -> i32 ---
+    native_terminal_claim :: proc(runtime: rawptr, instance_id: u64, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
+    native_terminal_release :: proc(handle: rawptr) ---
+    native_terminal_service :: proc(handle: rawptr, timestamp_ns: u64) -> i32 ---
+    native_terminal_wait :: proc(handle: rawptr, timeout_ms: i32) -> i32 ---
+    native_terminal_wake :: proc(handle: rawptr) ---
+    native_terminal_send_text :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
+    native_terminal_send_paste :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
+    native_terminal_send_named_key :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---
+    native_terminal_send_unicode_key :: proc(handle: rawptr, scalar: u32, action, modifiers: u8) -> i32 ---
+    native_terminal_send_mouse :: proc(handle: rawptr, kind, button, modifiers, buttons_down: u8, row: i32, column: u16, pixels_present: u8, pixel_x, pixel_y: u32) -> i32 ---
+    native_terminal_send_focus :: proc(handle: rawptr, focus: u8) -> i32 ---
+    native_terminal_send_resize :: proc(handle: rawptr, rows, columns, cell_width, cell_height: u16, claim: u8) -> i32 ---
+    native_terminal_selection_expand :: proc(handle: rawptr, kind: u8, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: ^Selection_Range_Info) -> i32 ---
+    native_terminal_selection_extract :: proc(handle: rawptr, start_row: i32, start_column: u16, end_row: i32, end_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    native_terminal_hyperlink_copy :: proc(handle: rawptr, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    native_terminal_search_find :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
+    native_terminal_consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info, payload: [^]u8, payload_capacity: c.size_t, copied_len: ^c.size_t) -> i32 ---
+    native_terminal_consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
+    native_terminal_consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
+    native_terminal_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
+    native_terminal_render_exchange :: proc(handle: rawptr) -> rawptr ---
+    native_terminal_publish_history :: proc(handle: rawptr, history_offset: u32) -> i32 ---
+    native_terminal_reconfigure_presentation :: proc(
+        handle: rawptr,
+        font: [^]u8, font_len: c.size_t,
+        italic: [^]u8, italic_len: c.size_t,
+        bold: [^]u8, bold_len: c.size_t,
+        bold_italic: [^]u8, bold_italic_len: c.size_t,
+        fallback: [^]u8, fallback_len: c.size_t,
+        secondary_fallback: [^]u8, secondary_fallback_len: c.size_t,
+        font_pixels: u16,
+    ) -> i32 ---
+    native_canvas_create :: proc(exchange: rawptr) -> rawptr ---
+    native_canvas_destroy :: proc(handle: rawptr) ---
+    native_canvas_prepare :: proc(handle: rawptr) -> i32 ---
+    native_canvas_accept :: proc(handle: rawptr) -> i32 ---
+    native_canvas_discard :: proc(handle: rawptr) -> i32 ---
+    native_canvas_presentation_generation :: proc(handle: rawptr) -> u64 ---
+    native_canvas_background_rgba :: proc(handle: rawptr) -> u32 ---
+    native_canvas_surface_width :: proc(handle: rawptr) -> u16 ---
+    native_canvas_surface_height :: proc(handle: rawptr) -> u16 ---
+    native_canvas_cell_width :: proc(handle: rawptr) -> u16 ---
+    native_canvas_cell_height :: proc(handle: rawptr) -> u16 ---
+    native_canvas_frame_revision :: proc(handle: rawptr) -> u64 ---
+    native_canvas_terminal_revision :: proc(handle: rawptr) -> u64 ---
+    native_canvas_history_offset :: proc(handle: rawptr) -> u32 ---
+    native_canvas_history_count :: proc(handle: rawptr) -> u32 ---
+    native_canvas_history_row_base :: proc(handle: rawptr) -> u32 ---
+    native_canvas_alternate_screen :: proc(handle: rawptr) -> u8 ---
+    native_canvas_upload_count :: proc(handle: rawptr) -> u32 ---
+    native_canvas_removal_count :: proc(handle: rawptr) -> u32 ---
+    native_canvas_command_count :: proc(handle: rawptr) -> u32 ---
+    native_canvas_upload_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Resource_Info) -> i32 ---
+    native_canvas_upload_copy :: proc(handle: rawptr, index: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    native_canvas_removal_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Removal_Info) -> i32 ---
+    native_canvas_command_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Command_Info) -> i32 ---
+    native_canvas_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
+    native_terminal_info_size :: proc() -> u32 ---
+    native_terminal_snapshot :: proc(
+        handle: rawptr,
+        history_offset: u32,
+        info: ^Native_Terminal_Info,
+        text: [^]u8, text_capacity: c.size_t, text_len: ^c.size_t,
+        title: [^]u8, title_capacity: c.size_t, title_len: ^c.size_t,
+        row_shapes: [^]Native_Row_Shape, row_shape_capacity: c.size_t, row_shape_count: ^c.size_t,
+    ) -> i32 ---
     interrupt_create :: proc() -> rawptr ---
     interrupt_cancel :: proc(token: rawptr) -> i32 ---
     interrupt_destroy :: proc(token: rawptr) ---
@@ -103,6 +183,35 @@ foreign howl_bridge {
     render_removal_info_size  :: proc() -> u32 ---
     render_command_info_size  :: proc() -> u32 ---
     server_tree       :: proc(endpoint: [^]u8, endpoint_len: c.size_t, interrupt: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> i32 ---
+}
+
+Native_Terminal_Info :: struct {
+    revision: u64,
+    terminal_revision: u64,
+    history_count: u32,
+    history_row_base: u32,
+    interaction_flags: u32,
+    rows: u16,
+    columns: u16,
+    cursor_row: u16,
+    cursor_column: u16,
+    task_progress: u16,
+    cursor_shape: u8,
+    cursor_visible: u8,
+    alternate_screen: u8,
+    stream_closed: u8,
+    child_exited: u8,
+    text_truncated: u8,
+    mouse_tracking: u8,
+    mouse_protocol: u8,
+    pointer_mode: u8,
+    _reserved: [3]u8,
+}
+
+Native_Row_Shape :: struct {
+    content_end_exclusive: u16,
+    wrapped: u8,
+    _reserved: u8,
 }
 
 Bridge_Route_Kind :: enum u8 {

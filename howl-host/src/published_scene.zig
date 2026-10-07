@@ -329,6 +329,11 @@ test "published scene converts one owned RGBA upload without terminal state" {
         .sequence = 1,
         .presentation_generation = 1,
         .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .alternate_screen = false,
         .surface = .{ .width = 10, .height = 20 },
         .cell_size = .{ .width = 10, .height = 20 },
         .uploads = &.{.{

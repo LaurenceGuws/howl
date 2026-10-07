@@ -156,6 +156,17 @@ History_Scrollbar_Geometry :: struct {
     visible_rows: u32,
 }
 
+Native_Presentation_Request :: struct {
+    generation: u64,
+    pending, waiting, failed: bool,
+    font_pixels: u16,
+    scale: f32,
+    font, italic, bold, bold_italic: [FONT_PATH_BYTES]u8,
+    fallback, secondary_fallback: [FONT_PATH_BYTES]u8,
+    font_len, italic_len, bold_len, bold_italic_len: int,
+    fallback_len, secondary_fallback_len: int,
+}
+
 Instance_View :: struct {
     ownership: Instance_Ownership,
     profile_index: int,
@@ -163,6 +174,10 @@ Instance_View :: struct {
     terminal_font_pixels: u16,
     terminal_font_overridden: bool,
     control: rawptr,
+    native_terminal: rawptr,
+    native_render_exchange: rawptr,
+    native_attention_pending: bool,
+    native_presentation: Native_Presentation_Request,
     control_pending_handle: rawptr,
     control_connect_done: bool,
     control_connect_applied: bool,
@@ -230,6 +245,11 @@ Instance_View :: struct {
     instance_id: u64,
     text: []u8,
     scratch: []u8,
+    native_row_shapes: []Native_Row_Shape,
+    native_row_shapes_scratch: []Native_Row_Shape,
+    native_row_shape_count: int,
+    native_row_shape_terminal_revision: u64,
+    native_row_shape_history_offset: u32,
     text_len: int,
     display_title: [1024]u8,
     display_title_len: int,
@@ -271,6 +291,7 @@ Instance_View :: struct {
     mutex: sync.Mutex,
     worker_stop: bool,
     canvas: rawptr,
+    canvas_presentation_generation: u64,
     render_work: ^Render_Work,
     canvas_font_pixels: u16,
     canvas_render_scale: f32,
@@ -964,7 +985,7 @@ apply_default_terminal_font_pixels :: proc(app: ^App, pixels: u16) {
         for view in app.tabs[index].panes {
             if view == nil || view.profile_font_pixels != 0 || view.terminal_font_overridden do continue
             view.terminal_font_pixels = pixels
-            restart_canvas_renderer(view)
+            refresh_terminal_presentation(app, view)
         }
     }
 }
@@ -990,7 +1011,7 @@ adjust_active_terminal_font :: proc(app: ^App, delta: int) {
     if next == current do return
     view.terminal_font_pixels = next
     view.terminal_font_overridden = true
-    restart_canvas_renderer(view)
+    refresh_terminal_presentation(app, view)
 }
 
 CANVAS_SCALE_MAX :: f32(8)
@@ -1012,6 +1033,97 @@ scaled_canvas_font_pixels :: proc(logical_pixels: u16, scale: f32) -> (u16, bool
         return 0, false
     }
     return u16(pixels), true
+}
+
+request_native_presentation :: proc(
+    app: ^App,
+    view: ^Instance_View,
+    force := false,
+) -> bool {
+    if app == nil || app.window == nil || view == nil ||
+       view.route_kind != .Local {
+        return false
+    }
+    sync.mutex_lock(&view.mutex)
+    terminal := view.native_terminal
+    sync.mutex_unlock(&view.mutex)
+    if terminal == nil do return false
+
+    logical_pixels := view_terminal_font_pixels(app, view)
+    scale := SDL.GetWindowDisplayScale(app.window)
+    pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
+    if !scaled do return false
+
+    font := effective_terminal_primary_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    italic := effective_terminal_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold := effective_terminal_bold_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold_italic := effective_terminal_bold_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    fallback := effective_terminal_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    secondary := effective_terminal_secondary_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    if len(font) == 0 || len(font) >= FONT_PATH_BYTES ||
+       len(italic) >= FONT_PATH_BYTES || len(bold) >= FONT_PATH_BYTES ||
+       len(bold_italic) >= FONT_PATH_BYTES || len(fallback) >= FONT_PATH_BYTES ||
+       len(secondary) >= FONT_PATH_BYTES {
+        return false
+    }
+
+    sync.mutex_lock(&view.mutex)
+    request := &view.native_presentation
+    same_target := request.font_pixels == pixels && request.scale == scale
+    if !force {
+        if request.failed && same_target {
+            sync.mutex_unlock(&view.mutex)
+            return false
+        }
+        if (request.pending || request.waiting) && same_target {
+            sync.mutex_unlock(&view.mutex)
+            return true
+        }
+        if !request.pending && !request.waiting &&
+           view.canvas_font_pixels == pixels &&
+           view.canvas_render_scale == scale {
+            sync.mutex_unlock(&view.mutex)
+            return true
+        }
+    }
+
+    request.generation += 1
+    request.pending = true
+    request.waiting = false
+    request.failed = false
+    request.font_pixels = pixels
+    request.scale = scale
+    request.font_len = len(font)
+    request.italic_len = len(italic)
+    request.bold_len = len(bold)
+    request.bold_italic_len = len(bold_italic)
+    request.fallback_len = len(fallback)
+    request.secondary_fallback_len = len(secondary)
+    copy(request.font[:request.font_len], transmute([]u8)font)
+    copy(request.italic[:request.italic_len], transmute([]u8)italic)
+    copy(request.bold[:request.bold_len], transmute([]u8)bold)
+    copy(request.bold_italic[:request.bold_italic_len], transmute([]u8)bold_italic)
+    copy(request.fallback[:request.fallback_len], transmute([]u8)fallback)
+    copy(request.secondary_fallback[:request.secondary_fallback_len], transmute([]u8)secondary)
+
+    // Any queued resize was derived from the old cell lattice. Preserve the
+    // user's sizing mode while invalidating only that stale geometry request.
+    view.size_control.generation += 1
+    view.size_control.pending = false
+    view.size_control.applied = {}
+    view.ui_dirty = true
+    sync.mutex_unlock(&view.mutex)
+    native_terminal_wake(terminal)
+    return true
+}
+
+refresh_terminal_presentation :: proc(app: ^App, view: ^Instance_View) {
+    if view == nil do return
+    if view.route_kind == .Local {
+        _ = request_native_presentation(app, view, true)
+        return
+    }
+    restart_canvas_renderer(view)
 }
 
 TEXT_DPI_BASE :: f32(72)
@@ -1110,13 +1222,216 @@ copy_canvas_bridge_error :: proc(view: ^Instance_View) {
         return
     }
     count: c.size_t
-    render_copy_error(
-        view.canvas,
-        raw_data(view.canvas_error[:]),
-        c.size_t(len(view.canvas_error)),
-        &count,
-    )
+    if view.route_kind == .Local {
+        native_canvas_copy_error(
+            view.canvas,
+            raw_data(view.canvas_error[:]),
+            c.size_t(len(view.canvas_error)),
+            &count,
+        )
+    } else {
+        render_copy_error(
+            view.canvas,
+            raw_data(view.canvas_error[:]),
+            c.size_t(len(view.canvas_error)),
+            &count,
+        )
+    }
     view.canvas_error_len = int(count)
+}
+
+canvas_upload_count :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_upload_count(view.canvas)
+    return render_upload_count(view.canvas)
+}
+
+canvas_removal_count :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_removal_count(view.canvas)
+    return render_removal_count(view.canvas)
+}
+
+canvas_command_count :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_command_count(view.canvas)
+    return render_command_count(view.canvas)
+}
+
+canvas_upload_info :: proc(view: ^Instance_View, index: u32, output: ^Canvas_Resource_Info) -> i32 {
+    if view == nil || view.canvas == nil do return 1
+    if view.route_kind == .Local do return native_canvas_upload_info(view.canvas, index, output)
+    return render_upload_info(view.canvas, index, output)
+}
+
+canvas_upload_copy :: proc(
+    view: ^Instance_View,
+    index: u32,
+    output: [^]u8,
+    capacity: c.size_t,
+    output_len: ^c.size_t,
+) -> i32 {
+    if view == nil || view.canvas == nil do return 1
+    if view.route_kind == .Local do return native_canvas_upload_copy(view.canvas, index, output, capacity, output_len)
+    return render_upload_copy(view.canvas, index, output, capacity, output_len)
+}
+
+canvas_removal_info :: proc(view: ^Instance_View, index: u32, output: ^Canvas_Removal_Info) -> i32 {
+    if view == nil || view.canvas == nil do return 1
+    if view.route_kind == .Local do return native_canvas_removal_info(view.canvas, index, output)
+    return render_removal_info(view.canvas, index, output)
+}
+
+canvas_command_info :: proc(view: ^Instance_View, index: u32, output: ^Canvas_Command_Info) -> i32 {
+    if view == nil || view.canvas == nil do return 1
+    if view.route_kind == .Local do return native_canvas_command_info(view.canvas, index, output)
+    return render_command_info(view.canvas, index, output)
+}
+
+canvas_background_rgba :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_background_rgba(view.canvas)
+    return render_background_rgba(view.canvas)
+}
+
+canvas_surface_width :: proc(view: ^Instance_View) -> u16 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_surface_width(view.canvas)
+    return render_surface_width(view.canvas)
+}
+
+canvas_surface_height :: proc(view: ^Instance_View) -> u16 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_surface_height(view.canvas)
+    return render_surface_height(view.canvas)
+}
+
+canvas_cell_width :: proc(view: ^Instance_View) -> u16 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_cell_width(view.canvas)
+    return render_cell_width(view.canvas)
+}
+
+canvas_cell_height :: proc(view: ^Instance_View) -> u16 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_cell_height(view.canvas)
+    return render_cell_height(view.canvas)
+}
+
+canvas_frame_revision :: proc(view: ^Instance_View) -> u64 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_frame_revision(view.canvas)
+    return render_frame_revision(view.canvas)
+}
+
+canvas_instance_revision :: proc(view: ^Instance_View) -> u64 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_terminal_revision(view.canvas)
+    return render_instance_revision(view.canvas)
+}
+
+canvas_history_offset :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_history_offset(view.canvas)
+    return render_history_offset(view.canvas)
+}
+
+canvas_history_count :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_history_count(view.canvas)
+    return render_history_count(view.canvas)
+}
+
+canvas_history_row_base :: proc(view: ^Instance_View) -> u32 {
+    if view == nil || view.canvas == nil do return 0
+    if view.route_kind == .Local do return native_canvas_history_row_base(view.canvas)
+    return render_history_row_base(view.canvas)
+}
+
+canvas_alternate_screen :: proc(view: ^Instance_View) -> bool {
+    if view == nil || view.canvas == nil do return false
+    if view.route_kind == .Local do return native_canvas_alternate_screen(view.canvas) != 0
+    return render_alternate_screen(view.canvas) != 0
+}
+
+canvas_selection_span :: proc(
+    view: ^Instance_View,
+    anchor_row: i32,
+    anchor_column: u16,
+    focus_row: i32,
+    focus_column: u16,
+    columns: u16,
+    alternate_screen: bool,
+    viewport_row: u16,
+    first, last: ^u16,
+) -> bool {
+    first^ = 0
+    last^ = 0
+    if view == nil || view.canvas == nil do return false
+    if view.route_kind != .Local {
+        return render_selection_span(
+            view.canvas,
+            anchor_row,
+            anchor_column,
+            focus_row,
+            focus_column,
+            columns,
+            alternate_screen ? u8(1) : u8(0),
+            viewport_row,
+            first,
+            last,
+        ) != 0
+    }
+
+    canvas_revision := canvas_instance_revision(view)
+    canvas_history := canvas_history_offset(view)
+    canvas_alternate := canvas_alternate_screen(view)
+    canvas_history_count_value := canvas_history_count(view)
+    canvas_history_base := canvas_history_row_base(view)
+
+    sync.mutex_lock(&view.mutex)
+    defer sync.mutex_unlock(&view.mutex)
+    if columns == 0 || alternate_screen != canvas_alternate ||
+       viewport_row >= u16(view.native_row_shape_count) ||
+       view.native_row_shape_terminal_revision != canvas_revision ||
+       view.native_row_shape_history_offset != canvas_history {
+        return false
+    }
+
+    start_row, end_row := anchor_row, focus_row
+    start_column, end_column := anchor_column, focus_column
+    if focus_row < anchor_row ||
+       (focus_row == anchor_row && focus_column < anchor_column) {
+        start_row, end_row = focus_row, anchor_row
+        start_column, end_column = focus_column, anchor_column
+    }
+    stable_row: i64
+    if canvas_alternate {
+        stable_row = i64(viewport_row)
+    } else {
+        stable_row = i64(canvas_history_base) +
+                     i64(canvas_history_count_value) -
+                     i64(canvas_history) +
+                     i64(viewport_row)
+    }
+    if stable_row < i64(start_row) || stable_row > i64(end_row) do return false
+
+    span_start := stable_row == i64(start_row) ? start_column : u16(0)
+    span_end := stable_row == i64(end_row) ? end_column : columns - 1
+    shape := view.native_row_shapes[viewport_row]
+    content_end := min(shape.content_end_exclusive, columns)
+    if stable_row == i64(end_row) || shape.wrapped != 0 {
+        if content_end == 0 do return false
+        selected_last := min(span_end, content_end - 1)
+        if selected_last < span_start do return false
+        first^ = span_start
+        last^ = selected_last
+        return true
+    }
+    newline_column := min(content_end, columns - 1)
+    first^ = span_start < content_end ? span_start : newline_column
+    last^ = newline_column
+    return true
 }
 
 remove_canvas_resource_at :: proc(view: ^Instance_View, index: int) {
@@ -1143,6 +1458,22 @@ clear_canvas_resources :: proc(view: ^Instance_View) {
 restart_canvas_renderer :: proc(view: ^Instance_View, clear_error := true) {
     if view == nil do return
     clear_selection(view)
+    if view.route_kind == .Local {
+        if view.canvas != nil {
+            native_canvas_destroy(view.canvas)
+            view.canvas = nil
+        }
+        clear_canvas_resources(view)
+        view.canvas_presentation_generation = 0
+        view.canvas_font_pixels = 0
+        view.canvas_render_scale = 0
+        view.canvas_worker_has_frame = false
+        if clear_error do view.canvas_error_len = 0
+        sync.mutex_lock(&view.mutex)
+        view.size_control.applied = {}
+        sync.mutex_unlock(&view.mutex)
+        return
+    }
     if view.render_work != nil {
         stop_render_worker(view.render_work)
         view.render_work = nil
@@ -1202,7 +1533,7 @@ remove_canvas_resource_key :: proc(view: ^Instance_View, resource, generation: u
 
 create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bool {
     info: Canvas_Resource_Info
-    if render_upload_info(view.canvas, index, &info) != 0 || info.width == 0 || info.height == 0 {
+    if canvas_upload_info(view, index, &info) != 0 || info.width == 0 || info.height == 0 {
         set_canvas_error(view, "invalid Canvas upload metadata")
         return false
     }
@@ -1213,8 +1544,8 @@ create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bo
     source_bytes := make([]u8, int(info.pixel_count))
     defer delete(source_bytes)
     copied: c.size_t
-    if render_upload_copy(
-        view.canvas,
+    if canvas_upload_copy(
+        view,
         index,
         raw_data(source_bytes),
         c.size_t(len(source_bytes)),
@@ -1301,6 +1632,26 @@ ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     scale := SDL.GetWindowDisplayScale(app.window)
     pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
+    if view.route_kind == .Local {
+        sync.mutex_lock(&view.mutex)
+        exchange := view.native_render_exchange
+        terminal_ready := view.native_terminal != nil
+        sync.mutex_unlock(&view.mutex)
+        if !terminal_ready || exchange == nil do return false
+        if view.canvas == nil {
+            view.canvas = native_canvas_create(exchange)
+            if view.canvas == nil {
+                set_canvas_error(view, "native Canvas creation failed")
+                return false
+            }
+            view.canvas_font_pixels = pixels
+            view.canvas_render_scale = scale
+        } else if view.canvas_font_pixels != pixels ||
+                  view.canvas_render_scale != scale {
+            _ = request_native_presentation(app, view)
+        }
+        return true
+    }
     if view.render_work != nil &&
        (view.canvas_font_pixels != pixels || view.canvas_render_scale != scale) {
         restart_canvas_renderer(view)
@@ -1340,6 +1691,131 @@ ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     return view.canvas != nil
 }
 
+update_native_canvas :: proc(
+    app: ^App,
+    view: ^Instance_View,
+    target_revision: u64,
+    requested_history_offset: u32,
+    requested_history_generation: u64,
+) -> bool {
+    code := native_canvas_prepare(view.canvas)
+    if code == 9 {
+        return canvas_frame_available(view)
+    }
+    if code != 0 {
+        copy_canvas_bridge_error(view)
+        message := "Native Canvas prepare failed without diagnostic"
+        if view.canvas_error_len > 0 {
+            message = string(view.canvas_error[:view.canvas_error_len])
+        }
+        if view.canvas_error_len == 0 do set_canvas_error(view, message)
+        publish_initial_error(view, message)
+        reset_canvas(view, false)
+        return false
+    }
+
+    generation := native_canvas_presentation_generation(view.canvas)
+    presentation_changed := view.canvas_presentation_generation != generation
+    applied_pixels := view.canvas_font_pixels
+    applied_scale := view.canvas_render_scale
+    applied_request_generation: u64
+    applied_request := false
+    if presentation_changed {
+        sync.mutex_lock(&view.mutex)
+        if view.native_presentation.waiting {
+            applied_pixels = view.native_presentation.font_pixels
+            applied_scale = view.native_presentation.scale
+            applied_request_generation = view.native_presentation.generation
+            applied_request = true
+        }
+        sync.mutex_unlock(&view.mutex)
+    }
+    if view.canvas_presentation_generation != 0 &&
+       view.canvas_presentation_generation != generation {
+        clear_canvas_resources(view)
+    }
+
+    for index in 0..<int(canvas_removal_count(view)) {
+        info: Canvas_Removal_Info
+        if canvas_removal_info(view, u32(index), &info) != 0 {
+            set_canvas_error(view, "Native Canvas removal decode failed")
+            reset_canvas(view, false)
+            return false
+        }
+        remove_canvas_resource_key(view, info.resource, info.generation, true)
+    }
+    for index in 0..<int(canvas_upload_count(view)) {
+        if !create_canvas_texture(app, view, u32(index)) {
+            reset_canvas(view, false)
+            return false
+        }
+    }
+
+    count := int(canvas_command_count(view))
+    commands := make([]Canvas_Command_Info, count)
+    for index in 0..<count {
+        if canvas_command_info(view, u32(index), &commands[index]) != 0 {
+            delete(commands)
+            set_canvas_error(view, "Native Canvas command decode failed")
+            reset_canvas(view, false)
+            return false
+        }
+    }
+    if native_canvas_accept(view.canvas) != 0 {
+        delete(commands)
+        copy_canvas_bridge_error(view)
+        reset_canvas(view, false)
+        return false
+    }
+
+    if applied_request {
+        sync.mutex_lock(&view.mutex)
+        if view.native_presentation.generation == applied_request_generation &&
+           view.native_presentation.waiting {
+            view.native_presentation.waiting = false
+        }
+        sync.mutex_unlock(&view.mutex)
+        view.canvas_font_pixels = applied_pixels
+        view.canvas_render_scale = applied_scale
+    }
+
+    if view.canvas_commands != nil do delete(view.canvas_commands)
+    view.canvas_commands = commands
+    view.canvas_presentation_generation = generation
+    view.canvas_frame_background_rgba = canvas_background_rgba(view)
+    view.canvas_surface_width = canvas_surface_width(view)
+    view.canvas_surface_height = canvas_surface_height(view)
+    view.canvas_frame_revision = canvas_frame_revision(view)
+    view.canvas_instance_revision = canvas_instance_revision(view)
+    view.canvas_history_offset = canvas_history_offset(view)
+    view.canvas_scale = view.canvas_render_scale
+    view.canvas_frame_font_pixels = view.canvas_font_pixels
+    view.canvas_worker_has_frame = true
+    accept_history_snapshot(
+        view,
+        view.canvas_history_offset,
+        canvas_history_count(view),
+        canvas_history_row_base(view),
+        canvas_alternate_screen(view),
+        requested_history_generation,
+    )
+    view.canvas_error_len = 0
+
+    sync.mutex_lock(&view.mutex)
+    latest_revision := view.revision
+    latest_history := view.history_target_offset
+    terminal := view.native_terminal
+    sync.mutex_unlock(&view.mutex)
+    if terminal != nil &&
+       (view.canvas_instance_revision < latest_revision ||
+        view.canvas_history_offset != latest_history ||
+        view.canvas_instance_revision < target_revision ||
+        view.canvas_history_offset != requested_history_offset) {
+        native_terminal_wake(terminal)
+    }
+    return true
+}
+
 update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if !ensure_canvas(app, view) {
         return false
@@ -1350,6 +1826,15 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     requested_history_generation := view.history_generation
     sync.mutex_unlock(&view.mutex)
     if target_revision == 0 do return false
+    if view.route_kind == .Local {
+        return update_native_canvas(
+            app,
+            view,
+            target_revision,
+            requested_history_offset,
+            requested_history_generation,
+        )
+    }
     work := view.render_work
     sync.mutex_lock(&work.mutex)
     ready := work.ready
@@ -1374,26 +1859,26 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         return false
     }
 
-    for index in 0..<int(render_removal_count(view.canvas)) {
+    for index in 0..<int(canvas_removal_count(view)) {
         info: Canvas_Removal_Info
-        if render_removal_info(view.canvas, u32(index), &info) != 0 {
+        if canvas_removal_info(view, u32(index), &info) != 0 {
             set_canvas_error(view, "Canvas removal decode failed")
             reset_canvas(view, false)
             return false
         }
         remove_canvas_resource_key(view, info.resource, info.generation, true)
     }
-    for index in 0..<int(render_upload_count(view.canvas)) {
+    for index in 0..<int(canvas_upload_count(view)) {
         if !create_canvas_texture(app, view, u32(index)) {
             reset_canvas(view, false)
             return false
         }
     }
 
-    count := int(render_command_count(view.canvas))
+    count := int(canvas_command_count(view))
     commands := make([]Canvas_Command_Info, count)
     for index in 0..<count {
-        if render_command_info(view.canvas, u32(index), &commands[index]) != 0 {
+        if canvas_command_info(view, u32(index), &commands[index]) != 0 {
             delete(commands)
             set_canvas_error(view, "Canvas command decode failed")
             reset_canvas(view, false)
@@ -1411,21 +1896,21 @@ update_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
         delete(view.canvas_commands)
     }
     view.canvas_commands = commands
-    view.canvas_frame_background_rgba = render_background_rgba(view.canvas)
-    view.canvas_surface_width = render_surface_width(view.canvas)
-    view.canvas_surface_height = render_surface_height(view.canvas)
-    view.canvas_frame_revision = render_frame_revision(view.canvas)
-    view.canvas_instance_revision = render_instance_revision(view.canvas)
-    view.canvas_history_offset = render_history_offset(view.canvas)
+    view.canvas_frame_background_rgba = canvas_background_rgba(view)
+    view.canvas_surface_width = canvas_surface_width(view)
+    view.canvas_surface_height = canvas_surface_height(view)
+    view.canvas_frame_revision = canvas_frame_revision(view)
+    view.canvas_instance_revision = canvas_instance_revision(view)
+    view.canvas_history_offset = canvas_history_offset(view)
     view.canvas_scale = view.canvas_render_scale
     view.canvas_frame_font_pixels = view.canvas_font_pixels
     view.canvas_worker_has_frame = true
     accept_history_snapshot(
         view,
         view.canvas_history_offset,
-        render_history_count(view.canvas),
-        render_history_row_base(view.canvas),
-        render_alternate_screen(view.canvas) != 0,
+        canvas_history_count(view),
+        canvas_history_row_base(view),
+        canvas_alternate_screen(view),
         prepared_history_generation,
     )
     view.canvas_error_len = 0
@@ -2002,6 +2487,7 @@ clear_search_result :: proc(view: ^Instance_View) {
 
 ensure_search_worker :: proc(view: ^Instance_View) -> bool {
     if view == nil || view.control == nil do return false
+    if view.route_kind == .Local do return view.native_terminal != nil
     sync.mutex_lock(&view.mutex)
     failed := view.search_failed
     sync.mutex_unlock(&view.mutex)
@@ -2041,7 +2527,11 @@ queue_search :: proc(view: ^Instance_View, query: []u8, reverse: bool) -> bool {
     view.search_state = .Idle
     view.search_error_len = 0
     sync.mutex_unlock(&view.mutex)
-    sync.cond_signal(&view.search_cond)
+    if view.route_kind == .Local && view.native_terminal != nil {
+        native_terminal_wake(view.native_terminal)
+    } else {
+        sync.cond_signal(&view.search_cond)
+    }
     return true
 }
 
@@ -2304,6 +2794,9 @@ scroll_history_rows :: proc(view: ^Instance_View, rows_delta: int) -> bool {
             u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
         view.history_anchor_valid = true
     }
+    if view.route_kind == .Local && view.native_terminal != nil {
+        native_terminal_wake(view.native_terminal)
+    }
     return true
 }
 
@@ -2330,6 +2823,9 @@ set_history_offset :: proc(view: ^Instance_View, requested_offset: u32) -> bool 
         view.history_anchor_top_row =
             u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
         view.history_anchor_valid = true
+    }
+    if view.route_kind == .Local && view.native_terminal != nil {
+        native_terminal_wake(view.native_terminal)
     }
     return true
 }
@@ -2373,6 +2869,9 @@ scroll_history_wheel :: proc(view: ^Instance_View, wheel_rows: f32) -> bool {
             u64(view.history_row_base) + u64(view.history_count) - u64(clamped)
         view.history_anchor_valid = true
     }
+    if view.route_kind == .Local && view.native_terminal != nil {
+        native_terminal_wake(view.native_terminal)
+    }
     return true
 }
 
@@ -2400,6 +2899,9 @@ return_history_live_with_selection_policy :: proc(view: ^Instance_View, clear_se
         clear_selection_locked(view)
     }
     reset_history_locked(view)
+    if changed && view.route_kind == .Local && view.native_terminal != nil {
+        native_terminal_wake(view.native_terminal)
+    }
     return changed
 }
 
@@ -2416,7 +2918,7 @@ displayed_alternate_screen :: proc(view: ^Instance_View) -> bool {
         return false
     }
     if view.canvas != nil {
-        return render_alternate_screen(view.canvas) != 0
+        return canvas_alternate_screen(view)
     }
     sync.mutex_lock(&view.mutex)
     value := view.alternate_screen
@@ -2479,9 +2981,15 @@ allocate_instance_view :: proc(ownership: Instance_Ownership) -> ^Instance_View 
     if ownership == .Owned do view.size_control.mode = .Taking
     view.text = make([]u8, SESSION_TEXT_BYTES)
     view.scratch = make([]u8, SESSION_TEXT_BYTES)
-    if view.text == nil || view.scratch == nil {
+    row_capacity := int(render_maximum_rows())
+    view.native_row_shapes = make([]Native_Row_Shape, row_capacity)
+    view.native_row_shapes_scratch = make([]Native_Row_Shape, row_capacity)
+    if view.text == nil || view.scratch == nil ||
+       view.native_row_shapes == nil || view.native_row_shapes_scratch == nil {
         if view.text != nil do delete(view.text)
         if view.scratch != nil do delete(view.scratch)
+        if view.native_row_shapes != nil do delete(view.native_row_shapes)
+        if view.native_row_shapes_scratch != nil do delete(view.native_row_shapes_scratch)
         free(view)
         return nil
     }
@@ -2516,6 +3024,17 @@ create_target_instance_view :: proc(
     view.server_id = server_id
     view.session_id = session_id
     view.instance_id = instance_id
+    if route_kind == .Local {
+        worker_context := instance_worker_context()
+        view.control_thread = thread.create_and_start_with_data(
+            rawptr(view),
+            native_terminal_instance,
+            init_context = worker_context,
+            name = "howl-odin-terminal",
+        )
+        if view.control_thread == nil do publish_initial_error(view, "Native terminal worker creation failed")
+        return view
+    }
     view.control_interrupt = interrupt_create()
     view.observer_interrupt = interrupt_create()
     if view.control_interrupt == nil || view.observer_interrupt == nil {
@@ -2571,7 +3090,9 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     reset_canvas(view)
     sync.mutex_lock(&view.mutex)
     view.worker_stop = true
+    native_terminal := view.native_terminal
     sync.mutex_unlock(&view.mutex)
+    if native_terminal != nil do native_terminal_wake(native_terminal)
     sync.cond_signal(&view.search_cond)
     sync.cond_signal(&view.control_cond)
     sync.cond_broadcast(&view.observer_cond)
@@ -2603,7 +3124,7 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     if view.search != nil {
         destroy(view.search)
     }
-    if view.control_pending_handle != nil do destroy(view.control_pending_handle)
+    if view.route_kind != .Local && view.control_pending_handle != nil do destroy(view.control_pending_handle)
     if view.control_interrupt != nil do interrupt_destroy(view.control_interrupt)
     if view.observer_interrupt != nil do interrupt_destroy(view.observer_interrupt)
     for view.control_count > 0 {
@@ -2613,10 +3134,12 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     if view.control_result.bytes != nil do delete(view.control_result.bytes)
     if view.clipboard_reply != nil do delete(view.clipboard_reply)
     if retire_local && view.route_kind == .Local && view.instance_id != 0 {
-        _ = local_instance_destroy(desktop_io_runtime, view.instance_id)
+        _ = native_local_instance_destroy(desktop_io_runtime, view.instance_id)
     }
     delete(view.scratch)
     delete(view.text)
+    delete(view.native_row_shapes_scratch)
+    delete(view.native_row_shapes)
     free(view)
 }
 
@@ -2753,14 +3276,34 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
     }
     command := profile_command(profile)
     cwd := profile_cwd(profile)
+    logical_pixels := profile.font_pixels
+    if logical_pixels == 0 do logical_pixels = app.terminal_font_pixels
+    scale := SDL.GetWindowDisplayScale(app.window)
+    font_pixels, scaled := scaled_canvas_font_pixels(logical_pixels, scale)
+    if !scaled {
+        return create_error_instance_view("Local Instance display scale is invalid", .Owned)
+    }
+    font := effective_terminal_primary_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    italic := effective_terminal_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold := effective_terminal_bold_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    bold_italic := effective_terminal_bold_italic_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    fallback := effective_terminal_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
+    secondary := effective_terminal_secondary_fallback_font(&app.terminal_fonts, &app.terminal_font_overrides)
     diagnostic: [160]u8
     diagnostic_len: c.size_t
-    local_id := local_instance_create(
+    local_id := native_local_instance_create(
         desktop_io_runtime,
         raw_data(shell), c.size_t(len(shell)),
         raw_data(command), c.size_t(len(command)),
         raw_data(cwd), c.size_t(len(cwd)),
         OWNED_SESSION_ROWS, OWNED_SESSION_COLUMNS, 4096,
+        raw_data(font), c.size_t(len(font)),
+        raw_data(italic), c.size_t(len(italic)),
+        raw_data(bold), c.size_t(len(bold)),
+        raw_data(bold_italic), c.size_t(len(bold_italic)),
+        raw_data(fallback), c.size_t(len(fallback)),
+        raw_data(secondary), c.size_t(len(secondary)),
+        font_pixels,
         raw_data(diagnostic[:]), c.size_t(len(diagnostic)), &diagnostic_len,
     )
     if local_id == 0 {
@@ -2769,7 +3312,7 @@ create_owned_profile_instance_view :: proc(app: ^App, profile: ^Profile, profile
     }
     view := create_local_instance_view(local_id)
     if view == nil {
-        _ = local_instance_destroy(desktop_io_runtime, local_id)
+        _ = native_local_instance_destroy(desktop_io_runtime, local_id)
         return nil
     }
     if view != nil {
@@ -2843,8 +3386,8 @@ terminal_pointer_location :: proc(
     if view == nil || view.canvas == nil {
         return 0, 0, 0, 0, false
     }
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
+    cell_width := canvas_cell_width(view)
+    cell_height := canvas_cell_height(view)
     if cell_width == 0 || cell_height == 0 || view.canvas_surface_width == 0 || view.canvas_surface_height == 0 {
         return 0, 0, 0, 0, false
     }
@@ -3642,8 +4185,8 @@ selection_cell_at :: proc(
        view.canvas_surface_width == 0 || view.canvas_surface_height == 0 {
         return 0, 0, false
     }
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
+    cell_width := canvas_cell_width(view)
+    cell_height := canvas_cell_height(view)
     if cell_width == 0 || cell_height == 0 {
         return 0, 0, false
     }
@@ -3709,7 +4252,7 @@ selection_stable_point_at :: proc(
     if !hit || view.canvas == nil {
         return 0, 0, 0, false, false
     }
-    cell_width := render_cell_width(view.canvas)
+    cell_width := canvas_cell_width(view)
     if cell_width == 0 {
         return 0, 0, 0, false, false
     }
@@ -3717,12 +4260,12 @@ selection_stable_point_at :: proc(
     if columns == 0 || viewport_column >= columns {
         return 0, 0, 0, false, false
     }
-    alternate = render_alternate_screen(view.canvas) != 0
+    alternate = canvas_alternate_screen(view)
     stable_row, stable_ok := selection_stable_row(
         viewport_row,
-        render_history_offset(view.canvas),
-        render_history_count(view.canvas),
-        render_history_row_base(view.canvas),
+        canvas_history_offset(view),
+        canvas_history_count(view),
+        canvas_history_row_base(view),
         alternate,
     )
     if !stable_ok {
@@ -3778,7 +4321,7 @@ expand_selection_at :: proc(
     view.selection_generation += 1
     generation := view.selection_generation
     sync.mutex_unlock(&view.mutex)
-    _ = queue_control(view, {kind = .Expand, action = kind, history = render_history_offset(view.canvas),
+    _ = queue_control(view, {kind = .Expand, action = kind, history = canvas_history_offset(view),
                             row = stable_row, column = column, columns = columns,
                             alternate = alternate ? u8(1) : u8(0), generation = generation})
     return true
@@ -3892,7 +4435,7 @@ update_selection_edge_scroll_intent :: proc(
     if view == nil || view.canvas == nil {
         return false
     }
-    cell_height := render_cell_height(view.canvas)
+    cell_height := canvas_cell_height(view)
     if cell_height == 0 {
         return false
     }
@@ -3901,7 +4444,7 @@ update_selection_edge_scroll_intent :: proc(
     if !surface_ok do return false
     surface_top := surface.y
     surface_bottom := surface.y + surface.h
-    alternate := render_alternate_screen(view.canvas) != 0
+    alternate := canvas_alternate_screen(view)
 
     sync.mutex_lock(&view.mutex)
     dragging := view.selection_dragging
@@ -4077,14 +4620,14 @@ draw_selection :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     selected_alternate := view.selection_alternate_screen
     sync.mutex_unlock(&view.mutex)
 
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
+    cell_width := canvas_cell_width(view)
+    cell_height := canvas_cell_height(view)
     if cell_width == 0 || cell_height == 0 {
         return
     }
     columns := u16(view.canvas_surface_width / cell_width)
     rows := u16(view.canvas_surface_height / cell_height)
-    alternate := render_alternate_screen(view.canvas) != 0
+    alternate := canvas_alternate_screen(view)
     if selected_columns != columns || selected_alternate != alternate || rows == 0 {
         return
     }
@@ -4102,10 +4645,10 @@ draw_selection :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) {
     color := SDL.Color{palette.accent[0], palette.accent[1], palette.accent[2], 72}
     for viewport_row in 0..<int(rows) {
         first, last: u16
-        if render_selection_span(
-            view.canvas, anchor_row, anchor_column, focus_row, focus_column,
-            selected_columns, selected_alternate ? 1 : 0, u16(viewport_row), &first, &last,
-        ) == 0 {
+        if !canvas_selection_span(
+            view, anchor_row, anchor_column, focus_row, focus_column,
+            selected_columns, selected_alternate, u16(viewport_row), &first, &last,
+        ) {
             continue
         }
         rect := SDL.FRect{
@@ -4130,22 +4673,22 @@ draw_search_highlight :: proc(app: ^App, view: ^Instance_View, pane: SDL.FRect) 
         return
     }
 
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
+    cell_width := canvas_cell_width(view)
+    cell_height := canvas_cell_height(view)
     if cell_width == 0 || cell_height == 0 {
         return
     }
     columns := u16(view.canvas_surface_width / cell_width)
     rows := u16(view.canvas_surface_height / cell_height)
-    alternate := render_alternate_screen(view.canvas) != 0
+    alternate := canvas_alternate_screen(view)
     if result.columns != columns || (result.alternate_screen != 0) != alternate {
         return
     }
     top_row: i64 = 0
     if !alternate {
-        top_row = i64(render_history_row_base(view.canvas)) +
-                  i64(render_history_count(view.canvas)) -
-                  i64(render_history_offset(view.canvas))
+        top_row = i64(canvas_history_row_base(view)) +
+                  i64(canvas_history_count(view)) -
+                  i64(canvas_history_offset(view))
     }
     viewport_row := i64(result.row) - top_row
     if viewport_row < 0 || viewport_row >= i64(rows) ||
@@ -5869,7 +6412,7 @@ history_scrollbar_geometry :: proc(
 ) -> (geometry: History_Scrollbar_Geometry, ok: bool) {
     if view == nil || view.canvas == nil do return {}, false
 
-    cell_height := render_cell_height(view.canvas)
+    cell_height := canvas_cell_height(view)
     if cell_height == 0 do return {}, false
     surface, surface_ok := terminal_surface_rect(view, pane)
     if !surface_ok do return {}, false
@@ -5877,10 +6420,10 @@ history_scrollbar_geometry :: proc(
     return history_scrollbar_geometry_for_surface(
         pane,
         surface,
-        render_history_offset(view.canvas),
-        render_history_count(view.canvas),
+        canvas_history_offset(view),
+        canvas_history_count(view),
         u32(view.canvas_surface_height / cell_height),
-        render_alternate_screen(view.canvas) != 0,
+        canvas_alternate_screen(view),
     )
 }
 
@@ -6277,8 +6820,8 @@ active_terminal_cursor_rect :: proc(
         return {}, {}, false
     }
     pane = pane_value
-    cell_width := render_cell_width(view.canvas)
-    cell_height := render_cell_height(view.canvas)
+    cell_width := canvas_cell_width(view)
+    cell_height := canvas_cell_height(view)
     if cell_width == 0 || cell_height == 0 {
         return {}, {}, false
     }
@@ -6859,7 +7402,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 13 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 14 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")
@@ -6875,6 +7418,8 @@ main :: proc() {
     assert(size_of(Selection_Range_Info) == int(selection_range_info_size()))
     assert(size_of(Interaction_State_Info) == int(interaction_state_info_size()))
     assert(size_of(Consequence_Info) == int(consequence_info_size()))
+    assert(size_of(Native_Terminal_Info) == int(native_terminal_info_size()))
+    assert(size_of(Native_Row_Shape) == 4)
     if !SDL.SetAppMetadata(APP_NAME, APP_VERSION, APP_IDENTIFIER) {
         sdl_error("SDL_SetAppMetadata failed")
         return
@@ -7075,13 +7620,8 @@ main :: proc() {
         fmt.eprintln("Odin config error: ", string(app.config_notice[:app.config_notice_len]))
         return
     }
-    app.render_dispatcher = start_render_dispatcher()
-    if app.render_dispatcher == nil {
-        fmt.eprintln("Odin process render worker creation failed")
-        return
-    }
     defer {
-        stop_render_dispatcher(app.render_dispatcher)
+        if app.render_dispatcher != nil do stop_render_dispatcher(app.render_dispatcher)
         app.render_dispatcher = nil
     }
     if intent == .Server {

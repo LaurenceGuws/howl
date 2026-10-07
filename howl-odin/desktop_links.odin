@@ -53,7 +53,7 @@ open_hyperlink_at :: proc(
     sync.mutex_lock(&view.mutex)
     generation := view.selection_generation
     sync.mutex_unlock(&view.mutex)
-    admitted := queue_control(view, {kind = .Link, history = render_history_offset(view.canvas),
+    admitted := queue_control(view, {kind = .Link, history = canvas_history_offset(view),
                                    row = stable_row, column = column, columns = columns,
                                    alternate = alternate ? u8(1) : u8(0), generation = generation}) == 0
     return true, admitted

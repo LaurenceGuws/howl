@@ -134,13 +134,17 @@ experimental:
     Safari/Home-Screen the WebKit/PWA canary; outside the core gate
   howl-odin: >-
     experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,
-    settings/actions, history/selection and bounded asynchronous workers. Direct Attach
-    profiles consume explicit HWLS Instance streams; transient `--server` startup uses
-    server-client exact Session+Instance attach and then the same observer/control/render/
-    consequence HWLS workers. Target identity includes route+endpoint+Session+Instance so
-    distinct Server-owned Instances never share consequence authority accidentally.
-    Launch profiles create a canonical in-process Instance through the listener-free
-    desktop Local owner (Linux PTY or Windows ConPTY); Direct Attach and Server-selected
+    settings/actions and history/selection. Direct Attach profiles consume explicit HWLS
+    Instance streams; transient `--server` startup uses server-client exact
+    Session+Instance attach and then the same transported observer/control/render/
+    consequence workers. Local launch profiles instead create one fully presented
+    in-process Instance (Linux PTY or Windows ConPTY) claimed by one terminal worker.
+    That worker owns PTY/VT service, semantic input, resize, history, search, selection,
+    hyperlink/consequence handling and Render production; SDL consumes immutable Render
+    publications through NativeCanvas on the graphical thread. Local has no HWLS,
+    howl-client observer/control/render workers, listener or service worker. Target
+    identity includes route+endpoint+Session+Instance so distinct Server-owned Instances
+    never share consequence authority accidentally. Direct Attach and Server-selected
     routes remain non-owning ordinary HWLS attachments. Its desktop font owner resolves
     regular/italic/bold/bold-italic files plus fallbacks and supplies independent
     howl-text FontSets to the shared Render face-family contract. No sibling

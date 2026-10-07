@@ -122,7 +122,7 @@ resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: 
     sync.mutex_unlock(&view.mutex)
     if !enabled || !ensure_canvas(app, view) do return
     geometry, ok := pane_geometry(width, height, canvas_render_scale_value(view),
-                                  render_cell_width(view.canvas), render_cell_height(view.canvas))
+                                  canvas_cell_width(view), canvas_cell_height(view))
     if !ok do return
     sync.mutex_lock(&view.mutex)
     task, needed := next_size_task(&view.size_control, geometry)

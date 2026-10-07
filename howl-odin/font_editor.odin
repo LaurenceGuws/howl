@@ -179,7 +179,7 @@ restart_all_font_renderers :: proc(app: ^App) {
 	if app == nil do return
 	for tab_index in 0..<app.tab_count {
 		for view in app.tabs[tab_index].panes {
-			if view != nil do restart_canvas_renderer(view)
+			if view != nil do refresh_terminal_presentation(app, view)
 		}
 	}
 }

@@ -310,7 +310,10 @@ reconcile_consequence_owners :: proc(app: ^App) {
 	}
 	for tab_index in 0..<app.tab_count {
 		for view in app.tabs[tab_index].panes {
-			if view == nil || view.control == nil || !instance_interactive(view) do continue
+			if view == nil || view.route_kind == .Local ||
+			   view.control == nil || !instance_interactive(view) {
+				continue
+			}
 			endpoint := instance_endpoint(view)
 			if len(endpoint) == 0 do continue
 			owner := find_consequence_owner(app, view)
@@ -371,6 +374,17 @@ apply_desktop_attention :: proc(app: ^App) -> bool {
 			owner.attention_pending = false
 		}
 		sync.mutex_unlock(&owner.mutex)
+	}
+	for tab_index in 0..<app.tab_count {
+		for view in app.tabs[tab_index].panes {
+			if view == nil || view.route_kind != .Local do continue
+			sync.mutex_lock(&view.mutex)
+			if view.native_attention_pending {
+				attention = true
+				view.native_attention_pending = false
+			}
+			sync.mutex_unlock(&view.mutex)
+		}
 	}
 	if !attention do return false
 	flags := SDL.GetWindowFlags(app.window)

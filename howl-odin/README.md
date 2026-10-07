@@ -13,10 +13,12 @@ not duplicate VT, PTY, Instance, text shaping, or terminal raster semantics.
 The current Linux proof plus Windows Remote and Local canaries use Odin + SDL3
 for the application/backend shell and the existing Howl native render owners for
 terminal presentation. `native/` is
-a C-shaped Zig seam over `howl-client`, `server-client`, `howl-render`, and the
-existing explicit Instance client transport. It exports neither wire/client backing structs nor a
-copied terminal renderer: Odin receives canonical Canvas resource/command facts
-and sends semantic input through `howl-client`. SDL3_ttf remains only for app
+a C-shaped Zig seam over transported `howl-client`/`server-client` routes and the
+canonical Instance/Render owners used directly by Local. It exports neither
+wire/client backing structs nor a copied terminal renderer: Odin receives canonical
+Canvas resource/command facts. Attached routes send semantic input through
+`howl-client`; Local sends the same semantic operations directly to its sole
+terminal-thread Instance owner. SDL3_ttf remains only for app
 chrome and IME composition; real terminal presentation is Canvas-only.
 
 Odin has no emergency substitute implementation path. A required canonical
@@ -26,7 +28,7 @@ display change may retain the last already-accepted canonical Canvas frame until
 its replacement frame is accepted, but a replacement failure discards that
 retained frame and exposes the exact failure.
 
-Direct local/attached observation keeps the existing lossless raw-snapshot policy on
+Direct attached observation keeps the existing lossless raw-snapshot policy on
 validated Unix sockets; TCP attachments retain compression, including loopback. The
 transient `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` startup route connects to
 one Server, consumes exact attach, and then every Odin observer/control/render/
@@ -51,8 +53,11 @@ Current canary:
 - native resizable SDL3 window with Windows-familiar tabs, `+`/menu affordance,
   command palette, and Settings surface;
 - Local launch profiles own canonical in-process Instances on Linux and Windows. Linux
-  uses the native PTY owner; Windows uses ConPTY. Both expose the Instance to Odin only
-  through listener-free ordinary HWLS client streams, never a hidden daemon or Server.
+  uses the native PTY owner; Windows uses ConPTY. One `howl-odin-terminal` worker
+  exclusively claims each Local Instance, services PTY/VT state, executes semantic
+  control/query/consequence work, and publishes immutable Render frames. SDL consumes
+  those publications on the graphical thread. No HWLS client stream, listener, hidden
+  daemon, or Server exists in the Local path.
   Windows currently accepts the interactive shell and cwd recipe; a nonempty profile
   command fails explicitly until Windows command-shell grammar has a deliberate contract.
   Direct Attach profiles own observer/control clients, cancellation, and teardown;
@@ -139,9 +144,12 @@ Current canary:
   presentation default. The profile dropdown enumerates the real catalogue and marks the
   stable-id default. Schema 4 also persists labelled Server endpoints separately from
   launch/attach profiles;
-- Launch profiles now create a canonical Howl Instance in-process and expose it to the
-  existing Odin control/observation/render/consequence clients through unnamed
-  socketpairs. No listener, filesystem socket, Session, Server, or standalone daemon is
+- Launch profiles now create a canonical presented Howl Instance in-process and hand it
+  directly to one terminal worker. PTY service, input, resize, history publication,
+  search, selection extraction/expansion, hyperlink lookup, consequence handling,
+  presentation reconfiguration, VT observation and Render production all stay on that
+  owner. SDL receives only final backend-neutral Render publications. No HWLS, client
+  snapshot path, listener, filesystem socket, Session, Server, or standalone daemon is
   created for Local. Shell/command/cwd are live recipe inputs; nonempty environment
   overrides currently fail explicitly rather than being silently ignored;
 - Servers is a separate product route: the dropdown opens an asynchronous persisted
@@ -150,12 +158,16 @@ Current canary:
   ordinary Odin terminal tabs/panes/input/Canvas/history path;
 - Home tab observes the existing canonical Howl Instance at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
-- committed text plus named/control keys round-trip through `howl-client`;
+- committed text plus named/control keys use the same canonical VT semantics: Attach/
+  Server routes round-trip through `howl-client`, while Local feeds the owned Instance
+  directly on its terminal thread;
 - desktop pointer routing now consults Howl's coherent interaction state instead of
   assuming every mouse belongs to the client. Ordinary shell tracking-off behavior
   remains local selection/history; a child enabling canonical mouse tracking gets
-  semantic press/release/move/wheel facts through `howl-client.actions.mouse`, and
-  VT alone chooses the child escape encoding. Shift+drag and Shift+wheel are explicit
+  semantic press/release/move/wheel facts through the bridge's canonical semantic
+  actions, and VT alone chooses the child escape encoding. Attached routes use
+  `howl-client.actions.mouse`; Local applies the same facts directly to Instance.
+  Shift+drag and Shift+wheel are explicit
   local overrides even while tracking is enabled. A controlled SGR button-event
   canary produced exact child mouse reports for click, drag, and wheel, while the
   same Shift overrides produced no additional child RX bytes;
@@ -164,7 +176,8 @@ Current canary:
   the managed-KWin canary received canonical focus-out `ESC[O` and focus-in `ESC[I`.
   Focus loss also terminates any terminal-owned mouse capture with semantic releases;
 - Ctrl+left-click is the deliberate desktop hyperlink override. The app resolves the
-  exact displayed stable cell through `howl-client.view` OSC 8 metadata, accepts only
+  exact displayed stable cell through canonical OSC 8 metadata, using `howl-client.view`
+  for attachments and direct VT observation for Local, accepts only
   valid UTF-8 `http://` / `https://` targets, and delegates opening to SDL. Ordinary
   unlinked Ctrl-clicks fall through to the existing mouse/selection router; unsupported
   canonical schemes such as `file://` are never handed to the platform;
@@ -403,7 +416,14 @@ controls proofs, not double-click-titlebar or mixed-monitor/hotplug acceptance.
 
 ## Asynchronous Instance I/O
 
-One application-owned I/O runtime outlives all attached Instance workers. Connection setup, protocol requests/acknowledgements, search, selection/clipboard/link queries, image fetching, and host-policy I/O execute on workers. SDL windowing, drawing, resource submission, clipboard and browser opening remain on the graphical thread. Native transport is explicit Unix or numeric-IPv4 TCP; Odin owns no SSH subprocess, bridge executable, PTY, Session or Server.
+One application-owned I/O runtime outlives all Instance workers. Transported
+Direct/Server routes keep independent connection/control/observation workers for
+protocol requests, search, selection, images and host policy. Local has exactly one
+`howl-odin-terminal` worker per Instance; it owns PTY/VT service and all terminal-side
+semantic work and publishes immutable Render frames. SDL windowing, drawing, resource
+submission, clipboard and browser opening remain on the graphical thread. Native
+transport for attachments is explicit Unix or numeric-IPv4 TCP; Odin owns no SSH
+subprocess, bridge executable, Session or Server.
 
 ## Instance size control
 
@@ -423,11 +443,13 @@ automatic resizes use only the existing resize request, not assign-leader. A
 not-leader reply stops auto-sizing and leaves ordinary terminal input usable.
 There is no ownership polling timer and no automatic attempt to take it back.
 
-The shared client preserves NotGeometryLeader separately from transport failure.
-Odin allows one queued/in-flight size transaction per pane, remembers only ACKed
+For transported attachments the shared client preserves NotGeometryLeader separately
+from transport failure. Odin allows one queued/in-flight size transaction per pane, remembers only ACKed
 geometry, and uses an intent generation so a queued old request is retired or a
 late completion cannot re-enable stopped/newly requested auto-sizing. A resize
 already transmitted may still complete after Stop; Stop is not an unsend promise.
+Local performs the same serialized size transaction on the terminal owner; invalid
+geometry is a nonfatal rejected-size result rather than a terminal-owner failure.
 
 Stop deliberately does not send the protocol's unconditional clear-leader
 operation: a delayed clear could evict a different client's newer ownership.
@@ -438,7 +460,7 @@ service update, route policy, profile conversion, or default shortcut is needed.
 
 ## Reusing an observed live view
 
-An image-free live observation now transfers its existing immutable `howl-client`
+For transported Direct/Server attachments, an image-free live observation transfers its existing immutable `howl-client`
 view to rendering instead of fetching and projecting the screen a second time.
 The pane owns at most one newest offer; a render request may own one transferred
 view. Replacement, failure and teardown destroy their own allocations. There is
@@ -458,7 +480,7 @@ borrowed from a different observer. Clearing the last image can return to live
 view reuse. This is partial elimination of redundant work, not a claim that all
 observations or connection lifetimes have been merged.
 
-The two worker channels remain independent. A stalled external image fetch does
+On transported attachments the two worker channels remain independent. A stalled external image fetch does
 not block the graphical thread, input worker, or newer observer metadata. Native
 text/image transition and stopped-carrier proofs remain required alongside the
 pixel and CPU controls. The improvement is in Odin's use of the existing shared

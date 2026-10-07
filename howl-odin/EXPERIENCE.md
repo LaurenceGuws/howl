@@ -1014,9 +1014,11 @@ The Odin application deliberately has a small **direct** dependency surface:
 - one app-private `libhowl_odin_bridge.so`;
 - libc/libm from the host platform.
 
-The bridge reuses in-tree `howl-client`, `server-client`, `howl-render`, and the
-optional `howl_local` owner. Local creation composes canonical `howl-instance`/
-`howl-pty`/`howl-vt` in-process; Remote attach remains non-owning. Native text
+The bridge reuses in-tree `howl-client` and `server-client` for transported
+attachments, while Local directly owns the canonical `howl-instance`/
+`howl-pty`/`howl-vt` composition and its Render publication path in-process.
+Exactly one terminal worker owns each Local Instance; no Local HWLS/service/client
+lane exists. Remote attach remains non-owning. Native text
 rendering dynamically uses the
 system FreeType/HarfBuzz stack, which in turn brings normal font/image support
 libraries such as zlib, bzip2, libpng, Brotli, GLib, Graphite2, and PCRE2 on the

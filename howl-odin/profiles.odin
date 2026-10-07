@@ -507,7 +507,7 @@ profile_apply_font_to_views :: proc(app: ^App, profile_index: int) {
 			if view != nil && view.profile_index == profile_index {
 				view.profile_font_pixels = profile.font_pixels
 				seed_view_terminal_font(app, view)
-				restart_canvas_renderer(view)
+				refresh_terminal_presentation(app, view)
 			}
 		}
 	}

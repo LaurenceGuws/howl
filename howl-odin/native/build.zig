@@ -18,7 +18,6 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("howl_client", client_dependency.module("howl_client"));
     root.addImport("howl_client_render", client_dependency.module("howl_client_render"));
-    root.addImport("howl_local", client_dependency.module("howl_local"));
     root.addImport("server_client", server_client_dependency.module("server_client"));
 
     const library = b.addLibrary(.{

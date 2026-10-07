@@ -249,6 +249,14 @@ pub fn bufferedOutputPending(instance: *const Instance) bool {
     return state.read_start < state.read_end;
 }
 
+/// True while caller input or terminal replies are queued for the child PTY.
+///
+/// Poll owners include writable readiness whenever this is true; unlike the
+/// previous Service result, this reflects input admitted since the last turn.
+pub fn writePending(instance: *const Instance) bool {
+    return stateConst(instance).writes.count != 0;
+}
+
 /// Reports whether this Instance owns canonical text/Render presentation state.
 pub fn presented(instance: *const Instance) bool {
     return stateConst(instance).presentation != null;
@@ -791,6 +799,11 @@ const PresentationState = struct {
         writer.finish(
             self.presentation_generation,
             frame.revision,
+            observation.semanticSequence(),
+            view.history_offset,
+            view.history_count,
+            view.history_row_base,
+            view.is_alternate_screen,
             surface,
             cell_size,
             missing.len + frame.uploads.len,
