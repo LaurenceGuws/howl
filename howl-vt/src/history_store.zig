@@ -397,6 +397,48 @@ const Shape = struct {
     scalars: u32,
 };
 
+comptime {
+    std.debug.assert(@sizeOf(CellAttrs) == 44);
+    std.debug.assert(@sizeOf(cell_values.Color) == 8);
+    std.debug.assert(@offsetOf(cell_values.Color, "kind") == 4);
+    std.debug.assert(@offsetOf(cell_values.Color, "value") == 0);
+    std.debug.assert(@offsetOf(CellAttrs, "fg") == 0);
+    std.debug.assert(@offsetOf(CellAttrs, "bg") == 8);
+    std.debug.assert(@offsetOf(CellAttrs, "underline_color") == 16);
+    std.debug.assert(@offsetOf(CellAttrs, "link_id") == 24);
+    std.debug.assert(@offsetOf(CellAttrs, "font") == 28);
+    std.debug.assert(@offsetOf(CellAttrs, "baseline") == 29);
+    std.debug.assert(@offsetOf(CellAttrs, "bold") == 30);
+    std.debug.assert(@offsetOf(CellAttrs, "dim") == 31);
+    std.debug.assert(@offsetOf(CellAttrs, "italic") == 32);
+    std.debug.assert(@offsetOf(CellAttrs, "blink") == 33);
+    std.debug.assert(@offsetOf(CellAttrs, "blink_fast") == 34);
+    std.debug.assert(@offsetOf(CellAttrs, "reverse") == 35);
+    std.debug.assert(@offsetOf(CellAttrs, "invisible") == 36);
+    std.debug.assert(@offsetOf(CellAttrs, "underline") == 37);
+    std.debug.assert(@offsetOf(CellAttrs, "strikethrough") == 38);
+    std.debug.assert(@offsetOf(CellAttrs, "underline_style") == 39);
+    std.debug.assert(@offsetOf(CellAttrs, "protected") == 40);
+}
+
+inline fn historyAttrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
+    const a = std.mem.asBytes(left);
+    const b = std.mem.asBytes(right);
+    const color_mask: u64 = 0x0000_00ff_ffff_ffff;
+    const difference =
+        ((std.mem.readInt(u64, a[0..8], .little) ^
+            std.mem.readInt(u64, b[0..8], .little)) & color_mask) |
+        ((std.mem.readInt(u64, a[8..16], .little) ^
+            std.mem.readInt(u64, b[8..16], .little)) & color_mask) |
+        ((std.mem.readInt(u64, a[16..24], .little) ^
+            std.mem.readInt(u64, b[16..24], .little)) & color_mask) |
+        (std.mem.readInt(u64, a[24..32], .little) ^
+            std.mem.readInt(u64, b[24..32], .little)) |
+        (std.mem.readInt(u64, a[32..40], .little) ^
+            std.mem.readInt(u64, b[32..40], .little));
+    return difference == 0 and left.protected == right.protected;
+}
+
 const Recycled = struct {
     cells: CellStream.Chain = .{},
     attrs: AttrStream.Chain = .{},
@@ -537,7 +579,7 @@ pub const Store = struct {
             for (source.cells) |*value| {
                 if (value.combining_len >= scalar_storage.inline_scalars)
                     return error.InvalidSource;
-                if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
+                if (previous == null or !historyAttrsEqual(previous.?, &value.attrs)) {
                     attrs += 1;
                     previous = &value.attrs;
                 }
@@ -554,7 +596,7 @@ pub const Store = struct {
         var scalars: usize = 0;
         var previous: ?*const CellAttrs = null;
         for (source.cells, 0..) |*value, column| {
-            if (previous == null or !cell_values.attrsEqual(previous.?, &value.attrs)) {
+            if (previous == null or !historyAttrsEqual(previous.?, &value.attrs)) {
                 attrs += 1;
                 previous = &value.attrs;
             }
@@ -1185,4 +1227,93 @@ test "history shape rejects external scalar claim when scalar owner is empty" {
         .wrapped = false,
         .geometry = .single_width,
     }));
+}
+
+test "history attribute equality ignores padding while preserving semantic fields" {
+    var left: CellAttrs = undefined;
+    var right: CellAttrs = undefined;
+    @memset(std.mem.asBytes(&left), 0xa5);
+    @memset(std.mem.asBytes(&right), 0x5a);
+
+    inline for (@typeInfo(CellAttrs).@"struct".field_names, @typeInfo(CellAttrs).@"struct".field_types) |name, field_type| {
+        if (field_type == cell_values.Color) {
+            @field(left, name).kind = .default;
+            @field(left, name).value = 0;
+            @field(right, name).kind = .default;
+            @field(right, name).value = 0;
+        } else {
+            @field(left, name) = @field(cell_values.default_attrs, name);
+            @field(right, name) = @field(cell_values.default_attrs, name);
+        }
+    }
+    try std.testing.expect(historyAttrsEqual(&left, &right));
+    try std.testing.expect(cell_values.attrsEqual(&left, &right));
+
+    right.fg.value = 1;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.fg.value = 0;
+    right.bg.kind = .indexed;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.bg.kind = .default;
+    right.underline_color.value = 1;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.underline_color.value = 0;
+    right.link_id = 1;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.link_id = 0;
+    right.italic = true;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.italic = false;
+    right.strikethrough = true;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+    right.strikethrough = false;
+    right.protected = .dec;
+    try std.testing.expect(!historyAttrsEqual(&left, &right));
+}
+
+test "history attribute equality matches canonical contract for every field" {
+    const Mutate = struct {
+        fn scalar(comptime T: type, value: T) T {
+            return switch (@typeInfo(T)) {
+                .bool => !value,
+                .int => value ^ 1,
+                .@"enum" => if (@backingInt(value) == @typeInfo(T).@"enum".field_values[0])
+                    @fromBackingInt(@intCast(@typeInfo(T).@"enum".field_values[1]))
+                else
+                    @fromBackingInt(@intCast(@typeInfo(T).@"enum".field_values[0])),
+                else => @compileError("add history attr proof for the new field type"),
+            };
+        }
+    };
+
+    const original = cell_values.default_attrs;
+    inline for (
+        @typeInfo(CellAttrs).@"struct".field_names,
+        @typeInfo(CellAttrs).@"struct".field_types,
+    ) |field_name, field_type| {
+        if (field_type == cell_values.Color) {
+            inline for (
+                @typeInfo(cell_values.Color).@"struct".field_names,
+                @typeInfo(cell_values.Color).@"struct".field_types,
+            ) |component_name, component_type| {
+                var changed = original;
+                const component = &@field(@field(changed, field_name), component_name);
+                component.* = Mutate.scalar(component_type, component.*);
+                try std.testing.expect(!historyAttrsEqual(&original, &changed));
+                try std.testing.expectEqual(
+                    cell_values.attrsEqual(&original, &changed),
+                    historyAttrsEqual(&original, &changed),
+                );
+            }
+        } else {
+            var changed = original;
+            const value = &@field(changed, field_name);
+            value.* = Mutate.scalar(field_type, value.*);
+            try std.testing.expect(!historyAttrsEqual(&original, &changed));
+            try std.testing.expectEqual(
+                cell_values.attrsEqual(&original, &changed),
+                historyAttrsEqual(&original, &changed),
+            );
+        }
+    }
 }
