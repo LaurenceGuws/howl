@@ -83,6 +83,17 @@ const FrameSlot = struct {
         self.* = undefined;
     }
 
+    fn ensureCommands(
+        self: *FrameSlot,
+        allocator: std.mem.Allocator,
+        needed: usize,
+    ) std.mem.Allocator.Error!void {
+        if (self.commands.len >= needed) return;
+        const replacement = try allocator.alloc(terminal.Command, needed);
+        allocator.free(self.commands);
+        self.commands = replacement;
+    }
+
     fn ensurePixels(self: *FrameSlot, allocator: std.mem.Allocator, needed: usize) !void {
         if (self.pixels.len >= needed) return;
         const replacement = try allocator.alloc(u8, needed);
@@ -192,6 +203,19 @@ pub const Writer = struct {
     /// Borrows the fixed backend-command storage for this unpublished slot.
     pub fn commandStorage(self: *Writer) []terminal.Command {
         return self.slot().commands;
+    }
+
+    /// Grows only this unpublished slot's backend-command storage.
+    ///
+    /// The slot is exclusively producer-owned while writing, so replacement
+    /// cannot invalidate a backend lease. Existing unpublished contents need
+    /// not be preserved.
+    pub fn ensureCommandCapacity(
+        self: *Writer,
+        needed: usize,
+    ) std.mem.Allocator.Error!void {
+        const impl = exchangeImpl(self.exchange);
+        try self.slot().ensureCommands(impl.allocator, needed);
     }
 
     /// Ensures and borrows owned pixel storage that will remain stable for the eventual lease.
@@ -536,6 +560,19 @@ test "ready publications coalesce while a held lease remains immutable" {
     try std.testing.expectEqual(@as(u64, 3), latest.value.revision);
     try std.testing.expectEqual(@as(u16, 3), latest.value.commands[0].solid.rect.width);
     try latest.release(&.{});
+}
+
+test "unpublished command storage grows without shrinking" {
+    const exchange = try init(std.testing.allocator, 2);
+    defer deinit(exchange);
+
+    var writer = beginWrite(exchange).?;
+    try std.testing.expectEqual(@as(usize, 2), writer.commandStorage().len);
+    try writer.ensureCommandCapacity(9);
+    try std.testing.expectEqual(@as(usize, 9), writer.commandStorage().len);
+    try writer.ensureCommandCapacity(4);
+    try std.testing.expectEqual(@as(usize, 9), writer.commandStorage().len);
+    writer.abort();
 }
 
 test "lease feedback publishes only newest exact residency" {

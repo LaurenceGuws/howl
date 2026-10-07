@@ -574,6 +574,7 @@ const PresentationState = struct {
     backend_residency_count: usize = 0,
     atlas_pixel_capacity: usize,
     command_capacity: usize,
+    command_limit: usize,
     presentation_generation: u64 = 1,
 
     fn initWithFonts(
@@ -616,12 +617,17 @@ const PresentationState = struct {
 
         const state = try allocator.create(PresentationState);
         errdefer allocator.destroy(state);
+        const command_limit = if (config.command_limit == 0)
+            config.command_capacity
+        else
+            config.command_limit;
         state.* = .{
             .renderer = renderer,
             .fonts = fonts.*,
             .exchange = exchange,
             .atlas_pixel_capacity = atlas_pixel_capacity,
             .command_capacity = config.command_capacity,
+            .command_limit = command_limit,
         };
         state.refresh(observation, 0) catch |failure| {
             allocator.destroy(state);
@@ -772,16 +778,37 @@ const PresentationState = struct {
         }
         std.debug.assert(pixel_at == external_pixel_count);
 
-        const frame = try terminal_render.frame(
-            self.renderer,
-            prospective[0..prospective_count],
-            .{
-                .uploads = uploads[missing.len..],
-                .removals = writer.removalStorage(),
-                .commands = writer.commandStorage(),
-                .pixels = pixels[external_pixel_count..],
-            },
-        );
+        const frame = while (true) {
+            const current = terminal_render.frame(
+                self.renderer,
+                prospective[0..prospective_count],
+                .{
+                    .uploads = uploads[missing.len..],
+                    .removals = writer.removalStorage(),
+                    .commands = writer.commandStorage(),
+                    .pixels = pixels[external_pixel_count..],
+                },
+            ) catch |failure| switch (failure) {
+                error.CommandLimit => {
+                    const current_capacity = writer.commandStorage().len;
+                    if (current_capacity >= self.command_limit)
+                        return error.CommandLimit;
+                    const doubled = std.math.mul(
+                        usize,
+                        current_capacity,
+                        2,
+                    ) catch self.command_limit;
+                    const next = @min(
+                        self.command_limit,
+                        @max(current_capacity + 1, doubled),
+                    );
+                    try writer.ensureCommandCapacity(next);
+                    continue;
+                },
+                else => |err| return err,
+            };
+            break current;
+        };
         for (uploads[missing.len..][0..frame.uploads.len]) |*upload|
             upload.pixel_offset = std.math.add(
                 usize,
@@ -1026,6 +1053,10 @@ const State = struct {
         presentation.terminal_history_offset = 0;
         presentation.backend_residency_count = 0;
         presentation.atlas_pixel_capacity = atlas_pixel_capacity;
+        presentation.command_limit = if (config.command_limit == 0)
+            config.command_capacity
+        else
+            config.command_limit;
         presentation.presentation_generation = next_generation;
         return .{
             .cell_size = cell_size,
@@ -1908,6 +1939,57 @@ test "presented Instance owns direct VT to Render progression" {
     try std.testing.expect(after.revision > before.revision);
     try std.testing.expect(frame.commands.len != 0);
     try std.testing.expectEqual(after.revision, frame.revision);
+}
+
+test "presented publication grows frame command storage to configured limit" {
+    const fonts = @import("test_fonts");
+    const font_config = text.Config{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 18 },
+    };
+    const instance = try initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = "sleep 30",
+            .rows = 2,
+            .columns = 8,
+            .history_rows = 8,
+        },
+        .{
+            .fonts = .{ .regular = .{ .path = font_config } },
+            .box_drawing = .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .shape_cache = .{
+                .entry_capacity = 32,
+                .scalar_capacity = 128,
+                .glyph_capacity = 128,
+                .max_sequence_scalars = 16,
+            },
+            .atlas = .{
+                .width = 256,
+                .height = 256,
+                .entry_capacity = 128,
+            },
+            .shaped_capacity = 128,
+            .raster_bytes = 256 * 256,
+            .command_capacity = 1,
+            .command_limit = 64,
+        },
+    );
+    defer deinit(instance);
+
+    const state = stateMut(instance);
+    try std.testing.expect((try state.terminal.feed("ABCDEFGH")).stateChanged());
+    try publishRender(instance);
+
+    const exchange = try renderExchange(instance);
+    var lease = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    defer lease.abandon();
+    try std.testing.expect(lease.value.commands.len > 1);
 }
 
 test "presented publication owns canonical VT image bytes and consumes residency feedback" {
