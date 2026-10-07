@@ -74,6 +74,22 @@ pane_geometry :: proc(width, height, scale: f32, cell_width, cell_height: u16) -
             u16(clamp(columns, 1, f32(render_maximum_columns()))), cell_width, cell_height}, true
 }
 
+local_canvas_resize_ready :: proc(
+    view: ^Instance_View,
+    target_font_pixels: u16,
+    target_scale: f32,
+) -> bool {
+    if view == nil || view.route_kind != .Local do return true
+    if target_font_pixels == 0 || !valid_canvas_scale(target_scale) do return false
+
+    sync.mutex_lock(&view.mutex)
+    transitioning := view.native_presentation.pending || view.native_presentation.waiting
+    sync.mutex_unlock(&view.mutex)
+    return !transitioning &&
+           view.canvas_font_pixels == target_font_pixels &&
+           view.canvas_render_scale == target_scale
+}
+
 
 centered_terminal_surface :: proc(
     content: SDL.FRect,
@@ -121,6 +137,14 @@ resize_instance_to_pane :: proc(app: ^App, view: ^Instance_View, width, height: 
     enabled := view.size_control.mode != .Fixed
     sync.mutex_unlock(&view.mutex)
     if !enabled || !ensure_canvas(app, view) do return
+    if view.route_kind == .Local {
+        target_scale := SDL.GetWindowDisplayScale(app.window)
+        target_pixels, valid_target := scaled_canvas_font_pixels(
+            view_terminal_font_pixels(app, view),
+            target_scale,
+        )
+        if !valid_target || !local_canvas_resize_ready(view, target_pixels, target_scale) do return
+    }
     geometry, ok := pane_geometry(width, height, canvas_render_scale_value(view),
                                   canvas_cell_width(view), canvas_cell_height(view))
     if !ok do return

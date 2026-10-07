@@ -98,6 +98,30 @@ pane_size_uses_backing_pixels_and_rejects_invalid_geometry :: proc(t: ^testing.T
 }
 
 @(test)
+local_resize_waits_for_the_accepted_presentation_lattice :: proc(t: ^testing.T) {
+    view := Instance_View{
+        route_kind = .Local,
+        canvas_font_pixels = 15,
+        canvas_render_scale = 1,
+    }
+
+    testing.expect(t, local_canvas_resize_ready(&view, 15, 1))
+    testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
+
+    view.native_presentation.pending = true
+    view.canvas_font_pixels = 26
+    view.canvas_render_scale = 1.7
+    testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
+
+    view.native_presentation.pending = false
+    view.native_presentation.waiting = true
+    testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
+
+    view.native_presentation.waiting = false
+    testing.expect(t, local_canvas_resize_ready(&view, 26, 1.7))
+}
+
+@(test)
 size_actions_are_rebindable_without_hardcoded_shortcuts :: proc(t: ^testing.T) {
     app: App
     testing.expect(t, initialize_key_mappings(&app))
