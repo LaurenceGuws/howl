@@ -28,7 +28,7 @@ SETTLE_MS=${HORSES_SETTLE_MS:-1200}
 WINDOW_RECT=${HORSES_RECT:-auto}
 SYNCHRONIZED_OUTPUT=${HORSES_SYNCHRONIZED_OUTPUT:-1}
 IFS=',' read -r -a DOSES <<< "${HORSES_DOSES:-1,4,16,64,256,1024,4096,8192,16384,32768,65536}"
-HORSES=(howl foot kitty alacritty ghostty konsole wezterm)
+HORSES=(howl foot kitty alacritty konsole wezterm)
 
 usage() {
     cat <<'USAGE'
@@ -94,9 +94,6 @@ horse_argv() {
         alacritty)
             printf '%s\0' /usr/bin/alacritty --config-file "$CONFIG_ROOT/alacritty.toml"
             ;;
-        ghostty)
-            printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$CONFIG_ROOT/ghostty-xdg" /usr/bin/ghostty --gtk-single-instance=false
-            ;;
         konsole)
             printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$EVIDENCE_ROOT/konsole-xdg" \
                 /usr/bin/konsole --separate --builtin-profile --hide-menubar --hide-tabbar --hide-toolbars --notransparency \
@@ -140,7 +137,6 @@ horse_executable() {
         foot) printf '%s\n' /usr/bin/foot ;;
         kitty) printf '%s\n' /usr/bin/kitty ;;
         alacritty) printf '%s\n' /usr/bin/alacritty ;;
-        ghostty) printf '%s\n' /usr/bin/ghostty ;;
         konsole) printf '%s\n' /usr/bin/konsole ;;
         wezterm) printf '%s\n' /usr/bin/wezterm ;;
         *) return 1 ;;
@@ -154,7 +150,6 @@ horse_config_digest() {
         foot) sha256sum "$CONFIG_ROOT/foot.ini" | awk '{print $1}' ;;
         kitty) sha256sum "$CONFIG_ROOT/kitty.conf" | awk '{print $1}' ;;
         alacritty) sha256sum "$CONFIG_ROOT/alacritty.toml" | awk '{print $1}' ;;
-        ghostty) sha256sum "$CONFIG_ROOT/ghostty-xdg/ghostty/config" | awk '{print $1}' ;;
         wezterm) sha256sum "$CONFIG_ROOT/wezterm.lua" | awk '{print $1}' ;;
         konsole) sha256sum "$SELF" | awk '{print $1}' ;;
         *) return 1 ;;
@@ -168,7 +163,6 @@ horse_version() {
         foot) foot --version 2>&1 | head -n 1 ;;
         kitty) kitty --version 2>&1 | head -n 1 ;;
         alacritty) alacritty --version 2>&1 | head -n 1 ;;
-        ghostty) ghostty --version 2>&1 | head -n 1 ;;
         konsole) konsole --version 2>&1 | head -n 1 ;;
         wezterm) wezterm --version 2>&1 | head -n 1 ;;
     esac
