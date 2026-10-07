@@ -2488,6 +2488,8 @@ pub const Screen = struct {
         const col = self.cursor.col;
         const start = physical_row * @as(u32, self.cols) + @as(u32, col);
         const limit = @min(bytes.len, self.cols - col);
+        var template = blank_cell;
+        template.attrs = self.current_attrs;
         var count: usize = 0;
         while (count < limit) : (count += 1) {
             const byte = bytes[count];
@@ -2495,11 +2497,8 @@ pub const Screen = struct {
             const target = &cells[start + count];
             if (target.width != 1 or target.height != 1 or target.x != 0 or
                 target.y != 0 or target.combining_len != 0) break;
-            target.* = .{
-                .codepoint = byte,
-                .width = 1,
-                .attrs = self.current_attrs,
-            };
+            target.* = template;
+            target.codepoint = byte;
         }
         if (count == 0) return 0;
         const last = bytes[count - 1];
