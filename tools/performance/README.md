@@ -7,6 +7,7 @@ The benchmark configs under `configs/` are intentionally separate from Captain's
 Performance-specific choices are documented product knobs:
 
 - **Howl**: isolated `XDG_CONFIG_HOME`, 10 px terminal font, ordinary 4096-row Local history retained by the product.
+- **Foot**: 7.90 pt IosevkaTerm Nerd Font (nearest size that qualifies for the common 378x74 lattice), exact-frame resizing instead of cell-multiple snapping, no decoration/padding, 4096 scrollback lines, scrollback indicator hidden, cursor blink off. Renderer worker policy remains Foot's product default.
 - **Kitty**: 8 pt, `repaint_delay 4`, `input_delay 0`, `sync_to_monitor no`; cursor trail/blink, blur and shell integration disabled; ligatures disabled for the benchmark font path.
 - **Alacritty**: 7 pt, auto renderer, no decoration/padding/blur, cursor blink off, 1 px vertical font offset for a comparable line lattice, 4096 history rows.
 - **Ghostty**: 8 pt, no decoration/padding/blur, cursor blink off, common ligature features disabled, 32 MiB lazy scrollback budget, single-instance/cgroup indirection disabled for fresh-process trials.

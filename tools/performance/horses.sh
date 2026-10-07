@@ -28,7 +28,7 @@ SETTLE_MS=${HORSES_SETTLE_MS:-1200}
 WINDOW_RECT=${HORSES_RECT:-auto}
 SYNCHRONIZED_OUTPUT=${HORSES_SYNCHRONIZED_OUTPUT:-1}
 IFS=',' read -r -a DOSES <<< "${HORSES_DOSES:-1,4,16,64,256,1024,4096,8192,16384,32768,65536}"
-HORSES=(howl kitty alacritty ghostty konsole wezterm)
+HORSES=(howl foot kitty alacritty ghostty konsole wezterm)
 
 usage() {
     cat <<'USAGE'
@@ -85,6 +85,9 @@ horse_argv() {
         howl)
             printf '%s\0' /usr/bin/env "XDG_CONFIG_HOME=$CONFIG_ROOT/howl-xdg" "$HOWL_BIN"
             ;;
+        foot)
+            printf '%s\0' /usr/bin/foot --config "$CONFIG_ROOT/foot.ini"
+            ;;
         kitty)
             printf '%s\0' /usr/bin/kitty --config "$CONFIG_ROOT/kitty.conf" --single-instance=no --detach=no
             ;;
@@ -134,6 +137,7 @@ horse_executable() {
     local horse=$1
     case "$horse" in
         howl) printf '%s\n' "$HOWL_BIN" ;;
+        foot) printf '%s\n' /usr/bin/foot ;;
         kitty) printf '%s\n' /usr/bin/kitty ;;
         alacritty) printf '%s\n' /usr/bin/alacritty ;;
         ghostty) printf '%s\n' /usr/bin/ghostty ;;
@@ -147,6 +151,7 @@ horse_config_digest() {
     local horse=$1
     case "$horse" in
         howl) sha256sum "$CONFIG_ROOT/howl-xdg/howl/odin.json" | awk '{print $1}' ;;
+        foot) sha256sum "$CONFIG_ROOT/foot.ini" | awk '{print $1}' ;;
         kitty) sha256sum "$CONFIG_ROOT/kitty.conf" | awk '{print $1}' ;;
         alacritty) sha256sum "$CONFIG_ROOT/alacritty.toml" | awk '{print $1}' ;;
         ghostty) sha256sum "$CONFIG_ROOT/ghostty-xdg/ghostty/config" | awk '{print $1}' ;;
@@ -160,6 +165,7 @@ horse_version() {
     local horse=$1
     case "$horse" in
         howl) "$HOWL_BIN" --version 2>&1 | head -n 1 ;;
+        foot) foot --version 2>&1 | head -n 1 ;;
         kitty) kitty --version 2>&1 | head -n 1 ;;
         alacritty) alacritty --version 2>&1 | head -n 1 ;;
         ghostty) ghostty --version 2>&1 | head -n 1 ;;
