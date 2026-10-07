@@ -19,7 +19,6 @@ APP_NAME :: "Howl"
 APP_VERSION :: "0.1.6-dev"
 APP_IDENTIFIER :: "io.github.laurenceguws.howl"
 APP_WINDOW_ICON :: "howl-window-icon.bmp"
-SESSION_TEXT_BYTES :: 512 * 1024
 SELECTION_TEXT_BYTES :: 1024 * 1024
 SEARCH_QUERY_BYTES :: 512
 SESSION_RETRY_MS :: 50
@@ -276,14 +275,11 @@ Instance_View :: struct {
     server_id: u64,
     session_id: u64,
     instance_id: u64,
-    text: []u8,
-    scratch: []u8,
     native_row_shapes: []Native_Row_Shape,
     native_row_shapes_scratch: []Native_Row_Shape,
     native_row_shape_count: int,
     native_row_shape_terminal_revision: u64,
     native_row_shape_history_offset: u32,
-    text_len: int,
     display_title: [1024]u8,
     display_title_len: int,
     task_progress: u16,
@@ -318,7 +314,6 @@ Instance_View :: struct {
     selection_pointer_y: f32,
     selection_columns: u16,
     selection_alternate_screen: bool,
-    text_truncated: bool,
     error: [160]u8,
     error_len: int,
     mutex: sync.Mutex,
@@ -2244,14 +2239,10 @@ observe_instance :: proc(data: rawptr) {
             break
         }
 
-        output_len: c.size_t
         result := snapshot(
             observer,
             after_revision,
             0,
-            raw_data(view.scratch),
-            c.size_t(len(view.scratch)),
-            &output_len,
         )
         if result != 0 {
             sync.mutex_lock(&view.mutex)
@@ -2285,7 +2276,6 @@ observe_instance :: proc(data: rawptr) {
         snapshot_alternate_screen := alternate_screen(observer) != 0
         snapshot_stream_closed := stream_closed(observer) != 0
         snapshot_child_exited := child_exited(observer) != 0
-        snapshot_text_truncated := text_truncated(observer) != 0
         title_bytes: [1024]u8
         title_len := int(snapshot_title(observer, raw_data(title_bytes[:]), c.size_t(len(title_bytes))))
         progress := snapshot_progress(observer)
@@ -2315,8 +2305,6 @@ observe_instance :: proc(data: rawptr) {
             snapshot_alternate_screen,
         )
         apply_history_geometry_locked(view, snapshot_columns)
-        copy(view.text[:int(output_len)], view.scratch[:int(output_len)])
-        view.text_len = int(output_len)
         view.interaction_state = fresh_interaction
         view.interaction_state_valid = true
         view.revision = snapshot_revision
@@ -2338,7 +2326,6 @@ observe_instance :: proc(data: rawptr) {
         view.alternate_screen = snapshot_alternate_screen
         view.stream_closed = snapshot_stream_closed
         view.child_exited = snapshot_child_exited
-        view.text_truncated = snapshot_text_truncated
         copy(view.display_title[:title_len], title_bytes[:title_len])
         view.display_title_len = title_len
         view.task_progress = progress
@@ -3012,15 +2999,10 @@ allocate_instance_view :: proc(ownership: Instance_Ownership) -> ^Instance_View 
     }
     view.ownership = ownership
     if ownership == .Owned do view.size_control.mode = .Taking
-    view.text = make([]u8, SESSION_TEXT_BYTES)
-    view.scratch = make([]u8, SESSION_TEXT_BYTES)
     row_capacity := int(render_maximum_rows())
     view.native_row_shapes = make([]Native_Row_Shape, row_capacity)
     view.native_row_shapes_scratch = make([]Native_Row_Shape, row_capacity)
-    if view.text == nil || view.scratch == nil ||
-       view.native_row_shapes == nil || view.native_row_shapes_scratch == nil {
-        if view.text != nil do delete(view.text)
-        if view.scratch != nil do delete(view.scratch)
+    if view.native_row_shapes == nil || view.native_row_shapes_scratch == nil {
         if view.native_row_shapes != nil do delete(view.native_row_shapes)
         if view.native_row_shapes_scratch != nil do delete(view.native_row_shapes_scratch)
         free(view)
@@ -3169,8 +3151,6 @@ destroy_instance_view_with_local_policy :: proc(view: ^Instance_View, retire_loc
     if retire_local && view.route_kind == .Local && view.instance_id != 0 {
         _ = native_local_instance_destroy(desktop_io_runtime, view.instance_id)
     }
-    delete(view.scratch)
-    delete(view.text)
     delete(view.native_row_shapes_scratch)
     delete(view.native_row_shapes)
     free(view)
@@ -7435,7 +7415,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 14 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 15 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")

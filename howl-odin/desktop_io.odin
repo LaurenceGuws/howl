@@ -358,7 +358,6 @@ publish_native_control_failure :: proc(view: ^Instance_View, handle: rawptr, pre
 apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offset: u32) -> bool {
     if view == nil || handle == nil do return false
     info: Native_Terminal_Info
-    text_len: c.size_t
     title: [1024]u8
     title_len: c.size_t
     row_shape_count: c.size_t
@@ -366,9 +365,6 @@ apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offs
         handle,
         history_offset,
         &info,
-        raw_data(view.scratch),
-        c.size_t(len(view.scratch)),
-        &text_len,
         raw_data(title[:]),
         c.size_t(len(title)),
         &title_len,
@@ -408,8 +404,7 @@ apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offs
                view.child_exited != (info.child_exited != 0) ||
                view.task_progress != info.task_progress ||
                view.display_title_len != int(title_len) ||
-               string(view.display_title[:view.display_title_len]) != string(title[:int(title_len)]) ||
-               view.text_len != int(text_len)
+               string(view.display_title[:view.display_title_len]) != string(title[:int(title_len)])
 
     validate_selection_context_locked(
         view,
@@ -420,8 +415,6 @@ apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offs
         info.alternate_screen != 0,
     )
     apply_history_geometry_locked(view, info.columns)
-    copy(view.text[:int(text_len)], view.scratch[:int(text_len)])
-    view.text_len = int(text_len)
     view.interaction_state = interaction
     view.interaction_state_valid = true
     view.revision = info.revision
@@ -443,7 +436,6 @@ apply_native_snapshot :: proc(view: ^Instance_View, handle: rawptr, history_offs
     view.alternate_screen = info.alternate_screen != 0
     view.stream_closed = info.stream_closed != 0
     view.child_exited = info.child_exited != 0
-    view.text_truncated = info.text_truncated != 0
     copy(view.display_title[:int(title_len)], title[:int(title_len)])
     view.display_title_len = int(title_len)
     view.task_progress = info.task_progress

@@ -91,7 +91,6 @@ foreign howl_bridge {
         handle: rawptr,
         history_offset: u32,
         info: ^Native_Terminal_Info,
-        text: [^]u8, text_capacity: c.size_t, text_len: ^c.size_t,
         title: [^]u8, title_capacity: c.size_t, title_len: ^c.size_t,
         row_shapes: [^]Native_Row_Shape, row_shape_capacity: c.size_t, row_shape_count: ^c.size_t,
     ) -> i32 ---
@@ -111,7 +110,7 @@ foreign howl_bridge {
     consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
     consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
     consequence_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
-    snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
+    snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32) -> i32 ---
     snapshot_take_rich_loan :: proc(handle: rawptr) -> rawptr ---
     snapshot_release_rich_loan :: proc(handle: rawptr) ---
     snapshot_take_view :: proc(handle: rawptr) -> rawptr ---
@@ -148,7 +147,6 @@ foreign howl_bridge {
     history_offset     :: proc(handle: rawptr) -> u32 ---
     history_count      :: proc(handle: rawptr) -> u32 ---
     history_row_base   :: proc(handle: rawptr) -> u32 ---
-    text_truncated     :: proc(handle: rawptr) -> u8 ---
     render_create      :: proc(runtime, interrupt: rawptr, route_kind: u8, endpoint: [^]u8, endpoint_len: c.size_t, server_id, session_id, instance_id: u64, font: [^]u8, font_len: c.size_t, italic: [^]u8, italic_len: c.size_t, bold: [^]u8, bold_len: c.size_t, bold_italic: [^]u8, bold_italic_len: c.size_t, fallback: [^]u8, fallback_len: c.size_t, secondary_fallback: [^]u8, secondary_fallback_len: c.size_t, font_pixels: u16, diagnostic: [^]u8, diagnostic_capacity: c.size_t, diagnostic_len: ^c.size_t) -> rawptr ---
     render_destroy     :: proc(handle: rawptr) ---
     render_observe     :: proc(handle: rawptr, history_offset: u32) -> i32 ---
@@ -201,11 +199,10 @@ Native_Terminal_Info :: struct {
     alternate_screen: u8,
     stream_closed: u8,
     child_exited: u8,
-    text_truncated: u8,
     mouse_tracking: u8,
     mouse_protocol: u8,
     pointer_mode: u8,
-    _reserved: [3]u8,
+    _reserved: [4]u8,
 }
 
 Native_Row_Shape :: struct {

@@ -2325,9 +2325,6 @@ pub export fn howl_odin_bridge_native_terminal_snapshot(
     raw: ?*NativeTerminalHandle,
     history_offset: u32,
     info: *NativeTerminalInfo,
-    text_ptr: [*]u8,
-    text_capacity: usize,
-    text_len: *usize,
     title_ptr: [*]u8,
     title_capacity: usize,
     title_len: *usize,
@@ -2336,7 +2333,6 @@ pub export fn howl_odin_bridge_native_terminal_snapshot(
     row_shape_count: *usize,
 ) i32 {
     info.* = .{};
-    text_len.* = 0;
     title_len.* = 0;
     row_shape_count.* = 0;
     const owner = nativeTerminalValue(raw) orelse return 1;
@@ -2344,13 +2340,6 @@ pub export fn howl_odin_bridge_native_terminal_snapshot(
     const view = observation.semanticView(history_offset);
     if (view.rows > row_shape_capacity) return 2;
     fillNativeTerminalInfo(owner, history_offset, info);
-    const projected = writeNativeVisibleText(
-        observation,
-        history_offset,
-        text_ptr[0..text_capacity],
-    );
-    text_len.* = projected.used;
-    info.text_truncated = @intFromBool(projected.truncated);
     const title = observation.title() orelse "";
     title_len.* = writeDisplayTitle(title, title_ptr[0..title_capacity]);
     for (0..view.rows) |row_index| {
@@ -2649,11 +2638,10 @@ pub const NativeTerminalInfo = extern struct {
     alternate_screen: u8 = 0,
     stream_closed: u8 = 0,
     child_exited: u8 = 0,
-    text_truncated: u8 = 0,
     mouse_tracking: u8 = 0,
     mouse_protocol: u8 = 0,
     pointer_mode: u8 = 0,
-    _reserved: [3]u8 = @splat(0),
+    _reserved: [4]u8 = @splat(0),
 };
 
 pub const NativeRowShape = extern struct {
@@ -4064,7 +4052,6 @@ const Bridge = struct {
     rich_loan_taken: bool = false,
     last_begin: ?protocol.SnapshotBegin = null,
     reusable_view: ?*client.view.Snapshot = null,
-    text_truncated: bool = false,
     display_title: [protocol.properties.maximum_field_bytes]u8 = undefined,
     display_title_len: usize = 0,
     task_progress: protocol.properties.Progress = .{},
@@ -4125,75 +4112,6 @@ const NativeTextWriter = struct {
     }
 };
 
-fn nativeCellHasText(
-    view: *const native_instance.Terminal.SemanticView,
-    row: u16,
-    column: u16,
-) bool {
-    const cell = view.cellInfoAt(row, column);
-    if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) return false;
-    var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-    return view.cellScalarsAt(row, column, &scalars).len != 0;
-}
-
-fn nativeLastTextCell(
-    view: *const native_instance.Terminal.SemanticView,
-    row: u16,
-) ?u16 {
-    var column: usize = view.cols;
-    while (column != 0) {
-        column -= 1;
-        if (nativeCellHasText(view, row, @intCast(column)))
-            return @intCast(column);
-    }
-    return null;
-}
-
-fn nativeLastTextRow(
-    view: *const native_instance.Terminal.SemanticView,
-) ?u16 {
-    var row: usize = view.rows;
-    while (row != 0) {
-        row -= 1;
-        if (nativeLastTextCell(view, @intCast(row)) != null)
-            return @intCast(row);
-    }
-    return null;
-}
-
-fn writeNativeVisibleText(
-    observation: *const native_instance.Terminal.Observation,
-    history_offset: u32,
-    output: []u8,
-) struct { used: usize, truncated: bool } {
-    const view = observation.semanticView(history_offset);
-    const last_row = nativeLastTextRow(&view) orelse
-        return .{ .used = 0, .truncated = false };
-    var writer = NativeTextWriter{ .bytes = output };
-    var row: u16 = 0;
-    while (row <= last_row) : (row += 1) {
-        if (row != 0 and !writer.byte('\n')) break;
-        const last_cell = nativeLastTextCell(&view, row) orelse continue;
-        var column: u16 = 0;
-        while (column <= last_cell) : (column += 1) {
-            const cell = view.cellInfoAt(row, column);
-            if (cell.x != 0 or cell.y != 0) continue;
-            var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-            const values = view.cellScalarsAt(row, column, &scalars);
-            if (cell.attrs.invisible or values.len == 0) {
-                if (!writer.byte(' ')) break;
-                continue;
-            }
-            for (values) |value| {
-                if (!writer.scalar(value)) break;
-            }
-            if (writer.truncated) break;
-        }
-        if (writer.truncated) break;
-    }
-    return .{ .used = writer.used, .truncated = writer.truncated };
-}
-
 fn fillNativeTerminalInfo(
     owner: *const NativeTerminal,
     history_offset: u32,
@@ -4233,11 +4151,11 @@ fn fillNativeTerminalInfo(
 }
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 14;
+    return 15;
 }
 
 test "Odin bridge version tracks native local ownership ABI" {
-    try std.testing.expectEqual(@as(u32, 14), howl_odin_bridge_version());
+    try std.testing.expectEqual(@as(u32, 15), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(
@@ -4314,11 +4232,7 @@ pub export fn howl_odin_bridge_snapshot(
     raw: ?*Handle,
     after_revision: u64,
     history_offset: u32,
-    output_ptr: [*]u8,
-    output_capacity: usize,
-    output_len: *usize,
 ) i32 {
-    output_len.* = 0;
     const value = raw orelse return 1;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
@@ -4379,14 +4293,11 @@ pub export fn howl_odin_bridge_snapshot(
     };
 
     if (use_live_delta and rich_view.begin.history_offset == 0 and rich_view.graphics.images.len == 0) {
-        const text = client.view.writeVisibleRichText(&rich_view, output_ptr[0..output_capacity]);
         bridge.live_view = rich_view;
         bridge.rich_loan_active = true;
         bridge.last_begin = rich_view.begin;
-        bridge.text_truncated = text.truncated;
         bridge.display_title_len = writeDisplayTitle(rich_view.properties.title orelse "", &bridge.display_title);
         bridge.task_progress = rich_view.properties.progress;
-        output_len.* = text.bytes_written;
         return 0;
     }
 
@@ -4399,13 +4310,10 @@ pub export fn howl_odin_bridge_snapshot(
     }
     defer if (bridge.reusable_view == null) client.view.deinit(projected);
 
-    const text = client.view.writeVisibleText(projected, output_ptr[0..output_capacity]);
     bridge.last_begin = client.view.begin(projected).*;
-    bridge.text_truncated = text.truncated;
     const properties = client.view.properties(projected);
     bridge.display_title_len = writeDisplayTitle(properties.title orelse "", &bridge.display_title);
     bridge.task_progress = properties.progress;
-    output_len.* = text.bytes_written;
     return 0;
 }
 
@@ -5258,12 +5166,6 @@ pub export fn howl_odin_bridge_history_row_base(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_row_base else 0;
 }
 
-pub export fn howl_odin_bridge_text_truncated(raw: ?*Handle) u8 {
-    const value = raw orelse return 0;
-    const bridge: *Bridge = @ptrCast(@alignCast(value));
-    return @intFromBool(bridge.text_truncated);
-}
-
 fn lastBegin(raw: ?*Handle) ?protocol.SnapshotBegin {
     const value = raw orelse return null;
     const bridge: *Bridge = @ptrCast(@alignCast(value));
@@ -5970,8 +5872,6 @@ test "native terminal claim services PTY directly and publishes Render" {
     } else return error.Timeout;
 
     var info = NativeTerminalInfo{};
-    var text: [256]u8 = undefined;
-    var text_len: usize = 0;
     var title: [64]u8 = undefined;
     var title_len: usize = 0;
     var row_shapes: [16]NativeRowShape = undefined;
@@ -5982,9 +5882,6 @@ test "native terminal claim services PTY directly and publishes Render" {
             raw,
             0,
             &info,
-            &text,
-            text.len,
-            &text_len,
             &title,
             title.len,
             &title_len,
@@ -5998,9 +5895,11 @@ test "native terminal claim services PTY directly and publishes Render" {
     try std.testing.expectEqual(@as(u16, 2), info.rows);
     try std.testing.expectEqual(@as(u16, 16), info.columns);
     try std.testing.expectEqual(@as(usize, 2), row_shape_count);
-    try std.testing.expect(
-        std.mem.indexOf(u8, text[0..text_len], "NATIVE_READY") != null,
+    try std.testing.expectEqual(
+        @as(u21, 'N'),
+        native_instance.terminal(owner.value).semanticView(0).cellAt(0, 0),
     );
+    try std.testing.expectEqual(@as(u16, 12), row_shapes[0].content_end_exclusive);
 
     try std.testing.expectEqual(
         @as(i32, 0),
