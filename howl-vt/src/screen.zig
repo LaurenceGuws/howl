@@ -2484,21 +2484,34 @@ pub const Screen = struct {
         const flags = self.row_flags orelse return 0;
         var physical_row = @as(u32, self.row_origin) + @as(u32, self.cursor.row);
         if (physical_row >= self.rows) physical_row -= self.rows;
-        if (flags[physical_row] & row_geometry_mask != 0) return 0;
+        const physical_flags = flags[physical_row];
+        if (physical_flags & row_geometry_mask != 0) return 0;
         const col = self.cursor.col;
         const start = physical_row * @as(u32, self.cols) + @as(u32, col);
         const limit = @min(bytes.len, self.cols - col);
-        var template = blank_cell;
-        template.attrs = self.current_attrs;
+        const scan_code = (physical_flags & row_scan_mask) >> row_scan_shift;
+        const default_empty_row =
+            scan_code == row_scan_known_empty and
+            cell_values.attrsEqual(&self.current_attrs, &initial_cell_attrs);
         var count: usize = 0;
-        while (count < limit) : (count += 1) {
-            const byte = bytes[count];
-            if (byte < 0x20 or byte > 0x7e) break;
-            const target = &cells[start + count];
-            if (target.width != 1 or target.height != 1 or target.x != 0 or
-                target.y != 0 or target.combining_len != 0) break;
-            target.* = template;
-            target.codepoint = byte;
+        if (default_empty_row) {
+            while (count < limit) : (count += 1) {
+                const byte = bytes[count];
+                if (byte < 0x20 or byte > 0x7e) break;
+                cells[start + count].codepoint = byte;
+            }
+        } else {
+            var template = blank_cell;
+            template.attrs = self.current_attrs;
+            while (count < limit) : (count += 1) {
+                const byte = bytes[count];
+                if (byte < 0x20 or byte > 0x7e) break;
+                const target = &cells[start + count];
+                if (target.width != 1 or target.height != 1 or target.x != 0 or
+                    target.y != 0 or target.combining_len != 0) break;
+                target.* = template;
+                target.codepoint = byte;
+            }
         }
         if (count == 0) return 0;
         const last = bytes[count - 1];
@@ -7888,4 +7901,28 @@ test "staged output under byte pressure preserves retained owner until fallback"
     const replacement_slices = replacement_text.slices(screen.output_text.?);
     try std.testing.expectEqualSlices(u8, second, replacement_slices[0]);
     try std.testing.expectEqual(@as(usize, 0), replacement_slices[1].len);
+}
+
+test "plain ASCII uses canonical empty-row state without losing attribute fallback" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 8, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.clearVisibleCells();
+    screen.establishEmptyRowScanEnd(0);
+    screen.cursor.setPositionByClient(0, 0);
+    try std.testing.expectEqual(@as(usize, 3), screen.writePlainAsciiPrefix("ABC"));
+    var expected = blank_cell;
+    expected.codepoint = 'A';
+    try std.testing.expectEqualDeep(expected, screen.visibleRowCells(0)[0]);
+    expected.codepoint = 'B';
+    try std.testing.expectEqualDeep(expected, screen.visibleRowCells(0)[1]);
+    expected.codepoint = 'C';
+    try std.testing.expectEqualDeep(expected, screen.visibleRowCells(0)[2]);
+
+    screen.clearVisibleCells();
+    screen.establishEmptyRowScanEnd(1);
+    screen.cursor.setPositionByClient(1, 0);
+    screen.current_attrs.bold = true;
+    try std.testing.expectEqual(@as(usize, 1), screen.writePlainAsciiPrefix("Z"));
+    try std.testing.expect(screen.visibleRowCells(1)[0].attrs.bold);
 }
