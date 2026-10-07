@@ -575,13 +575,38 @@ pub const Store = struct {
             return error.InvalidSource;
         if (!source.scalars.hasAllocatedRanges()) {
             var attrs: usize = 0;
-            var previous: ?*const CellAttrs = null;
+            const color_mask: u64 = 0x0000_00ff_ffff_ffff;
+            var previous_valid = false;
+            var previous0: u64 = 0;
+            var previous1: u64 = 0;
+            var previous2: u64 = 0;
+            var previous3: u64 = 0;
+            var previous4: u64 = 0;
             for (source.cells) |*value| {
                 if (value.combining_len >= scalar_storage.inline_scalars)
                     return error.InvalidSource;
-                if (previous == null or !historyAttrsEqual(previous.?, &value.attrs)) {
+                const bytes = std.mem.asBytes(&value.attrs);
+                const current0 = std.mem.readInt(u64, bytes[0..8], .little) & color_mask;
+                const current1 = std.mem.readInt(u64, bytes[8..16], .little) & color_mask;
+                const current2 =
+                    (std.mem.readInt(u64, bytes[16..24], .little) & color_mask) |
+                    (@as(u64, @backingInt(value.attrs.protected)) << 40);
+                const current3 = std.mem.readInt(u64, bytes[24..32], .little);
+                const current4 = std.mem.readInt(u64, bytes[32..40], .little);
+                const same = previous_valid and
+                    ((previous0 ^ current0) |
+                        (previous1 ^ current1) |
+                        (previous2 ^ current2) |
+                        (previous3 ^ current3) |
+                        (previous4 ^ current4)) == 0;
+                if (!same) {
                     attrs += 1;
-                    previous = &value.attrs;
+                    previous_valid = true;
+                    previous0 = current0;
+                    previous1 = current1;
+                    previous2 = current2;
+                    previous3 = current3;
+                    previous4 = current4;
                 }
             }
             if (attrs > std.math.maxInt(u16)) return error.Capacity;
@@ -1316,4 +1341,58 @@ test "history attribute equality matches canonical contract for every field" {
             );
         }
     }
+}
+
+test "no-scalar history shape counts semantic attribute runs despite padding" {
+    var cells: [4]Cell = undefined;
+    for (&cells, 0..) |*cell, index| {
+        @memset(std.mem.asBytes(cell), if (index & 1 == 0) 0xa5 else 0x5a);
+        cell.* = cell_values.blank;
+        cell.codepoint = @intCast('A' + index);
+    }
+
+    // Re-poison only attribute padding, then restore every semantic field.
+    for (&cells, 0..) |*cell, index| {
+        var attrs: CellAttrs = undefined;
+        @memset(std.mem.asBytes(&attrs), if (index & 1 == 0) 0xa5 else 0x5a);
+        inline for (
+            @typeInfo(CellAttrs).@"struct".field_names,
+            @typeInfo(CellAttrs).@"struct".field_types,
+        ) |name, field_type| {
+            if (field_type == cell_values.Color) {
+                inline for (@typeInfo(cell_values.Color).@"struct".field_names) |component|
+                    @field(@field(attrs, name), component) =
+                        @field(@field(cell_values.default_attrs, name), component);
+            } else {
+                @field(attrs, name) = @field(cell_values.default_attrs, name);
+            }
+        }
+        cell.attrs = attrs;
+    }
+
+    var scalars = try scalar_storage.Storage.init(std.testing.allocator, cells.len);
+    defer scalars.deinit();
+    var store = try Store.init(std.testing.allocator, 4, cells.len, 0);
+    defer store.deinit();
+
+    var uniform = try store.preparePush(.{
+        .cells = &cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    });
+    defer store.discardPrepared(&uniform);
+    try std.testing.expectEqual(@as(u16, 1), uniform.shape.attrs);
+
+    cells[1].attrs.bold = true;
+    var runs = try store.preparePush(.{
+        .cells = &cells,
+        .scalars = &scalars,
+        .scalar_start = 0,
+        .wrapped = false,
+        .geometry = .single_width,
+    });
+    defer store.discardPrepared(&runs);
+    try std.testing.expectEqual(@as(u16, 3), runs.shape.attrs);
 }
