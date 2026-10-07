@@ -114,6 +114,10 @@ local_resize_waits_for_the_accepted_presentation_lattice :: proc(t: ^testing.T) 
     testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
 
     view.native_presentation.pending = false
+    view.native_presentation.inflight = true
+    testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
+
+    view.native_presentation.inflight = false
     view.native_presentation.waiting = true
     testing.expect(t, !local_canvas_resize_ready(&view, 26, 1.7))
 

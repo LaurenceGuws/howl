@@ -532,12 +532,11 @@ process_native_search :: proc(view: ^Instance_View, handle: rawptr) -> bool {
 process_native_presentation :: proc(view: ^Instance_View, handle: rawptr) -> bool {
     if view == nil || handle == nil do return false
     sync.mutex_lock(&view.mutex)
-    if !view.native_presentation.pending {
+    request, admitted := begin_native_presentation(&view.native_presentation)
+    if !admitted {
         sync.mutex_unlock(&view.mutex)
         return false
     }
-    request := view.native_presentation
-    view.native_presentation.pending = false
     sync.mutex_unlock(&view.mutex)
 
     code := native_terminal_reconfigure_presentation(
@@ -552,10 +551,12 @@ process_native_presentation :: proc(view: ^Instance_View, handle: rawptr) -> boo
     )
 
     sync.mutex_lock(&view.mutex)
-    current := request.generation == view.native_presentation.generation
+    current := finish_native_presentation(
+        &view.native_presentation,
+        request.generation,
+        code,
+    )
     if current {
-        view.native_presentation.waiting = code == 0
-        view.native_presentation.failed = code != 0
         view.ui_dirty = true
     }
     sync.mutex_unlock(&view.mutex)

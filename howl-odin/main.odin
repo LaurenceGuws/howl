@@ -158,13 +158,46 @@ History_Scrollbar_Geometry :: struct {
 
 Native_Presentation_Request :: struct {
     generation: u64,
-    pending, waiting, failed: bool,
+    pending, inflight, waiting, failed: bool,
     font_pixels: u16,
     scale: f32,
     font, italic, bold, bold_italic: [FONT_PATH_BYTES]u8,
     fallback, secondary_fallback: [FONT_PATH_BYTES]u8,
     font_len, italic_len, bold_len, bold_italic_len: int,
     fallback_len, secondary_fallback_len: int,
+}
+
+native_presentation_target_busy :: proc(
+    request: ^Native_Presentation_Request,
+    font_pixels: u16,
+    scale: f32,
+) -> bool {
+    if request == nil do return false
+    same_target := request.font_pixels == font_pixels && request.scale == scale
+    return same_target && (request.pending || request.inflight || request.waiting)
+}
+
+begin_native_presentation :: proc(
+    request: ^Native_Presentation_Request,
+) -> (Native_Presentation_Request, bool) {
+    if request == nil || !request.pending || request.inflight do return {}, false
+    snapshot := request^
+    request.pending = false
+    request.inflight = true
+    return snapshot, true
+}
+
+finish_native_presentation :: proc(
+    request: ^Native_Presentation_Request,
+    generation: u64,
+    code: i32,
+) -> bool {
+    if request == nil do return false
+    request.inflight = false
+    if request.generation != generation do return false
+    request.waiting = code == 0
+    request.failed = code != 0
+    return true
 }
 
 Instance_View :: struct {
@@ -1075,11 +1108,11 @@ request_native_presentation :: proc(
             sync.mutex_unlock(&view.mutex)
             return false
         }
-        if (request.pending || request.waiting) && same_target {
+        if native_presentation_target_busy(request, pixels, scale) {
             sync.mutex_unlock(&view.mutex)
             return true
         }
-        if !request.pending && !request.waiting &&
+        if !request.pending && !request.inflight && !request.waiting &&
            view.canvas_font_pixels == pixels &&
            view.canvas_render_scale == scale {
             sync.mutex_unlock(&view.mutex)

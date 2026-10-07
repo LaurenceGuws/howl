@@ -2,6 +2,45 @@ package main
 import "core:testing"
 
 @(test)
+native_presentation_admission_closes_the_worker_gap_without_blocking_replacement :: proc(t: ^testing.T) {
+    state := Native_Presentation_Request{
+        generation = 4,
+        pending = true,
+        font_pixels = 18,
+        scale = 1,
+    }
+
+    admitted, ok := begin_native_presentation(&state)
+    testing.expect(t, ok)
+    testing.expect_value(t, admitted.generation, u64(4))
+    testing.expect(t, !state.pending)
+    testing.expect(t, state.inflight)
+    testing.expect(t, native_presentation_target_busy(&state, 18, 1))
+    testing.expect(t, !native_presentation_target_busy(&state, 31, 1.7))
+
+    // A genuinely newer target may supersede the in-flight generation.
+    state.generation = 5
+    state.pending = true
+    state.waiting = false
+    state.failed = false
+    state.font_pixels = 31
+    state.scale = 1.7
+    testing.expect(t, !finish_native_presentation(&state, admitted.generation, 0))
+    testing.expect(t, !state.inflight)
+    testing.expect(t, state.pending)
+
+    replacement, replacement_ok := begin_native_presentation(&state)
+    testing.expect(t, replacement_ok)
+    testing.expect_value(t, replacement.generation, u64(5))
+    testing.expect(t, state.inflight)
+    testing.expect(t, native_presentation_target_busy(&state, 31, 1.7))
+    testing.expect(t, finish_native_presentation(&state, replacement.generation, 0))
+    testing.expect(t, !state.inflight)
+    testing.expect(t, state.waiting)
+    testing.expect(t, !state.failed)
+}
+
+@(test)
 control_queue_is_fifo_bounded_and_does_not_replay_after_stop :: proc(t: ^testing.T) {
     view: Instance_View
     for i in 0..<CONTROL_QUEUE_ITEMS {

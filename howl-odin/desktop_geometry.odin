@@ -83,7 +83,9 @@ local_canvas_resize_ready :: proc(
     if target_font_pixels == 0 || !valid_canvas_scale(target_scale) do return false
 
     sync.mutex_lock(&view.mutex)
-    transitioning := view.native_presentation.pending || view.native_presentation.waiting
+    transitioning := view.native_presentation.pending ||
+                     view.native_presentation.inflight ||
+                     view.native_presentation.waiting
     sync.mutex_unlock(&view.mutex)
     return !transitioning &&
            view.canvas_font_pixels == target_font_pixels &&
