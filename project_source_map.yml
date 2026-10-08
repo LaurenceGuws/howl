@@ -160,7 +160,8 @@ experimental:
     live Instance. Application allocations use the Zig SMP allocator; SDL and
     other C dependencies retain their own allocation policy. Bounded tabs/nested
     panes, layout controls and the shared mapping registry/command palette are
-    connected. Saved configuration/settings, selection/search, full input and
-    desktop consequence policy, live fonts/DPI and explicit attachments remain
+    connected, including live pane fonts and display-scale transactions. Saved
+    configuration/settings, selection/search, desktop input/consequence policy
+    and explicit attachments remain
     to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

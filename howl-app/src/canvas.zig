@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
+const terminal = @import("terminal.zig");
 const render = instance.render.terminal;
 
 const resource_limit = render.maximum_external_images + 1;
@@ -86,17 +87,12 @@ pub const Canvas = struct {
         return if (self.lease) |lease| lease.value else null;
     }
 
-    /// Replaces a notified publication, returning exact old residency before claiming the new lease.
-    pub fn update(self: *Canvas, renderer: *c.SDL_Renderer, exchange: *instance.RenderExchange) !void {
-        // The caller invokes update only after a producer notification. Release
-        // the old frame before claiming the next single-consumer lease.
-        if (self.lease) |*lease| {
-            var residency: [resource_limit]render.Residency = undefined;
-            for (self.textures[0..self.count], 0..) |texture, index| residency[index] = texture.residency;
-            try lease.release(residency[0..self.count]);
-            self.lease = null;
-        }
-        var lease = instance.acquirePublishedFrame(exchange) orelse return error.NoPublishedFrame;
+    /// Transfers an immutable publication only when ready; duplicate wakeups keep the old lease.
+    pub fn update(self: *Canvas, renderer: *c.SDL_Renderer, owner: *terminal.Terminal) !void {
+        var residency: [resource_limit]render.Residency = undefined;
+        for (self.textures[0..self.count], 0..) |texture, index| residency[index] = texture.residency;
+        var lease = (try owner.replaceFrame(if (self.lease) |*previous| previous else null, residency[0..self.count])) orelse return;
+        self.lease = null;
         errdefer lease.abandon();
         const value = lease.value;
         if (self.generation != value.presentation_generation) {
@@ -239,4 +235,80 @@ test "overhanging commands keep their exact clip, contained quads share the pane
     try std.testing.expect(contained(.{ .x = -3, .y = 7, .width = 12, .height = 14 }, clip));
     try std.testing.expect(!contained(.{ .x = -4, .y = 7, .width = 12, .height = 14 }, clip));
     try std.testing.expect(!contained(.{ .x = -3, .y = 7, .width = 13, .height = 14 }, clip));
+}
+
+test "failed backend allocation retires its candidate; a fresh presentation generation rebuilds exact resources" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const presentation: instance.PresentationConfig = .{
+        .fonts = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+        .command_limit = instance.render.limits.maximum_frame_commands,
+    };
+    const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'HELLO\\033]0;READY\\007'; read line; printf '\\033]0;CONTINUED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, presentation, c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "READY")) break;
+        if (status.failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    if (attempts == 5000) return error.Timeout;
+    const surface = c.SDL_CreateSurface(250, 100, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var backend = Canvas.init(failing.allocator());
+    defer backend.deinit();
+    owner.requestFrame();
+    var failed = false;
+    attempts = 0;
+    while (!failed and attempts < 5000) : (attempts += 1) {
+        backend.update(renderer, owner) catch |failure| {
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+            failed = true;
+        };
+        if (!failed) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(failed);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "CONTINUED")) break;
+        if (status.failure) |failure| return failure;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    if (attempts == 5000) return error.Timeout;
+    backend.deinit();
+    backend = Canvas.init(std.testing.allocator);
+    const configured = try owner.reconfigure(presentation, null);
+    try std.testing.expect(configured.cell_size.width > 0);
+    attempts = 0;
+    while (backend.frame() == null and attempts < 5000) : (attempts += 1) {
+        try backend.update(renderer, owner);
+        if (backend.frame() == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    const accepted = backend.frame() orelse return error.MissingFrame;
+    try std.testing.expect(accepted.presentation_generation > 1);
+    const geometry = try std.testing.allocator.create(Geometry);
+    defer std.testing.allocator.destroy(geometry);
+    geometry.* = .{};
+    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    try std.testing.expectEqual(@as(?terminal.Failure, null), owner.snapshot().failure);
 }

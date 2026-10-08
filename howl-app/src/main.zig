@@ -19,6 +19,9 @@ const Pane = struct {
     rows: u16 = 0,
     columns: u16 = 0,
     size_control: bool = true,
+    font_size: u16 = 15,
+    cell_size: ?instance.render.terminal.Size = null,
+    font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
 };
 const Tab = struct {
@@ -95,17 +98,18 @@ const App = struct {
     fn report(self: *App, failure: anytype) void {
         self.setNotice(@errorName(failure));
     }
-    fn createPane(self: *App) !*Pane {
+    fn createPane(self: *App, font_size: u16) !*Pane {
         const result = try allocator.create(Pane);
         errdefer allocator.destroy(result);
-        const font_size: u16 = @intFromFloat(@round(15 * self.scale));
+        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
         result.* = .{
             .owner = try terminal.Terminal.create(allocator, self.init.io, self.init.minimal.environ, .{
                 .shell = self.init.environ_map.get("SHELL") orelse "/bin/sh",
                 .rows = 37,
                 .columns = 80,
-            }, self.fonts.config(font_size), self.wake_event, false),
+            }, self.fonts.config(pixels), self.wake_event, false),
             .canvas = canvas.Canvas.init(allocator),
+            .font_size = font_size,
         };
         return result;
     }
@@ -146,12 +150,12 @@ const App = struct {
         self.syncVisible();
         try self.gainKeyboard();
     }
-    fn createTab(self: *App) !void {
+    fn createTab(self: *App, font_size: u16) !void {
         if (self.tab_count == tab_limit) return error.TabLimit;
         const value = try allocator.create(Tab);
         errdefer allocator.destroy(value);
         value.* = .{};
-        value.panes[0] = try self.createPane();
+        value.panes[0] = try self.createPane(font_size);
         errdefer self.destroyPane(value.panes[0].?);
         try self.loseKeyboard();
         self.tabs[self.tab_count] = value;
@@ -179,7 +183,7 @@ const App = struct {
     fn split(self: *App, axis: layout.Axis) !void {
         var candidate = self.tab().tree;
         const slot = try candidate.split(axis);
-        const value = try self.createPane();
+        const value = try self.createPane(self.pane().font_size);
         errdefer self.destroyPane(value);
         try self.loseKeyboard();
         self.tab().panes[slot] = value;
@@ -229,15 +233,12 @@ const App = struct {
         const previous = self.pane();
         const status = previous.owner.snapshot();
         if (status.failure == null and !status.closed) {
-            if (previous.graphics_failure != null) {
-                previous.canvas.deinit();
-                previous.canvas = canvas.Canvas.init(allocator);
-                previous.graphics_failure = null;
-            }
+            if (previous.font_failure != null or previous.graphics_failure != null)
+                try self.configureFont(previous, previous.font_size, false);
             try previous.owner.submit(.retry_render);
             return;
         }
-        const next = try self.createPane();
+        const next = try self.createPane(previous.font_size);
         errdefer self.destroyPane(next);
         try self.loseKeyboard();
         self.tab().panes[self.tab().tree.active] = next;
@@ -255,7 +256,8 @@ const App = struct {
         }
         switch (target) {
             .action => |action| switch (action) {
-                .new_tab, .duplicate_tab, .open_local => try self.createTab(),
+                .new_tab, .open_local => try self.createTab(15),
+                .duplicate_tab => try self.createTab(self.pane().font_size),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
                 .split_horizontal => try self.split(.vertical),
@@ -302,9 +304,55 @@ const App = struct {
                 if (!changed) self.setNotice("No divider in that direction");
             },
             .toggle_find => return error.FindNotImplemented,
-            .adjust_font => return error.FontChangeNotImplemented,
+            .adjust_font => |delta| {
+                const p = self.pane();
+                const next: u16 = @intCast(std.math.clamp(@as(i32, p.font_size) + delta, 8, 48));
+                if (next != p.font_size) try self.configureFont(p, next, true);
+            },
             .copy_selection => return error.SelectionNotImplemented,
         }
+    }
+    fn surfaceFor(self: *App, value: *Pane) ?instance.render.terminal.Size {
+        if (!value.size_control) return null;
+        var places: [layout.pane_limit]layout.Placement = undefined;
+        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+        const visible = self.tab().tree.layout(self.body(), &places, &dividers);
+        for (places[0..visible.panes]) |place| if (self.tab().panes[place.pane] == value)
+            return physicalSurface(place.rect, self.scale);
+        return null;
+    }
+    fn configureFont(self: *App, value: *Pane, logical_size: u16, resize: bool) terminal.ConfigureError!void {
+        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(logical_size)) * self.scale));
+        const geometry = value.owner.reconfigure(self.fonts.config(pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
+            value.font_failure = failure;
+            return failure;
+        };
+        if (value.graphics_failure != null) {
+            // The new generation ignores retired GPU residency and supplies complete resources.
+            value.canvas.deinit();
+            value.canvas = canvas.Canvas.init(allocator);
+            value.graphics_failure = null;
+        }
+        value.font_size = logical_size;
+        value.cell_size = geometry.cell_size;
+        value.rows = geometry.rows;
+        value.columns = geometry.columns;
+        value.font_failure = null;
+    }
+    fn displayScale(self: *App) void {
+        const next = c.SDL_GetWindowDisplayScale(self.window);
+        if (next == self.scale) return;
+        if (!std.math.isFinite(next) or next <= 0 or next > 8) {
+            self.report(error.DisplayScale);
+            return;
+        }
+        self.scale = next;
+        if (!c.TTF_SetFontSize(self.ui_font, 15 * next)) self.report(error.TTF);
+        for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |value| {
+            const status = value.owner.snapshot();
+            if (status.failure != null or status.closed) continue;
+            self.configureFont(value, value.font_size, true) catch |failure| self.report(failure);
+        };
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -422,7 +470,7 @@ const App = struct {
                     try self.closeTab();
                 } else self.drag = .tab;
             } else if (x < 8 + width * @as(f32, @floatFromInt(self.tab_count)) + 32) {
-                try self.createTab();
+                try self.createTab(15);
             } else try self.openPalette(false);
             return;
         }
@@ -480,7 +528,7 @@ const App = struct {
         if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
         self.width = @floatFromInt(@max(1, width));
         self.height = @floatFromInt(@max(1, height));
-        // Live display-scale/font reconfiguration is a remaining qualification gap.
+        self.displayScale();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
             !c.SDL_SetRenderDrawColor(self.renderer, 24, 25, 33, 255) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
         const tab_width = self.tabWidth();
@@ -505,16 +553,19 @@ const App = struct {
             const p = self.tab().panes[place.pane].?;
             const active = place.pane == self.tab().tree.active;
             try fill(self.renderer, place.rect, if (active) .{ .r = 76, .g = 85, .b = 112, .a = 255 } else .{ .r = 31, .g = 33, .b = 43, .a = 255 });
-            const rect: c.SDL_FRect = .{ .x = place.rect.x + 3, .y = place.rect.y + 3, .w = @max(1, place.rect.width - 6), .h = @max(1, place.rect.height - 6) };
-            if (p.graphics_failure == null and p.owner.takeFrame()) {
-                p.canvas.update(self.renderer, p.owner.renderExchange()) catch |failure| {
+            const rect = paneContent(place.rect);
+            if (p.graphics_failure == null) {
+                p.canvas.update(self.renderer, p.owner) catch |failure| {
                     p.graphics_failure = failure;
                 };
             }
             const status = p.owner.snapshot();
             if (p.canvas.frame()) |frame| {
-                const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(frame.cell_size.height))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_rows))));
-                const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(frame.cell_size.width))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_columns))));
+                // A completed font transaction supplies the new lattice before its frame arrives.
+                // An older accepted lease must not resize canonical geometry back to its old font.
+                const cell = p.cell_size orelse frame.cell_size;
+                const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(cell.height))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_rows))));
+                const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(cell.width))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_columns))));
                 if (p.size_control and status.failure == null and !status.closed and (rows != p.rows or columns != p.columns)) {
                     try p.owner.submit(.{ .resize = .{ .rows = rows, .columns = columns } });
                     p.rows = rows;
@@ -524,11 +575,22 @@ const App = struct {
                     p.graphics_failure = failure;
                 };
             }
-            const failure: ?(GraphicsFailure || terminal.Failure || terminal.PresentationFailure) = if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else null;
-            if (failure) |value| {
-                try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = 28 }, .{ .r = 96, .g = 35, .b = 43, .a = 255 });
-                try self.drawText(@errorName(value), rect.x + 8, rect.y + 6);
-            } else if (status.closed) try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
+            clearClip(self.renderer);
+            const failure: ?(GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
+            if (failure != null or status.closed) {
+                const clip: c.SDL_Rect = .{
+                    .x = @intFromFloat(@floor(rect.x)),
+                    .y = @intFromFloat(@floor(rect.y)),
+                    .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - @as(c_int, @intFromFloat(@floor(rect.x))),
+                    .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - @as(c_int, @intFromFloat(@floor(rect.y))),
+                };
+                if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
+                defer clearClip(self.renderer);
+                if (failure) |value| {
+                    try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = @min(28, rect.h) }, .{ .r = 96, .g = 35, .b = 43, .a = 255 });
+                    try self.drawText(@errorName(value), rect.x + 8, rect.y + 6);
+                } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
+            }
         }
         try self.drawText(if (self.notice_len == 0) "Local" else self.notice[0..self.notice_len], 10, self.height - 22);
         if (self.palette != null) try self.drawPalette();
@@ -583,7 +645,7 @@ pub fn main(init: std.process.Init) !void {
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
     };
     defer app.deinit();
-    try app.createTab();
+    try app.createTab(15);
     while (app.running) {
         try app.draw();
         var event: c.SDL_Event = undefined;
@@ -601,6 +663,18 @@ fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void 
 fn clearClip(renderer: *c.SDL_Renderer) void {
     const success = c.SDL_SetRenderClipRect(renderer, null);
     std.debug.assert(success);
+}
+fn paneContent(rect: layout.Rect) c.SDL_FRect {
+    const x_padding = @min(3, rect.width / 4);
+    const y_padding = @min(3, rect.height / 4);
+    return .{ .x = rect.x + x_padding, .y = rect.y + y_padding, .w = rect.width - 2 * x_padding, .h = rect.height - 2 * y_padding };
+}
+fn physicalSurface(rect: layout.Rect, scale: f32) instance.render.terminal.Size {
+    const content = paneContent(rect);
+    return .{
+        .width = @intFromFloat(std.math.clamp(@round(@as(f64, content.w) * scale), 1, @as(f64, @floatFromInt(std.math.maxInt(u32))))),
+        .height = @intFromFloat(std.math.clamp(@round(@as(f64, content.h) * scale), 1, @as(f64, @floatFromInt(std.math.maxInt(u32))))),
+    };
 }
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len > haystack.len) return false;
@@ -640,4 +714,15 @@ test "palette query is bounded and includes deliberately unbound directional com
     for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
     p = .{ .profile = true };
     try std.testing.expectEqual(@as(usize, 2), p.indices(&indices));
+}
+
+test "tiny nested pane content never crosses its layout owner and has a bounded positive configuration surface" {
+    for ([_]f32{ 0.125, 1, 4, 6, 40 }) |width| {
+        const outer: layout.Rect = .{ .x = 10, .y = 20, .width = width, .height = 0.25 };
+        const content = paneContent(outer);
+        try std.testing.expect(content.x >= outer.x and content.x + content.w <= outer.x + outer.width);
+        try std.testing.expect(content.y >= outer.y and content.y + content.h <= outer.y + outer.height);
+        const surface = physicalSurface(outer, 1.7);
+        try std.testing.expect(surface.width >= 1 and surface.height >= 1);
+    }
 }

@@ -41,20 +41,22 @@ directions are preserved. Physical key ownership prevents app chords from
 leaking repeats or releases to a terminal after focus or modifiers change.
 
 SDL consumes canonical Canvas commands/resources. Named/control keys, committed
-text, paste, focus and stable history anchors are connected. Hidden presentation
-and projection failure cannot stop canonical input/output. A rendering failure
+text, paste, focus and stable history anchors are connected. Pane-local font
+changes and moving display scale use serialized transactional presentation
+updates. Hidden presentation and projection failure cannot stop canonical input/output. A rendering failure
 can be retried independently; a stopped Local child can be restarted. A new
 window executes the exact running Linux image even after on-disk replacement.
 
 This remains an experimental capability cut. Saved launch recipes/configuration,
-settings, selection/search, full Kitty/IME lifecycle, terminal mouse and alternate
-scroll routing, rich desktop consequences, live font/DPI changes and explicit
-attachments still need qualification. Duplicate currently opens another copy of
+settings, selection/search, IME presentation, terminal mouse and alternate
+scroll routing, rich desktop consequences and explicit attachments still need
+qualification. Duplicate currently opens another copy of
 the default Local launch recipe. Startup high DPI is supported. Unsupported
 commands report their exact gap instead of silently taking another route.
 
-Twenty package proofs cover worker independence/failure cleanup, immutable
-publication, visibility credits, key ownership, mapping conflicts and bounded
+Twenty-five package proofs cover worker independence/failure cleanup, immutable
+publication/transfer stalls, exact lease ownership, failed backend recovery,
+font rollback, visibility credits, key ownership, mapping conflicts and bounded
 pane topology. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:
 zig build -Doptimize=ReleaseSafe.

@@ -23,6 +23,21 @@ pub const Failure = instance.InputError || instance.ResizeError ||
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
 pub const PresentationFailure = instance.PublishError || error{SDLNotification};
 
+/// Immutable lease transfer failures; no-frame leaves the previously accepted lease untouched.
+pub const FrameError = instance.RenderLease.ReleaseError || error{ WrongExchange, NoPublishedFrame };
+
+/// Exact transactional configuration/admission failures; old presentation survives failure.
+pub const ConfigureError = instance.ReconfigurePresentationError || error{ TerminalStopped, InputQueueFull };
+
+const Configuration = struct {
+    config: instance.PresentationConfig,
+    surface: ?instance.render.terminal.Size,
+    result: ?instance.PresentationGeometry = null,
+    failure: ?ConfigureError = null,
+    complete: bool = false,
+};
+const Work = union(enum) { intent: Task, configure: *Configuration };
+
 /// Copied interaction/lifecycle facts; contains no borrowed canonical storage.
 pub const Status = struct {
     title: [1024]u8 = undefined,
@@ -67,6 +82,11 @@ pub const Terminal = opaque {
     pub fn submit(self: *Terminal, task: Task) !void {
         return self.state().submit(task);
     }
+    /// Borrows a font recipe only until the sole worker completes its transaction.
+    /// Waiting is uncancelable, so queued configuration cannot outlive these borrowed paths.
+    pub fn reconfigure(self: *Terminal, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
+        return self.state().reconfigure(config, surface);
+    }
     /// Changes projection visibility without changing canonical service policy.
     pub fn setVisible(self: *Terminal, visible: bool) void {
         self.state().setVisible(visible);
@@ -75,13 +95,10 @@ pub const Terminal = opaque {
     pub fn requestFrame(self: *Terminal) void {
         self.state().requestFrame();
     }
-    /// Consumes the producer notification that a new immutable frame is available.
-    pub fn takeFrame(self: *Terminal) bool {
-        return self.state().takeFrame();
-    }
-    /// Returns only the immutable frame/residency exchange, never the live Instance.
-    pub fn renderExchange(self: *Terminal) *instance.RenderExchange {
-        return self.state().exchange;
+    /// Replaces the backend's old lease only when another publication is ready.
+    /// A null result preserves the old lease; the short transfer contains no SDL work.
+    pub fn replaceFrame(self: *Terminal, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency) FrameError!?instance.RenderLease {
+        return self.state().replaceFrame(previous, residency);
     }
 
     fn state(self: *Terminal) *State {
@@ -104,7 +121,9 @@ const State = struct {
     event_type: u32,
     thread: ?std.Thread = null,
     mutex: std.Io.Mutex = .init,
-    tasks: [queue_limit]Task = undefined,
+    configured: std.Io.Condition = .init,
+    frame_mutex: std.Io.Mutex = .init,
+    tasks: [queue_limit]Work = undefined,
     head: usize = 0,
     count: usize = 0,
     input_bytes: usize = 0,
@@ -154,7 +173,7 @@ const State = struct {
         self.mutex.unlock(self.io);
         self.wake();
         if (self.thread) |thread| thread.join();
-        while (self.pop()) |task| self.releaseTask(task);
+        self.cancelPending();
         closeWake(self.wake_fd);
         instance.deinit(self.value);
         const allocator = self.allocator;
@@ -163,6 +182,24 @@ const State = struct {
 
     fn takeFrame(self: *State) bool {
         return self.new_frame.swap(false, .acq_rel);
+    }
+
+    fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency) FrameError!?instance.RenderLease {
+        if (!self.new_frame.load(.acquire)) return null;
+        self.frame_mutex.lockUncancelable(self.io);
+        defer {
+            self.frame_mutex.unlock(self.io);
+            // A producer that skipped this short transfer never waits for the GUI.
+            if (self.credit.load(.acquire)) self.wake();
+        }
+        if (!self.new_frame.load(.acquire)) return null;
+        if (previous) |lease| {
+            if (lease.exchange != self.exchange) return error.WrongExchange;
+            try lease.release(residency);
+        }
+        const lease = instance.acquirePublishedFrame(self.exchange) orelse return error.NoPublishedFrame;
+        self.new_frame.store(false, .release);
+        return lease;
     }
 
     fn snapshot(self: *State) Status {
@@ -190,15 +227,68 @@ const State = struct {
             }
         }
         errdefer self.releaseTask(task);
+        try self.admit(.{ .intent = task });
+    }
+
+    fn admit(self: *State, work: Work) error{ TerminalStopped, InputQueueFull }!void {
+        const bytes = if (work == .intent) taskBytes(work.intent).len else 0;
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping or self.status.failure != null) return error.TerminalStopped;
-        if (self.count == queue_limit or bytes.len > input_byte_limit - self.input_bytes)
-            return error.InputQueueFull;
-        self.tasks[(self.head + self.count) % queue_limit] = task;
+        if (self.count == queue_limit or bytes > input_byte_limit - self.input_bytes) return error.InputQueueFull;
+        self.tasks[(self.head + self.count) % queue_limit] = work;
         self.count += 1;
-        self.input_bytes += bytes.len;
+        self.input_bytes += bytes;
         self.wake();
+    }
+
+    fn reconfigure(self: *State, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
+        var request: Configuration = .{ .config = config, .surface = surface };
+        try self.admit(.{ .configure = &request });
+        self.mutex.lockUncancelable(self.io);
+        while (!request.complete) self.configured.waitUncancelable(self.io, &self.mutex);
+        self.mutex.unlock(self.io);
+        if (request.failure) |failure| return failure;
+        return request.result.?;
+    }
+
+    fn completeConfiguration(self: *State, request: *Configuration, result: ConfigureError!instance.PresentationGeometry) void {
+        self.mutex.lockUncancelable(self.io);
+        if (result) |geometry| request.result = geometry else |failure| request.failure = failure;
+        request.complete = true;
+        self.configured.broadcast(self.io);
+        // No request access follows unlock: the waiting caller can now retire its stack storage.
+        self.mutex.unlock(self.io);
+    }
+
+    fn applyConfiguration(self: *State, request: *Configuration) void {
+        const live = instance.terminal(self.value).semanticView(0);
+        const result = if (request.surface) |surface|
+            instance.reconfigurePresentationSurface(self.value, request.config, surface)
+        else keep_grid: {
+            const cell = instance.reconfigurePresentation(self.value, request.config) catch |failure| {
+                self.completeConfiguration(request, failure);
+                return;
+            };
+            break :keep_grid instance.PresentationGeometry{ .cell_size = cell, .rows = live.rows, .columns = live.cols };
+        };
+        if (result) |geometry| {
+            if (geometry.columns != live.cols) self.history.reset();
+            self.presentation_failure = null;
+            self.mutex.lockUncancelable(self.io);
+            self.status.presentation_failure = null;
+            self.mutex.unlock(self.io);
+            self.gate.pending = true;
+            self.credit.store(true, .release);
+            self.completeConfiguration(request, geometry);
+        } else |failure| self.completeConfiguration(request, failure);
+    }
+
+    fn cancelPending(self: *State) void {
+        while (self.pop()) |work| switch (work) {
+            .intent => |task| self.releaseTask(task),
+            .configure => |request| self.completeConfiguration(request, error.TerminalStopped),
+        };
     }
 
     fn setVisible(self: *State, visible: bool) void {
@@ -213,14 +303,14 @@ const State = struct {
         if (!self.credit.swap(true, .acq_rel)) self.wake();
     }
 
-    fn pop(self: *State) ?Task {
+    fn pop(self: *State) ?Work {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.count == 0) return null;
         const task = self.tasks[self.head];
         self.head = (self.head + 1) % queue_limit;
         self.count -= 1;
-        self.input_bytes -= taskBytes(task).len;
+        if (task == .intent) self.input_bytes -= taskBytes(task.intent).len;
         return task;
     }
 
@@ -293,9 +383,13 @@ const State = struct {
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
         if (lifecycle_changed or title_changed) self.notify();
+        var published = false;
         if (self.presentation_failure == null and self.gate.pending and self.visible.load(.acquire) and
             self.gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
         {
+            // Projection may skip a stalled GUI transfer; canonical service never waits for it.
+            if (!self.frame_mutex.tryLock()) return result;
+            defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
             instance.publishRenderAt(self.value, self.history.offset) catch |failure| {
                 if (failure == error.PublicationBusy) {
@@ -311,8 +405,9 @@ const State = struct {
             };
             self.gate.pending = false;
             self.new_frame.store(true, .release);
-            self.notify();
+            published = true;
         }
+        if (published) self.notify();
         return result;
     }
 
@@ -321,6 +416,7 @@ const State = struct {
             self.mutex.lockUncancelable(self.io);
             self.status.failure = failure;
             self.mutex.unlock(self.io);
+            self.cancelPending();
             self.notify();
         };
     }
@@ -329,10 +425,13 @@ const State = struct {
         var readable = true;
         var writable = true;
         while (!self.stopRequested()) {
-            while (self.pop()) |task| {
-                defer self.releaseTask(task);
-                try self.apply(task);
-            }
+            while (self.pop()) |work| switch (work) {
+                .intent => |task| {
+                    defer self.releaseTask(task);
+                    try self.apply(task);
+                },
+                .configure => |request| self.applyConfiguration(request),
+            };
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
@@ -451,8 +550,8 @@ test "hidden presentation still drains one MiB and semantic input to the sole ca
     @memset(submitted, '?');
     std.testing.allocator.free(submitted);
     try waitTitle(owner, "DONE");
-    try std.testing.expect(!owner.takeFrame());
-    try std.testing.expect(instance.acquirePublishedFrame(owner.renderExchange()) == null);
+    try std.testing.expect(!owner.state().takeFrame());
+    try std.testing.expect(instance.acquirePublishedFrame(owner.state().exchange) == null);
     // Oversized input and borrowed key text are rejected without mutation.
     const oversized = try std.testing.allocator.alloc(u8, input_byte_limit + 1);
     defer std.testing.allocator.free(oversized);
@@ -475,7 +574,7 @@ test "a held immutable publication cannot pace canonical progress or prevent cle
     defer owner.destroy();
     try waitTitle(owner, "READY");
     try waitFrame(owner);
-    var lease = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var lease = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     defer lease.abandon();
     const before = lease.value.terminal_revision;
     const first = lease.value.commands[0];
@@ -489,7 +588,7 @@ test "a held immutable publication cannot pace canonical progress or prevent cle
 fn waitFrame(owner: *Terminal) !void {
     var attempt: u16 = 0;
     while (attempt < 5000) : (attempt += 1) {
-        if (owner.takeFrame()) return;
+        if (owner.state().takeFrame()) return;
         if (owner.snapshot().failure) |failure| return failure;
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
@@ -511,13 +610,13 @@ test "synchronized hold releases a new frame after one second without further ch
     defer owner.destroy();
     try waitTitle(owner, "READY");
     try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var initial = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     const ready_revision = owner.snapshot().revision;
     if (initial.value.terminal_revision < ready_revision) {
         try initial.release(&.{});
         owner.requestFrame();
         try waitFrame(owner);
-        initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+        initial = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     }
     try std.testing.expectEqual(ready_revision, initial.value.terminal_revision);
     const revision = initial.value.terminal_revision;
@@ -531,7 +630,7 @@ test "synchronized hold releases a new frame after one second without further ch
         std.debug.print("hold published too early: {d}ms after input, initial revision {d}, canonical revision {d}\n", .{ elapsed, revision, owner.snapshot().revision });
         return error.EarlyPublication;
     }
-    var released = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var released = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     defer released.abandon();
     try std.testing.expect(released.value.terminal_revision > revision);
 }
@@ -574,7 +673,7 @@ test "projection failure leaves canonical output and input alive" {
     defer owner.destroy();
     try waitTitle(owner, "READY");
     try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var initial = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     try initial.release(&.{});
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "FIRST");
@@ -604,19 +703,149 @@ test "visibility affirmation cannot manufacture presentation credits; reveal can
     defer owner.destroy();
     try waitTitle(owner, "READY");
     try waitFrame(owner);
-    var initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var initial = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     try initial.release(&.{});
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "FIRST");
     for (0..16) |_| owner.setVisible(true);
     try owner.submit(.{ .input = .{ .bytes = "END\n" } });
     try waitTitle(owner, "SECOND");
-    try std.testing.expect(!owner.takeFrame());
-    try std.testing.expect(instance.acquirePublishedFrame(owner.renderExchange()) == null);
+    try std.testing.expect(!owner.state().takeFrame());
+    try std.testing.expect(instance.acquirePublishedFrame(owner.state().exchange) == null);
     owner.setVisible(false);
     owner.setVisible(true);
     try waitFrame(owner);
-    var revealed = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    var revealed = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
     defer revealed.abandon();
     try std.testing.expectEqual(owner.snapshot().revision, revealed.value.terminal_revision);
+}
+
+test "font configuration rolls back failure and replaces geometry while an older immutable lease stays held" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033]0;CONTINUED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try waitFrame(owner);
+    var held = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
+    const old_generation = held.value.presentation_generation;
+    const old_size = held.value.cell_size;
+    var invalid = testPresentation();
+    invalid.fonts.regular = .{ .path = .{ .primary = "/missing-howl-live-font.ttf", .size = .{ .pixels = 18 } } };
+    try std.testing.expectError(error.FontOpen, owner.reconfigure(invalid, null));
+    try std.testing.expectEqual(old_generation, held.value.presentation_generation);
+    try std.testing.expectEqualDeep(old_size, held.value.cell_size);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "CONTINUED");
+    var larger = testPresentation();
+    larger.fonts.regular.path.size = .{ .pixels = 18 };
+    const surface: instance.render.terminal.Size = .{ .width = 200, .height = 150 };
+    const geometry = try owner.reconfigure(larger, surface);
+    try std.testing.expectEqual(surface.width / geometry.cell_size.width, geometry.columns);
+    try std.testing.expectEqual(surface.height / geometry.cell_size.height, geometry.rows);
+    try std.testing.expectEqual(old_generation, held.value.presentation_generation);
+    try std.testing.expectEqualDeep(old_size, held.value.cell_size);
+    try held.release(&.{});
+    try waitFrame(owner);
+    var changed = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
+    defer changed.abandon();
+    try std.testing.expect(changed.value.presentation_generation > old_generation);
+    try std.testing.expectEqualDeep(geometry.cell_size, changed.value.cell_size);
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "canonical failure rejects or releases borrowed configuration before its caller retires" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try owner.submit(.{ .resize = .{ .rows = 0, .columns = 0 } });
+    try std.testing.expectError(error.TerminalStopped, owner.reconfigure(testPresentation(), null));
+    try std.testing.expect(owner.snapshot().failure != null);
+}
+
+test "a stalled backend lease transfer cannot pace canonical output; no-frame preserves the accepted lease" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\\000' x; printf '\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    var initial: ?instance.RenderLease = null;
+    var attempts: u16 = 0;
+    while (initial == null and attempts < 5000) : (attempts += 1) {
+        initial = try owner.replaceFrame(null, &.{});
+        if (initial == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    var held = initial orelse return error.MissingFrame;
+    defer held.abandon();
+    try std.testing.expect(try owner.replaceFrame(&held, &.{}) == null);
+    try std.testing.expect(!held.released);
+    const sequence = held.value.sequence;
+    owner.state().frame_mutex.lockUncancelable(owner.state().io);
+    var locked = true;
+    defer if (locked) owner.state().frame_mutex.unlock(owner.state().io);
+    owner.requestFrame();
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    try std.testing.expectEqual(sequence, held.value.sequence);
+    owner.state().frame_mutex.unlock(owner.state().io);
+    locked = false;
+    owner.requestFrame();
+    owner.state().wake();
+    const other = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer other.destroy();
+    var other_frame: ?instance.RenderLease = null;
+    attempts = 0;
+    while (other_frame == null and attempts < 5000) : (attempts += 1) {
+        other_frame = try other.replaceFrame(null, &.{});
+        if (other_frame == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    var foreign = other_frame orelse return error.MissingFrame;
+    defer foreign.abandon();
+    attempts = 0;
+    while (!owner.state().new_frame.load(.acquire) and attempts < 5000) : (attempts += 1)
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    if (attempts == 5000) return error.Timeout;
+    try std.testing.expectError(error.WrongExchange, owner.replaceFrame(&foreign, &.{}));
+    try std.testing.expect(!foreign.released and !held.released);
+    var replacement: ?instance.RenderLease = null;
+    attempts = 0;
+    while (replacement == null and attempts < 5000) : (attempts += 1) {
+        replacement = try owner.replaceFrame(&held, &.{});
+        if (replacement == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    var changed = replacement orelse return error.MissingFrame;
+    defer changed.abandon();
+    try std.testing.expect(held.released);
+    try std.testing.expect(changed.value.sequence > sequence);
+    try std.testing.expect(try owner.replaceFrame(&changed, &.{}) == null);
+    try std.testing.expect(!changed.released);
 }
