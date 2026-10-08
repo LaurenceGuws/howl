@@ -157,15 +157,19 @@ horse_config_digest() {
 }
 
 horse_version() {
-    local horse=$1
+    local horse=$1 version
+    # Drain the command before selecting a line: head can SIGPIPE a producer
+    # that prints another diagnostic, turning valid metadata into a failed run.
     case "$horse" in
-        howl) "$HOWL_BIN" --version 2>&1 | head -n 1 ;;
-        foot) foot --version 2>&1 | head -n 1 ;;
-        kitty) kitty --version 2>&1 | head -n 1 ;;
-        alacritty) alacritty --version 2>&1 | head -n 1 ;;
-        konsole) konsole --version 2>&1 | head -n 1 ;;
-        wezterm) wezterm --version 2>&1 | head -n 1 ;;
+        howl) version=$("$HOWL_BIN" --version 2>&1) || return ;;
+        foot) version=$(foot --version 2>&1) || return ;;
+        kitty) version=$(kitty --version 2>&1) || return ;;
+        alacritty) version=$(alacritty --version 2>&1) || return ;;
+        konsole) version=$(konsole --version 2>&1) || return ;;
+        wezterm) version=$(wezterm --version 2>&1) || return ;;
+        *) return 1 ;;
     esac
+    printf '%s\n' "${version%%$'\n'*}"
 }
 
 wmio_data() {
@@ -501,15 +505,57 @@ raise SystemExit(0 if not remaining else 1)
 PYIN
 }
 
+# Freeze ownership arguments into the trap. Function locals may already be
+# unwound when errexit in a nested metadata function reaches the shell EXIT.
+arm_run_cleanup() {
+    local command
+    printf -v command 'cleanup_failed_run "$?" %q %q %q %q %q' "$1" "$2" "$3" "$4" "$5"
+    trap "$command" EXIT
+}
+
+# Armed for one run/probe and removed after successful cleanup. The fresh window
+# and its launch/terminal PIDs are owned by that invocation, never an app match.
+cleanup_failed_run() {
+    local result=$1 run_dir=$2 stable=$3 root_pid=$4 launcher_pid=$5 sampler_pid=$6
+    trap - EXIT
+    trap '' INT TERM
+    set +e
+    touch "$run_dir/release"
+    if [[ $sampler_pid =~ ^[1-9][0-9]*$ ]]; then
+        [[ -e $run_dir/producer.exit ]] || printf '125\n' > "$run_dir/producer.exit"
+        wait "$sampler_pid"
+    fi
+    if [[ ! $root_pid =~ ^[1-9][0-9]*$ && -n $stable ]]; then
+        root_pid=$(window_pid "$stable" 2>/dev/null)
+    fi
+    if [[ $root_pid =~ ^[1-9][0-9]*$ ]]; then
+        terminate_process_tree "$root_pid" "$run_dir/process-tree-cleanup.json"
+    elif [[ $launcher_pid =~ ^[1-9][0-9]*$ ]]; then
+        terminate_process_tree "$launcher_pid" "$run_dir/process-tree-cleanup.json"
+    fi
+    if [[ -n $stable ]] && wmio_data window --stable-id "$stable" >/dev/null 2>&1; then
+        wmio_data close --stable-id "$stable" > "$run_dir/window-close.json" 2> "$run_dir/window-close.stderr"
+    fi
+    if [[ $launcher_pid =~ ^[1-9][0-9]*$ ]]; then
+        if ! wait_pid_exit "$launcher_pid" 3000; then kill "$launcher_pid" 2>/dev/null; fi
+        if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null; fi
+    fi
+    exit "$result"
+}
+
 probe_one() {
     local horse=$1
     have_horse "$horse" || fail "unknown horse: $horse"
     require_file "$WMIO"; require_file "$HOWL_BIN"
 
-    local stamp run_dir before stable rect x y width height root_pid launcher_pid typed
+    local stamp run_dir before stable="" rect x y width height root_pid="" launcher_pid="" typed
+    local sampler_pid=""
     stamp=$(date +%Y%m%dT%H%M%S)
     run_dir="$EVIDENCE_ROOT/calibration/$stamp-$horse"
     mkdir -p "$run_dir"
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     wmio_data capabilities > "$run_dir/wmio-capabilities.json"
     wmio_data desktop > "$run_dir/desktop-before.json"
     before=$(window_ids)
@@ -517,12 +563,14 @@ probe_one() {
     local -a argv
     mapfile -d '' -t argv < <(horse_argv "$horse")
     launch_horse "$run_dir" "${argv[@]}"
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$launcher_pid" > "$run_dir/launcher.pid"
 
     stable=$(new_window_id "$before" 12000) || {
         kill "$launcher_pid" 2>/dev/null || true
         fail "could not discover exactly one fresh window for $horse; evidence: $run_dir"
     }
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$stable" > "$run_dir/window.stable-id"
     rect=$(resolved_rect) || fail "monitor not found: $MONITOR"
     IFS=, read -r x y width height <<<"$rect"
@@ -531,6 +579,7 @@ probe_one() {
     sleep "$(python3 -c "print($SETTLE_MS/1000)")"
     wmio_data window --stable-id "$stable" > "$run_dir/window-ready.json"
     root_pid=$(window_pid "$stable")
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$root_pid" > "$run_dir/root.pid"
 
     local ready_cmd
@@ -563,6 +612,7 @@ probe_one() {
     fi
     if ! wait_pid_exit "$launcher_pid" 3000; then kill "$launcher_pid" 2>/dev/null || true; fi
     if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null || true; fi
+    trap - EXIT INT TERM
 }
 
 calibrate() {
@@ -588,10 +638,13 @@ run_one() {
     [[ $dose =~ ^[0-9]+$ ]] || fail "dose must be an integer"
     require_file "$WMIO"; require_file "$TUI_ZOO"; require_file "$HOWL_BIN"
 
-    local stamp run_dir before stable rect x y width height root_pid launcher_pid sampler_pid
+    local stamp run_dir before stable="" rect x y width height root_pid="" launcher_pid="" sampler_pid=""
     stamp=$(date +%Y%m%dT%H%M%S)
     run_dir="$EVIDENCE_ROOT/$stamp-$horse-cells-d${dose}"
     mkdir -p "$run_dir"
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     wmio_data capabilities > "$run_dir/wmio-capabilities.json"
     wmio_data desktop > "$run_dir/desktop-before.json"
     before=$(window_ids)
@@ -599,12 +652,14 @@ run_one() {
     local -a argv
     mapfile -d '' -t argv < <(horse_argv "$horse")
     launch_horse "$run_dir" "${argv[@]}"
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$launcher_pid" > "$run_dir/launcher.pid"
 
     stable=$(new_window_id "$before" 12000) || {
         kill "$launcher_pid" 2>/dev/null || true
         fail "could not discover exactly one fresh window for $horse; evidence: $run_dir"
     }
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$stable" > "$run_dir/window.stable-id"
     wmio_data window --stable-id "$stable" > "$run_dir/window-created.json"
 
@@ -616,6 +671,7 @@ run_one() {
     sleep "$(python3 -c "print($SETTLE_MS/1000)")"
     wmio_data window --stable-id "$stable" > "$run_dir/window-ready.json"
     root_pid=$(window_pid "$stable")
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     printf '%s\n' "$root_pid" > "$run_dir/root.pid"
     record_metadata "$run_dir" "$horse" "$dose" "$stable" "$root_pid" "$rect"
     capture_host "$run_dir"
@@ -657,6 +713,7 @@ run_one() {
 
     sample_tree "$root_pid" "$run_dir/samples.jsonl" "$run_dir/producer.exit" "$SAMPLE_MS" &
     sampler_pid=$!
+    arm_run_cleanup "$run_dir" "$stable" "$root_pid" "$launcher_pid" "$sampler_pid"
     touch "$run_dir/go"
 
     local run_timeout=$((DURATION_MS + 12000))
@@ -678,6 +735,7 @@ run_one() {
         kill "$launcher_pid" 2>/dev/null || true
     fi
     if [[ $GRAPHICAL_ENVIRONMENT == physical ]]; then wait "$launcher_pid" 2>/dev/null || true; fi
+    trap - EXIT INT TERM
 }
 
 doctor() {

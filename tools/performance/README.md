@@ -31,6 +31,13 @@ lifetime ticks across producer exit would create a negative interval. Older
 captures can contain that error; recalculate stable intervals or rerun before
 comparing their average CPU.
 
+Each race and calibration probe retains cleanup for its fresh window and process
+identities as soon as they are known. Placement/metadata failures and interrupts
+release the runner, stop the sampler, and clean up only that owned process tree.
+Version output is drained before selecting its first line, so extra diagnostics
+do not introduce a SIGPIPE failure; genuine version-command failures still fail
+the run.
+
 
 ## Isolated visual KWin lab
 
