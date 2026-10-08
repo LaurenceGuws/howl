@@ -136,6 +136,33 @@ Warm frozen projection comparisons also favored the inlined call, but baseline
 variance prevents a single headline stage percentage. These later comparisons
 are separate measurements and must not be added to the whole-night ratios.
 
+A separate 12-second ABFFBA saturation run compared the same original source,
+the classifier-inline refinement at 080fb7f, and Foot on the same track and
+payload lattice:
+
+| Dose | Original Howl producer fps / terminal CPU | Refined Howl | Foot |
+| --- | --- | --- | --- |
+|32768|42.276 /61.46%|46.403 /40.92%|48.554 /76.55%|
+|65536|21.308 /56.92%|23.288 /37.01%|24.399 /57.00%|
+
+At these doses, refined Howl emitted about 10% more frames than the original
+while using about 33–35% less terminal CPU. Foot emitted about 4–5% more than
+refined Howl and used more terminal CPU. These remain separate dimensions.
+Raw receipts and per-PID folds are retained in the workstream
+saturation-direct-controls files.
+
+A separate scratch frontend counter over the refined native bridge retained
+about 60 SDL presents per second. New frame ingests followed the producer:
+about 46.2/s at 32768 and 21.2–21.6/s at 65536. These instrumented cadence
+probes emitted 46.210 and 21.438 producer fps respectively; their throughput
+must not be substituted for the uninstrumented control table above.
+
+Eight final-source native oracle cases covered 32768/65536 writes, alnum/
+printable glyphs, synchronized output, and stalled/demanding observers.
+Every final foreground scalar hash matched the independent TUI Zoo oracle,
+and every requested quiet immutable frame reached its canonical revision.
+This establishes terminal-state agreement separately from SDL cadence.
+
 End-to-end ownership checks used scratch-only frontend logs over the accepted
 native bridge. A hidden tab processed 1,048,576 cell writes with no frame
 ingests while hidden, then resumed at its exact canonical revision with
