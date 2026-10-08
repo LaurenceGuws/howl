@@ -2131,7 +2131,7 @@ fn buildContentCommands(
                     surface,
                 ) orelse continue;
 
-            if (sequence.len == 1 and generated.classify(sequence[0]) != null) {
+            if (sequence.len == 1 and @call(.always_inline, generated.classify, .{sequence[0]}) != null) {
                 const sized_frame = if (plain_geometry)
                     physical
                 else

@@ -91,3 +91,55 @@ Select background and Unicode performance canaries without changing the track:
 The run metadata records both selectors. Producer FPS measures emitted frames
 and stdout backpressure; it does not establish displayed FPS or Unicode rendering
 correctness. Keep each configuration in its own dose curve.
+
+
+## Private native qualification (2026-10-08)
+
+The overnight comparison used a private 1920x1080 compositor, the same
+378x74 alnum payload, synchronized output, a 240 fps producer target and
+20-second ABFFBA ordering. Original Howl was product source fc0f339; the
+presentation-credit checkpoint was 713a21e, with harness cleanup at 2641889.
+Howl exposed 381x78 PTY cells and Foot 384x77; the common payload fits both.
+
+These CPU values separate terminal processes from TUI Zoo using the raw
+per-PID samples, excluding intervals with process-set changes. They differ
+from the harness's complete-tree CPU summary. Percentages refer to one CPU core.
+
+| Dose | Original Howl producer fps / terminal CPU | Scheduled Howl | Foot |
+| --- | --- | --- | --- |
+|4096|239.849 /87.45%|239.999 /37.18%|239.999 /30.91%|
+|8192|164.690 /81.11%|180.921 /43.37%|196.374 /42.15%|
+
+The scheduled checkpoint used about 57.5% less terminal CPU at 4096 and
+46.5% less at 8192, with about 9.9% more producer throughput at 8192. Both scheduled
+Howl 4096 runs had zero skipped slots; original Howl had 6 and 0. Foot still led
+the 8192 producer comparison. Raw receipts and per-PID folds are retained in
+the Home workstream gait-20261008/night-direct-controls files.
+
+Producer fps describes emission and stdout backpressure. A separate
+scratch-only frontend counter measured about 60 successful SDL presents and
+60 new frame ingests per second in warm 4096/8192 runs; producer fps must not
+be presented as displayed fps.
+
+A subsequent static inlining refinement at the generated-glyph classifier
+call site retained its ordinary public function type and classification
+behavior. Independent 12-second ABBA comparisons against 713a21e gave:
+
+| Case | Terminal CPU before / after | Producer fps before / after |
+| --- | --- | --- |
+|4096 alnum|38.04% /37.17%|239.957 /239.998|
+|8192 alnum|43.17% /42.47%|181.086 /181.025|
+|4096 Unicode/background|60.85% /60.47%|226.206 /226.088|
+
+The small 8192 and Unicode producer decreases are retained explicitly.
+Warm frozen projection comparisons also favored the inlined call, but baseline
+variance prevents a single headline stage percentage. These later comparisons
+are separate measurements and must not be added to the whole-night ratios.
+
+End-to-end ownership checks used scratch-only frontend logs over the accepted
+native bridge. A hidden tab processed 1,048,576 cell writes with no frame
+ingests while hidden, then resumed at its exact canonical revision with
+27,975 immutable Render commands. A quiet synchronized-output hold retained
+the older frame and caught up after about one second without further child
+output. The hidden fixture uses TUI Zoo oracle mode to preserve final glyphs;
+ordinary producer cleanup would otherwise clear the frozen view.
