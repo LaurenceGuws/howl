@@ -38,6 +38,7 @@ experimental:
   - howl-flutter
   - howl-web
   - howl-odin
+  - howl-app
 
 ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer

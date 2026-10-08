@@ -24,6 +24,7 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
+  - replace the Odin daily shell with the smallest direct Zig SDL howl-app that preserves its qualified behavior; retain Odin until capability parity
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
   - pressure the shortest native path through howl-host: one in-process Instance, direct canonical VT observation, text/render and Vulkan/Wayland with no transported client or Server route
   - pressure the same Instance/client/text/renderer owners through maintained visual canaries: Flutter over desktop Local, direct, or Server-selected native streams and Web over its Wasm/browser presentation gates

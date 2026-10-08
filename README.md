@@ -98,6 +98,10 @@ endpoints, but that is application configuration, not Server discovery. Odin als
 exposes explicit Server-selected Instance startup while preserving its Local/direct
 lanes; after attach its existing render/input workers remain ordinary HWLS clients.
 
+howl-app is the direct Zig/SDL daily-shell replacement beside Odin. Its first
+Local path borrows immutable canonical Render leases without the internal C ABI;
+Odin remains the daily app until the shell and attachment capabilities are qualified.
+
 The Vulkan Host is deliberately different: it is the native direct-embed performance
 canary only. It owns one in-process Instance and projects canonical VT observation
 directly through text/render/Vulkan/Wayland. Its build disables transported client

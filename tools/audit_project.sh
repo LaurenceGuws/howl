@@ -206,6 +206,10 @@ if ! grep -Fqx "pub const version = \"$workspace_version\";" howl-cli/src/howl_c
     printf 'howl-cli/src/howl_cli.zig: version does not match VERSION (%s)\n' "$workspace_version"
     status=1
 fi
+if ! grep -Fqx "const version = \"$workspace_version\";" howl-app/src/main.zig; then
+    printf 'howl-app/src/main.zig: version does not match VERSION (%s)\n' "$workspace_version"
+    status=1
+fi
 if ! grep -Fqx "APP_VERSION :: \"$workspace_version\"" howl-odin/main.odin; then
     printf 'howl-odin/main.odin: version does not match VERSION (%s)\n' "$workspace_version"
     status=1

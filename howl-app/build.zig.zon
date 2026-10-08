@@ -1,0 +1,8 @@
+.{
+    .name = .howl_app,
+    .version = "0.1.6-dev",
+    .fingerprint = 0xf47649779279c0da,
+    .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
+    .dependencies = .{ .howl_instance = .{ .path = "../howl-instance" } },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", ".zig-audit.json" },
+}
