@@ -160,7 +160,9 @@ experimental:
     live Instance. Application allocations use the Zig SMP allocator; SDL and
     other C dependencies retain their own allocation policy. Bounded tabs/nested
     panes, layout controls and the shared mapping registry/command palette are
-    connected, including live pane fonts and display-scale transactions. Saved
+    connected, including live pane fonts and display-scale transactions. Original-owner
+    mouse gestures, negotiated wheel routing and UI-local IME preedit/caret areas
+    use copied terminal facts and accepted immutable frame geometry. Saved
     configuration/settings, selection/search, desktop input/consequence policy
     and explicit attachments remain
     to be carried over before daily supersession. Its package check includes

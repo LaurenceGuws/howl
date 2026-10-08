@@ -88,3 +88,43 @@ fn match(allocator: std.mem.Allocator, pattern: [:0]const u8) ![]const u8 {
     if (text.len == 0 or text.len >= 4096 or text[0] != '/') return error.InvalidFontPath;
     return allocator.dupe(u8, text);
 }
+
+/// Owns SDL's UI/preedit faces; the canonical terminal font stack remains howl-text.
+pub const TextFonts = struct {
+    faces: [3]*c.TTF_Font,
+
+    /// Opens the regular and two Unicode fallback faces with reverse-order failure cleanup.
+    pub fn open(allocator: std.mem.Allocator, fonts: *const Fonts, pixels: f32) !TextFonts {
+        var self: TextFonts = undefined;
+        var count: usize = 0;
+        errdefer {
+            if (count != 0) c.TTF_ClearFallbackFonts(self.faces[0]);
+            while (count != 0) {
+                count -= 1;
+                c.TTF_CloseFont(self.faces[count]);
+            }
+        }
+        for ([_]usize{ 0, 4, 5 }, 0..) |index, slot| {
+            const path = try allocator.dupeSentinel(u8, fonts.paths[index], 0);
+            defer allocator.free(path);
+            self.faces[slot] = c.TTF_OpenFont(path, pixels) orelse return error.TTF;
+            count += 1;
+            if (slot != 0 and !c.TTF_AddFallbackFont(self.faces[0], self.faces[slot])) return error.TTF;
+        }
+        return self;
+    }
+    /// Keeps all three SDL faces at the same physical size.
+    pub fn setSize(self: *TextFonts, pixels: f32) error{TTF}!void {
+        for (self.faces) |face| if (!c.TTF_SetFontSize(face, pixels)) return error.TTF;
+    }
+    /// Detaches fallbacks before retiring every owned SDL font.
+    pub fn deinit(self: *TextFonts) void {
+        c.TTF_ClearFallbackFonts(self.faces[0]);
+        var count: usize = self.faces.len;
+        while (count != 0) {
+            count -= 1;
+            c.TTF_CloseFont(self.faces[count]);
+        }
+        self.* = undefined;
+    }
+};

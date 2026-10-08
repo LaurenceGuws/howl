@@ -7,6 +7,8 @@ const canvas = @import("canvas.zig");
 const layout = @import("layout.zig");
 const keybindings = @import("keybindings.zig");
 const input = @import("input.zig");
+const pointer = @import("pointer.zig");
+const composition = @import("composition.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -23,6 +25,7 @@ const Pane = struct {
     cell_size: ?instance.render.terminal.Size = null,
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
+    wheel: pointer.Wheel = .{},
 };
 const Tab = struct {
     tree: layout.Tree = layout.Tree.init(),
@@ -49,12 +52,13 @@ const Palette = struct {
     }
 };
 const Drag = union(enum) { none, divider: layout.Divider, tab };
+const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
 const App = struct {
     init: std.process.Init,
     fonts: *const font_owner.Fonts,
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,
-    ui_font: *c.TTF_Font,
+    ui_fonts: *font_owner.TextFonts,
     geometry: *canvas.Geometry,
     wake_event: u32,
     scale: f32,
@@ -62,6 +66,9 @@ const App = struct {
     tab_count: u8 = 0,
     active: u8 = 0,
     keyboard: input.Keyboard = .{},
+    preedit: composition.Composition = .{},
+    input_timestamp: u64 = 0,
+    capture: ?PointerCapture = null,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
     drag: Drag = .none,
@@ -114,6 +121,10 @@ const App = struct {
         return result;
     }
     fn destroyPane(self: *App, value: *Pane) void {
+        if (self.capture) |held| if (held.pane == value) {
+            self.finishPointer() catch |failure| self.report(failure);
+            self.capture = null;
+        };
         self.keyboard.forget(value.owner);
         value.canvas.deinit();
         value.owner.destroy();
@@ -123,7 +134,13 @@ const App = struct {
         for (value.panes) |maybe| if (maybe) |p| self.destroyPane(p);
         allocator.destroy(value);
     }
+    fn cancelComposition(self: *App) void {
+        self.preedit.cancel(self.input_timestamp);
+        if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
+    }
     fn loseKeyboard(self: *App) !void {
+        self.cancelComposition();
+        try self.finishPointer();
         try self.keyboard.releaseTerminal();
         if (self.tab_count == 0 or !self.focused or self.palette != null) return;
         const owner = self.pane().owner;
@@ -131,6 +148,7 @@ const App = struct {
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
+        self.cancelComposition();
         if (self.tab_count == 0 or !self.focused or self.palette != null) return;
         const owner = self.pane().owner;
         const status = owner.snapshot();
@@ -347,7 +365,7 @@ const App = struct {
             return;
         }
         self.scale = next;
-        if (!c.TTF_SetFontSize(self.ui_font, 15 * next)) self.report(error.TTF);
+        self.ui_fonts.setSize(15 * next) catch |failure| self.report(failure);
         for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |value| {
             const status = value.owner.snapshot();
             if (status.failure != null or status.closed) continue;
@@ -393,6 +411,7 @@ const App = struct {
         }
     }
     fn event(self: *App, value: c.SDL_Event) !void {
+        self.input_timestamp = value.common.timestamp;
         switch (value.type) {
             c.SDL_EVENT_QUIT, c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => self.running = false,
             c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
@@ -407,7 +426,14 @@ const App = struct {
                     .overlay => try self.paletteKey(value.key.key),
                 }
             },
+            c.SDL_EVENT_TEXT_EDITING => {
+                if (!self.focused or !self.preedit.accepts(value.edit.timestamp)) return;
+                if (self.palette) |p| if (p.profile) return;
+                try self.preedit.set(std.mem.span(value.edit.text), value.edit.start, value.edit.length);
+            },
             c.SDL_EVENT_TEXT_INPUT => {
+                if (!self.focused or !self.preedit.accepts(value.text.timestamp)) return;
+                self.preedit.clear();
                 if (self.keyboard.consumeText()) return;
                 const text = std.mem.span(value.text.text);
                 if (self.palette) |*p| {
@@ -418,22 +444,40 @@ const App = struct {
                     }
                 } else try self.pane().owner.submit(.{ .input = .{ .bytes = text } });
             },
-            c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (value.button.button == c.SDL_BUTTON_LEFT) try self.pointerDown(value.button.x, value.button.y),
-            c.SDL_EVENT_MOUSE_BUTTON_UP => if (value.button.button == c.SDL_BUTTON_LEFT) {
-                if (self.consume_left_release) self.consume_left_release = false;
-                self.drag = .none;
+            c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
+                try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState())),
+            c.SDL_EVENT_MOUSE_BUTTON_UP => {
+                const button = mouseButton(value.button.button) orelse return;
+                if (button == .left and self.consume_left_release) {
+                    self.consume_left_release = false;
+                    return;
+                }
+                if (self.capture != null) try self.pointerRelease(button, value.button.x, value.button.y, input.semanticModifiers(c.SDL_GetModState()));
+                if (button == .left) self.drag = .none;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
-                if (self.drag == .divider) self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
-                if (self.drag == .tab and value.motion.y < 40 and self.tab_count > 1) {
+                if (self.capture) |*held| {
+                    const point = self.pointerLocation(held.pane, value.motion.x, value.motion.y, true) orelse held.last;
+                    try held.pane.owner.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), held.buttons) });
+                    held.last = point;
+                } else if (self.drag == .divider) {
+                    self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
+                } else if (self.drag == .tab and value.motion.y < 40 and self.tab_count > 1) {
                     const index: u8 = @intFromFloat(std.math.clamp(@floor((value.motion.x - 8) / self.tabWidth()), 0, @as(f32, @floatFromInt(self.tab_count - 1))));
                     self.moveTab(index);
+                } else if (self.palette == null) {
+                    if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
+                        const p = self.tab().panes[slot].?;
+                        const state = p.owner.snapshot().interaction orelse return;
+                        if (state.mouse_tracking != .any_event) return;
+                        const frame = p.canvas.frame() orelse return;
+                        if (frame.history_offset != 0) return;
+                        const point = self.pointerLocation(p, value.motion.x, value.motion.y, false) orelse return;
+                        try p.owner.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), 0) });
+                    }
                 }
             },
-            c.SDL_EVENT_MOUSE_WHEEL => {
-                if (self.palette != null) return;
-                try self.pane().owner.submit(.{ .scroll = @intFromFloat(std.math.clamp(@round(value.wheel.y * 3), -1000, 1000)) });
-            },
+            c.SDL_EVENT_MOUSE_WHEEL => try self.pointerWheel(value.wheel),
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => {
                 self.focused = true;
                 try self.gainKeyboard();
@@ -446,8 +490,13 @@ const App = struct {
             else => {},
         }
     }
-    fn pointerDown(self: *App, x: f32, y: f32) !void {
+    fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier) !void {
+        if (self.capture) |held| {
+            const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
+            return self.pointerPress(held.pane, point, button, mods);
+        }
         if (self.palette != null) {
+            if (button != .left) return;
             var matches: [keybindings.definitions.len]usize = undefined;
             const count = self.palette.?.indices(&matches);
             const box = self.paletteRect();
@@ -462,6 +511,7 @@ const App = struct {
             return;
         }
         if (y < 36) {
+            if (button != .left) return;
             const width = self.tabWidth();
             if (x >= 8 and x < 8 + width * @as(f32, @floatFromInt(self.tab_count))) {
                 const index: u8 = @intFromFloat(@floor((x - 8) / width));
@@ -477,14 +527,89 @@ const App = struct {
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.body(), &places, &dividers);
-        for (dividers[0..result.dividers]) |divider| if (divider.rect.contains(x, y)) {
+        for (dividers[0..result.dividers]) |divider| if (button == .left and divider.rect.contains(x, y)) {
             self.drag = .{ .divider = divider };
             return;
         };
         for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) {
             try self.focusPane(place.pane);
+            const p = self.pane();
+            const frame = p.canvas.frame() orelse return;
+            const state = p.owner.snapshot().interaction orelse return;
+            if (!mods.shift and frame.history_offset == 0 and state.mouse_tracking != .off) {
+                const point = self.pointerLocation(p, x, y, false) orelse return;
+                try self.pointerPress(p, point, button, mods);
+            }
             return;
         };
+    }
+    fn pointerPane(self: *App, x: f32, y: f32) ?u8 {
+        var places: [layout.pane_limit]layout.Placement = undefined;
+        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) return place.pane;
+        return null;
+    }
+    fn pointerLocation(self: *App, p: *Pane, x: f32, y: f32, captured: bool) ?pointer.Location {
+        const frame = p.canvas.frame() orelse return null;
+        var places: [layout.pane_limit]layout.Placement = undefined;
+        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
+            const rect = paneContent(place.rect);
+            return pointer.locate(.{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, self.scale, frame.cell_size, frame.surface, x, y, captured);
+        };
+        return null;
+    }
+    // SDL automatically captures held button gestures; this state binds their semantic owner.
+    fn pointerPress(self: *App, p: *Pane, point: pointer.Location, button: instance.MouseButton, mods: instance.InputModifier) !void {
+        const bit = pointer.buttonBit(button);
+        const before: u8 = if (self.capture) |held| held.buttons else 0;
+        if (before & bit != 0) return;
+        const after = before | bit;
+        try p.owner.submit(.{ .input = point.event(.press, button, mods, after) });
+        self.capture = .{ .pane = p, .buttons = after, .last = point };
+    }
+    fn pointerRelease(self: *App, button: instance.MouseButton, x: f32, y: f32, mods: instance.InputModifier) !void {
+        const held = self.capture orelse return;
+        const bit = pointer.buttonBit(button);
+        if (held.buttons & bit == 0) return;
+        const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
+        const after = held.buttons & ~bit;
+        held.pane.owner.submit(.{ .input = point.event(.release, button, mods, after) }) catch |failure| {
+            if (failure != error.TerminalStopped) return failure;
+        };
+        self.capture = if (after == 0) null else .{ .pane = held.pane, .buttons = after, .last = point };
+    }
+    fn finishPointer(self: *App) !void {
+        for ([_]instance.MouseButton{ .left, .middle, .right }) |button|
+            try self.pointerRelease(button, -std.math.inf(f32), -std.math.inf(f32), .{});
+    }
+    fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
+        if (self.palette != null) return;
+        const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
+        const p = self.tab().panes[slot].?;
+        const frame = p.canvas.frame() orelse return;
+        const mods = input.semanticModifiers(c.SDL_GetModState());
+        const route = pointer.wheelRoute(frame.history_offset != 0, mods.shift, p.owner.snapshot().interaction, frame.alternate_screen);
+        const steps = p.wheel.consume(wheel.y * @as(f32, if (wheel.direction == c.SDL_MOUSEWHEEL_FLIPPED) -1 else 1), route);
+        if (steps == 0) return;
+        switch (route) {
+            .history => try p.owner.submit(.{ .scroll = steps }),
+            .terminal => {
+                const point = self.pointerLocation(p, wheel.mouse_x, wheel.mouse_y, false) orelse return;
+                const button: instance.MouseButton = if (steps > 0) .wheel_up else .wheel_down;
+                for (0..@abs(steps)) |_| try p.owner.submit(.{ .input = point.event(.wheel, button, mods, if (self.capture) |held| if (held.pane == p) held.buttons else 0 else 0) });
+            },
+            .alternate => {
+                const key: instance.Key = .{ .named = if (steps > 0) .up else .down };
+                for (0..@abs(steps)) |_| {
+                    try p.owner.submit(.{ .input = .{ .key = .{ .key = key, .action = .press } } });
+                    try p.owner.submit(.{ .input = .{ .key = .{ .key = key, .action = .release } } });
+                }
+            },
+            .wait, .ignore => {},
+        }
     }
     fn paletteRect(self: *const App) layout.Rect {
         const width = @min(600, @max(1, self.width - 24));
@@ -515,12 +640,86 @@ const App = struct {
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         if (bytes.len == 0) return;
-        const surface = c.TTF_RenderText_Blended(self.ui_font, bytes.ptr, bytes.len, .{ .r = 224, .g = 226, .b = 238, .a = 255 }) orelse return error.TTF;
+        const surface = c.TTF_RenderText_Blended(self.ui_fonts.faces[0], bytes.ptr, bytes.len, .{ .r = 224, .g = 226, .b = 238, .a = 255 }) orelse return error.TTF;
         defer c.SDL_DestroySurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse return error.SDL;
         defer c.SDL_DestroyTexture(texture);
         const rect: c.SDL_FRect = .{ .x = x, .y = y, .w = @as(f32, @floatFromInt(surface.*.w)) / self.scale, .h = @as(f32, @floatFromInt(surface.*.h)) / self.scale };
         if (!c.SDL_RenderTexture(self.renderer, texture, null, &rect)) return error.SDL;
+    }
+    fn textWidth(self: *App, bytes: []const u8) !f32 {
+        if (bytes.len == 0) return 0;
+        var width: c_int = 0;
+        var height: c_int = 0;
+        if (!c.TTF_GetStringSize(self.ui_fonts.faces[0], bytes.ptr, bytes.len, &width, &height)) return error.TTF;
+        return @as(f32, @floatFromInt(width)) / self.scale;
+    }
+    fn drawComposition(self: *App) !void {
+        if (!self.focused) return;
+        var clip: layout.Rect = undefined;
+        var x: f32 = undefined;
+        var y: f32 = undefined;
+        var cell_height: f32 = 20;
+        var logical_font: f32 = 15;
+        if (self.palette) |p| {
+            if (p.profile) {
+                if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
+                return;
+            }
+            const box = self.paletteRect();
+            clip = .{ .x = box.x + 12, .y = box.y + 8, .width = @max(1, box.width - 24), .height = 32 };
+            x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
+            y = box.y + 12;
+        } else {
+            const p = self.pane();
+            const frame = p.canvas.frame() orelse {
+                if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
+                return;
+            };
+            if (frame.history_offset != 0) {
+                if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
+                return;
+            }
+            var places: [layout.pane_limit]layout.Placement = undefined;
+            var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+            const result = self.tab().tree.layout(self.body(), &places, &dividers);
+            var found = false;
+            for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
+                const rect = paneContent(place.rect);
+                clip = .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h };
+                found = true;
+                break;
+            };
+            if (!found) return;
+            const status = p.owner.snapshot();
+            const cell_width = @as(f32, @floatFromInt(frame.cell_size.width)) / self.scale;
+            cell_height = @as(f32, @floatFromInt(frame.cell_size.height)) / self.scale;
+            x = clip.x + @as(f32, @floatFromInt(status.cursor_col)) * cell_width;
+            y = clip.y + @as(f32, @floatFromInt(status.cursor_row)) * cell_height;
+            x = std.math.clamp(x, clip.x, clip.x + clip.width - @min(1, clip.width));
+            y = std.math.clamp(y, clip.y, clip.y + clip.height - @min(cell_height, clip.height));
+            logical_font = @floatFromInt(p.font_size);
+        }
+        if (self.preedit.len != 0) try self.ui_fonts.setSize(logical_font * self.scale);
+        defer if (self.preedit.len != 0) self.ui_fonts.setSize(15 * self.scale) catch |failure| self.report(failure);
+        const text = self.preedit.text();
+        const text_width = try self.textWidth(text);
+        const caret = try self.textWidth(text[0..composition.byteOffset(text, self.preedit.start)]);
+        const available = @max(1, clip.x + clip.width - x);
+        const area: c.SDL_Rect = .{
+            .x = @intFromFloat(@floor(x)),
+            .y = @intFromFloat(@floor(y)),
+            .w = @intFromFloat(@ceil(@min(available, @max(2, @max(text_width, caret + 2))))),
+            .h = @intFromFloat(@ceil(@min(cell_height, clip.y + clip.height - y))),
+        };
+        if (!c.SDL_SetTextInputArea(self.window, &area, @intFromFloat(@floor(@min(caret, @as(f32, @floatFromInt(area.w - 1))))))) return error.SDL;
+        if (text.len == 0) return;
+        const target: c.SDL_Rect = .{ .x = @intFromFloat(@floor(clip.x)), .y = @intFromFloat(@floor(clip.y)), .w = @intFromFloat(@ceil(clip.width)), .h = @intFromFloat(@ceil(clip.height)) };
+        if (!c.SDL_SetRenderClipRect(self.renderer, &target)) return error.SDL;
+        defer clearClip(self.renderer);
+        try fill(self.renderer, .{ .x = x, .y = y, .width = @min(available, @max(2, text_width)), .height = cell_height }, .{ .r = 24, .g = 25, .b = 33, .a = 255 });
+        try self.drawText(text, x, y);
+        try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, .{ .r = 130, .g = 170, .b = 255, .a = 255 });
     }
     fn draw(self: *App) !void {
         var width: c_int = 0;
@@ -594,6 +793,7 @@ const App = struct {
         }
         try self.drawText(if (self.notice_len == 0) "Local" else self.notice[0..self.notice_len], 10, self.height - 22);
         if (self.palette != null) try self.drawPalette();
+        try self.drawComposition();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
         for (places[0..result.panes]) |place| {
             const p = self.tab().panes[place.pane].?;
@@ -620,10 +820,8 @@ pub fn main(init: std.process.Init) !void {
     defer c.SDL_DestroyWindow(window);
     const scale = c.SDL_GetWindowDisplayScale(window);
     if (!std.math.isFinite(scale) or scale <= 0 or scale > 8) return error.DisplayScale;
-    const font_path = try allocator.dupeSentinel(u8, fonts.paths[0], 0);
-    defer allocator.free(font_path);
-    const ui_font = c.TTF_OpenFont(font_path, 15 * scale) orelse return error.TTF;
-    defer c.TTF_CloseFont(ui_font);
+    var ui_fonts = try font_owner.TextFonts.open(allocator, &fonts, 15 * scale);
+    defer ui_fonts.deinit();
     const renderer = c.SDL_CreateRenderer(window, null) orelse return error.SDL;
     defer c.SDL_DestroyRenderer(renderer);
     if (!c.SDL_SetRenderVSync(renderer, 1) or !c.SDL_StartTextInput(window)) return error.SDL;
@@ -637,7 +835,7 @@ pub fn main(init: std.process.Init) !void {
         .fonts = &fonts,
         .window = window,
         .renderer = renderer,
-        .ui_font = ui_font,
+        .ui_fonts = &ui_fonts,
         .geometry = geometry,
         .wake_event = wake_event,
         .scale = scale,
@@ -659,6 +857,14 @@ pub fn main(init: std.process.Init) !void {
 fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
     const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
     if (!c.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a) or !c.SDL_RenderFillRect(renderer, &target)) return error.SDL;
+}
+fn mouseButton(button: u8) ?instance.MouseButton {
+    return switch (button) {
+        c.SDL_BUTTON_LEFT => .left,
+        c.SDL_BUTTON_MIDDLE => .middle,
+        c.SDL_BUTTON_RIGHT => .right,
+        else => null,
+    };
 }
 fn clearClip(renderer: *c.SDL_Renderer) void {
     const success = c.SDL_SetRenderClipRect(renderer, null);
@@ -701,6 +907,8 @@ test {
     std.testing.refAllDecls(layout);
     std.testing.refAllDecls(keybindings);
     std.testing.refAllDecls(input);
+    std.testing.refAllDecls(pointer);
+    std.testing.refAllDecls(composition);
 }
 
 test "palette query is bounded and includes deliberately unbound directional commands" {
@@ -725,4 +933,107 @@ test "tiny nested pane content never crosses its layout owner and has a bounded 
         const surface = physicalSurface(outer, 1.7);
         try std.testing.expect(surface.width >= 1 and surface.height >= 1);
     }
+}
+
+test "SDL composition stays local, uses its caret area and clears before pane input ownership changes" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const test_allocator = std.testing.allocator;
+    const window = c.SDL_CreateWindow("composition proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    try std.testing.expect(c.SDL_StartTextInput(window));
+    const surface = c.SDL_CreateSurface(1000, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry = try test_allocator.create(canvas.Geometry);
+    defer test_allocator.destroy(geometry);
+    geometry.* = .{};
+    const fonts: font_owner.Fonts = .{ .allocator = test_allocator, .paths = @splat(@import("test_fonts").primary_font) };
+    var ui_fonts = try font_owner.TextFonts.open(test_allocator, &fonts, 15);
+    defer ui_fonts.deinit();
+    var threaded = std.Io.Threaded.init(test_allocator, .{});
+    defer threaded.deinit();
+    const owner = try terminal.Terminal.create(test_allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033[2;5H\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, fonts.config(15), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    var p: Pane = .{ .owner = owner, .canvas = canvas.Canvas.init(test_allocator) };
+    defer p.canvas.deinit();
+    var t: Tab = .{};
+    t.panes[0] = &p;
+    var app: App = .{
+        .init = undefined,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = geometry,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+        .tab_count = 1,
+    };
+    app.tabs[0] = &t;
+    var attempts: u16 = 0;
+    while (p.canvas.frame() == null and attempts < 5000) : (attempts += 1) {
+        try p.canvas.update(renderer, owner);
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(p.canvas.frame() != null);
+    var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+    event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 100, .windowID = c.SDL_GetWindowID(window), .text = "aéz", .start = 2, .length = 1 };
+    const before = owner.snapshot().revision;
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("aéz", app.preedit.text());
+    try std.testing.expectEqual(before, owner.snapshot().revision);
+    try app.drawComposition();
+    var area: c.SDL_Rect = undefined;
+    var caret: c_int = 0;
+    try std.testing.expect(c.SDL_GetTextInputArea(window, &area, &caret));
+    try std.testing.expect(area.x > 9 and area.y > 43 and area.w > 0 and area.h > 0);
+    try std.testing.expect(caret > 0 and caret < area.w);
+    event_value.common.timestamp = 200;
+    app.input_timestamp = 200;
+    try app.openPalette(false);
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 150, .windowID = c.SDL_GetWindowID(window), .text = "OLD-OWNER\n" };
+    try app.event(event_value);
+    try std.testing.expectEqual(@as(usize, 0), app.palette.?.len);
+    event_value.text.timestamp = 201;
+    event_value.text.text = "filter";
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("filter", app.palette.?.query[0..app.palette.?.len]);
+    try app.drawComposition();
+    try app.openPalette(false);
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
+    event_value.text.timestamp = 202;
+    event_value.text.text = "COMMITTED\n";
+    try app.event(event_value);
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "COMMITTED")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    const point: pointer.Location = .{ .row = 1, .col = 2, .pixel_x = 20, .pixel_y = 20 };
+    try app.pointerPress(&p, point, .left, .{});
+    try std.testing.expect(app.capture.?.pane == &p);
+    try app.pointerRelease(.right, 0, 0, .{});
+    try std.testing.expectEqual(@as(u8, 1), app.capture.?.buttons);
+    event_value.common = .{ .type = c.SDL_EVENT_WINDOW_FOCUS_LOST, .reserved = 0, .timestamp = 300 };
+    try app.event(event_value);
+    try std.testing.expect(app.capture == null);
+    event_value.button = .{ .type = c.SDL_EVENT_MOUSE_BUTTON_UP, .reserved = 0, .timestamp = 301, .windowID = c.SDL_GetWindowID(window), .which = 0, .button = c.SDL_BUTTON_LEFT, .down = false, .clicks = 1, .padding = 0, .x = 0, .y = 0 };
+    try app.event(event_value);
+    try std.testing.expect(app.capture == null);
 }

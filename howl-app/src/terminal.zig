@@ -48,6 +48,8 @@ pub const Status = struct {
     closed: bool = false,
     child_exit: ?instance.ChildExit = null,
     interaction: ?instance.Terminal.InteractionState = null,
+    cursor_row: u16 = 0,
+    cursor_col: u16 = 0,
 };
 
 /// Typed ownership boundary. SDL cannot obtain the live canonical Instance.
@@ -374,6 +376,8 @@ const State = struct {
         self.status.closed = result.stream_closed;
         self.status.child_exit = result.child_exit;
         self.status.interaction = observation.interactionState();
+        self.status.cursor_row = live.cursor_row;
+        self.status.cursor_col = live.cursor_col;
         self.status.revision = observation.semanticSequence();
         const title = observation.title() orelse "";
         const title_len = @min(title.len, self.status.title.len);
@@ -848,4 +852,29 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
     try std.testing.expect(changed.value.sequence > sequence);
     try std.testing.expect(try owner.replaceFrame(&changed, &.{}) == null);
     try std.testing.expect(!changed.released);
+}
+
+test "semantic mouse reports and copied caret facts survive without a graphical observer" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033[?1002h\\033[?1006h\\033]0;READY\\007'; bytes=$(dd bs=1 count=18 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\033[2;5H\\033]0;%s\\007' \"$bytes\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const before = owner.snapshot();
+    try std.testing.expectEqual(instance.Terminal.MouseTrackingMode.button_event, before.interaction.?.mouse_tracking);
+    try owner.submit(.{ .input = .{ .mouse = .{ .kind = .press, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 } } });
+    try owner.submit(.{ .input = .{ .mouse = .{ .kind = .release, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 } } });
+    try waitTitle(owner, "1b5b3c303b343b334d1b5b3c303b343b336d");
+    const after = owner.snapshot();
+    try std.testing.expectEqual(@as(u16, 1), after.cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), after.cursor_col);
+    try std.testing.expect(!owner.state().takeFrame());
 }
