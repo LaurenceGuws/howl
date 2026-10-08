@@ -152,13 +152,15 @@ experimental:
 
   howl-app: >-
     experimental direct Zig/SDL3 daily-shell replacement beside Odin. Currently
-    owns one Local canonical Instance on an exclusive terminal worker, bounded
+    owns each Local canonical Instance on an exclusive terminal worker, bounded
     typed input/control admission, independent PTY service, synchronized-output
     release and history anchors. SDL consumes immutable Instance Render leases,
     exact resources and commands with no internal C ABI, shared bridge library,
     handle catalogue or serialized Local route. Graphical code cannot obtain the
     live Instance. Application allocations use the Zig SMP allocator; SDL and
-    other C dependencies retain their own allocation policy. Tabs/settings,
-    selection/search, desktop consequence policy and explicit attachments remain
+    other C dependencies retain their own allocation policy. Bounded tabs/nested
+    panes, layout controls and the shared mapping registry/command palette are
+    connected. Saved configuration/settings, selection/search, full input and
+    desktop consequence policy, live fonts/DPI and explicit attachments remain
     to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

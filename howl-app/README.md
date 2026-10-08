@@ -33,9 +33,28 @@ regex/logical-line search, unsupported launch environment overrides and other
 unimplemented platform contracts) are not invented as rewrite prerequisites.
 
 This is a replacement implementation beside Odin, not yet its daily replacement.
-The first implementation has a real Local shell, direct SDL Canvas, resize,
-semantic named/control keys, text/paste/focus and stable scrollback. It uses
-headless consequence policy. Tabs/settings, selection/search, rich desktop
-integration and attachments remain to be carried over. Real-PTY proofs cover
-hidden/stalled presentation, copied input ownership, synchronized-output timeout
-and construction failure. The active Howl workstream records private GUI evidence. Build with the repository's exact Zig pin: zig build -Doptimize=ReleaseSafe.
+The current implementation has real Local shells, eight tabs, eight nested panes,
+tab reorder/duplicate/new window, divider dragging, directional focus/resize/swap,
+zoom and leaf collapse. One bounded mapping registry supplies dispatch and the
+searchable command palette; the fifty existing defaults and deliberately unbound
+directions are preserved. Physical key ownership prevents app chords from
+leaking repeats or releases to a terminal after focus or modifiers change.
+
+SDL consumes canonical Canvas commands/resources. Named/control keys, committed
+text, paste, focus and stable history anchors are connected. Hidden presentation
+and projection failure cannot stop canonical input/output. A rendering failure
+can be retried independently; a stopped Local child can be restarted. A new
+window executes the exact running Linux image even after on-disk replacement.
+
+This remains an experimental capability cut. Saved launch recipes/configuration,
+settings, selection/search, full Kitty/IME lifecycle, terminal mouse and alternate
+scroll routing, rich desktop consequences, live font/DPI changes and explicit
+attachments still need qualification. Duplicate currently opens another copy of
+the default Local launch recipe. Startup high DPI is supported. Unsupported
+commands report their exact gap instead of silently taking another route.
+
+Twenty package proofs cover worker independence/failure cleanup, immutable
+publication, visibility credits, key ownership, mapping conflicts and bounded
+pane topology. The active workstream records private GUI controls and remaining
+gaps. Build with the repository's exact Zig pin:
+zig build -Doptimize=ReleaseSafe.

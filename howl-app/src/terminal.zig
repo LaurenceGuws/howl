@@ -13,18 +13,22 @@ pub const Task = union(enum) {
     resize: struct { rows: u16, columns: u16 },
     scroll: i32,
     seek: u32,
+    retry_render,
 };
 
 /// Exact failures produced by this terminal worker's owned operations.
 pub const Failure = instance.InputError || instance.ResizeError ||
-    instance.ServiceError || instance.PublishError || std.posix.PollError ||
-    error{SDLNotification};
+    instance.ServiceError || std.posix.PollError;
+
+/// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
+pub const PresentationFailure = instance.PublishError || error{SDLNotification};
 
 /// Copied interaction/lifecycle facts; contains no borrowed canonical storage.
 pub const Status = struct {
     title: [1024]u8 = undefined,
     title_len: usize = 0,
     failure: ?Failure = null,
+    presentation_failure: ?PresentationFailure = null,
     revision: u64 = 0,
     closed: bool = false,
     child_exit: ?instance.ChildExit = null,
@@ -110,6 +114,7 @@ const State = struct {
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
     gate: policy.Gate = .{},
+    presentation_failure: ?PresentationFailure = null,
     history: policy.History = .{},
 
     fn create(
@@ -197,8 +202,10 @@ const State = struct {
     }
 
     fn setVisible(self: *State, visible: bool) void {
-        if (self.visible.swap(visible, .acq_rel) != visible) self.wake();
-        if (visible) self.requestFrame();
+        if (self.visible.swap(visible, .acq_rel) != visible) {
+            if (visible) self.requestFrame();
+            self.wake();
+        }
     }
 
     /// Called only after successful SDL presentation, or an explicit reveal.
@@ -254,6 +261,14 @@ const State = struct {
                 self.history.seek(offset, live.history_count, live.history_row_base, live.is_alternate_screen);
                 self.gate.pending = true;
             },
+            .retry_render => {
+                self.presentation_failure = null;
+                self.mutex.lockUncancelable(self.io);
+                self.status.presentation_failure = null;
+                self.mutex.unlock(self.io);
+                self.gate.pending = true;
+                self.credit.store(true, .release);
+            },
         }
     }
 
@@ -278,7 +293,7 @@ const State = struct {
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
         if (lifecycle_changed or title_changed) self.notify();
-        if (self.gate.pending and self.visible.load(.acquire) and
+        if (self.presentation_failure == null and self.gate.pending and self.visible.load(.acquire) and
             self.gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
         {
             std.debug.assert(self.credit.swap(false, .acq_rel));
@@ -287,7 +302,12 @@ const State = struct {
                     self.credit.store(true, .release);
                     return result;
                 }
-                return failure;
+                self.presentation_failure = failure;
+                self.mutex.lockUncancelable(self.io);
+                self.status.presentation_failure = failure;
+                self.mutex.unlock(self.io);
+                self.notify();
+                return result;
             };
             self.gate.pending = false;
             self.new_frame.store(true, .release);
@@ -345,7 +365,7 @@ const State = struct {
         event.type = self.event_type;
         if (!c.SDL_PushEvent(&event)) {
             self.mutex.lockUncancelable(self.io);
-            if (self.status.failure == null) self.status.failure = error.SDLNotification;
+            if (self.status.presentation_failure == null) self.status.presentation_failure = error.SDLNotification;
             self.mutex.unlock(self.io);
         }
     }
@@ -534,4 +554,69 @@ fn closeWake(fd: posix.fd_t) void {
     const status = posix.errno(result);
     // Linux consumes the descriptor even when close reports EINTR.
     std.debug.assert(status == .SUCCESS or status == .INTR);
+}
+
+test "projection failure leaves canonical output and input alive" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var presentation = testPresentation();
+    presentation.command_capacity = 16;
+    presentation.command_limit = 16;
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 32 ]; do printf '\\033[41mX\\033[42mY'; i=$((i + 1)); done; printf '\\033[0m'; printf '\\033]0;FIRST\\007'; read line; printf '\\033]0;SECOND\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, presentation, c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try waitFrame(owner);
+    var initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    try initial.release(&.{});
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "FIRST");
+    owner.requestFrame();
+    var attempts: u16 = 0;
+    while (owner.snapshot().presentation_failure == null and attempts < 5000) : (attempts += 1)
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    try std.testing.expect(owner.snapshot().presentation_failure != null);
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+    try owner.submit(.{ .input = .{ .bytes = "CONTINUE\n" } });
+    try waitTitle(owner, "SECOND");
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+}
+
+test "visibility affirmation cannot manufacture presentation credits; reveal can" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf 'X\\033]0;FIRST\\007'; read line; printf '\\033]0;SECOND\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try waitFrame(owner);
+    var initial = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    try initial.release(&.{});
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "FIRST");
+    for (0..16) |_| owner.setVisible(true);
+    try owner.submit(.{ .input = .{ .bytes = "END\n" } });
+    try waitTitle(owner, "SECOND");
+    try std.testing.expect(!owner.takeFrame());
+    try std.testing.expect(instance.acquirePublishedFrame(owner.renderExchange()) == null);
+    owner.setVisible(false);
+    owner.setVisible(true);
+    try waitFrame(owner);
+    var revealed = instance.acquirePublishedFrame(owner.renderExchange()) orelse return error.MissingFrame;
+    defer revealed.abandon();
+    try std.testing.expectEqual(owner.snapshot().revision, revealed.value.terminal_revision);
 }
