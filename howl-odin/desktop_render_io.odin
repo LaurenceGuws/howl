@@ -413,6 +413,22 @@ sync_render_visibility :: proc(app: ^App) {
     }
 }
 
+// A completed presentation makes room for one current native frame.
+// Hidden panes keep draining their canonical terminal without projecting it.
+request_native_frames :: proc(app: ^App, width, height: f32) {
+    if app == nil || !active_tab_is_instance(app) do return
+    tab := &app.tabs[app.active_tab]
+    layout := pane_layout(tab, terminal_inset(width, height))
+    for entry in layout.entries[:layout.entry_count] {
+        view := tab_pane_view(tab, entry.pane_index)
+        if view == nil do continue
+        sync.mutex_lock(&view.mutex)
+        // The worker clears its handle under this lock before freeing it.
+        if view.native_terminal != nil do native_terminal_request_render(view.native_terminal)
+        sync.mutex_unlock(&view.mutex)
+    }
+}
+
 request_render :: proc(work: ^Render_Work, view: ^Instance_View, revision: u64, history: u32, history_generation: u64) {
     if work == nil || revision == 0 do return
     history_loan: rawptr

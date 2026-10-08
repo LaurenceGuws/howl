@@ -18,6 +18,12 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("howl_client", client_dependency.module("howl_client"));
     root.addImport("howl_client_render", client_dependency.module("howl_client_render"));
+    const instance_dependency = b.dependency("howl_instance", .{
+        .target = target,
+        .optimize = optimize,
+        .bundled_render_text = target.result.os.tag != .linux,
+    });
+    root.addImport("test_fonts", instance_dependency.module("howl_text_test_fonts"));
     root.addImport("server_client", server_client_dependency.module("server_client"));
 
     const library = b.addLibrary(.{

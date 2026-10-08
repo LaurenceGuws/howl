@@ -35,3 +35,19 @@ test "root exposes the complete native consumer vocabulary" {
     _ = @import("howl_vk");
     _ = @import("howl_wayland");
 }
+
+test "readonly VT accessors retain ordinary function pointers" {
+    const View = vt.Terminal.SemanticView;
+    const Geometry = @typeInfo(@TypeOf(View.lineGeometry)).@"fn".return_type.?;
+    const cell: *const fn (*const View, u16, u16) vt.Terminal.Cell = View.cellInfoAt;
+    const scalars: *const fn (*const View, u16, u16, *[24]u21) []const u21 = View.cellScalarsAt;
+    const geometry: *const fn (*const View, u16) Geometry = View.lineGeometry;
+    var terminal = try vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    _ = try terminal.feed("A\xcc\x81");
+    const view = terminal.semanticView(0);
+    var output: [24]u21 = undefined;
+    try std.testing.expectEqual(@as(u32, 'A'), cell(&view, 0, 0).codepoint);
+    try std.testing.expectEqualSlices(u21, &.{ 'A', 0x0301 }, scalars(&view, 0, 0, &output));
+    try std.testing.expectEqual(.single_width, geometry(&view, 0));
+}

@@ -19,7 +19,7 @@ root_publics=(
     '    pub const inline_scalars = scalar_storage.inline_scalars;'
     '    pub const maximum_scalars = scalar_storage.maximum_scalars;'
 )
-if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
+if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
     printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
     status=1
 fi
@@ -55,12 +55,12 @@ while IFS= read -r file; do
         }
         /^[[:space:]]*\/\/ zig-audit: acknowledge / { next }
         /^[[:space:]]*\/\/ reason:/ { next }
-        /^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]/ {
+        /^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]/ {
             if (previous !~ /^[[:space:]]*\/\/\//) {
                 printf "%s:%d: undocumented public declaration\n", FILENAME, NR
                 failed = 1
             }
-            if ($0 ~ /^[[:space:]]*pub fn[[:space:]]/) {
+            if ($0 ~ /^[[:space:]]*pub (inline )?fn[[:space:]]/) {
                 signature = $0
                 signature_line = NR
                 if ($0 ~ /\{[[:space:]]*$/) check_signature()

@@ -7356,7 +7356,7 @@ draw :: proc(app: ^App) {
     if font_chooser_is_open(app) do draw_font_chooser(app, width, height)
     update_text_input_area(app, width, height)
     draw_ime_preedit(app, width, height)
-    _ = SDL.RenderPresent(app.renderer)
+    if SDL.RenderPresent(app.renderer) do request_native_frames(app, width, height)
 }
 
 Startup_Intent :: enum { Run, Server, Help, Version, Invalid }
@@ -7415,7 +7415,7 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 15 { fmt.eprintln("Howl bridge version mismatch"); return }
+    if version() != 16 { fmt.eprintln("Howl bridge version mismatch"); return }
     if consequence_kind_signature() != bridge_consequence_kind_signature() ||
        consequence_reply_signature() != bridge_consequence_reply_signature() {
         fmt.eprintln("Howl consequence ABI mismatch")

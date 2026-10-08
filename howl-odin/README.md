@@ -425,6 +425,13 @@ submission, clipboard and browser opening remain on the graphical thread. Native
 transport for attachments is explicit Unix or numeric-IPv4 TCP; Odin owns no SSH
 subprocess, bridge executable, Session or Server.
 
+Local terminal service continues while a pane is hidden or its backend is delayed.
+Each completed SDL presentation grants visible native panes one coalesced credit
+for a current Render projection; unread intermediate states need not be projected.
+Resize, font, history and lifecycle changes publish without waiting for a credit.
+Synchronized output remains held until release or its one-second presentation
+timeout, including when no further PTY bytes arrive.
+
 ## Instance size control
 
 Command Palette (`Ctrl+Shift+P`) and Settings > Mappings expose two rebindable,

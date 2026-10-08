@@ -34,6 +34,7 @@ foreign howl_bridge {
     native_terminal_service :: proc(handle: rawptr, timestamp_ns: u64) -> i32 ---
     native_terminal_wait :: proc(handle: rawptr, timeout_ms: i32) -> i32 ---
     native_terminal_wake :: proc(handle: rawptr) ---
+    native_terminal_request_render :: proc(handle: rawptr) ---
     native_terminal_send_text :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     native_terminal_send_paste :: proc(handle: rawptr, bytes: [^]u8, bytes_len: c.size_t) -> i32 ---
     native_terminal_send_named_key :: proc(handle: rawptr, key, action, modifiers: u8) -> i32 ---

@@ -4950,7 +4950,7 @@ pub const Terminal = struct {
             const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
                 .history => |recency| screen.historyCellAt(recency, col),
-                .screen => |screen_row| screen.cellInfoAt(screen_row, col),
+                .screen => |screen_row| @call(.always_inline, Screen.cellInfoAt, .{ screen, screen_row, col }),
             };
         }
 
@@ -4978,11 +4978,7 @@ pub const Terminal = struct {
                     col,
                     &retained,
                 ),
-                .screen => |screen_row| screen.cellScalarsAt(
-                    screen_row,
-                    col,
-                    &retained,
-                ),
+                .screen => |screen_row| @call(.always_inline, Screen.cellScalarsAt, .{ screen, screen_row, col, &retained }),
             };
             for (values, 0..) |value, index| output[index] = @intCast(value);
             return output[0..values.len];
@@ -5005,7 +5001,7 @@ pub const Terminal = struct {
             const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
                 .history => |recency| screen.historyLineGeometry(recency),
-                .screen => |screen_row| screen.lineGeometry(screen_row),
+                .screen => |screen_row| @call(.always_inline, Screen.lineGeometry, .{ screen, screen_row }),
             };
         }
 

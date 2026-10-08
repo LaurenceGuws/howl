@@ -1338,7 +1338,7 @@ fn contentUsesMulticellAllocation(comptime Source: type, cell: Source.Cell) bool
         (cell.width > 1 and !cell.semantic_width);
 }
 
-fn contentUsesPlainGeometry(
+inline fn contentUsesPlainGeometry(
     comptime Source: type,
     cell: Source.Cell,
     line_geometry: source_semantics.LineGeometry,
@@ -1350,7 +1350,7 @@ fn contentUsesPlainGeometry(
         !cell.semantic_width;
 }
 
-fn contentIsContextualOperatorCell(
+inline fn contentIsContextualOperatorCell(
     comptime Source: type,
     cell: Source.Cell,
     sequence: []const u32,
@@ -1487,7 +1487,7 @@ fn dimContentColor(value: frame_vocabulary.Color) frame_vocabulary.Color {
     return result;
 }
 
-fn contentCellColors(
+inline fn contentCellColors(
     comptime Source: type,
     cell: Source.Cell,
     presentation: *const Source.Presentation,

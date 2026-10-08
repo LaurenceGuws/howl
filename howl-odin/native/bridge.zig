@@ -152,6 +152,13 @@ const NativePublication = struct {
     synchronized_pending: bool = false,
     synchronized_timed_out: bool = false,
 
+    fn waitMilliseconds(self: *const NativePublication, now_ns: u64) ?u32 {
+        const started = self.synchronized_started_ns orelse return null;
+        const remaining = native_synchronized_output_timeout_ns -|
+            (now_ns -| started);
+        return @intCast((remaining + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
+    }
+
     fn note(
         self: *NativePublication,
         current_revision: u64,
@@ -205,6 +212,8 @@ const NativeTerminal = struct {
     id: u64,
     value: *native_instance.Instance,
     publication: NativePublication,
+    render_pending: bool = false,
+    render_requested: std.atomic.Value(bool) = .init(false),
     stream_closed: bool = false,
     child_exit: ?native_instance.ChildExit = null,
     history_offset: u32 = 0,
@@ -241,10 +250,14 @@ const NativeTerminal = struct {
             self.history_offset,
         );
         self.history_offset = view.history_offset;
+        // Consume the backend's credit before work starts, so a concurrent
+        // request for the following presentation remains available.
+        _ = self.render_requested.swap(false, .acq_rel);
         try native_instance.publishRenderAt(
             self.value,
             self.history_offset,
         );
+        self.render_pending = false;
     }
 
     fn service(self: *NativeTerminal, timestamp_ns: u64) !native_instance.Service {
@@ -259,14 +272,22 @@ const NativeTerminal = struct {
             self.setError("service", @errorName(failure));
             return failure;
         };
+        try self.finishService(serviced, timestamp_ns);
+        return serviced;
+    }
+
+    fn finishService(
+        self: *NativeTerminal,
+        serviced: native_instance.Service,
+        timestamp_ns: u64,
+    ) !void {
         const observation = native_instance.terminal(self.value);
-        const revision = observation.semanticSequence();
-        const publish = self.publication.note(
-            revision,
+        self.render_pending = self.publication.note(
+            observation.semanticSequence(),
             observation.synchronizedOutput(),
             serviced.synchronized_output.ended,
             timestamp_ns,
-        );
+        ) or self.render_pending;
         const lifecycle_changed =
             serviced.stream_closed != self.stream_closed or
             (serviced.child_exit != null and self.child_exit == null);
@@ -274,12 +295,24 @@ const NativeTerminal = struct {
         if (serviced.child_exit) |value| self.child_exit = value;
         self.write_pending = serviced.write_pending;
         self.animation_wait_ms = serviced.animation_wait_ms;
-        if (publish or lifecycle_changed)
+
+        // PTY/VT always advance. Only optional presentation work needs a
+        // backend credit, and an earlier released cut cannot expose a new hold.
+        const released = !observation.synchronizedOutput() or
+            self.publication.synchronized_timed_out;
+        if (lifecycle_changed or
+            (self.render_pending and released and self.render_requested.load(.acquire)))
+        {
             self.publishCurrent() catch |failure| {
                 self.setError("publish", @errorName(failure));
                 return failure;
             };
-        return serviced;
+        }
+    }
+
+    fn requestRender(self: *NativeTerminal) void {
+        self.render_requested.store(true, .release);
+        self.wake();
     }
 
     fn wake(self: *NativeTerminal) void {
@@ -339,16 +372,24 @@ const NativeTerminal = struct {
         const descriptor = try native_instance.descriptor(self.value);
         const write_pending =
             self.write_pending or native_instance.writePending(self.value);
-        const animation_timeout: i32 = if (self.animation_wait_ms) |value|
-            @intCast(@min(value, @as(u32, @intCast(std.math.maxInt(i32)))))
-        else
-            timeout_ms;
-        const effective_timeout = if (native_instance.bufferedOutputPending(self.value))
-            @as(i32, 0)
-        else if (timeout_ms < 0)
-            animation_timeout
-        else
-            @min(timeout_ms, animation_timeout);
+        var effective_timeout = timeout_ms;
+        const deadlines = [_]?u32{
+            self.animation_wait_ms,
+            self.publication.waitMilliseconds(nativeNowNs(self.runtime.threaded.io())),
+        };
+        for (deadlines) |deadline| {
+            const value = deadline orelse continue;
+            const bounded: i32 = @intCast(@min(
+                value,
+                @as(u32, @intCast(std.math.maxInt(i32))),
+            ));
+            effective_timeout = if (effective_timeout < 0)
+                bounded
+            else
+                @min(effective_timeout, bounded);
+        }
+        if (native_instance.bufferedOutputPending(self.value))
+            effective_timeout = 0;
         var pty_events: i16 = posix.POLL.IN | posix.POLL.HUP;
         if (write_pending) pty_events |= posix.POLL.OUT;
         var descriptors = [_]posix.pollfd{
@@ -384,26 +425,7 @@ const NativeTerminal = struct {
             self.setError("service", @errorName(failure));
             return failure;
         };
-        const observation = native_instance.terminal(self.value);
-        const revision = observation.semanticSequence();
-        const publish = self.publication.note(
-            revision,
-            observation.synchronizedOutput(),
-            serviced.synchronized_output.ended,
-            timestamp_ns,
-        );
-        const lifecycle_changed =
-            serviced.stream_closed != self.stream_closed or
-            (serviced.child_exit != null and self.child_exit == null);
-        self.stream_closed = serviced.stream_closed;
-        if (serviced.child_exit) |value| self.child_exit = value;
-        self.write_pending = serviced.write_pending;
-        self.animation_wait_ms = serviced.animation_wait_ms;
-        if (publish or lifecycle_changed)
-            self.publishCurrent() catch |failure| {
-                self.setError("publish", @errorName(failure));
-                return failure;
-            };
+        try self.finishService(serviced, timestamp_ns);
         return serviced;
     }
 };
@@ -854,6 +876,14 @@ pub export fn howl_odin_bridge_native_terminal_wait(
     return 0;
 }
 
+/// Grants one coalesced presentation credit after the backend presents.
+pub export fn howl_odin_bridge_native_terminal_request_render(
+    raw: ?*NativeTerminalHandle,
+) void {
+    const owner = nativeTerminalValue(raw) orelse return;
+    owner.requestRender();
+}
+
 /// Wakes a terminal worker after another thread enqueues copied control work.
 pub export fn howl_odin_bridge_native_terminal_wake(
     raw: ?*NativeTerminalHandle,
@@ -999,9 +1029,8 @@ fn nativeLastContentColumn(
         column -= 1;
         const cell = view.cellInfoAt(row, @intCast(column));
         if (cell.x != 0 or cell.y != 0) continue;
-        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-        const values = view.cellScalarsAt(row, @intCast(column), &scalars);
-        if (values.len == 0 or values[0] == ' ') continue;
+        // A lead cell's first scalar is its copied codepoint.
+        if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
         const end = @min(
             @as(u32, view.cols - 1),
             @as(u32, @intCast(column)) + @max(@as(u32, cell.width), 1) - 1,
@@ -1021,8 +1050,7 @@ fn nativeLastSearchColumn(
         column -= 1;
         const cell = view.cellInfoAt(row, @intCast(column));
         if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) continue;
-        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-        if (view.cellScalarsAt(row, @intCast(column), &scalars).len != 0)
+        if (cell.codepoint != 0)
             return @intCast(column);
     }
     return null;
@@ -2001,10 +2029,7 @@ pub export fn howl_odin_bridge_native_terminal_publish_history(
         history_offset,
     );
     owner.history_offset = view.history_offset;
-    native_instance.publishRenderAt(
-        owner.value,
-        owner.history_offset,
-    ) catch |failure| {
+    owner.publishCurrent() catch |failure| {
         owner.setError("publish_history", @errorName(failure));
         return 2;
     };
@@ -4151,11 +4176,11 @@ fn fillNativeTerminalInfo(
 }
 
 pub export fn howl_odin_bridge_version() u32 {
-    return 15;
+    return 16;
 }
 
 test "Odin bridge version tracks native local ownership ABI" {
-    try std.testing.expectEqual(@as(u32, 15), howl_odin_bridge_version());
+    try std.testing.expectEqual(@as(u32, 16), howl_odin_bridge_version());
 }
 
 pub export fn howl_odin_bridge_create(
@@ -5938,6 +5963,190 @@ test "native terminal claim services PTY directly and publishes Render" {
     try std.testing.expect(runtime.native_local.destroy(runtime.threaded.io(), id));
 }
 
+fn initNativeTestTerminal(runtime: *Runtime, command: []const u8) !NativeTerminal {
+    const fonts = @import("test_fonts");
+    var fallbacks: [2][]const u8 = undefined;
+    const value = try native_instance.initPresented(
+        std.testing.allocator,
+        std.testing.environ,
+        .{
+            .shell = "/bin/sh",
+            .command = command,
+            .rows = 2,
+            .columns = 16,
+            .history_rows = 8,
+        },
+        nativePresentationConfig(
+            &fallbacks,
+            fonts.primary_font,
+            "",
+            "",
+            "",
+            "",
+            "",
+            18,
+        ),
+    );
+    errdefer native_instance.deinit(value);
+    const wake = try createNativeWakePair();
+    errdefer {
+        closeNativeWake(wake[1]);
+        closeNativeWake(wake[0]);
+    }
+    var owner = NativeTerminal{
+        .runtime = runtime,
+        .id = 1,
+        .value = value,
+        .publication = .{
+            .revision = native_instance.terminal(value).semanticSequence(),
+        },
+        .wake_read = wake[0],
+        .wake_write = wake[1],
+    };
+    try owner.publishCurrent();
+    return owner;
+}
+
+fn deinitNativeTestTerminal(owner: *NativeTerminal) void {
+    closeNativeWake(owner.wake_write);
+    closeNativeWake(owner.wake_read);
+    native_instance.deinit(owner.value);
+}
+
+test "native stalled presentation never paces VT and a quiet request catches up" {
+    var runtime = Runtime{
+        .threaded = std.Io.Threaded.init(std.testing.allocator, .{
+            .environ = std.testing.environ,
+        }),
+    };
+    defer runtime.threaded.deinit();
+    var owner = try initNativeTestTerminal(
+        &runtime,
+        "stty -echo; printf '\\033[?2026hFRESH\\033[?2026l'; read line",
+    );
+    defer deinitNativeTestTerminal(&owner);
+    const exchange = try native_instance.renderExchange(owner.value);
+    var first = native_instance.acquirePublishedFrame(exchange).?;
+    defer first.abandon();
+    const initial_revision = first.value.terminal_revision;
+
+    for (0..2000) |_| {
+        _ = try owner.waitAndService(1);
+        if (native_instance.terminal(owner.value).semanticView(0).cellAt(0, 0) == 'F')
+            break;
+    } else return error.Timeout;
+    const revision = native_instance.terminal(owner.value).semanticSequence();
+    try std.testing.expect(revision > initial_revision);
+    try std.testing.expect(owner.render_pending);
+    try std.testing.expectEqual(initial_revision, first.value.terminal_revision);
+    first.abandon();
+    try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
+
+    owner.requestRender();
+    _ = try owner.waitAndService(100);
+    var latest = native_instance.acquirePublishedFrame(exchange) orelse
+        return error.MissingPublication;
+    defer latest.abandon();
+    try std.testing.expectEqual(revision, latest.value.terminal_revision);
+    try std.testing.expect(!owner.render_pending);
+    latest.abandon();
+
+    // A presentation credit with no new terminal state neither republishes
+    // nor causes an idle producer loop.
+    owner.requestRender();
+    _ = try owner.waitAndService(0);
+    try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
+    try std.testing.expect(!owner.render_pending);
+}
+
+test "native pending release cannot publish the next synchronized hold" {
+    var runtime = Runtime{
+        .threaded = std.Io.Threaded.init(std.testing.allocator, .{
+            .environ = std.testing.environ,
+        }),
+    };
+    defer runtime.threaded.deinit();
+    var owner = try initNativeTestTerminal(
+        &runtime,
+        "stty -echo; printf '\\033[?2026hA\\033[?2026l\\033[?2026hB'; read line; printf '\\033[?2026l'; sleep 30",
+    );
+    defer deinitNativeTestTerminal(&owner);
+    const exchange = try native_instance.renderExchange(owner.value);
+    var first = native_instance.acquirePublishedFrame(exchange).?;
+    first.abandon();
+
+    for (0..2000) |_| {
+        _ = try owner.waitAndService(1);
+        const observation = native_instance.terminal(owner.value);
+        if (observation.synchronizedOutput() and
+            observation.semanticView(0).cellAt(0, 1) == 'B')
+            break;
+    } else return error.Timeout;
+    try std.testing.expect(owner.render_pending);
+    owner.requestRender();
+    _ = try owner.waitAndService(0);
+    try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
+    try std.testing.expect(owner.render_requested.load(.acquire));
+    try std.testing.expect(!owner.publication.synchronized_timed_out);
+
+    try std.testing.expectEqual(
+        @as(i32, 0),
+        howl_odin_bridge_native_terminal_send_text(@ptrCast(&owner), "\n".ptr, 1),
+    );
+    for (0..2000) |_| {
+        _ = try owner.waitAndService(1);
+        if (!native_instance.terminal(owner.value).synchronizedOutput())
+            break;
+    } else return error.Timeout;
+    var released = native_instance.acquirePublishedFrame(exchange) orelse
+        return error.MissingPublication;
+    defer released.abandon();
+    try std.testing.expectEqual(
+        native_instance.terminal(owner.value).semanticSequence(),
+        released.value.terminal_revision,
+    );
+    try std.testing.expect(!owner.render_pending);
+}
+
+test "native quiet synchronized hold wakes on its publication deadline" {
+    var runtime = Runtime{
+        .threaded = std.Io.Threaded.init(std.testing.allocator, .{
+            .environ = std.testing.environ,
+        }),
+    };
+    defer runtime.threaded.deinit();
+    var owner = try initNativeTestTerminal(
+        &runtime,
+        "printf '\\033[?2026hQ'; sleep 30",
+    );
+    defer deinitNativeTestTerminal(&owner);
+    const exchange = try native_instance.renderExchange(owner.value);
+    var first = native_instance.acquirePublishedFrame(exchange).?;
+    first.abandon();
+    for (0..2000) |_| {
+        _ = try owner.waitAndService(1);
+        if (native_instance.terminal(owner.value).semanticView(0).cellAt(0, 0) == 'Q')
+            break;
+    } else return error.Timeout;
+    try std.testing.expect(native_instance.terminal(owner.value).synchronizedOutput());
+
+    owner.requestRender();
+    _ = try owner.waitAndService(0); // Drain the explicit wake before the quiet wait.
+    const started = nativeNowNs(runtime.threaded.io());
+    _ = try owner.waitAndService(-1);
+    const elapsed = nativeNowNs(runtime.threaded.io()) - started;
+    try std.testing.expect(elapsed < 3 * std.time.ns_per_s);
+    try std.testing.expect(owner.publication.synchronized_timed_out);
+    try std.testing.expect(native_instance.terminal(owner.value).synchronizedOutput());
+    var timed_out = native_instance.acquirePublishedFrame(exchange) orelse
+        return error.MissingPublication;
+    defer timed_out.abandon();
+    try std.testing.expectEqual(
+        native_instance.terminal(owner.value).semanticSequence(),
+        timed_out.value.terminal_revision,
+    );
+}
+
 test "native Canvas exposes no geometry before an accepted publication" {
     const front = NativeCanvasFront{};
     try std.testing.expectEqual(@as(u16, 0), front.surface.width);
@@ -5965,4 +6174,109 @@ test "native presentation config retains two caller-owned fallback paths" {
     try std.testing.expectEqual(@as(usize, 2), regular.fallbacks.len);
     try std.testing.expectEqualStrings("arabic.ttf", regular.fallbacks[0]);
     try std.testing.expectEqualStrings("cjk.ttc", regular.fallbacks[1]);
+}
+
+test "native row bounds preserve scalar semantics for clusters and history" {
+    var terminal = try native_instance.Terminal.initWithHistory(std.testing.allocator, 4, 12, 6);
+    defer terminal.deinit();
+    _ = try terminal.feed("\x1b[1;2HA\xcc\x81\x1b[2;6H\xe4\xb8\xad\x1b[3;9H \xcc\x81\x1b[4;3H\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb");
+    for (0..2) |_| {
+        const view = terminal.semanticView(0);
+        for (0..view.rows) |row_index| {
+            const row: u16 = @intCast(row_index);
+            var expected_content: ?u16 = null;
+            var expected_search: ?u16 = null;
+            for (0..view.cols) |column_index| {
+                const column: u16 = @intCast(column_index);
+                const cell = view.cellInfoAt(row, column);
+                if (cell.x != 0 or cell.y != 0) continue;
+                var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
+                const scalars = view.cellScalarsAt(row, column, &storage);
+                if (scalars.len != 0 and scalars[0] != ' ')
+                    expected_content = @intCast(@min(@as(u32, view.cols - 1), @as(u32, column) + @max(@as(u32, cell.width), 1) - 1));
+                if (scalars.len != 0 and !cell.attrs.invisible) expected_search = column;
+            }
+            try std.testing.expectEqual(expected_content, nativeLastContentColumn(&view, row));
+            try std.testing.expectEqual(expected_search, nativeLastSearchColumn(&view, row));
+        }
+        _ = try terminal.feed("\r\n\x1b[8mhidden\x1b[0m\r\n");
+    }
+    const history = terminal.semanticView(1);
+    try std.testing.expect(history.history_count != 0);
+    for (0..history.rows) |row_index| {
+        const row: u16 = @intCast(row_index);
+        var expected: ?u16 = null;
+        for (0..history.cols) |column_index| {
+            const column: u16 = @intCast(column_index);
+            const cell = history.cellInfoAt(row, column);
+            if (cell.x != 0 or cell.y != 0) continue;
+            var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
+            const scalars = history.cellScalarsAt(row, column, &storage);
+            if (scalars.len != 0 and scalars[0] != ' ')
+                expected = @intCast(@min(@as(u32, history.cols - 1), @as(u32, column) + @max(@as(u32, cell.width), 1) - 1));
+        }
+        try std.testing.expectEqual(expected, nativeLastContentColumn(&history, row));
+    }
+}
+
+test "native forced viewport and font changes do not require presentation credit" {
+    const fonts = @import("test_fonts");
+    var runtime = Runtime{
+        .threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ }),
+    };
+    defer runtime.threaded.deinit();
+    var owner = try initNativeTestTerminal(&runtime, "stty -echo; printf 'zero\\none\\ntwo\\nthree\\n'; printf '\\033]2;FORCED-READY\\007'; read line");
+    defer deinitNativeTestTerminal(&owner);
+    const exchange = try native_instance.renderExchange(owner.value);
+    var initial = native_instance.acquirePublishedFrame(exchange).?;
+    initial.abandon();
+    for (0..2000) |_| {
+        _ = try owner.waitAndService(1);
+        if (std.mem.eql(u8, native_instance.terminal(owner.value).title() orelse "", "FORCED-READY")) break;
+    } else return error.Timeout;
+    try std.testing.expect(owner.render_pending);
+    try std.testing.expect(!owner.render_requested.load(.acquire));
+    try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
+
+    try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_publish_history(@ptrCast(&owner), 1));
+    var history = native_instance.acquirePublishedFrame(exchange) orelse return error.MissingPublication;
+    defer history.abandon();
+    try std.testing.expectEqual(@as(u32, 1), history.value.history_offset);
+    const retained_surface = history.value.surface;
+    const pixels = native_instance.terminal(owner.value).cellPixelSize().?;
+    const cell_width: u16 = @intCast(pixels.width);
+    const cell_height: u16 = @intCast(pixels.height);
+    try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_send_resize(@ptrCast(&owner), 3, 24, cell_width, cell_height, 1));
+    try std.testing.expectEqual(retained_surface, history.value.surface);
+    // The exchange admits one backend lease; the forced update may publish
+    // while it is pinned, then becomes acquirable after that lease is released.
+    history.abandon();
+    var resized = native_instance.acquirePublishedFrame(exchange) orelse return error.MissingResizePublication;
+    defer resized.abandon();
+    try std.testing.expectEqual(@as(u16, 24) * cell_width, resized.value.surface.width);
+    try std.testing.expectEqual(@as(u16, 3) * cell_height, resized.value.surface.height);
+    const old_generation = resized.value.presentation_generation;
+    try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_reconfigure_presentation(
+        @ptrCast(&owner),
+        fonts.primary_font.ptr,
+        fonts.primary_font.len,
+        "".ptr,
+        0,
+        "".ptr,
+        0,
+        "".ptr,
+        0,
+        "".ptr,
+        0,
+        "".ptr,
+        0,
+        22,
+    ));
+    try std.testing.expectEqual(old_generation, resized.value.presentation_generation);
+    resized.abandon();
+    var reconfigured = native_instance.acquirePublishedFrame(exchange) orelse return error.MissingFontPublication;
+    defer reconfigured.abandon();
+    try std.testing.expect(reconfigured.value.presentation_generation > old_generation);
+    try std.testing.expectEqual(native_instance.terminal(owner.value).semanticSequence(), reconfigured.value.terminal_revision);
+    try std.testing.expect(!owner.render_requested.load(.acquire));
 }

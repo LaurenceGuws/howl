@@ -1266,10 +1266,10 @@ pub const Screen = struct {
         output: *[scalar_storage.maximum_scalars]u32,
     ) []const u32 {
         if (row >= self.rows or col >= self.cols) return &.{};
-        const observed = self.cellInfoAt(row, col);
+        const observed = @call(.always_inline, Screen.cellInfoAt, .{ self, row, col });
         const lead_row = row -| observed.y;
         const lead_col = col -| observed.x;
-        const lead = self.cellInfoAt(lead_row, lead_col);
+        const lead = @call(.always_inline, Screen.cellInfoAt, .{ self, lead_row, lead_col });
         if (lead.codepoint == 0) return &.{};
         output[0] = lead.codepoint;
         if (lead.combining_len == 0) return output[0..1];

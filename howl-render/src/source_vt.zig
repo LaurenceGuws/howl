@@ -77,13 +77,13 @@ pub const Source = struct {
     }
 
     /// Copies one canonical cell at already-validated physical row/column coordinates.
-    pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
-        return snapshot.view.cellInfoAt(row, @intCast(column));
+    pub inline fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
+        return @call(.always_inline, VT.SemanticView.cellInfoAt, .{ &snapshot.view, row, @as(u16, @intCast(column)) });
     }
 
     /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
-    pub fn lineGeometry(snapshot: *const Snapshot, row: Row) semantic.LineGeometry {
-        return switch (snapshot.view.lineGeometry(row)) {
+    pub inline fn lineGeometry(snapshot: *const Snapshot, row: Row) semantic.LineGeometry {
+        return switch (@call(.always_inline, VT.SemanticView.lineGeometry, .{ &snapshot.view, row })) {
             .single_width => .single_width,
             .double_width => .double_width,
             .double_height_top => .double_height_top,
@@ -93,7 +93,7 @@ pub const Source = struct {
 
     /// Borrows/copies one lead cell's complete scalar cluster into caller scratch.
     /// Continuation and blank cells intentionally expose an empty sequence.
-    pub fn cellScalars(
+    pub inline fn cellScalars(
         snapshot: *const Snapshot,
         row: usize,
         column: usize,
@@ -106,7 +106,7 @@ pub const Source = struct {
             return output[0..1];
         }
         var scalars: [24]u21 = undefined;
-        const sequence = snapshot.view.cellScalarsAt(@intCast(row), @intCast(column), &scalars);
+        const sequence = @call(.always_inline, VT.SemanticView.cellScalarsAt, .{ &snapshot.view, @as(u16, @intCast(row)), @as(u16, @intCast(column)), &scalars });
         for (sequence, 0..) |scalar, index| output[index] = scalar;
         return output[0..sequence.len];
     }
