@@ -21,6 +21,10 @@ Find and the frame-derived scrollbar use the same worker and immutable facts.
 Find bounds queries to 255 UTF-8 bytes, retains 512 stable matches and scans four
 rows per service turn. Reflow/eviction/bank changes remain explicit failures.
 
+Canvas draws canonical physical-pixel commands at SDL scale one, then restores
+the UI scale. The centred origin aligns to the physical grid; generated blocks
+and box rules retain their raster coverage at fractional desktop scales.
+
 The right-side Settings panel retains sidebar/content focus, pointer selectors,
 profile New/Duplicate/Delete, View/Edit, Set default and inline Save/Cancel.
 Seven settings pages edit Local shell/command/cwd/environment recipes, mappings,

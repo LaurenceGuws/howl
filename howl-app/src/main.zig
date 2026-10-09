@@ -1,3 +1,4 @@
+//! Owns the local SDL window, pane layout, input routing and terminal workers.
 const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
@@ -2143,13 +2144,13 @@ fn paneContent(rect: layout.Rect) c.SDL_FRect {
     return .{ .x = rect.x + x_padding, .y = rect.y + y_padding, .w = rect.width - 2 * x_padding, .h = rect.height - 2 * y_padding };
 }
 // Centre only the accepted frame; available pane size remains the resize authority.
-// Whole physical-pixel offsets keep the lattice sharp at fractional desktop scales.
+// Align the absolute origin to physical pixels, including the pane inset.
 fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
     return .{
-        .x = available.x + @round(@max(0, available.w - width) * scale / 2) / scale,
-        .y = available.y + @round(@max(0, available.h - height) * scale / 2) / scale,
+        .x = std.math.clamp(@round((available.x + (available.w - width) / 2) * scale) / scale, available.x, available.x + available.w - width),
+        .y = std.math.clamp(@round((available.y + (available.h - height) / 2) * scale) / scale, available.y, available.y + available.h - height),
         .w = width,
         .h = height,
     };
@@ -2688,6 +2689,8 @@ test "centred accepted terminal lattice shares slack, clips stale frames and map
         try std.testing.expect(placed.x >= available.x and placed.y >= available.y);
         try std.testing.expect(placed.x + placed.w <= available.x + available.w);
         try std.testing.expect(placed.y + placed.h <= available.y + available.h);
+        try std.testing.expectApproxEqAbs(@round(placed.x * scale), placed.x * scale, 0.001);
+        try std.testing.expectApproxEqAbs(@round(placed.y * scale), placed.y * scale, 0.001);
         const left = placed.x - available.x;
         const right = available.x + available.w - placed.x - placed.w;
         const top = placed.y - available.y;
