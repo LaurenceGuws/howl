@@ -165,7 +165,9 @@ experimental:
     use copied terminal facts and accepted immutable frame geometry. A bounded owned
     schema-1..4 saved config supplies startup/profile selection, saved launch recipes,
     mappings and exact font paths. Owned tab/pane recipes survive configuration
-    replacement; unavailable attachments and construction failures retain their
+    replacement. Local launches apply owned child-only environment overlays without
+    mutating inherited application state; the PTY copies before caller retirement
+    and keeps terminal identity canonical. Unavailable attachments and construction failures retain their
     exact route without Local fallback. Eight bounded settings pages share the
     owned config and mapping registry, with search, physical shortcut recording,
     profile/environment/Server editing, themes and atomic live-font transactions.

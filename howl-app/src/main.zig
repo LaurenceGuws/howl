@@ -24,7 +24,7 @@ const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn"
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
 
 const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set ||
-    error{ AttachmentNotImplemented, EnvironmentOverridesUnsupported };
+    error{AttachmentNotImplemented};
 const Pane = struct {
     owner: ?*terminal.Terminal = null,
     recipe: config.Recipe,
@@ -154,9 +154,10 @@ const App = struct {
     }
     fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
         if (std.ascii.eqlIgnoreCase(recipe.mode, "attach")) return error.AttachmentNotImplemented;
-        if (recipe.environment.len != 0) return error.EnvironmentOverridesUnsupported;
+        const inherited = if (recipe.environment.len != 0) try profileEnvironment(allocator, self.init.environ_map, recipe.environment) else self.init.minimal.environ;
+        defer if (recipe.environment.len != 0) inherited.block.deinit(allocator);
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
-        return terminal.Terminal.create(allocator, self.init.io, self.init.minimal.environ, .{
+        return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
             .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
@@ -1737,6 +1738,25 @@ const FontChange = struct {
     overridden: bool,
     geometry: ?instance.PresentationGeometry = null,
 };
+fn profileEnvironment(gpa: std.mem.Allocator, parent: *const std.process.Environ.Map, entries: []const config.Environment) std.mem.Allocator.Error!std.process.Environ {
+    var child = try parent.clone(gpa);
+    defer child.deinit();
+    for (entries) |entry| try child.put(entry.name, entry.value);
+    const block = try gpa.allocSentinel(?[*:0]const u8, child.count(), null);
+    var initialized: usize = 0;
+    errdefer {
+        for (block[0..initialized]) |entry| gpa.free(std.mem.span(entry.?));
+        gpa.free(block);
+    }
+    var entries_iter = child.iterator();
+    while (entries_iter.next()) |entry| {
+        const bytes = try std.fmt.allocPrintSentinel(gpa, "{s}={s}", .{ entry.key_ptr.*, entry.value_ptr.* }, 0);
+        block[initialized] = bytes.ptr;
+        initialized += 1;
+    }
+    return .{ .block = .{ .slice = block } };
+}
+
 fn savedRecipe(current: *const config.Config, owned: config.Profile) !config.Profile {
     for (0..current.profileCount()) |index| {
         const value = try current.profile(@intCast(index));
@@ -2210,4 +2230,64 @@ test "SDL drop events keep modal input owners isolated and copy event bytes befo
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(attempts < 5000);
+}
+
+fn environmentAllocationProof(gpa: std.mem.Allocator, parent: *const std.process.Environ.Map) !void {
+    const value = try profileEnvironment(gpa, parent, &.{
+        .{ .name = "HOWL_OVERRIDE", .value = "界 south" },
+        .{ .name = "HOWL_EMPTY", .value = "" },
+    });
+    defer value.block.deinit(gpa);
+    try std.testing.expectEqualStrings("north", std.process.Environ.getPosix(value, "HOWL_BASE").?);
+    try std.testing.expectEqualStrings("界 south", std.process.Environ.getPosix(value, "HOWL_OVERRIDE").?);
+    try std.testing.expectEqualStrings("", std.process.Environ.getPosix(value, "HOWL_EMPTY").?);
+}
+test "profile environment owns inherited replacements and empty Unicode values across allocation failure" {
+    var parent = std.process.Environ.Map.init(std.testing.allocator);
+    defer parent.deinit();
+    try parent.put("HOWL_BASE", "north");
+    try parent.put("HOWL_OVERRIDE", "original");
+    try parent.put("HOWL_EMPTY", "nonempty");
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, environmentAllocationProof, .{&parent});
+    try std.testing.expectEqualStrings("original", parent.get("HOWL_OVERRIDE").?);
+    try std.testing.expectEqualStrings("nonempty", parent.get("HOWL_EMPTY").?);
+}
+test "Local child keeps copied profile environment after caller retirement and terminal identity stays canonical" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const a = std.testing.allocator;
+    var parent = try std.process.Environ.createMap(std.testing.environ, a);
+    defer parent.deinit();
+    try parent.put("HOWL_BASE", "inherited");
+    var provided = try profileEnvironment(a, &parent, &.{
+        .{ .name = "HOWL_BASE", .value = "overridden" },
+        .{ .name = "HOWL_OVERRIDE", .value = "界 south" },
+        .{ .name = "HOWL_EMPTY", .value = "" },
+        .{ .name = "TERM", .value = "must-not-replace-terminal-identity" },
+    });
+    var provided_live = true;
+    defer if (provided_live) provided.block.deinit(a);
+    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const owner = try terminal.Terminal.create(a, threaded.io(), provided, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; read line; printf '\\033]0;%s|%s|%s|%s\\007' \"$HOWL_BASE\" \"$HOWL_OVERRIDE\" \"$HOWL_EMPTY\" \"$TERM\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, fonts.config(15), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    provided.block.deinit(a);
+    provided_live = false;
+    try parent.put("HOWL_BASE", "changed-after-launch");
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (std.mem.eql(u8, status.title[0..status.title_len], "overridden|界 south||xterm-256color")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    try std.testing.expectEqualStrings("changed-after-launch", parent.get("HOWL_BASE").?);
 }

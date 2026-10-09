@@ -55,9 +55,14 @@ window executes the exact running Linux image even after on-disk replacement.
 Startup reads the existing schema-1..4 odin.json through bounded owned parsing.
 Saved mappings, exact font paths, default profile and per-profile font sizes are
 applied. The searchable profile menu opens built-in or saved recipes. Launches
-preserve shell, command and cwd; new tabs and splits use the configured default,
+preserve shell, command, cwd and child-only environment overrides; new tabs and splits use the configured default,
 and duplicate retains the original tab recipe. Each tab/pane owns its recipe,
 so config replacement cannot invalidate a live launch or a later restart.
+Nonempty environment recipes clone the inherited map, apply validated rows and
+materialize one owned POSIX block; the PTY copies it before caller retirement.
+Empty recipes retain the direct inherited lane. Parent state is unchanged, empty
+and Unicode values stay literal, and terminal-owned TERM/COLORTERM remain canonical.
+Partial construction frees completed strings and the full pointer allocation.
 An unavailable attachment or failed constructor remains an explicitly failed
 pane; retry uses that same recipe and never falls back to Local. Missing config
 preserves the Home default. Eight bounded settings pages edit profiles, ordered
@@ -108,7 +113,7 @@ IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Seventy-two package proofs cover worker independence/failure cleanup, immutable
+Seventy-four package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
@@ -123,7 +128,8 @@ hidden retained-history navigation and refresh, later pointer ownership,
 hostile-query failure, canonical progress during active find, and fractional
 scrollbar seek bounds, exact hidden desktop replies/attention independence,
 canonical hyperlink ownership/domain refusal, HTTP policy and drop bounds,
-caller-retired bracketed paste, and modal SDL drop isolation. A successful
+caller-retired bracketed paste, modal SDL drop isolation, and profile environment
+allocation cleanup/parent isolation/caller retirement. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:
