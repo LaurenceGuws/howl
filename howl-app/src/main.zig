@@ -434,7 +434,6 @@ const App = struct {
                 const text = try allocator.dupeSentinel(u8, bytes, 0);
                 defer allocator.free(text);
                 if (!c.SDL_SetClipboardText(text)) return error.SDLClipboard;
-                self.setNotice("Selection copied");
             },
         }
     }
@@ -1330,8 +1329,7 @@ const App = struct {
         defer clearClip(self.renderer);
         const width = @as(f32, @floatFromInt(frame.cell_size.width)) / self.scale;
         const height = @as(f32, @floatFromInt(frame.cell_size.height)) / self.scale;
-        var color = (try self.uiPalette()).accent;
-        color.a = 100;
+        const color: c.SDL_Color = .{ .r = 180, .g = 180, .b = 180, .a = 100 };
         for (paint.spans[0..paint.rows], 0..) |span, row| if (span) |range| {
             try fill(self.renderer, .{ .x = rect.x + @as(f32, @floatFromInt(range.first)) * width, .y = rect.y + @as(f32, @floatFromInt(row)) * height, .width = @as(f32, @floatFromInt(range.last - range.first + 1)) * width, .height = height }, color);
         };
@@ -1452,7 +1450,10 @@ const App = struct {
         const start = self.paletteStart(count);
         for (matches[start..@min(count, start + self.paletteRows())], start..) |index, number| {
             const row = self.paletteRow(number - start);
-            if (number == self.palette.?.selected) try fill(self.renderer, row, colors.active);
+            if (number == self.palette.?.selected) {
+                try fill(self.renderer, row, colors.active);
+                try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
+            }
             if (self.palette.?.profile) {
                 if (index < self.configuration.profileCount()) {
                     const recipe = try self.configuration.profile(@intCast(index));
@@ -1641,7 +1642,10 @@ const App = struct {
         try self.drawText("Close", box.x + box.width - 60, box.y + 12);
         for (settings.titles, 0..) |title, index| {
             const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + 52 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
-            if (!e.search and @backingInt(e.page) == index) try fill(self.renderer, row, colors.active);
+            if (!e.search and @backingInt(e.page) == index) {
+                try fill(self.renderer, row, colors.active);
+                try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
+            }
             try self.clippedText(title, row, row.x + 6);
         }
         if (!e.search and (e.page == .defaults or e.page == .profiles or e.editing != null)) {
@@ -1823,7 +1827,7 @@ const App = struct {
         defer clearClip(self.renderer);
         try fill(self.renderer, .{ .x = x, .y = y, .width = @min(available, @max(2, text_width)), .height = cell_height }, .{ .r = 24, .g = 25, .b = 33, .a = 255 });
         try self.drawText(text, x, y);
-        try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, .{ .r = 130, .g = 170, .b = 255, .a = 255 });
+        try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, (try self.uiPalette()).accent);
     }
     fn chromeEvent(self: *App, event_value: c.SDL_Event) !bool {
         if (event_value.type == c.SDL_EVENT_WINDOW_FOCUS_LOST) {
@@ -1878,6 +1882,7 @@ const App = struct {
         const value = self.tabs[index].?;
         const status = value.panes[value.tree.active].?.snapshot();
         try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
+        if (index == self.active) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + rect.height - 1, .width = rect.width, .height = 1 }, colors.accent);
         const close_width: f32 = if (self.tab_count > 1 and rect.width >= 96) 30 else 0;
         try self.clippedText(status.title[0..status.title_len], .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
         if (close_width != 0) try self.drawText("×", rect.x + rect.width - 18, rect.y + 6);

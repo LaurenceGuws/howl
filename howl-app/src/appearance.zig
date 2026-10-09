@@ -20,10 +20,10 @@ pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
         // Ayu-like charcoal surfaces, with the Howl logo's orange accent.
         .window = rgb(0, 0, 0),
         .title = rgb(11, 14, 20),
-        .active = rgb(28, 37, 49),
-        .idle = rgb(17, 21, 28),
+        .active = rgb(58, 39, 20),
+        .idle = rgb(22, 21, 20),
         .panel = rgb(11, 14, 20),
-        .border = rgb(47, 57, 70),
+        .border = rgb(60, 48, 34),
         .text = rgb(191, 189, 182),
         .muted = rgb(138, 145, 155),
         .accent = rgb(254, 140, 1),
@@ -37,7 +37,7 @@ pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
         .border = rgb(76, 84, 98),
         .text = rgb(229, 232, 238),
         .muted = rgb(156, 165, 178),
-        .accent = rgb(112, 180, 224),
+        .accent = rgb(254, 140, 1),
     };
     if (std.mem.eql(u8, id, "high_contrast")) return .{
         .window = rgb(0, 0, 0),
