@@ -124,6 +124,7 @@ const App = struct {
     height: f32 = 650,
     notice: [256]u8 = @splat(0),
     notice_len: usize = 0,
+    notice_until: u64 = 0,
 
     fn deinit(self: *App) void {
         if (self.chooser) |chooser| chooser.destroy(allocator);
@@ -141,6 +142,15 @@ const App = struct {
     fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
         @memcpy(self.notice[0..self.notice_len], message[0..self.notice_len]);
+        self.notice_until = c.SDL_GetTicks() +| 5000;
+    }
+    fn expireNotice(self: *App, now: u64) void {
+        if (now >= self.notice_until) self.notice_len = 0;
+    }
+    fn waitTimeout(self: *const App, now: u64) ?c_int {
+        const scrolling = self.selecting != null and self.selecting.?.edge != 0;
+        if (self.notice_len != 0) return @intCast(@max(1, @min(self.notice_until -| now, if (scrolling) @as(u64, 50) else std.math.maxInt(c_int))));
+        return if (scrolling) 50 else null;
     }
     // zig-audit: acknowledge anytype
     // reason: The UI formats exact inferred error sets from distinct owned operations; it neither erases nor returns their error authority.
@@ -1314,7 +1324,7 @@ const App = struct {
     }
     fn drawSelection(self: *App, p: *Pane, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
         const paint = &p.canvas.selection_paint;
-        if (paint.serial != p.selection_serial) return;
+        // Paint belongs to the accepted frame, not a newer queued drag intent.
         const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.w)), .h = @intFromFloat(@ceil(rect.h)) };
         if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
         defer clearClip(self.renderer);
@@ -1877,18 +1887,20 @@ const App = struct {
         for ([_]chrome.Button{ .minimize, .maximize, .close }) |button| {
             const rect = chrome.control(button, self.width);
             if (self.chrome_hover == button) try fill(self.renderer, rect, if (button == .close) .{ .r = 184, .g = 46, .b = 56, .a = 255 } else colors.active);
-            const x = rect.x + 21;
-            const y: f32 = 23;
             const color = if (self.chrome_hover == button) colors.text else colors.muted;
-            if (!c.SDL_SetRenderDrawColor(self.renderer, color.r, color.g, color.b, color.a)) return error.SDL;
+            // Switchyard's hand-tuned glyphs in a 42x26 box, centred in our caption.
+            const y = rect.y + 8;
             switch (button) {
-                .minimize => if (!c.SDL_RenderLine(self.renderer, x - 5, y + 3, x + 5, y + 3)) return error.SDL,
+                .minimize => try fill(self.renderer, .{ .x = rect.x + 15, .y = y + 16, .width = 12, .height = 1 }, color),
                 .maximize => {
-                    if (c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0)
-                        try outline(self.renderer, .{ .x = x - 3, .y = y - 6, .width = 8, .height = 8 }, color);
-                    try outline(self.renderer, .{ .x = x - 5, .y = y - 4, .width = 9, .height = 9 }, color);
+                    const glyph = if (c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0) chrome.restore_icon else chrome.maximize_icon;
+                    for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = y + part.y, .width = part.width, .height = part.height }, color);
                 },
-                .close => if (!c.SDL_RenderLine(self.renderer, x - 5, y - 5, x + 5, y + 5) or !c.SDL_RenderLine(self.renderer, x - 5, y + 5, x + 5, y - 5)) return error.SDL,
+                .close => for (0..11) |step| {
+                    const offset: f32 = @floatFromInt(step);
+                    try fill(self.renderer, .{ .x = rect.x + 15 + offset, .y = y + 7 + offset, .width = 1, .height = 1 }, color);
+                    if (step != 5) try fill(self.renderer, .{ .x = rect.x + 15 + offset, .y = y + 17 - offset, .width = 1, .height = 1 }, color);
+                },
                 .none => {},
             }
         }
@@ -1983,6 +1995,7 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
+        self.expireNotice(c.SDL_GetTicks());
         if (self.notice_len != 0) {
             const notice: layout.Rect = .{ .x = 6, .y = self.height - 28, .width = @max(1, self.width - 12), .height = 22 };
             try fill(self.renderer, notice, colors.title);
@@ -2063,8 +2076,8 @@ pub fn main(initial: std.process.Init) !void {
         try app.draw();
         app.selectionTick() catch |failure| app.report(failure);
         var event: c.SDL_Event = undefined;
-        if (app.selecting != null and app.selecting.?.edge != 0) {
-            if (!c.SDL_WaitEventTimeout(&event, 50)) continue;
+        if (app.waitTimeout(c.SDL_GetTicks())) |timeout| {
+            if (!c.SDL_WaitEventTimeout(&event, timeout)) continue;
         } else if (!c.SDL_WaitEvent(&event)) return error.SDL;
         while (true) {
             app.event(event) catch |failure| app.report(failure);
@@ -2707,4 +2720,73 @@ test "centred accepted terminal lattice shares slack, clips stale frames and map
     try std.testing.expectEqualDeep(available, oversized);
     const tiny: c.SDL_FRect = .{ .x = 10, .y = 20, .w = 0.125, .h = 0.25 };
     try std.testing.expectEqualDeep(tiny, terminalPlacement(tiny, .{ .width = 1, .height = 1 }, 1.7));
+}
+
+test "pending drag requests retain accepted selection paint; accepted clear removes it" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(40, 20, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    var p: Pane = .{ .recipe = undefined, .canvas = canvas.Canvas.init(std.testing.allocator), .selection_serial = 999 };
+    defer p.canvas.deinit();
+    p.canvas.selection_paint = .{ .serial = 11, .rows = 1 };
+    p.canvas.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+    var app: App = .{ .init = undefined, .configuration = &configuration, .fonts = undefined, .window = undefined, .renderer = renderer, .ui_fonts = undefined, .geometry = undefined, .wake_event = 0, .scale = 1, .bindings = try keybindings.Bindings.init() };
+    const frame: instance.PublishedFrame = .{
+        .sequence = 1,
+        .presentation_generation = 1,
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .alternate_screen = false,
+        .surface = .{ .width = 40, .height = 20 },
+        .cell_size = .{ .width = 10, .height = 20 },
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .pixels = &.{},
+    };
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    for ([_]bool{ false, true }) |cleared| {
+        if (cleared) p.canvas.selection_paint = .{ .serial = 999 };
+        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+        try std.testing.expect(c.SDL_RenderClear(renderer));
+        try app.drawSelection(&p, .{ .x = 0, .y = 0, .w = 40, .h = 20 }, frame);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        var red: u8 = 0;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 5, 5, &red, null, null, null));
+        try std.testing.expect(if (cleared) red == 0 else red > 0);
+        try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
+    }
+}
+
+test "notice expiry wakes a quiet window once and preserves bounded selection scrolling" {
+    var app: App = .{ .init = undefined, .configuration = undefined, .fonts = undefined, .window = undefined, .renderer = undefined, .ui_fonts = undefined, .geometry = undefined, .wake_event = 0, .scale = 1, .bindings = try keybindings.Bindings.init() };
+    app.notice_len = 5;
+    app.notice_until = 5000;
+    try std.testing.expectEqual(@as(?c_int, 5000), app.waitTimeout(0));
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(4999));
+    // Crossing the deadline after draw still earns a repaint before indefinite wait.
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(5000));
+    try std.testing.expectEqual(@as(usize, 5), app.notice_len);
+    app.expireNotice(5000);
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(5000));
+    try std.testing.expectEqual(@as(usize, 0), app.notice_len);
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(9000));
+    app.selecting = .{ .pane = undefined, .x = 0, .y = 0, .edge = 1 };
+    app.notice_len = 5;
+    app.notice_until = 10000;
+    try std.testing.expectEqual(@as(?c_int, 50), app.waitTimeout(9000));
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(9999));
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(10000));
+    app.expireNotice(10000);
+    try std.testing.expectEqual(@as(?c_int, 50), app.waitTimeout(10000));
+    app.selecting = null;
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(10000));
 }

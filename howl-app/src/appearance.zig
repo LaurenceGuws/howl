@@ -1,3 +1,4 @@
+//! Shell palettes; terminal colours remain owned by canonical presentation.
 const c = @import("desktop");
 const std = @import("std");
 
@@ -16,15 +17,16 @@ pub const Palette = struct {
 /// Resolves the three compatible saved theme ids; unknown ids fail rather than falling back.
 pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
     if (std.mem.eql(u8, id, "howl_dark")) return .{
-        .window = rgb(14, 17, 22),
-        .title = rgb(26, 30, 38),
-        .active = rgb(42, 48, 59),
-        .idle = rgb(31, 36, 45),
-        .panel = rgb(13, 16, 20),
-        .border = rgb(60, 68, 82),
-        .text = rgb(220, 226, 234),
-        .muted = rgb(137, 148, 164),
-        .accent = rgb(96, 165, 250),
+        // Ayu-like charcoal surfaces, with the Howl logo's orange accent.
+        .window = rgb(0, 0, 0),
+        .title = rgb(11, 14, 20),
+        .active = rgb(28, 37, 49),
+        .idle = rgb(17, 21, 28),
+        .panel = rgb(11, 14, 20),
+        .border = rgb(47, 57, 70),
+        .text = rgb(191, 189, 182),
+        .muted = rgb(138, 145, 155),
+        .accent = rgb(254, 140, 1),
     };
     if (std.mem.eql(u8, id, "slate")) return .{
         .window = rgb(21, 23, 28),

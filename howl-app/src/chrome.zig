@@ -1,3 +1,4 @@
+//! Shared caption geometry and native window hit policy.
 const std = @import("std");
 const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
@@ -89,3 +90,22 @@ test "dragged chip preserves grab offset, reorders at midpoint and clamps outsid
     try std.testing.expectEqual(@as(u8, 2), dragging.move(4000, 3, 1000));
     try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, 3, 1000));
 }
+
+/// Switchyard maximize outline in the standard 42x26 caption box.
+pub const maximize_icon: []const Rect = &.{
+    .{ .x = 15, .y = 7, .width = 12, .height = 1 },
+    .{ .x = 15, .y = 17, .width = 12, .height = 1 },
+    .{ .x = 15, .y = 8, .width = 1, .height = 9 },
+    .{ .x = 26, .y = 8, .width = 1, .height = 9 },
+};
+/// Restore glyph with the front window occluding the rear outline.
+pub const restore_icon: []const Rect = &.{
+    .{ .x = 17, .y = 6, .width = 10, .height = 1 },
+    .{ .x = 17, .y = 7, .width = 1, .height = 2 },
+    .{ .x = 26, .y = 7, .width = 1, .height = 7 },
+    .{ .x = 24, .y = 14, .width = 3, .height = 1 },
+    .{ .x = 14, .y = 9, .width = 10, .height = 1 },
+    .{ .x = 14, .y = 17, .width = 10, .height = 1 },
+    .{ .x = 14, .y = 10, .width = 1, .height = 7 },
+    .{ .x = 23, .y = 10, .width = 1, .height = 7 },
+};
