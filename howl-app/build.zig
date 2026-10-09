@@ -12,9 +12,13 @@ pub fn build(b: *std.Build) void {
         \\#include <poll.h>
         \\#include <unistd.h>
         \\#include <errno.h>
+        \\#include <sys/socket.h>
+        \\#include <netinet/in.h>
     );
     const translation = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
+    const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
+    const server = b.dependency("server_client", .{ .target = target, .optimize = optimize });
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -23,6 +27,10 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("desktop", translation.createModule());
     root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("howl_client", client.module("howl_client"));
+    root.addImport("howl_client_render", client.module("howl_client_render"));
+    root.addImport("server_client", server.module("server_client"));
+    root.addImport("test_instance_service", instance.module("howl_instance_service"));
     root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     root.linkSystemLibrary("SDL3", .{});
     root.linkSystemLibrary("SDL3_ttf", .{});

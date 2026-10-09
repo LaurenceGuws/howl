@@ -49,6 +49,21 @@ pub const PublishedFrame = struct {
 // reason: The exchange hides atomics, owned frame buffers, and slot state so callers can only use the bounded lease/publication protocol.
 pub const Exchange = opaque {};
 
+/// Sole-producer lifetime/write capability; never included in a consumer lease.
+// zig-audit: acknowledge opaque_type
+// reason: Distinct opaque capabilities prevent a backend Exchange or Lease from obtaining producer mutation or destruction authority.
+pub const Producer = opaque {};
+
+/// Borrows only the consumer capability for this producer's lifetime.
+pub fn consumer(producer: *Producer) *Exchange {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Both opaque capabilities name the owned Impl; this one-way conversion drops mutation/destruction authority.
+    return @ptrCast(producer);
+}
+fn producerImpl(producer: *Producer) *Impl {
+    return exchangeImpl(consumer(producer));
+}
+
 const FrameSlot = struct {
     state: std.atomic.Value(u8) = .init(stateValue(.free)),
     sequence: std.atomic.Value(u64) = .init(0),
@@ -145,7 +160,7 @@ pub const InitError = std.mem.Allocator.Error || error{InvalidCapacity};
 pub fn init(
     allocator: std.mem.Allocator,
     command_capacity: usize,
-) InitError!*Exchange {
+) InitError!*Producer {
     const impl = try allocator.create(Impl);
     errdefer allocator.destroy(impl);
 
@@ -163,13 +178,13 @@ pub fn init(
     impl.residency_sequence = 0;
 
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns the concrete Impl allocation and adapts it to the stable opaque Exchange handle without changing address or lifetime.
+    // reason: This boundary owns the concrete Impl allocation and adapts it to the stable opaque Producer handle without changing address or lifetime.
     return @ptrCast(impl);
 }
 
 /// Releases all publication storage after the backend has released every outstanding lease.
-pub fn deinit(exchange: *Exchange) void {
-    const impl = exchangeImpl(exchange);
+pub fn deinit(producer: *Producer) void {
+    const impl = producerImpl(producer);
     std.debug.assert(!impl.reader_active.load(.acquire));
     for (&impl.frames) |*slot| {
         std.debug.assert(slot.state.load(.acquire) != stateValue(.reading));
@@ -182,12 +197,12 @@ pub fn deinit(exchange: *Exchange) void {
 
 /// Owns one terminal-thread-only frame slot while a publication is being assembled.
 pub const Writer = struct {
-    exchange: *Exchange,
+    producer: *Producer,
     index: usize,
     finished: bool = false,
 
     fn slot(self: *Writer) *FrameSlot {
-        return &exchangeImpl(self.exchange).frames[self.index];
+        return &producerImpl(self.producer).frames[self.index];
     }
 
     /// Borrows the fixed upload descriptor storage for this unpublished slot.
@@ -214,13 +229,13 @@ pub const Writer = struct {
         self: *Writer,
         needed: usize,
     ) std.mem.Allocator.Error!void {
-        const impl = exchangeImpl(self.exchange);
+        const impl = producerImpl(self.producer);
         try self.slot().ensureCommands(impl.allocator, needed);
     }
 
     /// Ensures and borrows owned pixel storage that will remain stable for the eventual lease.
     pub fn pixelStorage(self: *Writer, needed: usize) std.mem.Allocator.Error![]u8 {
-        const impl = exchangeImpl(self.exchange);
+        const impl = producerImpl(self.producer);
         const value = self.slot();
         try value.ensurePixels(impl.allocator, needed);
         return value.pixels;
@@ -243,7 +258,7 @@ pub const Writer = struct {
         command_count: usize,
         pixel_count: usize,
     ) void {
-        const impl = exchangeImpl(self.exchange);
+        const impl = producerImpl(self.producer);
         const value = self.slot();
         std.debug.assert(!self.finished);
         std.debug.assert(presentation_generation != 0);
@@ -292,8 +307,8 @@ pub const Writer = struct {
 };
 
 /// Claims a free slot or replaces the oldest unread slot without waiting for the backend.
-pub fn beginWrite(exchange: *Exchange) ?Writer {
-    const impl = exchangeImpl(exchange);
+pub fn beginWrite(producer: *Producer) ?Writer {
+    const impl = producerImpl(producer);
 
     // Prefer unused storage.
     for (&impl.frames, 0..) |*slot, index| {
@@ -303,7 +318,7 @@ pub fn beginWrite(exchange: *Exchange) ?Writer {
             .acq_rel,
             .acquire,
         ) == null)
-            return .{ .exchange = exchange, .index = index };
+            return .{ .producer = producer, .index = index };
     }
 
     // Coalesce by replacing an unread frame. A reading slot is immutable and
@@ -326,8 +341,8 @@ pub fn beginWrite(exchange: *Exchange) ?Writer {
         .acq_rel,
         .acquire,
     ) != null)
-        return beginWrite(exchange);
-    return .{ .exchange = exchange, .index = index };
+        return beginWrite(producer);
+    return .{ .producer = producer, .index = index };
 }
 
 /// Holds one immutable backend-thread publication until exact residency feedback is returned.
@@ -423,11 +438,11 @@ pub fn acquireLatest(exchange: *Exchange) ?Lease {
 /// Older unread reports are discarded. Null means the previous accepted
 /// residency remains current.
 pub fn takeLatestResidency(
-    exchange: *Exchange,
+    producer: *Producer,
     presentation_generation: u64,
     output: *[maximum_residencies]terminal.Residency,
 ) ?[]const terminal.Residency {
-    const impl = exchangeImpl(exchange);
+    const impl = producerImpl(producer);
     while (true) {
         var chosen: ?usize = null;
         var chosen_sequence: u64 = 0;
@@ -535,7 +550,7 @@ test "ready publications coalesce while a held lease remains immutable" {
     } };
     first.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
-    var lease = acquireLatest(exchange).?;
+    var lease = acquireLatest(consumer(exchange)).?;
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
 
     var second = beginWrite(exchange).?;
@@ -556,7 +571,7 @@ test "ready publications coalesce while a held lease remains immutable" {
     try std.testing.expectEqual(@as(u16, 1), lease.value.commands[0].solid.rect.width);
     try lease.release(&.{});
 
-    var latest = acquireLatest(exchange).?;
+    var latest = acquireLatest(consumer(exchange)).?;
     try std.testing.expectEqual(@as(u64, 3), latest.value.revision);
     try std.testing.expectEqual(@as(u16, 3), latest.value.commands[0].solid.rect.width);
     try latest.release(&.{});
@@ -581,7 +596,7 @@ test "lease feedback publishes only newest exact residency" {
 
     var writer = beginWrite(exchange).?;
     writer.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
-    var lease = acquireLatest(exchange).?;
+    var lease = acquireLatest(consumer(exchange)).?;
 
     const resource = try terminal.ResourceId.init(9);
     const accepted = terminal.Residency{
@@ -658,7 +673,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
         0,
     );
 
-    var hold = ConcurrentHold{ .exchange = exchange };
+    var hold = ConcurrentHold{ .exchange = consumer(exchange) };
     const backend = try std.Thread.spawn(.{}, ConcurrentHold.run, .{&hold});
     while (!hold.acquired.load(.acquire))
         std.atomic.spinLoopHint();
@@ -692,7 +707,24 @@ test "backend lease remains immutable while producer coalesces a burst" {
     backend.join();
     try std.testing.expect(!hold.failed.load(.acquire));
 
-    var latest = acquireLatest(exchange).?;
+    var latest = acquireLatest(consumer(exchange)).?;
     try std.testing.expectEqual(@as(u64, 101), latest.value.revision);
     try latest.release(&.{});
+}
+
+test "a leased consumer has no producer write or lifetime capability" {
+    const producer = try init(std.testing.allocator, 1);
+    defer deinit(producer);
+    var writer = beginWrite(producer).?;
+    writer.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    var lease = acquireLatest(consumer(producer)).?;
+    defer lease.abandon();
+    comptime {
+        if (Producer == Exchange or @TypeOf(lease.exchange) != *Exchange)
+            @compileError("consumer lease gained producer authority");
+        const write_type = @typeInfo(@TypeOf(beginWrite)).@"fn".param_types[0].?;
+        const retire_type = @typeInfo(@TypeOf(deinit)).@"fn".param_types[0].?;
+        if (write_type != *Producer or retire_type != *Producer)
+            @compileError("exchange producer authority escaped its capability");
+    }
 }

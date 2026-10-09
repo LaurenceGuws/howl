@@ -5,7 +5,8 @@ const pty = @import("howl_pty");
 const howl_render = @import("howl_render");
 const vt = @import("howl_vt");
 const terminal_render = howl_render.terminal;
-const publication = @import("publication.zig");
+/// Source-neutral immutable frame exchange; exposes no canonical terminal owner.
+pub const publication = @import("publication.zig");
 
 /// Shared-instance wire and geometry-authority contract.
 pub const protocol = @import("howl_instance_protocol");
@@ -566,6 +567,7 @@ const PresentationState = struct {
     renderer: *terminal_render.Renderer,
     fonts: OwnedFonts,
     exchange: *publication.Exchange,
+    producer: *publication.Producer,
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     terminal_revision: ?u64 = null,
@@ -604,11 +606,12 @@ const PresentationState = struct {
             },
         );
         errdefer terminal_render.deinit(renderer);
-        const exchange = publication.init(allocator, config.command_capacity) catch |failure| switch (failure) {
+        const producer = publication.init(allocator, config.command_capacity) catch |failure| switch (failure) {
             error.InvalidCapacity => return error.InvalidConfig,
             else => |err| return err,
         };
-        errdefer publication.deinit(exchange);
+        errdefer publication.deinit(producer);
+        const exchange = publication.consumer(producer);
         const atlas_pixel_capacity = std.math.mul(
             usize,
             @as(usize, config.atlas.width),
@@ -625,6 +628,7 @@ const PresentationState = struct {
             .renderer = renderer,
             .fonts = fonts.*,
             .exchange = exchange,
+            .producer = producer,
             .atlas_pixel_capacity = atlas_pixel_capacity,
             .command_capacity = config.command_capacity,
             .command_limit = command_limit,
@@ -637,7 +641,7 @@ const PresentationState = struct {
     }
 
     fn deinit(self: *PresentationState, allocator: std.mem.Allocator) void {
-        publication.deinit(self.exchange);
+        publication.deinit(self.producer);
         terminal_render.deinit(self.renderer);
         self.fonts.deinit();
         self.* = undefined;
@@ -687,7 +691,7 @@ const PresentationState = struct {
     ) PublishError!void {
         try self.refresh(observation, history_offset);
         if (publication.takeLatestResidency(
-            self.exchange,
+            self.producer,
             self.presentation_generation,
             &self.backend_residency,
         )) |accepted|
@@ -745,7 +749,7 @@ const PresentationState = struct {
             });
         }
 
-        var writer = publication.beginWrite(self.exchange) orelse
+        var writer = publication.beginWrite(self.producer) orelse
             return error.PublicationBusy;
         defer writer.abort();
         const pixel_capacity = std.math.add(

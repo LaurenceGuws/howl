@@ -6,17 +6,21 @@ const selection = @import("selection.zig");
 const find = @import("find.zig");
 const desktop = @import("desktop.zig");
 const posix = std.posix;
+const attached = @import("attached.zig");
+const client = @import("howl_client");
 
 const queue_limit = 64;
 const input_byte_limit = 1024 * 1024;
 
-/// Bounded asynchronous semantic input and presentation-geometry intent.
+/// Bounded asynchronous terminal and desktop intent.
 pub const Task = union(enum) {
     input: instance.Input,
     resize: struct { rows: u16, columns: u16 },
     scroll: i32,
     seek: u32,
     retry_render,
+    desktop,
+    take_size_control,
     select: Select,
     find: find.Request,
 };
@@ -33,7 +37,7 @@ pub const Select = struct {
 /// Noncanonical selection failures never stop process/VT service.
 pub const SelectionError = error{ InvalidSelection, SelectionContextChanged, SelectionEvicted };
 /// Bounded canonical extraction and FIFO admission failures.
-pub const CopyError = instance.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
+pub const CopyError = instance.Terminal.TextError || SelectionError || attached.Error || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
 const Link = struct { context: selection.Context, point: instance.Terminal.TextPoint };
 const Copy = struct {
     link: ?Link = null,
@@ -46,16 +50,16 @@ const Copy = struct {
 
 /// Exact failures produced by this terminal worker's owned operations.
 pub const Failure = instance.InputError || instance.ResizeError ||
-    instance.ServiceError || std.posix.PollError || desktop.Error;
+    instance.ServiceError || std.posix.PollError || desktop.Error || SelectionError || attached.Error || std.Thread.SpawnError;
 
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
-pub const PresentationFailure = instance.PublishError || error{SDLNotification};
+pub const PresentationFailure = instance.PublishError || attached.RenderError || error{SDLNotification};
 
 /// Immutable lease transfer failures; no-frame leaves the previously accepted lease untouched.
 pub const FrameError = instance.RenderLease.ReleaseError || error{ WrongExchange, NoPublishedFrame };
 
 /// Exact transactional configuration/admission failures; old presentation survives failure.
-pub const ConfigureError = instance.ReconfigurePresentationError || error{ TerminalStopped, InputQueueFull };
+pub const ConfigureError = instance.ReconfigurePresentationError || attached.ConfigureError || error{ TerminalStopped, InputQueueFull };
 
 const Configuration = struct {
     config: instance.PresentationConfig,
@@ -75,6 +79,10 @@ pub const Status = struct {
     revision: u64 = 0,
     closed: bool = false,
     child_exit: ?instance.ChildExit = null,
+    child_exited: bool = false,
+    geometry_failure: ?client.actions.Error = null,
+    geometry_failure_serial: u64 = 0,
+    desktop_failure: ?client.consequences.Error = null,
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
     selection_failure: ?SelectionError = null,
@@ -102,6 +110,13 @@ pub const Terminal = opaque {
         // zig-audit: acknowledge ptr_cast
         // reason: State owns this allocation; the opaque pointer keeps SDL outside canonical mutation authority without changing address or lifetime.
         return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible));
+    }
+
+    /// Starts one exact attachment without constructing a Local Instance or resizing the target.
+    pub fn attach(allocator: std.mem.Allocator, io: std.Io, target: attached.Target, presentation: instance.PresentationConfig, event_type: u32, initially_visible: bool) !*Terminal {
+        // zig-audit: acknowledge ptr_cast
+        // reason: State owns the tagged backend allocation; SDL receives only the same opaque typed facade.
+        return @ptrCast(try State.createAttached(allocator, io, target, presentation, event_type, initially_visible));
     }
 
     /// Stops/joins the worker and retires its child; all graphical leases must already be retired.
@@ -161,7 +176,9 @@ pub const Terminal = opaque {
 const State = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    value: *instance.Instance,
+    backend: union(enum) { local: *instance.Instance, attached: *attached.Attached },
+    observation: ?attached.Observation = null,
+    search_view: ?*client.view.Snapshot = null,
     exchange: *instance.RenderExchange,
     wake_fd: posix.fd_t,
     event_type: u32,
@@ -209,7 +226,7 @@ const State = struct {
         self.* = .{
             .allocator = allocator,
             .io = io,
-            .value = value,
+            .backend = .{ .local = value },
             .exchange = exchange,
             .wake_fd = fd,
             .event_type = event_type,
@@ -219,16 +236,35 @@ const State = struct {
         return self;
     }
 
+    fn createAttached(allocator: std.mem.Allocator, io: std.Io, target: attached.Target, presentation: instance.PresentationConfig, event_type: u32, initially_visible: bool) !*State {
+        const self = try allocator.create(State);
+        errdefer allocator.destroy(self);
+        const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (fd < 0) return error.WakeFailed;
+        errdefer closeWake(fd);
+        const owner = try attached.Attached.init(allocator, io, target, presentation, fd);
+        errdefer owner.deinit();
+        self.* = .{ .allocator = allocator, .io = io, .backend = .{ .attached = owner }, .exchange = owner.exchange, .wake_fd = fd, .event_type = event_type, .visible = .init(initially_visible) };
+        self.thread = try std.Thread.spawn(.{}, run, .{self});
+        return self;
+    }
+
     /// All backend leases must be retired before destroying this lifetime owner.
     fn destroy(self: *State) void {
         self.mutex.lockUncancelable(self.io);
         self.stopping = true;
         self.mutex.unlock(self.io);
+        if (self.backend == .attached) self.backend.attached.stop();
         self.wake();
         if (self.thread) |thread| thread.join();
         self.cancelPending();
+        if (self.observation) |*value| value.deinit();
+        if (self.search_view) |value| client.view.deinit(value);
+        switch (self.backend) {
+            .local => |value| instance.deinit(value),
+            .attached => |value| value.deinit(),
+        }
         closeWake(self.wake_fd);
-        instance.deinit(self.value);
         const allocator = self.allocator;
         allocator.destroy(self);
     }
@@ -320,11 +356,32 @@ const State = struct {
     }
 
     fn applyConfiguration(self: *State, request: *Configuration) void {
-        const live = instance.terminal(self.value).semanticView(0);
+        if (self.backend == .attached) {
+            const begin = if (self.observation) |value| client.view.begin(value.view).* else {
+                self.completeConfiguration(request, error.TerminalStopped);
+                return;
+            };
+            const geometry = self.backend.attached.reconfigure(request.config, request.surface, begin.rows, begin.columns) catch |failure| {
+                self.completeConfiguration(request, failure);
+                return;
+            };
+            self.new_frame.store(false, .release);
+            if (geometry.columns != begin.columns) self.history.reset();
+            self.presentation_failure = null;
+            self.mutex.lockUncancelable(self.io);
+            self.status.presentation_failure = null;
+            self.status.geometry_failure = null;
+            self.mutex.unlock(self.io);
+            self.gate.pending = true;
+            self.credit.store(true, .release);
+            self.completeConfiguration(request, geometry);
+            return;
+        }
+        const live = instance.terminal(self.backend.local).semanticView(0);
         const result = if (request.surface) |surface|
-            instance.reconfigurePresentationSurface(self.value, request.config, surface)
+            instance.reconfigurePresentationSurface(self.backend.local, request.config, surface)
         else keep_grid: {
-            const cell = instance.reconfigurePresentation(self.value, request.config) catch |failure| {
+            const cell = instance.reconfigurePresentation(self.backend.local, request.config) catch |failure| {
                 self.completeConfiguration(request, failure);
                 return;
             };
@@ -368,6 +425,10 @@ const State = struct {
         self.mutex.unlock(self.io);
     }
     fn applyCopy(self: *State, request: *Copy) void {
+        if (self.backend == .attached) {
+            self.completeCopy(request, self.remoteCopy(request));
+            return;
+        }
         if (request.link) |link| {
             self.completeCopy(request, self.linkText(link, request.allocator, request.max_bytes));
             return;
@@ -376,10 +437,10 @@ const State = struct {
             self.completeCopy(request, self.selection_failure orelse error.NoSelection);
             return;
         };
-        self.completeCopy(request, range.copy(instance.terminal(self.value), request.allocator, request.max_bytes));
+        self.completeCopy(request, range.copy(instance.terminal(self.backend.local), request.allocator, request.max_bytes));
     }
     fn resolve(self: *State, context: selection.Context, point: instance.Terminal.TextPoint) SelectionError!struct { view: instance.Terminal.SemanticView, row: u16 } {
-        const observation = instance.terminal(self.value);
+        const observation = instance.terminal(self.backend.local);
         const live = observation.semanticView(0);
         if (live.cols != context.columns or live.is_alternate_screen != context.alternate) return error.SelectionContextChanged;
         const first = try context.row(0);
@@ -395,7 +456,7 @@ const State = struct {
         const resolved = try self.resolve(link.context, link.point);
         const cell = resolved.view.cellInfoAt(resolved.row, link.point.col);
         if (cell.attrs.link_id == 0) return error.NoHyperlink;
-        const uri = instance.terminal(self.value).hyperlinkUri(cell.attrs.link_id) orelse return error.NoHyperlink;
+        const uri = instance.terminal(self.backend.local).hyperlinkUri(cell.attrs.link_id) orelse return error.NoHyperlink;
         if (uri.len > max_bytes) return error.HyperlinkLimit;
         return allocator.dupe(u8, uri);
     }
@@ -431,7 +492,7 @@ const State = struct {
     fn selectMatch(self: *State, range: selection.Range) void {
         self.selected = range;
         self.selection_failure = null;
-        const live = instance.terminal(self.value).semanticView(0);
+        const live = instance.terminal(self.backend.local).semanticView(0);
         const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
         self.history.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
         self.gate.pending = true;
@@ -439,7 +500,7 @@ const State = struct {
     fn applyFind(self: *State, request: find.Request) void {
         self.selection_serial = request.serial;
         self.selection_failure = null;
-        const observation = instance.terminal(self.value);
+        const observation = instance.terminal(self.backend.local);
         switch (request.kind) {
             .close => {
                 self.search = .{};
@@ -506,8 +567,10 @@ const State = struct {
     }
 
     fn apply(self: *State, task: Task) !void {
-        const live = instance.terminal(self.value).semanticView(0);
+        if (self.backend == .attached) return self.applyAttached(task);
+        const live = instance.terminal(self.backend.local).semanticView(0);
         switch (task) {
+            .desktop, .take_size_control => {},
             .find => |request| self.applyFind(request),
             .select => |intent| self.applySelection(intent) catch |failure| {
                 self.selected = null;
@@ -523,12 +586,12 @@ const State = struct {
                         self.gate.pending = true;
                     }
                 }
-                try instance.input(self.value, input);
+                try instance.input(self.backend.local, input);
             },
             .resize => |size| {
                 if (size.rows != live.rows or size.columns != live.cols) {
                     if (size.columns != live.cols) self.history.reset();
-                    try instance.resize(self.value, size.rows, size.columns);
+                    try instance.resize(self.backend.local, size.rows, size.columns);
                     self.gate.pending = true;
                 }
             },
@@ -552,11 +615,11 @@ const State = struct {
     }
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !instance.Service {
-        const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .retain);
-        const host = try desktop.drain(self.value);
+        const result = try instance.serviceWithConsequencePolicy(self.backend.local, readable, writable, now, .retain);
+        const host = try desktop.drain(self.backend.local);
         self.consequence_worked = host.worked;
         if (host.attention and !self.attention.swap(true, .acq_rel)) self.notify();
-        const observation = instance.terminal(self.value);
+        const observation = instance.terminal(self.backend.local);
         const live = observation.semanticView(0);
         self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
@@ -592,6 +655,7 @@ const State = struct {
             (self.status.child_exit == null and result.child_exit != null);
         self.status.closed = result.stream_closed;
         self.status.child_exit = result.child_exit;
+        self.status.child_exited = result.child_exit != null;
         self.status.interaction = observation.interactionState();
         self.status.cursor_row = live.cursor_row;
         self.status.cursor_col = live.cursor_col;
@@ -612,7 +676,7 @@ const State = struct {
             if (!self.frame_mutex.tryLock()) return result;
             defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
-            instance.publishRenderAt(self.value, self.history.offset) catch |failure| {
+            instance.publishRenderAt(self.backend.local, self.history.offset) catch |failure| {
                 if (failure == error.PublicationBusy) {
                     self.credit.store(true, .release);
                     return result;
@@ -636,6 +700,7 @@ const State = struct {
 
     fn run(self: *State) void {
         self.loop() catch |failure| {
+            if (self.backend == .attached) self.backend.attached.stop();
             self.mutex.lockUncancelable(self.io);
             self.status.failure = failure;
             self.mutex.unlock(self.io);
@@ -645,6 +710,7 @@ const State = struct {
     }
 
     fn loop(self: *State) !void {
+        if (self.backend == .attached) return self.loopAttached();
         var readable = true;
         var writable = true;
         while (!self.stopRequested()) {
@@ -665,11 +731,11 @@ const State = struct {
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (instance.bufferedOutputPending(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
+            if (instance.bufferedOutputPending(self.backend.local) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
             var fds = [_]posix.pollfd{
                 .{
-                    .fd = if (result.stream_closed and !result.write_pending) -1 else try instance.descriptor(self.value),
-                    .events = posix.POLL.IN | posix.POLL.HUP | if (result.write_pending or instance.writePending(self.value)) @as(i16, posix.POLL.OUT) else 0,
+                    .fd = if (result.stream_closed and !result.write_pending) -1 else try instance.descriptor(self.backend.local),
+                    .events = posix.POLL.IN | posix.POLL.HUP | if (result.write_pending or instance.writePending(self.backend.local)) @as(i16, posix.POLL.OUT) else 0,
                     .revents = 0,
                 },
                 .{ .fd = self.wake_fd, .events = posix.POLL.IN, .revents = 0 },
@@ -678,8 +744,363 @@ const State = struct {
             // reason: Readiness is consumed from each exact revents mask below; the aggregate ready count adds no authority.
             _ = try posix.poll(&fds, timeout);
             if (fds[1].revents & posix.POLL.IN != 0) self.drainWake();
-            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or instance.bufferedOutputPending(self.value);
+            readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or instance.bufferedOutputPending(self.backend.local);
             writable = fds[0].revents & posix.POLL.OUT != 0;
+        }
+    }
+
+    fn remoteView(self: *State, context: selection.Context, point: instance.Terminal.TextPoint) (SelectionError || attached.Error)!struct { view: *client.view.Snapshot, row: u16 } {
+        const current = self.observation orelse return error.InvalidSelection;
+        const live = client.view.begin(current.view);
+        if (live.columns != context.columns or live.alternate_screen != context.alternate) return error.SelectionContextChanged;
+        const first = try context.row(0);
+        const top: i64 = if (live.alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
+        const offset = top - first;
+        if (offset < 0 or offset > live.history_count) return error.SelectionEvicted;
+        const view = try self.backend.attached.observeNow(@intCast(offset));
+        errdefer client.view.deinit(view);
+        const begin = client.view.begin(view);
+        if (begin.columns != context.columns or begin.alternate_screen != context.alternate) return error.SelectionContextChanged;
+        const fresh = attached.context(begin.*);
+        const row = @as(i64, point.row) - try fresh.row(0);
+        if (row < 0 or row >= @min(begin.rows, context.rows) or point.col >= begin.columns) return error.SelectionEvicted;
+        return .{ .view = view, .row = @intCast(row) };
+    }
+    fn remoteCopy(self: *State, request: *Copy) CopyError![]const u8 {
+        if (request.link) |link| {
+            const resolved = try self.remoteView(link.context, link.point);
+            defer client.view.deinit(resolved.view);
+            const row = client.view.rows(resolved.view)[resolved.row];
+            const cell = client.view.cells(resolved.view)[@as(usize, row.cell_offset) + link.point.col];
+            if (cell.link_id == 0) return error.NoHyperlink;
+            for (client.view.hyperlinks(resolved.view)) |hyperlink| if (hyperlink.link_id == cell.link_id) {
+                const uri = client.view.uris(resolved.view)[hyperlink.uri_offset..][0..hyperlink.uri_len];
+                if (uri.len > request.max_bytes) return error.HyperlinkLimit;
+                return request.allocator.dupe(u8, uri);
+            };
+            return error.NoHyperlink;
+        }
+        const range = self.selected orelse return self.selection_failure orelse error.NoSelection;
+        const connection = &self.backend.attached.control.?;
+        try connection.stream.beginOperation(5000);
+        defer connection.stream.endOperation();
+        const text = client.selection.extract(connection, request.allocator, attached.toRange(range)) catch |failure| {
+            switch (failure) {
+                error.SelectionRejected, error.ContextChanged, error.InvalidPoint, error.InvalidUtf8 => {},
+                else => self.backend.attached.control_failure = failure,
+            }
+            return failure;
+        };
+        errdefer request.allocator.free(text);
+        if (text.len > request.max_bytes) return error.CopyLimit;
+        return text;
+    }
+    fn remoteSelect(self: *State, intent: Select) (SelectionError || attached.Error)!void {
+        self.selection_serial = intent.serial;
+        self.selection_failure = null;
+        self.gate.pending = true;
+        if (intent.kind == .clear) {
+            self.selected = null;
+            return;
+        }
+        const resolved = try self.remoteView(intent.context, intent.point);
+        defer client.view.deinit(resolved.view);
+        switch (intent.kind) {
+            .start => self.selected = attached.fromRange(try client.selection.Range.start(resolved.view, resolved.row, intent.point.col)),
+            .extend => {
+                var range = attached.toRange(self.selected orelse return error.InvalidSelection);
+                try range.extend(resolved.view, resolved.row, intent.point.col);
+                self.selected = attached.fromRange(range);
+            },
+            .word => self.selected = if (try client.selection.word(resolved.view, resolved.row, intent.point.col)) |range| attached.fromRange(range) else null,
+            .row => self.selected = if (try client.selection.visualRow(resolved.view, resolved.row)) |range| attached.fromRange(range) else null,
+            .clear => {},
+        }
+    }
+    fn applyAttached(self: *State, task: Task) !void {
+        const remote = self.backend.attached;
+        const begin = if (self.observation) |value| client.view.begin(value.view).* else null;
+        switch (task) {
+            .desktop => try remote.acquireDesktop(),
+            .take_size_control => try remote.acquireGeometry(),
+            .input => |value| {
+                if (value == .bytes or value == .paste or value == .key) {
+                    self.history.reset();
+                    remote.seek(0);
+                    self.selected = null;
+                    self.gate.pending = true;
+                }
+                try remote.input(value);
+            },
+            .resize => |size| {
+                remote.resize(size.rows, size.columns) catch |failure| {
+                    if (failure != error.NotGeometryLeader and failure != error.ServerRejected) return failure;
+                    self.mutex.lockUncancelable(self.io);
+                    self.status.geometry_failure = failure;
+                    self.status.geometry_failure_serial +%= 1;
+                    self.mutex.unlock(self.io);
+                    self.notify();
+                    return;
+                };
+                self.mutex.lockUncancelable(self.io);
+                self.status.geometry_failure = null;
+                self.mutex.unlock(self.io);
+                if (begin) |value| if (size.columns != value.columns) self.history.reset();
+            },
+            .scroll => |delta| if (begin) |value| {
+                self.history.scroll(delta, value.history_count, value.history_row_base, value.alternate_screen);
+                remote.seek(self.history.offset);
+            },
+            .seek => |offset| if (begin) |value| {
+                self.history.seek(offset, value.history_count, value.history_row_base, value.alternate_screen);
+                remote.seek(self.history.offset);
+            },
+            .select => |intent| self.remoteSelect(intent) catch |failure| switch (failure) {
+                error.InvalidSelection, error.SelectionContextChanged, error.SelectionEvicted, error.ContextChanged, error.InvalidPoint => {
+                    self.selected = null;
+                    self.selection_failure = switch (failure) {
+                        error.SelectionContextChanged, error.ContextChanged => error.SelectionContextChanged,
+                        error.SelectionEvicted => error.SelectionEvicted,
+                        else => error.InvalidSelection,
+                    };
+                },
+                else => return failure,
+            },
+            .find => |request| try self.remoteFind(request),
+            .retry_render => {
+                self.presentation_failure = null;
+                self.mutex.lockUncancelable(self.io);
+                self.status.presentation_failure = null;
+                self.mutex.unlock(self.io);
+                self.credit.store(true, .release);
+            },
+        }
+        self.gate.pending = true;
+    }
+    fn remoteFind(self: *State, request: find.Request) !void {
+        self.selection_serial = request.serial;
+        self.selection_failure = null;
+        switch (request.kind) {
+            .close => {
+                self.search = .{};
+                self.search.status.serial = request.serial;
+                self.selected = null;
+                if (self.search_view) |value| client.view.deinit(value);
+                self.search_view = null;
+            },
+            .query => try self.remoteBeginFind(request),
+            .next, .previous => {
+                if (self.search.status.phase == .stale or self.search.status.phase == .failed) {
+                    var refreshed = self.search.request;
+                    refreshed.serial = request.serial;
+                    try self.remoteBeginFind(refreshed);
+                } else if (self.search.navigate(request.serial, request.kind == .previous)) |range| self.remoteMatch(range);
+            },
+        }
+    }
+    fn remoteBeginFind(self: *State, request: find.Request) !void {
+        const view = try self.backend.attached.observeNow(0);
+        defer client.view.deinit(view);
+        const begin = client.view.begin(view);
+        const context = attached.context(begin.*);
+        const total: u64 = @as(u64, if (context.alternate) 0 else context.history_count) + context.rows;
+        const first: u64 = if (context.alternate) 0 else context.history_row_base;
+        self.search = .{};
+        self.selected = null;
+        self.search.request = request;
+        self.search.status.serial = request.serial;
+        if (request.len > request.bytes.len or !std.unicode.utf8ValidateSlice(request.bytes[0..request.len])) {
+            self.search.fail(error.InvalidQuery);
+            return;
+        }
+        if (total == 0 or first + total - 1 > std.math.maxInt(i32)) {
+            self.search.fail(error.InvalidSearchContext);
+            return;
+        }
+        self.search.context = context;
+        self.search.revision = begin.terminal_revision;
+        self.search.status = .{ .serial = request.serial, .phase = if (request.len == 0) .idle else .scanning, .total = @intCast(total) };
+        if (self.search_view) |old| client.view.deinit(old);
+        self.search_view = null;
+    }
+    fn remoteMatch(self: *State, range: selection.Range) void {
+        self.selected = range;
+        self.selection_failure = null;
+        const value = self.observation orelse return;
+        const begin = client.view.begin(value.view);
+        const top: i64 = if (begin.alternate_screen) 0 else @as(i64, begin.history_row_base) + begin.history_count;
+        self.history.seek(@intCast(@min(@as(i64, begin.history_count), @max(0, top - range.anchor.row))), begin.history_count, begin.history_row_base, begin.alternate_screen);
+        self.backend.attached.seek(self.history.offset);
+        self.gate.pending = true;
+    }
+    fn remoteFindStep(self: *State) !void {
+        const value = self.observation orelse return;
+        const begin = client.view.begin(value.view);
+        const search = &self.search;
+        if (search.status.phase == .idle or search.status.phase == .failed or search.status.phase == .stale) return;
+        // The independent control lane can start Find ahead of the observer.
+        // Wait for its cut; only later canonical progress invalidates the search.
+        if (begin.terminal_revision < search.revision) return;
+        if (search.revision != begin.terminal_revision) {
+            search.status.phase = .stale;
+            if (self.selection_serial == search.status.serial) self.selected = null;
+            return;
+        }
+        if (search.status.phase != .scanning) return;
+        const first: i64 = if (search.context.alternate) 0 else search.context.history_row_base;
+        const top = first + (if (search.context.alternate) @as(i64, 0) else search.context.history_count);
+        var served: u8 = 0;
+        while (search.status.scanned < search.status.total and served < 4) : (served += 1) {
+            const absolute = first + search.status.scanned;
+            if (self.search_view) |cached| {
+                const cached_context = attached.context(client.view.begin(cached).*);
+                const cached_top = try cached_context.row(0);
+                if (absolute < cached_top or absolute >= @as(i64, cached_top) + cached_context.rows) {
+                    client.view.deinit(cached);
+                    self.search_view = null;
+                }
+            }
+            if (self.search_view == null) self.search_view = try self.backend.attached.observeNow(@intCast(@max(0, top - absolute)));
+            const page = self.search_view.?;
+            const page_begin = client.view.begin(page);
+            if (page_begin.terminal_revision != search.revision) {
+                search.status.phase = .stale;
+                return;
+            }
+            const row: u16 = @intCast(absolute - try attached.context(page_begin.*).row(0));
+            var column: u16 = 0;
+            while (column < page_begin.columns) {
+                const match = try client.search.rowFrom(page, self.allocator, search.request.bytes[0..search.request.len], row, column, false) orelse break;
+                const range = attached.fromRange(match.range);
+                if (search.status.count == 0 or !std.meta.eql(search.matches[search.status.count - 1], range)) {
+                    if (search.status.count == find.match_limit) {
+                        search.status.phase = .incomplete;
+                        return;
+                    }
+                    search.matches[search.status.count] = range;
+                    search.status.count += 1;
+                }
+                column = match.start_column + 1;
+            }
+            search.status.scanned += 1;
+        }
+        if (search.status.scanned == search.status.total) search.status.phase = .complete;
+        if (self.selection_serial == search.status.serial and search.status.current == null and search.status.count != 0)
+            if (search.navigate(self.selection_serial, false)) |range| self.remoteMatch(range);
+    }
+    fn serviceAttached(self: *State) !void {
+        const remote = self.backend.attached;
+        if (remote.control_failure) |failure| return failure;
+        var changed = false;
+        const effects = try remote.drain();
+        self.consequence_worked = effects.worked;
+        if (effects.attention and !self.attention.swap(true, .acq_rel)) self.notify();
+        self.mutex.lockUncancelable(self.io);
+        // Zig 0.17.0-dev.1980+e78ea8f2c self-hosted codegen miscompiles ?Error != ?Error:
+        // even null/null can compare unequal and keep waking an idle attachment.
+        // Use structural equality for both copied failure facts below; retain the idle-credit proof.
+        if (!std.meta.eql(self.status.desktop_failure, remote.consequence_failure)) {
+            self.status.desktop_failure = remote.consequence_failure;
+            changed = true;
+        }
+        self.mutex.unlock(self.io);
+        if (try remote.take()) |value| {
+            changed = true;
+            if (self.observation) |*old| old.deinit();
+            self.observation = value;
+            self.gate.pending = true;
+            const begin = client.view.begin(value.view);
+            self.history.follow(begin.history_count, begin.history_row_base, begin.alternate_screen);
+            remote.seek(self.history.offset);
+            if (self.selected) |range| switch (range.validity(attached.context(begin.*))) {
+                .valid => {},
+                .context_changed => {
+                    self.selected = null;
+                    self.selection_failure = error.SelectionContextChanged;
+                },
+                .evicted => {
+                    self.selected = null;
+                    self.selection_failure = error.SelectionEvicted;
+                },
+            };
+        }
+        const current = self.observation orelse return;
+        const begin = client.view.begin(current.view);
+        const old_search = self.search.status;
+        try self.remoteFindStep();
+        changed = changed or !std.meta.eql(old_search, self.search.status);
+        self.mutex.lockUncancelable(self.io);
+        // Keep optional-error comparison structural for the pinned compiler workaround above.
+        changed = changed or self.status.selection_serial != self.selection_serial or
+            !std.meta.eql(self.status.selected, self.selected) or !std.meta.eql(self.status.selection_failure, self.selection_failure);
+        self.status.search = self.search.status;
+        self.status.selected = self.selected;
+        self.status.selection_serial = self.selection_serial;
+        self.status.selection_failure = self.selection_failure;
+        self.status.closed = begin.stream_closed;
+        self.status.child_exited = begin.child_exited;
+        self.status.interaction = current.interaction;
+        self.status.cursor_row = begin.cursor_row;
+        self.status.cursor_col = begin.cursor_column;
+        self.status.revision = begin.terminal_revision;
+        const title = client.view.properties(current.view).title orelse "";
+        self.status.title_len = @min(title.len, self.status.title.len);
+        @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
+        self.mutex.unlock(self.io);
+        if (changed) self.notify();
+        if (self.presentation_failure != null or !self.gate.pending or !self.visible.load(.acquire) or
+            !self.credit.load(.acquire) or begin.history_offset != self.history.offset) return;
+        if (!self.frame_mutex.tryLock()) return;
+        defer self.frame_mutex.unlock(self.io);
+        std.debug.assert(self.credit.swap(false, .acq_rel));
+        remote.publish(&current) catch |failure| {
+            if (remote.control_failure) |poison| return poison;
+            if (failure == error.PublicationBusy) {
+                self.credit.store(true, .release);
+                return;
+            }
+            self.presentation_failure = failure;
+            self.mutex.lockUncancelable(self.io);
+            self.status.presentation_failure = failure;
+            self.mutex.unlock(self.io);
+            self.notify();
+            return;
+        };
+        self.paint = .{ .serial = self.selection_serial, .rows = begin.rows };
+        if (self.selected) |range| for (0..@min(begin.rows, self.paint.spans.len)) |row| {
+            if (client.selection.visualSpan(current.view, attached.toRange(range), @intCast(row))) |span|
+                self.paint.spans[row] = .{ .first = span.start_column, .last = span.end_column };
+        };
+        self.gate.pending = false;
+        self.new_frame.store(true, .release);
+        self.notify();
+    }
+    fn loopAttached(self: *State) !void {
+        try self.backend.attached.start();
+        while (!self.stopRequested()) {
+            while (self.pop()) |work| switch (work) {
+                .intent => |task| {
+                    defer self.releaseTask(task);
+                    try self.apply(task);
+                },
+                .configure => |request| {
+                    self.applyConfiguration(request);
+                    if (self.backend.attached.control_failure) |failure| return failure;
+                },
+                .copy => |request| {
+                    self.applyCopy(request);
+                    if (self.backend.attached.control_failure) |failure| return failure;
+                },
+            };
+            if (self.backend.attached.control_failure) |failure| return failure;
+            try self.serviceAttached();
+            var fds = [_]posix.pollfd{.{ .fd = self.wake_fd, .events = posix.POLL.IN, .revents = 0 }};
+            const search_ready = self.search.status.phase == .scanning and
+                (if (self.observation) |value| client.view.begin(value.view).terminal_revision >= self.search.revision else false);
+            // zig-audit: acknowledge discard
+            // reason: Only the exact wake descriptor readiness matters; the aggregate poll count adds no authority.
+            _ = try posix.poll(&fds, if (search_ready or self.consequence_worked) 0 else -1);
+            if (fds[0].revents & posix.POLL.IN != 0) self.drainWake();
         }
     }
 
@@ -1465,4 +1886,348 @@ test "owned file and text drops preserve exact canonical bracketed paste after c
     try waitTitle(owner, "EXACT");
     try std.testing.expect(owner.snapshot().failure == null);
     try std.testing.expect(!owner.state().new_frame.load(.acquire));
+}
+
+const AttachedFixture = struct {
+    value: *instance.Instance,
+    service: @import("test_instance_service").Service,
+    listener: posix.fd_t,
+    port: u16,
+    thread: ?std.Thread = null,
+    stopped: std.atomic.Value(bool) = .init(false),
+    failed: std.atomic.Value(bool) = .init(false),
+
+    fn create(allocator: std.mem.Allocator, io: std.Io, command: []const u8) !*AttachedFixture {
+        const self = try allocator.create(AttachedFixture);
+        errdefer allocator.destroy(self);
+        const value = try instance.init(allocator, std.testing.environ, .{
+            .shell = "/bin/sh",
+            .command = command,
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 8,
+        });
+        errdefer instance.deinit(value);
+        var service = try @import("test_instance_service").Service.init(allocator, io, value);
+        errdefer service.deinit();
+        const fd = c.socket(c.AF_INET, c.SOCK_STREAM | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
+        if (fd < 0) return error.TestSocketFailed;
+        errdefer closeWake(fd);
+        var address = std.mem.zeroes(c.sockaddr_in);
+        address.sin_family = c.AF_INET;
+        address.sin_addr.s_addr = std.mem.nativeToBig(u32, 0x7f000001);
+        // zig-audit: acknowledge ptr_cast
+        // reason: sockaddr_in is the complete native IPv4 socket address, with its exact extent supplied to bind.
+        if (c.bind(fd, @ptrCast(&address), @sizeOf(c.sockaddr_in)) != 0 or c.listen(fd, 8) != 0) return error.TestSocketFailed;
+        var size: c.socklen_t = @sizeOf(c.sockaddr_in);
+        // zig-audit: acknowledge ptr_cast
+        // reason: getsockname receives a complete native IPv4 buffer and its checked capacity.
+        if (c.getsockname(fd, @ptrCast(&address), &size) != 0 or size != @sizeOf(c.sockaddr_in)) return error.TestSocketFailed;
+        self.* = .{ .value = value, .service = service, .listener = fd, .port = std.mem.bigToNative(u16, address.sin_port) };
+        self.thread = try std.Thread.spawn(.{}, pump, .{self});
+        return self;
+    }
+    fn pump(self: *AttachedFixture) void {
+        while (!self.stopped.load(.acquire)) {
+            while (true) {
+                const raw = posix.system.accept4(self.listener, null, null, c.SOCK_NONBLOCK | c.SOCK_CLOEXEC);
+                switch (posix.errno(raw)) {
+                    .SUCCESS => {},
+                    .INTR => continue,
+                    .AGAIN => break,
+                    else => {
+                        self.failed.store(true, .release);
+                        return;
+                    },
+                }
+                const fd: posix.fd_t = @intCast(raw);
+                self.service.adoptClient(fd, &.{}, &.{}) catch {
+                    closeWake(fd);
+                    self.failed.store(true, .release);
+                    return;
+                };
+            }
+            self.service.turn(1) catch {
+                self.failed.store(true, .release);
+                return;
+            };
+        }
+    }
+    fn destroy(self: *AttachedFixture, allocator: std.mem.Allocator) void {
+        self.stopped.store(true, .release);
+        if (self.thread) |thread| thread.join();
+        self.service.deinit();
+        instance.deinit(self.value);
+        closeWake(self.listener);
+        allocator.destroy(self);
+    }
+};
+fn attachedInitFailure(allocator: std.mem.Allocator, io: std.Io, fd: posix.fd_t) !void {
+    var endpoint = [_]u8{ 'u', 'n', 'i', 'x', ':', 'x' };
+    const owner = try attached.Attached.init(allocator, io, .{ .direct = &endpoint }, testPresentation(), fd);
+    defer owner.deinit();
+    @memset(&endpoint, '?');
+    try std.testing.expectEqualStrings("unix:x", owner.target.direct);
+    try std.testing.expect(owner.control == null and owner.observer == null);
+}
+test "attachment construction owns its recipe and reverses every allocation without starting I/O" {
+    const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (fd < 0) return error.WakeFailed;
+    defer closeWake(fd);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, attachedInitFailure, .{ std.testing.io, fd });
+}
+fn attachedFrame(owner: *Terminal) !instance.RenderLease {
+    var i: u16 = 0;
+    while (i < 5000) : (i += 1) {
+        if (owner.snapshot().failure) |failure| return failure;
+        if (try owner.replaceFrame(null, &.{}, null)) |lease| return lease;
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    return error.Timeout;
+}
+test "exact attachment preserves geometry, images, semantic input, held leases and independent process lifetime" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const host = try AttachedFixture.create(allocator, io, "stty -echo; printf '\\033_Ga=T,f=32,s=1,v=1,i=7,q=2;AP8A/w==\\033\\\\'; " ++
+        "printf '\\033]8;;https://example.invalid/captain\\033\\\\wide 界\\033]8;;\\033\\\\\\r\\n'; " ++
+        "printf '\\033]0;READY\\007'; read line; " ++
+        "dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\\000' x; " ++
+        "printf '\\033]0;%s\\007\\007' \"$line\"; sleep 30");
+    defer host.destroy(allocator);
+    const endpoint = try std.fmt.allocPrint(allocator, "tcp://127.0.0.1:{d}", .{host.port});
+    defer allocator.free(endpoint);
+    var owner_live = true;
+    const owner = try Terminal.attach(allocator, io, .{ .direct = endpoint }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer if (owner_live) owner.destroy();
+    try owner.submit(.desktop);
+    try waitTitle(owner, "READY");
+    var connection = try client.Connection.connect(allocator, endpoint);
+    defer connection.deinit();
+    var initial = try client.rich.requestRaw(&connection, allocator, 0, 0);
+    defer initial.deinit();
+    try std.testing.expectEqual(@as(u16, 4), initial.begin.rows);
+    try std.testing.expectEqual(@as(u16, 20), initial.begin.columns);
+    try std.testing.expect(!initial.begin.leader_present);
+    var lease = try attachedFrame(owner);
+    var lease_live = true;
+    defer if (lease_live) lease.abandon();
+    const revision = lease.value.terminal_revision;
+    const command = lease.value.commands[0];
+    const pixels = try allocator.dupe(u8, lease.value.pixels);
+    defer allocator.free(pixels);
+    var image_seen = false;
+    for (lease.value.uploads) |upload| if (upload.format == .rgba8) {
+        try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, lease.value.pixels[upload.pixel_offset..][0..upload.pixel_count]);
+        image_seen = true;
+    };
+    try std.testing.expect(image_seen);
+    const context = try selection.Context.fromFrame(lease.value);
+    // The image advances the cursor; the canonical hyperlink is on the next rendered row.
+    var link_point: ?instance.Terminal.TextPoint = null;
+    for (initial.rows, 0..) |row, row_index| for (row.cells, 0..) |cell, column| {
+        if (cell.link_id != 0 and cell.x != 0) {
+            link_point = .{ .row = try context.row(@intCast(row_index)), .col = @intCast(column) };
+            break;
+        }
+    };
+    const point = link_point orelse return error.MissingHyperlink;
+    const uri = try owner.copyHyperlink(allocator, context, point);
+    defer allocator.free(uri);
+    try std.testing.expectEqualStrings("https://example.invalid/captain", uri);
+    // A held frame plus repeated idle credits must not generate status wakeups.
+    // This catches optional-error equality lowering that falsely reports change.
+    try std.Io.sleep(io, .fromMilliseconds(10), .awake);
+    var idle_event: c.SDL_Event = undefined;
+    while (c.SDL_PollEvent(&idle_event)) {}
+    owner.requestFrame();
+    for (0..16) |_| {
+        try std.testing.expect((try owner.replaceFrame(null, &.{}, null)) == null);
+        try std.Io.sleep(io, .fromMilliseconds(2), .awake);
+    }
+    while (c.SDL_PollEvent(&idle_event))
+        try std.testing.expect(idle_event.type != owner.state().event_type);
+    try owner.submit(.{ .find = try find.Request.query(11, "wide") });
+    var attempt: u16 = 0;
+    while (attempt < 5000 and owner.snapshot().search.phase == .idle) : (attempt += 1) try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    attempt = 0;
+    while (attempt < 5000 and owner.snapshot().search.phase == .scanning) : (attempt += 1) try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    try std.testing.expectEqual(find.Phase.complete, owner.snapshot().search.phase);
+    try std.testing.expectEqual(@as(u16, 1), owner.snapshot().search.count);
+    const selected = try owner.copySelection(allocator, 128);
+    defer allocator.free(selected);
+    try std.testing.expectEqualStrings("wide", selected);
+    owner.setVisible(false);
+    const supplied = try allocator.dupe(u8, "DONE\n");
+    try owner.submit(.{ .input = .{ .bytes = supplied } });
+    @memset(supplied, '?');
+    allocator.free(supplied);
+    try waitTitle(owner, "DONE");
+    var attention = owner.takeAttention();
+    var attention_wait: u16 = 0;
+    while (!attention and attention_wait < 5000) : (attention_wait += 1) {
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+        attention = owner.takeAttention();
+    }
+    try std.testing.expect(attention);
+    try std.testing.expectEqual(find.Phase.stale, owner.snapshot().search.phase);
+    try std.testing.expectEqual(revision, lease.value.terminal_revision);
+    try std.testing.expectEqualDeep(command, lease.value.commands[0]);
+    try std.testing.expectEqualSlices(u8, pixels, lease.value.pixels);
+    try owner.submit(.take_size_control);
+    try owner.submit(.{ .resize = .{ .rows = 6, .columns = 30 } });
+    attempt = 0;
+    while (attempt < 5000) : (attempt += 1) {
+        var changed = try client.rich.requestRaw(&connection, allocator, 0, 0);
+        defer changed.deinit();
+        if (changed.begin.rows == 6 and changed.begin.columns == 30) {
+            try std.testing.expect(changed.begin.leader_present);
+            break;
+        }
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempt < 5000);
+    // A competing client takes authority; ordinary resize must not steal it back.
+    try client.actions.resize(&connection, 7, 31);
+    try owner.submit(.{ .resize = .{ .rows = 8, .columns = 32 } });
+    attempt = 0;
+    while (owner.snapshot().geometry_failure == null and attempt < 5000) : (attempt += 1)
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    try std.testing.expectEqual(error.NotGeometryLeader, owner.snapshot().geometry_failure.?);
+    try std.testing.expect(owner.snapshot().failure == null);
+    var authority = try client.rich.requestRaw(&connection, allocator, 0, 0);
+    defer authority.deinit();
+    try std.testing.expectEqual(@as(u16, 7), authority.begin.rows);
+    try std.testing.expectEqual(@as(u16, 31), authority.begin.columns);
+    // A completed rejection leaves the control stream usable.
+    try owner.submit(.take_size_control);
+    try owner.submit(.{ .resize = .{ .rows = 6, .columns = 30 } });
+    attempt = 0;
+    while (attempt < 5000) : (attempt += 1) {
+        var recovered = try client.rich.requestRaw(&connection, allocator, 0, 0);
+        defer recovered.deinit();
+        if (recovered.begin.rows == 6 and recovered.begin.columns == 30) break;
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempt < 5000);
+    lease.abandon();
+    lease_live = false;
+    const before = std.Io.Clock.awake.now(io);
+    owner.destroy();
+    owner_live = false;
+    const elapsed = before.untilNow(io, .awake).toNanoseconds();
+    try std.testing.expect(elapsed < std.time.ns_per_s);
+    var retained = try client.rich.requestRaw(&connection, allocator, 0, 0);
+    defer retained.deinit();
+    try std.testing.expect(!retained.begin.stream_closed and !retained.begin.child_exited);
+    try std.testing.expectEqualStrings("DONE", retained.properties.title.?);
+    try std.testing.expect(!host.failed.load(.acquire));
+}
+
+const StalledAttachment = struct {
+    listener: posix.fd_t,
+    port: u16,
+    control_complete: bool,
+    thread: ?std.Thread = null,
+    stopped: std.atomic.Value(bool) = .init(false),
+    connected: std.atomic.Value(u8) = .init(0),
+    failed: std.atomic.Value(bool) = .init(false),
+    fn create(gpa: std.mem.Allocator, control_complete: bool) !*StalledAttachment {
+        const self = try gpa.create(StalledAttachment);
+        errdefer gpa.destroy(self);
+        const fd = c.socket(c.AF_INET, c.SOCK_STREAM | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
+        if (fd < 0) return error.TestSocketFailed;
+        errdefer closeWake(fd);
+        var address = std.mem.zeroes(c.sockaddr_in);
+        address.sin_family = c.AF_INET;
+        address.sin_addr.s_addr = std.mem.nativeToBig(u32, 0x7f000001);
+        // zig-audit: acknowledge ptr_cast
+        // reason: The isolated fixture binds one complete IPv4 address with its exact native extent.
+        if (c.bind(fd, @ptrCast(&address), @sizeOf(c.sockaddr_in)) != 0 or c.listen(fd, 2) != 0) return error.TestSocketFailed;
+        var size: c.socklen_t = @sizeOf(c.sockaddr_in);
+        // zig-audit: acknowledge ptr_cast
+        // reason: getsockname receives the exact isolated fixture's complete IPv4 address buffer and checked capacity.
+        if (c.getsockname(fd, @ptrCast(&address), &size) != 0 or size != @sizeOf(c.sockaddr_in)) return error.TestSocketFailed;
+        self.* = .{ .listener = fd, .port = std.mem.bigToNative(u16, address.sin_port), .control_complete = control_complete };
+        self.thread = try std.Thread.spawn(.{}, pump, .{self});
+        return self;
+    }
+    fn pump(self: *StalledAttachment) void {
+        var peers: [2]?posix.fd_t = @splat(null);
+        defer for (peers) |fd| if (fd) |value| closeWake(value);
+        var count: u8 = 0;
+        while (!self.stopped.load(.acquire)) {
+            if (count < (if (self.control_complete) @as(u8, 2) else 1)) {
+                const raw = posix.system.accept4(self.listener, null, null, c.SOCK_NONBLOCK | c.SOCK_CLOEXEC);
+                switch (posix.errno(raw)) {
+                    .SUCCESS => {
+                        const fd: posix.fd_t = @intCast(raw);
+                        peers[count] = fd;
+                        var packet: [client.protocol.header_bytes + client.protocol.payload_bytes.welcome]u8 = undefined;
+                        client.protocol.encodeHeader(packet[0..client.protocol.header_bytes], .{ .kind = .welcome, .payload_len = client.protocol.payload_bytes.welcome }) catch {
+                            self.failed.store(true, .release);
+                            return;
+                        };
+                        client.protocol.encodeWelcome(packet[client.protocol.header_bytes..], .{ .client_id = count + 1 });
+                        const bytes = if (count == 0 and self.control_complete) packet.len else 5;
+                        // A partial fixed welcome is enough to park setup; this peer never replies again.
+                        if (c.send(fd, &packet, bytes, c.MSG_NOSIGNAL) != bytes) {
+                            self.failed.store(true, .release);
+                            return;
+                        }
+                        count += 1;
+                        self.connected.store(count, .release);
+                    },
+                    .INTR => continue,
+                    .AGAIN => {},
+                    else => {
+                        self.failed.store(true, .release);
+                        return;
+                    },
+                }
+            }
+            std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake) catch {
+                self.failed.store(true, .release);
+                return;
+            };
+        }
+    }
+    fn destroy(self: *StalledAttachment, gpa: std.mem.Allocator) void {
+        self.stopped.store(true, .release);
+        if (self.thread) |thread| thread.join();
+        closeWake(self.listener);
+        gpa.destroy(self);
+    }
+};
+test "pane destruction interrupts partial control and observer welcome without waiting for setup timeout" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    for ([_]bool{ false, true }) |control_complete| {
+        const peer = try StalledAttachment.create(gpa, control_complete);
+        defer peer.destroy(gpa);
+        const endpoint = try std.fmt.allocPrint(gpa, "tcp://127.0.0.1:{d}", .{peer.port});
+        defer gpa.free(endpoint);
+        const owner = try Terminal.attach(gpa, io, .{ .direct = endpoint }, testPresentation(), c.SDL_RegisterEvents(1), false);
+        var live = true;
+        defer if (live) owner.destroy();
+        const expected: u8 = if (control_complete) 2 else 1;
+        var i: u16 = 0;
+        while (peer.connected.load(.acquire) != expected and i < 5000) : (i += 1) {
+            if (peer.failed.load(.acquire)) return error.TestPeerFailed;
+            try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+        }
+        try std.testing.expect(i < 5000);
+        const before = std.Io.Clock.awake.now(io);
+        owner.destroy();
+        live = false;
+        try std.testing.expect(before.untilNow(io, .awake).toNanoseconds() < std.time.ns_per_s);
+        try std.testing.expect(!peer.failed.load(.acquire));
+    }
 }
