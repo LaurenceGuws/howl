@@ -38,27 +38,47 @@ pub fn namedKey(
     action: protocol.InputKeyAction,
     modifiers: u8,
 ) Error!void {
-    return keyInput(connection, .{ .kind = .named, .key_value = @backingInt(key), .action = action, .modifiers = modifiers });
-}
-
-/// Sends one Unicode physical-key transition with exact modifier bits.
-pub fn unicodeKey(connection: *client.Connection, scalar: u32, action: protocol.InputKeyAction, modifiers: u8) Error!void {
-    return keyInput(connection, .{ .kind = .unicode, .key_value = scalar, .action = action, .modifiers = modifiers });
-}
-
-/// Sends one complete bounded typed physical-key event, including alternate identities and text.
-pub fn keyInput(connection: *client.Connection, value: protocol.KeyInput) Error!void {
-    var payload: [
-        1 + protocol.typed_input.key_header_bytes +
-            protocol.typed_input.maximum_legacy_key_bytes + protocol.typed_input.maximum_key_text_bytes
-    ]u8 = undefined;
-    const body = protocol.encodeKeyInput(payload[1..], value) catch |failure| switch (failure) {
+    var body_storage: [protocol.typed_input.key_header_bytes]u8 = undefined;
+    const body = protocol.encodeKeyInput(&body_storage, .{
+        .kind = .named,
+        .key_value = @backingInt(key),
+        .action = action,
+        .modifiers = modifiers,
+    }) catch |failure| switch (failure) {
         // zig-audit: acknowledge unreachable
-        // reason: The scratch includes the fixed header and both independently bounded text maxima; validated input always fits.
+        // reason: body_storage is exactly protocol.typed_input.key_header_bytes, the encoder's required fixed size.
         error.OutputTooSmall => unreachable,
         else => |err| return err,
     };
+    var payload: [1 + protocol.typed_input.key_header_bytes]u8 = undefined;
     payload[0] = @backingInt(protocol.InputKind.key);
+    @memcpy(payload[1 .. 1 + body.len], body);
+    try connection.send(.input, payload[0 .. 1 + body.len]);
+    try expectOk(connection, .input);
+}
+
+/// Sends one Unicode physical-key transition with exact modifier bits.
+pub fn unicodeKey(
+    connection: *client.Connection,
+    scalar: u32,
+    action: protocol.InputKeyAction,
+    modifiers: u8,
+) Error!void {
+    var body_storage: [protocol.typed_input.key_header_bytes]u8 = undefined;
+    const body = protocol.encodeKeyInput(&body_storage, .{
+        .kind = .unicode,
+        .key_value = scalar,
+        .action = action,
+        .modifiers = modifiers,
+    }) catch |failure| switch (failure) {
+        // zig-audit: acknowledge unreachable
+        // reason: body_storage is exactly protocol.typed_input.key_header_bytes, the encoder's required fixed size.
+        error.OutputTooSmall => unreachable,
+        else => |err| return err,
+    };
+    var payload: [1 + protocol.typed_input.key_header_bytes]u8 = undefined;
+    payload[0] = @backingInt(protocol.InputKind.key);
+    @memcpy(payload[1 .. 1 + body.len], body);
     try connection.send(.input, payload[0 .. 1 + body.len]);
     try expectOk(connection, .input);
 }
@@ -95,16 +115,11 @@ pub fn resizeGeometry(connection: *client.Connection, geometry: protocol.Resize)
     if (geometry.rows == 0 or geometry.columns == 0 or
         (geometry.cell_pixel_width == 0) != (geometry.cell_pixel_height == 0))
         return error.InvalidResize;
-    try acquireGeometry(connection);
-    try resizeGeometryOwned(connection, geometry);
-}
-
-/// Explicitly takes geometry authority without changing the canonical grid.
-pub fn acquireGeometry(connection: *client.Connection) Error!void {
     var leader_payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
     protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.client_id });
     try connection.send(.assign_leader, &leader_payload);
     try expectOk(connection, .assign_leader);
+    try resizeGeometryOwned(connection, geometry);
 }
 
 /// Resizes only while this exact connection already owns geometry authority.
@@ -167,64 +182,4 @@ test "resize distinguishes authority loss from rejection and malformed acknowled
     try std.testing.expectError(error.ServerRejected, checkResult(.resize, .{ .request_kind = .resize, .code = .rejected }));
     try std.testing.expectError(error.UnexpectedFrame, checkResult(.resize, .{ .request_kind = .input, .code = .not_leader }));
     try std.testing.expectError(error.ServerRejected, checkResult(.input, .{ .request_kind = .input, .code = .not_leader }));
-}
-
-fn testTransfer(fd: std.posix.fd_t, output: ?[]u8, input: ?[]const u8) !void {
-    var offset: usize = 0;
-    const len = if (output) |value| value.len else input.?.len;
-    while (offset < len) {
-        const result = if (output) |value| std.posix.system.read(fd, value[offset..].ptr, len - offset) else std.posix.system.write(fd, input.?[offset..].ptr, len - offset);
-        switch (std.posix.errno(result)) {
-            .SUCCESS => {
-                if (result == 0 or result > len - offset) return error.TestTransferFailed;
-                offset += result;
-            },
-            .INTR => continue,
-            else => return error.TestTransferFailed,
-        }
-    }
-}
-fn testClose(fd: std.posix.fd_t) void {
-    const result = std.posix.system.close(fd);
-    std.debug.assert(std.posix.errno(result) == .SUCCESS or std.posix.errno(result) == .INTR);
-}
-test "complete typed physical key preserves alternate identities and maximum text without borrowing caller storage" {
-    var pair: [2]std.posix.fd_t = undefined;
-    if (std.posix.errno(std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair)) != .SUCCESS) return error.TestSocketFailed;
-    defer testClose(pair[1]);
-    const transport = @import("client_transport");
-    var diagnostic: client.ConnectDiagnostic = .{};
-    var connection = client.Connection{ .allocator = std.testing.allocator, .stream = try transport.Stream.adopt(pair[0], &diagnostic, null), .client_id = 9 };
-    defer connection.deinit();
-    try connection.stream.finishHandshake(&diagnostic);
-    var ack_header: [protocol.header_bytes]u8 = undefined;
-    var ack: [protocol.payload_bytes.result]u8 = undefined;
-    try protocol.encodeHeader(&ack_header, .{ .kind = .result, .payload_len = ack.len });
-    protocol.encodeResult(&ack, .{ .request_kind = .input, .code = .ok });
-    try testTransfer(pair[1], null, &ack_header);
-    try testTransfer(pair[1], null, &ack);
-    var legacy: [protocol.typed_input.maximum_legacy_key_bytes]u8 = @splat('L');
-    var text: [protocol.typed_input.maximum_key_text_bytes]u8 = @splat('T');
-    try keyInput(&connection, .{ .kind = .unicode, .key_value = 'a', .action = .repeat, .modifiers = 0xff, .shifted = 0x754c, .alternate = 0x3bb, .legacy_text = &legacy, .text = &text });
-    @memset(&legacy, '?');
-    @memset(&text, '?');
-    var header_bytes: [protocol.header_bytes]u8 = undefined;
-    try testTransfer(pair[1], &header_bytes, null);
-    const header = try protocol.decodeHeader(&header_bytes);
-    try std.testing.expectEqual(protocol.Kind.input, header.kind);
-    var body: [1 + protocol.typed_input.key_header_bytes + protocol.typed_input.maximum_legacy_key_bytes + protocol.typed_input.maximum_key_text_bytes]u8 = undefined;
-    try std.testing.expectEqual(body.len, header.payload_len);
-    try testTransfer(pair[1], &body, null);
-    try std.testing.expectEqual(@backingInt(protocol.InputKind.key), body[0]);
-    const decoded = try protocol.decodeKeyInput(body[1..]);
-    try std.testing.expectEqual(@as(u32, 'a'), decoded.key_value);
-    try std.testing.expectEqual(protocol.InputKeyAction.repeat, decoded.action);
-    try std.testing.expectEqual(@as(u8, 0xff), decoded.modifiers);
-    try std.testing.expectEqual(@as(?u32, 0x754c), decoded.shifted);
-    try std.testing.expectEqual(@as(?u32, 0x3bb), decoded.alternate);
-    for (decoded.legacy_text) |byte| try std.testing.expectEqual(@as(u8, 'L'), byte);
-    for (decoded.text) |byte| try std.testing.expectEqual(@as(u8, 'T'), byte);
-    try std.testing.expectError(error.InvalidPayload, keyInput(&connection, .{ .kind = .unicode, .key_value = 0xd800, .action = .press }));
-    var fds = [_]std.posix.pollfd{.{ .fd = pair[1], .events = std.posix.POLL.IN, .revents = 0 }};
-    try std.testing.expectEqual(@as(usize, 0), try std.posix.poll(&fds, 0));
 }

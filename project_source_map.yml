@@ -34,7 +34,7 @@ experimental:
   client-transport: >-
     protocol-neutral native Unix/numeric-IPv4 TCP ordered-stream module shared by
     the Instance client and Server control client. Owns cancellation, descriptor
-    lifetime, bounded connect/explicit-operation deadlines and transport diagnostics only; no protocol,
+    lifetime, bounded connect deadlines and transport diagnostics only; no protocol,
     Instance/Session/Server, discovery, authentication or route-selection policy.
     Its package check includes its complete ruleset-3 zig-audit source gate
   server-service: >-
@@ -179,7 +179,7 @@ experimental:
     the same transaction. Worker-owned stable selection, word/visual-row expansion,
     edge scrolling and bounded FIFO Copy preserve canonical Unicode; copied paint
     travels with its matching immutable lease. Eviction/reflow/bank failures stay
-    explicit. Pane-local literal Find scans bounded worker-owned canonical or copied observation rows,
+    explicit. Pane-local literal Find scans bounded worker-owned canonical rows,
     reports stale/capped/error cuts, and navigates through the same stable range
     and seek path. A frame-derived scrollbar captures bounded original-pane seek
     gestures without reflow. Retained desktop consequences receive deterministic FIFO
@@ -187,16 +187,5 @@ experimental:
     Canonical OSC 8 Ctrl-click uses bounded owned URI copying and HTTP(S) policy;
     bounded file/text SDL drops reuse semantic paste with modal isolation.
     SDL Wayland text-drop line splitting retains the existing platform behavior.
-    Direct profiles attach only their exact HWLS endpoint; transient --server startup
-    attaches exact nonzero Server/Session/Instance identities before same-stream HWLS
-    handoff. Independent cancelable control and long-poll observation connections
-    keep semantic input separate from presentation. The transported owner retains
-    bounded owned cuts and exact image generations; SDL receives only copied facts
-    and immutable source-neutral Render leases. Producer write/lifetime authority
-    is a distinct opaque capability unavailable through consumer exchanges or leases.
-    Attachment never claims geometry; Take Instance size control explicitly acquires
-    it, and later resize never steals it back. One desktop consequence owner per exact
-    target transfers on pane retirement. Closing an attached pane leaves the remote
-    Instance alive; stale identities fail exactly without fallback. External native IME
-    qualification remains before daily supersession. Its package check includes
+    Explicit attachments remain to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

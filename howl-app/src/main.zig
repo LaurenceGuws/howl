@@ -3,7 +3,6 @@ const c = @import("desktop");
 const instance = @import("howl_instance");
 const font_owner = @import("fonts.zig");
 const terminal = @import("terminal.zig");
-const attachment = @import("attached.zig");
 const canvas = @import("canvas.zig");
 const layout = @import("layout.zig");
 const keybindings = @import("keybindings.zig");
@@ -25,23 +24,19 @@ const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn"
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
 
 const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set ||
-    @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.attach)).@"fn".return_type.?).error_union.error_set;
-const ServerIdentity = struct { server_id: u64, session_id: u64, instance_id: u64 };
+    error{AttachmentNotImplemented};
 const Pane = struct {
     owner: ?*terminal.Terminal = null,
     recipe: config.Recipe,
-    server: ?ServerIdentity = null,
     creation_failure: ?CreationError = null,
     canvas: canvas.Canvas,
     rows: u16 = 0,
     columns: u16 = 0,
     size_control: bool = true,
-    desktop_owner: bool = false,
     font_size: u16 = 15,
     font_overridden: bool = false,
     selection_serial: u64 = 0,
     selection_failure_reported: u64 = 0,
-    geometry_failure_reported: u64 = 0,
     selection_hit: ?SelectionHit = null,
     finder: ?FindEditor = null,
     cell_size: ?instance.render.terminal.Size = null,
@@ -61,7 +56,6 @@ const Pane = struct {
 };
 const Tab = struct {
     recipe: config.Recipe,
-    server: ?ServerIdentity = null,
     tree: layout.Tree = layout.Tree.init(),
     panes: [layout.pane_limit]?*Pane = @splat(null),
 };
@@ -158,19 +152,11 @@ const App = struct {
     fn startup(self: *const App) !config.Profile {
         return self.configuration.profile(try self.configuration.defaultProfile());
     }
-    fn launch(self: *App, recipe: config.Profile, font_size: u16, server: ?ServerIdentity) CreationError!*terminal.Terminal {
-        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
-        if (std.ascii.eqlIgnoreCase(recipe.mode, "attach")) {
-            const target: attachment.Target = if (server) |identity| .{ .server = .{
-                .endpoint = recipe.endpoint,
-                .server_id = identity.server_id,
-                .session_id = identity.session_id,
-                .instance_id = identity.instance_id,
-            } } else .{ .direct = recipe.endpoint };
-            return terminal.Terminal.attach(allocator, self.init.io, target, self.fonts.config(pixels), self.wake_event, false);
-        }
+    fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
+        if (std.ascii.eqlIgnoreCase(recipe.mode, "attach")) return error.AttachmentNotImplemented;
         const inherited = if (recipe.environment.len != 0) try profileEnvironment(allocator, self.init.environ_map, recipe.environment) else self.init.minimal.environ;
         defer if (recipe.environment.len != 0) inherited.block.deinit(allocator);
+        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
         return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
@@ -179,17 +165,15 @@ const App = struct {
             .columns = 80,
         }, self.fonts.config(pixels), self.wake_event, false);
     }
-    fn createPane(self: *App, supplied: config.Profile, font_size: ?u16, server: ?ServerIdentity) !*Pane {
+    fn createPane(self: *App, supplied: config.Profile, font_size: ?u16) !*Pane {
         const result = try allocator.create(Pane);
         errdefer allocator.destroy(result);
         result.* = .{
             .recipe = try config.Recipe.copy(allocator, supplied),
-            .server = server,
-            .size_control = !std.ascii.eqlIgnoreCase(supplied.mode, "attach"),
             .canvas = canvas.Canvas.init(allocator),
             .font_size = font_size orelse self.profileFont(supplied),
         };
-        result.owner = self.launch(result.recipe.value, result.font_size, server) catch |failure| blk: {
+        result.owner = self.launch(result.recipe.value, result.font_size) catch |failure| blk: {
             result.creation_failure = failure;
             break :blk null;
         };
@@ -235,32 +219,11 @@ const App = struct {
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
     }
     fn syncVisible(self: *App) void {
-        self.reconcileDesktop();
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const t = maybe.?;
             for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p|
                 if (p.owner) |owner| owner.setVisible(index == self.active and (!t.tree.zoomed or slot == t.tree.active));
         }
-    }
-    fn reconcileDesktop(self: *App) void {
-        for (self.tabs[0..self.tab_count]) |tab_value| for (tab_value.?.panes) |candidate| {
-            const pane_value = candidate orelse continue;
-            const owner = pane_value.owner orelse continue;
-            if (pane_value.desktop_owner or owner.snapshot().failure != null or
-                !std.ascii.eqlIgnoreCase(pane_value.recipe.value.mode, "attach")) continue;
-            var claimed = false;
-            for (self.tabs[0..self.tab_count]) |other_tab| for (other_tab.?.panes) |other| if (other) |value| {
-                if (!value.desktop_owner or value.owner == null or value.owner.?.snapshot().failure != null) continue;
-                if (sameAttachment(pane_value.recipe.value, pane_value.server, value.recipe.value, value.server)) claimed = true;
-            };
-            if (!claimed) {
-                owner.submit(.desktop) catch |failure| {
-                    self.report(failure);
-                    continue;
-                };
-                pane_value.desktop_owner = true;
-            }
-        };
     }
     fn selectTab(self: *App, index: u8) !void {
         if (index >= self.tab_count or index == self.active) return;
@@ -269,13 +232,13 @@ const App = struct {
         self.syncVisible();
         try self.gainKeyboard();
     }
-    fn createTab(self: *App, supplied: config.Profile, font_size: ?u16, server: ?ServerIdentity) !void {
+    fn createTab(self: *App, supplied: config.Profile, font_size: ?u16) !void {
         if (self.tab_count == tab_limit) return error.TabLimit;
         const value = try allocator.create(Tab);
         errdefer allocator.destroy(value);
-        value.* = .{ .recipe = try config.Recipe.copy(allocator, supplied), .server = server };
+        value.* = .{ .recipe = try config.Recipe.copy(allocator, supplied) };
         errdefer value.recipe.deinit();
-        value.panes[0] = try self.createPane(value.recipe.value, font_size, server);
+        value.panes[0] = try self.createPane(value.recipe.value, font_size);
         errdefer self.destroyPane(value.panes[0].?);
         try self.loseKeyboard();
         self.tabs[self.tab_count] = value;
@@ -303,7 +266,7 @@ const App = struct {
     fn split(self: *App, axis: layout.Axis) !void {
         var candidate = self.tab().tree;
         const slot = try candidate.split(axis);
-        const value = try self.createPane(try self.startup(), null, null);
+        const value = try self.createPane(try self.startup(), null);
         errdefer self.destroyPane(value);
         try self.loseKeyboard();
         self.tab().panes[slot] = value;
@@ -359,7 +322,7 @@ const App = struct {
             try previous.submit(.retry_render);
             return;
         }
-        const next = try self.createPane(if (previous.server != null) previous.recipe.value else try savedRecipe(self.configuration, previous.recipe.value), previous.font_size, previous.server);
+        const next = try self.createPane(try savedRecipe(self.configuration, previous.recipe.value), previous.font_size);
         next.font_overridden = previous.font_overridden;
         errdefer self.destroyPane(next);
         try self.loseKeyboard();
@@ -382,9 +345,9 @@ const App = struct {
         }
         switch (target) {
             .action => |action| switch (action) {
-                .new_tab => try self.createTab(try self.startup(), null, null),
-                .open_local => try self.createTab(try self.configuration.profile(1), null, null),
-                .duplicate_tab => try self.createTab(if (self.tab().server != null) self.tab().recipe.value else try savedRecipe(self.configuration, self.tab().recipe.value), null, self.tab().server),
+                .new_tab => try self.createTab(try self.startup(), null),
+                .open_local => try self.createTab(try self.configuration.profile(1), null),
+                .duplicate_tab => try self.createTab(try savedRecipe(self.configuration, self.tab().recipe.value), null),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
                 .split_horizontal => try self.split(.vertical),
@@ -403,17 +366,12 @@ const App = struct {
                     self.fullscreen = !self.fullscreen;
                 },
                 .recover_instance => try self.recover(),
-                .take_size_control => {
-                    try self.pane().submit(.take_size_control);
-                    self.pane().size_control = true;
-                    self.pane().rows = 0;
-                    self.pane().columns = 0;
-                },
+                .take_size_control => self.pane().size_control = true,
                 .stop_resizing => self.pane().size_control = false,
                 .open_command_palette => try self.openPalette(false),
                 .open_profile_menu => try self.openPalette(true),
                 .open_settings => try self.toggleSettings(),
-                .attach_home => try self.createTab(try self.configuration.profile(0), null, null),
+                .attach_home => try self.createTab(try self.configuration.profile(0), null),
             },
             .select_tab => |index| try self.selectTab(index),
             .paste_clipboard => {
@@ -895,7 +853,7 @@ const App = struct {
         if (!self.palette.?.profile) return self.dispatch(keybindings.definitions[index].target);
         const recipe = try self.configuration.profile(@intCast(index));
         // Keep the overlay and original input owner intact if construction cannot commit.
-        try self.createTab(recipe, null, null);
+        try self.createTab(recipe, null);
         self.palette = null;
         try self.gainKeyboard();
     }
@@ -1154,7 +1112,7 @@ const App = struct {
                     try self.closeTab();
                 } else self.drag = .tab;
             } else if (x < 8 + width * @as(f32, @floatFromInt(self.tab_count)) + 32) {
-                try self.createTab(try self.startup(), null, null);
+                try self.createTab(try self.startup(), null);
             } else try self.openPalette(false);
             return;
         }
@@ -1619,7 +1577,6 @@ const App = struct {
         try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, .{ .r = 130, .g = 170, .b = 255, .a = 255 });
     }
     fn draw(self: *App) !void {
-        self.reconcileDesktop();
         try self.desktopAttention();
         var width: c_int = 0;
         var height: c_int = 0;
@@ -1662,11 +1619,6 @@ const App = struct {
             if (self.selecting) |dragging| if (dragging.pane == p and dragging.edge != 0)
                 try self.selectPoint(p, dragging.x, dragging.y, .extend, true);
             const status = p.snapshot();
-            if (status.geometry_failure) |failure| if (status.geometry_failure_serial != p.geometry_failure_reported) {
-                p.geometry_failure_reported = status.geometry_failure_serial;
-                p.size_control = false;
-                self.report(failure);
-            };
             if (active and status.selection_serial == p.selection_serial and status.selection_failure != null and p.selection_failure_reported != status.selection_serial) {
                 p.selection_failure_reported = status.selection_serial;
                 self.report(status.selection_failure.?);
@@ -1677,10 +1629,6 @@ const App = struct {
                 const cell = p.cell_size orelse frame.cell_size;
                 const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(cell.height))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_rows))));
                 const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(cell.width))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_columns))));
-                if (!p.size_control) {
-                    p.rows = frame.surface.height / frame.cell_size.height;
-                    p.columns = frame.surface.width / frame.cell_size.width;
-                }
                 if (p.size_control and status.failure == null and !status.closed and (rows != p.rows or columns != p.columns)) {
                     try p.submit(.{ .resize = .{ .rows = rows, .columns = columns } });
                     p.rows = rows;
@@ -1729,18 +1677,11 @@ const App = struct {
 /// Owns SDL/application lifetime and graphical leases; terminal workers retain canonical authority.
 pub fn main(init: std.process.Init) !void {
     const args = init.minimal.args.vector;
-    const startup = try parseStartup(args[1..]);
-    switch (startup) {
-        .version => {
-            std.debug.print("Howl {s} (Zig SDL app)\n", .{version});
-            return;
-        },
-        .help => {
-            std.debug.print("Usage: howl-app [--help | --version] | --server ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n", .{});
-            return;
-        },
-        .run, .server => {},
+    if (args.len == 2 and std.mem.eql(u8, std.mem.span(args[1]), "--version")) {
+        std.debug.print("Howl {s} (Zig SDL app)\n", .{version});
+        return;
     }
+    if (args.len != 1) return error.InvalidArguments;
     if (!c.SDL_SetAppMetadata("Howl", version, "io.github.laurenceguws.howl") or !c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
     defer c.SDL_Quit();
     if (!c.TTF_Init()) return error.TTF;
@@ -1777,11 +1718,7 @@ pub fn main(init: std.process.Init) !void {
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
     };
     defer app.deinit();
-    switch (startup) {
-        .server => |target| try app.createTab(.{ .id = "server-occurrence", .name = "Server Instance", .mode = "attach", .endpoint = target.endpoint }, null, .{ .server_id = target.server_id, .session_id = target.session_id, .instance_id = target.instance_id }),
-        .run => try app.createTab(try app.startup(), null, null),
-        .help, .version => return,
-    }
+    try app.createTab(try app.startup(), null);
     while (app.running) {
         try app.draw();
         app.selectionTick() catch |failure| app.report(failure);
@@ -1794,31 +1731,6 @@ pub fn main(init: std.process.Init) !void {
             if (!app.running or !c.SDL_PollEvent(&event)) break;
         }
     }
-}
-fn sameAttachment(a: config.Profile, a_server: ?ServerIdentity, b: config.Profile, b_server: ?ServerIdentity) bool {
-    return std.ascii.eqlIgnoreCase(a.mode, "attach") and std.ascii.eqlIgnoreCase(b.mode, "attach") and
-        std.mem.eql(u8, a.endpoint, b.endpoint) and std.meta.eql(a_server, b_server);
-}
-const Startup = union(enum) { run, help, version, server: @import("server_client").Target };
-fn parseStartup(args: []const [*:0]const u8) error{InvalidArguments}!Startup {
-    if (args.len == 0) return .run;
-    if (args.len == 1) {
-        const value = std.mem.span(args[0]);
-        if (std.mem.eql(u8, value, "--version")) return .version;
-        if (std.mem.eql(u8, value, "--help") or std.mem.eql(u8, value, "-h")) return .help;
-    }
-    if (args.len != 5 or !std.mem.eql(u8, std.mem.span(args[0]), "--server")) return error.InvalidArguments;
-    var ids: [3]u64 = undefined;
-    for (args[2..], 0..) |value, i| {
-        const bytes = std.mem.span(value);
-        if (bytes.len == 0 or bytes.len > 20) return error.InvalidArguments;
-        for (bytes) |byte| if (byte < '0' or byte > '9') return error.InvalidArguments;
-        ids[i] = std.fmt.parseInt(u64, bytes, 10) catch return error.InvalidArguments;
-        if (ids[i] == 0) return error.InvalidArguments;
-    }
-    const target: @import("server_client").Target = .{ .endpoint = std.mem.span(args[1]), .server_id = ids[0], .session_id = ids[1], .instance_id = ids[2] };
-    attachment.validate(.{ .server = target }) catch return error.InvalidArguments;
-    return .{ .server = target };
 }
 const FontChange = struct {
     pane: *Pane,
@@ -2378,42 +2290,4 @@ test "Local child keeps copied profile environment after caller retirement and t
     }
     try std.testing.expect(attempts < 5000);
     try std.testing.expectEqualStrings("changed-after-launch", parent.get("HOWL_BASE").?);
-}
-
-test {
-    std.testing.refAllDecls(@import("attached.zig"));
-}
-
-test "startup preserves exact Server identity and rejects malformed routes before desktop initialization" {
-    try std.testing.expect((try parseStartup(&.{})) == .run);
-    try std.testing.expect((try parseStartup(&.{"--help"})) == .help);
-    try std.testing.expect((try parseStartup(&.{"--version"})) == .version);
-    const target = (try parseStartup(&.{ "--server", "unix:/owned/server", "91", "7", "3" })).server;
-    try std.testing.expectEqualStrings("unix:/owned/server", target.endpoint);
-    try std.testing.expectEqual(@as(u64, 91), target.server_id);
-    try std.testing.expectEqual(@as(u64, 7), target.session_id);
-    try std.testing.expectEqual(@as(u64, 3), target.instance_id);
-    for ([_][*:0]const u8{ "0", "", "-1", "+1", "18446744073709551616", "1.0", " 1" }) |bad| {
-        try std.testing.expectError(error.InvalidArguments, parseStartup(&.{ "--server", "unix:/owned/server", "91", bad, "3" }));
-    }
-    try std.testing.expectError(error.InvalidArguments, parseStartup(&.{ "--server", "https://example.invalid", "91", "7", "3" }));
-    try std.testing.expectError(error.InvalidArguments, parseStartup(&.{ "--server", "unix:/owned/server", "91", "7" }));
-}
-
-test "duplicate attachment panes share the desktop role only for the same exact occurrence" {
-    const a: config.Profile = .{ .id = "one", .name = "One", .mode = "attach", .endpoint = "unix:/owned/server" };
-    var b = a;
-    b.id = "two";
-    b.name = "Two";
-    try std.testing.expect(sameAttachment(a, null, b, null));
-    const identity: ServerIdentity = .{ .server_id = 91, .session_id = 7, .instance_id = 3 };
-    try std.testing.expect(sameAttachment(a, identity, b, identity));
-    try std.testing.expect(!sameAttachment(a, identity, b, null));
-    inline for (.{ "server_id", "session_id", "instance_id" }) |field| {
-        var other = identity;
-        @field(other, field) += 1;
-        try std.testing.expect(!sameAttachment(a, identity, b, other));
-    }
-    b.endpoint = "unix:/other/server";
-    try std.testing.expect(!sameAttachment(a, identity, b, identity));
 }

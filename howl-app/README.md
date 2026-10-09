@@ -106,24 +106,14 @@ SDL's Wayland backend splits multiline text on CR/LF before delivering these
 events, matching Odin's existing backend behavior; source separators are not
 preserved by that platform path.
 
-Direct saved profiles attach their exact HWLS endpoint. `--server ENDPOINT SERVER_ID
-SESSION_ID INSTANCE_ID` attaches an exact Server incarnation and performs HWLS
-handoff on the same stream; stale targets fail without Local fallback. Attachment
-uses independent bounded, cancelable control and observation connections, owned
-observation cuts and exact image generations. SDL consumes the same immutable
-Render lease contract; producer authority never travels with a lease. Attaching
-does not claim or change geometry. Take Instance size control is the explicit
-acquisition; later resizes cannot reclaim a lost role. Duplicate tabs retain the
-exact route, one pane owns desktop consequences per target, and closing an attached
-view leaves the remote Instance alive.
-
-This remains an experimental capability cut. Exact font paths can also be edited
-and reset in settings.
+This remains an experimental capability cut. Explicit attachments still need
+qualification. Exact
+font paths can also be edited and reset in settings.
 IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Package proofs cover worker independence/failure cleanup, immutable
+Seventy-four package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
@@ -139,9 +129,7 @@ hostile-query failure, canonical progress during active find, and fractional
 scrollbar seek bounds, exact hidden desktop replies/attention independence,
 canonical hyperlink ownership/domain refusal, HTTP policy and drop bounds,
 caller-retired bracketed paste, modal SDL drop isolation, and profile environment
-allocation cleanup/parent isolation/caller retirement, exact attachment validation,
-full typed key payloads, independent input with held frames, canonical remote
-selection/find/images, setup cancellation and sleeping idle credits. A successful
+allocation cleanup/parent isolation/caller retirement. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:

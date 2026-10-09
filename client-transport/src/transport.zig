@@ -19,7 +19,6 @@ pub const Handle = posix.fd_t;
 /// Enumerates transport construction, cancellation, I/O, and endpoint failures.
 pub const Error = error{
     ConnectionCanceled,
-    OperationRequiresInterrupt,
     InvalidEndpoint,
     SocketCreateFailed,
     SocketDuplicateFailed,
@@ -210,19 +209,6 @@ pub const Stream = struct {
         errdefer closeFd(fd);
         try setCloseOnExec(fd);
         return .{ .fd = fd };
-    }
-
-    /// Bounds one caller-owned request/response transaction on a cancellable established stream.
-    /// The owner must retire the stream after partial I/O or timeout, then end the bound.
-    pub fn beginOperation(self: *Stream, timeout_ms: u32) Error!void {
-        // Interrupt-bearing streams stay nonblocking for their entire lifetime.
-        if (self.interrupt == null) return error.OperationRequiresInterrupt;
-        self.handshake_deadline_ms = (try monotonicMilliseconds()) + timeout_ms;
-    }
-
-    /// Ends a completed request's temporary I/O deadline.
-    pub fn endOperation(self: *Stream) void {
-        self.handshake_deadline_ms = null;
     }
 
     /// Writes one complete handshake payload under the current setup deadline.
@@ -905,23 +891,4 @@ test "adoption owns socket policy and setup deadline until construction finishes
         try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.getsockopt(stream.fd, posix.SOL.SOCKET, posix.SO.NOSIGPIPE, std.mem.asBytes(&enabled).ptr, &length)));
         try std.testing.expectEqual(@as(c_int, 1), enabled);
     }
-}
-
-test "bounded established operation times out partial response and requires cancellable I/O" {
-    const pair = testSocketPair();
-    defer closeFd(pair[1]);
-    const interrupt = try Interrupt.init(std.testing.allocator);
-    defer interrupt.deinit();
-    var diagnostic: ConnectDiagnostic = .{};
-    var stream = try Stream.adopt(pair[0], &diagnostic, interrupt);
-    defer stream.deinit();
-    try stream.finishHandshake(&diagnostic);
-    try writeAll(pair[1], "partial");
-    try stream.beginOperation(20);
-    var response: [16]u8 = undefined;
-    try std.testing.expectError(error.SocketConnectTimedOut, stream.read(&response));
-    stream.endOperation();
-    try std.testing.expect(stream.handshake_deadline_ms == null);
-    var blocking = Stream{ .fd = pair[1] };
-    try std.testing.expectError(error.OperationRequiresInterrupt, blocking.beginOperation(20));
 }
