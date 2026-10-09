@@ -4,6 +4,7 @@ const instance = @import("howl_instance");
 const policy = @import("publication.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
+const desktop = @import("desktop.zig");
 const posix = std.posix;
 
 const queue_limit = 64;
@@ -32,8 +33,10 @@ pub const Select = struct {
 /// Noncanonical selection failures never stop process/VT service.
 pub const SelectionError = error{ InvalidSelection, SelectionContextChanged, SelectionEvicted };
 /// Bounded canonical extraction and FIFO admission failures.
-pub const CopyError = instance.Terminal.TextError || SelectionError || error{ NoSelection, CopyLimit, TerminalStopped, InputQueueFull };
+pub const CopyError = instance.Terminal.TextError || SelectionError || error{ NoSelection, NoHyperlink, HyperlinkLimit, CopyLimit, TerminalStopped, InputQueueFull };
+const Link = struct { context: selection.Context, point: instance.Terminal.TextPoint };
 const Copy = struct {
+    link: ?Link = null,
     allocator: std.mem.Allocator,
     max_bytes: usize,
     result: ?[]const u8 = null,
@@ -43,7 +46,7 @@ const Copy = struct {
 
 /// Exact failures produced by this terminal worker's owned operations.
 pub const Failure = instance.InputError || instance.ResizeError ||
-    instance.ServiceError || std.posix.PollError;
+    instance.ServiceError || std.posix.PollError || desktop.Error;
 
 /// Projection failure stays separate from canonical I/O and never stops PTY/VT service.
 pub const PresentationFailure = instance.PublishError || error{SDLNotification};
@@ -122,6 +125,14 @@ pub const Terminal = opaque {
     pub fn copySelection(self: *Terminal, allocator: std.mem.Allocator, max_bytes: usize) CopyError![]const u8 {
         return self.state().copySelection(allocator, max_bytes);
     }
+    /// Copies one clicked canonical OSC 8 URI through the same bounded FIFO completion.
+    pub fn copyHyperlink(self: *Terminal, allocator: std.mem.Allocator, context: selection.Context, point: instance.Terminal.TextPoint) CopyError![]const u8 {
+        return self.state().copy(allocator, desktop.uri_limit, .{ .context = context, .point = point });
+    }
+    /// Takes one coalesced copied attention fact without blocking canonical service.
+    pub fn takeAttention(self: *Terminal) bool {
+        return self.state().attention.swap(false, .acq_rel);
+    }
     /// Changes projection visibility without changing canonical service policy.
     pub fn setVisible(self: *Terminal, visible: bool) void {
         self.state().setVisible(visible);
@@ -175,6 +186,8 @@ const State = struct {
     selection_failure: ?SelectionError = null,
     paint: selection.Paint = .{},
     search: find.Find = .{},
+    attention: std.atomic.Value(bool) = .init(false),
+    consequence_worked: bool = false,
 
     fn create(
         allocator: std.mem.Allocator,
@@ -334,8 +347,11 @@ const State = struct {
     }
 
     fn copySelection(self: *State, allocator: std.mem.Allocator, max_bytes: usize) CopyError![]const u8 {
+        return self.copy(allocator, max_bytes, null);
+    }
+    fn copy(self: *State, allocator: std.mem.Allocator, max_bytes: usize, link: ?Link) CopyError![]const u8 {
         if (max_bytes == 0 or max_bytes > input_byte_limit) return error.CopyLimit;
-        var request: Copy = .{ .allocator = allocator, .max_bytes = max_bytes };
+        var request: Copy = .{ .allocator = allocator, .max_bytes = max_bytes, .link = link };
         try self.admit(.{ .copy = &request });
         self.mutex.lockUncancelable(self.io);
         while (!request.complete) self.configured.waitUncancelable(self.io, &self.mutex);
@@ -352,11 +368,36 @@ const State = struct {
         self.mutex.unlock(self.io);
     }
     fn applyCopy(self: *State, request: *Copy) void {
+        if (request.link) |link| {
+            self.completeCopy(request, self.linkText(link, request.allocator, request.max_bytes));
+            return;
+        }
         const range = self.selected orelse {
             self.completeCopy(request, self.selection_failure orelse error.NoSelection);
             return;
         };
         self.completeCopy(request, range.copy(instance.terminal(self.value), request.allocator, request.max_bytes));
+    }
+    fn resolve(self: *State, context: selection.Context, point: instance.Terminal.TextPoint) SelectionError!struct { view: instance.Terminal.SemanticView, row: u16 } {
+        const observation = instance.terminal(self.value);
+        const live = observation.semanticView(0);
+        if (live.cols != context.columns or live.is_alternate_screen != context.alternate) return error.SelectionContextChanged;
+        const first = try context.row(0);
+        const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
+        const offset = top - first;
+        if (offset < 0 or offset > live.history_count) return error.SelectionEvicted;
+        const view = observation.semanticView(@intCast(offset));
+        const row_index = @as(i64, point.row) - first;
+        if (row_index < 0 or row_index >= @min(view.rows, context.rows) or point.col >= view.cols) return error.InvalidSelection;
+        return .{ .view = view, .row = @intCast(row_index) };
+    }
+    fn linkText(self: *State, link: Link, allocator: std.mem.Allocator, max_bytes: usize) CopyError![]const u8 {
+        const resolved = try self.resolve(link.context, link.point);
+        const cell = resolved.view.cellInfoAt(resolved.row, link.point.col);
+        if (cell.attrs.link_id == 0) return error.NoHyperlink;
+        const uri = instance.terminal(self.value).hyperlinkUri(cell.attrs.link_id) orelse return error.NoHyperlink;
+        if (uri.len > max_bytes) return error.HyperlinkLimit;
+        return allocator.dupe(u8, uri);
     }
     fn applySelection(self: *State, intent: Select) SelectionError!void {
         self.selection_serial = intent.serial;
@@ -366,18 +407,11 @@ const State = struct {
             self.selected = null;
             return;
         }
-        const observation = instance.terminal(self.value);
-        const live = observation.semanticView(0);
-        const current = selection.Context.fromView(live);
-        if (current.columns != intent.context.columns or current.alternate != intent.context.alternate) return error.SelectionContextChanged;
-        const first = try intent.context.row(0);
-        const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
-        const offset = top - first;
-        if (offset < 0 or offset > live.history_count) return error.SelectionEvicted;
-        const view = observation.semanticView(@intCast(offset));
-        const row_index = @as(i64, intent.point.row) - first;
-        if (row_index < 0 or row_index >= @min(view.rows, intent.context.rows)) return error.InvalidSelection;
-        const point = try selection.point(view, @intCast(row_index), intent.point.col);
+        const resolved = try self.resolve(intent.context, intent.point);
+        const view = resolved.view;
+        const row_index = resolved.row;
+        const current = selection.Context.fromView(view);
+        const point = try selection.point(view, row_index, intent.point.col);
         switch (intent.kind) {
             .start => self.selected = try selection.start(view, @intCast(row_index), intent.point.col),
             .extend => {
@@ -518,7 +552,10 @@ const State = struct {
     }
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !instance.Service {
-        const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .headless);
+        const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .retain);
+        const host = try desktop.drain(self.value);
+        self.consequence_worked = host.worked;
+        if (host.attention and !self.attention.swap(true, .acq_rel)) self.notify();
         const observation = instance.terminal(self.value);
         const live = observation.semanticView(0);
         self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
@@ -628,7 +665,7 @@ const State = struct {
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (instance.bufferedOutputPending(self.value) or self.search.status.phase == .scanning) timeout = 0;
+            if (instance.bufferedOutputPending(self.value) or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
             var fds = [_]posix.pollfd{
                 .{
                     .fd = if (result.stream_closed and !result.write_pending) -1 else try instance.descriptor(self.value),
@@ -1234,6 +1271,8 @@ test "canonical failure cancels or rejects borrowed copy requests before caller 
     defer owner.destroy();
     try owner.submit(.{ .resize = .{ .rows = 0, .columns = 0 } });
     try std.testing.expectError(error.TerminalStopped, owner.copySelection(std.testing.allocator, 128));
+    const context: selection.Context = .{ .rows = 4, .columns = 20, .history_count = 0, .history_row_base = 0, .history_offset = 0, .alternate = false };
+    try std.testing.expectError(error.TerminalStopped, owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 0 }));
     try std.testing.expect(owner.snapshot().failure != null);
 }
 
@@ -1320,5 +1359,110 @@ test "incremental hidden find cannot fence canonical input and one MiB output be
     const status = try waitSearch(owner, 1, .stale);
     try std.testing.expect(status.failure == null);
     try std.testing.expect(status.selected == null);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+}
+
+test "retained desktop replies flush in exact FIFO while hidden and attention never paces canonical service" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033]52;c;?\\007\\033]22;?\\007\\033[?996n\\033[19t\\033[11t\\033[13t\\033[20t\\033[5t\\033]9;message\\007'; actual=$(dd bs=1 count=41 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'); if [ \"$actual\" = '1b5d35323b633b1b5c1b5d32323b64656661756c741b5c1b5b3f3939373b316e1b5b393b343b323074' ]; then printf '\\033]0;REPLIED\\007'; else printf '\\033]0;BAD_REPLY\\007'; fi; read line; printf '\\007\\007\\033]1337;RequestAttention=yes\\007\\033]1337;StealFocus\\007\\033]0;ATTENTION\\007'; read line; printf '\\033]9;ordinary message\\007\\033]52;c;SGVsbG8=\\007\\033]0;MESSAGE\\007'; read line; i=0; while [ \"$i\" -lt 200 ]; do printf '\\007\\033]1337;RequestAttention=burst\\007'; i=$((i+1)); done; dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\\000' x; printf '\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    // The child emits only the queries before blocking on all exact replies.
+    // No observer credit or later child output can flush them on our behalf.
+    try waitTitle(owner, "REPLIED");
+    try std.testing.expect(!owner.takeAttention());
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "ATTENTION");
+    try std.testing.expect(owner.takeAttention());
+    try std.testing.expect(!owner.takeAttention());
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "MESSAGE");
+    try std.testing.expect(!owner.takeAttention());
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    try std.testing.expect(owner.takeAttention());
+    try std.testing.expect(!owner.takeAttention());
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "canonical hyperlink copy owns UTF8 and resolves retained rows while refusing bank columns and eviction" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]8;id=one;https://howl.example/owned?q=1\\033\\\\界X\\033]8;;\\033\\\\\\r\\nplain\\r\\n\\033]0;READY\\007'; read line; i=0; while [ \"$i\" -lt 5 ]; do printf 'later\\r\\n'; i=$((i+1)); done; printf '\\033]0;SCROLLED\\007'; read line; printf '\\033[?1049hALT\\033]0;ALT\\007'; read line; printf '\\033[?1049l\\033]0;NORMAL\\007'; read line; i=0; while [ \"$i\" -lt 20 ]; do printf 'evicted\\r\\n'; i=$((i+1)); done; printf '\\033]0;EVICTED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const context: selection.Context = .{ .rows = 4, .columns = 20, .history_count = 0, .history_row_base = 0, .history_offset = 0, .alternate = false };
+    const uri = try owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 0 });
+    defer std.testing.allocator.free(uri);
+    try std.testing.expectEqualStrings("https://howl.example/owned?q=1", uri);
+    const continuation = try owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 1 });
+    defer std.testing.allocator.free(continuation);
+    try std.testing.expectEqualStrings(uri, continuation);
+    try std.testing.expectError(error.NoHyperlink, owner.copyHyperlink(std.testing.allocator, context, .{ .row = 1, .col = 0 }));
+    try std.testing.expectError(error.InvalidSelection, owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 20 }));
+    try std.testing.expectError(error.InvalidSelection, owner.copyHyperlink(std.testing.allocator, context, .{ .row = -1, .col = 0 }));
+    try std.testing.expectError(error.HyperlinkLimit, owner.state().copy(std.testing.allocator, 3, .{ .context = context, .point = .{ .row = 0, .col = 0 } }));
+    var changed = context;
+    changed.columns = 19;
+    try std.testing.expectError(error.SelectionContextChanged, owner.copyHyperlink(std.testing.allocator, changed, .{ .row = 0, .col = 0 }));
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "SCROLLED");
+    const retained = try owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 0 });
+    defer std.testing.allocator.free(retained);
+    try std.testing.expectEqualStrings(uri, retained);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "ALT");
+    try std.testing.expectError(error.SelectionContextChanged, owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 0 }));
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "NORMAL");
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "EVICTED");
+    try std.testing.expectError(error.SelectionEvicted, owner.copyHyperlink(std.testing.allocator, context, .{ .row = 0, .col = 0 }));
+    try std.testing.expectEqualStrings("https://howl.example/owned?q=1", uri);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "owned file and text drops preserve exact canonical bracketed paste after caller buffers retire" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033[?2004h\\033]0;READY\\007'; actual=$(dd bs=1 count=100 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'); if [ \"$actual\" = '1b5b3230307e272f6e6f7465732f4361707461696e275c272773202428746f756368206e6f7065292e74787427201b5b3230317e1b5b3230307ee7958c206c696e65206f6e650a2428746f756368206e6f7065293b206c696e652074776f1b5b3230317e' ]; then printf '\\033]0;EXACT\\007'; else printf '\\033]0;BAD_DROP\\007'; fi; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    var output: [desktop.quoted_limit]u8 = undefined;
+    const quoted = try desktop.quoteFile("/notes/Captain's $(touch nope).txt", &output);
+    try owner.submit(.{ .input = .{ .paste = quoted } });
+    @memset(&output, '?');
+    const original = try std.testing.allocator.dupe(u8, "界 line one\n$(touch nope); line two");
+    try owner.submit(.{ .input = .{ .paste = try desktop.dropText(original) } });
+    @memset(original, '?');
+    std.testing.allocator.free(original);
+    try waitTitle(owner, "EXACT");
+    try std.testing.expect(owner.snapshot().failure == null);
     try std.testing.expect(!owner.state().new_frame.load(.acquire));
 }

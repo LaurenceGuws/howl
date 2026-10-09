@@ -16,6 +16,7 @@ const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
 const scrollbar = @import("scrollbar.zig");
+const desktop = @import("desktop.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -1054,6 +1055,10 @@ const App = struct {
                     }
                 }
             },
+            c.SDL_EVENT_DROP_FILE, c.SDL_EVENT_DROP_TEXT => {
+                if (value.drop.windowID != c.SDL_GetWindowID(self.window)) return;
+                try self.drop(value.drop.data, value.type == c.SDL_EVENT_DROP_FILE);
+            },
             c.SDL_EVENT_MOUSE_WHEEL => try self.pointerWheel(value.wheel),
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => {
                 self.focused = true;
@@ -1133,6 +1138,11 @@ const App = struct {
                     return;
                 }
             }
+            if (button == .left and mods.control) {
+                self.consume_left_release = true;
+                try self.openHyperlink(p, x, y);
+                return;
+            }
             const state = p.snapshot().interaction orelse return;
             if (!mods.shift and frame.history_offset == 0 and state.mouse_tracking != .off) {
                 const point = self.pointerLocation(p, x, y, false) orelse return;
@@ -1149,6 +1159,37 @@ const App = struct {
             return;
         };
     }
+    fn openHyperlink(self: *App, p: *Pane, x: f32, y: f32) !void {
+        const frame = p.canvas.frame() orelse return;
+        const location = self.pointerLocation(p, x, y, false) orelse return;
+        const context = try selection.Context.fromFrame(frame);
+        const bytes = try (try p.requireOwner()).copyHyperlink(allocator, context, .{ .row = try context.row(@intCast(location.row)), .col = location.col });
+        defer allocator.free(bytes);
+        if (!desktop.uriAllowed(bytes)) return error.InvalidHyperlink;
+        const uri = try allocator.dupeSentinel(u8, bytes, 0);
+        defer allocator.free(uri);
+        if (!c.SDL_OpenURL(uri)) return error.SDLBrowser;
+    }
+    fn drop(self: *App, data: ?[*:0]const u8, file: bool) !void {
+        if (data == null or self.palette != null or self.settings_editor != null or self.pane().finder != null) return;
+        const p = self.pane();
+        const status = p.snapshot();
+        if (p.owner == null or status.failure != null or status.closed) return;
+        const supplied = try desktop.eventText(data.?, file);
+        var quoted: [desktop.quoted_limit]u8 = undefined;
+        const bytes = if (file) try desktop.quoteFile(supplied, &quoted) else try desktop.dropText(supplied);
+        self.cancelComposition();
+        try p.submit(.{ .input = .{ .paste = bytes } });
+    }
+    fn desktopAttention(self: *App) !void {
+        var attention = false;
+        for (self.tabs[0..self.tab_count]) |t| for (t.?.panes) |p| if (p) |value| if (value.owner) |owner| {
+            if (owner.takeAttention()) attention = true;
+        };
+        if (attention and c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_INPUT_FOCUS == 0)
+            if (!c.SDL_FlashWindow(self.window, c.SDL_FLASH_BRIEFLY)) return error.SDLAttention;
+    }
+
     fn scrollPoint(self: *App, y: f32) !void {
         const dragging = if (self.scrolling) |*value| value else return;
         const offset = dragging.bar.seek(y, dragging.grab) orelse return;
@@ -1535,6 +1576,7 @@ const App = struct {
         try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, .{ .r = 130, .g = 170, .b = 255, .a = 255 });
     }
     fn draw(self: *App) !void {
+        try self.desktopAttention();
         var width: c_int = 0;
         var height: c_int = 0;
         if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
@@ -2089,4 +2131,83 @@ test {
     // zig-audit: acknowledge discard
     // reason: Loads the independent selection module behavior proofs without a runtime operation or result.
     _ = selection;
+}
+
+test "SDL drop events keep modal input owners isolated and copy event bytes before retirement" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("drop proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, fonts.config(15), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(a, try configuration.profile(1)), .canvas = canvas.Canvas.init(a) };
+    defer p.recipe.deinit();
+    defer p.canvas.deinit();
+    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(1)) };
+    defer t.recipe.deinit();
+    t.panes[0] = &p;
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+        .tab_count = 1,
+    };
+    app.tabs[0] = &t;
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "READY")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+    event_value.drop.type = c.SDL_EVENT_DROP_TEXT;
+    event_value.drop.windowID = c.SDL_GetWindowID(window);
+    event_value.drop.data = "wrong-owner\\n";
+    app.palette = .{};
+    try app.event(event_value);
+    app.palette = null;
+    app.settings_editor = .{};
+    try app.event(event_value);
+    app.settings_editor = null;
+    p.finder = .{};
+    try app.event(event_value);
+    p.finder = null;
+    event_value.drop.windowID += 1;
+    try app.event(event_value);
+    event_value.drop.windowID = c.SDL_GetWindowID(window);
+    event_value.drop.data = null;
+    try app.event(event_value);
+    var text: [4:0]u8 = .{ 'y', 'e', 's', '\n' };
+    event_value.drop.data = &text;
+    try app.event(event_value);
+    @memset(&text, '?');
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (std.mem.eql(u8, status.title[0..status.title_len], "yes")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
 }

@@ -180,6 +180,10 @@ experimental:
     explicit. Pane-local literal Find scans bounded worker-owned canonical rows,
     reports stale/capped/error cuts, and navigates through the same stable range
     and seek path. A frame-derived scrollbar captures bounded original-pane seek
-    gestures without reflow. Desktop input/consequence policy and explicit attachments remain
-    to be carried over before daily supersession. Its package check includes
+    gestures without reflow. Retained desktop consequences receive deterministic FIFO
+    replies/consumption; copied attention briefly flashes only unfocused windows.
+    Canonical OSC 8 Ctrl-click uses bounded owned URI copying and HTTP(S) policy;
+    bounded file/text SDL drops reuse semantic paste with modal isolation.
+    SDL Wayland text-drop line splitting retains the existing platform behavior.
+    Explicit attachments remain to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

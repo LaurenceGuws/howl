@@ -87,14 +87,28 @@ Enter/Shift+Enter navigate known matches through the same range/paint/seek path.
 The scrollbar derives its thumb from the accepted immutable frame and captures
 seek gestures on their original pane without changing the canonical grid.
 
-This remains an experimental capability cut. Rich
-desktop consequences and explicit attachments still need qualification. Exact
+The sole worker drains retained desktop consequences in canonical FIFO order:
+clipboard queries receive empty replies, pointer queries default, color preference
+dark, and screen-cell queries the canonical grid. Other unsupported consequences
+are consumed. BEL and explicit attention requests coalesce into a copied fact;
+SDL briefly flashes only an unfocused window and never requests focus.
+Ctrl+left copies a canonical OSC 8 URI through the existing bounded FIFO and
+opens only valid HTTP(S); matching releases stay application-owned even when
+terminal mouse reporting is active. File drops use bounded POSIX quoting plus
+a trailing separator; each SDL text-drop event is pasted byte-for-byte through
+the same owned semantic path. Modals and unavailable panes refuse drops.
+SDL's Wayland backend splits multiline text on CR/LF before delivering these
+events, matching Odin's existing backend behavior; source separators are not
+preserved by that platform path.
+
+This remains an experimental capability cut. Explicit attachments still need
+qualification. Exact
 font paths can also be edited and reset in settings.
 IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Sixty-six package proofs cover worker independence/failure cleanup, immutable
+Seventy-two package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
@@ -107,7 +121,9 @@ fault cleanup, plus selection paint/lease coherence under transfer stalls,
 exact literal matching/Unicode/conceal bounds, incremental scan caps/staleness,
 hidden retained-history navigation and refresh, later pointer ownership,
 hostile-query failure, canonical progress during active find, and fractional
-scrollbar seek bounds. A successful
+scrollbar seek bounds, exact hidden desktop replies/attention independence,
+canonical hyperlink ownership/domain refusal, HTTP policy and drop bounds,
+caller-retired bracketed paste, and modal SDL drop isolation. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:
