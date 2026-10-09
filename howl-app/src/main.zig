@@ -4,6 +4,7 @@ const instance = @import("howl_instance");
 const font_owner = @import("fonts.zig");
 const terminal = @import("terminal.zig");
 const canvas = @import("canvas.zig");
+const chrome = @import("chrome.zig");
 const layout = @import("layout.zig");
 const keybindings = @import("keybindings.zig");
 const input = @import("input.zig");
@@ -66,9 +67,10 @@ const Palette = struct {
 
     fn indices(self: *const Palette, configuration: *const config.Config, out: *[keybindings.definitions.len]usize) error{InvalidDefaultProfile}!usize {
         var count: usize = 0;
-        const limit = if (self.profile) configuration.profileCount() else keybindings.definitions.len;
+        const limit = if (self.profile) configuration.profileCount() + 2 else keybindings.definitions.len;
         for (0..limit) |i| {
-            const label = if (self.profile) (try configuration.profile(@intCast(i))).name else keybindings.definitions[i].label;
+            if (!self.profile and keybindings.definitions[i].target != .action) continue;
+            const label = if (self.profile) (if (i < configuration.profileCount()) (try configuration.profile(@intCast(i))).name else if (i == configuration.profileCount()) "Command Palette" else "Settings") else keybindings.definitions[i].label;
             if (self.len != 0 and !containsIgnoreCase(label, self.query[0..self.len])) continue;
             out[count] = i;
             count += 1;
@@ -81,7 +83,7 @@ const FindEditor = struct {
     bytes: [find.query_limit]u8 = undefined,
     len: usize = 0,
 };
-const Drag = union(enum) { none, divider: layout.Divider, tab };
+const Drag = union(enum) { none, divider: layout.Divider, tab: chrome.Drag };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
 const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u32 = null };
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
@@ -111,10 +113,12 @@ const App = struct {
     settings_editor: ?settings.Editor = null,
     chooser: ?*font_chooser.Chooser = null,
     drag: Drag = .none,
+    chrome_pressed: chrome.Button = .none,
+    chrome_hover: chrome.Button = .none,
+    pointer_buttons: u32 = 0,
     consume_left_release: bool = false,
     focused: bool = false,
     running: bool = true,
-    fullscreen: bool = false,
     width: f32 = 1000,
     height: f32 = 650,
     notice: [256]u8 = @splat(0),
@@ -131,10 +135,7 @@ const App = struct {
         return self.tab().panes[self.tab().tree.active].?;
     }
     fn terminalBody(self: *const App) layout.Rect {
-        return .{ .x = 6, .y = 40, .width = @max(1, self.width - 12), .height = @max(1, self.height - 68) };
-    }
-    fn tabWidth(self: *const App) f32 {
-        return std.math.clamp((self.width - 100) / @as(f32, @floatFromInt(@max(1, self.tab_count))), 60, 200);
+        return .{ .x = 6, .y = chrome.height, .width = @max(1, self.width - 12), .height = @max(1, self.height - chrome.height - 28) };
     }
     fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
@@ -329,7 +330,25 @@ const App = struct {
         self.syncVisible();
         self.gainKeyboard() catch |failure| self.report(failure);
     }
+    fn actionEnabled(self: *App, action: keybindings.Action) bool {
+        var panes: usize = 0;
+        for (self.tab().panes) |p| if (p != null) {
+            panes += 1;
+        };
+        return switch (action) {
+            .new_tab, .duplicate_tab, .open_local => self.tab_count < tab_limit,
+            .split_vertical, .split_horizontal => panes < layout.pane_limit,
+            .toggle_pane_zoom => panes > 1,
+            .next_tab, .previous_tab => self.tab_count > 1,
+            .move_tab_left => self.active > 0,
+            .move_tab_right => self.active + 1 < self.tab_count,
+            .take_size_control => !self.pane().size_control,
+            .stop_resizing => self.pane().size_control,
+            else => true,
+        };
+    }
     fn dispatch(self: *App, target: keybindings.Target) !void {
+        if (target == .action and !self.actionEnabled(target.action)) return;
         self.notice_len = 0;
         if (self.settings_editor != null and !(target == .action and target.action == .open_settings)) {
             self.settings_editor = null;
@@ -360,8 +379,7 @@ const App = struct {
                 .move_tab_left => if (self.active > 0) self.moveTab(self.active - 1),
                 .move_tab_right => self.moveTab(self.active + 1),
                 .toggle_fullscreen => {
-                    if (!c.SDL_SetWindowFullscreen(self.window, !self.fullscreen)) return error.SDL;
-                    self.fullscreen = !self.fullscreen;
+                    if (!c.SDL_SetWindowFullscreen(self.window, c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_FULLSCREEN == 0)) return error.SDL;
                 },
                 .recover_instance => try self.recover(),
                 .take_size_control => self.pane().size_control = true,
@@ -581,6 +599,41 @@ const App = struct {
         self.setNotice("Saved");
     }
     fn activateSetting(self: *App, row: settings.Row) !void {
+        const editor = &self.settings_editor.?;
+        if (editor.search) {
+            editor.search = false;
+            editor.query_len = 0;
+            editor.page = row.page;
+            editor.profile = switch (row.target) {
+                .profile => |field| field.index,
+                .environment => |field| field.profile,
+                .clone_profile, .set_default, .delete_profile, .add_environment => |index| index,
+                .delete_environment => |field| field.profile,
+                else => editor.profile,
+            };
+            editor.selected = 0;
+            editor.content_focus = true;
+            var all: [settings.row_limit]settings.Row = undefined;
+            var shown: [settings.row_limit]u16 = undefined;
+            const count = try settings.rows(self.configuration, &all);
+            const visible = editor.indices(all[0..count], &shown);
+            for (shown[0..visible], 0..) |index, number| {
+                if (std.meta.eql(all[index].target, row.target)) {
+                    editor.selected = number;
+                    break;
+                }
+            }
+            self.cancelComposition();
+            return;
+        }
+        if (row.target == .information) return;
+        if (row.target == .set_default and !editor.search) {
+            editor.profile = row.target.set_default;
+            editor.page = .profiles;
+            editor.selected = 0;
+            editor.content_focus = true;
+            return;
+        }
         if (row.target == .font_family) {
             self.cancelComposition();
             self.chooser = try font_chooser.Chooser.create(allocator, self.init.io, self.configuration, self.fonts.paths[0]);
@@ -770,10 +823,16 @@ const App = struct {
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
         if (key == c.SDLK_TAB and !e.search) {
-            const pages = settings.titles.len;
-            e.page = @fromBackingInt(@intCast((@backingInt(e.page) + (if (mods.shift) pages - 1 else @as(usize, 1))) % pages));
-            e.selected = 0;
-            e.delete_pending = null;
+            e.content_focus = !e.content_focus;
+            return;
+        }
+        if (!e.search and !e.content_focus) {
+            if (key == c.SDLK_UP or key == c.SDLK_DOWN) {
+                const page_number = @as(i16, @backingInt(e.page)) + @as(i16, if (key == c.SDLK_UP) -1 else 1);
+                e.page = @fromBackingInt(@intCast(std.math.clamp(page_number, 0, settings.titles.len - 1)));
+                e.selected = 0;
+                e.delete_pending = null;
+            } else if (key == c.SDLK_RETURN or key == c.SDLK_RIGHT) e.content_focus = true;
             return;
         }
         if (visible == 0) return;
@@ -822,6 +881,7 @@ const App = struct {
             },
             else => {},
         }
+        if (!e.search and e.page == .defaults) e.profile = @intCast(e.selected);
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -845,6 +905,11 @@ const App = struct {
     }
     fn choosePalette(self: *App, index: usize) !void {
         if (!self.palette.?.profile) return self.dispatch(keybindings.definitions[index].target);
+        if (index >= self.configuration.profileCount()) {
+            self.palette = null;
+            if (index == self.configuration.profileCount()) return self.openPalette(false);
+            return self.toggleSettings();
+        }
         const recipe = try self.configuration.profile(@intCast(index));
         // Keep the overlay and original input owner intact if construction cannot commit.
         try self.createTab(recipe, null);
@@ -956,6 +1021,7 @@ const App = struct {
     }
 
     fn event(self: *App, value: c.SDL_Event) !void {
+        if (try self.chromeEvent(value)) return;
         self.input_timestamp = value.common.timestamp;
         switch (value.type) {
             c.SDL_EVENT_QUIT, c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => self.running = false,
@@ -1035,9 +1101,8 @@ const App = struct {
                     held.last = point;
                 } else if (self.drag == .divider) {
                     self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
-                } else if (self.drag == .tab and value.motion.y < 40 and self.tab_count > 1) {
-                    const index: u8 = @intFromFloat(std.math.clamp(@floor((value.motion.x - 8) / self.tabWidth()), 0, @as(f32, @floatFromInt(self.tab_count - 1))));
-                    self.moveTab(index);
+                } else if (self.drag == .tab) {
+                    self.moveTab(self.drag.tab.move(value.motion.x, self.tab_count, self.width));
                 } else if (self.palette == null and self.settings_editor == null) {
                     if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
                         const p = self.tab().panes[slot].?;
@@ -1089,25 +1154,38 @@ const App = struct {
             if (!box.contains(x, y)) {
                 self.palette = null;
                 try self.gainKeyboard();
-            } else if (y >= box.y + 48) {
-                const row: usize = @intFromFloat(@floor((y - box.y - 48) / 26));
+            } else {
                 const start = self.paletteStart(count);
-                if (row < 16 and row + start < count) try self.choosePalette(matches[row + start]);
+                for (0..@min(count - start, self.paletteRows())) |row| {
+                    if (self.paletteRow(row).contains(x, y)) {
+                        try self.choosePalette(matches[row + start]);
+                        break;
+                    }
+                }
             }
             return;
         }
-        if (y < 36) {
+        if (y < chrome.height) {
             if (button != .left) return;
-            const width = self.tabWidth();
-            if (x >= 8 and x < 8 + width * @as(f32, @floatFromInt(self.tab_count))) {
-                const index: u8 = @intFromFloat(@floor((x - 8) / width));
+            for (0..self.tab_count) |number| {
+                const index: u8 = @intCast(number);
+                const rect = chrome.tab(index, self.tab_count, self.width);
+                if (!rect.contains(x, y)) continue;
                 try self.selectTab(index);
-                if (x >= 8 + width * @as(f32, @floatFromInt(index + 1)) - 22) {
+                if (self.tab_count > 1 and rect.width >= 96 and x >= rect.x + rect.width - 30) {
                     try self.closeTab();
-                } else self.drag = .tab;
-            } else if (x < 8 + width * @as(f32, @floatFromInt(self.tab_count)) + 32) {
+                    self.consume_left_release = true;
+                } else self.drag = .{ .tab = chrome.Drag.begin(rect, x) };
+                return;
+            }
+            if (chrome.plus(self.tab_count, self.width).contains(x, y)) {
                 try self.createTab(try self.startup(), null);
-            } else try self.openPalette(false);
+            } else if (chrome.menu(self.tab_count, self.width).contains(x, y)) {
+                try self.openPalette(true);
+            } else if (chrome.settings(self.width).contains(x, y)) {
+                try self.toggleSettings();
+            }
+            self.consume_left_release = true;
             return;
         }
         var places: [layout.pane_limit]layout.Placement = undefined;
@@ -1296,7 +1374,18 @@ const App = struct {
             if (std.math.isFinite(wheel.y)) chooser.move(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)));
             return;
         }
-        if ((self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
+        if (self.settings_editor) |*editor| {
+            if (!std.math.isFinite(wheel.y) or editor.editing != null) return;
+            var rows: [settings.row_limit]settings.Row = undefined;
+            var filtered: [settings.row_limit]u16 = undefined;
+            const count = try settings.rows(self.configuration, &rows);
+            const visible = editor.indices(rows[0..count], &filtered);
+            const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
+            editor.selected = @intCast(std.math.clamp(@as(i32, @intCast(editor.selected)) + offset, 0, @as(i32, @intCast(visible -| 1))));
+            editor.content_focus = true;
+            return;
+        }
+        if (self.palette != null or self.pane().finder != null) return;
         const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
         const p = self.tab().panes[slot].?;
         const frame = p.canvas.frame() orelse return;
@@ -1321,77 +1410,174 @@ const App = struct {
             .wait, .ignore => {},
         }
     }
+    fn paletteRows(self: *const App) usize {
+        if (self.palette.?.profile) return self.configuration.profileCount() + 2;
+        return @min(keybindings.definitions.len, @as(usize, @intFromFloat(@floor(@max(0, self.height - 134) / 36))));
+    }
     fn paletteRect(self: *const App) layout.Rect {
-        const width = @min(600, @max(1, self.width - 24));
-        return .{ .x = (self.width - width) / 2, .y = 52, .width = width, .height = @min(474, @max(1, self.height - 88)) };
+        if (self.palette.?.profile) {
+            const width = @min(420, @max(1, self.width - 24));
+            return .{ .x = @min(chrome.menu(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = 46, .width = width, .height = @min(@max(1, self.height - 58), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+        }
+        const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
+        const width = @min(580, @max(1, self.width - 32));
+        return .{ .x = (self.width - width) / 2, .y = @min(92, @max(0, (self.height - tall) / 2)), .width = width, .height = tall };
     }
     fn paletteStart(self: *const App, count: usize) usize {
-        const selected = @min(self.palette.?.selected, count -| 1);
-        return if (selected >= 16) selected - 15 else 0;
+        const rows = @max(1, self.paletteRows());
+        return @min((@min(self.palette.?.selected, count -| 1) / rows) * rows, count -| rows);
+    }
+    fn paletteRow(self: *const App, number: usize) layout.Rect {
+        const box = self.paletteRect();
+        const profiles = self.palette.?.profile;
+        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + (if (profiles) @as(f32, 8) else 62) + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 48) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 16) else 36)), .height = if (profiles) 42 else 34 };
     }
     fn drawPalette(self: *App) !void {
         var matches: [keybindings.definitions.len]usize = undefined;
         const count = try self.palette.?.indices(self.configuration, &matches);
         const box = self.paletteRect();
-        try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = self.height }, .{ .r = 0, .g = 0, .b = 0, .a = 155 });
-        try fill(self.renderer, box, .{ .r = 39, .g = 42, .b = 56, .a = 255 });
-        try self.drawText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (self.palette.?.profile) "Profiles — type to filter" else "Commands — type to filter", box.x + 12, box.y + 12);
+        const colors = try self.uiPalette();
+        try fill(self.renderer, box, colors.title);
+        try outline(self.renderer, box, colors.border);
+        if (!self.palette.?.profile) try self.clippedText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else "> Command Palette", .{ .x = box.x + 18, .y = box.y + 12, .width = @max(1, box.width - 36), .height = 28 }, box.x + 18);
         const start = self.paletteStart(count);
-        const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(box.x)), .y = @intFromFloat(@floor(box.y + 48)), .w = @intFromFloat(@ceil(box.width)), .h = @intFromFloat(@ceil(@max(1, box.height - 48))) };
-        if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
-        defer clearClip(self.renderer);
-        for (matches[start..@min(count, start + 16)], start..) |index, row| {
-            const y = box.y + 48 + @as(f32, @floatFromInt(row - start)) * 26;
-            if (row == self.palette.?.selected) try fill(self.renderer, .{ .x = box.x + 4, .y = y, .width = box.width - 8, .height = 26 }, .{ .r = 65, .g = 71, .b = 96, .a = 255 });
+        for (matches[start..@min(count, start + self.paletteRows())], start..) |index, number| {
+            const row = self.paletteRow(number - start);
+            if (number == self.palette.?.selected) try fill(self.renderer, row, colors.active);
             if (self.palette.?.profile) {
-                const recipe = try self.configuration.profile(@intCast(index));
-                try self.drawText(recipe.name, box.x + 12, y + 4);
-                if (index == try self.configuration.defaultProfile()) try self.drawText("default", box.x + box.width - 90, y + 4);
+                if (index < self.configuration.profileCount()) {
+                    const recipe = try self.configuration.profile(@intCast(index));
+                    try self.clippedText(recipe.name, row, row.x + 10);
+                    try self.drawText("Create Instance", row.x + 10, row.y + 24);
+                    if (index == try self.configuration.defaultProfile()) try self.drawText("default", row.x + row.width - 72, row.y + 13);
+                } else try self.clippedText(if (index == self.configuration.profileCount()) "Command Palette" else "Settings", row, row.x + 10);
             } else {
-                try self.drawText(keybindings.definitions[index].label, box.x + 12, y + 4);
                 const binding = self.bindings.rows[index];
-                if (binding.len != 0) try self.drawText(binding.text[0..binding.len], box.x + box.width - 174, y + 4);
+                const label: layout.Rect = .{ .x = row.x + 10, .y = row.y + 2, .width = @max(1, row.width - 205), .height = 28 };
+                try self.clippedTextColor(keybindings.definitions[index].label, label, label.x, if (self.actionEnabled(keybindings.definitions[index].target.action)) colors.text else colors.muted);
+                if (binding.len != 0) try self.clippedText(binding.text[0..binding.len], .{ .x = row.x + row.width - 195, .y = row.y + 2, .width = 185, .height = 28 }, row.x + row.width - 195);
             }
+        }
+        if (!self.palette.?.profile and count > self.paletteRows()) {
+            var footer: [96]u8 = undefined;
+            const text = try std.fmt.bufPrint(&footer, "{d}–{d} of {d} · ↑↓ to navigate", .{ start + 1, @min(count, start + self.paletteRows()), count });
+            try self.clippedTextColor(text, .{ .x = box.x + 18, .y = box.y + box.height - 32, .width = @max(1, box.width - 36), .height = 26 }, box.x + 18, colors.muted);
         }
     }
     fn settingsRect(self: *const App) layout.Rect {
-        const width = @min(900, @max(1, self.width - 24));
-        return .{ .x = (self.width - width) / 2, .y = 44, .width = width, .height = @max(1, self.height - 66) };
+        const width = @min(760, @max(1, self.width - 24));
+        return .{ .x = self.width - width - 12, .y = 58, .width = width, .height = @max(1, self.height - 76) };
     }
     fn settingsBody(self: *const App) layout.Rect {
         const box = self.settingsRect();
-        const sidebar = @min(180, box.width / 3);
-        return .{ .x = box.x + sidebar + 12, .y = box.y + 88, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - 132) };
+        const sidebar = @min(178, box.width / 3);
+        return .{ .x = box.x + sidebar + 16, .y = box.y + 92, .width = @max(1, box.width - sidebar - 32), .height = @max(1, box.height - 198) };
     }
     fn settingsField(self: *const App) layout.Rect {
         const box = self.settingsRect();
         const body = self.settingsBody();
-        return .{ .x = body.x, .y = box.y + 44, .width = body.width, .height = 32 };
+        if (self.settings_editor.?.editing != null and !self.settings_editor.?.search) {
+            const row: usize = @min(self.settings_editor.?.selected, self.settingsVisible() - 1);
+            return .{ .x = body.x + body.width * 0.46, .y = body.y + @as(f32, @floatFromInt(row)) * self.settingsRowHeight() + 5, .width = @max(1, body.width * 0.54 - 8), .height = self.settingsRowHeight() - 10 };
+        }
+        return .{ .x = body.x, .y = box.y + 48, .width = body.width, .height = 32 };
+    }
+    fn settingsRowHeight(self: *const App) f32 {
+        const e = self.settings_editor.?;
+        return if (e.search or e.page == .mappings) 32 else 48;
     }
     fn settingsVisible(self: *const App) usize {
-        return @max(1, @as(usize, @intFromFloat(@floor(self.settingsBody().height / 32))));
+        return @max(1, @as(usize, @intFromFloat(@floor(self.settingsBody().height / self.settingsRowHeight()))));
     }
     fn settingsStart(self: *const App, count: usize) usize {
         const selected = @min(self.settings_editor.?.selected, count -| 1);
         return (selected + 1) -| self.settingsVisible();
     }
+    fn settingsToolbarCount(self: *const App) usize {
+        return if (self.settings_editor.?.editing != null) 2 else 3;
+    }
+    fn settingsToolbarButton(self: *const App, number: usize) layout.Rect {
+        const box = self.settingsRect();
+        const body = self.settingsBody();
+        const count: f32 = @floatFromInt(self.settingsToolbarCount());
+        const width = @max(1, (body.width - (count - 1) * 6) / count);
+        return .{ .x = body.x + @as(f32, @floatFromInt(number)) * (width + 6), .y = box.y + 48, .width = width, .height = 32 };
+    }
+    fn settingsToolbarAction(self: *App, number: usize) !void {
+        const e = &self.settings_editor.?;
+        if (e.editing) |target| {
+            if (number == 0) try self.changeSetting(target, e.buffer[0..e.len]) else {
+                self.cancelComposition();
+                e.cancel();
+            }
+            return;
+        }
+        if (e.page == .defaults) {
+            switch (number) {
+                0 => {
+                    try self.changeSetting(.add_profile, "");
+                    e.profile = self.configuration.profileCount() - 1;
+                    e.page = .profiles;
+                    e.selected = 0;
+                    try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.configuration);
+                },
+                1 => {
+                    try self.changeSetting(.{ .clone_profile = e.profile }, "");
+                    e.profile = self.configuration.profileCount() - 1;
+                    e.page = .profiles;
+                    e.selected = 0;
+                },
+                2 => {
+                    try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
+                    e.profile = @min(e.profile, self.configuration.profileCount() - 1);
+                },
+                else => {},
+            }
+        } else if (e.page == .profiles) switch (number) {
+            0 => {
+                e.page = .defaults;
+                e.selected = e.profile;
+            },
+            1 => {
+                try self.changeSetting(.{ .clone_profile = e.profile }, "");
+                e.profile = self.configuration.profileCount() - 1;
+                e.selected = 0;
+            },
+            2 => try self.changeSetting(.{ .set_default = e.profile }, ""),
+            else => {},
+        };
+        e.content_focus = true;
+    }
     fn settingsClick(self: *App, x: f32, y: f32) !void {
         const e = &self.settings_editor.?;
         const box = self.settingsRect();
-        if (e.editing != null) return;
-        if (!box.contains(x, y) or (x >= box.x + box.width - 70 and y < box.y + 36)) return self.toggleSettings();
+        if (e.editing != null) {
+            for (0..self.settingsToolbarCount()) |number| if (self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
+            return;
+        }
+        if (x >= box.x + box.width - 70 and y >= box.y and y < box.y + 40) return self.toggleSettings();
+        if (!box.contains(x, y)) return;
         const body = self.settingsBody();
-        if (x < body.x - 12 and y >= box.y + 48) {
-            const page: usize = @intFromFloat(@floor((y - box.y - 48) / 34));
+        if (x < body.x - 12 and y >= box.y + 52) {
+            const page: usize = @intFromFloat(@floor((y - box.y - 52) / 34));
             if (page < settings.titles.len) {
                 self.cancelComposition();
                 e.page = @fromBackingInt(@intCast(page));
+                e.content_focus = false;
                 e.search = false;
                 e.query_len = 0;
                 e.selected = 0;
                 e.delete_pending = null;
             }
             return;
+        }
+        if (e.page == .defaults or e.page == .profiles or e.editing != null) {
+            for (0..self.settingsToolbarCount()) |number| {
+                if (self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
+            }
+        }
+        if (e.page == .defaults and y >= box.y + box.height - 96 and x >= body.x and x < body.x + 136) {
+            return self.changeSetting(.{ .set_default = e.profile }, "");
         }
         const field = self.settingsField();
         if (field.contains(x, y)) {
@@ -1406,39 +1592,63 @@ const App = struct {
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
-        const row: usize = @intFromFloat(@floor((y - body.y) / 32));
+        const row: usize = @intFromFloat(@floor((y - body.y) / self.settingsRowHeight()));
         const chosen = row + self.settingsStart(visible);
         if (row >= self.settingsVisible() or chosen >= visible) return;
         if (e.selected != chosen) e.delete_pending = null;
         e.selected = chosen;
-        try self.activateSetting(all[indices[chosen]]);
+        if (all[indices[chosen]].target == .set_default) e.profile = all[indices[chosen]].target.set_default;
+        e.content_focus = true;
+        const target_row = all[indices[chosen]];
+        if ((target_row.target == .default_font or target_row.target == .default_profile or target_row.target == .theme) and (x < body.x + 36 or x >= body.x + body.width - 36)) {
+            var key_event = std.mem.zeroes(c.SDL_KeyboardEvent);
+            key_event.key = if (x < body.x + 36) c.SDLK_LEFT else c.SDLK_RIGHT;
+            return self.settingsKey(key_event);
+        }
+        if (target_row.target == .set_default and x < body.x + body.width - 82) return;
+        if (target_row.editable() and target_row.target != .default_font and target_row.target != .default_profile and target_row.target != .theme and x < body.x + body.width * 0.46) return;
+        try self.activateSetting(target_row);
     }
     fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
+        return self.clippedTextColor(text, rect, x, (try self.uiPalette()).text);
+    }
+    fn clippedTextColor(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color) !void {
         const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.width)), .h = @intFromFloat(@ceil(rect.height)) };
         if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
         defer clearClip(self.renderer);
-        try self.drawText(text, x, rect.y + 6);
+        try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
     }
     fn drawSettings(self: *App) !void {
         const e = &self.settings_editor.?;
         const colors = try self.uiPalette();
         const box = self.settingsRect();
         const body = self.settingsBody();
-        try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = self.height }, .{ .r = 0, .g = 0, .b = 0, .a = 180 });
-        try fill(self.renderer, box, colors.panel);
-        try self.drawText("Settings", box.x + 12, box.y + 12);
+        e.profile = @min(e.profile, self.configuration.profileCount() - 1);
+        try fill(self.renderer, box, colors.title);
+        try outline(self.renderer, box, colors.border);
+        try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = body.x - box.x - 16, .height = box.height }, colors.idle);
+        try self.drawText("Settings", box.x + 18, box.y + 18);
+        try self.drawText(settings.titles[@backingInt(e.page)], body.x, box.y + 18);
         try self.drawText("Close", box.x + box.width - 60, box.y + 12);
         for (settings.titles, 0..) |title, index| {
-            const row: layout.Rect = .{ .x = box.x + 6, .y = box.y + 48 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
+            const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + 52 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
             if (!e.search and @backingInt(e.page) == index) try fill(self.renderer, row, colors.active);
             try self.clippedText(title, row, row.x + 6);
         }
-        const field = self.settingsField();
-        try fill(self.renderer, field, colors.title);
-        const text = if (e.editing != null) e.buffer[0..e.len] else if (e.search) e.query[0..e.query_len] else "Search settings — Ctrl+F";
-        const scroll = if (e.editing != null or e.search) @max(0, try self.textWidth(text) - field.width + 12) else 0;
-        try self.clippedText(if (e.recording) "Press a shortcut — Esc cancels" else text, field, field.x + 6 - scroll);
-        if (e.select_all) try fill(self.renderer, .{ .x = field.x + 4, .y = field.y + 2, .width = @max(1, field.width - 8), .height = 2 }, colors.accent);
+        if (!e.search and (e.page == .defaults or e.page == .profiles or e.editing != null)) {
+            const labels: [3][]const u8 = if (e.editing != null) .{ "Save", "Cancel", "" } else if (e.page == .defaults) .{ "New profile", "Duplicate", if (e.delete_pending != null) "Delete?" else "Delete" } else .{ "< Profiles", "Duplicate", "Set default" };
+            for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
+                const button = self.settingsToolbarButton(number);
+                try fill(self.renderer, button, colors.idle);
+                try outline(self.renderer, button, colors.border);
+                try self.clippedText(label, button, button.x + 8);
+            }
+        } else {
+            const field = self.settingsField();
+            try fill(self.renderer, field, if (e.search) colors.panel else colors.title);
+            const text = if (e.search) e.query[0..e.query_len] else "Changes save automatically · Ctrl+F search";
+            try self.clippedText(text, field, field.x + 6);
+        }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
@@ -1447,25 +1657,61 @@ const App = struct {
         const start = self.settingsStart(visible);
         for (indices[start..@min(visible, start + self.settingsVisible())], start..) |index, number| {
             const row = all[index];
-            const rect: layout.Rect = .{ .x = body.x, .y = body.y + @as(f32, @floatFromInt(number - start)) * 32, .width = body.width, .height = 30 };
-            if (number == e.selected) try fill(self.renderer, rect, colors.active);
+            const rect: layout.Rect = .{ .x = body.x, .y = body.y + @as(f32, @floatFromInt(number - start)) * self.settingsRowHeight(), .width = body.width - 8, .height = self.settingsRowHeight() - 4 };
+            if (number == e.selected and e.content_focus) try fill(self.renderer, rect, colors.active);
+            try outline(self.renderer, rect, if (number == e.selected and e.content_focus) colors.accent else colors.border);
             var label: [192]u8 = undefined;
-            const name = if (row.scope.len == 0) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
+            const name = if (row.scope.len == 0 or !e.search) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [32]u8 = undefined;
-            const contents = try row.text(self.configuration, &value);
-            const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.52 - 12), .height = rect.height };
-            const right: layout.Rect = .{ .x = rect.x + rect.width * 0.52, .y = rect.y, .width = @max(1, rect.width * 0.48 - 6), .height = rect.height };
-            try self.clippedText(name, left, left.x);
-            try self.clippedText(contents, right, right.x);
+            const raw_contents = if (number == e.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.configuration, &value);
+            const contents = if (raw_contents.len != 0 or (number == e.selected and e.editing != null)) raw_contents else switch (row.target) {
+                .binding => "Unbound",
+                .font => "Inherited",
+                .profile => |field| switch (field.field) {
+                    .command => "Interactive shell",
+                    .shell, .cwd, .font_pixels => "Inherited",
+                    .name => "",
+                },
+                else => "",
+            };
+            const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.46 - 12), .height = rect.height };
+            const right: layout.Rect = .{ .x = rect.x + rect.width * 0.46, .y = rect.y, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height };
+            if (row.target == .default_font or row.target == .default_profile or row.target == .theme) {
+                try self.clippedText(if (row.target == .default_font) "-" else "<", .{ .x = rect.x, .y = rect.y, .width = 36, .height = rect.height }, rect.x + 12);
+                try self.clippedText(row.label, .{ .x = rect.x + 40, .y = rect.y - 2, .width = @max(1, rect.width - 80), .height = 22 }, rect.x + 48);
+                try self.clippedText(contents, .{ .x = rect.x + 40, .y = rect.y + 18, .width = @max(1, rect.width - 80), .height = 24 }, rect.x + 48);
+                try self.clippedText(if (row.target == .default_font) "+" else ">", .{ .x = rect.x + rect.width - 36, .y = rect.y, .width = 36, .height = rect.height }, rect.x + rect.width - 24);
+            } else if (row.target == .set_default and !e.search) {
+                try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
+                try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
+            } else {
+                try self.clippedText(name, left, left.x);
+                try self.clippedTextColor(contents, right, right.x, if (row.target == .information) colors.muted else colors.text);
+            }
         }
-        try self.clippedText("Enter edits · Tab page · ↑↓ choose · Backspace resets · Ctrl+F search", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
+        if (visible > self.settingsVisible()) {
+            const tall = body.height * @as(f32, @floatFromInt(self.settingsVisible())) / @as(f32, @floatFromInt(visible));
+            const offset = @as(f32, @floatFromInt(start)) / @as(f32, @floatFromInt(visible - self.settingsVisible()));
+            try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y, .width = 3, .height = body.height }, colors.idle);
+            try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y + offset * (body.height - tall), .width = 3, .height = tall }, colors.accent);
+        }
+        if (e.page == .defaults) {
+            const button: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 96, .width = 136, .height = 30 };
+            try fill(self.renderer, button, colors.idle);
+            try outline(self.renderer, button, colors.border);
+            try self.clippedText(if (e.profile == try self.configuration.defaultProfile()) "Default" else "Set default", button, button.x + 8);
+        }
+        try self.clippedText(if (e.page == .profiles and e.profile == 0) "Read-only template · Duplicate to customize" else "Enter edits · Tab focus · ↑↓ choose · Ctrl+F search", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         try self.drawTextFont(self.ui_fonts.faces[0], bytes, x, y);
     }
     fn drawTextFont(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32) !void {
+        return self.drawTextTint(font, bytes, x, y, (try self.uiPalette()).text);
+    }
+    fn drawTextTint(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32, color: c.SDL_Color) !void {
         if (bytes.len == 0) return;
-        const surface = c.TTF_RenderText_Blended(font, bytes.ptr, bytes.len, (try self.uiPalette()).text) orelse return error.TTF;
+        const surface = c.TTF_RenderText_Blended(font, bytes.ptr, bytes.len, color) orelse return error.TTF;
         defer c.SDL_DestroySurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse return error.SDL;
         defer c.SDL_DestroyTexture(texture);
@@ -1501,7 +1747,7 @@ const App = struct {
             y = clip.y + 6;
         } else if (self.palette) |p| {
             const box = self.paletteRect();
-            clip = .{ .x = box.x + 12, .y = box.y + 8, .width = @max(1, box.width - 24), .height = 32 };
+            clip = .{ .x = box.x + 12, .y = box.y + 12, .width = @max(1, box.width - 24), .height = 32 };
             x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
             y = box.y + 12;
         } else if (self.pane().finder) |editor| {
@@ -1570,6 +1816,85 @@ const App = struct {
         try self.drawText(text, x, y);
         try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, .{ .r = 130, .g = 170, .b = 255, .a = 255 });
     }
+    fn chromeEvent(self: *App, event_value: c.SDL_Event) !bool {
+        if (event_value.type == c.SDL_EVENT_WINDOW_FOCUS_LOST) {
+            self.pointer_buttons = 0;
+            self.chrome_pressed = .none;
+        }
+        if (event_value.type == c.SDL_EVENT_WINDOW_MOUSE_LEAVE) self.chrome_hover = .none;
+        if (event_value.type == c.SDL_EVENT_MOUSE_MOTION) {
+            self.chrome_hover = chrome.buttonAt(event_value.motion.x, event_value.motion.y, self.width);
+            return self.chrome_pressed != .none;
+        }
+        const down = event_value.type == c.SDL_EVENT_MOUSE_BUTTON_DOWN;
+        if (!down and event_value.type != c.SDL_EVENT_MOUSE_BUTTON_UP) return false;
+        const event_button = event_value.button;
+        if (event_button.button > 0 and event_button.button < 32) {
+            const bit = @as(u32, 1) << @as(u5, @intCast(event_button.button));
+            if (down) self.pointer_buttons |= bit else self.pointer_buttons &= ~bit;
+        }
+        const target = chrome.buttonAt(event_button.x, event_button.y, self.width);
+        if (event_button.button == c.SDL_BUTTON_LEFT) {
+            if (down and target != .none) {
+                self.chrome_pressed = target;
+                return true;
+            }
+            if (!down and self.chrome_pressed != .none) {
+                const pressed = self.chrome_pressed;
+                self.chrome_pressed = .none;
+                if (pressed == target) switch (target) {
+                    .none => {},
+                    .minimize => if (!c.SDL_MinimizeWindow(self.window)) return error.SDL,
+                    .maximize => {
+                        const flags = c.SDL_GetWindowFlags(self.window);
+                        if (flags & c.SDL_WINDOW_FULLSCREEN == 0) {
+                            if (flags & c.SDL_WINDOW_MAXIMIZED != 0) {
+                                if (!c.SDL_RestoreWindow(self.window)) return error.SDL;
+                            } else if (!c.SDL_MaximizeWindow(self.window)) return error.SDL;
+                        }
+                    },
+                    .close => self.running = false,
+                };
+                return true;
+            }
+        }
+        if (down and event_button.button == c.SDL_BUTTON_RIGHT and chrome.caption(self.tab_count, self.width).contains(event_button.x, event_button.y)) {
+            if (!c.SDL_ShowWindowSystemMenu(self.window, @intFromFloat(event_button.x), @intFromFloat(event_button.y))) return error.SDL;
+            return true;
+        }
+        return false;
+    }
+    fn drawTab(self: *App, index: u8, rect: layout.Rect) !void {
+        const colors = try self.uiPalette();
+        const value = self.tabs[index].?;
+        const status = value.panes[value.tree.active].?.snapshot();
+        try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
+        const close_width: f32 = if (self.tab_count > 1 and rect.width >= 96) 30 else 0;
+        try self.clippedText(status.title[0..status.title_len], .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
+        if (close_width != 0) try self.drawText("×", rect.x + rect.width - 24, rect.y + 6);
+        if (index == self.active) try fill(self.renderer, .{ .x = rect.x + 8, .y = rect.y + rect.height - 2, .width = @max(1, rect.width - 16), .height = 2 }, colors.accent);
+    }
+    fn drawWindowControls(self: *App) !void {
+        const colors = try self.uiPalette();
+        for ([_]chrome.Button{ .minimize, .maximize, .close }) |button| {
+            const rect = chrome.control(button, self.width);
+            if (self.chrome_hover == button) try fill(self.renderer, rect, if (button == .close) .{ .r = 184, .g = 46, .b = 56, .a = 255 } else colors.active);
+            const x = rect.x + 21;
+            const y: f32 = 23;
+            const color = if (self.chrome_hover == button) colors.text else colors.muted;
+            if (!c.SDL_SetRenderDrawColor(self.renderer, color.r, color.g, color.b, color.a)) return error.SDL;
+            switch (button) {
+                .minimize => if (!c.SDL_RenderLine(self.renderer, x - 5, y + 3, x + 5, y + 3)) return error.SDL,
+                .maximize => {
+                    if (c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_MAXIMIZED != 0)
+                        try outline(self.renderer, .{ .x = x - 3, .y = y - 6, .width = 8, .height = 8 }, color);
+                    try outline(self.renderer, .{ .x = x - 5, .y = y - 4, .width = 9, .height = 9 }, color);
+                },
+                .close => if (!c.SDL_RenderLine(self.renderer, x - 5, y - 5, x + 5, y + 5) or !c.SDL_RenderLine(self.renderer, x - 5, y + 5, x + 5, y - 5)) return error.SDL,
+                .none => {},
+            }
+        }
+    }
     fn draw(self: *App) !void {
         try self.desktopAttention();
         var width: c_int = 0;
@@ -1581,21 +1906,25 @@ const App = struct {
         const colors = try self.uiPalette();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
             !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
-        const tab_width = self.tabWidth();
-        for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
-            const value = maybe.?;
-            const status = value.panes[value.tree.active].?.snapshot();
-            const rect: layout.Rect = .{ .x = 8 + tab_width * @as(f32, @floatFromInt(index)), .y = 4, .width = tab_width - 3, .height = 30 };
-            try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
-            const title_clip: c.SDL_Rect = .{ .x = @intFromFloat(rect.x + 4), .y = 4, .w = @intFromFloat(@max(1, rect.width - 28)), .h = 30 };
-            if (!c.SDL_SetRenderClipRect(self.renderer, &title_clip)) return error.SDL;
-            try self.drawText(status.title[0..status.title_len], rect.x + 8, 10);
-            clearClip(self.renderer);
-            try self.drawText("×", rect.x + rect.width - 18, 10);
+        try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
+        for (0..self.tab_count) |number| {
+            const index: u8 = @intCast(number);
+            const rect = chrome.tab(index, self.tab_count, self.width);
+            if (self.drag == .tab and index == self.active) {
+                try outline(self.renderer, rect, colors.border);
+            } else try self.drawTab(index, rect);
         }
-        const after_tabs = 8 + tab_width * @as(f32, @floatFromInt(self.tab_count));
-        try self.drawText("+", after_tabs + 8, 10);
-        try self.drawText("⋯", self.width - 32, 10);
+        if (self.drag == .tab) {
+            var rect = chrome.tab(self.active, self.tab_count, self.width);
+            rect.x = self.drag.tab.x;
+            try self.drawTab(self.active, rect);
+            try outline(self.renderer, rect, colors.accent);
+        }
+        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.menu(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const u8{ "+", "v", "Settings" }) |rect, label| {
+            try fill(self.renderer, rect, colors.idle);
+            try self.drawText(label, rect.x + 11, rect.y + 6);
+        }
+        try self.drawWindowControls();
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
@@ -1722,6 +2051,10 @@ pub fn main(initial: std.process.Init) !void {
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
     };
     defer app.deinit();
+    if (!c.SDL_SetWindowHitTest(window, windowHitTest, &app) or !c.SDL_SetWindowBordered(window, false)) return error.SDL;
+    // zig-audit: acknowledge discard
+    // reason: Callback retirement is best-effort immediately before SDL destroys this owned window.
+    defer _ = c.SDL_SetWindowHitTest(window, null, null);
     try app.createTab(try app.startup(), null);
     while (app.running) {
         try app.draw();
@@ -1767,6 +2100,24 @@ fn savedRecipe(current: *const config.Config, owned: config.Profile) !config.Pro
         if (std.mem.eql(u8, value.id, owned.id)) return value;
     }
     return owned;
+}
+// zig-audit: acknowledge anyopaque
+// reason: SDL callback userdata is the stable application owner; never retained by a terminal worker.
+fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*anyopaque) callconv(.c) c.SDL_HitTestResult {
+    // zig-audit: acknowledge ptr_cast
+    // reason: SDL returns the stable App address installed for this owned window.
+    // zig-audit: acknowledge align_cast
+    // reason: SDL returns the stable App address installed for this window; callback ends before App retirement.
+    const app: *App = @ptrCast(@alignCast(data.?));
+    if (app.drag != .none or app.chrome_pressed != .none or app.pointer_buttons != 0) return c.SDL_HITTEST_NORMAL;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    if (!c.SDL_GetWindowSize(window, &width, &height)) return c.SDL_HITTEST_NORMAL;
+    return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.tab_count, c.SDL_GetWindowFlags(window));
+}
+fn outline(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
+    const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
+    if (!c.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a) or !c.SDL_RenderRect(renderer, &target)) return error.SDL;
 }
 fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
     const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
@@ -1828,19 +2179,20 @@ test {
     std.testing.refAllDecls(appearance);
 }
 
-test "palette query is bounded and includes deliberately unbound directional commands" {
+test "command palette stays action-oriented while profile menu retains application entry points" {
     var configuration = config.Config.defaults(std.testing.allocator);
     defer configuration.deinit();
     var p: Palette = .{};
     var indices: [keybindings.definitions.len]usize = undefined;
-    try std.testing.expectEqual(keybindings.definitions.len, try p.indices(&configuration, &indices));
+    const count = try p.indices(&configuration, &indices);
+    try std.testing.expect(count > 0 and count < keybindings.definitions.len);
+    for (indices[0..count]) |index| try std.testing.expect(keybindings.definitions[index].target == .action);
     const query = "FOCUS PANE";
     @memcpy(p.query[0..query.len], query);
     p.len = query.len;
-    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
-    for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
+    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, &indices));
     p = .{ .profile = true };
-    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, &indices));
 }
 
 test "profile palette uses saved recipes and resolves its configured default" {
@@ -1850,7 +2202,7 @@ test "profile palette uses saved recipes and resolves its configured default" {
     defer configuration.deinit();
     var p: Palette = .{ .profile = true };
     var indices: [keybindings.definitions.len]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 2), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
     @memcpy(p.query[0..5], "BUILD");
     p.len = 5;
     try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));

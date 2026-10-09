@@ -5,7 +5,7 @@ const bindings = @import("keybindings.zig");
 /// Qualified settings groups; every mutable field uses the same bounded editor.
 pub const Page = enum { startup, interaction, appearance, colors, mappings, defaults, profiles };
 /// Human titles in stable sidebar order.
-pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profile defaults", "Profiles" };
+pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profiles", "Edit profile" };
 /// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
 pub const row_limit = 416;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
@@ -104,7 +104,12 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
         const recipe = try current.profile(index);
         try b.add(.{ .page = .defaults, .label = recipe.name, .scope = recipe.id, .target = .{ .set_default = index } });
         try b.add(.{ .page = .profiles, .label = "Duplicate profile", .scope = recipe.name, .target = .{ .clone_profile = index } });
-        if (index == 0) continue;
+        if (index == 0) {
+            for ([_][]const u8{ "Name", "Shell", "Command", "Working directory", "Font size" }, [_][]const u8{ recipe.name, "Inherited login shell", "Interactive shell", "Inherited directory", "Default" }) |label, value| {
+                try b.add(.{ .page = .profiles, .label = label, .scope = recipe.name, .target = .{ .information = value } });
+            }
+            continue;
+        }
         for ([_]ProfileField{ .name, .shell, .command, .cwd, .font_pixels }) |tag| {
             try b.add(.{ .page = .profiles, .label = switch (tag) {
                 .name => "Name",
@@ -256,6 +261,8 @@ fn environmentName(entries: []const config.Environment, buffer: []u8) ![]const u
 pub const Editor = struct {
     page: Page = .startup,
     selected: usize = 0,
+    profile: u8 = 0,
+    content_focus: bool = false,
     search: bool = false,
     query: [128]u8 = @splat(0),
     query_len: usize = 0,
@@ -271,6 +278,17 @@ pub const Editor = struct {
         var count: usize = 0;
         for (supplied, 0..) |row, index| {
             if (!self.search and row.page != self.page) continue;
+            if (!self.search and self.page == .profiles) {
+                const profile_index: ?u8 = switch (row.target) {
+                    .information => 0,
+                    .profile => |field| field.index,
+                    .environment => |field| field.profile,
+                    .add_environment => |index_value| index_value,
+                    .delete_environment => |field| field.profile,
+                    else => null,
+                };
+                if (profile_index == null or profile_index.? != self.profile) continue;
+            }
             const query = self.query[0..self.query_len];
             if (self.search and !contains(row.label, query) and !contains(row.scope, query)) continue;
             out[count] = @intCast(index);
@@ -442,4 +460,25 @@ test "saved shortcut text outlives registry iteration and the previous config" {
     const changed = try bindings.Bindings.fromOverrides(second.value.keybindings);
     try std.testing.expectEqual(@as(?usize, 3), changed.find(c.SDLK_G, c.SDL_KMOD_LCTRL | c.SDL_KMOD_LSHIFT));
     try std.testing.expectEqual(@as(?usize, 0), changed.find(c.SDLK_T, c.SDL_KMOD_LCTRL | c.SDL_KMOD_LALT));
+}
+
+test "profile editor shows only selected recipe while global search still finds all recipes" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try accept(&current, .add_profile, "");
+    try accept(&current, .add_profile, "");
+    var all: [row_limit]Row = undefined;
+    const count = try rows(&current, &all);
+    var found: [row_limit]u16 = undefined;
+    var editor: Editor = .{ .page = .profiles, .profile = 1 };
+    const shown = editor.indices(all[0..count], &found);
+    try std.testing.expect(shown > 0);
+    for (found[0..shown]) |index_value| switch (all[index_value].target) {
+        .profile => |field| try std.testing.expectEqual(@as(u8, 1), field.index),
+        .add_environment => |value| try std.testing.expectEqual(@as(u8, 1), value),
+        else => return error.UnexpectedProfileRow,
+    };
+    editor.search = true;
+    const global = editor.indices(all[0..count], &found);
+    try std.testing.expect(global > shown);
 }

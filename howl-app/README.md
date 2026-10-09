@@ -8,8 +8,10 @@ or internal C ABI. Application allocations use Zig's SMP allocator.
 
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, zoom, leaf collapse and restart.
-One bounded mapping registry supplies shortcuts and the searchable command
-palette. Physical key ownership fences repeats/releases across focus changes.
+One bounded mapping registry supplies shortcuts; the command palette exposes
+context-enabled actions and the profile dropdown includes Settings and Command
+Palette. SDL client chrome owns the existing Settings button, caption controls,
+native drag/resize regions and pointer-following tab chips without an idle timer. Physical key ownership fences repeats/releases across focus changes.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal
@@ -17,6 +19,8 @@ Find and the frame-derived scrollbar use the same worker and immutable facts.
 Find bounds queries to 255 UTF-8 bytes, retains 512 stable matches and scans four
 rows per service turn. Reflow/eviction/bank changes remain explicit failures.
 
+The right-side Settings panel retains sidebar/content focus, pointer selectors,
+profile New/Duplicate/Delete, View/Edit, Set default and inline Save/Cancel.
 Seven settings pages edit Local shell/command/cwd/environment recipes, mappings,
 themes and exact font paths. A bounded installed-font chooser supplies preview
 and cancellation. Font updates are transactional: failed saves restore
