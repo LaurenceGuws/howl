@@ -173,8 +173,10 @@ const AtlasKey = union(enum) {
     },
 };
 
+const AtlasIdentity = struct { low: u64, high: u64 };
+
 const AtlasEntry = struct {
-    key: AtlasKey,
+    key: AtlasIdentity,
     atlas_x: u16,
     atlas_y: u16,
     width: u16,
@@ -572,7 +574,7 @@ pub fn resolveFontAtlas(
         if (impl.ascii_entries[variant_index][index]) |entry_index| {
             std.debug.assert(entry_index < impl.entry_count);
             const entry = impl.entries[entry_index];
-            std.debug.assert(std.meta.eql(entry.key, key));
+            std.debug.assert(std.meta.eql(entry.key, atlasIdentity(key)));
             return atlasRaster(entry);
         }
     }
@@ -746,14 +748,21 @@ pub fn resolveGeneratedAtlas(
     return cacheAtlas(impl, key, width, height, 0, 0, pixels);
 }
 
+// Exact identity: low holds glyph/geometry, high holds sizing and key kind.
+// Zig 0.17.0-dev.1980+e78ea8f2c lowers u128 shifts to expensive limb loops;
+// two u64 words retain every key bit without padding comparisons or hashing.
+fn atlasIdentity(key: AtlasKey) AtlasIdentity {
+    return switch (key) {
+        .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = 0 },
+        .smooth_wave => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.thickness) << 16) | (@as(u64, v.line_height) << 32), .high = 1 << 16 },
+        .generated => |v| .{ .low = @as(u64, v.codepoint) | (@as(u64, v.width) << 32) | (@as(u64, v.height) << 48), .high = (2 << 16) | @as(u64, v.sizing.scale) | (@as(u64, v.sizing.subscale_n) << 8) | (@as(u64, v.sizing.subscale_d) << 12) },
+    };
+}
+
 fn findAtlasIndex(impl: *const AtlasImpl, key: AtlasKey) ?usize {
-    if (std.meta.activeTag(key) == .font) {
-        for (impl.entries[0..impl.entry_count], 0..) |entry, index|
-            if (std.meta.activeTag(entry.key) == .font and std.meta.eql(entry.key.font, key.font)) return index;
-        return null;
-    }
-    for (impl.entries[0..impl.entry_count], 0..) |entry, index|
-        if (std.meta.eql(entry.key, key)) return index;
+    const wanted = atlasIdentity(key);
+    for (impl.entries[0..impl.entry_count], 0..) |*entry, index|
+        if (entry.key.low == wanted.low and entry.key.high == wanted.high) return index;
     return null;
 }
 
@@ -771,6 +780,10 @@ test "atlas lookup matches generic key equality and first match across all varia
         .{ .generated = .{ .codepoint = 0x2500, .width = 11, .height = 20, .sizing = .{} } },
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 21, .sizing = .{} } },
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .scale = 2 } } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 2 } } },
+        .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{ .subscale_n = 1, .subscale_d = 3 } } },
+        .{ .generated = .{ .codepoint = std.math.maxInt(u32), .width = std.math.maxInt(u16), .height = std.math.maxInt(u16), .sizing = .{ .scale = 255, .subscale_n = 14, .subscale_d = 15 } } },
+        .{ .smooth_wave = .{ .width = std.math.maxInt(u16), .thickness = std.math.maxInt(u16), .line_height = std.math.maxInt(u16) } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 1, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 11, .thickness = 1, .line_height = 20 } },
         .{ .smooth_wave = .{ .width = 10, .thickness = 2, .line_height = 20 } },
@@ -778,15 +791,16 @@ test "atlas lookup matches generic key equality and first match across all varia
     };
     var entries: [2]AtlasEntry = undefined;
     // Lookup borrows only entries/count: no font or raster owner is invoked.
-    var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .entries = &entries, .pixels = &.{}, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
+    var impl = AtlasImpl{ .allocator = std.testing.allocator, .fonts = undefined, .box_drawing = undefined, .entries = &entries, .pixels = &.{}, .config = .{ .width = 1, .height = 1, .entry_capacity = 2 } };
     for (keys) |first| for (keys) |second| {
-        for ([_]AtlasKey{ first, second }, 0..) |key, index|
-            entries[index] = .{ .key = key, .atlas_x = 0, .atlas_y = 0, .width = 0, .height = 0, .left = 0, .top = 0 };
+        const retained = [_]AtlasKey{ first, second };
+        for (retained, 0..) |key, index|
+            entries[index] = .{ .key = atlasIdentity(key), .atlas_x = 0, .atlas_y = 0, .width = 0, .height = 0, .left = 0, .top = 0 };
         for (0..entries.len + 1) |count| {
             impl.entry_count = count;
             for (keys) |key| {
                 var expected: ?usize = null;
-                for (entries[0..count], 0..) |entry, index| if (std.meta.eql(entry.key, key)) {
+                for (retained[0..count], 0..) |entry, index| if (std.meta.eql(entry, key)) {
                     expected = index;
                     break;
                 };
@@ -836,7 +850,7 @@ fn cacheAtlas(
     impl.shelf_y = pack.shelf_y;
     impl.shelf_height = pack.shelf_height;
     const entry = AtlasEntry{
-        .key = key,
+        .key = atlasIdentity(key),
         .atlas_x = @intCast(pack.x),
         .atlas_y = @intCast(pack.y),
         .width = width,

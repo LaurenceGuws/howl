@@ -1910,8 +1910,9 @@ fn buildContentCommands(
     var has_decorations = false;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
+        const line_geometry = Source.lineGeometry(snapshot, row);
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
+        const line_columns = try contentLineColumnCount(columns, line_geometry);
         for (0..line_columns) |column| {
             const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
@@ -1928,7 +1929,7 @@ fn buildContentCommands(
                     physical,
                     colors.background,
                     row_index,
-                    Source.lineGeometry(snapshot, row),
+                    line_geometry,
                     cell_size,
                     surface,
                 );
@@ -1943,8 +1944,9 @@ fn buildContentCommands(
     for (0..row_count) |row_index| {
         if (!has_decorations) break;
         const row = Source.rowAt(snapshot, row_index);
+        const line_geometry = Source.lineGeometry(snapshot, row);
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
+        const line_columns = try contentLineColumnCount(columns, line_geometry);
         for (0..line_columns) |column| {
             const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
@@ -1977,7 +1979,7 @@ fn buildContentCommands(
                     colors.underline,
                     sizing,
                     row_index,
-                    Source.lineGeometry(snapshot, row),
+                    line_geometry,
                     cell_size,
                     surface,
                 )) has_raster = true;
@@ -1992,13 +1994,14 @@ fn buildContentCommands(
                     .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
                     .width = clip.width,
                     .height = @max(@as(u16, 1), metrics.strike_height),
-                }, colors.underline, sizing, row_index, Source.lineGeometry(snapshot, row), cell_size, surface);
+                }, colors.underline, sizing, row_index, line_geometry, cell_size, surface);
             }
         }
     }
 
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
+        const line_geometry = Source.lineGeometry(snapshot, row);
         const row_start = used;
         if (incremental_plan) |plan| {
             if (!plan.repairs[row_index]) {
@@ -2025,7 +2028,7 @@ fn buildContentCommands(
             }
         }
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
-        const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
+        const line_columns = try contentLineColumnCount(columns, line_geometry);
         // Evaluate only after a visible font cell reaches the original checks.
         var plain_row_clip: ?frame_vocabulary.Rect = null;
         var plain_row_baseline: ?i64 = null;
@@ -2053,7 +2056,7 @@ fn buildContentCommands(
             var run: text.Run = undefined;
             var contextual = false;
             var cluster_stride_26_6: i64 = 0;
-            if (Source.lineGeometry(snapshot, row) == .single_width and
+            if (line_geometry == .single_width and
                 try contentIsContextualOperatorCell(Source, cell, sequence))
             {
                 const run_limit = @min(
@@ -2115,7 +2118,7 @@ fn buildContentCommands(
                 }
             }
             const physical = try contentCellRect(row_index, column, cell_size);
-            const plain_geometry = contentUsesPlainGeometry(Source, cell, Source.lineGeometry(snapshot, row));
+            const plain_geometry = contentUsesPlainGeometry(Source, cell, line_geometry);
             const sizing: ?ContentCellSizing = if (plain_geometry)
                 null
             else
@@ -2126,7 +2129,7 @@ fn buildContentCommands(
                 try contentCellVisibleClip(
                     sizing.?,
                     row_index,
-                    Source.lineGeometry(snapshot, row),
+                    line_geometry,
                     cell_size,
                     surface,
                 ) orelse continue;
@@ -2152,7 +2155,7 @@ fn buildContentCommands(
                         try contentLineTransformRect(
                             sized_frame,
                             row_index,
-                            Source.lineGeometry(snapshot, row),
+                            line_geometry,
                             cell_size,
                         ),
                     .clip = allocation_clip,
@@ -2196,7 +2199,7 @@ fn buildContentCommands(
                 break :blk try contentLineClip(
                     row_clip,
                     row_index,
-                    Source.lineGeometry(snapshot, row),
+                    line_geometry,
                     cell_size,
                     surface,
                 ) orelse continue;
@@ -2205,7 +2208,7 @@ fn buildContentCommands(
                 cell,
                 sizing.?,
                 row_index,
-                Source.lineGeometry(snapshot, row),
+                line_geometry,
                 cell_size,
                 surface,
             ) orelse continue;
@@ -2272,7 +2275,7 @@ fn buildContentCommands(
                             try contentLineTransformRect(
                                 sized_destination,
                                 row_index,
-                                Source.lineGeometry(snapshot, row),
+                                line_geometry,
                                 cell_size,
                             ),
                         .clip = font_clip,

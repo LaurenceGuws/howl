@@ -77,6 +77,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .bundled = bundled_text,
     }).module("howl_text");
+    const cache_module = b.createModule(.{ .root_source_file = b.path("src/glyph_cache.zig"), .target = target, .optimize = optimize });
+    cache_module.addImport("howl_text", text);
+    const cache_tests = b.addTest(.{ .name = "howl-render-cache", .root_module = cache_module, .use_llvm = false, .use_lld = false });
+    check.dependOn(&cache_tests.step);
+    test_step.dependOn(&b.addRunArtifact(cache_tests).step);
+
     module.addImport("howl_text", text);
     test_module.addImport("howl_text", text);
 
