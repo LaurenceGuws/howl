@@ -1669,13 +1669,23 @@ const App = struct {
 };
 
 /// Owns SDL/application lifetime and graphical leases; terminal workers retain canonical authority.
-pub fn main(init: std.process.Init) !void {
+pub fn main(initial: std.process.Init) !void {
+    var init = initial;
     const args = init.minimal.args.vector;
     if (args.len == 2 and std.mem.eql(u8, std.mem.span(args[1]), "--version")) {
         std.debug.print("Howl {s} (Zig SDL app)\n", .{version});
         return;
     }
     if (args.len != 1) return error.InvalidArguments;
+    // Zig 0.17.0-dev.1980+e78ea8f2c retains the original POSIX environment length.
+    // SDL consumes Wayland activation tokens with unsetenv, invalidating that view.
+    // Own both child inheritance and I/O's environment before entering SDL.
+    const inherited = try profileEnvironment(allocator, init.environ_map, &.{});
+    defer inherited.block.deinit(allocator);
+    var threaded = std.Io.Threaded.init(allocator, .{ .environ = inherited });
+    defer threaded.deinit();
+    init.minimal.environ = inherited;
+    init.io = threaded.io();
     if (!c.SDL_SetAppMetadata("Howl", version, "io.github.laurenceguws.howl") or !c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
     defer c.SDL_Quit();
     if (!c.TTF_Init()) return error.TTF;
@@ -2245,6 +2255,23 @@ test "profile environment owns inherited replacements and empty Unicode values a
     try std.testing.checkAllAllocationFailures(std.testing.allocator, environmentAllocationProof, .{&parent});
     try std.testing.expectEqualStrings("original", parent.get("HOWL_OVERRIDE").?);
     try std.testing.expectEqualStrings("nonempty", parent.get("HOWL_EMPTY").?);
+}
+
+test "startup environment snapshot survives activation removal and parent retirement" {
+    const a = std.testing.allocator;
+    const owned = snapshot: {
+        var parent = std.process.Environ.Map.init(a);
+        defer parent.deinit();
+        try parent.put("XDG_ACTIVATION_TOKEN", "one-use");
+        try parent.put("HOWL_BASE", "retained");
+        const value = try profileEnvironment(a, &parent, &.{});
+        errdefer value.block.deinit(a);
+        try std.testing.expect(parent.orderedRemove("XDG_ACTIVATION_TOKEN"));
+        break :snapshot value;
+    };
+    defer owned.block.deinit(a);
+    try std.testing.expectEqualStrings("retained", std.process.Environ.getPosix(owned, "HOWL_BASE").?);
+    try std.testing.expectEqualStrings("one-use", std.process.Environ.getPosix(owned, "XDG_ACTIVATION_TOKEN").?);
 }
 test "Local child keeps copied profile environment after caller retirement and terminal identity stays canonical" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
