@@ -1030,6 +1030,17 @@ const App = struct {
         try self.clippedText(text, info_rect, info_rect.x);
     }
 
+    /// Processes every event; unchanged composition acknowledgments cannot repaint themselves.
+    fn processEvent(self: *App, value: c.SDL_Event) bool {
+        // SDL_SetTextInputArea can elicit an empty editing acknowledgment.
+        // Drawing that unchanged preedit sends another caret area and feeds itself.
+        const unchanged = value.type == c.SDL_EVENT_TEXT_EDITING and self.preedit.len == 0 and std.mem.span(value.edit.text).len == 0;
+        self.event(value) catch |failure| {
+            self.report(failure);
+            return true;
+        };
+        return !unchanged;
+    }
     fn event(self: *App, value: c.SDL_Event) !void {
         if (try self.chromeEvent(value)) return;
         self.input_timestamp = value.common.timestamp;
@@ -2076,15 +2087,20 @@ pub fn main(initial: std.process.Init) !void {
     // reason: Callback retirement is best-effort immediately before SDL destroys this owned window.
     defer _ = c.SDL_SetWindowHitTest(window, null, null);
     try app.createTab(try app.startup(), null);
+    var redraw = true;
     while (app.running) {
-        try app.draw();
+        if (redraw) try app.draw();
+        redraw = false;
         app.selectionTick() catch |failure| app.report(failure);
         var event: c.SDL_Event = undefined;
         if (app.waitTimeout(c.SDL_GetTicks())) |timeout| {
-            if (!c.SDL_WaitEventTimeout(&event, timeout)) continue;
+            if (!c.SDL_WaitEventTimeout(&event, timeout)) {
+                redraw = true;
+                continue;
+            }
         } else if (!c.SDL_WaitEvent(&event)) return error.SDL;
         while (true) {
-            app.event(event) catch |failure| app.report(failure);
+            if (app.processEvent(event)) redraw = true;
             if (!app.running or !c.SDL_PollEvent(&event)) break;
         }
     }
@@ -2317,7 +2333,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
     event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 100, .windowID = c.SDL_GetWindowID(window), .text = "aéz", .start = 2, .length = 1 };
     const before = owner.snapshot().revision;
-    try app.event(event_value);
+    try std.testing.expect(app.processEvent(event_value));
     try std.testing.expectEqualStrings("aéz", app.preedit.text());
     try std.testing.expectEqual(before, owner.snapshot().revision);
     try app.drawComposition();
@@ -2326,6 +2342,19 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try std.testing.expect(c.SDL_GetTextInputArea(window, &area, &caret));
     try std.testing.expect(area.x > 9 and area.y > 43 and area.w > 0 and area.h > 0);
     try std.testing.expect(caret > 0 and caret < area.w);
+    event_value.edit.text = "";
+    event_value.edit.timestamp = 101;
+    try std.testing.expect(app.processEvent(event_value));
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
+    try std.testing.expect(!app.processEvent(event_value));
+    try std.testing.expectEqual(before, owner.snapshot().revision);
+    const oversized: [1025:0]u8 = @splat('x');
+    event_value.edit.text = &oversized;
+    try std.testing.expect(app.processEvent(event_value));
+    try std.testing.expect(app.notice_len != 0);
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
+    event_value.edit.text = "";
+    try std.testing.expect(!app.processEvent(event_value));
     event_value.common.timestamp = 200;
     app.input_timestamp = 200;
     try app.openPalette(false);

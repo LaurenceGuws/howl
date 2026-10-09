@@ -195,3 +195,29 @@ At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Al
 This is a baseline, not a win claim. Howl sustains ordinary 240 Hz through 4096, but trails the references at 8192. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
 
 Raw receipts and CPU reconciliation are in `~/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/`: `REPORT.md`, `REFS.jsonl`, `FOLDED.json`, `runs/` and `CLEANUP.json`. Every stable interval reconciles per-PID and tree CPU; all 40 owned process trees and the private compositor retired cleanly. PSS is retained separately: the first Howl cold launch has a 1.6 GiB PSS outlier that is not explained by its 67 MiB anonymous footprint, so PSS must not be relabelled as owned host RAM. The normal ReleaseSafe dogfood binary and user settings were not changed.
+
+## Empty preedit repaint qualification, 2026-10-10
+
+An app-only SDL feedback path could present old frames: updating the IME caret
+could elicit an empty editing acknowledgment, whose unconditional redraw moved
+the caret again while canonical output was changing. The app now processes that
+event without redrawing when composition was already empty. Active composition,
+clearing, input, failures and timer expiry retain their redraws. Worker wake
+coalescing and renderer/VT architecture were not changed.
+
+Twenty-three uninstrumented A/B/B/A and reference trials qualified the change.
+At 1 Hz with 4096 cells, terminal CPU fell from 0.66–0.81% to 0.46–0.51% of one
+core. A capped 65536-cell control completed exactly 400 frames at 20 Hz in every
+trial: terminal CPU fell from 25.98–30.84% to 22.95–22.99%. This is an equal-work
+CPU saving. One saturating candidate trial had lower producer cadence
+(22.77 versus baseline 23.86–24.10 fps), so maximum throughput improvement is not
+claimed. Unicode/background remains near 238–239 producer fps without a CPU win.
+
+The raw controls, separated CPU samples, binary hashes and cleanup receipts are
+beside the reference baseline in `night-20261010/`: `AB.jsonl`, `CAPPED.jsonl`,
+`AB_FOLDED.json`, `EMPTY_PREEDIT_RESULT.md`, `ab-runs/` and `capped-runs/`.
+All 23 owned process trees and both private environments retired cleanly.
+Root checks/tests/protocol/audits and both app optimization-mode proofs passed.
+A per-call probe rejected a header-text cache: rasterization and texture creation
+were only about 1–2% of measured app CPU. Temporary instrumentation stays outside
+accepted source.
