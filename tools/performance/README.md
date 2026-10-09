@@ -31,6 +31,9 @@ lifetime ticks across producer exit would create a negative interval. Older
 captures can contain that error; recalculate stable intervals or rerun before
 comparing their average CPU.
 
+Raw samples also retain per-PID CPU and memory so terminal costs can be separated
+from TUI Zoo and the shell/marshal. Complete-tree summaries remain unchanged.
+
 Each race and calibration probe retains cleanup for its fresh window and process
 identities as soon as they are known. Placement/metadata failures and interrupts
 release the runner, stop the sampler, and clean up only that owned process tree.
@@ -79,7 +82,7 @@ physical 1920x1036 KDE index without an explicit cross-track qualification.
 
 ## Benchmark Howl build
 
-`build-howl-fast.sh` creates a self-contained race binary under `~/.local/state/howl-performance-index/howl-fast`: native Zig bridge/dependency graph in ReleaseFast and Odin `-o:speed` without the daily `-debug` safety instrumentation. The normal dogfood binary is not modified.
+`build-howl-fast.sh` builds the Local-only Zig app and its proofs in ReleaseFast under `~/.local/state/howl-performance-index/howl-fast`. The app retains its tracked LLVM codegen/selfhost-linker policy. `horses.sh` uses the independent benchmark `app.json`; the normal dogfood binary and user settings are not modified. `HORSES_HOWL_FAST_ROOT` selects a workstream-owned artifact directory.
 
 The `cells` workload accepts doses through 65,536; the default sweep now extends through 8,192, 16,384, 32,768 and 65,536 to find real saturation knees.
 
@@ -88,7 +91,11 @@ Select background and Unicode performance canaries without changing the track:
     HORSES_GLYPH_SET=alnum HORSES_BACKGROUND=1 ./tools/performance/horses.sh run howl 4096
     HORSES_GLYPH_SET=unicode HORSES_BACKGROUND=1 ./tools/performance/horses.sh run howl 4096
 
-The run metadata records both selectors. Producer FPS measures emitted frames
+`HORSES_WORKLOAD=rain` selects the diffed Rain canary with the same geometry,
+cadence and duration. The explicit workload selector reaches the terminal-side
+runner even in managed environments.
+
+The run metadata records the workload and both selectors. Producer FPS measures emitted frames
 and stdout backpressure; it does not establish displayed FPS or Unicode rendering
 correctness. Keep each configuration in its own dose curve.
 
@@ -101,7 +108,7 @@ The overnight comparison used a private 1920x1080 compositor, the same
 presentation-credit checkpoint was 713a21e, with harness cleanup at 2641889.
 Howl exposed 381x78 PTY cells and Foot 384x77; the common payload fits both.
 
-These CPU values separate terminal processes from TUI Zoo using the raw
+These historical Odin CPU values separate terminal processes from TUI Zoo using the raw
 per-PID samples, excluding intervals with process-set changes. They differ
 from the harness's complete-tree CPU summary. Percentages refer to one CPU core.
 
@@ -170,3 +177,21 @@ ingests while hidden, then resumed at its exact canonical revision with
 the older frame and caught up after about one second without further child
 output. The hidden fixture uses TUI Zoo oracle mode to preserve final glyphs;
 ordinary producer cleanup would otherwise clear the frozen view.
+
+## Local app reference control, 2026-10-10
+
+At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Alacritty in a private 1920×1080 KWin environment at scale 1, with Iosevka 10px, the same 378×74 TUI Zoo payload, 240 Hz target and 20-second trials. There were 40 successful fresh-process trials; the 4096/8192/65536 alnum doses were repeated in reverse horse order. Values below are producer fps / terminal CPU percent of one core, excluding TUI Zoo and the shell.
+
+| Canary | Howl | Foot | Kitty | Alacritty |
+|---|---:|---:|---:|---:|
+| alnum 16 | 240.0 / 18.5 | 240.0 / 3.5 | 240.0 / 24.6 | 240.0 / 13.6 |
+| alnum 4096 | 240.0 / 33.6–33.9 | 240.0 / 30.8–31.1 | 240.0 / 103.3–103.8 | 240.0 / 28.1–29.6 |
+| alnum 8192 | 184.4–186.3 / 39.0–39.7 | 200.6 / 41.9–45.2 | 213.0–213.1 / 106.4–107.1 | 211.4–213.6 / 39.7–40.0 |
+| alnum 65536 | 23.7–23.8 / 34.0–34.3 | 25.1–25.3 / 58.4–59.5 | 26.8 / 38.4–38.9 | 23.5–23.6 / 25.6–26.1 |
+| unicode-bg 4096 | 237.3 / 55.0 | 239.8 / 94.6 | 240.0 / 90.1 | 240.0 / 40.6 |
+| plain 4096 | 240.0 / 33.7 | 240.0 / 30.7 | 240.0 / 103.9 | 240.0 / 29.5 |
+| rain | 240.0 / 6.2 | 240.0 / 15.5 | 240.0 / 19.0 | 240.0 / 8.9 |
+
+This is a baseline, not a win claim. Howl sustains ordinary 240 Hz through 4096, but trails the references at 8192. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
+
+Raw receipts and CPU reconciliation are in `~/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/`: `REPORT.md`, `REFS.jsonl`, `FOLDED.json`, `runs/` and `CLEANUP.json`. Every stable interval reconciles per-PID and tree CPU; all 40 owned process trees and the private compositor retired cleanly. PSS is retained separately: the first Howl cold launch has a 1.6 GiB PSS outlier that is not explained by its 67 MiB anonymous footprint, so PSS must not be relabelled as owned host RAM. The normal ReleaseSafe dogfood binary and user settings were not changed.

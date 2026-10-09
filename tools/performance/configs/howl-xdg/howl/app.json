@@ -1,22 +1,18 @@
 {
-  "schema": 4,
+  "schema": 1,
   "terminal_font_pixels": 10,
-  "startup_profile": 0,
   "default_profile": "benchmark",
   "profiles": [
     {
       "id": "benchmark",
       "name": "Benchmark",
-      "mode": "launch",
-      "shell": "",
+      "shell": "/bin/sh",
       "command": "",
       "cwd": "",
-      "endpoint": "",
       "environment": [],
       "font_pixels": 0
     }
   ],
-  "servers": [],
   "keybindings": [],
   "app_theme": "howl_dark",
   "font": {
