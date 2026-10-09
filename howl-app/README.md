@@ -46,5 +46,11 @@ external native input-method control remains unqualified. Startup high DPI and
 live font/display-scale changes are supported. Odin remains daily until Local
 qualification and a daily-driver trial complete.
 
+The desktop artifact and its proofs use LLVM code generation with the selfhost
+linker. On Zig 0.17.0-dev.1980+e78ea8f2c, matched live btop work reproduced similar
+publication/presentation counts in app and Odin; switching app code generation
+reduced worker CPU substantially. Standalone core package build policies remain
+unchanged. ReleaseSafe retains bounds and safety checks.
+
 Build with the repository's exact compiler pin:
 zig build install check test -Doptimize=ReleaseSafe

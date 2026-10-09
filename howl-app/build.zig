@@ -27,9 +27,11 @@ pub fn build(b: *std.Build) void {
     root.linkSystemLibrary("SDL3", .{});
     root.linkSystemLibrary("SDL3_ttf", .{});
     root.linkSystemLibrary("fontconfig", .{});
-    const app = b.addExecutable(.{ .name = "howl-app", .root_module = root, .use_llvm = false, .use_lld = false });
+    // Zig 0.17.0-dev.1980+e78ea8f2c: selfhost codegen inflated publication CPU.
+    // Use LLVM for this desktop artifact and its proofs; keep the selfhost linker.
+    const app = b.addExecutable(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
     b.installArtifact(app);
-    const tests = b.addTest(.{ .name = "howl-app", .root_module = root, .use_llvm = false, .use_lld = false });
+    const tests = b.addTest(.{ .name = "howl-app", .root_module = root, .use_llvm = true, .use_lld = false });
     const check = b.step("check", "Compile the direct Zig SDL app and its proofs");
     check.dependOn(&app.step);
     check.dependOn(&tests.step);
