@@ -3,6 +3,7 @@ const c = @import("desktop");
 const instance = @import("howl_instance");
 const policy = @import("publication.zig");
 const selection = @import("selection.zig");
+const find = @import("find.zig");
 const posix = std.posix;
 
 const queue_limit = 64;
@@ -16,6 +17,7 @@ pub const Task = union(enum) {
     seek: u32,
     retry_render,
     select: Select,
+    find: find.Request,
 };
 
 /// Selection operations resolve only within the terminal worker.
@@ -73,6 +75,7 @@ pub const Status = struct {
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
     selection_failure: ?SelectionError = null,
+    search: find.Status = .{},
     interaction: ?instance.Terminal.InteractionState = null,
     cursor_row: u16 = 0,
     cursor_col: u16 = 0,
@@ -171,6 +174,7 @@ const State = struct {
     selection_serial: u64 = 0,
     selection_failure: ?SelectionError = null,
     paint: selection.Paint = .{},
+    search: find.Find = .{},
 
     fn create(
         allocator: std.mem.Allocator,
@@ -390,6 +394,41 @@ const State = struct {
             .clear => {},
         }
     }
+    fn selectMatch(self: *State, range: selection.Range) void {
+        self.selected = range;
+        self.selection_failure = null;
+        const live = instance.terminal(self.value).semanticView(0);
+        const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
+        self.history.seek(@intCast(@min(@as(i64, live.history_count), @max(0, top - range.anchor.row))), live.history_count, live.history_row_base, live.is_alternate_screen);
+        self.gate.pending = true;
+    }
+    fn applyFind(self: *State, request: find.Request) void {
+        self.selection_serial = request.serial;
+        self.selection_failure = null;
+        const observation = instance.terminal(self.value);
+        switch (request.kind) {
+            .close => {
+                self.search = .{};
+                self.search.status.serial = request.serial;
+                self.selected = null;
+            },
+            .query => {
+                self.selected = null;
+                self.search.begin(observation, request) catch |failure| self.search.fail(failure);
+            },
+            .next, .previous => {
+                if (self.search.status.phase == .stale or self.search.status.phase == .failed) {
+                    var refreshed = self.search.request;
+                    refreshed.serial = request.serial;
+                    self.selected = null;
+                    self.search.begin(observation, refreshed) catch |failure| self.search.fail(failure);
+                } else if (self.search.navigate(request.serial, request.kind == .previous)) |range| self.selectMatch(range);
+            },
+        }
+        self.gate.pending = true;
+        self.notify();
+    }
+
     fn cancelPending(self: *State) void {
         while (self.pop()) |work| switch (work) {
             .intent => |task| self.releaseTask(task),
@@ -435,6 +474,7 @@ const State = struct {
     fn apply(self: *State, task: Task) !void {
         const live = instance.terminal(self.value).semanticView(0);
         switch (task) {
+            .find => |request| self.applyFind(request),
             .select => |intent| self.applySelection(intent) catch |failure| {
                 self.selected = null;
                 self.selection_failure = failure;
@@ -494,7 +534,20 @@ const State = struct {
                 self.selection_failure = error.SelectionEvicted;
             },
         };
+        const search_changed = self.search.step(observation) catch |failure| failed: {
+            self.search.fail(failure);
+            break :failed true;
+        };
+        if (self.selection_serial == self.search.status.serial) {
+            if (self.search.status.phase == .stale and self.selected != null) {
+                self.selected = null;
+                self.gate.pending = true;
+            } else if (self.search.status.current == null and self.search.status.count != 0) {
+                if (self.search.navigate(self.selection_serial, false)) |range| self.selectMatch(range);
+            }
+        }
         self.mutex.lockUncancelable(self.io);
+        self.status.search = self.search.status;
         self.status.selected = self.selected;
         self.status.selection_serial = self.selection_serial;
         self.status.selection_failure = self.selection_failure;
@@ -513,7 +566,7 @@ const State = struct {
         self.status.title_len = title_len;
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
-        if (lifecycle_changed or title_changed) self.notify();
+        if (lifecycle_changed or title_changed or search_changed) self.notify();
         var published = false;
         if (self.presentation_failure == null and self.gate.pending and self.visible.load(.acquire) and
             self.gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
@@ -575,7 +628,7 @@ const State = struct {
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
             }
-            if (instance.bufferedOutputPending(self.value)) timeout = 0;
+            if (instance.bufferedOutputPending(self.value) or self.search.status.phase == .scanning) timeout = 0;
             var fds = [_]posix.pollfd{
                 .{
                     .fd = if (result.stream_closed and !result.write_pending) -1 else try instance.descriptor(self.value),
@@ -1182,4 +1235,90 @@ test "canonical failure cancels or rejects borrowed copy requests before caller 
     try owner.submit(.{ .resize = .{ .rows = 0, .columns = 0 } });
     try std.testing.expectError(error.TerminalStopped, owner.copySelection(std.testing.allocator, 128));
     try std.testing.expect(owner.snapshot().failure != null);
+}
+
+fn waitSearch(owner: *Terminal, serial: u64, phase: find.Phase) !Status {
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (status.search.serial == serial and status.search.phase == phase) return status;
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    return error.Timeout;
+}
+test "hidden retained-history find refreshes stale cuts and never steals a later pointer selection" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; i=0; while [ \"$i\" -lt 100 ]; do printf 'needle %03d\\r\\n' \"$i\"; i=$((i+1)); done; printf '\\033]0;READY\\007'; read line; printf 'needle NEW\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 128,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try owner.submit(.{ .find = try find.Request.query(1, "needle") });
+    const initial = try waitSearch(owner, 1, .complete);
+    try std.testing.expectEqual(@as(u16, 100), initial.search.count);
+    try std.testing.expectEqual(@as(?u16, 0), initial.search.current);
+    try std.testing.expect(initial.selected.?.anchor.row < 10);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    const text = try owner.copySelection(std.testing.allocator, 128);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("needle", text);
+    try owner.submit(.{ .find = .{ .serial = 2, .kind = .next } });
+    const next = try waitSearch(owner, 2, .complete);
+    try std.testing.expectEqual(@as(?u16, 1), next.search.current);
+    try std.testing.expect(next.selected.?.anchor.row > initial.selected.?.anchor.row);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    const stale = try waitSearch(owner, 2, .stale);
+    try std.testing.expect(stale.selected == null);
+    try owner.submit(.{ .find = .{ .serial = 3, .kind = .previous } });
+    const refreshed = try waitSearch(owner, 3, .complete);
+    try std.testing.expectEqual(@as(u16, 101), refreshed.search.count);
+    // Query and later pointer intent share one FIFO; incremental first-match navigation
+    // must honor the later selection serial even when no graphical observer exists.
+    try owner.submit(.{ .find = try find.Request.query(4, "needle") });
+    const context: selection.Context = .{ .rows = 4, .columns = 20, .history_count = 97, .history_row_base = 0, .history_offset = 0, .alternate = false };
+    try owner.submit(.{ .select = .{ .serial = 5, .kind = .start, .context = context, .point = .{ .row = 99, .col = 7 } } });
+    const manual = try waitSearch(owner, 4, .complete);
+    try std.testing.expectEqual(@as(u64, 5), manual.selection_serial);
+    try std.testing.expectEqual(@as(i32, 99), manual.selected.?.anchor.row);
+    try std.testing.expectEqual(@as(u16, 7), manual.selected.?.anchor.col);
+    try owner.submit(.{ .find = .{ .serial = 6, .kind = .close } });
+    const closed = try waitSearch(owner, 6, .idle);
+    try std.testing.expect(closed.selected == null);
+    try std.testing.expectError(error.NoSelection, owner.copySelection(std.testing.allocator, 128));
+    try owner.submit(.{ .find = .{ .serial = 7, .kind = .query, .len = 65535 } });
+    const invalid = try waitSearch(owner, 7, .failed);
+    try std.testing.expectEqual(error.InvalidQuery, invalid.search.failure.?);
+    try std.testing.expect(invalid.failure == null);
+}
+
+test "incremental hidden find cannot fence canonical input and one MiB output behind observer progress" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; i=0; while [ \"$i\" -lt 1000 ]; do printf 'needle %04d\\r\\n' \"$i\"; i=$((i+1)); done; printf '\\033]0;READY\\007'; read line; dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\\000' x; printf '\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 2048,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    try owner.submit(.{ .find = try find.Request.query(1, "never") });
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    const status = try waitSearch(owner, 1, .stale);
+    try std.testing.expect(status.failure == null);
+    try std.testing.expect(status.selected == null);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
 }

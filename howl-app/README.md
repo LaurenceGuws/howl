@@ -78,14 +78,23 @@ active gesture; negotiated terminal mouse reports keep their route and Shift
 selects text. FIFO Copy returns bounded owned UTF-8, including complete wide
 characters and combining sequences, without exposing canonical rows to SDL.
 
-This remains an experimental capability cut. Search/scrollbar, rich
+Pane-local Find edits bounded UTF-8 literals without sending query keys, paste or
+preedit to the child. The worker scans four canonical visual rows per service turn
+and retains at most 512 stable matches for a 255-byte query. Exact Unicode and
+conceal filtering preserve canonical columns. Changed canonical revisions report
+stale; Enter refreshes. The match cap reports incomplete results explicitly.
+Enter/Shift+Enter navigate known matches through the same range/paint/seek path.
+The scrollbar derives its thumb from the accepted immutable frame and captures
+seek gestures on their original pane without changing the canonical grid.
+
+This remains an experimental capability cut. Rich
 desktop consequences and explicit attachments still need qualification. Exact
 font paths can also be edited and reset in settings.
 IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Sixty-one package proofs cover worker independence/failure cleanup, immutable
+Sixty-six package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
@@ -94,7 +103,11 @@ bounds, migration, mapping swaps, bounded settings edits, catalogue mutation,
 shortcut recording, live-font save rollback with held frames/history, and
 font-catalogue bounds, exact face ownership, allocation cleanup and chooser IME,
 stable selection/Unicode/soft-wrap semantics, hidden FIFO copy, copy bounds and
-fault cleanup, plus selection paint/lease coherence under transfer stalls. A successful
+fault cleanup, plus selection paint/lease coherence under transfer stalls,
+exact literal matching/Unicode/conceal bounds, incremental scan caps/staleness,
+hidden retained-history navigation and refresh, later pointer ownership,
+hostile-query failure, canonical progress during active find, and fractional
+scrollbar seek bounds. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:

@@ -177,6 +177,9 @@ experimental:
     the same transaction. Worker-owned stable selection, word/visual-row expansion,
     edge scrolling and bounded FIFO Copy preserve canonical Unicode; copied paint
     travels with its matching immutable lease. Eviction/reflow/bank failures stay
-    explicit. Search/scrollbar, desktop input/consequence policy and explicit attachments remain
+    explicit. Pane-local literal Find scans bounded worker-owned canonical rows,
+    reports stale/capped/error cuts, and navigates through the same stable range
+    and seek path. A frame-derived scrollbar captures bounded original-pane seek
+    gestures without reflow. Desktop input/consequence policy and explicit attachments remain
     to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

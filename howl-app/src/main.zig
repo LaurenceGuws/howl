@@ -14,6 +14,8 @@ const settings = @import("settings.zig");
 const appearance = @import("appearance.zig");
 const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
+const find = @import("find.zig");
+const scrollbar = @import("scrollbar.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -35,6 +37,7 @@ const Pane = struct {
     selection_serial: u64 = 0,
     selection_failure_reported: u64 = 0,
     selection_hit: ?SelectionHit = null,
+    finder: ?FindEditor = null,
     cell_size: ?instance.render.terminal.Size = null,
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
@@ -73,8 +76,14 @@ const Palette = struct {
         return count;
     }
 };
+const FindEditor = struct {
+    serial: u64 = 0,
+    bytes: [find.query_limit]u8 = undefined,
+    len: usize = 0,
+};
 const Drag = union(enum) { none, divider: layout.Divider, tab };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
+const ScrollDrag = struct { pane: *Pane, bar: scrollbar.Bar, grab: f32, last: ?u32 = null };
 const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
 const SelectionHit = struct { point: instance.Terminal.TextPoint, columns: u16, alternate: bool };
 const App = struct {
@@ -95,6 +104,7 @@ const App = struct {
     input_timestamp: u64 = 0,
     capture: ?PointerCapture = null,
     selecting: ?SelectionDrag = null,
+    scrolling: ?ScrollDrag = null,
     selection_tick: u64 = 0,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
@@ -168,6 +178,7 @@ const App = struct {
         return result;
     }
     fn destroyPane(self: *App, value: *Pane) void {
+        if (self.scrolling) |dragging| if (dragging.pane == value) self.cancelDrag();
         if (self.selecting) |dragging| if (dragging.pane == value) self.cancelDrag();
         if (self.capture) |held| if (held.pane == value) {
             self.finishPointer() catch |failure| self.report(failure);
@@ -193,14 +204,14 @@ const App = struct {
         self.cancelComposition();
         try self.finishPointer();
         try self.keyboard.releaseTerminal();
-        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null)) return;
+        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
         self.cancelComposition();
-        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null)) return;
+        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
@@ -364,7 +375,7 @@ const App = struct {
             .paste_clipboard => {
                 const text = c.SDL_GetClipboardText() orelse return error.SDL;
                 defer c.SDL_free(text);
-                try self.pane().submit(.{ .input = .{ .paste = std.mem.span(text) } });
+                if (self.pane().finder != null) try self.findAppend(std.mem.span(text)) else try self.pane().submit(.{ .input = .{ .paste = std.mem.span(text) } });
             },
             .history_oldest => try self.pane().submit(.{ .seek = std.math.maxInt(u32) }),
             .history_live => try self.pane().submit(.{ .seek = 0 }),
@@ -380,7 +391,7 @@ const App = struct {
                 const changed = self.tab().tree.resize(direction);
                 if (!changed) self.setNotice("No divider in that direction");
             },
-            .toggle_find => return error.FindNotImplemented,
+            .toggle_find => try self.toggleFind(),
             .adjust_font => |delta| {
                 const p = self.pane();
                 const next: u16 = @intCast(std.math.clamp(@as(i32, p.font_size) + delta, 8, 48));
@@ -824,6 +835,10 @@ const App = struct {
         thread.detach();
     }
     fn cancelDrag(self: *App) void {
+        if (self.scrolling != null) {
+            self.scrolling = null;
+            self.consume_left_release = true;
+        }
         if (self.selecting != null) {
             self.selecting = null;
             self.consume_left_release = true;
@@ -866,6 +881,84 @@ const App = struct {
             else => {},
         }
     }
+    fn findRequest(self: *App, p: *Pane, request: find.Request) !void {
+        if (p.selection_serial == std.math.maxInt(u64)) return error.SelectionSerialLimit;
+        var admitted = request;
+        admitted.serial = p.selection_serial + 1;
+        try p.submit(.{ .find = admitted });
+        p.selection_serial = admitted.serial;
+        if (p.finder) |*editor| editor.serial = admitted.serial;
+        p.selection_hit = null;
+        self.notice_len = 0;
+        self.cancelComposition();
+    }
+    fn toggleFind(self: *App) !void {
+        const p = self.pane();
+        try self.loseKeyboard();
+        if (p.finder != null) {
+            try self.findRequest(p, .{ .serial = 0, .kind = .close });
+            p.finder = null;
+        } else {
+            try self.findRequest(p, try find.Request.query(0, ""));
+            p.finder = .{ .serial = p.selection_serial };
+        }
+        try self.gainKeyboard();
+    }
+    fn findAppend(self: *App, text: []const u8) !void {
+        const p = self.pane();
+        var editor = p.finder.?;
+        if (text.len > editor.bytes.len - editor.len) return error.InvalidQuery;
+        @memcpy(editor.bytes[editor.len..][0..text.len], text);
+        editor.len += text.len;
+        try self.findRequest(p, try find.Request.query(0, editor.bytes[0..editor.len]));
+        editor.serial = p.selection_serial;
+        p.finder = editor;
+    }
+    fn findKey(self: *App, event_key: c.SDL_KeyboardEvent) !void {
+        const p = self.pane();
+        switch (event_key.key) {
+            c.SDLK_ESCAPE => try self.toggleFind(),
+            c.SDLK_RETURN, c.SDLK_KP_ENTER, c.SDLK_DOWN, c.SDLK_UP => try self.findRequest(p, .{
+                .serial = 0,
+                .kind = if (event_key.key == c.SDLK_UP or event_key.mod & c.SDL_KMOD_SHIFT != 0) .previous else .next,
+            }),
+            c.SDLK_BACKSPACE => {
+                var editor = p.finder.?;
+                if (editor.len == 0) return;
+                editor.len -= 1;
+                while (editor.len != 0 and editor.bytes[editor.len] & 0xc0 == 0x80) editor.len -= 1;
+                try self.findRequest(p, try find.Request.query(0, editor.bytes[0..editor.len]));
+                editor.serial = p.selection_serial;
+                p.finder = editor;
+            },
+            else => {},
+        }
+    }
+    fn findField(rect: c.SDL_FRect) layout.Rect {
+        return .{ .x = rect.x, .y = rect.y + @max(0, rect.h - 28), .width = rect.w, .height = @min(28, rect.h) };
+    }
+    fn drawFind(self: *App, p: *Pane, rect: c.SDL_FRect, status: terminal.Status) !void {
+        const editor = p.finder orelse return;
+        const field = findField(rect);
+        const colors = try self.uiPalette();
+        try fill(self.renderer, field, colors.active);
+        const query_rect: layout.Rect = .{ .x = field.x + 6, .y = field.y, .width = @max(1, field.width * 0.55 - 12), .height = field.height };
+        const query_text = if (editor.len == 0) "Find — type text" else editor.bytes[0..editor.len];
+        const query_scroll = if (editor.len == 0) 0 else @max(0, try self.textWidth(query_text) - query_rect.width + 12);
+        try self.clippedText(query_text, query_rect, query_rect.x - query_scroll);
+        const progress = status.search;
+        var buffer: [128]u8 = undefined;
+        const text = if (progress.serial != editor.serial) "Waiting…" else if (progress.failure) |failure| @errorName(failure) else switch (progress.phase) {
+            .idle => "Enter next · Shift+Enter previous · Esc",
+            .scanning => try std.fmt.bufPrint(&buffer, "{d} matches · searching {d}/{d}", .{ progress.count, progress.scanned, progress.total }),
+            .complete, .incomplete => try std.fmt.bufPrint(&buffer, "{d}/{d}{s} · Enter next · Esc", .{ if (progress.current) |index| index + 1 else @as(u16, 0), progress.count, if (progress.phase == .incomplete) " · capped" else "" }),
+            .stale => "Changed — Enter refreshes · Esc",
+            .failed => "Search failed · Enter retries",
+        };
+        const info_rect: layout.Rect = .{ .x = field.x + field.width * 0.55, .y = field.y, .width = @max(1, field.width * 0.45 - 6), .height = field.height };
+        try self.clippedText(text, info_rect, info_rect.x);
+    }
+
     fn event(self: *App, value: c.SDL_Event) !void {
         self.input_timestamp = value.common.timestamp;
         switch (value.type) {
@@ -882,11 +975,11 @@ const App = struct {
                     }
                     break :blk target;
                 } else null;
-                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.palette != null or self.settings_editor != null);
+                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.palette != null or self.settings_editor != null or self.pane().finder != null);
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else try self.paletteKey(value.key.key),
+                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key) else try self.findKey(value.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -908,12 +1001,17 @@ const App = struct {
                         p.len += text.len;
                         p.selected = 0;
                     }
-                } else try self.pane().submit(.{ .input = .{ .bytes = text } });
+                } else if (self.pane().finder != null) try self.findAppend(text) else try self.pane().submit(.{ .input = .{ .bytes = text } });
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
                 try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState()), value.button.clicks),
             c.SDL_EVENT_MOUSE_BUTTON_UP => {
                 const button = mouseButton(value.button.button) orelse return;
+                if (button == .left and self.scrolling != null) {
+                    defer self.scrolling = null;
+                    try self.scrollPoint(value.button.y);
+                    return;
+                }
                 if (button == .left and self.consume_left_release) {
                     self.consume_left_release = false;
                     return;
@@ -928,7 +1026,9 @@ const App = struct {
                 if (button == .left) self.drag = .none;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
-                if (self.selecting) |*dragging| {
+                if (self.scrolling != null) {
+                    try self.scrollPoint(value.motion.y);
+                } else if (self.selecting) |*dragging| {
                     dragging.x = value.motion.x;
                     dragging.y = value.motion.y;
                     try self.selectPoint(dragging.pane, dragging.x, dragging.y, .extend, true);
@@ -968,7 +1068,7 @@ const App = struct {
         }
     }
     fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier, clicks: u8) !void {
-        if (self.selecting != null) return;
+        if (self.selecting != null or self.scrolling != null) return;
         if (self.capture) |held| {
             const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
             return self.pointerPress(held.pane, point, button, mods);
@@ -1020,7 +1120,19 @@ const App = struct {
         for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) {
             try self.focusPane(place.pane);
             const p = self.pane();
+            if (p.finder != null and findField(paneContent(place.rect)).contains(x, y)) {
+                if (button == .left) self.consume_left_release = true;
+                return;
+            }
             const frame = p.canvas.frame() orelse return;
+            const content = paneContent(place.rect);
+            if (scrollbar.Bar.fromFrame(.{ .x = content.x, .y = content.y, .width = content.w, .height = content.h }, frame, self.scale)) |bar| {
+                if (button == .left and bar.track.contains(x, y)) {
+                    self.scrolling = .{ .pane = p, .bar = bar, .grab = if (bar.thumb.contains(x, y)) y - bar.thumb.y else bar.thumb.height / 2 };
+                    try self.scrollPoint(y);
+                    return;
+                }
+            }
             const state = p.snapshot().interaction orelse return;
             if (!mods.shift and frame.history_offset == 0 and state.mouse_tracking != .off) {
                 const point = self.pointerLocation(p, x, y, false) orelse return;
@@ -1037,6 +1149,20 @@ const App = struct {
             return;
         };
     }
+    fn scrollPoint(self: *App, y: f32) !void {
+        const dragging = if (self.scrolling) |*value| value else return;
+        const offset = dragging.bar.seek(y, dragging.grab) orelse return;
+        if (dragging.last == offset) return;
+        try dragging.pane.submit(.{ .seek = offset });
+        dragging.last = offset;
+    }
+    fn drawScrollbar(self: *App, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
+        const bar = scrollbar.Bar.fromFrame(.{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, frame, self.scale) orelse return;
+        const colors = try self.uiPalette();
+        try fill(self.renderer, bar.track, colors.idle);
+        try fill(self.renderer, bar.thumb, colors.border);
+    }
+
     fn selectPoint(self: *App, p: *Pane, x: f32, y: f32, kind: terminal.SelectKind, captured: bool) !void {
         const frame = p.canvas.frame() orelse return;
         const location = self.pointerLocation(p, x, y, captured) orelse return;
@@ -1134,7 +1260,7 @@ const App = struct {
             if (std.math.isFinite(wheel.y)) chooser.move(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)));
             return;
         }
-        if ((self.palette != null or self.settings_editor != null)) return;
+        if ((self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
         const p = self.tab().panes[slot].?;
         const frame = p.canvas.frame() orelse return;
@@ -1342,6 +1468,21 @@ const App = struct {
             clip = .{ .x = box.x + 12, .y = box.y + 8, .width = @max(1, box.width - 24), .height = 32 };
             x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
             y = box.y + 12;
+        } else if (self.pane().finder) |editor| {
+            const p = self.pane();
+            var places: [layout.pane_limit]layout.Placement = undefined;
+            var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+            const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
+            var found = false;
+            for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
+                clip = findField(paneContent(place.rect));
+                clip.width = @max(1, clip.width * 0.55 - 6);
+                found = true;
+                break;
+            };
+            if (!found) return;
+            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(editor.bytes[0..editor.len]));
+            y = clip.y + @min(6, @max(0, clip.height - 1));
         } else {
             const p = self.pane();
             const frame = p.canvas.frame() orelse {
@@ -1453,9 +1594,14 @@ const App = struct {
                 if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, rect, self.scale) catch |failure| {
                     p.graphics_failure = failure;
                 };
-                if (p.graphics_failure == null) try self.drawSelection(p, rect, frame);
+                if (p.graphics_failure == null) {
+                    try self.drawSelection(p, rect, frame);
+                    clearClip(self.renderer);
+                    try self.drawScrollbar(rect, frame);
+                }
             }
             clearClip(self.renderer);
+            try self.drawFind(p, rect, status);
             const failure: ?(CreationError || GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.creation_failure) |value| value else if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
             if (failure != null or status.closed) {
                 const clip: c.SDL_Rect = .{
