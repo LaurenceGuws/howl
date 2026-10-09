@@ -909,6 +909,7 @@ test {
     std.testing.refAllDecls(input);
     std.testing.refAllDecls(pointer);
     std.testing.refAllDecls(composition);
+    std.testing.refAllDecls(@import("config.zig"));
 }
 
 test "palette query is bounded and includes deliberately unbound directional commands" {

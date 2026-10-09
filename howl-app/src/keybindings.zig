@@ -149,6 +149,10 @@ pub fn parse(text: []const u8) error{InvalidShortcut}!Shortcut {
 
 /// Owns bounded editable binding text and the parsed runtime chord.
 pub const Binding = struct { shortcut: Shortcut = .{}, text: [64]u8 = @splat(0), len: u8 = 0, customized: bool = false };
+/// Borrowed schema-compatible persisted override, consumed synchronously.
+pub const Override = struct { action: []const u8 = "", shortcut: []const u8 = "" };
+/// Exact whole-table validation failures, including duplicate persisted ids.
+pub const LoadError = SetError || error{ MappingLimit, DuplicateMapping };
 /// Precise binding validation failures; collision never mutates either row.
 pub const SetError = error{ InvalidMapping, InvalidShortcut, BindingConflict };
 /// Fixed registry state; one owner serves dispatch, palette and settings.
@@ -164,6 +168,25 @@ pub const Bindings = struct {
             @memcpy(bindings.rows[index].text[0..definition.default_shortcut.len], definition.default_shortcut);
         }
         return bindings;
+    }
+
+    /// Loads all overrides before validating conflicts, so valid chord swaps remain atomic.
+    pub fn fromOverrides(overrides: []const Override) LoadError!Bindings {
+        if (overrides.len > definitions.len) return error.MappingLimit;
+        var result = try init();
+        var seen: [definitions.len]bool = @splat(false);
+        for (overrides) |row| {
+            const index = indexForId(row.action) orelse return error.InvalidMapping;
+            if (seen[index]) return error.DuplicateMapping;
+            seen[index] = true;
+            const shortcut = try parse(row.shortcut);
+            var next: Binding = .{ .shortcut = shortcut, .len = @intCast(row.shortcut.len), .customized = !std.mem.eql(u8, row.shortcut, definitions[index].default_shortcut) };
+            @memcpy(next.text[0..row.shortcut.len], row.shortcut);
+            result.rows[index] = next;
+        }
+        for (result.rows, 0..) |a, index| for (result.rows[index + 1 ..]) |b|
+            if (overlaps(a.shortcut, b.shortcut)) return error.BindingConflict;
+        return result;
     }
 
     /// Returns the one mapping matching a physical chord.
@@ -249,4 +272,17 @@ test "Plus aliases cannot shadow another active binding and legacy modifier orde
     const legacy = try parse("F5+Meta");
     try std.testing.expect(legacy.matches(c.SDLK_F5, c.SDL_KMOD_GUI));
     try std.testing.expectError(error.InvalidShortcut, parse("Ctrl+F13"));
+}
+
+test "saved mapping tables permit complete chord swaps but reject duplicate and conflicting rows" {
+    const values = [_]Override{
+        .{ .action = "new_tab", .shortcut = "F11" },
+        .{ .action = "toggle_fullscreen", .shortcut = "Ctrl+T" },
+    };
+    const swapped = try Bindings.fromOverrides(&values);
+    try std.testing.expectEqual(@as(?usize, 0), swapped.find(c.SDLK_F11, 0));
+    try std.testing.expectEqual(indexForId("toggle_fullscreen"), swapped.find(c.SDLK_T, c.SDL_KMOD_CTRL));
+    try std.testing.expectError(error.BindingConflict, Bindings.fromOverrides(values[0..1]));
+    try std.testing.expectError(error.DuplicateMapping, Bindings.fromOverrides(&.{ values[0], values[0] }));
+    try std.testing.expectError(error.InvalidMapping, Bindings.fromOverrides(&.{.{ .action = "missing", .shortcut = "" }}));
 }

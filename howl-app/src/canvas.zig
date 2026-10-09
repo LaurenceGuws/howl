@@ -259,6 +259,9 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
         .columns = 20,
     }, presentation, c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
+    var stage: []const u8 = "canonical READY";
+    var accepted_generation: u64 = 0;
+    errdefer std.debug.print("backend recovery failure at {s}; accepted generation {d}, canonical {any}, presentation {any}\n", .{ stage, accepted_generation, owner.snapshot().failure, owner.snapshot().presentation_failure });
     var attempts: u16 = 0;
     while (attempts < 5000) : (attempts += 1) {
         const status = owner.snapshot();
@@ -275,6 +278,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     var backend = Canvas.init(failing.allocator());
     defer backend.deinit();
     owner.requestFrame();
+    stage = "injected backend allocation";
     var failed = false;
     attempts = 0;
     while (!failed and attempts < 5000) : (attempts += 1) {
@@ -285,6 +289,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
         if (!failed) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(failed);
+    stage = "canonical CONTINUED after rejected backend";
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     attempts = 0;
     while (attempts < 5000) : (attempts += 1) {
@@ -296,6 +301,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     if (attempts == 5000) return error.Timeout;
     backend.deinit();
     backend = Canvas.init(std.testing.allocator);
+    stage = "font reconfiguration";
     const configured = try owner.reconfigure(presentation, null);
     try std.testing.expect(configured.cell_size.width > 0);
     attempts = 0;
@@ -303,7 +309,9 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
         try backend.update(renderer, owner);
         if (backend.frame() == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
+    stage = "fresh backend generation";
     const accepted = backend.frame() orelse return error.MissingFrame;
+    accepted_generation = accepted.presentation_generation;
     try std.testing.expect(accepted.presentation_generation > 1);
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);

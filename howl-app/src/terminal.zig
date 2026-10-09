@@ -187,7 +187,11 @@ const State = struct {
     }
 
     fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency) FrameError!?instance.RenderLease {
-        if (!self.new_frame.load(.acquire)) return null;
+        if (!self.new_frame.load(.acquire)) {
+            // Reconfiguration or a stalled transfer may still owe a credit-backed publication.
+            if (self.credit.load(.acquire)) self.wake();
+            return null;
+        }
         self.frame_mutex.lockUncancelable(self.io);
         defer {
             self.frame_mutex.unlock(self.io);
@@ -275,6 +279,10 @@ const State = struct {
             break :keep_grid instance.PresentationGeometry{ .cell_size = cell, .rows = live.rows, .columns = live.cols };
         };
         if (result) |geometry| {
+            // The sole producer invalidates only notification authority, never an accepted lease.
+            // Reconfiguration completes before the GUI can start its next transfer; only a later
+            // publication can make pre-reset unread slots observable again, retiring them first.
+            self.new_frame.store(false, .release);
             if (geometry.columns != live.cols) self.history.reset();
             self.presentation_failure = null;
             self.mutex.lockUncancelable(self.io);
@@ -877,4 +885,44 @@ test "semantic mouse reports and copied caret facts survive without a graphical 
     try std.testing.expectEqual(@as(u16, 1), after.cursor_row);
     try std.testing.expectEqual(@as(u16, 4), after.cursor_col);
     try std.testing.expect(!owner.state().takeFrame());
+}
+
+test "completed reconfiguration fences unread frames from the previous presentation" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf 'HELLO\\033]0;READY\\007'; read line; printf '\\033]0;CONTINUED\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), true);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    var attempts: u16 = 0;
+    while (!owner.state().new_frame.load(.acquire) and attempts < 5000) : (attempts += 1)
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    try std.testing.expect(attempts < 5000);
+    owner.setVisible(false);
+    const configured = try owner.reconfigure(testPresentation(), null);
+    try std.testing.expect(configured.cell_size.width > 0);
+    // An old unread slot remains native-owned, but cannot enter a fresh backend.
+    var hidden = try owner.replaceFrame(null, &.{});
+    defer if (hidden) |*lease| lease.abandon();
+    if (hidden) |lease| std.debug.print("pre-reset unread generation entered the backend: {d}\n", .{lease.value.presentation_generation});
+    try std.testing.expect(hidden == null);
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "CONTINUED");
+    owner.setVisible(true);
+    var fresh: ?instance.RenderLease = null;
+    defer if (fresh) |*lease| lease.abandon();
+    attempts = 0;
+    while (fresh == null and attempts < 5000) : (attempts += 1) {
+        fresh = try owner.replaceFrame(null, &.{});
+        if (fresh == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    const accepted = fresh orelse return error.Timeout;
+    try std.testing.expect(accepted.value.presentation_generation > 1);
 }

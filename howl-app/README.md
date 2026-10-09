@@ -52,6 +52,10 @@ updates. Hidden presentation and projection failure cannot stop canonical input/
 can be retried independently; a stopped Local child can be restarted. A new
 window executes the exact running Linux image even after on-disk replacement.
 
+The existing schema-1..4 odin.json model and atomic-save primitive are implemented
+and proved with bounded owned parsing. They are not yet applied by app startup
+or connected to settings; the runtime still uses its original Local recipe.
+
 This remains an experimental capability cut. Saved launch recipes/configuration,
 settings, selection/search, rich desktop consequences and explicit attachments
 still need qualification. IME's SDL event/render/candidate-area path is proved;
@@ -59,10 +63,13 @@ an external input method's platform integration still needs a live control. Dupl
 the default Local launch recipe. Startup high DPI is supported. Unsupported
 commands report their exact gap instead of silently taking another route.
 
-Thirty-two package proofs cover worker independence/failure cleanup, immutable
+Forty-one package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
-pane topology, exact PTY mouse reports, fractional wheel/pointer bounds and SDL
-preedit ownership/caret/commit behavior. The active workstream records private GUI controls and remaining
+pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
+preedit ownership/caret/commit behavior and compatible saved-config ownership,
+bounds, migration, mapping swaps and atomic-save failure cleanup. A successful
+font reset fences unread publications from the previous generation while
+preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:
 zig build -Doptimize=ReleaseSafe.
