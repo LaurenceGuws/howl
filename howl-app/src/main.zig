@@ -1948,7 +1948,6 @@ const App = struct {
             try fill(self.renderer, place.rect, colors.panel);
             if (active and result.panes > 1) try outline(self.renderer, place.rect, colors.border);
             const rect = paneContent(place.rect);
-            try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, colors.panel);
             if (p.graphics_failure == null) {
                 if (p.owner) |owner| p.canvas.update(self.renderer, owner) catch |failure| {
                     p.graphics_failure = failure;
@@ -2157,12 +2156,10 @@ fn clearClip(renderer: *c.SDL_Renderer) void {
     std.debug.assert(success);
 }
 fn paneContent(rect: layout.Rect) c.SDL_FRect {
-    const x_padding = @min(3, rect.width / 4);
-    const y_padding = @min(3, rect.height / 4);
-    return .{ .x = rect.x + x_padding, .y = rect.y + y_padding, .w = rect.width - 2 * x_padding, .h = rect.height - 2 * y_padding };
+    return .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
 }
 // Centre only the accepted frame; available pane size remains the resize authority.
-// Align the absolute origin to physical pixels, including the pane inset.
+// Align the absolute origin to physical pixels.
 fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
@@ -2245,12 +2242,14 @@ test "profile palette uses saved recipes and resolves its configured default" {
     try std.testing.expectEqual(@as(i32, 19), recipe.font_pixels);
 }
 
-test "tiny nested pane content never crosses its layout owner and has a bounded positive configuration surface" {
+test "pane content uses its whole layout owner and has a bounded positive configuration surface" {
     for ([_]f32{ 0.125, 1, 4, 6, 40 }) |width| {
         const outer: layout.Rect = .{ .x = 10, .y = 20, .width = width, .height = 0.25 };
         const content = paneContent(outer);
-        try std.testing.expect(content.x >= outer.x and content.x + content.w <= outer.x + outer.width);
-        try std.testing.expect(content.y >= outer.y and content.y + content.h <= outer.y + outer.height);
+        try std.testing.expectEqual(outer.x, content.x);
+        try std.testing.expectEqual(outer.y, content.y);
+        try std.testing.expectEqual(outer.width, content.w);
+        try std.testing.expectEqual(outer.height, content.h);
         const surface = physicalSurface(outer, 1.7);
         try std.testing.expect(surface.width >= 1 and surface.height >= 1);
     }
