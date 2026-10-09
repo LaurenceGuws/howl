@@ -135,7 +135,7 @@ const App = struct {
         return self.tab().panes[self.tab().tree.active].?;
     }
     fn terminalBody(self: *const App) layout.Rect {
-        return .{ .x = 6, .y = chrome.height, .width = @max(1, self.width - 12), .height = @max(1, self.height - chrome.height - 28) };
+        return .{ .x = 6, .y = chrome.height, .width = @max(1, self.width - 12), .height = @max(1, self.height - chrome.height - 6) };
     }
     fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
@@ -1927,7 +1927,8 @@ const App = struct {
         for (places[0..result.panes]) |place| {
             const p = self.tab().panes[place.pane].?;
             const active = place.pane == self.tab().tree.active;
-            try fill(self.renderer, place.rect, if (active) colors.accent else colors.border);
+            try fill(self.renderer, place.rect, colors.panel);
+            if (active and result.panes > 1) try outline(self.renderer, place.rect, colors.border);
             const rect = paneContent(place.rect);
             try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, colors.panel);
             if (p.graphics_failure == null) {
@@ -1980,7 +1981,11 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
-        try self.drawText(if (self.notice_len == 0) (try savedRecipe(self.configuration, self.pane().recipe.value)).name else self.notice[0..self.notice_len], 10, self.height - 22);
+        if (self.notice_len != 0) {
+            const notice: layout.Rect = .{ .x = 6, .y = self.height - 28, .width = @max(1, self.width - 12), .height = 22 };
+            try fill(self.renderer, notice, colors.title);
+            try self.clippedText(self.notice[0..self.notice_len], notice, notice.x + 4);
+        }
         if (self.palette != null) try self.drawPalette();
         if (self.settings_editor != null) try self.drawSettings();
         if (self.chooser != null) try self.drawChooser();
