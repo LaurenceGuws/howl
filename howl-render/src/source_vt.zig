@@ -18,8 +18,8 @@ pub const Source = struct {
         images: VT.Images,
     };
 
-    /// Identifies one visible canonical VT row by its bounded numeric index.
-    pub const Row = u16;
+    /// Borrows a live row once per projection pass; history uses copied-cell fallback.
+    pub const Row = struct { index: u16, cells: ?[]const VT.Cell };
     /// Copies one canonical VT cell value while its extended scalar tail remains view-addressed.
     pub const Cell = VT.Cell;
     /// Copies the canonical terminal palette and dynamic presentation colors.
@@ -67,23 +67,25 @@ pub const Source = struct {
     }
 
     /// Maps one validated dense row-record index to its canonical VT row identity.
-    pub fn rowAt(_: *const Snapshot, index: usize) Row {
-        return @intCast(index);
+    pub fn rowAt(snapshot: *const Snapshot, index: usize) Row {
+        const row: u16 = @intCast(index);
+        return .{ .index = row, .cells = snapshot.view.rowCells(row) };
     }
 
     /// Returns the number of physically exposed cells for one canonical row.
-    pub fn rowCellCount(snapshot: *const Snapshot, _: Row) usize {
-        return snapshot.view.cols;
+    pub fn rowCellCount(snapshot: *const Snapshot, row: Row) usize {
+        return if (row.cells) |cells| cells.len else snapshot.view.cols;
     }
 
     /// Copies one canonical cell at already-validated physical row/column coordinates.
     pub inline fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
-        return @call(.always_inline, VT.SemanticView.cellInfoAt, .{ &snapshot.view, row, @as(u16, @intCast(column)) });
+        if (row.cells) |cells| return cells[column];
+        return @call(.always_inline, VT.SemanticView.cellInfoAt, .{ &snapshot.view, row.index, @as(u16, @intCast(column)) });
     }
 
     /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
     pub inline fn lineGeometry(snapshot: *const Snapshot, row: Row) semantic.LineGeometry {
-        return switch (@call(.always_inline, VT.SemanticView.lineGeometry, .{ &snapshot.view, row })) {
+        return switch (@call(.always_inline, VT.SemanticView.lineGeometry, .{ &snapshot.view, row.index })) {
             .single_width => .single_width,
             .double_width => .double_width,
             .double_height_top => .double_height_top,

@@ -4954,6 +4954,17 @@ pub const Terminal = struct {
             };
         }
 
+        /// Borrows a complete active-screen row until the next terminal mutation.
+        /// Invalid coordinates and history rows return null; history may be sparse
+        /// and remains available through the copied cell observation methods.
+        pub fn rowCells(self: *const SemanticView, row: u16) ?[]const Cell {
+            if (row >= self.rows) return null;
+            return switch (self.rowSource(row)) {
+                .history => null,
+                .screen => |screen_row| self.backingScreen().visibleRowCells(screen_row),
+            };
+        }
+
         /// Returns the codepoint of one visible cell.
         pub fn cellAt(self: *const SemanticView, row: u16, col: u16) u21 {
             return @intCast(self.cellInfoAt(row, col).codepoint);
@@ -10659,5 +10670,36 @@ test "ASCII row prefixes preserve exact reply and synchronized service boundarie
             try std.testing.expect(terminal.replyBytes().len != 0)
         else
             try std.testing.expect(progress.summary.synchronized_output.ended);
+    }
+}
+
+test "semantic row borrow matches copied cells through ring history alternate and resize" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("abcd\r\nefgh\r\nijkl")).stateChanged());
+    const live = terminal.semanticView(0);
+    try std.testing.expect(live.history_count > 0);
+    for (0..live.rows) |row| {
+        const cells = live.rowCells(@intCast(row)).?;
+        try std.testing.expectEqual(@as(usize, live.cols), cells.len);
+        for (cells, 0..) |cell, col|
+            try std.testing.expectEqualDeep(live.cellInfoAt(@intCast(row), @intCast(col)), cell);
+    }
+    try std.testing.expect(live.rowCells(live.rows) == null);
+    const history = terminal.semanticView(1);
+    try std.testing.expect(history.rowCells(0) == null);
+    try std.testing.expect(history.rowCells(1) != null);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h界")).stateChanged());
+    const alternate = terminal.semanticView(1);
+    const cells = alternate.rowCells(0).?;
+    try std.testing.expectEqual(@as(u32, 0x754c), cells[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 1), cells[1].x);
+    try terminal.resize(3, 6);
+    const resized = terminal.semanticView(0);
+    for (0..resized.rows) |row| {
+        const current = resized.rowCells(@intCast(row)).?;
+        try std.testing.expectEqual(@as(usize, 6), current.len);
+        for (current, 0..) |cell, col|
+            try std.testing.expectEqualDeep(resized.cellInfoAt(@intCast(row), @intCast(col)), cell);
     }
 }
