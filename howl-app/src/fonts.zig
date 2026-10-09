@@ -7,8 +7,8 @@ pub const Fonts = struct {
     allocator: std.mem.Allocator,
     paths: [6][]const u8 = @splat(""),
 
-    /// Resolves explicit environment paths or exact installed family/style matches; required faces fail explicitly.
-    pub fn discover(allocator: std.mem.Allocator, env: *const std.process.Environ.Map) !Fonts {
+    /// Resolves saved paths, then environment paths, then exact installed family/style matches; required faces fail explicitly.
+    pub fn discover(allocator: std.mem.Allocator, env: *const std.process.Environ.Map, saved: [6][]const u8) !Fonts {
         var self: Fonts = .{ .allocator = allocator };
         errdefer self.deinit();
         const variables = [_][]const u8{ "HOWL_FONT", "HOWL_ITALIC_FONT", "HOWL_BOLD_FONT", "HOWL_BOLD_ITALIC_FONT", "HOWL_FALLBACK_FONT", "HOWL_SECONDARY_FALLBACK_FONT" };
@@ -22,12 +22,13 @@ pub const Fonts = struct {
         };
         if (c.FcInit() == 0) return error.Fontconfig;
         for (variables, patterns, 0..) |variable, pattern, index| {
-            if (env.get(variable)) |path| {
+            const explicit = if (saved[index].len != 0) saved[index] else env.get(variable);
+            if (explicit) |path| {
                 if (path.len == 0 or path.len >= 4096 or path[0] != '/') return error.InvalidFontPath;
                 self.paths[index] = try allocator.dupe(u8, path);
                 continue;
             }
-            if (index >= 1 and index <= 3 and env.get("HOWL_FONT") != null) continue;
+            if (index >= 1 and index <= 3 and (saved[0].len != 0 or env.get("HOWL_FONT") != null)) continue;
             self.paths[index] = match(allocator, pattern) catch |failure| {
                 if (index >= 1 and index <= 3) continue;
                 return failure;
@@ -128,3 +129,18 @@ pub const TextFonts = struct {
         self.* = undefined;
     }
 };
+
+test "saved font paths take precedence and remain owned after their input retires" {
+    const a = std.testing.allocator;
+    var env = std.process.Environ.Map.init(a);
+    defer env.deinit();
+    try env.put("HOWL_FONT", "/environment/regular");
+    const original = "/saved/selection-proof.ttf";
+    const paths: [6][]const u8 = @splat(original);
+    var fonts = try Fonts.discover(a, &env, paths);
+    defer fonts.deinit();
+    for (fonts.paths) |path| {
+        try std.testing.expectEqualStrings(original, path);
+        try std.testing.expect(path.ptr != original.ptr);
+    }
+}

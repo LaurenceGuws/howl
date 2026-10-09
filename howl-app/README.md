@@ -52,18 +52,24 @@ updates. Hidden presentation and projection failure cannot stop canonical input/
 can be retried independently; a stopped Local child can be restarted. A new
 window executes the exact running Linux image even after on-disk replacement.
 
-The existing schema-1..4 odin.json model and atomic-save primitive are implemented
-and proved with bounded owned parsing. They are not yet applied by app startup
-or connected to settings; the runtime still uses its original Local recipe.
+Startup reads the existing schema-1..4 odin.json through bounded owned parsing.
+Saved mappings, exact font paths, default profile and per-profile font sizes are
+applied. The searchable profile menu opens built-in or saved recipes. Launches
+preserve shell, command and cwd; new tabs and splits use the configured default,
+and duplicate retains the original tab recipe. Each tab/pane owns its recipe,
+so config replacement cannot invalidate a live launch or a later restart.
+An unavailable attachment or failed constructor remains an explicitly failed
+pane; retry uses that same recipe and never falls back to Local. Missing config
+preserves the Home default. The atomic-save primitive is proved but is not yet
+connected to a settings UI.
 
-This remains an experimental capability cut. Saved launch recipes/configuration,
-settings, selection/search, rich desktop consequences and explicit attachments
-still need qualification. IME's SDL event/render/candidate-area path is proved;
-an external input method's platform integration still needs a live control. Duplicate currently opens another copy of
-the default Local launch recipe. Startup high DPI is supported. Unsupported
-commands report their exact gap instead of silently taking another route.
+This remains an experimental capability cut. Settings, themes, selection/search,
+rich desktop consequences and explicit attachments still need qualification.
+IME's SDL event/render/candidate-area path is proved; an external input method's
+platform integration still needs a live control. Startup high DPI is supported.
+Unsupported commands report their exact gap.
 
-Forty-one package proofs cover worker independence/failure cleanup, immutable
+Forty-five package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL

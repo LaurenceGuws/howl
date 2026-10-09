@@ -69,6 +69,34 @@ pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || erro
     InvalidFontPath,
 };
 
+/// A pane's owned launch/attachment recipe; saved-config replacement cannot invalidate it.
+pub const Recipe = struct {
+    arena: std.heap.ArenaAllocator,
+    value: Profile,
+
+    /// Validates and copies every recipe string and environment row before returning.
+    pub fn copy(allocator: std.mem.Allocator, supplied: Profile) !Recipe {
+        try validateProfile(supplied);
+        var result: Recipe = .{ .arena = .init(allocator), .value = supplied };
+        errdefer result.arena.deinit();
+        const owned = result.arena.allocator();
+        inline for (.{ "id", "name", "mode", "shell", "command", "cwd", "endpoint" }) |field|
+            @field(result.value, field) = try owned.dupe(u8, @field(supplied, field));
+        const environment = try owned.alloc(Environment, supplied.environment.len);
+        for (supplied.environment, environment) |source, *destination| destination.* = .{
+            .name = try owned.dupe(u8, source.name),
+            .value = try owned.dupe(u8, source.value),
+        };
+        result.value.environment = environment;
+        return result;
+    }
+    /// Releases the recipe only after its pane's worker and all synchronous borrowers retire.
+    pub fn deinit(self: *Recipe) void {
+        self.arena.deinit();
+        self.* = undefined;
+    }
+};
+
 const Storage = struct {
     bytes: []u8,
     fixed: std.heap.FixedBufferAllocator,
@@ -203,6 +231,24 @@ fn id(value: []const u8) bool {
 fn fontSize(value: i32, inherited: bool) bool {
     return (inherited and value == 0) or (value >= 8 and value <= 48);
 }
+fn validateProfile(p: Profile) !void {
+    if (!id(p.id)) return error.InvalidProfileID;
+    if (!text(p.name, 80, true)) return error.InvalidProfileName;
+    const attach = std.ascii.eqlIgnoreCase(p.mode, "attach");
+    if (!attach and !std.ascii.eqlIgnoreCase(p.mode, "launch")) return error.InvalidProfileMode;
+    if (!fontSize(p.font_pixels, true)) return error.InvalidFontSize;
+    if (!text(p.shell, 512, false) or !text(p.command, 4096, false) or !text(p.cwd, 1024, false) or
+        !text(p.endpoint, 512, attach)) return error.InvalidProfileText;
+    if (attach) {
+        if (p.shell.len != 0 or p.command.len != 0 or p.cwd.len != 0 or p.environment.len != 0) return error.InvalidProfileOwnership;
+    } else if (p.endpoint.len != 0) return error.InvalidProfileOwnership;
+    if (p.environment.len > 16) return error.InvalidProfileEnvironment;
+    for (p.environment, 0..) |entry, env_index| {
+        if (!text(entry.name, 128, true) or std.mem.indexOfScalar(u8, entry.name, '=') != null or
+            !text(entry.value, 2048, false)) return error.InvalidProfileEnvironment;
+        for (p.environment[0..env_index]) |other| if (std.mem.eql(u8, entry.name, other.name)) return error.DuplicateEnvironment;
+    }
+}
 fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
     if (supplied.schema < 1 or supplied.schema > 4) return error.UnsupportedSchema;
     if (!fontSize(supplied.terminal_font_pixels, false)) return error.InvalidFontSize;
@@ -225,24 +271,9 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
     std.debug.assert(loaded_bindings.rows.len == bindings.definitions.len);
     if (value.profiles.len > 6) return error.ProfileLimit;
     for (value.profiles, 0..) |p, index| {
-        if (!id(p.id)) return error.InvalidProfileID;
+        try validateProfile(p);
         if (std.mem.eql(u8, p.id, "home") or std.mem.eql(u8, p.id, "local")) return error.DuplicateProfileID;
         for (value.profiles[0..index]) |other| if (std.mem.eql(u8, p.id, other.id)) return error.DuplicateProfileID;
-        if (!text(p.name, 80, true)) return error.InvalidProfileName;
-        const attach = std.ascii.eqlIgnoreCase(p.mode, "attach");
-        if (!attach and !std.ascii.eqlIgnoreCase(p.mode, "launch")) return error.InvalidProfileMode;
-        if (!fontSize(p.font_pixels, true)) return error.InvalidFontSize;
-        if (!text(p.shell, 512, false) or !text(p.command, 4096, false) or !text(p.cwd, 1024, false) or
-            !text(p.endpoint, 512, attach)) return error.InvalidProfileText;
-        if (attach) {
-            if (p.shell.len != 0 or p.command.len != 0 or p.cwd.len != 0 or p.environment.len != 0) return error.InvalidProfileOwnership;
-        } else if (p.endpoint.len != 0) return error.InvalidProfileOwnership;
-        if (p.environment.len > 16) return error.InvalidProfileEnvironment;
-        for (p.environment, 0..) |entry, env_index| {
-            if (!text(entry.name, 128, true) or std.mem.indexOfScalar(u8, entry.name, '=') != null or
-                !text(entry.value, 2048, false)) return error.InvalidProfileEnvironment;
-            for (p.environment[0..env_index]) |other| if (std.mem.eql(u8, entry.name, other.name)) return error.DuplicateEnvironment;
-        }
     }
     if (value.servers.len > 16) return error.ServerLimit;
     for (value.servers, 0..) |server, index| {
@@ -380,4 +411,25 @@ test "schema two retains mappings and schema four preserves Server rows and reje
     try std.testing.expectEqualStrings("unix:/one", current.value.servers[0].endpoint);
     try std.testing.expectError(error.DuplicateServer, Config.parse(std.testing.allocator, std.testing.io, prefix ++ "\"servers\":[{\"label\":\"one\",\"endpoint\":\"unix:/one\"},{\"label\":\"two\",\"endpoint\":\"unix:/one\"}]}"));
     try std.testing.expectError(error.InvalidProfileText, Config.parse(std.testing.allocator, std.testing.io, prefix ++ "\"profiles\":[{\"id\":\"one\",\"name\":\"one\",\"mode\":\"launch\",\"command\":\"bad\\u0000command\"}]}"));
+}
+
+test "pane recipe remains exact after parsed configuration retires" {
+    var recipe = owned: {
+        var value = try Config.parse(std.testing.allocator, std.testing.io, "{\"schema\":4,\"terminal_font_pixels\":15,\"app_theme\":\"howl_dark\",\"profiles\":[{\"id\":\"one\",\"name\":\"One\",\"mode\":\"launch\",\"shell\":\"/bin/sh\",\"command\":\"printf exact\",\"cwd\":\"/\",\"environment\":[{\"name\":\"A\",\"value\":\"B\"}],\"font_pixels\":23}]}");
+        defer value.deinit();
+        break :owned try Recipe.copy(std.testing.allocator, try value.profile(2));
+    };
+    defer recipe.deinit();
+    try std.testing.expectEqualStrings("printf exact", recipe.value.command);
+    try std.testing.expectEqualStrings("/bin/sh", recipe.value.shell);
+    try std.testing.expectEqualStrings("B", recipe.value.environment[0].value);
+    try std.testing.expectEqual(@as(i32, 23), recipe.value.font_pixels);
+}
+fn recipeAllocationProof(allocator: std.mem.Allocator) !void {
+    var recipe = try Recipe.copy(allocator, .{ .id = "one", .name = "One", .mode = "launch", .command = "printf exact", .environment = &.{.{ .name = "A", .value = "B" }} });
+    defer recipe.deinit();
+}
+test "recipe copy rejects hostile ownership and retires every partial allocation" {
+    try std.testing.expectError(error.InvalidProfileOwnership, Recipe.copy(std.testing.allocator, .{ .id = "remote", .name = "Remote", .mode = "attach", .endpoint = "unix:/one", .command = "wrong" }));
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, recipeAllocationProof, .{});
 }

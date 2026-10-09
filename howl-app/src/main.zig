@@ -9,14 +9,19 @@ const keybindings = @import("keybindings.zig");
 const input = @import("input.zig");
 const pointer = @import("pointer.zig");
 const composition = @import("composition.zig");
+const config = @import("config.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
 
+const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set ||
+    error{ AttachmentNotImplemented, EnvironmentOverridesUnsupported };
 const Pane = struct {
-    owner: *terminal.Terminal,
+    owner: ?*terminal.Terminal = null,
+    recipe: config.Recipe,
+    creation_failure: ?CreationError = null,
     canvas: canvas.Canvas,
     rows: u16 = 0,
     columns: u16 = 0,
@@ -26,8 +31,19 @@ const Pane = struct {
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
     wheel: pointer.Wheel = .{},
+
+    fn requireOwner(self: *Pane) error{PaneUnavailable}!*terminal.Terminal {
+        return self.owner orelse error.PaneUnavailable;
+    }
+    fn snapshot(self: *Pane) terminal.Status {
+        return if (self.owner) |owner| owner.snapshot() else .{};
+    }
+    fn submit(self: *Pane, task: terminal.Task) !void {
+        try (try self.requireOwner()).submit(task);
+    }
 };
 const Tab = struct {
+    recipe: config.Recipe,
     tree: layout.Tree = layout.Tree.init(),
     panes: [layout.pane_limit]?*Pane = @splat(null),
 };
@@ -37,17 +53,15 @@ const Palette = struct {
     selected: usize = 0,
     profile: bool = false,
 
-    fn matches(self: *const Palette, index: usize) bool {
-        if (self.profile) return keybindings.definitions[index].target == .action and
-            (keybindings.definitions[index].target.action == .open_local or keybindings.definitions[index].target.action == .attach_home);
-        return self.len == 0 or containsIgnoreCase(keybindings.definitions[index].label, self.query[0..self.len]);
-    }
-    fn indices(self: *const Palette, out: *[keybindings.definitions.len]usize) usize {
+    fn indices(self: *const Palette, configuration: *const config.Config, out: *[keybindings.definitions.len]usize) error{InvalidDefaultProfile}!usize {
         var count: usize = 0;
-        for (keybindings.definitions, 0..) |_, i| if (self.matches(i)) {
+        const limit = if (self.profile) configuration.profileCount() else keybindings.definitions.len;
+        for (0..limit) |i| {
+            const label = if (self.profile) (try configuration.profile(@intCast(i))).name else keybindings.definitions[i].label;
+            if (self.len != 0 and !containsIgnoreCase(label, self.query[0..self.len])) continue;
             out[count] = i;
             count += 1;
-        };
+        }
         return count;
     }
 };
@@ -55,6 +69,7 @@ const Drag = union(enum) { none, divider: layout.Divider, tab };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
 const App = struct {
     init: std.process.Init,
+    configuration: *config.Config,
     fonts: *const font_owner.Fonts,
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,
@@ -105,18 +120,35 @@ const App = struct {
     fn report(self: *App, failure: anytype) void {
         self.setNotice(@errorName(failure));
     }
-    fn createPane(self: *App, font_size: u16) !*Pane {
+    fn profileFont(self: *const App, recipe: config.Profile) u16 {
+        return @intCast(if (recipe.font_pixels != 0) recipe.font_pixels else self.configuration.value.terminal_font_pixels);
+    }
+    fn startup(self: *const App) !config.Profile {
+        return self.configuration.profile(try self.configuration.defaultProfile());
+    }
+    fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
+        if (std.ascii.eqlIgnoreCase(recipe.mode, "attach")) return error.AttachmentNotImplemented;
+        if (recipe.environment.len != 0) return error.EnvironmentOverridesUnsupported;
+        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
+        return terminal.Terminal.create(allocator, self.init.io, self.init.minimal.environ, .{
+            .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
+            .command = if (recipe.command.len != 0) recipe.command else null,
+            .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
+            .rows = 37,
+            .columns = 80,
+        }, self.fonts.config(pixels), self.wake_event, false);
+    }
+    fn createPane(self: *App, supplied: config.Profile, font_size: ?u16) !*Pane {
         const result = try allocator.create(Pane);
         errdefer allocator.destroy(result);
-        const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
         result.* = .{
-            .owner = try terminal.Terminal.create(allocator, self.init.io, self.init.minimal.environ, .{
-                .shell = self.init.environ_map.get("SHELL") orelse "/bin/sh",
-                .rows = 37,
-                .columns = 80,
-            }, self.fonts.config(pixels), self.wake_event, false),
+            .recipe = try config.Recipe.copy(allocator, supplied),
             .canvas = canvas.Canvas.init(allocator),
-            .font_size = font_size,
+            .font_size = font_size orelse self.profileFont(supplied),
+        };
+        result.owner = self.launch(result.recipe.value, result.font_size) catch |failure| blk: {
+            result.creation_failure = failure;
+            break :blk null;
         };
         return result;
     }
@@ -125,13 +157,15 @@ const App = struct {
             self.finishPointer() catch |failure| self.report(failure);
             self.capture = null;
         };
-        self.keyboard.forget(value.owner);
+        if (value.owner) |owner| self.keyboard.forget(owner);
         value.canvas.deinit();
-        value.owner.destroy();
+        if (value.owner) |owner| owner.destroy();
+        value.recipe.deinit();
         allocator.destroy(value);
     }
     fn destroyTab(self: *App, value: *Tab) void {
         for (value.panes) |maybe| if (maybe) |p| self.destroyPane(p);
+        value.recipe.deinit();
         allocator.destroy(value);
     }
     fn cancelComposition(self: *App) void {
@@ -143,14 +177,14 @@ const App = struct {
         try self.finishPointer();
         try self.keyboard.releaseTerminal();
         if (self.tab_count == 0 or !self.focused or self.palette != null) return;
-        const owner = self.pane().owner;
+        const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
         self.cancelComposition();
         if (self.tab_count == 0 or !self.focused or self.palette != null) return;
-        const owner = self.pane().owner;
+        const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
     }
@@ -158,7 +192,7 @@ const App = struct {
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const t = maybe.?;
             for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p|
-                p.owner.setVisible(index == self.active and (!t.tree.zoomed or slot == t.tree.active));
+                if (p.owner) |owner| owner.setVisible(index == self.active and (!t.tree.zoomed or slot == t.tree.active));
         }
     }
     fn selectTab(self: *App, index: u8) !void {
@@ -168,12 +202,13 @@ const App = struct {
         self.syncVisible();
         try self.gainKeyboard();
     }
-    fn createTab(self: *App, font_size: u16) !void {
+    fn createTab(self: *App, supplied: config.Profile, font_size: ?u16) !void {
         if (self.tab_count == tab_limit) return error.TabLimit;
         const value = try allocator.create(Tab);
         errdefer allocator.destroy(value);
-        value.* = .{};
-        value.panes[0] = try self.createPane(font_size);
+        value.* = .{ .recipe = try config.Recipe.copy(allocator, supplied) };
+        errdefer value.recipe.deinit();
+        value.panes[0] = try self.createPane(value.recipe.value, font_size);
         errdefer self.destroyPane(value.panes[0].?);
         try self.loseKeyboard();
         self.tabs[self.tab_count] = value;
@@ -201,7 +236,7 @@ const App = struct {
     fn split(self: *App, axis: layout.Axis) !void {
         var candidate = self.tab().tree;
         const slot = try candidate.split(axis);
-        const value = try self.createPane(self.pane().font_size);
+        const value = try self.createPane(try self.startup(), null);
         errdefer self.destroyPane(value);
         try self.loseKeyboard();
         self.tab().panes[slot] = value;
@@ -249,14 +284,14 @@ const App = struct {
     }
     fn recover(self: *App) !void {
         const previous = self.pane();
-        const status = previous.owner.snapshot();
-        if (status.failure == null and !status.closed) {
+        const status = previous.snapshot();
+        if (previous.owner != null and status.failure == null and !status.closed) {
             if (previous.font_failure != null or previous.graphics_failure != null)
                 try self.configureFont(previous, previous.font_size, false);
-            try previous.owner.submit(.retry_render);
+            try previous.submit(.retry_render);
             return;
         }
-        const next = try self.createPane(previous.font_size);
+        const next = try self.createPane(previous.recipe.value, previous.font_size);
         errdefer self.destroyPane(next);
         try self.loseKeyboard();
         self.tab().panes[self.tab().tree.active] = next;
@@ -274,8 +309,9 @@ const App = struct {
         }
         switch (target) {
             .action => |action| switch (action) {
-                .new_tab, .open_local => try self.createTab(15),
-                .duplicate_tab => try self.createTab(self.pane().font_size),
+                .new_tab => try self.createTab(try self.startup(), null),
+                .open_local => try self.createTab(try self.configuration.profile(1), null),
+                .duplicate_tab => try self.createTab(self.tab().recipe.value, null),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
                 .split_horizontal => try self.split(.vertical),
@@ -299,17 +335,17 @@ const App = struct {
                 .open_command_palette => try self.openPalette(false),
                 .open_profile_menu => try self.openPalette(true),
                 .open_settings => return error.SettingsNotImplemented,
-                .attach_home => return error.HomeAttachmentNotImplemented,
+                .attach_home => try self.createTab(try self.configuration.profile(0), null),
             },
             .select_tab => |index| try self.selectTab(index),
             .paste_clipboard => {
                 const text = c.SDL_GetClipboardText() orelse return error.SDL;
                 defer c.SDL_free(text);
-                try self.pane().owner.submit(.{ .input = .{ .paste = std.mem.span(text) } });
+                try self.pane().submit(.{ .input = .{ .paste = std.mem.span(text) } });
             },
-            .history_oldest => try self.pane().owner.submit(.{ .seek = std.math.maxInt(u32) }),
-            .history_live => try self.pane().owner.submit(.{ .seek = 0 }),
-            .history_page => |direction| try self.pane().owner.submit(.{ .scroll = @as(i32, @intCast(@max(1, self.pane().rows))) * direction }),
+            .history_oldest => try self.pane().submit(.{ .seek = std.math.maxInt(u32) }),
+            .history_live => try self.pane().submit(.{ .seek = 0 }),
+            .history_page => |direction| try self.pane().submit(.{ .scroll = @as(i32, @intCast(@max(1, self.pane().rows))) * direction }),
             .pane_focus => |direction| if (self.tab().tree.neighbor(self.body(), direction)) |slot| try self.focusPane(slot),
             .pane_swap => |direction| {
                 if (self.tab().tree.neighbor(self.body(), direction)) |slot| {
@@ -341,7 +377,11 @@ const App = struct {
     }
     fn configureFont(self: *App, value: *Pane, logical_size: u16, resize: bool) terminal.ConfigureError!void {
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(logical_size)) * self.scale));
-        const geometry = value.owner.reconfigure(self.fonts.config(pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
+        const owner = value.owner orelse {
+            value.font_size = logical_size;
+            return;
+        };
+        const geometry = owner.reconfigure(self.fonts.config(pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
             value.font_failure = failure;
             return failure;
         };
@@ -367,8 +407,8 @@ const App = struct {
         self.scale = next;
         self.ui_fonts.setSize(15 * next) catch |failure| self.report(failure);
         for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |value| {
-            const status = value.owner.snapshot();
-            if (status.failure != null or status.closed) continue;
+            const status = value.snapshot();
+            if (value.owner == null or status.failure != null or status.closed) continue;
             self.configureFont(value, value.font_size, true) catch |failure| self.report(failure);
         };
     }
@@ -384,9 +424,17 @@ const App = struct {
         self.drag = .none;
         self.consume_left_release = true;
     }
+    fn choosePalette(self: *App, index: usize) !void {
+        if (!self.palette.?.profile) return self.dispatch(keybindings.definitions[index].target);
+        const recipe = try self.configuration.profile(@intCast(index));
+        // Keep the overlay and original input owner intact if construction cannot commit.
+        try self.createTab(recipe, null);
+        self.palette = null;
+        try self.gainKeyboard();
+    }
     fn paletteKey(self: *App, key: c.SDL_Keycode) !void {
         var matches: [keybindings.definitions.len]usize = undefined;
-        const count = self.palette.?.indices(&matches);
+        const count = try self.palette.?.indices(self.configuration, &matches);
         switch (key) {
             c.SDLK_ESCAPE => {
                 self.palette = null;
@@ -406,7 +454,7 @@ const App = struct {
                     p.selected = 0;
                 }
             },
-            c.SDLK_RETURN => if (count != 0) try self.dispatch(keybindings.definitions[matches[@min(self.palette.?.selected, count - 1)]].target),
+            c.SDLK_RETURN => if (count != 0) try self.choosePalette(matches[@min(self.palette.?.selected, count - 1)]),
             else => {},
         }
     }
@@ -428,7 +476,6 @@ const App = struct {
             },
             c.SDL_EVENT_TEXT_EDITING => {
                 if (!self.focused or !self.preedit.accepts(value.edit.timestamp)) return;
-                if (self.palette) |p| if (p.profile) return;
                 try self.preedit.set(std.mem.span(value.edit.text), value.edit.start, value.edit.length);
             },
             c.SDL_EVENT_TEXT_INPUT => {
@@ -437,12 +484,12 @@ const App = struct {
                 if (self.keyboard.consumeText()) return;
                 const text = std.mem.span(value.text.text);
                 if (self.palette) |*p| {
-                    if (!p.profile and text.len <= p.query.len - p.len) {
+                    if (text.len <= p.query.len - p.len) {
                         @memcpy(p.query[p.len..][0..text.len], text);
                         p.len += text.len;
                         p.selected = 0;
                     }
-                } else try self.pane().owner.submit(.{ .input = .{ .bytes = text } });
+                } else try self.pane().submit(.{ .input = .{ .bytes = text } });
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
                 try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState())),
@@ -458,7 +505,7 @@ const App = struct {
             c.SDL_EVENT_MOUSE_MOTION => {
                 if (self.capture) |*held| {
                     const point = self.pointerLocation(held.pane, value.motion.x, value.motion.y, true) orelse held.last;
-                    try held.pane.owner.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), held.buttons) });
+                    try held.pane.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), held.buttons) });
                     held.last = point;
                 } else if (self.drag == .divider) {
                     self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
@@ -468,12 +515,12 @@ const App = struct {
                 } else if (self.palette == null) {
                     if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
                         const p = self.tab().panes[slot].?;
-                        const state = p.owner.snapshot().interaction orelse return;
+                        const state = p.snapshot().interaction orelse return;
                         if (state.mouse_tracking != .any_event) return;
                         const frame = p.canvas.frame() orelse return;
                         if (frame.history_offset != 0) return;
                         const point = self.pointerLocation(p, value.motion.x, value.motion.y, false) orelse return;
-                        try p.owner.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), 0) });
+                        try p.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), 0) });
                     }
                 }
             },
@@ -498,7 +545,7 @@ const App = struct {
         if (self.palette != null) {
             if (button != .left) return;
             var matches: [keybindings.definitions.len]usize = undefined;
-            const count = self.palette.?.indices(&matches);
+            const count = try self.palette.?.indices(self.configuration, &matches);
             const box = self.paletteRect();
             if (!box.contains(x, y)) {
                 self.palette = null;
@@ -506,7 +553,7 @@ const App = struct {
             } else if (y >= box.y + 48) {
                 const row: usize = @intFromFloat(@floor((y - box.y - 48) / 26));
                 const start = self.paletteStart(count);
-                if (row < 16 and row + start < count) try self.dispatch(keybindings.definitions[matches[row + start]].target);
+                if (row < 16 and row + start < count) try self.choosePalette(matches[row + start]);
             }
             return;
         }
@@ -520,7 +567,7 @@ const App = struct {
                     try self.closeTab();
                 } else self.drag = .tab;
             } else if (x < 8 + width * @as(f32, @floatFromInt(self.tab_count)) + 32) {
-                try self.createTab(15);
+                try self.createTab(try self.startup(), null);
             } else try self.openPalette(false);
             return;
         }
@@ -535,7 +582,7 @@ const App = struct {
             try self.focusPane(place.pane);
             const p = self.pane();
             const frame = p.canvas.frame() orelse return;
-            const state = p.owner.snapshot().interaction orelse return;
+            const state = p.snapshot().interaction orelse return;
             if (!mods.shift and frame.history_offset == 0 and state.mouse_tracking != .off) {
                 const point = self.pointerLocation(p, x, y, false) orelse return;
                 try self.pointerPress(p, point, button, mods);
@@ -567,7 +614,7 @@ const App = struct {
         const before: u8 = if (self.capture) |held| held.buttons else 0;
         if (before & bit != 0) return;
         const after = before | bit;
-        try p.owner.submit(.{ .input = point.event(.press, button, mods, after) });
+        try p.submit(.{ .input = point.event(.press, button, mods, after) });
         self.capture = .{ .pane = p, .buttons = after, .last = point };
     }
     fn pointerRelease(self: *App, button: instance.MouseButton, x: f32, y: f32, mods: instance.InputModifier) !void {
@@ -576,7 +623,7 @@ const App = struct {
         if (held.buttons & bit == 0) return;
         const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
         const after = held.buttons & ~bit;
-        held.pane.owner.submit(.{ .input = point.event(.release, button, mods, after) }) catch |failure| {
+        held.pane.submit(.{ .input = point.event(.release, button, mods, after) }) catch |failure| {
             if (failure != error.TerminalStopped) return failure;
         };
         self.capture = if (after == 0) null else .{ .pane = held.pane, .buttons = after, .last = point };
@@ -591,21 +638,21 @@ const App = struct {
         const p = self.tab().panes[slot].?;
         const frame = p.canvas.frame() orelse return;
         const mods = input.semanticModifiers(c.SDL_GetModState());
-        const route = pointer.wheelRoute(frame.history_offset != 0, mods.shift, p.owner.snapshot().interaction, frame.alternate_screen);
+        const route = pointer.wheelRoute(frame.history_offset != 0, mods.shift, p.snapshot().interaction, frame.alternate_screen);
         const steps = p.wheel.consume(wheel.y * @as(f32, if (wheel.direction == c.SDL_MOUSEWHEEL_FLIPPED) -1 else 1), route);
         if (steps == 0) return;
         switch (route) {
-            .history => try p.owner.submit(.{ .scroll = steps }),
+            .history => try p.submit(.{ .scroll = steps }),
             .terminal => {
                 const point = self.pointerLocation(p, wheel.mouse_x, wheel.mouse_y, false) orelse return;
                 const button: instance.MouseButton = if (steps > 0) .wheel_up else .wheel_down;
-                for (0..@abs(steps)) |_| try p.owner.submit(.{ .input = point.event(.wheel, button, mods, if (self.capture) |held| if (held.pane == p) held.buttons else 0 else 0) });
+                for (0..@abs(steps)) |_| try p.submit(.{ .input = point.event(.wheel, button, mods, if (self.capture) |held| if (held.pane == p) held.buttons else 0 else 0) });
             },
             .alternate => {
                 const key: instance.Key = .{ .named = if (steps > 0) .up else .down };
                 for (0..@abs(steps)) |_| {
-                    try p.owner.submit(.{ .input = .{ .key = .{ .key = key, .action = .press } } });
-                    try p.owner.submit(.{ .input = .{ .key = .{ .key = key, .action = .release } } });
+                    try p.submit(.{ .input = .{ .key = .{ .key = key, .action = .press } } });
+                    try p.submit(.{ .input = .{ .key = .{ .key = key, .action = .release } } });
                 }
             },
             .wait, .ignore => {},
@@ -621,11 +668,11 @@ const App = struct {
     }
     fn drawPalette(self: *App) !void {
         var matches: [keybindings.definitions.len]usize = undefined;
-        const count = self.palette.?.indices(&matches);
+        const count = try self.palette.?.indices(self.configuration, &matches);
         const box = self.paletteRect();
         try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = self.height }, .{ .r = 0, .g = 0, .b = 0, .a = 155 });
         try fill(self.renderer, box, .{ .r = 39, .g = 42, .b = 56, .a = 255 });
-        try self.drawText(if (self.palette.?.profile) "Profiles" else if (self.palette.?.len == 0) "Commands — type to filter" else self.palette.?.query[0..self.palette.?.len], box.x + 12, box.y + 12);
+        try self.drawText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (self.palette.?.profile) "Profiles — type to filter" else "Commands — type to filter", box.x + 12, box.y + 12);
         const start = self.paletteStart(count);
         const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(box.x)), .y = @intFromFloat(@floor(box.y + 48)), .w = @intFromFloat(@ceil(box.width)), .h = @intFromFloat(@ceil(@max(1, box.height - 48))) };
         if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
@@ -633,9 +680,15 @@ const App = struct {
         for (matches[start..@min(count, start + 16)], start..) |index, row| {
             const y = box.y + 48 + @as(f32, @floatFromInt(row - start)) * 26;
             if (row == self.palette.?.selected) try fill(self.renderer, .{ .x = box.x + 4, .y = y, .width = box.width - 8, .height = 26 }, .{ .r = 65, .g = 71, .b = 96, .a = 255 });
-            try self.drawText(keybindings.definitions[index].label, box.x + 12, y + 4);
-            const binding = self.bindings.rows[index];
-            if (binding.len != 0) try self.drawText(binding.text[0..binding.len], box.x + box.width - 174, y + 4);
+            if (self.palette.?.profile) {
+                const recipe = try self.configuration.profile(@intCast(index));
+                try self.drawText(recipe.name, box.x + 12, y + 4);
+                if (index == try self.configuration.defaultProfile()) try self.drawText("default", box.x + box.width - 90, y + 4);
+            } else {
+                try self.drawText(keybindings.definitions[index].label, box.x + 12, y + 4);
+                const binding = self.bindings.rows[index];
+                if (binding.len != 0) try self.drawText(binding.text[0..binding.len], box.x + box.width - 174, y + 4);
+            }
         }
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
@@ -662,10 +715,6 @@ const App = struct {
         var cell_height: f32 = 20;
         var logical_font: f32 = 15;
         if (self.palette) |p| {
-            if (p.profile) {
-                if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
-                return;
-            }
             const box = self.paletteRect();
             clip = .{ .x = box.x + 12, .y = box.y + 8, .width = @max(1, box.width - 24), .height = 32 };
             x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
@@ -691,7 +740,7 @@ const App = struct {
                 break;
             };
             if (!found) return;
-            const status = p.owner.snapshot();
+            const status = p.snapshot();
             const cell_width = @as(f32, @floatFromInt(frame.cell_size.width)) / self.scale;
             cell_height = @as(f32, @floatFromInt(frame.cell_size.height)) / self.scale;
             x = clip.x + @as(f32, @floatFromInt(status.cursor_col)) * cell_width;
@@ -733,7 +782,7 @@ const App = struct {
         const tab_width = self.tabWidth();
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const value = maybe.?;
-            const status = value.panes[value.tree.active].?.owner.snapshot();
+            const status = value.panes[value.tree.active].?.snapshot();
             const rect: layout.Rect = .{ .x = 8 + tab_width * @as(f32, @floatFromInt(index)), .y = 4, .width = tab_width - 3, .height = 30 };
             try fill(self.renderer, rect, if (index == self.active) .{ .r = 56, .g = 60, .b = 78, .a = 255 } else .{ .r = 34, .g = 36, .b = 47, .a = 255 });
             const title_clip: c.SDL_Rect = .{ .x = @intFromFloat(rect.x + 4), .y = 4, .w = @intFromFloat(@max(1, rect.width - 28)), .h = 30 };
@@ -754,11 +803,11 @@ const App = struct {
             try fill(self.renderer, place.rect, if (active) .{ .r = 76, .g = 85, .b = 112, .a = 255 } else .{ .r = 31, .g = 33, .b = 43, .a = 255 });
             const rect = paneContent(place.rect);
             if (p.graphics_failure == null) {
-                p.canvas.update(self.renderer, p.owner) catch |failure| {
+                if (p.owner) |owner| p.canvas.update(self.renderer, owner) catch |failure| {
                     p.graphics_failure = failure;
                 };
             }
-            const status = p.owner.snapshot();
+            const status = p.snapshot();
             if (p.canvas.frame()) |frame| {
                 // A completed font transaction supplies the new lattice before its frame arrives.
                 // An older accepted lease must not resize canonical geometry back to its old font.
@@ -766,7 +815,7 @@ const App = struct {
                 const rows: u16 = @intFromFloat(std.math.clamp(@floor(rect.h * self.scale / @as(f32, @floatFromInt(cell.height))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_rows))));
                 const columns: u16 = @intFromFloat(std.math.clamp(@floor(rect.w * self.scale / @as(f32, @floatFromInt(cell.width))), 1, @as(f32, @floatFromInt(instance.render.limits.maximum_columns))));
                 if (p.size_control and status.failure == null and !status.closed and (rows != p.rows or columns != p.columns)) {
-                    try p.owner.submit(.{ .resize = .{ .rows = rows, .columns = columns } });
+                    try p.submit(.{ .resize = .{ .rows = rows, .columns = columns } });
                     p.rows = rows;
                     p.columns = columns;
                 }
@@ -775,7 +824,7 @@ const App = struct {
                 };
             }
             clearClip(self.renderer);
-            const failure: ?(GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
+            const failure: ?(CreationError || GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.creation_failure) |value| value else if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
             if (failure != null or status.closed) {
                 const clip: c.SDL_Rect = .{
                     .x = @intFromFloat(@floor(rect.x)),
@@ -791,13 +840,13 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
-        try self.drawText(if (self.notice_len == 0) "Local" else self.notice[0..self.notice_len], 10, self.height - 22);
+        try self.drawText(if (self.notice_len == 0) self.pane().recipe.value.name else self.notice[0..self.notice_len], 10, self.height - 22);
         if (self.palette != null) try self.drawPalette();
         try self.drawComposition();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
         for (places[0..result.panes]) |place| {
             const p = self.tab().panes[place.pane].?;
-            if (p.graphics_failure == null) p.owner.requestFrame();
+            if (p.graphics_failure == null) if (p.owner) |owner| owner.requestFrame();
         }
     }
 };
@@ -814,7 +863,9 @@ pub fn main(init: std.process.Init) !void {
     defer c.SDL_Quit();
     if (!c.TTF_Init()) return error.TTF;
     defer c.TTF_Quit();
-    var fonts = try font_owner.Fonts.discover(allocator, init.environ_map);
+    var configuration = try config.Config.load(allocator, init.io, init.environ_map);
+    defer configuration.deinit();
+    var fonts = try font_owner.Fonts.discover(allocator, init.environ_map, configuration.value.font.paths());
     defer fonts.deinit();
     const window = c.SDL_CreateWindow("Howl", 1000, 650, c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY) orelse return error.SDL;
     defer c.SDL_DestroyWindow(window);
@@ -832,6 +883,7 @@ pub fn main(init: std.process.Init) !void {
     geometry.* = .{};
     var app: App = .{
         .init = init,
+        .configuration = &configuration,
         .fonts = &fonts,
         .window = window,
         .renderer = renderer,
@@ -839,11 +891,11 @@ pub fn main(init: std.process.Init) !void {
         .geometry = geometry,
         .wake_event = wake_event,
         .scale = scale,
-        .bindings = try keybindings.Bindings.init(),
+        .bindings = try keybindings.Bindings.fromOverrides(configuration.value.keybindings),
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
     };
     defer app.deinit();
-    try app.createTab(15);
+    try app.createTab(try app.startup(), null);
     while (app.running) {
         try app.draw();
         var event: c.SDL_Event = undefined;
@@ -913,16 +965,35 @@ test {
 }
 
 test "palette query is bounded and includes deliberately unbound directional commands" {
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
     var p: Palette = .{};
     var indices: [keybindings.definitions.len]usize = undefined;
-    try std.testing.expectEqual(keybindings.definitions.len, p.indices(&indices));
+    try std.testing.expectEqual(keybindings.definitions.len, try p.indices(&configuration, &indices));
     const query = "FOCUS PANE";
     @memcpy(p.query[0..query.len], query);
     p.len = query.len;
-    try std.testing.expectEqual(@as(usize, 4), p.indices(&indices));
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
     for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
     p = .{ .profile = true };
-    try std.testing.expectEqual(@as(usize, 2), p.indices(&indices));
+    try std.testing.expectEqual(@as(usize, 2), try p.indices(&configuration, &indices));
+}
+
+test "profile palette uses saved recipes and resolves its configured default" {
+    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":4,"terminal_font_pixels":15,"app_theme":"howl_dark","default_profile":"build","profiles":[{"id":"build","name":"Build shell","mode":"launch","shell":"/bin/sh","command":"exec sh","font_pixels":19}]}
+    );
+    defer configuration.deinit();
+    var p: Palette = .{ .profile = true };
+    var indices: [keybindings.definitions.len]usize = undefined;
+    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, &indices));
+    @memcpy(p.query[0..5], "BUILD");
+    p.len = 5;
+    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(try configuration.defaultProfile(), indices[0]);
+    const recipe = try configuration.profile(@intCast(indices[0]));
+    try std.testing.expectEqualStrings("exec sh", recipe.command);
+    try std.testing.expectEqual(@as(i32, 19), recipe.font_pixels);
 }
 
 test "tiny nested pane content never crosses its layout owner and has a bounded positive configuration surface" {
@@ -966,12 +1037,17 @@ test "SDL composition stays local, uses its caret area and clears before pane in
         .history_rows = 8,
     }, fonts.config(15), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
-    var p: Pane = .{ .owner = owner, .canvas = canvas.Canvas.init(test_allocator) };
+    var configuration = config.Config.defaults(test_allocator);
+    defer configuration.deinit();
+    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(1)), .canvas = canvas.Canvas.init(test_allocator) };
+    defer p.recipe.deinit();
     defer p.canvas.deinit();
-    var t: Tab = .{};
+    var t: Tab = .{ .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(1)) };
+    defer t.recipe.deinit();
     t.panes[0] = &p;
     var app: App = .{
         .init = undefined,
+        .configuration = &configuration,
         .fonts = &fonts,
         .window = window,
         .renderer = renderer,
