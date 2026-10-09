@@ -137,7 +137,7 @@ const App = struct {
         return self.tab().panes[self.tab().tree.active].?;
     }
     fn terminalBody(self: *const App) layout.Rect {
-        return .{ .x = 6, .y = chrome.height + 6, .width = @max(1, self.width - 12), .height = @max(1, self.height - chrome.height - 12) };
+        return .{ .x = 0, .y = chrome.height, .width = @max(1, self.width), .height = @max(1, self.height - chrome.height) };
     }
     fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
