@@ -171,7 +171,9 @@ experimental:
     profile/environment/Server editing, themes and atomic live-font transactions.
     Failed saves restore presentation against the unchanged canonical grid/history;
     accepted saves allow the next layout resize. Completed font resets fence
-    previous unread publications while preserving accepted leases. Font chooser,
-    selection/search/scrollbar, desktop input/consequence policy and explicit attachments remain
+    previous unread publications while preserving accepted leases. The bounded
+    installed terminal-family chooser keeps exact face recipes, substring/fuzzy
+    search, a sample font, live preview and original-font cancellation through
+    the same transaction. Selection/search/scrollbar, desktop input/consequence policy and explicit attachments remain
     to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

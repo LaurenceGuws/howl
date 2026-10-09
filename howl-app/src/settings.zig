@@ -19,6 +19,7 @@ pub const ServerTarget = struct { index: u8, endpoint: bool };
 /// Exact setting or owned catalogue operation; no terminal state enters an editor.
 pub const Target = union(enum) {
     default_font,
+    font_family,
     default_profile,
     theme,
     font: u8,
@@ -101,6 +102,7 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     var b: Builder = .{ .out = out };
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
     try b.add(.{ .page = .interaction, .label = "Terminal input", .target = .{ .information = "Negotiated keys/mouse, owned input, local IME and stable history" } });
+    try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
     try b.add(.{ .page = .appearance, .label = "Default terminal font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
@@ -270,7 +272,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
             std.mem.copyForwards(config.Server, servers[index..count], servers[index + 1 .. count + 1]);
             value.servers = servers[0..count];
         },
-        .information => return error.ReadOnlySetting,
+        .font_family, .information => return error.ReadOnlySetting,
     }
     return config.Config.fromValue(current.allocator, io, value);
 }

@@ -12,6 +12,7 @@ const composition = @import("composition.zig");
 const config = @import("config.zig");
 const settings = @import("settings.zig");
 const appearance = @import("appearance.zig");
+const font_chooser = @import("font_chooser.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -90,6 +91,7 @@ const App = struct {
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
     settings_editor: ?settings.Editor = null,
+    chooser: ?*font_chooser.Chooser = null,
     drag: Drag = .none,
     consume_left_release: bool = false,
     focused: bool = false,
@@ -101,6 +103,7 @@ const App = struct {
     notice_len: usize = 0,
 
     fn deinit(self: *App) void {
+        if (self.chooser) |chooser| chooser.destroy(allocator);
         for (self.tabs[0..self.tab_count]) |value| self.destroyTab(value.?);
     }
     fn tab(self: *App) *Tab {
@@ -434,6 +437,9 @@ const App = struct {
         try self.applyConfigurationAt(candidate, .cwd(), target);
     }
     fn applyConfigurationAt(self: *App, candidate: *config.Config, dir: std.Io.Dir, target: []const u8) !void {
+        try self.updateConfiguration(candidate, dir, target, true);
+    }
+    fn updateConfiguration(self: *App, candidate: *config.Config, dir: std.Io.Dir, target: []const u8, persist: bool) !void {
         const bindings = try keybindings.Bindings.fromOverrides(candidate.value.keybindings);
         var paths_changed = false;
         for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
@@ -471,7 +477,7 @@ const App = struct {
             count += 1;
         };
         // The private atomic file is replaced only after every font transaction succeeds.
-        try candidate.saveAt(self.init.io, dir, target);
+        if (persist) try candidate.saveAt(self.init.io, dir, target);
         for (changes[0..count]) |change| {
             const p = change.pane;
             p.font_size = change.size;
@@ -548,6 +554,11 @@ const App = struct {
         self.setNotice("Saved");
     }
     fn activateSetting(self: *App, row: settings.Row) !void {
+        if (row.target == .font_family) {
+            self.cancelComposition();
+            self.chooser = try font_chooser.Chooser.create(allocator, self.init.io, self.configuration, self.fonts.paths[0]);
+            return;
+        }
         if (row.target == .delete_profile) {
             if (try self.profileInUse(row.target.delete_profile)) return error.ProfileInUse;
             if (self.settings_editor.?.delete_pending != row.target.delete_profile) {
@@ -564,6 +575,117 @@ const App = struct {
                 self.setNotice("Press a shortcut — Esc cancels");
             }
         } else try self.changeSetting(row.target, "");
+    }
+    fn chooserApply(self: *App, persist: bool) !void {
+        const chooser = self.chooser.?;
+        var candidate = try chooser.candidate(allocator, self.init.io);
+        defer candidate.deinit();
+        if (persist) try self.applyConfiguration(&candidate) else try self.updateConfiguration(&candidate, .cwd(), "", false);
+        chooser.previewed = !persist;
+        self.cancelComposition();
+        if (persist) {
+            chooser.destroy(allocator);
+            self.chooser = null;
+            self.setNotice("Font family saved");
+        } else self.setNotice("Font preview — Enter saves; Esc restores");
+    }
+    fn chooserRestore(self: *App) !void {
+        const chooser = self.chooser.?;
+        if (chooser.previewed) {
+            var candidate = try config.Config.fromValue(allocator, self.init.io, chooser.original.value);
+            defer candidate.deinit();
+            try self.updateConfiguration(&candidate, .cwd(), "", false);
+            chooser.previewed = false;
+        }
+        self.cancelComposition();
+        self.setNotice("Original font restored");
+    }
+    fn chooserCancel(self: *App) !void {
+        try self.chooserRestore();
+        self.chooser.?.destroy(allocator);
+        self.chooser = null;
+    }
+    fn chooserKey(self: *App, key: c.SDL_Keycode) !void {
+        const chooser = self.chooser.?;
+        switch (key) {
+            c.SDLK_ESCAPE => try self.chooserCancel(),
+            c.SDLK_RETURN => try self.chooserApply(true),
+            c.SDLK_RIGHT => try self.chooserApply(false),
+            c.SDLK_LEFT => try self.chooserRestore(),
+            c.SDLK_UP => chooser.move(-1),
+            c.SDLK_DOWN => chooser.move(1),
+            c.SDLK_PAGEUP => chooser.move(-10),
+            c.SDLK_PAGEDOWN => chooser.move(10),
+            c.SDLK_HOME => chooser.selected = 0,
+            c.SDLK_END => chooser.selected = chooser.result_count -| 1,
+            c.SDLK_BACKSPACE => chooser.backspace(),
+            else => {},
+        }
+    }
+    fn chooserField(self: *const App) layout.Rect {
+        const box = self.settingsRect();
+        return .{ .x = box.x + 12, .y = box.y + 44, .width = @max(1, box.width - 24), .height = 32 };
+    }
+    fn chooserList(self: *const App) layout.Rect {
+        const box = self.settingsRect();
+        return .{ .x = box.x + 12, .y = box.y + 86, .width = @max(1, (box.width - 36) * 0.45), .height = @max(1, box.height - 142) };
+    }
+    fn chooserVisible(self: *const App) u16 {
+        return @intFromFloat(std.math.clamp(@floor(self.chooserList().height / 32), 1, 10));
+    }
+    fn chooserStart(self: *const App) u16 {
+        return (self.chooser.?.selected + 1) -| self.chooserVisible();
+    }
+    fn chooserClick(self: *App, x: f32, y: f32) !void {
+        const box = self.settingsRect();
+        if (!box.contains(x, y)) return self.chooserCancel();
+        const list = self.chooserList();
+        if (y >= box.y + box.height - 42) {
+            const third = @max(1, box.width / 3);
+            if (x < box.x + third) try self.chooserApply(false) else if (x < box.x + 2 * third) try self.chooserApply(true) else try self.chooserCancel();
+        } else if (list.contains(x, y)) {
+            const relative = @floor((y - list.y) / 32);
+            if (relative >= @as(f32, @floatFromInt(self.chooserVisible()))) return;
+            const row: u16 = @intFromFloat(relative);
+            const chosen = row + self.chooserStart();
+            if (row < self.chooserVisible() and chosen < self.chooser.?.result_count) self.chooser.?.selected = chosen;
+        }
+    }
+    fn drawChooser(self: *App) !void {
+        const chooser = self.chooser.?;
+        const colors = try self.uiPalette();
+        const box = self.settingsRect();
+        const list = self.chooserList();
+        const field = self.chooserField();
+        try fill(self.renderer, box, colors.panel);
+        try self.drawText(if (chooser.truncated) "Installed terminal fonts — first 256 families" else "Installed terminal fonts", box.x + 12, box.y + 12);
+        try fill(self.renderer, field, colors.title);
+        try self.clippedText(if (chooser.query_len == 0) "Type to search families" else chooser.query[0..chooser.query_len], field, field.x + 6);
+        const start = self.chooserStart();
+        for (start..@min(chooser.result_count, start + self.chooserVisible())) |index| {
+            const row: layout.Rect = .{ .x = list.x, .y = list.y + @as(f32, @floatFromInt(index - start)) * 32, .width = list.width, .height = 30 };
+            if (index == chooser.selected) try fill(self.renderer, row, colors.active);
+            try self.clippedText(try chooser.label(@intCast(index)), row, row.x + 6);
+        }
+        const sample: layout.Rect = .{ .x = list.x + list.width + 12, .y = list.y, .width = @max(1, box.x + box.width - 12 - list.x - list.width - 12), .height = list.height };
+        if (chooser.result_count == 0) try self.clippedText("No matching terminal font families", sample, sample.x) else {
+            try self.clippedText(try chooser.label(chooser.selected), .{ .x = sample.x, .y = sample.y, .width = sample.width, .height = 30 }, sample.x);
+            try self.clippedText(try chooser.regularPath(), .{ .x = sample.x, .y = sample.y + 32, .width = sample.width, .height = 30 }, sample.x);
+            const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(sample.x)), .y = @intFromFloat(@floor(sample.y + 68)), .w = @intFromFloat(@ceil(sample.width)), .h = @intFromFloat(@ceil(@max(1, sample.height - 68))) };
+            if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
+            defer clearClip(self.renderer);
+            if (try chooser.sample(self.scale)) |font| {
+                for ([_][]const u8{ "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789  ()[]{}<> +-*/", "Il1 O0  -> => != ==  $@" }, 0..) |line, number| {
+                    try self.drawTextFont(font, line, sample.x, sample.y + 76 + @as(f32, @floatFromInt(number)) * 34);
+                }
+            }
+        }
+        const button_width = @max(1, (box.width - 24) / 3);
+        for ([_][]const u8{ "Preview →", "Save Enter", "Cancel Esc" }, 0..) |label, index| {
+            const button: layout.Rect = .{ .x = box.x + 12 + @as(f32, @floatFromInt(index)) * button_width, .y = box.y + box.height - 38, .width = @max(1, button_width - 4), .height = 30 };
+            try fill(self.renderer, button, colors.active);
+            try self.clippedText(label, button, button.x + 6);
+        }
     }
     fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
         const e = &self.settings_editor.?;
@@ -733,6 +855,7 @@ const App = struct {
                 const mapping = self.bindings.find(value.key.key, value.key.mod);
                 const command = if (mapping) |index| blk: {
                     const target = keybindings.definitions[index].target;
+                    if (self.chooser != null) break :blk null;
                     if (self.settings_editor) |e| {
                         if (e.editing != null or !(target == .action and target.action == .open_settings)) break :blk null;
                     }
@@ -742,7 +865,7 @@ const App = struct {
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.settings_editor != null) try self.settingsKey(value.key) else try self.paletteKey(value.key.key),
+                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else try self.paletteKey(value.key.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -754,7 +877,9 @@ const App = struct {
                 self.preedit.clear();
                 if (self.keyboard.consumeText()) return;
                 const text = std.mem.span(value.text.text);
-                if (self.settings_editor) |*e| {
+                if (self.chooser) |chooser| {
+                    try chooser.append(text);
+                } else if (self.settings_editor) |*e| {
                     if (!e.recording) try e.append(text);
                 } else if (self.palette) |*p| {
                     if (text.len <= p.query.len - p.len) {
@@ -814,6 +939,10 @@ const App = struct {
         if (self.capture) |held| {
             const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
             return self.pointerPress(held.pane, point, button, mods);
+        }
+        if (self.chooser != null) {
+            if (button == .left) try self.chooserClick(x, y);
+            return;
         }
         if (self.settings_editor != null) {
             if (button == .left) try self.settingsClick(x, y);
@@ -910,6 +1039,10 @@ const App = struct {
             try self.pointerRelease(button, -std.math.inf(f32), -std.math.inf(f32), .{});
     }
     fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
+        if (self.chooser) |chooser| {
+            if (std.math.isFinite(wheel.y)) chooser.move(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)));
+            return;
+        }
         if ((self.palette != null or self.settings_editor != null)) return;
         const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
         const p = self.tab().panes[slot].?;
@@ -1075,8 +1208,11 @@ const App = struct {
         try self.clippedText("Enter edits · Tab page · ↑↓ choose · Backspace resets · Ctrl+F search", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
+        try self.drawTextFont(self.ui_fonts.faces[0], bytes, x, y);
+    }
+    fn drawTextFont(self: *App, font: *c.TTF_Font, bytes: []const u8, x: f32, y: f32) !void {
         if (bytes.len == 0) return;
-        const surface = c.TTF_RenderText_Blended(self.ui_fonts.faces[0], bytes.ptr, bytes.len, (try self.uiPalette()).text) orelse return error.TTF;
+        const surface = c.TTF_RenderText_Blended(font, bytes.ptr, bytes.len, (try self.uiPalette()).text) orelse return error.TTF;
         defer c.SDL_DestroySurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse return error.SDL;
         defer c.SDL_DestroyTexture(texture);
@@ -1097,7 +1233,11 @@ const App = struct {
         var y: f32 = undefined;
         var cell_height: f32 = 20;
         var logical_font: f32 = 15;
-        if (self.settings_editor) |e| {
+        if (self.chooser) |chooser| {
+            clip = self.chooserField();
+            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(chooser.query[0..chooser.query_len]));
+            y = clip.y + 6;
+        } else if (self.settings_editor) |e| {
             if ((e.editing == null and !e.search) or e.recording) {
                 if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
                 return;
@@ -1237,6 +1377,7 @@ const App = struct {
         try self.drawText(if (self.notice_len == 0) (try savedRecipe(self.configuration, self.pane().recipe.value)).name else self.notice[0..self.notice_len], 10, self.height - 22);
         if (self.palette != null) try self.drawPalette();
         if (self.settings_editor != null) try self.drawSettings();
+        if (self.chooser != null) try self.drawChooser();
         try self.drawComposition();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
         for (places[0..result.panes]) |place| {
@@ -1537,6 +1678,28 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try app.event(event_value);
     try std.testing.expectEqualStrings("/owned-field", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
     try std.testing.expectEqual(canonical_before_edit, owner.snapshot().revision);
+    app.settings_editor.?.cancel();
+    app.chooser = try allocator.create(font_chooser.Chooser);
+    app.chooser.?.* = .{ .original = config.Config.defaults(allocator) };
+    defer if (app.chooser) |chooser| chooser.destroy(allocator);
+    app.input_timestamp = 209;
+    app.cancelComposition();
+    event_value.text.timestamp = 208;
+    event_value.text.text = "OLD-FIELD";
+    try app.event(event_value);
+    try std.testing.expectEqual(@as(u8, 0), app.chooser.?.query_len);
+    event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 210, .windowID = c.SDL_GetWindowID(window), .text = "é", .start = 1, .length = 0 };
+    try app.event(event_value);
+    try app.drawComposition();
+    try std.testing.expect(c.SDL_GetTextInputArea(window, &area, &caret));
+    try std.testing.expect(@as(f32, @floatFromInt(area.x)) >= app.chooserField().x);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 211, .windowID = c.SDL_GetWindowID(window), .text = "jbmono" };
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("jbmono", app.chooser.?.query[0..app.chooser.?.query_len]);
+    try std.testing.expectEqual(canonical_before_edit, owner.snapshot().revision);
+    try app.chooserCancel();
+    try std.testing.expect(app.chooser == null);
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
     try app.toggleSettings();
     try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
     const point: pointer.Location = .{ .row = 1, .col = 2, .pixel_x = 20, .pixel_y = 20 };
