@@ -32,7 +32,7 @@ pub fn caption(count: u8, width: f32) Rect {
 /// One caption button; none has no hit area.
 pub fn control(button: Button, width: f32) Rect {
     if (button == .none) return .{ .x = 0, .y = 0, .width = 0, .height = 0 };
-    return .{ .x = width - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * 42, .y = 4, .width = 42, .height = 42 };
+    return .{ .x = width - @as(f32, @floatFromInt(4 - @as(u8, @backingInt(button)))) * 42, .y = 4, .width = 42, .height = 30 };
 }
 /// Resolves a caption control with the same painted geometry.
 pub fn buttonAt(x: f32, y: f32, width: f32) Button {

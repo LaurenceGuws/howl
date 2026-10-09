@@ -1894,7 +1894,7 @@ const App = struct {
             if (self.chrome_hover == button) try fill(self.renderer, rect, if (button == .close) .{ .r = 184, .g = 46, .b = 56, .a = 255 } else colors.active);
             const color = if (self.chrome_hover == button) colors.text else colors.muted;
             // Switchyard's hand-tuned glyphs in a 42x26 box, centred in our caption.
-            const y = rect.y + 8;
+            const y = rect.y + (rect.height - 26) / 2;
             switch (button) {
                 .minimize => try fill(self.renderer, .{ .x = rect.x + 15, .y = y + 16, .width = 12, .height = 1 }, color),
                 .maximize => {
