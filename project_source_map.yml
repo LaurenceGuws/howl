@@ -166,9 +166,12 @@ experimental:
     schema-1..4 saved config supplies startup/profile selection, saved launch recipes,
     mappings and exact font paths. Owned tab/pane recipes survive configuration
     replacement; unavailable attachments and construction failures retain their
-    exact route without Local fallback. The atomic-save primitive awaits the
-    settings UI. Completed font resets fence previous unread publications while
-    preserving accepted leases. Settings/themes, selection/search, desktop
-    input/consequence policy and explicit attachments remain
+    exact route without Local fallback. Eight bounded settings pages share the
+    owned config and mapping registry, with search, physical shortcut recording,
+    profile/environment/Server editing, themes and atomic live-font transactions.
+    Failed saves restore presentation against the unchanged canonical grid/history;
+    accepted saves allow the next layout resize. Completed font resets fence
+    previous unread publications while preserving accepted leases. Font chooser,
+    selection/search/scrollbar, desktop input/consequence policy and explicit attachments remain
     to be carried over before daily supersession. Its package check includes
     its complete ruleset-3 source audit.

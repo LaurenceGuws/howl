@@ -60,21 +60,28 @@ and duplicate retains the original tab recipe. Each tab/pane owns its recipe,
 so config replacement cannot invalidate a live launch or a later restart.
 An unavailable attachment or failed constructor remains an explicitly failed
 pane; retry uses that same recipe and never falls back to Local. Missing config
-preserves the Home default. The atomic-save primitive is proved but is not yet
-connected to a settings UI.
+preserves the Home default. Eight bounded settings pages edit profiles, ordered
+environment rows, labelled Server endpoints, mappings, themes and exact font
+recipes, with global search and a physical shortcut recorder. Saves replace the
+owned configuration atomically. Live font changes stage against the existing
+canonical grid; failed saves restore presentation without resetting history.
+Only an accepted save permits the next ordinary layout resize. Existing children
+keep running; future launches and retries use the current saved recipe.
 
-This remains an experimental capability cut. Settings, themes, selection/search,
-rich desktop consequences and explicit attachments still need qualification.
+This remains an experimental capability cut. A font chooser, selection/search/
+scrollbar, rich desktop consequences and explicit attachments still need
+qualification. Exact font paths can already be edited and reset in settings.
 IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Forty-five package proofs cover worker independence/failure cleanup, immutable
+Fifty-two package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
 preedit ownership/caret/commit behavior and compatible saved-config ownership,
-bounds, migration, mapping swaps and atomic-save failure cleanup. A successful
+bounds, migration, mapping swaps, bounded settings edits, catalogue mutation,
+shortcut recording and live-font save rollback with held frames/history. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:

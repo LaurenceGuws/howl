@@ -10,6 +10,8 @@ const input = @import("input.zig");
 const pointer = @import("pointer.zig");
 const composition = @import("composition.zig");
 const config = @import("config.zig");
+const settings = @import("settings.zig");
+const appearance = @import("appearance.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -27,6 +29,7 @@ const Pane = struct {
     columns: u16 = 0,
     size_control: bool = true,
     font_size: u16 = 15,
+    font_overridden: bool = false,
     cell_size: ?instance.render.terminal.Size = null,
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
@@ -70,7 +73,7 @@ const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
-    fonts: *const font_owner.Fonts,
+    fonts: *font_owner.Fonts,
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,
     ui_fonts: *font_owner.TextFonts,
@@ -86,6 +89,7 @@ const App = struct {
     capture: ?PointerCapture = null,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
+    settings_editor: ?settings.Editor = null,
     drag: Drag = .none,
     consume_left_release: bool = false,
     focused: bool = false,
@@ -105,7 +109,7 @@ const App = struct {
     fn pane(self: *App) *Pane {
         return self.tab().panes[self.tab().tree.active].?;
     }
-    fn body(self: *const App) layout.Rect {
+    fn terminalBody(self: *const App) layout.Rect {
         return .{ .x = 6, .y = 40, .width = @max(1, self.width - 12), .height = @max(1, self.height - 68) };
     }
     fn tabWidth(self: *const App) f32 {
@@ -176,14 +180,14 @@ const App = struct {
         self.cancelComposition();
         try self.finishPointer();
         try self.keyboard.releaseTerminal();
-        if (self.tab_count == 0 or !self.focused or self.palette != null) return;
+        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
         self.cancelComposition();
-        if (self.tab_count == 0 or !self.focused or self.palette != null) return;
+        if (self.tab_count == 0 or !self.focused or (self.palette != null or self.settings_editor != null)) return;
         const owner = self.pane().owner orelse return;
         const status = owner.snapshot();
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .in } });
@@ -274,6 +278,7 @@ const App = struct {
         self.active = destination;
     }
     fn openPalette(self: *App, profile: bool) !void {
+        if (self.settings_editor != null) self.settings_editor = null;
         if (self.palette != null) {
             self.palette = null;
             try self.gainKeyboard();
@@ -291,7 +296,8 @@ const App = struct {
             try previous.submit(.retry_render);
             return;
         }
-        const next = try self.createPane(previous.recipe.value, previous.font_size);
+        const next = try self.createPane(try savedRecipe(self.configuration, previous.recipe.value), previous.font_size);
+        next.font_overridden = previous.font_overridden;
         errdefer self.destroyPane(next);
         try self.loseKeyboard();
         self.tab().panes[self.tab().tree.active] = next;
@@ -301,6 +307,10 @@ const App = struct {
     }
     fn dispatch(self: *App, target: keybindings.Target) !void {
         self.notice_len = 0;
+        if (self.settings_editor != null and !(target == .action and target.action == .open_settings)) {
+            self.settings_editor = null;
+            try self.gainKeyboard();
+        }
         if (self.palette != null and !(target == .action and
             (target.action == .open_command_palette or target.action == .open_profile_menu)))
         {
@@ -311,7 +321,7 @@ const App = struct {
             .action => |action| switch (action) {
                 .new_tab => try self.createTab(try self.startup(), null),
                 .open_local => try self.createTab(try self.configuration.profile(1), null),
-                .duplicate_tab => try self.createTab(self.tab().recipe.value, null),
+                .duplicate_tab => try self.createTab(try savedRecipe(self.configuration, self.tab().recipe.value), null),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
                 .split_horizontal => try self.split(.vertical),
@@ -334,7 +344,7 @@ const App = struct {
                 .stop_resizing => self.pane().size_control = false,
                 .open_command_palette => try self.openPalette(false),
                 .open_profile_menu => try self.openPalette(true),
-                .open_settings => return error.SettingsNotImplemented,
+                .open_settings => try self.toggleSettings(),
                 .attach_home => try self.createTab(try self.configuration.profile(0), null),
             },
             .select_tab => |index| try self.selectTab(index),
@@ -346,9 +356,9 @@ const App = struct {
             .history_oldest => try self.pane().submit(.{ .seek = std.math.maxInt(u32) }),
             .history_live => try self.pane().submit(.{ .seek = 0 }),
             .history_page => |direction| try self.pane().submit(.{ .scroll = @as(i32, @intCast(@max(1, self.pane().rows))) * direction }),
-            .pane_focus => |direction| if (self.tab().tree.neighbor(self.body(), direction)) |slot| try self.focusPane(slot),
+            .pane_focus => |direction| if (self.tab().tree.neighbor(self.terminalBody(), direction)) |slot| try self.focusPane(slot),
             .pane_swap => |direction| {
-                if (self.tab().tree.neighbor(self.body(), direction)) |slot| {
+                if (self.tab().tree.neighbor(self.terminalBody(), direction)) |slot| {
                     const changed = self.tab().tree.swap(slot);
                     std.debug.assert(changed);
                 }
@@ -361,7 +371,10 @@ const App = struct {
             .adjust_font => |delta| {
                 const p = self.pane();
                 const next: u16 = @intCast(std.math.clamp(@as(i32, p.font_size) + delta, 8, 48));
-                if (next != p.font_size) try self.configureFont(p, next, true);
+                if (next != p.font_size) {
+                    try self.configureFont(p, next, true);
+                    p.font_overridden = true;
+                }
             },
             .copy_selection => return error.SelectionNotImplemented,
         }
@@ -370,7 +383,7 @@ const App = struct {
         if (!value.size_control) return null;
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const visible = self.tab().tree.layout(self.body(), &places, &dividers);
+        const visible = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..visible.panes]) |place| if (self.tab().panes[place.pane] == value)
             return physicalSurface(place.rect, self.scale);
         return null;
@@ -411,6 +424,258 @@ const App = struct {
             if (value.owner == null or status.failure != null or status.closed) continue;
             self.configureFont(value, value.font_size, true) catch |failure| self.report(failure);
         };
+    }
+    fn uiPalette(self: *const App) error{InvalidTheme}!appearance.Palette {
+        return appearance.palette(self.configuration.value.app_theme);
+    }
+    fn applyConfiguration(self: *App, candidate: *config.Config) !void {
+        const target = try config.Config.path(allocator, self.init.environ_map);
+        defer allocator.free(target);
+        try self.applyConfigurationAt(candidate, .cwd(), target);
+    }
+    fn applyConfigurationAt(self: *App, candidate: *config.Config, dir: std.Io.Dir, target: []const u8) !void {
+        const bindings = try keybindings.Bindings.fromOverrides(candidate.value.keybindings);
+        var paths_changed = false;
+        for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
+            paths_changed = paths_changed or !std.mem.eql(u8, old, new);
+        }
+        var next_fonts: ?font_owner.Fonts = null;
+        defer if (next_fonts) |*owned| owned.deinit();
+        var next_ui: ?font_owner.TextFonts = null;
+        defer if (next_ui) |*owned| owned.deinit();
+        if (paths_changed) {
+            next_fonts = try font_owner.Fonts.discover(allocator, self.init.environ_map, candidate.value.font.paths());
+            next_ui = try font_owner.TextFonts.open(allocator, &next_fonts.?, 15 * self.scale);
+        }
+        const fonts = if (next_fonts) |*value| value else self.fonts;
+        var changes: [tab_limit * layout.pane_limit]FontChange = undefined;
+        var count: usize = 0;
+        errdefer self.rollbackFonts(changes[0..count]);
+        for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |p| {
+            const old = try savedRecipe(self.configuration, p.recipe.value);
+            const new = try savedRecipe(candidate, p.recipe.value);
+            const reset = old.font_pixels != new.font_pixels;
+            const overridden = p.font_overridden and !reset;
+            const size: u16 = if (overridden) p.font_size else @intCast(if (new.font_pixels != 0) new.font_pixels else candidate.value.terminal_font_pixels);
+            var change: FontChange = .{ .pane = p, .size = size, .overridden = overridden };
+            const status = p.snapshot();
+            if (p.owner) |owner| {
+                if ((paths_changed or size != p.font_size) and status.failure == null and !status.closed) {
+                    const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale));
+                    // Stage presentation with the canonical grid unchanged. A failed save must
+                    // not reset history through a temporary column change.
+                    change.geometry = try owner.reconfigure(fonts.config(pixels), null);
+                }
+            }
+            changes[count] = change;
+            count += 1;
+        };
+        // The private atomic file is replaced only after every font transaction succeeds.
+        try candidate.saveAt(self.init.io, dir, target);
+        for (changes[0..count]) |change| {
+            const p = change.pane;
+            p.font_size = change.size;
+            p.font_overridden = change.overridden;
+            if (change.geometry) |geometry| {
+                p.cell_size = geometry.cell_size;
+                p.rows = geometry.rows;
+                p.columns = geometry.columns;
+                p.font_failure = null;
+                if (p.graphics_failure != null) {
+                    p.canvas.deinit();
+                    p.canvas = canvas.Canvas.init(allocator);
+                    p.graphics_failure = null;
+                }
+            }
+        }
+        // Swapping returns the old configuration to the caller's existing cleanup path.
+        std.mem.swap(config.Config, self.configuration, candidate);
+        self.bindings = bindings;
+        if (next_ui) |owned| {
+            self.ui_fonts.deinit();
+            self.ui_fonts.* = owned;
+            next_ui = null;
+        }
+        if (next_fonts) |owned| {
+            self.fonts.deinit();
+            self.fonts.* = owned;
+            next_fonts = null;
+        }
+    }
+    fn rollbackFonts(self: *App, changes: []const FontChange) void {
+        for (changes) |change| {
+            if (change.geometry == null) continue;
+            const p = change.pane;
+            const owner = p.owner orelse continue;
+            const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(p.font_size)) * self.scale));
+            const geometry = owner.reconfigure(self.fonts.config(pixels), null) catch |failure| {
+                p.font_failure = failure;
+                continue;
+            };
+            p.cell_size = geometry.cell_size;
+            p.rows = geometry.rows;
+            p.columns = geometry.columns;
+        }
+    }
+    fn toggleSettings(self: *App) !void {
+        if (self.settings_editor != null) {
+            self.settings_editor = null;
+            try self.gainKeyboard();
+            return;
+        }
+        try self.loseKeyboard();
+        self.palette = null;
+        self.settings_editor = .{};
+    }
+    fn profileInUse(self: *App, index: u8) !bool {
+        const id = (try self.configuration.profile(index)).id;
+        for (self.tabs[0..self.tab_count]) |value| {
+            const t = value.?;
+            if (std.mem.eql(u8, t.recipe.value.id, id)) return true;
+            for (t.panes) |maybe| if (maybe) |p| {
+                if (std.mem.eql(u8, p.recipe.value.id, id)) return true;
+            };
+        }
+        return false;
+    }
+    fn changeSetting(self: *App, target: settings.Target, text: []const u8) !void {
+        if (target == .delete_profile and try self.profileInUse(target.delete_profile)) return error.ProfileInUse;
+        var candidate = try settings.change(self.configuration, self.init.io, target, text);
+        defer candidate.deinit();
+        try self.applyConfiguration(&candidate);
+        self.cancelComposition();
+        self.settings_editor.?.cancel();
+        self.setNotice("Saved");
+    }
+    fn activateSetting(self: *App, row: settings.Row) !void {
+        if (row.target == .delete_profile) {
+            if (try self.profileInUse(row.target.delete_profile)) return error.ProfileInUse;
+            if (self.settings_editor.?.delete_pending != row.target.delete_profile) {
+                self.settings_editor.?.delete_pending = row.target.delete_profile;
+                self.setNotice("Press Enter again to delete this profile");
+                return;
+            }
+        }
+        self.cancelComposition();
+        if (row.editable()) {
+            try self.settings_editor.?.begin(row, self.configuration);
+            if (row.target == .binding) {
+                self.settings_editor.?.recording = true;
+                self.setNotice("Press a shortcut — Esc cancels");
+            }
+        } else try self.changeSetting(row.target, "");
+    }
+    fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
+        const e = &self.settings_editor.?;
+        const key = event_value.key;
+        const mods = input.semanticModifiers(event_value.mod);
+        if (e.recording) {
+            if (key == c.SDLK_ESCAPE) {
+                self.cancelComposition();
+                e.cancel();
+                return;
+            }
+            if (key == c.SDLK_LCTRL or key == c.SDLK_RCTRL or key == c.SDLK_LSHIFT or key == c.SDLK_RSHIFT or
+                key == c.SDLK_LALT or key == c.SDLK_RALT or key == c.SDLK_LGUI or key == c.SDLK_RGUI) return;
+            self.keyboard.suppress_text = true;
+            var buffer: [64]u8 = undefined;
+            try self.changeSetting(e.editing.?, try keybindings.format(key, event_value.mod, &buffer));
+            return;
+        }
+        if (e.editing) |target| {
+            if (mods.control and key == c.SDLK_A) e.select_all = true else if (mods.control and key == c.SDLK_V) {
+                self.keyboard.suppress_text = true;
+                const text = c.SDL_GetClipboardText() orelse return error.SDL;
+                defer c.SDL_free(text);
+                try e.append(std.mem.span(text));
+            } else switch (key) {
+                c.SDLK_ESCAPE => {
+                    self.cancelComposition();
+                    e.cancel();
+                },
+                c.SDLK_RETURN => try self.changeSetting(target, e.buffer[0..e.len]),
+                c.SDLK_BACKSPACE, c.SDLK_DELETE => e.backspace(),
+                else => {},
+            }
+            return;
+        }
+        if (mods.control and key == c.SDLK_F) {
+            self.cancelComposition();
+            e.search = !e.search;
+            e.query_len = 0;
+            e.selected = 0;
+            e.delete_pending = null;
+            return;
+        }
+        if (key == c.SDLK_ESCAPE) {
+            self.cancelComposition();
+            if (e.search) {
+                e.search = false;
+                e.query_len = 0;
+                e.selected = 0;
+            } else try self.toggleSettings();
+            return;
+        }
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.configuration, &all);
+        const visible = e.indices(all[0..count], &indices);
+        if (key == c.SDLK_TAB and !e.search) {
+            const pages = settings.titles.len;
+            e.page = @fromBackingInt(@intCast((@backingInt(e.page) + (if (mods.shift) pages - 1 else @as(usize, 1))) % pages));
+            e.selected = 0;
+            e.delete_pending = null;
+            return;
+        }
+        if (visible == 0) return;
+        e.selected = @min(e.selected, visible - 1);
+        const row = all[indices[e.selected]];
+        switch (key) {
+            c.SDLK_UP, c.SDLK_PAGEUP => {
+                e.selected -|= if (key == c.SDLK_UP) 1 else 10;
+                e.delete_pending = null;
+            },
+            c.SDLK_DOWN, c.SDLK_PAGEDOWN => {
+                e.selected = @min(visible - 1, e.selected + (if (key == c.SDLK_DOWN) @as(usize, 1) else 10));
+                e.delete_pending = null;
+            },
+            c.SDLK_RETURN => try self.activateSetting(row),
+            c.SDLK_BACKSPACE => if (e.search) {
+                e.backspace();
+            } else if (row.target == .binding) {
+                try self.changeSetting(row.target, keybindings.definitions[row.target.binding].default_shortcut);
+            } else if (row.target == .font) {
+                try self.changeSetting(row.target, "");
+            },
+            c.SDLK_DELETE => if (row.target == .binding) try self.changeSetting(row.target, ""),
+            c.SDLK_LEFT, c.SDLK_RIGHT => {
+                const delta: i8 = if (key == c.SDLK_LEFT) -1 else 1;
+                if (mods.alt and row.target == .environment) {
+                    const field = row.target.environment;
+                    try self.changeSetting(.{ .move_environment = .{ .profile = field.profile, .index = field.index, .delta = delta } }, "");
+                } else if (row.target == .default_font) {
+                    const next = std.math.clamp(self.configuration.value.terminal_font_pixels + delta, 8, 48);
+                    var text: [16]u8 = undefined;
+                    try self.changeSetting(row.target, try std.fmt.bufPrint(&text, "{d}", .{next}));
+                } else if (row.target == .default_profile) {
+                    const index = try self.configuration.defaultProfile();
+                    const next: u8 = @intCast(std.math.clamp(@as(i16, index) + delta, 0, @as(i16, self.configuration.profileCount()) - 1));
+                    try self.changeSetting(.{ .set_default = next }, "");
+                } else if (row.target == .theme) {
+                    const themes = [_][]const u8{ "howl_dark", "slate", "high_contrast" };
+                    var index: i16 = 0;
+                    for (themes, 0..) |theme, i| if (std.mem.eql(u8, theme, self.configuration.value.app_theme)) {
+                        index = @intCast(i);
+                        break;
+                    };
+                    try self.changeSetting(row.target, themes[@intCast(@mod(index + delta, 3))]);
+                } else if (row.target == .profile and row.target.profile.field == .mode) {
+                    const recipe = try self.configuration.profile(row.target.profile.index);
+                    try self.changeSetting(row.target, if (std.ascii.eqlIgnoreCase(recipe.mode, "launch")) "attach" else "launch");
+                }
+            },
+            else => {},
+        }
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -466,12 +731,18 @@ const App = struct {
                 const press = value.type == c.SDL_EVENT_KEY_DOWN;
                 if (press) self.cancelDrag();
                 const mapping = self.bindings.find(value.key.key, value.key.mod);
-                const command = if (mapping) |index| keybindings.definitions[index].target else null;
-                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.palette != null);
+                const command = if (mapping) |index| blk: {
+                    const target = keybindings.definitions[index].target;
+                    if (self.settings_editor) |e| {
+                        if (e.editing != null or !(target == .action and target.action == .open_settings)) break :blk null;
+                    }
+                    break :blk target;
+                } else null;
+                const route = try self.keyboard.route(value.key, press, self.pane().owner, command, self.palette != null or self.settings_editor != null);
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => try self.paletteKey(value.key.key),
+                    .overlay => if (self.settings_editor != null) try self.settingsKey(value.key) else try self.paletteKey(value.key.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -483,7 +754,9 @@ const App = struct {
                 self.preedit.clear();
                 if (self.keyboard.consumeText()) return;
                 const text = std.mem.span(value.text.text);
-                if (self.palette) |*p| {
+                if (self.settings_editor) |*e| {
+                    if (!e.recording) try e.append(text);
+                } else if (self.palette) |*p| {
                     if (text.len <= p.query.len - p.len) {
                         @memcpy(p.query[p.len..][0..text.len], text);
                         p.len += text.len;
@@ -512,7 +785,7 @@ const App = struct {
                 } else if (self.drag == .tab and value.motion.y < 40 and self.tab_count > 1) {
                     const index: u8 = @intFromFloat(std.math.clamp(@floor((value.motion.x - 8) / self.tabWidth()), 0, @as(f32, @floatFromInt(self.tab_count - 1))));
                     self.moveTab(index);
-                } else if (self.palette == null) {
+                } else if (self.palette == null and self.settings_editor == null) {
                     if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
                         const p = self.tab().panes[slot].?;
                         const state = p.snapshot().interaction orelse return;
@@ -541,6 +814,10 @@ const App = struct {
         if (self.capture) |held| {
             const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
             return self.pointerPress(held.pane, point, button, mods);
+        }
+        if (self.settings_editor != null) {
+            if (button == .left) try self.settingsClick(x, y);
+            return;
         }
         if (self.palette != null) {
             if (button != .left) return;
@@ -573,7 +850,7 @@ const App = struct {
         }
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (dividers[0..result.dividers]) |divider| if (button == .left and divider.rect.contains(x, y)) {
             self.drag = .{ .divider = divider };
             return;
@@ -593,7 +870,7 @@ const App = struct {
     fn pointerPane(self: *App, x: f32, y: f32) ?u8 {
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..result.panes]) |place| if (place.rect.contains(x, y)) return place.pane;
         return null;
     }
@@ -601,7 +878,7 @@ const App = struct {
         const frame = p.canvas.frame() orelse return null;
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
             const rect = paneContent(place.rect);
             return pointer.locate(.{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, self.scale, frame.cell_size, frame.surface, x, y, captured);
@@ -633,7 +910,7 @@ const App = struct {
             try self.pointerRelease(button, -std.math.inf(f32), -std.math.inf(f32), .{});
     }
     fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
-        if (self.palette != null) return;
+        if ((self.palette != null or self.settings_editor != null)) return;
         const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
         const p = self.tab().panes[slot].?;
         const frame = p.canvas.frame() orelse return;
@@ -691,9 +968,115 @@ const App = struct {
             }
         }
     }
+    fn settingsRect(self: *const App) layout.Rect {
+        const width = @min(900, @max(1, self.width - 24));
+        return .{ .x = (self.width - width) / 2, .y = 44, .width = width, .height = @max(1, self.height - 66) };
+    }
+    fn settingsBody(self: *const App) layout.Rect {
+        const box = self.settingsRect();
+        const sidebar = @min(180, box.width / 3);
+        return .{ .x = box.x + sidebar + 12, .y = box.y + 88, .width = @max(1, box.width - sidebar - 24), .height = @max(1, box.height - 132) };
+    }
+    fn settingsField(self: *const App) layout.Rect {
+        const box = self.settingsRect();
+        const body = self.settingsBody();
+        return .{ .x = body.x, .y = box.y + 44, .width = body.width, .height = 32 };
+    }
+    fn settingsVisible(self: *const App) usize {
+        return @max(1, @as(usize, @intFromFloat(@floor(self.settingsBody().height / 32))));
+    }
+    fn settingsStart(self: *const App, count: usize) usize {
+        const selected = @min(self.settings_editor.?.selected, count -| 1);
+        return (selected + 1) -| self.settingsVisible();
+    }
+    fn settingsClick(self: *App, x: f32, y: f32) !void {
+        const e = &self.settings_editor.?;
+        const box = self.settingsRect();
+        if (e.editing != null) return;
+        if (!box.contains(x, y) or (x >= box.x + box.width - 70 and y < box.y + 36)) return self.toggleSettings();
+        const body = self.settingsBody();
+        if (x < body.x - 12 and y >= box.y + 48) {
+            const page: usize = @intFromFloat(@floor((y - box.y - 48) / 34));
+            if (page < settings.titles.len) {
+                self.cancelComposition();
+                e.page = @fromBackingInt(@intCast(page));
+                e.search = false;
+                e.query_len = 0;
+                e.selected = 0;
+                e.delete_pending = null;
+            }
+            return;
+        }
+        const field = self.settingsField();
+        if (field.contains(x, y)) {
+            e.search = true;
+            e.query_len = 0;
+            e.selected = 0;
+            self.cancelComposition();
+            return;
+        }
+        if (!body.contains(x, y)) return;
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.configuration, &all);
+        const visible = e.indices(all[0..count], &indices);
+        const row: usize = @intFromFloat(@floor((y - body.y) / 32));
+        const chosen = row + self.settingsStart(visible);
+        if (row >= self.settingsVisible() or chosen >= visible) return;
+        if (e.selected != chosen) e.delete_pending = null;
+        e.selected = chosen;
+        try self.activateSetting(all[indices[chosen]]);
+    }
+    fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
+        const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.width)), .h = @intFromFloat(@ceil(rect.height)) };
+        if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
+        defer clearClip(self.renderer);
+        try self.drawText(text, x, rect.y + 6);
+    }
+    fn drawSettings(self: *App) !void {
+        const e = &self.settings_editor.?;
+        const colors = try self.uiPalette();
+        const box = self.settingsRect();
+        const body = self.settingsBody();
+        try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = self.height }, .{ .r = 0, .g = 0, .b = 0, .a = 180 });
+        try fill(self.renderer, box, colors.panel);
+        try self.drawText("Settings", box.x + 12, box.y + 12);
+        try self.drawText("Close", box.x + box.width - 60, box.y + 12);
+        for (settings.titles, 0..) |title, index| {
+            const row: layout.Rect = .{ .x = box.x + 6, .y = box.y + 48 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
+            if (!e.search and @backingInt(e.page) == index) try fill(self.renderer, row, colors.active);
+            try self.clippedText(title, row, row.x + 6);
+        }
+        const field = self.settingsField();
+        try fill(self.renderer, field, colors.title);
+        const text = if (e.editing != null) e.buffer[0..e.len] else if (e.search) e.query[0..e.query_len] else "Search settings — Ctrl+F";
+        const scroll = if (e.editing != null or e.search) @max(0, try self.textWidth(text) - field.width + 12) else 0;
+        try self.clippedText(if (e.recording) "Press a shortcut — Esc cancels" else text, field, field.x + 6 - scroll);
+        if (e.select_all) try fill(self.renderer, .{ .x = field.x + 4, .y = field.y + 2, .width = @max(1, field.width - 8), .height = 2 }, colors.accent);
+        var all: [settings.row_limit]settings.Row = undefined;
+        var indices: [settings.row_limit]u16 = undefined;
+        const count = try settings.rows(self.configuration, &all);
+        const visible = e.indices(all[0..count], &indices);
+        e.selected = @min(e.selected, visible -| 1);
+        const start = self.settingsStart(visible);
+        for (indices[start..@min(visible, start + self.settingsVisible())], start..) |index, number| {
+            const row = all[index];
+            const rect: layout.Rect = .{ .x = body.x, .y = body.y + @as(f32, @floatFromInt(number - start)) * 32, .width = body.width, .height = 30 };
+            if (number == e.selected) try fill(self.renderer, rect, colors.active);
+            var label: [192]u8 = undefined;
+            const name = if (row.scope.len == 0) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
+            var value: [32]u8 = undefined;
+            const contents = try row.text(self.configuration, &value);
+            const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.52 - 12), .height = rect.height };
+            const right: layout.Rect = .{ .x = rect.x + rect.width * 0.52, .y = rect.y, .width = @max(1, rect.width * 0.48 - 6), .height = rect.height };
+            try self.clippedText(name, left, left.x);
+            try self.clippedText(contents, right, right.x);
+        }
+        try self.clippedText("Enter edits · Tab page · ↑↓ choose · Backspace resets · Ctrl+F search", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
+    }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         if (bytes.len == 0) return;
-        const surface = c.TTF_RenderText_Blended(self.ui_fonts.faces[0], bytes.ptr, bytes.len, .{ .r = 224, .g = 226, .b = 238, .a = 255 }) orelse return error.TTF;
+        const surface = c.TTF_RenderText_Blended(self.ui_fonts.faces[0], bytes.ptr, bytes.len, (try self.uiPalette()).text) orelse return error.TTF;
         defer c.SDL_DestroySurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse return error.SDL;
         defer c.SDL_DestroyTexture(texture);
@@ -714,7 +1097,16 @@ const App = struct {
         var y: f32 = undefined;
         var cell_height: f32 = 20;
         var logical_font: f32 = 15;
-        if (self.palette) |p| {
+        if (self.settings_editor) |e| {
+            if ((e.editing == null and !e.search) or e.recording) {
+                if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
+                return;
+            }
+            clip = self.settingsField();
+            const text = if (e.editing != null) e.buffer[0..e.len] else e.query[0..e.query_len];
+            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(text));
+            y = clip.y + 6;
+        } else if (self.palette) |p| {
             const box = self.paletteRect();
             clip = .{ .x = box.x + 12, .y = box.y + 8, .width = @max(1, box.width - 24), .height = 32 };
             x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
@@ -731,7 +1123,7 @@ const App = struct {
             }
             var places: [layout.pane_limit]layout.Placement = undefined;
             var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-            const result = self.tab().tree.layout(self.body(), &places, &dividers);
+            const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
             var found = false;
             for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == p) {
                 const rect = paneContent(place.rect);
@@ -777,14 +1169,15 @@ const App = struct {
         self.width = @floatFromInt(@max(1, width));
         self.height = @floatFromInt(@max(1, height));
         self.displayScale();
+        const colors = try self.uiPalette();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
-            !c.SDL_SetRenderDrawColor(self.renderer, 24, 25, 33, 255) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
+            !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
         const tab_width = self.tabWidth();
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const value = maybe.?;
             const status = value.panes[value.tree.active].?.snapshot();
             const rect: layout.Rect = .{ .x = 8 + tab_width * @as(f32, @floatFromInt(index)), .y = 4, .width = tab_width - 3, .height = 30 };
-            try fill(self.renderer, rect, if (index == self.active) .{ .r = 56, .g = 60, .b = 78, .a = 255 } else .{ .r = 34, .g = 36, .b = 47, .a = 255 });
+            try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
             const title_clip: c.SDL_Rect = .{ .x = @intFromFloat(rect.x + 4), .y = 4, .w = @intFromFloat(@max(1, rect.width - 28)), .h = 30 };
             if (!c.SDL_SetRenderClipRect(self.renderer, &title_clip)) return error.SDL;
             try self.drawText(status.title[0..status.title_len], rect.x + 8, 10);
@@ -796,12 +1189,13 @@ const App = struct {
         try self.drawText("⋯", self.width - 32, 10);
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
-        const result = self.tab().tree.layout(self.body(), &places, &dividers);
+        const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
         for (places[0..result.panes]) |place| {
             const p = self.tab().panes[place.pane].?;
             const active = place.pane == self.tab().tree.active;
-            try fill(self.renderer, place.rect, if (active) .{ .r = 76, .g = 85, .b = 112, .a = 255 } else .{ .r = 31, .g = 33, .b = 43, .a = 255 });
+            try fill(self.renderer, place.rect, if (active) colors.accent else colors.border);
             const rect = paneContent(place.rect);
+            try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, colors.panel);
             if (p.graphics_failure == null) {
                 if (p.owner) |owner| p.canvas.update(self.renderer, owner) catch |failure| {
                     p.graphics_failure = failure;
@@ -840,8 +1234,9 @@ const App = struct {
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
             }
         }
-        try self.drawText(if (self.notice_len == 0) self.pane().recipe.value.name else self.notice[0..self.notice_len], 10, self.height - 22);
+        try self.drawText(if (self.notice_len == 0) (try savedRecipe(self.configuration, self.pane().recipe.value)).name else self.notice[0..self.notice_len], 10, self.height - 22);
         if (self.palette != null) try self.drawPalette();
+        if (self.settings_editor != null) try self.drawSettings();
         try self.drawComposition();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
         for (places[0..result.panes]) |place| {
@@ -906,6 +1301,19 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 }
+const FontChange = struct {
+    pane: *Pane,
+    size: u16,
+    overridden: bool,
+    geometry: ?instance.PresentationGeometry = null,
+};
+fn savedRecipe(current: *const config.Config, owned: config.Profile) !config.Profile {
+    for (0..current.profileCount()) |index| {
+        const value = try current.profile(@intCast(index));
+        if (std.mem.eql(u8, value.id, owned.id)) return value;
+    }
+    return owned;
+}
 fn fill(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
     const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
     if (!c.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a) or !c.SDL_RenderFillRect(renderer, &target)) return error.SDL;
@@ -962,6 +1370,8 @@ test {
     std.testing.refAllDecls(pointer);
     std.testing.refAllDecls(composition);
     std.testing.refAllDecls(@import("config.zig"));
+    std.testing.refAllDecls(settings);
+    std.testing.refAllDecls(appearance);
 }
 
 test "palette query is bounded and includes deliberately unbound directional commands" {
@@ -1024,7 +1434,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     const geometry = try test_allocator.create(canvas.Geometry);
     defer test_allocator.destroy(geometry);
     geometry.* = .{};
-    const fonts: font_owner.Fonts = .{ .allocator = test_allocator, .paths = @splat(@import("test_fonts").primary_font) };
+    var fonts: font_owner.Fonts = .{ .allocator = test_allocator, .paths = @splat(@import("test_fonts").primary_font) };
     var ui_fonts = try font_owner.TextFonts.open(test_allocator, &fonts, 15);
     defer ui_fonts.deinit();
     var threaded = std.Io.Threaded.init(test_allocator, .{});
@@ -1102,6 +1512,33 @@ test "SDL composition stays local, uses its caret area and clears before pane in
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(attempts < 5000);
+    try app.toggleSettings();
+    app.settings_editor.?.search = true;
+    event_value.text.timestamp = 203;
+    event_value.text.text = "regular";
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("regular", app.settings_editor.?.query[0..app.settings_editor.?.query_len]);
+    const field: settings.Row = .{ .page = .appearance, .label = "Regular font", .target = .{ .font = 0 } };
+    try app.settings_editor.?.begin(field, &configuration);
+    app.input_timestamp = 205;
+    app.cancelComposition();
+    event_value.text.timestamp = 204;
+    event_value.text.text = "/old-field";
+    try app.event(event_value);
+    try std.testing.expectEqual(@as(usize, 0), app.settings_editor.?.len);
+    const canonical_before_edit = owner.snapshot().revision;
+    event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 206, .windowID = c.SDL_GetWindowID(window), .text = "é", .start = 1, .length = 0 };
+    try app.event(event_value);
+    try app.drawComposition();
+    try std.testing.expect(c.SDL_GetTextInputArea(window, &area, &caret));
+    try std.testing.expect(@as(f32, @floatFromInt(area.x)) >= app.settingsField().x);
+    try std.testing.expectEqual(canonical_before_edit, owner.snapshot().revision);
+    event_value.text = .{ .type = c.SDL_EVENT_TEXT_INPUT, .reserved = 0, .timestamp = 207, .windowID = c.SDL_GetWindowID(window), .text = "/owned-field" };
+    try app.event(event_value);
+    try std.testing.expectEqualStrings("/owned-field", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
+    try std.testing.expectEqual(canonical_before_edit, owner.snapshot().revision);
+    try app.toggleSettings();
+    try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
     const point: pointer.Location = .{ .row = 1, .col = 2, .pixel_x = 20, .pixel_y = 20 };
     try app.pointerPress(&p, point, .left, .{});
     try std.testing.expect(app.capture.?.pane == &p);
@@ -1113,4 +1550,127 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     event_value.button = .{ .type = c.SDL_EVENT_MOUSE_BUTTON_UP, .reserved = 0, .timestamp = 301, .windowID = c.SDL_GetWindowID(window), .which = 0, .button = c.SDL_BUTTON_LEFT, .down = false, .clicks = 1, .padding = 0, .x = 0, .y = 0 };
     try app.event(event_value);
     try std.testing.expect(app.capture == null);
+}
+
+test "failed settings save restores fonts without changing canonical history or held leases; acceptance preserves pane overrides" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("settings transaction proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(1000, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var current = config.Config.defaults(a);
+    defer current.deinit();
+    var panes: [2]Pane = undefined;
+    var count: usize = 0;
+    var proof_stage: []const u8 = "construction";
+
+    defer for (panes[0..count]) |*p| {
+        p.canvas.deinit();
+        p.owner.?.destroy();
+        p.recipe.deinit();
+    };
+    errdefer if (count == 2) {
+        const status = panes[0].snapshot();
+        std.debug.print("settings proof stage={s} title={s} p0_history={d} p1_history={d}\n", .{
+            proof_stage,                                                     status.title[0..status.title_len],
+            if (panes[0].canvas.frame()) |frame| frame.history_count else 0, if (panes[1].canvas.frame()) |frame| frame.history_count else 0,
+        });
+    };
+    for (&panes, 0..) |*p, index| {
+        var recipe = try config.Recipe.copy(a, try current.profile(1));
+        errdefer recipe.deinit();
+        const size: u16 = if (index == 0) 15 else 17;
+        const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
+            .shell = "/bin/sh",
+            .command = "read start; i=0; while [ \"$i\" -lt 70 ]; do printf '%s\\n' \"$i\"; i=$((i+1)); done; printf '\\033]0;READY\\007'; while read line; do size=$(stty size); printf '\\033]0;%s:%s\\007' \"$line\" \"$size\"; printf '%s\\n' \"$line\"; done",
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 64,
+        }, fonts.config(size), c.SDL_RegisterEvents(1), true);
+        p.* = .{ .owner = owner, .recipe = recipe, .canvas = canvas.Canvas.init(a), .font_size = size, .font_overridden = index != 0, .rows = 4, .columns = 20 };
+        count += 1;
+    }
+    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try current.profile(1)) };
+    defer t.recipe.deinit();
+    const second = try t.tree.split(.horizontal);
+    t.panes[0] = &panes[0];
+    t.panes[second] = &panes[1];
+    var app: App = .{ .init = undefined, .configuration = &current, .fonts = &fonts, .window = window, .renderer = renderer, .ui_fonts = &ui_fonts, .geometry = undefined, .wake_event = 0, .scale = 1, .bindings = try keybindings.Bindings.init(), .tab_count = 1 };
+    app.init.io = threaded.io();
+    app.tabs[0] = &t;
+    proof_stage = "initial empty publication";
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        for (&panes) |*p| try p.canvas.update(renderer, p.owner.?);
+        if (panes[0].canvas.frame() != null and panes[1].canvas.frame() != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    for (&panes) |*p| try p.submit(.{ .input = .{ .bytes = "START\n" } });
+    proof_stage = "initial publication";
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        for (&panes) |*p| try p.canvas.update(renderer, p.owner.?);
+        if (panes[0].canvas.frame() != null and panes[1].canvas.frame() != null and
+            panes[0].canvas.frame().?.history_count >= 60 and panes[1].canvas.frame().?.history_count >= 60) break;
+        // This observer must acknowledge early publications before waiting for later output.
+        for (&panes) |*p| p.owner.?.requestFrame();
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    const held = panes[0].canvas.frame().?;
+    const generation = held.presentation_generation;
+    const history = held.history_count;
+    var candidate = try settings.change(&current, threaded.io(), .default_font, "23");
+    defer candidate.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDir(threaded.io(), "occupied", .default_dir);
+    proof_stage = "save rollback";
+    try std.testing.expectError(error.IsDir, app.applyConfigurationAt(&candidate, temporary.dir, "occupied"));
+    try std.testing.expectEqual(@as(i32, 15), current.value.terminal_font_pixels);
+    try std.testing.expectEqual(@as(u16, 15), panes[0].font_size);
+    try std.testing.expectEqual(@as(u16, 17), panes[1].font_size);
+    try std.testing.expectEqual(generation, panes[0].canvas.frame().?.presentation_generation);
+    try std.testing.expectEqual(history, panes[0].canvas.frame().?.history_count);
+    proof_stage = "canonical continuity";
+    try panes[0].submit(.{ .input = .{ .bytes = "CHECK\n" } });
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        const status = panes[0].snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "CHECK:4 20")) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    proof_stage = "restored publication";
+    panes[0].owner.?.requestFrame();
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        try panes[0].canvas.update(renderer, panes[0].owner.?);
+        const frame = panes[0].canvas.frame().?;
+        if (frame.presentation_generation > generation and frame.history_count >= history) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    proof_stage = "accepted save";
+    try app.applyConfigurationAt(&candidate, temporary.dir, "odin.json");
+    try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
+    try std.testing.expectEqual(@as(u16, 23), panes[0].font_size);
+    try std.testing.expectEqual(@as(u16, 17), panes[1].font_size);
+    try std.testing.expect(panes[1].font_overridden);
+    var reopened = try config.Config.loadAt(a, threaded.io(), temporary.dir, "odin.json");
+    defer reopened.deinit();
+    try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
 }

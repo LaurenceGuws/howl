@@ -138,6 +138,13 @@ pub const Config = struct {
         const value = try validate(io, storage.parsed.value);
         return .{ .allocator = allocator, .value = value, .storage = storage };
     }
+    /// Copies a validated schema into owned parser storage before any supplied slices retire.
+    pub fn fromValue(allocator: std.mem.Allocator, io: std.Io, supplied: Schema) !Config {
+        const value = try validate(io, supplied);
+        const bytes = try std.json.Stringify.valueAlloc(allocator, value, .{});
+        defer allocator.free(bytes);
+        return parse(allocator, io, bytes);
+    }
     /// Reads one bounded file; only FileNotFound chooses built-in defaults.
     pub fn loadAt(allocator: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, target: []const u8) !Config {
         const bytes = dir.readFileAlloc(io, target, allocator, .limited(file_limit)) catch |failure| {

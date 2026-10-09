@@ -238,6 +238,45 @@ test "invalid or conflicting saved bindings leave every registry row unchanged" 
     try std.testing.expect(indexForId("no_such_mapping") == null);
 }
 
+/// Formats one physical recording into the same validated shortcut vocabulary used by dispatch.
+pub fn format(key: c.SDL_Keycode, mod: c.SDL_Keymod, buffer: []u8) ![]const u8 {
+    var name_buffer: [16]u8 = undefined;
+    const plus = key == c.SDLK_PLUS or (key == c.SDLK_EQUALS and mod & c.SDL_KMOD_SHIFT != 0);
+    const name = if (plus) "Plus" else switch (key) {
+        c.SDLK_SPACE => "Space",
+        c.SDLK_RETURN => "Enter",
+        c.SDLK_TAB => "Tab",
+        c.SDLK_ESCAPE => "Escape",
+        c.SDLK_BACKSPACE => "Backspace",
+        c.SDLK_DELETE => "Delete",
+        c.SDLK_INSERT => "Insert",
+        c.SDLK_HOME => "Home",
+        c.SDLK_END => "End",
+        c.SDLK_PAGEUP => "PageUp",
+        c.SDLK_PAGEDOWN => "PageDown",
+        c.SDLK_LEFT => "Left",
+        c.SDLK_RIGHT => "Right",
+        c.SDLK_UP => "Up",
+        c.SDLK_DOWN => "Down",
+        else => blk: {
+            if (key >= c.SDLK_F1 and key <= c.SDLK_F12) break :blk try std.fmt.bufPrint(&name_buffer, "F{d}", .{key - c.SDLK_F1 + 1});
+            if (key < 0x21 or key > 0x7e) return error.InvalidShortcut;
+            name_buffer[0] = std.ascii.toUpper(@intCast(key));
+            break :blk name_buffer[0..1];
+        },
+    };
+    const text = try std.fmt.bufPrint(buffer, "{s}{s}{s}{s}{s}", .{
+        if (mod & c.SDL_KMOD_CTRL != 0) "Ctrl+" else "",
+        if (mod & c.SDL_KMOD_ALT != 0) "Alt+" else "",
+        if (mod & c.SDL_KMOD_GUI != 0) "Super+" else "",
+        if (!plus and mod & c.SDL_KMOD_SHIFT != 0) "Shift+" else "",
+        name,
+    });
+    const shortcut = try parse(text);
+    std.debug.assert(shortcut.key != 0);
+    return text;
+}
+
 fn parseKey(token: []const u8) error{InvalidShortcut}!c.SDL_Keycode {
     if (token.len == 1 and token[0] >= 0x20 and token[0] <= 0x7e and token[0] != '+') return std.ascii.toLower(token[0]);
     const names = [_][]const u8{ "Space", "Plus", "Enter", "Tab", "Escape", "Esc", "Backspace", "Delete", "Insert", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down" };
@@ -285,4 +324,17 @@ test "saved mapping tables permit complete chord swaps but reject duplicate and 
     try std.testing.expectError(error.BindingConflict, Bindings.fromOverrides(values[0..1]));
     try std.testing.expectError(error.DuplicateMapping, Bindings.fromOverrides(&.{ values[0], values[0] }));
     try std.testing.expectError(error.InvalidMapping, Bindings.fromOverrides(&.{.{ .action = "missing", .shortcut = "" }}));
+}
+
+test "physical shortcut recording preserves semantic Plus and named modifier chords" {
+    var buffer: [64]u8 = undefined;
+    const plus = try format(c.SDLK_EQUALS, c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT, &buffer);
+    try std.testing.expectEqualStrings("Ctrl+Plus", plus);
+    try std.testing.expect((try parse(plus)).matches(c.SDLK_EQUALS, c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT));
+    try std.testing.expectEqualStrings("Alt+Shift+F5", try format(c.SDLK_F5, c.SDL_KMOD_ALT | c.SDL_KMOD_SHIFT, &buffer));
+    try std.testing.expectEqualStrings("Ctrl+Alt+T", try format(c.SDLK_T, c.SDL_KMOD_CTRL | c.SDL_KMOD_ALT, &buffer));
+    try std.testing.expectEqualStrings("Ctrl+Shift+G", try format(c.SDLK_G, c.SDL_KMOD_CTRL | c.SDL_KMOD_SHIFT, &buffer));
+    try std.testing.expectError(error.InvalidShortcut, format(c.SDLK_LCTRL, c.SDL_KMOD_CTRL, &buffer));
+    var tiny: [2]u8 = undefined;
+    try std.testing.expectError(error.NoSpaceLeft, format(c.SDLK_LEFT, c.SDL_KMOD_CTRL, &tiny));
 }
