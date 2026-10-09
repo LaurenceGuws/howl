@@ -6,32 +6,26 @@ const Rect = @import("layout.zig").Rect;
 pub const height: f32 = 46;
 /// Window caption control identity.
 pub const Button = enum { none, minimize, maximize, close };
-/// Existing visible Settings button.
+/// Compact Settings entry beside the caption controls.
 pub fn settings(width: f32) Rect {
-    return .{ .x = width - 248, .y = 7, .width = 104, .height = 32 };
+    return .{ .x = width - 166, .y = 4, .width = 32, .height = 30 };
 }
 /// Bounded tab stride leaving room for header controls.
 pub fn step(count: u8, width: f32) f32 {
-    return @max(16, @min(162, @max(0, settings(width).x - 8 - 108) / @as(f32, @floatFromInt(@max(1, count))) - 4)) + 4;
+    return std.math.clamp((width - 234) / @as(f32, @floatFromInt(@max(1, count))), 20, 200);
 }
 /// Chip geometry shared by paint, drag and hit testing.
 pub fn tab(index: u8, count: u8, width: f32) Rect {
     const stride = step(count, width);
-    return .{ .x = 8 + @as(f32, @floatFromInt(index)) * stride, .y = 7, .width = stride - 4, .height = 32 };
+    return .{ .x = 8 + @as(f32, @floatFromInt(index)) * stride, .y = 4, .width = stride - 3, .height = 30 };
 }
 /// New-tab button after the chip strip.
 pub fn plus(count: u8, width: f32) Rect {
-    return .{ .x = 8 + @as(f32, @floatFromInt(count)) * step(count, width), .y = 7, .width = 34, .height = 32 };
-}
-/// Profile menu button next to new tab.
-pub fn menu(count: u8, width: f32) Rect {
-    var rect = plus(count, width);
-    rect.x += 38;
-    return rect;
+    return .{ .x = 8 + @as(f32, @floatFromInt(count)) * step(count, width), .y = 4, .width = 32, .height = 30 };
 }
 /// Unoccupied header strip available for compositor dragging.
 pub fn caption(count: u8, width: f32) Rect {
-    const left = menu(count, width).x + 38;
+    const left = plus(count, width).x + 32;
     return .{ .x = left, .y = 4, .width = @max(0, settings(width).x - left - 4), .height = 42 };
 }
 /// One caption button; none has no hit area.

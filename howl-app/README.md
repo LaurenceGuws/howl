@@ -9,9 +9,11 @@ or internal C ABI. Application allocations use Zig's SMP allocator.
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, zoom, leaf collapse and restart.
 One bounded mapping registry supplies shortcuts; the command palette exposes
-context-enabled actions and the profile dropdown includes Settings and Command
-Palette. SDL client chrome owns the existing Settings button, caption controls,
-native drag/resize regions and pointer-following tab chips without an idle timer. Physical key ownership fences repeats/releases across focus changes.
+context-enabled actions; Ctrl+Shift+Space opens the profile menu. The compact
+`⋯` header button opens Settings, and Ctrl+Shift+P opens Command Palette. SDL
+client chrome owns caption controls, native drag/resize regions and the wider
+pointer-following tab chips without an idle timer. Physical key ownership fences
+repeats/releases across focus changes.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

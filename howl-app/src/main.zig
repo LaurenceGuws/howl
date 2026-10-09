@@ -1180,8 +1180,6 @@ const App = struct {
             }
             if (chrome.plus(self.tab_count, self.width).contains(x, y)) {
                 try self.createTab(try self.startup(), null);
-            } else if (chrome.menu(self.tab_count, self.width).contains(x, y)) {
-                try self.openPalette(true);
             } else if (chrome.settings(self.width).contains(x, y)) {
                 try self.toggleSettings();
             }
@@ -1417,7 +1415,7 @@ const App = struct {
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
             const width = @min(420, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.menu(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = 46, .width = width, .height = @min(@max(1, self.height - 58), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+            return .{ .x = @min(chrome.plus(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = 46, .width = width, .height = @min(@max(1, self.height - 58), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));
@@ -1871,8 +1869,7 @@ const App = struct {
         try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
         const close_width: f32 = if (self.tab_count > 1 and rect.width >= 96) 30 else 0;
         try self.clippedText(status.title[0..status.title_len], .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
-        if (close_width != 0) try self.drawText("×", rect.x + rect.width - 24, rect.y + 6);
-        if (index == self.active) try fill(self.renderer, .{ .x = rect.x + 8, .y = rect.y + rect.height - 2, .width = @max(1, rect.width - 16), .height = 2 }, colors.accent);
+        if (close_width != 0) try self.drawText("×", rect.x + rect.width - 18, rect.y + 6);
     }
     fn drawWindowControls(self: *App) !void {
         const colors = try self.uiPalette();
@@ -1920,9 +1917,8 @@ const App = struct {
             try self.drawTab(self.active, rect);
             try outline(self.renderer, rect, colors.accent);
         }
-        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.menu(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const u8{ "+", "v", "Settings" }) |rect, label| {
-            try fill(self.renderer, rect, colors.idle);
-            try self.drawText(label, rect.x + 11, rect.y + 6);
+        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const u8{ "+", "⋯" }) |rect, label| {
+            try self.drawText(label, rect.x + 8, rect.y + 6);
         }
         try self.drawWindowControls();
         var places: [layout.pane_limit]layout.Placement = undefined;
