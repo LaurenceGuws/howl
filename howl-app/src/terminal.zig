@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
 const policy = @import("publication.zig");
+const selection = @import("selection.zig");
 const posix = std.posix;
 
 const queue_limit = 64;
@@ -14,6 +15,28 @@ pub const Task = union(enum) {
     scroll: i32,
     seek: u32,
     retry_render,
+    select: Select,
+};
+
+/// Selection operations resolve only within the terminal worker.
+pub const SelectKind = enum { start, extend, word, row, clear };
+/// One copied stable selection intent; only the worker resolves its canonical text.
+pub const Select = struct {
+    serial: u64,
+    kind: SelectKind,
+    context: selection.Context,
+    point: instance.Terminal.TextPoint = .{ .row = 0, .col = 0 },
+};
+/// Noncanonical selection failures never stop process/VT service.
+pub const SelectionError = error{ InvalidSelection, SelectionContextChanged, SelectionEvicted };
+/// Bounded canonical extraction and FIFO admission failures.
+pub const CopyError = instance.Terminal.TextError || SelectionError || error{ NoSelection, CopyLimit, TerminalStopped, InputQueueFull };
+const Copy = struct {
+    allocator: std.mem.Allocator,
+    max_bytes: usize,
+    result: ?[]const u8 = null,
+    failure: ?CopyError = null,
+    complete: bool = false,
 };
 
 /// Exact failures produced by this terminal worker's owned operations.
@@ -36,7 +59,7 @@ const Configuration = struct {
     failure: ?ConfigureError = null,
     complete: bool = false,
 };
-const Work = union(enum) { intent: Task, configure: *Configuration };
+const Work = union(enum) { intent: Task, configure: *Configuration, copy: *Copy };
 
 /// Copied interaction/lifecycle facts; contains no borrowed canonical storage.
 pub const Status = struct {
@@ -47,6 +70,9 @@ pub const Status = struct {
     revision: u64 = 0,
     closed: bool = false,
     child_exit: ?instance.ChildExit = null,
+    selected: ?selection.Range = null,
+    selection_serial: u64 = 0,
+    selection_failure: ?SelectionError = null,
     interaction: ?instance.Terminal.InteractionState = null,
     cursor_row: u16 = 0,
     cursor_col: u16 = 0,
@@ -89,6 +115,10 @@ pub const Terminal = opaque {
     pub fn reconfigure(self: *Terminal, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
         return self.state().reconfigure(config, surface);
     }
+    /// Copies the FIFO-selected canonical range into bounded caller-owned UTF-8 storage.
+    pub fn copySelection(self: *Terminal, allocator: std.mem.Allocator, max_bytes: usize) CopyError![]const u8 {
+        return self.state().copySelection(allocator, max_bytes);
+    }
     /// Changes projection visibility without changing canonical service policy.
     pub fn setVisible(self: *Terminal, visible: bool) void {
         self.state().setVisible(visible);
@@ -99,8 +129,8 @@ pub const Terminal = opaque {
     }
     /// Replaces the backend's old lease only when another publication is ready.
     /// A null result preserves the old lease; the short transfer contains no SDL work.
-    pub fn replaceFrame(self: *Terminal, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency) FrameError!?instance.RenderLease {
-        return self.state().replaceFrame(previous, residency);
+    pub fn replaceFrame(self: *Terminal, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency, paint: ?*selection.Paint) FrameError!?instance.RenderLease {
+        return self.state().replaceFrame(previous, residency, paint);
     }
 
     fn state(self: *Terminal) *State {
@@ -137,6 +167,10 @@ const State = struct {
     gate: policy.Gate = .{},
     presentation_failure: ?PresentationFailure = null,
     history: policy.History = .{},
+    selected: ?selection.Range = null,
+    selection_serial: u64 = 0,
+    selection_failure: ?SelectionError = null,
+    paint: selection.Paint = .{},
 
     fn create(
         allocator: std.mem.Allocator,
@@ -186,7 +220,7 @@ const State = struct {
         return self.new_frame.swap(false, .acq_rel);
     }
 
-    fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency) FrameError!?instance.RenderLease {
+    fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency, paint: ?*selection.Paint) FrameError!?instance.RenderLease {
         if (!self.new_frame.load(.acquire)) {
             // Reconfiguration or a stalled transfer may still owe a credit-backed publication.
             if (self.credit.load(.acquire)) self.wake();
@@ -204,6 +238,7 @@ const State = struct {
             try lease.release(residency);
         }
         const lease = instance.acquirePublishedFrame(self.exchange) orelse return error.NoPublishedFrame;
+        if (paint) |output| output.* = self.paint;
         self.new_frame.store(false, .release);
         return lease;
     }
@@ -294,10 +329,72 @@ const State = struct {
         } else |failure| self.completeConfiguration(request, failure);
     }
 
+    fn copySelection(self: *State, allocator: std.mem.Allocator, max_bytes: usize) CopyError![]const u8 {
+        if (max_bytes == 0 or max_bytes > input_byte_limit) return error.CopyLimit;
+        var request: Copy = .{ .allocator = allocator, .max_bytes = max_bytes };
+        try self.admit(.{ .copy = &request });
+        self.mutex.lockUncancelable(self.io);
+        while (!request.complete) self.configured.waitUncancelable(self.io, &self.mutex);
+        self.mutex.unlock(self.io);
+        if (request.failure) |failure| return failure;
+        return request.result.?;
+    }
+    fn completeCopy(self: *State, request: *Copy, result: CopyError![]const u8) void {
+        self.mutex.lockUncancelable(self.io);
+        if (result) |bytes| request.result = bytes else |failure| request.failure = failure;
+        request.complete = true;
+        self.configured.broadcast(self.io);
+        // The caller can retire request storage after this unlock.
+        self.mutex.unlock(self.io);
+    }
+    fn applyCopy(self: *State, request: *Copy) void {
+        const range = self.selected orelse {
+            self.completeCopy(request, self.selection_failure orelse error.NoSelection);
+            return;
+        };
+        self.completeCopy(request, range.copy(instance.terminal(self.value), request.allocator, request.max_bytes));
+    }
+    fn applySelection(self: *State, intent: Select) SelectionError!void {
+        self.selection_serial = intent.serial;
+        self.selection_failure = null;
+        self.gate.pending = true;
+        if (intent.kind == .clear) {
+            self.selected = null;
+            return;
+        }
+        const observation = instance.terminal(self.value);
+        const live = observation.semanticView(0);
+        const current = selection.Context.fromView(live);
+        if (current.columns != intent.context.columns or current.alternate != intent.context.alternate) return error.SelectionContextChanged;
+        const first = try intent.context.row(0);
+        const top: i64 = if (live.is_alternate_screen) 0 else @as(i64, live.history_row_base) + live.history_count;
+        const offset = top - first;
+        if (offset < 0 or offset > live.history_count) return error.SelectionEvicted;
+        const view = observation.semanticView(@intCast(offset));
+        const row_index = @as(i64, intent.point.row) - first;
+        if (row_index < 0 or row_index >= @min(view.rows, intent.context.rows)) return error.InvalidSelection;
+        const point = try selection.point(view, @intCast(row_index), intent.point.col);
+        switch (intent.kind) {
+            .start => self.selected = try selection.start(view, @intCast(row_index), intent.point.col),
+            .extend => {
+                const range = self.selected orelse return error.InvalidSelection;
+                switch (range.validity(current)) {
+                    .valid => {},
+                    .context_changed => return error.SelectionContextChanged,
+                    .evicted => return error.SelectionEvicted,
+                }
+                self.selected.?.focus = point;
+            },
+            .word => self.selected = try selection.word(view, @intCast(row_index), intent.point.col),
+            .row => self.selected = try selection.visualRow(view, @intCast(row_index)),
+            .clear => {},
+        }
+    }
     fn cancelPending(self: *State) void {
         while (self.pop()) |work| switch (work) {
             .intent => |task| self.releaseTask(task),
             .configure => |request| self.completeConfiguration(request, error.TerminalStopped),
+            .copy => |request| self.completeCopy(request, error.TerminalStopped),
         };
     }
 
@@ -338,11 +435,19 @@ const State = struct {
     fn apply(self: *State, task: Task) !void {
         const live = instance.terminal(self.value).semanticView(0);
         switch (task) {
+            .select => |intent| self.applySelection(intent) catch |failure| {
+                self.selected = null;
+                self.selection_failure = failure;
+            },
             .input => |input| {
                 // Committed input returns this pane to live; focus/mouse do not.
                 if (input == .bytes or input == .paste or input == .key) {
                     if (self.history.offset != 0) self.gate.pending = true;
                     self.history.reset();
+                    if (self.selected != null) {
+                        self.selected = null;
+                        self.gate.pending = true;
+                    }
                 }
                 try instance.input(self.value, input);
             },
@@ -378,7 +483,21 @@ const State = struct {
         const live = observation.semanticView(0);
         self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
         self.gate.note(observation.semanticSequence(), observation.synchronizedOutput(), result.synchronized_output.ended, now);
+        if (self.selected) |range| switch (range.validity(selection.Context.fromView(live))) {
+            .valid => {},
+            .context_changed => {
+                self.selected = null;
+                self.selection_failure = error.SelectionContextChanged;
+            },
+            .evicted => {
+                self.selected = null;
+                self.selection_failure = error.SelectionEvicted;
+            },
+        };
         self.mutex.lockUncancelable(self.io);
+        self.status.selected = self.selected;
+        self.status.selection_serial = self.selection_serial;
+        self.status.selection_failure = self.selection_failure;
         const lifecycle_changed = self.status.closed != result.stream_closed or
             (self.status.child_exit == null and result.child_exit != null);
         self.status.closed = result.stream_closed;
@@ -415,6 +534,8 @@ const State = struct {
                 self.notify();
                 return result;
             };
+            const view = observation.semanticView(self.history.offset);
+            self.paint = if (self.selected) |range| range.paint(view, self.selection_serial) catch .{ .serial = self.selection_serial } else .{ .serial = self.selection_serial };
             self.gate.pending = false;
             self.new_frame.store(true, .release);
             published = true;
@@ -443,6 +564,7 @@ const State = struct {
                     try self.apply(task);
                 },
                 .configure => |request| self.applyConfiguration(request),
+                .copy => |request| self.applyCopy(request),
             };
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
@@ -808,12 +930,12 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
     var initial: ?instance.RenderLease = null;
     var attempts: u16 = 0;
     while (initial == null and attempts < 5000) : (attempts += 1) {
-        initial = try owner.replaceFrame(null, &.{});
+        initial = try owner.replaceFrame(null, &.{}, null);
         if (initial == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
     var held = initial orelse return error.MissingFrame;
     defer held.abandon();
-    try std.testing.expect(try owner.replaceFrame(&held, &.{}) == null);
+    try std.testing.expect(try owner.replaceFrame(&held, &.{}, null) == null);
     try std.testing.expect(!held.released);
     const sequence = held.value.sequence;
     owner.state().frame_mutex.lockUncancelable(owner.state().io);
@@ -837,7 +959,7 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
     var other_frame: ?instance.RenderLease = null;
     attempts = 0;
     while (other_frame == null and attempts < 5000) : (attempts += 1) {
-        other_frame = try other.replaceFrame(null, &.{});
+        other_frame = try other.replaceFrame(null, &.{}, null);
         if (other_frame == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
     var foreign = other_frame orelse return error.MissingFrame;
@@ -846,19 +968,19 @@ test "a stalled backend lease transfer cannot pace canonical output; no-frame pr
     while (!owner.state().new_frame.load(.acquire) and attempts < 5000) : (attempts += 1)
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     if (attempts == 5000) return error.Timeout;
-    try std.testing.expectError(error.WrongExchange, owner.replaceFrame(&foreign, &.{}));
+    try std.testing.expectError(error.WrongExchange, owner.replaceFrame(&foreign, &.{}, null));
     try std.testing.expect(!foreign.released and !held.released);
     var replacement: ?instance.RenderLease = null;
     attempts = 0;
     while (replacement == null and attempts < 5000) : (attempts += 1) {
-        replacement = try owner.replaceFrame(&held, &.{});
+        replacement = try owner.replaceFrame(&held, &.{}, null);
         if (replacement == null) try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
     var changed = replacement orelse return error.MissingFrame;
     defer changed.abandon();
     try std.testing.expect(held.released);
     try std.testing.expect(changed.value.sequence > sequence);
-    try std.testing.expect(try owner.replaceFrame(&changed, &.{}) == null);
+    try std.testing.expect(try owner.replaceFrame(&changed, &.{}, null) == null);
     try std.testing.expect(!changed.released);
 }
 
@@ -909,7 +1031,7 @@ test "completed reconfiguration fences unread frames from the previous presentat
     const configured = try owner.reconfigure(testPresentation(), null);
     try std.testing.expect(configured.cell_size.width > 0);
     // An old unread slot remains native-owned, but cannot enter a fresh backend.
-    var hidden = try owner.replaceFrame(null, &.{});
+    var hidden = try owner.replaceFrame(null, &.{}, null);
     defer if (hidden) |*lease| lease.abandon();
     if (hidden) |lease| std.debug.print("pre-reset unread generation entered the backend: {d}\n", .{lease.value.presentation_generation});
     try std.testing.expect(hidden == null);
@@ -920,9 +1042,144 @@ test "completed reconfiguration fences unread frames from the previous presentat
     defer if (fresh) |*lease| lease.abandon();
     attempts = 0;
     while (fresh == null and attempts < 5000) : (attempts += 1) {
-        fresh = try owner.replaceFrame(null, &.{});
+        fresh = try owner.replaceFrame(null, &.{}, null);
         if (fresh == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     const accepted = fresh orelse return error.Timeout;
     try std.testing.expect(accepted.value.presentation_generation > 1);
+}
+
+fn waitCopy(owner: *Terminal, request: *Copy) void {
+    const state = owner.state();
+    state.mutex.lockUncancelable(state.io);
+    while (!request.complete) state.configured.waitUncancelable(state.io, &state.mutex);
+    state.mutex.unlock(state.io);
+}
+fn waitPaint(owner: *Terminal, previous: ?*instance.RenderLease, paint: *selection.Paint) !instance.RenderLease {
+    var attempts: u16 = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        if (try owner.replaceFrame(previous, &.{}, paint)) |lease| return lease;
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    }
+    return error.Timeout;
+}
+
+test "hidden canonical selection copies Unicode in FIFO order without presentation authority" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'alpha beta gamma\\r\\nwide: \\347\\225\\214 e\\314\\201\\033]0;READY\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const context: selection.Context = .{ .rows = 4, .columns = 20, .history_count = 0, .history_row_base = 0, .history_offset = 0, .alternate = false };
+    try std.testing.expectError(error.NoSelection, owner.copySelection(std.testing.allocator, 128));
+    try std.testing.expectError(error.CopyLimit, owner.copySelection(std.testing.allocator, 0));
+    try std.testing.expectError(error.CopyLimit, owner.copySelection(std.testing.allocator, input_byte_limit + 1));
+    try owner.submit(.{ .select = .{ .serial = 1, .kind = .word, .context = context, .point = .{ .row = 0, .col = 7 } } });
+    var first: Copy = .{ .allocator = std.testing.allocator, .max_bytes = 128 };
+    try owner.state().admit(.{ .copy = &first });
+    defer {
+        waitCopy(owner, &first);
+        if (first.result) |bytes| std.testing.allocator.free(bytes);
+    }
+    try owner.submit(.{ .select = .{ .serial = 2, .kind = .row, .context = context, .point = .{ .row = 1, .col = 0 } } });
+    const line = try owner.copySelection(std.testing.allocator, 128);
+    defer std.testing.allocator.free(line);
+    waitCopy(owner, &first);
+    try std.testing.expect(first.failure == null);
+    try std.testing.expectEqualStrings("beta", first.result.?);
+    try std.testing.expectEqualStrings("wide: \xe7\x95\x8c e\xcc\x81", line);
+    try std.testing.expectError(error.TextLimit, owner.copySelection(std.testing.allocator, 3));
+    try owner.submit(.{ .resize = .{ .rows = 4, .columns = 19 } });
+    try std.testing.expectError(error.SelectionContextChanged, owner.copySelection(std.testing.allocator, 128));
+    try owner.submit(.{ .select = .{ .serial = 3, .kind = .word, .context = context, .point = .{ .row = 0, .col = 7 } } });
+    try std.testing.expectError(error.SelectionContextChanged, owner.copySelection(std.testing.allocator, 128));
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    try std.testing.expect(owner.snapshot().failure == null);
+}
+
+test "selection paint travels with its immutable lease and a stalled transfer cannot pace canonical progress" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'alpha beta gamma\\033]0;READY\\007'; read line; printf '\\033[2J\\033[Homega psi chi\\033]0;DONE\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const context: selection.Context = .{ .rows = 4, .columns = 20, .history_count = 0, .history_row_base = 0, .history_offset = 0, .alternate = false };
+    try owner.submit(.{ .select = .{ .serial = 11, .kind = .word, .context = context, .point = .{ .row = 0, .col = 7 } } });
+    const word = try owner.copySelection(std.testing.allocator, 128);
+    defer std.testing.allocator.free(word);
+    try std.testing.expectEqualStrings("beta", word);
+    var paint: selection.Paint = .{};
+    owner.setVisible(true);
+    var held = try waitPaint(owner, null, &paint);
+    defer held.abandon();
+    try std.testing.expectEqual(@as(u64, 11), paint.serial);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spans[0]);
+    const sequence = held.value.sequence;
+    owner.state().frame_mutex.lockUncancelable(threaded.io());
+    var locked = true;
+    defer if (locked) owner.state().frame_mutex.unlock(threaded.io());
+    owner.requestFrame();
+    try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    try waitTitle(owner, "DONE");
+    try std.testing.expectEqual(sequence, held.value.sequence);
+    try std.testing.expect(try owner.replaceFrame(&held, &.{}, &paint) == null);
+    try std.testing.expect(!held.released);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 9 }), paint.spans[0]);
+    try std.testing.expectError(error.NoSelection, owner.copySelection(std.testing.allocator, 128));
+    owner.state().frame_mutex.unlock(threaded.io());
+    locked = false;
+    owner.requestFrame();
+    owner.state().wake();
+    var cleared = try waitPaint(owner, &held, &paint);
+    defer cleared.abandon();
+    try std.testing.expect(held.released);
+    try std.testing.expect(cleared.value.sequence > sequence);
+    try std.testing.expectEqual(@as(u64, 11), paint.serial);
+    for (paint.spans) |span| try std.testing.expect(span == null);
+    const fresh_context = try selection.Context.fromFrame(cleared.value);
+    try owner.submit(.{ .select = .{ .serial = 12, .kind = .word, .context = fresh_context, .point = .{ .row = try fresh_context.row(0), .col = 7 } } });
+    const next = try owner.copySelection(std.testing.allocator, 128);
+    defer std.testing.allocator.free(next);
+    try std.testing.expectEqualStrings("psi", next);
+    owner.requestFrame();
+    var selected = try waitPaint(owner, &cleared, &paint);
+    defer selected.abandon();
+    try std.testing.expectEqual(@as(u64, 12), paint.serial);
+    try std.testing.expectEqual(@as(?selection.Span, .{ .first = 6, .last = 8 }), paint.spans[0]);
+    try std.testing.expect(try owner.replaceFrame(&selected, &.{}, &paint) == null);
+    try std.testing.expect(!selected.released);
+    try std.testing.expectEqual(@as(u64, 12), paint.serial);
+}
+
+test "canonical failure cancels or rejects borrowed copy requests before caller retirement" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 4,
+        .columns = 20,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try owner.submit(.{ .resize = .{ .rows = 0, .columns = 0 } });
+    try std.testing.expectError(error.TerminalStopped, owner.copySelection(std.testing.allocator, 128));
+    try std.testing.expect(owner.snapshot().failure != null);
 }

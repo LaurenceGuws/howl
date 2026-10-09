@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
 const terminal = @import("terminal.zig");
+const selection = @import("selection.zig");
 const render = instance.render.terminal;
 
 const resource_limit = render.maximum_external_images + 1;
@@ -64,6 +65,7 @@ pub const Geometry = struct {
 pub const Canvas = struct {
     allocator: std.mem.Allocator,
     lease: ?instance.RenderLease = null,
+    selection_paint: selection.Paint = .{},
     textures: [resource_limit]Texture = undefined,
     count: usize = 0,
     converted: std.ArrayList(u8) = .empty,
@@ -91,7 +93,7 @@ pub const Canvas = struct {
     pub fn update(self: *Canvas, renderer: *c.SDL_Renderer, owner: *terminal.Terminal) !void {
         var residency: [resource_limit]render.Residency = undefined;
         for (self.textures[0..self.count], 0..) |texture, index| residency[index] = texture.residency;
-        var lease = (try owner.replaceFrame(if (self.lease) |*previous| previous else null, residency[0..self.count])) orelse return;
+        var lease = (try owner.replaceFrame(if (self.lease) |*previous| previous else null, residency[0..self.count], &self.selection_paint)) orelse return;
         self.lease = null;
         errdefer lease.abandon();
         const value = lease.value;

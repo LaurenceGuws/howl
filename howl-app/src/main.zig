@@ -13,6 +13,7 @@ const config = @import("config.zig");
 const settings = @import("settings.zig");
 const appearance = @import("appearance.zig");
 const font_chooser = @import("font_chooser.zig");
+const selection = @import("selection.zig");
 const allocator = std.heap.smp_allocator;
 const version = "0.1.6-dev";
 const tab_limit = 8;
@@ -31,6 +32,9 @@ const Pane = struct {
     size_control: bool = true,
     font_size: u16 = 15,
     font_overridden: bool = false,
+    selection_serial: u64 = 0,
+    selection_failure_reported: u64 = 0,
+    selection_hit: ?SelectionHit = null,
     cell_size: ?instance.render.terminal.Size = null,
     font_failure: ?terminal.ConfigureError = null,
     graphics_failure: ?GraphicsFailure = null,
@@ -71,6 +75,8 @@ const Palette = struct {
 };
 const Drag = union(enum) { none, divider: layout.Divider, tab };
 const PointerCapture = struct { pane: *Pane, buttons: u8, last: pointer.Location };
+const SelectionDrag = struct { pane: *Pane, x: f32, y: f32, edge: i8 = 0 };
+const SelectionHit = struct { point: instance.Terminal.TextPoint, columns: u16, alternate: bool };
 const App = struct {
     init: std.process.Init,
     configuration: *config.Config,
@@ -88,6 +94,8 @@ const App = struct {
     preedit: composition.Composition = .{},
     input_timestamp: u64 = 0,
     capture: ?PointerCapture = null,
+    selecting: ?SelectionDrag = null,
+    selection_tick: u64 = 0,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
     settings_editor: ?settings.Editor = null,
@@ -160,6 +168,7 @@ const App = struct {
         return result;
     }
     fn destroyPane(self: *App, value: *Pane) void {
+        if (self.selecting) |dragging| if (dragging.pane == value) self.cancelDrag();
         if (self.capture) |held| if (held.pane == value) {
             self.finishPointer() catch |failure| self.report(failure);
             self.capture = null;
@@ -180,6 +189,7 @@ const App = struct {
         if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
     }
     fn loseKeyboard(self: *App) !void {
+        self.cancelDrag();
         self.cancelComposition();
         try self.finishPointer();
         try self.keyboard.releaseTerminal();
@@ -379,7 +389,14 @@ const App = struct {
                     p.font_overridden = true;
                 }
             },
-            .copy_selection => return error.SelectionNotImplemented,
+            .copy_selection => {
+                const bytes = try (try self.pane().requireOwner()).copySelection(allocator, 1024 * 1024);
+                defer allocator.free(bytes);
+                const text = try allocator.dupeSentinel(u8, bytes, 0);
+                defer allocator.free(text);
+                if (!c.SDL_SetClipboardText(text)) return error.SDLClipboard;
+                self.setNotice("Selection copied");
+            },
         }
     }
     fn surfaceFor(self: *App, value: *Pane) ?instance.render.terminal.Size {
@@ -807,6 +824,10 @@ const App = struct {
         thread.detach();
     }
     fn cancelDrag(self: *App) void {
+        if (self.selecting != null) {
+            self.selecting = null;
+            self.consume_left_release = true;
+        }
         if (self.drag == .none) return;
         self.drag = .none;
         self.consume_left_release = true;
@@ -890,18 +911,29 @@ const App = struct {
                 } else try self.pane().submit(.{ .input = .{ .bytes = text } });
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
-                try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState())),
+                try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState()), value.button.clicks),
             c.SDL_EVENT_MOUSE_BUTTON_UP => {
                 const button = mouseButton(value.button.button) orelse return;
                 if (button == .left and self.consume_left_release) {
                     self.consume_left_release = false;
                     return;
                 }
+                if (button == .left and self.selecting != null) {
+                    const p = self.selecting.?.pane;
+                    self.selecting = null;
+                    try self.selectPoint(p, value.button.x, value.button.y, .extend, true);
+                    return;
+                }
                 if (self.capture != null) try self.pointerRelease(button, value.button.x, value.button.y, input.semanticModifiers(c.SDL_GetModState()));
                 if (button == .left) self.drag = .none;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
-                if (self.capture) |*held| {
+                if (self.selecting) |*dragging| {
+                    dragging.x = value.motion.x;
+                    dragging.y = value.motion.y;
+                    try self.selectPoint(dragging.pane, dragging.x, dragging.y, .extend, true);
+                    self.selectionEdge();
+                } else if (self.capture) |*held| {
                     const point = self.pointerLocation(held.pane, value.motion.x, value.motion.y, true) orelse held.last;
                     try held.pane.submit(.{ .input = point.event(.move, .none, input.semanticModifiers(c.SDL_GetModState()), held.buttons) });
                     held.last = point;
@@ -935,7 +967,8 @@ const App = struct {
             else => {},
         }
     }
-    fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier) !void {
+    fn pointerDown(self: *App, x: f32, y: f32, button: instance.MouseButton, mods: instance.InputModifier, clicks: u8) !void {
+        if (self.selecting != null) return;
         if (self.capture) |held| {
             const point = self.pointerLocation(held.pane, x, y, true) orelse held.last;
             return self.pointerPress(held.pane, point, button, mods);
@@ -992,8 +1025,66 @@ const App = struct {
             if (!mods.shift and frame.history_offset == 0 and state.mouse_tracking != .off) {
                 const point = self.pointerLocation(p, x, y, false) orelse return;
                 try self.pointerPress(p, point, button, mods);
+            } else if (button == .left) {
+                const kind: terminal.SelectKind = if (clicks >= 3) .row else if (clicks == 2) .word else .start;
+                try self.selectPoint(p, x, y, kind, false);
+                if (kind == .start) {
+                    self.selecting = .{ .pane = p, .x = x, .y = y };
+                    self.selectionEdge();
+                    self.selection_tick = c.SDL_GetTicksNS();
+                } else self.consume_left_release = true;
             }
             return;
+        };
+    }
+    fn selectPoint(self: *App, p: *Pane, x: f32, y: f32, kind: terminal.SelectKind, captured: bool) !void {
+        const frame = p.canvas.frame() orelse return;
+        const location = self.pointerLocation(p, x, y, captured) orelse return;
+        const context = try selection.Context.fromFrame(frame);
+        const hit: SelectionHit = .{ .point = .{ .row = try context.row(@intCast(location.row)), .col = location.col }, .columns = context.columns, .alternate = context.alternate };
+        if (kind == .extend and p.selection_hit != null and std.meta.eql(p.selection_hit.?, hit)) return;
+        if (p.selection_serial == std.math.maxInt(u64)) return error.SelectionSerialLimit;
+        const serial = p.selection_serial + 1;
+        try p.submit(.{ .select = .{ .serial = serial, .kind = kind, .context = context, .point = hit.point } });
+        p.selection_serial = serial;
+        p.selection_hit = hit;
+    }
+    fn selectionEdge(self: *App) void {
+        const dragging = if (self.selecting) |*value| value else return;
+        dragging.edge = 0;
+        const frame = dragging.pane.canvas.frame() orelse return;
+        if (frame.alternate_screen) return;
+        var places: [layout.pane_limit]layout.Placement = undefined;
+        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+        const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
+        for (places[0..result.panes]) |place| if (self.tab().panes[place.pane] == dragging.pane) {
+            const rect = paneContent(place.rect);
+            const bottom = rect.y + @min(rect.h, @as(f32, @floatFromInt(frame.surface.height)) / self.scale);
+            const band = @min(@as(f32, @floatFromInt(frame.cell_size.height)) / self.scale * 2, (bottom - rect.y) / 2);
+            if (dragging.y < rect.y + band and frame.history_offset < frame.history_count) dragging.edge = 1 else if (dragging.y >= bottom - band and frame.history_offset != 0) dragging.edge = -1;
+        };
+    }
+    fn selectionTick(self: *App) !void {
+        self.selectionEdge();
+        const dragging = self.selecting orelse return;
+        if (dragging.edge == 0) return;
+        const now = c.SDL_GetTicksNS();
+        if (now - self.selection_tick < 50 * std.time.ns_per_ms) return;
+        self.selection_tick = now;
+        try dragging.pane.submit(.{ .scroll = dragging.edge });
+    }
+    fn drawSelection(self: *App, p: *Pane, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
+        const paint = &p.canvas.selection_paint;
+        if (paint.serial != p.selection_serial) return;
+        const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.w)), .h = @intFromFloat(@ceil(rect.h)) };
+        if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
+        defer clearClip(self.renderer);
+        const width = @as(f32, @floatFromInt(frame.cell_size.width)) / self.scale;
+        const height = @as(f32, @floatFromInt(frame.cell_size.height)) / self.scale;
+        var color = (try self.uiPalette()).accent;
+        color.a = 100;
+        for (paint.spans[0..paint.rows], 0..) |span, row| if (span) |range| {
+            try fill(self.renderer, .{ .x = rect.x + @as(f32, @floatFromInt(range.first)) * width, .y = rect.y + @as(f32, @floatFromInt(row)) * height, .width = @as(f32, @floatFromInt(range.last - range.first + 1)) * width, .height = height }, color);
         };
     }
     fn pointerPane(self: *App, x: f32, y: f32) ?u8 {
@@ -1341,7 +1432,13 @@ const App = struct {
                     p.graphics_failure = failure;
                 };
             }
+            if (self.selecting) |dragging| if (dragging.pane == p and dragging.edge != 0)
+                try self.selectPoint(p, dragging.x, dragging.y, .extend, true);
             const status = p.snapshot();
+            if (active and status.selection_serial == p.selection_serial and status.selection_failure != null and p.selection_failure_reported != status.selection_serial) {
+                p.selection_failure_reported = status.selection_serial;
+                self.report(status.selection_failure.?);
+            }
             if (p.canvas.frame()) |frame| {
                 // A completed font transaction supplies the new lattice before its frame arrives.
                 // An older accepted lease must not resize canonical geometry back to its old font.
@@ -1356,6 +1453,7 @@ const App = struct {
                 if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, rect, self.scale) catch |failure| {
                     p.graphics_failure = failure;
                 };
+                if (p.graphics_failure == null) try self.drawSelection(p, rect, frame);
             }
             clearClip(self.renderer);
             const failure: ?(CreationError || GraphicsFailure || terminal.Failure || terminal.PresentationFailure || terminal.ConfigureError) = if (p.creation_failure) |value| value else if (p.graphics_failure) |value| value else if (status.failure) |value| value else if (status.presentation_failure) |value| value else if (p.font_failure) |value| value else null;
@@ -1434,8 +1532,11 @@ pub fn main(init: std.process.Init) !void {
     try app.createTab(try app.startup(), null);
     while (app.running) {
         try app.draw();
+        app.selectionTick() catch |failure| app.report(failure);
         var event: c.SDL_Event = undefined;
-        if (!c.SDL_WaitEvent(&event)) return error.SDL;
+        if (app.selecting != null and app.selecting.?.edge != 0) {
+            if (!c.SDL_WaitEventTimeout(&event, 50)) continue;
+        } else if (!c.SDL_WaitEvent(&event)) return error.SDL;
         while (true) {
             app.event(event) catch |failure| app.report(failure);
             if (!app.running or !c.SDL_PollEvent(&event)) break;
@@ -1836,4 +1937,10 @@ test "failed settings save restores fonts without changing canonical history or 
     var reopened = try config.Config.loadAt(a, threaded.io(), temporary.dir, "odin.json");
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
+}
+
+test {
+    // zig-audit: acknowledge discard
+    // reason: Loads the independent selection module behavior proofs without a runtime operation or result.
+    _ = selection;
 }

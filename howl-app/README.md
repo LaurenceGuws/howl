@@ -70,21 +70,31 @@ terminal-family chooser has bounded substring/fuzzy search, exact face recipes,
 a sample font, live preview, original-font restoration and atomic Save. Existing children
 keep running; future launches and retries use the current saved recipe.
 
-This remains an experimental capability cut. Selection/search/scrollbar, rich
+Pointer selection, word/visual-row expansion and Copy are connected through the
+sole terminal worker. Copied stable coordinates survive scrolling and ordinary
+output; eviction, column reflow and bank changes fail explicitly. Copied spans
+travel with the matching immutable lease. Edge scrolling wakes only during an
+active gesture; negotiated terminal mouse reports keep their route and Shift
+selects text. FIFO Copy returns bounded owned UTF-8, including complete wide
+characters and combining sequences, without exposing canonical rows to SDL.
+
+This remains an experimental capability cut. Search/scrollbar, rich
 desktop consequences and explicit attachments still need qualification. Exact
 font paths can also be edited and reset in settings.
 IME's SDL event/render/candidate-area path is proved; an external input method's
 platform integration still needs a live control. Startup high DPI is supported.
 Unsupported commands report their exact gap.
 
-Fifty-five package proofs cover worker independence/failure cleanup, immutable
+Sixty-one package proofs cover worker independence/failure cleanup, immutable
 publication/transfer stalls, exact lease ownership, failed backend recovery,
 font rollback, visibility credits, key ownership, mapping conflicts, bounded
 pane topology, exact PTY mouse reports, fractional wheel/pointer bounds, SDL
 preedit ownership/caret/commit behavior and compatible saved-config ownership,
 bounds, migration, mapping swaps, bounded settings edits, catalogue mutation,
 shortcut recording, live-font save rollback with held frames/history, and
-font-catalogue bounds, exact face ownership, allocation cleanup and chooser IME. A successful
+font-catalogue bounds, exact face ownership, allocation cleanup and chooser IME,
+stable selection/Unicode/soft-wrap semantics, hidden FIFO copy, copy bounds and
+fault cleanup, plus selection paint/lease coherence under transfer stalls. A successful
 font reset fences unread publications from the previous generation while
 preserving already accepted immutable leases. The active workstream records private GUI controls and remaining
 gaps. Build with the repository's exact Zig pin:
