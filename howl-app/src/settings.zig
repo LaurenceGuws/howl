@@ -3,19 +3,17 @@ const config = @import("config.zig");
 const bindings = @import("keybindings.zig");
 
 /// Qualified settings groups; every mutable field uses the same bounded editor.
-pub const Page = enum { startup, interaction, appearance, colors, mappings, defaults, profiles, servers };
+pub const Page = enum { startup, interaction, appearance, colors, mappings, defaults, profiles };
 /// Human titles in stable sidebar order.
-pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profile defaults", "Profiles", "Servers" };
-/// Maximum derived rows for six custom profiles, sixteen environment pairs each, fifty mappings and sixteen Servers.
-pub const row_limit = 512;
+pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profile defaults", "Profiles" };
+/// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
+pub const row_limit = 416;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
-pub const ProfileField = enum { name, mode, shell, command, cwd, endpoint, font_pixels };
+pub const ProfileField = enum { name, shell, command, cwd, font_pixels };
 /// One catalogue index and exact custom-profile field.
 pub const ProfileTarget = struct { index: u8, field: ProfileField };
 /// One bounded environment row and its name/value field.
 pub const EnvironmentTarget = struct { profile: u8, index: u8, name: bool };
-/// One bounded Server row and its label/endpoint field.
-pub const ServerTarget = struct { index: u8, endpoint: bool };
 /// Exact setting or owned catalogue operation; no terminal state enters an editor.
 pub const Target = union(enum) {
     default_font,
@@ -26,7 +24,6 @@ pub const Target = union(enum) {
     binding: u8,
     profile: ProfileTarget,
     environment: EnvironmentTarget,
-    server: ServerTarget,
     set_default: u8,
     add_profile,
     clone_profile: u8,
@@ -34,8 +31,6 @@ pub const Target = union(enum) {
     add_environment: u8,
     delete_environment: struct { profile: u8, index: u8 },
     move_environment: struct { profile: u8, index: u8, delta: i8 },
-    add_server,
-    delete_server: u8,
     information: []const u8,
 };
 /// A borrowed derived row; rebuilt after every accepted configuration replacement.
@@ -71,10 +66,6 @@ pub const Row = struct {
                 const entry = recipe.environment[field.index];
                 break :blk if (field.name) entry.name else entry.value;
             },
-            .server => |field| if (field.index < value.servers.len)
-                (if (field.endpoint) value.servers[field.index].endpoint else value.servers[field.index].label)
-            else
-                error.InvalidSetting,
             .information => |message| message,
             .set_default => |index| if (index == try current.defaultProfile()) "Default" else "Set default",
             else => "",
@@ -83,7 +74,7 @@ pub const Row = struct {
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .font, .binding, .profile, .environment, .server => true,
+            .default_font, .default_profile, .theme, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -113,17 +104,13 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
         const recipe = try current.profile(index);
         try b.add(.{ .page = .defaults, .label = recipe.name, .scope = recipe.id, .target = .{ .set_default = index } });
         try b.add(.{ .page = .profiles, .label = "Duplicate profile", .scope = recipe.name, .target = .{ .clone_profile = index } });
-        if (index < 2) continue;
-        for ([_]ProfileField{ .name, .mode, .shell, .command, .cwd, .endpoint, .font_pixels }) |tag| {
-            if (tag == .endpoint and !std.ascii.eqlIgnoreCase(recipe.mode, "attach")) continue;
-            if ((tag == .shell or tag == .command or tag == .cwd) and !std.ascii.eqlIgnoreCase(recipe.mode, "launch")) continue;
+        if (index == 0) continue;
+        for ([_]ProfileField{ .name, .shell, .command, .cwd, .font_pixels }) |tag| {
             try b.add(.{ .page = .profiles, .label = switch (tag) {
                 .name => "Name",
-                .mode => "Route (launch or attach)",
                 .shell => "Shell",
                 .command => "Command",
                 .cwd => "Working directory",
-                .endpoint => "Attachment endpoint",
                 .font_pixels => "Font size (blank inherits)",
             }, .scope = recipe.name, .target = .{ .profile = .{ .index = index, .field = tag } } });
         }
@@ -132,16 +119,10 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
             try b.add(.{ .page = .profiles, .label = "Environment value", .scope = entry.name, .target = .{ .environment = .{ .profile = index, .index = @intCast(env_index), .name = false } } });
             try b.add(.{ .page = .profiles, .label = "Delete environment entry", .scope = entry.name, .target = .{ .delete_environment = .{ .profile = index, .index = @intCast(env_index) } } });
         }
-        if (std.ascii.eqlIgnoreCase(recipe.mode, "launch")) try b.add(.{ .page = .profiles, .label = "Add environment entry", .scope = recipe.name, .target = .{ .add_environment = index } });
+        try b.add(.{ .page = .profiles, .label = "Add environment entry", .scope = recipe.name, .target = .{ .add_environment = index } });
         try b.add(.{ .page = .profiles, .label = "Delete profile", .scope = recipe.name, .target = .{ .delete_profile = index } });
     }
     try b.add(.{ .page = .profiles, .label = "New launch profile", .target = .add_profile });
-    for (current.value.servers, 0..) |server, index| {
-        try b.add(.{ .page = .servers, .label = "Server label", .scope = server.label, .target = .{ .server = .{ .index = @intCast(index), .endpoint = false } } });
-        try b.add(.{ .page = .servers, .label = "Server endpoint", .scope = server.label, .target = .{ .server = .{ .index = @intCast(index), .endpoint = true } } });
-        try b.add(.{ .page = .servers, .label = "Delete Server", .scope = server.label, .target = .{ .delete_server = @intCast(index) } });
-    }
-    try b.add(.{ .page = .servers, .label = "New Server", .target = .add_server });
     return b.count;
 }
 /// Produces a fully validated owned candidate; failure leaves the live config and source file untouched.
@@ -149,14 +130,11 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
     var value = current.value;
     var profiles: [6]config.Profile = @splat(.{});
     var environment: [16]config.Environment = @splat(.{});
-    var servers: [16]config.Server = @splat(.{});
     var overrides: [bindings.definitions.len]bindings.Override = @splat(.{});
     var updated_bindings = try bindings.Bindings.fromOverrides(value.keybindings);
     var generated: [128]u8 = undefined;
     if (value.profiles.len > profiles.len) return error.ProfileLimit;
-    if (value.servers.len > servers.len) return error.ServerLimit;
     @memcpy(profiles[0..value.profiles.len], value.profiles);
-    @memcpy(servers[0..value.servers.len], value.servers);
     switch (target) {
         .default_font => value.terminal_font_pixels = try std.fmt.parseInt(i32, text, 10),
         .default_profile => value.default_profile = text,
@@ -188,19 +166,6 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
             const recipe = try mutableProfile(&profiles, value.profiles.len, field.index);
             switch (field.field) {
                 .font_pixels => recipe.font_pixels = if (text.len == 0) 0 else try std.fmt.parseInt(i32, text, 10),
-                .mode => {
-                    if (std.ascii.eqlIgnoreCase(text, "launch")) {
-                        recipe.mode = "launch";
-                        recipe.endpoint = "";
-                    } else if (std.ascii.eqlIgnoreCase(text, "attach")) {
-                        recipe.mode = "attach";
-                        recipe.shell = "";
-                        recipe.command = "";
-                        recipe.cwd = "";
-                        recipe.environment = &.{};
-                        if (recipe.endpoint.len == 0) recipe.endpoint = "tcp://127.0.0.1:39601";
-                    } else return error.InvalidProfileMode;
-                },
                 inline else => |tag| @field(recipe, @tagName(tag)) = text,
             }
             value.profiles = profiles[0..value.profiles.len];
@@ -242,43 +207,26 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         },
         .add_profile, .clone_profile => {
             if (value.profiles.len == profiles.len) return error.ProfileLimit;
-            const recipe = if (target == .clone_profile) try current.profile(target.clone_profile) else config.Profile{ .name = "New profile", .mode = "launch" };
+            const recipe = if (target == .clone_profile) try current.profile(target.clone_profile) else config.Profile{ .name = "New profile" };
             profiles[value.profiles.len] = recipe;
             profiles[value.profiles.len].id = try profileID(current, &generated);
             value.profiles = profiles[0 .. value.profiles.len + 1];
         },
         .delete_profile => |index| {
-            if (index < 2 or index - 2 >= value.profiles.len) return error.InvalidSetting;
-            if (index == try current.defaultProfile()) value.default_profile = "home";
+            if (index == 0 or index - 1 >= value.profiles.len) return error.InvalidSetting;
+            if (index == try current.defaultProfile()) value.default_profile = "local";
             const count = value.profiles.len - 1;
-            const retiring = index - 2;
+            const retiring = index - 1;
             std.mem.copyForwards(config.Profile, profiles[retiring..count], profiles[retiring + 1 .. count + 1]);
             value.profiles = profiles[0..count];
-        },
-        .server => |field| {
-            if (field.index >= value.servers.len) return error.InvalidSetting;
-            if (field.endpoint) servers[field.index].endpoint = text else servers[field.index].label = text;
-            value.servers = servers[0..value.servers.len];
-        },
-        .add_server => {
-            if (value.servers.len == servers.len) return error.ServerLimit;
-            const endpoint = try serverEndpoint(value.servers, &generated);
-            servers[value.servers.len] = .{ .label = "New Server", .endpoint = endpoint };
-            value.servers = servers[0 .. value.servers.len + 1];
-        },
-        .delete_server => |index| {
-            if (index >= value.servers.len) return error.InvalidSetting;
-            const count = value.servers.len - 1;
-            std.mem.copyForwards(config.Server, servers[index..count], servers[index + 1 .. count + 1]);
-            value.servers = servers[0..count];
         },
         .font_family, .information => return error.ReadOnlySetting,
     }
     return config.Config.fromValue(current.allocator, io, value);
 }
 fn mutableProfile(profiles: *[6]config.Profile, count: usize, index: u8) error{InvalidSetting}!*config.Profile {
-    if (index < 2 or index - 2 >= count) return error.InvalidSetting;
-    return &profiles[index - 2];
+    if (index == 0 or index - 1 >= count) return error.InvalidSetting;
+    return &profiles[index - 1];
 }
 fn profileID(current: *const config.Config, buffer: []u8) ![]const u8 {
     for (1..10) |number| {
@@ -304,19 +252,6 @@ fn environmentName(entries: []const config.Environment, buffer: []u8) ![]const u
     }
     return error.InvalidProfileEnvironment;
 }
-fn serverEndpoint(entries: []const config.Server, buffer: []u8) ![]const u8 {
-    for (1..18) |number| {
-        const endpoint = try std.fmt.bufPrint(buffer, "tcp://127.0.0.1:{d}", .{39601 + number});
-        var found = false;
-        for (entries) |entry| if (std.mem.eql(u8, entry.endpoint, endpoint)) {
-            found = true;
-            break;
-        };
-        if (!found) return endpoint;
-    }
-    return error.ServerLimit;
-}
-
 /// Small edit/search state. The live configuration owns row values; only committed candidates allocate.
 pub const Editor = struct {
     page: Page = .startup,
@@ -418,30 +353,23 @@ test "settings candidates own generated recipes, validate hostile edits and pres
     var current = config.Config.defaults(std.testing.allocator);
     defer current.deinit();
     try accept(&current, .add_profile, "");
-    try accept(&current, .{ .profile = .{ .index = 2, .field = .name } }, "Build shell");
-    try accept(&current, .{ .profile = .{ .index = 2, .field = .command } }, "exec /bin/sh");
-    try accept(&current, .{ .add_environment = 2 }, "");
-    try accept(&current, .{ .add_environment = 2 }, "");
-    try accept(&current, .{ .environment = .{ .profile = 2, .index = 1, .name = false } }, "exact");
-    try accept(&current, .{ .move_environment = .{ .profile = 2, .index = 1, .delta = -1 } }, "");
+    try accept(&current, .{ .profile = .{ .index = 1, .field = .name } }, "Build shell");
+    try accept(&current, .{ .profile = .{ .index = 1, .field = .command } }, "exec /bin/sh");
+    try accept(&current, .{ .add_environment = 1 }, "");
+    try accept(&current, .{ .add_environment = 1 }, "");
+    try accept(&current, .{ .environment = .{ .profile = 1, .index = 1, .name = false } }, "exact");
+    try accept(&current, .{ .move_environment = .{ .profile = 1, .index = 1, .delta = -1 } }, "");
     try std.testing.expectEqualStrings("exact", current.value.profiles[0].environment[0].value);
-    try std.testing.expectError(error.DuplicateEnvironment, change(&current, std.testing.io, .{ .environment = .{ .profile = 2, .index = 0, .name = true } }, "VAR_1"));
+    try std.testing.expectError(error.DuplicateEnvironment, change(&current, std.testing.io, .{ .environment = .{ .profile = 1, .index = 0, .name = true } }, "VAR_1"));
     try std.testing.expectError(error.InvalidFontSize, change(&current, std.testing.io, .default_font, "49"));
     try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .{ .delete_profile = 0 }, ""));
     try std.testing.expectEqualStrings("Build shell", current.value.profiles[0].name);
-    try accept(&current, .{ .clone_profile = 2 }, "");
+    try accept(&current, .{ .clone_profile = 1 }, "");
     try std.testing.expectEqualStrings("profile_2", current.value.profiles[1].id);
     try std.testing.expectEqualStrings("exec /bin/sh", current.value.profiles[1].command);
-    try accept(&current, .{ .set_default = 2 }, "");
-    try accept(&current, .{ .delete_profile = 2 }, "");
+    try accept(&current, .{ .set_default = 1 }, "");
+    try accept(&current, .{ .delete_profile = 1 }, "");
     try std.testing.expectEqual(@as(u8, 0), try current.defaultProfile());
-    try accept(&current, .{ .profile = .{ .index = 2, .field = .mode } }, "attach");
-    try std.testing.expectEqualStrings("", current.value.profiles[0].command);
-    try std.testing.expectEqual(@as(usize, 0), current.value.profiles[0].environment.len);
-    try accept(&current, .add_server, "");
-    try accept(&current, .add_server, "");
-    try std.testing.expect(!std.mem.eql(u8, current.value.servers[0].endpoint, current.value.servers[1].endpoint));
-    try std.testing.expectError(error.DuplicateServer, change(&current, std.testing.io, .{ .server = .{ .index = 1, .endpoint = true } }, current.value.servers[0].endpoint));
 }
 test "settings text and global search stay bounded and preserve complete Unicode input" {
     var current = config.Config.defaults(std.testing.allocator);
@@ -468,7 +396,7 @@ test "settings text and global search stay bounded and preserve complete Unicode
 fn allocationProof(a: std.mem.Allocator) !void {
     var current = config.Config.defaults(a);
     defer current.deinit();
-    var candidate = try change(&current, std.testing.io, .{ .clone_profile = 1 }, "");
+    var candidate = try change(&current, std.testing.io, .{ .clone_profile = 0 }, "");
     defer candidate.deinit();
     var mapped = try change(&candidate, std.testing.io, .{ .binding = 0 }, "Ctrl+Alt+T");
     defer mapped.deinit();
@@ -478,16 +406,12 @@ test "settings candidate construction retires every partial allocation" {
 }
 test "maximum saved catalogues fit the settings row budget with all editable environment pairs" {
     var env_names: [16][32]u8 = undefined;
-    var endpoints: [16][64]u8 = undefined;
     var environment: [16]config.Environment = undefined;
-    var servers: [16]config.Server = undefined;
     for (&environment, &env_names, 0..) |*entry, *buffer, index| entry.* = .{ .name = try std.fmt.bufPrint(buffer, "VAR_{d}", .{index}), .value = "value" };
-    for (&servers, &endpoints, 0..) |*entry, *buffer, index| entry.* = .{ .label = "Server", .endpoint = try std.fmt.bufPrint(buffer, "tcp://127.0.0.1:{d}", .{39602 + index}) };
     var profiles: [6]config.Profile = undefined;
-    for (&profiles, [_][]const u8{ "a", "b", "c", "d", "e", "f" }) |*recipe, id| recipe.* = .{ .id = id, .name = id, .mode = "launch", .environment = &environment };
+    for (&profiles, [_][]const u8{ "a", "b", "c", "d", "e", "f" }) |*recipe, id| recipe.* = .{ .id = id, .name = id, .environment = &environment };
     var schema = config.Config.defaults(std.testing.allocator).value;
     schema.profiles = &profiles;
-    schema.servers = &servers;
     var current = try config.Config.fromValue(std.testing.allocator, std.testing.io, schema);
     defer current.deinit();
     var all: [row_limit]Row = undefined;

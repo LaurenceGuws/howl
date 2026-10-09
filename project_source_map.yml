@@ -151,41 +151,19 @@ experimental:
     daemon/socket path exists. Outside the core gate
 
   howl-app: >-
-    experimental direct Zig/SDL3 daily-shell replacement beside Odin. Currently
-    owns each Local canonical Instance on an exclusive terminal worker, bounded
-    typed input/control admission, independent PTY service, synchronized-output
-    release and history anchors. SDL consumes immutable Instance Render leases,
-    exact resources and commands with no internal C ABI, shared bridge library,
-    handle catalogue or serialized Local route. Graphical code cannot obtain the
-    live Instance. Application allocations use the Zig SMP allocator; SDL and
-    other C dependencies retain their own allocation policy. Bounded tabs/nested
-    panes, layout controls and the shared mapping registry/command palette are
-    connected, including live pane fonts and display-scale transactions. Original-owner
-    mouse gestures, negotiated wheel routing and UI-local IME preedit/caret areas
-    use copied terminal facts and accepted immutable frame geometry. A bounded owned
-    schema-1..4 saved config supplies startup/profile selection, saved launch recipes,
-    mappings and exact font paths. Owned tab/pane recipes survive configuration
-    replacement. Local launches apply owned child-only environment overlays without
-    mutating inherited application state; the PTY copies before caller retirement
-    and keeps terminal identity canonical. Unavailable attachments and construction failures retain their
-    exact route without Local fallback. Eight bounded settings pages share the
-    owned config and mapping registry, with search, physical shortcut recording,
-    profile/environment/Server editing, themes and atomic live-font transactions.
-    Failed saves restore presentation against the unchanged canonical grid/history;
-    accepted saves allow the next layout resize. Completed font resets fence
-    previous unread publications while preserving accepted leases. The bounded
-    installed terminal-family chooser keeps exact face recipes, substring/fuzzy
-    search, a sample font, live preview and original-font cancellation through
-    the same transaction. Worker-owned stable selection, word/visual-row expansion,
-    edge scrolling and bounded FIFO Copy preserve canonical Unicode; copied paint
-    travels with its matching immutable lease. Eviction/reflow/bank failures stay
-    explicit. Pane-local literal Find scans bounded worker-owned canonical rows,
-    reports stale/capped/error cuts, and navigates through the same stable range
-    and seek path. A frame-derived scrollbar captures bounded original-pane seek
-    gestures without reflow. Retained desktop consequences receive deterministic FIFO
-    replies/consumption; copied attention briefly flashes only unfocused windows.
-    Canonical OSC 8 Ctrl-click uses bounded owned URI copying and HTTP(S) policy;
-    bounded file/text SDL drops reuse semantic paste with modal isolation.
-    SDL Wayland text-drop line splitting retains the existing platform behavior.
-    Explicit attachments remain to be carried over before daily supersession. Its package check includes
-    its complete ruleset-3 source audit.
+    experimental Local-only Zig/SDL3 daily-shell replacement beside Odin. Each
+    pane owns one direct canonical Instance on an exclusive terminal worker;
+    SDL consumes immutable Render leases and copied facts. No client transport,
+    HWLS, Server/Session, endpoint, attachment/detach lane, listener, internal
+    C ABI or live canonical owner crosses the GUI. Bounded tabs/panes/layout,
+    mappings/palette, owned semantic input, history/selection/copy/Find/scrollbar,
+    desktop consequences/hyperlinks/drops and transactional fonts/scale/settings
+    share that singular path. Application allocations use the SMP allocator.
+    One built-in Local recipe plus six custom shell/command/cwd/environment
+    recipes use strict bounded app.json, independent of Odin config. Seven
+    settings pages and the installed-font chooser retain atomic save/rollback.
+    Local child-only environment overlays preserve parent state and canonical
+    terminal identity. Frame stalls and projection failures cannot stop canonical
+    service. SDL preedit/caret/commit is proved; external native IME remains.
+    Odin stays daily until Local qualification. Its package check includes
+    the complete ruleset-3 source audit.

@@ -15,6 +15,7 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and generated terminal-cell glyphs
 
 composition:
+  - howl-app is Local-only: one direct in-process Instance per pane, with no Server/Session, endpoint, transport or attachment/detach subsystem
   - howl-vt may be embedded directly without PTY, Instance, Session, or Server machinery
   - a local shell or terminal host may compose howl-pty plus howl-vt through howl-instance without knowing that Session or Server concepts exist
   - optional orchestration has the noun/process tree Server -> Sessions -> Instances

@@ -11,7 +11,6 @@ pub const Action = enum {
     split_horizontal,
     toggle_pane_zoom,
     open_local,
-    attach_home,
     recover_instance,
     open_settings,
     open_command_palette,
@@ -46,7 +45,7 @@ pub const Target = union(enum) {
 /// One stable persisted mapping id, human label and default binding.
 pub const Definition = struct { target: Target, id: []const u8, label: []const u8, default_shortcut: []const u8, category: Category };
 
-/// The daily fifty-row registry, including unbound directional commands.
+/// The Local daily registry, including unbound directional commands.
 pub const definitions = [_]Definition{
     .{ .target = .{ .action = .new_tab }, .id = "new_tab", .label = "New tab", .default_shortcut = "Ctrl+T", .category = .tab },
     .{ .target = .{ .action = .new_window }, .id = "new_window", .label = "New window", .default_shortcut = "Ctrl+Shift+N", .category = .window },
@@ -55,8 +54,7 @@ pub const definitions = [_]Definition{
     .{ .target = .{ .action = .split_horizontal }, .id = "split_down", .label = "Split pane down", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .toggle_pane_zoom }, .id = "toggle_pane_zoom", .label = "Toggle pane zoom", .default_shortcut = "Ctrl+Shift+Z", .category = .pane },
     .{ .target = .{ .action = .open_local }, .id = "open_local", .label = "Open Local shell", .default_shortcut = "", .category = .profile },
-    .{ .target = .{ .action = .attach_home }, .id = "attach_home", .label = "Attach Home Instance", .default_shortcut = "", .category = .profile },
-    .{ .target = .{ .action = .recover_instance }, .id = "recover_instance", .label = "Restart / reconnect pane", .default_shortcut = "Ctrl+Shift+R", .category = .pane },
+    .{ .target = .{ .action = .recover_instance }, .id = "recover_instance", .label = "Restart pane", .default_shortcut = "Ctrl+Shift+R", .category = .pane },
     .{ .target = .{ .action = .open_settings }, .id = "open_settings", .label = "Open settings", .default_shortcut = "Ctrl+,", .category = .application },
     .{ .target = .{ .action = .open_command_palette }, .id = "command_palette", .label = "Command Palette", .default_shortcut = "Ctrl+Shift+P", .category = .application },
     .{ .target = .{ .action = .open_profile_menu }, .id = "profile_menu", .label = "Profile menu", .default_shortcut = "Ctrl+Shift+Space", .category = .application },
@@ -214,9 +212,9 @@ pub fn indexForId(id: []const u8) ?usize {
     return null;
 }
 
-test "daily defaults preserve fifty mappings, unbound Alt directions and shifted Plus" {
+test "daily defaults preserve Local mappings, unbound Alt directions and shifted Plus" {
     const bindings = try Bindings.init();
-    try std.testing.expectEqual(@as(usize, 50), definitions.len);
+    try std.testing.expectEqual(@as(usize, 49), definitions.len);
     for (definitions, bindings.rows) |definition, binding| {
         if (definition.target == .pane_focus or definition.target == .pane_resize or definition.target == .pane_swap)
             try std.testing.expectEqual(@as(c.SDL_Keycode, 0), binding.shortcut.key);

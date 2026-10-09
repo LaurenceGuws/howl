@@ -23,8 +23,7 @@ const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
 
-const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set ||
-    error{AttachmentNotImplemented};
+const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set;
 const Pane = struct {
     owner: ?*terminal.Terminal = null,
     recipe: config.Recipe,
@@ -153,7 +152,6 @@ const App = struct {
         return self.configuration.profile(try self.configuration.defaultProfile());
     }
     fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
-        if (std.ascii.eqlIgnoreCase(recipe.mode, "attach")) return error.AttachmentNotImplemented;
         const inherited = if (recipe.environment.len != 0) try profileEnvironment(allocator, self.init.environ_map, recipe.environment) else self.init.minimal.environ;
         defer if (recipe.environment.len != 0) inherited.block.deinit(allocator);
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
@@ -346,7 +344,7 @@ const App = struct {
         switch (target) {
             .action => |action| switch (action) {
                 .new_tab => try self.createTab(try self.startup(), null),
-                .open_local => try self.createTab(try self.configuration.profile(1), null),
+                .open_local => try self.createTab(try self.configuration.profile(0), null),
                 .duplicate_tab => try self.createTab(try savedRecipe(self.configuration, self.tab().recipe.value), null),
                 .new_window => try self.newWindow(),
                 .split_vertical => try self.split(.horizontal),
@@ -371,7 +369,6 @@ const App = struct {
                 .open_command_palette => try self.openPalette(false),
                 .open_profile_menu => try self.openPalette(true),
                 .open_settings => try self.toggleSettings(),
-                .attach_home => try self.createTab(try self.configuration.profile(0), null),
             },
             .select_tab => |index| try self.selectTab(index),
             .paste_clipboard => {
@@ -821,9 +818,6 @@ const App = struct {
                         break;
                     };
                     try self.changeSetting(row.target, themes[@intCast(@mod(index + delta, 3))]);
-                } else if (row.target == .profile and row.target.profile.field == .mode) {
-                    const recipe = try self.configuration.profile(row.target.profile.index);
-                    try self.changeSetting(row.target, if (std.ascii.eqlIgnoreCase(recipe.mode, "launch")) "attach" else "launch");
                 }
             },
             else => {},
@@ -1836,17 +1830,17 @@ test "palette query is bounded and includes deliberately unbound directional com
     try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
     for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
     p = .{ .profile = true };
-    try std.testing.expectEqual(@as(usize, 2), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
 }
 
 test "profile palette uses saved recipes and resolves its configured default" {
     var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
-        \\{"schema":4,"terminal_font_pixels":15,"app_theme":"howl_dark","default_profile":"build","profiles":[{"id":"build","name":"Build shell","mode":"launch","shell":"/bin/sh","command":"exec sh","font_pixels":19}]}
+        \\{"schema":1,"terminal_font_pixels":15,"app_theme":"howl_dark","default_profile":"build","profiles":[{"id":"build","name":"Build shell","shell":"/bin/sh","command":"exec sh","font_pixels":19}]}
     );
     defer configuration.deinit();
     var p: Palette = .{ .profile = true };
     var indices: [keybindings.definitions.len]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 2), try p.indices(&configuration, &indices));
     @memcpy(p.query[0..5], "BUILD");
     p.len = 5;
     try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
@@ -1899,10 +1893,10 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     defer owner.destroy();
     var configuration = config.Config.defaults(test_allocator);
     defer configuration.deinit();
-    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(1)), .canvas = canvas.Canvas.init(test_allocator) };
+    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(0)), .canvas = canvas.Canvas.init(test_allocator) };
     defer p.recipe.deinit();
     defer p.canvas.deinit();
-    var t: Tab = .{ .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(1)) };
+    var t: Tab = .{ .recipe = try config.Recipe.copy(test_allocator, try configuration.profile(0)) };
     defer t.recipe.deinit();
     t.panes[0] = &p;
     var app: App = .{
@@ -2061,7 +2055,7 @@ test "failed settings save restores fonts without changing canonical history or 
         });
     };
     for (&panes, 0..) |*p, index| {
-        var recipe = try config.Recipe.copy(a, try current.profile(1));
+        var recipe = try config.Recipe.copy(a, try current.profile(0));
         errdefer recipe.deinit();
         const size: u16 = if (index == 0) 15 else 17;
         const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
@@ -2074,7 +2068,7 @@ test "failed settings save restores fonts without changing canonical history or 
         p.* = .{ .owner = owner, .recipe = recipe, .canvas = canvas.Canvas.init(a), .font_size = size, .font_overridden = index != 0, .rows = 4, .columns = 20 };
         count += 1;
     }
-    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try current.profile(1)) };
+    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try current.profile(0)) };
     defer t.recipe.deinit();
     const second = try t.tree.split(.horizontal);
     t.panes[0] = &panes[0];
@@ -2137,12 +2131,12 @@ test "failed settings save restores fonts without changing canonical history or 
     }
     try std.testing.expect(attempts < 5000);
     proof_stage = "accepted save";
-    try app.applyConfigurationAt(&candidate, temporary.dir, "odin.json");
+    try app.applyConfigurationAt(&candidate, temporary.dir, "app.json");
     try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
     try std.testing.expectEqual(@as(u16, 23), panes[0].font_size);
     try std.testing.expectEqual(@as(u16, 17), panes[1].font_size);
     try std.testing.expect(panes[1].font_overridden);
-    var reopened = try config.Config.loadAt(a, threaded.io(), temporary.dir, "odin.json");
+    var reopened = try config.Config.loadAt(a, threaded.io(), temporary.dir, "app.json");
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
 }
@@ -2172,10 +2166,10 @@ test "SDL drop events keep modal input owners isolated and copy event bytes befo
     defer owner.destroy();
     var configuration = config.Config.defaults(a);
     defer configuration.deinit();
-    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(a, try configuration.profile(1)), .canvas = canvas.Canvas.init(a) };
+    var p: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(a, try configuration.profile(0)), .canvas = canvas.Canvas.init(a) };
     defer p.recipe.deinit();
     defer p.canvas.deinit();
-    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(1)) };
+    var t: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(0)) };
     defer t.recipe.deinit();
     t.panes[0] = &p;
     var app: App = .{
