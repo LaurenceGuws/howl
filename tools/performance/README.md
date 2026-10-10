@@ -421,3 +421,46 @@ data/bss unchanged. Root/Safe/Fast/audits and private fractional-scale
 Settings/New Tab GUI pass. Artifacts, raw stable CPU folds, memory samples,
 fault receipts and cleanup are in
 night-20261010/cursor-iterate-20261010/RESULT.md under the current workstream.
+
+### Projection failure recovery, 2026-10-10
+
+A controlled 128-glyph CJK page at 48 px exceeds howl-app's fixed 512×512 atlas.
+Both builds report AtlasFull and retain the prior successful pixels. After the
+child clears to fitting text, fbab07e stays frozen; the successor presents the
+new page and clears the error. The worker now blocks only the failed canonical
+contentSequence and history viewport. Cursor-only changes retain the block and
+observer credit. New content or a changed viewport can attempt; successful
+publication clears the failure. Atlas bounds and cursor ownership stay fixed.
+
+Captain's separate late second-buffer nvim report remains unresolved. Nine
+isolated scratch/server.go buffer switches at 1.25, 1.75, 2.0 scale with Captain's
+four Iosevka faces and size 18 showed no visible failure; this does not reproduce
+the unknown previous artifact, plugins or transient frame.
+
+Twelve matched 20-second ReleaseSafe A/B/B/A controls used the same Fast TUI Zoo
+producer and private 1920×1080 OpenGL environment. Duration-weighted terminal CPU
+excludes the producer and shell, using valid stable process identities:
+
+| Case | fbab07e CPU, one core | Successor CPU, one core |
+| --- | --- | --- |
+| Cursor 60 Hz | 2.13–2.18% | 1.98–2.28% |
+| Unicode/background 4096 cells, 20 Hz | 13.67–13.72% | 13.52–13.67% |
+| Heavy 65536 cells, 20 Hz | 28.56–28.96% | 28.51–28.56% |
+
+All producer slots completed (cursor 1200, other cases 400 each); no missed slots.
+This qualifies healthy fixed-work behavior, not a speed or RAM improvement.
+The first baseline memory peak was cold; remaining anonymous-memory ranges
+overlap. No atlas or content-target budget grew. Safe ELF bytes decreased 9493.
+
+A separate instrumented Safe profile excludes initial placement and producer
+shutdown, observing seconds 5–20 after the first presentation. Warm cursor:
+899 presentations, zero texture creation/destruction, zero TTF raster calls and
+zero content-target changes. GUI-thread CPU 1.60%; inclusive SDL_RenderPresent
+1.07%. Rich output still rebuilds content and flushes target changes. These
+inclusive call clocks guide the next boundary investigation; they are not an
+uninstrumented whole-process comparison or proof of driver-internal attribution.
+
+Evidence and replay recipes remain in Home's active Howl workstream under
+zig-app-20261008/night-20261010/cursor-atlas-20261010. Temporary probes are retired
+after qualification. The maintained child-barrier proof covers failed projection,
+unchanged cursor-only credit, canonical service, and successful content recovery.

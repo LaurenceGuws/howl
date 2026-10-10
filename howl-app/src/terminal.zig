@@ -179,7 +179,8 @@ const State = struct {
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
     gate: policy.Gate = .{},
-    presentation_failure: ?PresentationFailure = null,
+    // Block only the content/viewport which failed; canonical service remains independent.
+    blocked_presentation: ?struct { content_sequence: u64, history_offset: u32 } = null,
     history: policy.History = .{},
     selected: ?selection.Range = null,
     selection_serial: u64 = 0,
@@ -336,7 +337,7 @@ const State = struct {
             // publication can make pre-reset unread slots observable again, retiring them first.
             self.new_frame.store(false, .release);
             if (geometry.columns != live.cols) self.history.reset();
-            self.presentation_failure = null;
+            self.blocked_presentation = null;
             self.mutex.lockUncancelable(self.io);
             self.status.presentation_failure = null;
             self.mutex.unlock(self.io);
@@ -541,7 +542,7 @@ const State = struct {
                 self.gate.pending = true;
             },
             .retry_render => {
-                self.presentation_failure = null;
+                self.blocked_presentation = null;
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = null;
                 self.mutex.unlock(self.io);
@@ -605,7 +606,11 @@ const State = struct {
         self.mutex.unlock(self.io);
         if (lifecycle_changed or title_changed or search_changed) self.notify();
         var published = false;
-        if (self.presentation_failure == null and self.gate.pending and self.visible.load(.acquire) and
+        const blocked = if (self.blocked_presentation) |failed|
+            failed.content_sequence == observation.contentSequence() and failed.history_offset == self.history.offset
+        else
+            false;
+        if (!blocked and self.gate.pending and self.visible.load(.acquire) and
             self.gate.released(observation.synchronizedOutput()) and self.credit.load(.acquire))
         {
             // Projection may skip a stalled GUI transfer; canonical service never waits for it.
@@ -617,13 +622,22 @@ const State = struct {
                     self.credit.store(true, .release);
                     return result;
                 }
-                self.presentation_failure = failure;
+                self.blocked_presentation = .{
+                    .content_sequence = observation.contentSequence(),
+                    .history_offset = self.history.offset,
+                };
                 self.mutex.lockUncancelable(self.io);
                 self.status.presentation_failure = failure;
                 self.mutex.unlock(self.io);
                 self.notify();
                 return result;
             };
+            if (self.blocked_presentation != null) {
+                self.blocked_presentation = null;
+                self.mutex.lockUncancelable(self.io);
+                self.status.presentation_failure = null;
+                self.mutex.unlock(self.io);
+            }
             const view = observation.semanticView(self.history.offset);
             self.paint = if (self.selected) |range| range.paint(view, self.selection_serial) catch .{ .serial = self.selection_serial } else .{ .serial = self.selection_serial };
             self.gate.pending = false;
@@ -879,7 +893,7 @@ fn closeWake(fd: posix.fd_t) void {
     std.debug.assert(status == .SUCCESS or status == .INTR);
 }
 
-test "projection failure leaves canonical output and input alive" {
+test "projection failure blocks only the failed content while canonical service stays alive" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -889,16 +903,26 @@ test "projection failure leaves canonical output and input alive" {
     presentation.command_limit = 16;
     const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
-        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 32 ]; do printf '\\033[41mX\\033[42mY'; i=$((i + 1)); done; printf '\\033[0m'; printf '\\033]0;FIRST\\007'; read line; printf '\\033]0;SECOND\\007'; sleep 30",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 32 ]; do printf '\\033[41mX\\033[42mY'; i=$((i + 1)); done; printf '\\033[0m'; printf '\\033]0;FIRST\\007'; read line; printf '\\033[1;2H'; read line; printf '\\033[0m\\033[2J\\033[Hok\\033]0;RECOVERED\\007'; sleep 30",
         .rows = 4,
         .columns = 20,
         .history_rows = 8,
     }, presentation, c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
+    var stage: []const u8 = "initial";
+    errdefer {
+        const status = owner.snapshot();
+        std.debug.print("recovery proof {s}: title={s}, cursor={d}, failure={any}, credit={any}, ready={any}\n", .{
+            stage,                               status.title[0..status.title_len],      status.cursor_col, status.presentation_failure,
+            owner.state().credit.load(.acquire), owner.state().new_frame.load(.acquire),
+        });
+    }
     try waitTitle(owner, "READY");
     try waitFrame(owner);
     var initial = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
+    const initial_revision = initial.value.terminal_revision;
     try initial.release(&.{});
+    stage = "exhaustion";
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "FIRST");
     owner.requestFrame();
@@ -907,9 +931,29 @@ test "projection failure leaves canonical output and input alive" {
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     try std.testing.expect(owner.snapshot().presentation_failure != null);
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+    stage = "cursor";
     try owner.submit(.{ .input = .{ .bytes = "CONTINUE\n" } });
-    try waitTitle(owner, "SECOND");
+    attempts = 0;
+    while (owner.snapshot().cursor_col != 1 and attempts < 5000) : (attempts += 1)
+        try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
+    try std.testing.expectEqual(@as(u16, 1), owner.snapshot().cursor_col);
+    const failure = owner.snapshot().presentation_failure;
+    try std.testing.expect(failure != null);
+    owner.requestFrame();
+    try std.Io.sleep(owner.state().io, .fromMilliseconds(20), .awake);
+    try std.testing.expectEqual(failure, owner.snapshot().presentation_failure);
     try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+    try std.testing.expect(!owner.state().new_frame.load(.acquire));
+    // A consumed credit would prove another failed projection, even with no new frame.
+    try std.testing.expect(owner.state().credit.load(.acquire));
+    stage = "recovery";
+    try owner.submit(.{ .input = .{ .bytes = "RECOVER\n" } });
+    try waitTitle(owner, "RECOVERED");
+    try waitFrame(owner);
+    try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+    var recovered = instance.acquirePublishedFrame(owner.state().exchange) orelse return error.MissingFrame;
+    defer recovered.abandon();
+    try std.testing.expect(recovered.value.terminal_revision > initial_revision);
 }
 
 test "visibility affirmation cannot manufacture presentation credits; reveal can" {
