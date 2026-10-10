@@ -1,5 +1,11 @@
 # Terminal performance track
 
+Open [race.html](race.html) directly from disk for the bird's-eye race overview.
+It is one self-contained HTML snapshot: no server, Python runtime, scripts, polling
+or focus follower. Update its values and named provenance together after a qualified
+race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
+horses and metrics stay explicit. Raw workstream receipts remain authoritative.
+
 `horses.sh` runs deterministic TUI Zoo workloads through fresh terminal processes while WMIO owns graphical identity, placement, focus and close.
 
 The benchmark configs under `configs/` are intentionally separate from Captain's daily terminal settings. The optimized KDE track uses the same IosevkaTerm Nerd Font family, opaque backgrounds, no blur, no cursor animation, minimal/no window chrome and padding, and ordinary 4096-row scrollback policy where a terminal exposes line-count history.
