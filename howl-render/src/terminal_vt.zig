@@ -74,6 +74,8 @@ pub const Renderer = renderer.Renderer;
 pub const Usage = renderer.Usage;
 /// Uses the source-neutral frame scratch buffers.
 pub const FrameBuffers = renderer.FrameBuffers;
+/// Identifies an unchanged caller-owned content command prefix.
+pub const RetainedContent = renderer.RetainedContent;
 /// Uses the source-neutral completed frame view.
 pub const Frame = renderer.Frame;
 /// Uses the retained-row scene update kind.
@@ -150,4 +152,18 @@ pub fn updateObservation(
         .images = observation.images(history_offset),
     };
     return renderer.updateSource(source_vt.Source, owner, &snapshot, image_bindings);
+}
+
+/// Refreshes the cursor synchronously after the owner proves content unchanged.
+pub fn updateObservationCursor(
+    owner: *Renderer,
+    observation: *const VT.Observation,
+    history_offset: u32,
+) Error!void {
+    const snapshot: source_vt.Source.Snapshot = .{
+        .view = observation.semanticView(history_offset),
+        .colors = observation.presentation(),
+        .images = observation.images(history_offset),
+    };
+    return renderer.updateCursorSource(source_vt.Source, owner, &snapshot);
 }

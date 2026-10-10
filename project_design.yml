@@ -50,6 +50,10 @@ ownership:
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
   - renderer and platform policy stay outside VT, PTY, and Instance
+  - VT owns one semantic cursor and a canonical content identity which remains stable for cursor-only movement and output bracketing; missed observations cannot erase a content mutation
+  - howl-app keeps content and cursor work separate: Render retains content commands plus cursor geometry, Instance publishes complete immutable frames with reusable slot prefixes, and Canvas retains visible-pane content pixels beneath the cursor overlay
+  - cursor glyph lookup indexes clipped painted ink by physical row, including overhang; slot reuse requires the same content revision, presentation generation and command buffer, while growth or aborted preparation invalidates reuse
+  - Canvas content targets are backend acceleration only, released for hidden panes and rebuilt after geometry, presentation or target-reset changes; canonical progress never depends on their lifetime
   - VT owns retained image/frame/animation semantics; Instance supplies monotonic service/wake scheduling when used, while a direct VT embedder supplies its own clock
   - Server/Session orchestration, when present, depends downward on Instances and must never become a prerequisite for local terminal composition
 

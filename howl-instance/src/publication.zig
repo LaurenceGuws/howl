@@ -31,6 +31,8 @@ pub const PublishedFrame = struct {
     sequence: u64,
     presentation_generation: u64,
     revision: u64,
+    content_revision: u64 = 0,
+    content_command_count: usize = 0,
     terminal_revision: u64,
     history_offset: u32,
     history_count: u32,
@@ -54,6 +56,8 @@ const FrameSlot = struct {
     sequence: std.atomic.Value(u64) = .init(0),
     presentation_generation: u64 = 1,
     revision: u64 = 0,
+    content_revision: u64 = 0,
+    content_command_count: usize = 0,
     terminal_revision: u64 = 0,
     history_offset: u32 = 0,
     history_count: u32 = 0,
@@ -92,6 +96,8 @@ const FrameSlot = struct {
         const replacement = try allocator.alloc(terminal.Command, needed);
         allocator.free(self.commands);
         self.commands = replacement;
+        self.content_revision = 0;
+        self.content_command_count = 0;
     }
 
     fn ensurePixels(self: *FrameSlot, allocator: std.mem.Allocator, needed: usize) !void {
@@ -106,6 +112,8 @@ const FrameSlot = struct {
             .sequence = self.sequence.load(.acquire),
             .presentation_generation = self.presentation_generation,
             .revision = self.revision,
+            .content_revision = self.content_revision,
+            .content_command_count = self.content_command_count,
             .terminal_revision = self.terminal_revision,
             .history_offset = self.history_offset,
             .history_count = self.history_count,
@@ -205,6 +213,14 @@ pub const Writer = struct {
         return self.slot().commands;
     }
 
+    /// Reuses this slot's complete prefix only within the same presentation.
+    /// A lease is never touched; the writing slot is exclusively producer-owned.
+    pub fn retainedContent(self: *Writer, generation: u64) ?terminal.RetainedContent {
+        const value = self.slot();
+        if (value.presentation_generation != generation or value.content_revision == 0) return null;
+        return .{ .revision = value.content_revision, .commands = value.commands[0..value.content_command_count] };
+    }
+
     /// Grows only this unpublished slot's backend-command storage.
     ///
     /// The slot is exclusively producer-owned while writing, so replacement
@@ -231,6 +247,8 @@ pub const Writer = struct {
         self: *Writer,
         presentation_generation: u64,
         revision: u64,
+        content_revision: u64,
+        content_command_count: usize,
         terminal_revision: u64,
         history_offset: u32,
         history_count: u32,
@@ -252,6 +270,7 @@ pub const Writer = struct {
         std.debug.assert(upload_count <= value.uploads.len);
         std.debug.assert(removal_count <= value.removals.len);
         std.debug.assert(command_count <= value.commands.len);
+        std.debug.assert(content_command_count <= command_count);
         std.debug.assert(pixel_count <= value.pixels.len);
         std.debug.assert(surface.width != 0 and surface.height != 0);
         std.debug.assert(cell_size.width != 0 and cell_size.height != 0);
@@ -260,6 +279,8 @@ pub const Writer = struct {
         if (impl.producer_sequence == 0) impl.producer_sequence = 1;
         value.presentation_generation = presentation_generation;
         value.revision = revision;
+        value.content_revision = content_revision;
+        value.content_command_count = content_command_count;
         value.terminal_revision = terminal_revision;
         value.history_offset = history_offset;
         value.history_count = history_count;
@@ -286,7 +307,11 @@ pub const Writer = struct {
     /// Returns an unpublished writer slot to the free pool.
     pub fn abort(self: *Writer) void {
         if (self.finished) return;
-        self.slot().state.store(stateValue(.free), .release);
+        const value = self.slot();
+        // A failed preparation may have overwritten part of the content prefix.
+        value.content_revision = 0;
+        value.content_command_count = 0;
+        value.state.store(stateValue(.free), .release);
         self.finished = true;
     }
 };
@@ -544,7 +569,7 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    first.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    first.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var lease = acquireLatest(exchange).?;
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
@@ -554,14 +579,14 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
         .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
     } };
-    second.finish(1, 2, 2, 0, 0, 0, false, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    second.finish(1, 2, 2, 1, 2, 0, 0, 0, false, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var third = beginWrite(exchange).?;
     third.commandStorage()[0] = .{ .solid = .{
         .rect = .{ .x = 0, .y = 0, .width = 3, .height = 1 },
         .color = .{ .r = 7, .g = 8, .b = 9, .a = 255 },
     } };
-    third.finish(1, 3, 3, 0, 0, 0, false, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    third.finish(1, 3, 3, 1, 3, 0, 0, 0, false, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     // Held payload cannot be overwritten by producer coalescing.
     try std.testing.expectEqual(@as(u16, 1), lease.value.commands[0].solid.rect.width);
@@ -591,7 +616,7 @@ test "lease feedback tracks applied resources without releasing immutable frame 
     defer deinit(exchange);
 
     var writer = beginWrite(exchange).?;
-    writer.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
     var lease = acquireLatest(exchange).?;
     defer lease.abandon();
 
@@ -618,7 +643,7 @@ test "lease feedback tracks applied resources without releasing immutable frame 
     try std.testing.expect(takeLatestResidency(exchange, 1, &storage) == null);
 
     writer = beginWrite(exchange).?;
-    writer.finish(1, 2, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 2, 2, 0, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
     try std.testing.expect(acquireLatest(exchange) == null);
     try lease.release(&.{accepted});
@@ -677,21 +702,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    initial.finish(
-        1,
-        1,
-        1,
-        0,
-        0,
-        0,
-        false,
-        .{ .width = 1, .height = 1 },
-        .{ .width = 1, .height = 1 },
-        0,
-        0,
-        1,
-        0,
-    );
+    initial.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
 
     var hold = ConcurrentHold{ .exchange = exchange };
     const backend = try std.Thread.spawn(.{}, ConcurrentHold.run, .{&hold});
@@ -706,21 +717,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
             .rect = .{ .x = 0, .y = 0, .width = width, .height = 1 },
             .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
         } };
-        writer.finish(
-            1,
-            revision,
-            revision,
-            0,
-            0,
-            0,
-            false,
-            .{ .width = width, .height = 1 },
-            .{ .width = 1, .height = 1 },
-            0,
-            0,
-            1,
-            0,
-        );
+        writer.finish(1, revision, revision, 1, revision, 0, 0, 0, false, .{ .width = width, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
     }
 
     hold.release_now.store(true, .release);
@@ -730,4 +727,31 @@ test "backend lease remains immutable while producer coalesces a burst" {
     var latest = acquireLatest(exchange).?;
     try std.testing.expectEqual(@as(u64, 101), latest.value.revision);
     try latest.release(&.{});
+}
+
+test "only completed same-generation prefixes survive slot reuse; growth and abort invalidate them" {
+    const exchange = try init(std.testing.allocator, 1);
+    defer deinit(exchange);
+    var writer = beginWrite(exchange).?;
+    const first_index = writer.index;
+    writer.commandStorage()[0] = .{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    writer.finish(7, 11, 9, 1, 11, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    var lease = acquireLatest(exchange).?;
+    lease.abandon();
+    writer = beginWrite(exchange).?;
+    try std.testing.expectEqual(first_index, writer.index);
+    const retained = writer.retainedContent(7).?;
+    try std.testing.expectEqual(@as(u64, 9), retained.revision);
+    try std.testing.expectEqual(@as(usize, 1), retained.commands.len);
+    try std.testing.expect(retained.commands.ptr == writer.commandStorage().ptr);
+    try std.testing.expect(writer.retainedContent(8) == null);
+    try writer.ensureCommandCapacity(2);
+    try std.testing.expect(writer.retainedContent(7) == null);
+    writer.abort();
+    writer = beginWrite(exchange).?;
+    try std.testing.expect(writer.retainedContent(7) == null);
+    writer.abort();
 }

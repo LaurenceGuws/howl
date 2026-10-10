@@ -569,6 +569,7 @@ const PresentationState = struct {
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
     terminal_revision: ?u64 = null,
+    content_revision: ?u64 = null,
     terminal_history_offset: u32 = 0,
     backend_residency: [publication.maximum_residencies]terminal_render.Residency = undefined,
     backend_residency_count: usize = 0,
@@ -657,6 +658,19 @@ const PresentationState = struct {
             self.terminal_revision.? == revision and
             self.terminal_history_offset == view.history_offset)
             return;
+        const content_revision = observation.contentSequence();
+        reuse: {
+            if (self.content_revision == content_revision and
+                self.terminal_history_offset == view.history_offset)
+            {
+                terminal_render.updateObservationCursor(self.renderer, observation, view.history_offset) catch |failure| switch (failure) {
+                    error.InvalidView => break :reuse,
+                    else => return failure,
+                };
+                self.terminal_revision = revision;
+                return;
+            }
+        }
         var candidate: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = try terminal_render.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
@@ -674,6 +688,7 @@ const PresentationState = struct {
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
         self.terminal_revision = revision;
+        self.content_revision = content_revision;
         self.terminal_history_offset = view.history_offset;
     }
 
@@ -780,6 +795,7 @@ const PresentationState = struct {
                 self.renderer,
                 prospective[0..prospective_count],
                 .{
+                    .retained_content = writer.retainedContent(self.presentation_generation),
                     .uploads = uploads[missing.len..],
                     .removals = writer.removalStorage(),
                     .commands = writer.commandStorage(),
@@ -823,6 +839,8 @@ const PresentationState = struct {
         writer.finish(
             self.presentation_generation,
             frame.revision,
+            frame.content_revision,
+            frame.content_command_count,
             observation.semanticSequence(),
             view.history_offset,
             view.history_count,
@@ -999,6 +1017,7 @@ const State = struct {
 
         const observation = self.terminal.observation();
         const old_revision = observation.semanticSequence();
+        const old_content_revision = observation.contentSequence();
         var candidate_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = try terminal_render.planObservationImageBindings(
             &.{},
@@ -1047,6 +1066,7 @@ const State = struct {
         @memcpy(presentation.image_bindings[0..bindings.len], bindings);
         presentation.image_binding_count = bindings.len;
         presentation.terminal_revision = old_revision;
+        presentation.content_revision = old_content_revision;
         presentation.terminal_history_offset = 0;
         presentation.backend_residency_count = 0;
         presentation.atlas_pixel_capacity = atlas_pixel_capacity;
@@ -2263,4 +2283,164 @@ test "presentation surface reconfigure derives canonical grid from new font metr
     try std.testing.expectEqual(geometry.columns, view.cols);
     try std.testing.expectEqual(@as(u32, geometry.cell_size.width), pixels.width);
     try std.testing.expectEqual(@as(u32, geometry.cell_size.height), pixels.height);
+}
+
+test "cursor and content cuts agree with complete projection across native mutations and stalled leases" {
+    const allocator = std.testing.allocator;
+    var canonical = try Terminal.initWithHistory(allocator, 4, 8, 8);
+    defer canonical.deinit();
+    const config = PresentationConfig{
+        .fonts = .{ .regular = .{ .path = .{
+            .primary = @import("test_fonts").primary_font,
+            .size = .{ .pixels = 18 },
+        } } },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+        .shaped_capacity = 128,
+        .raster_bytes = 512 * 512,
+        .command_capacity = 256,
+    };
+    var fonts = try OwnedFonts.init(allocator, config.fonts);
+    const candidate = PresentationState.initWithFonts(allocator, &fonts, config, canonical.observation()) catch |failure| {
+        fonts.deinit();
+        return failure;
+    };
+    defer candidate.deinit(allocator);
+    const cell = candidate.cellSize();
+    try canonical.setCellPixelSize(cell.width, cell.height);
+    const baseline = try terminal_render.init(allocator, candidate.fonts.faces(), .{
+        .cell_size = candidate.cellSize(),
+        .box_drawing = config.box_drawing,
+        .shape_cache = config.shape_cache,
+        .atlas = config.atlas,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+        .command_capacity = config.command_capacity,
+    });
+    defer terminal_render.deinit(baseline);
+
+    const cuts = [_]struct { bytes: []const u8, history: u32 = 0 }{
+        .{ .bytes = "ABCDEFGH\x1b[2;1Hijklmnop\x1b[3;1Hqrstuvwx" },
+        .{ .bytes = "\x1b[1;3H" },
+        .{ .bytes = "\x1b[?2026h\x1b[3;2H\x1b[?2026l" },
+        .{ .bytes = "\x1b[?2026;5h\x1b[?2026l" },
+        .{ .bytes = "\x1b[?5l" },
+        .{ .bytes = "\x1b[2;4H\x1b[3 q" },
+        .{ .bytes = "\x1b[?25l" },
+        .{ .bytes = "\x1b[?25h\x1b[0 q" },
+        .{ .bytes = "\x1b[2;1H\x1b[4;9;44mQ\x1b[0m" },
+        .{ .bytes = "\x1b[1;1H\x1b#6" },
+        .{ .bytes = "\x1b[1;2H" },
+        .{ .bytes = "\x1b]4;1;#102030\x07\x1b[?5h" },
+        .{ .bytes = "\x1b[2;2H" },
+        .{ .bytes = "\x1b[?5l\x1b[2K" },
+        .{ .bytes = "\x1b[4;1H\r\nnew\r\nlast" },
+        .{ .bytes = "\x1b[1;2H", .history = 1 },
+        .{ .bytes = "\x1b[2;3H" },
+        .{ .bytes = "\x1b[?1049hALT" },
+        .{ .bytes = "\x1b[2;2H" },
+        .{ .bytes = "\x1b[?1049l" },
+        .{ .bytes = "\x1bcRESET" },
+        .{ .bytes = "\x1b[2;1H\u{754c}e\u{0301}" },
+        .{ .bytes = "\x1b[2;2H" },
+        .{ .bytes = "\x1b_Ga=T,f=32,s=1,v=1,i=1,q=2;/wAA/w==\x1b\\" },
+        .{ .bytes = "\x1b[1;1H" },
+        .{ .bytes = "\x1b_Ga=d,d=A,q=2;\x1b\\" },
+    };
+    try candidate.publish(canonical.observation(), 0);
+    var held = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+    defer held.abandon();
+    const held_commands = try allocator.dupe(terminal_render.Command, held.value.commands);
+    defer allocator.free(held_commands);
+    var baseline_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
+    var baseline_binding_count: usize = 0;
+    for (cuts) |cut| {
+        const old_history = candidate.terminal_history_offset;
+        const old_content = canonical.contentSequence();
+        const old_render = terminal_render.usage(candidate.renderer).content_revision;
+        try std.testing.expect((try canonical.feed(cut.bytes)).stateChanged());
+        try candidate.publish(canonical.observation(), cut.history);
+        if (canonical.contentSequence() == old_content and cut.history == old_history)
+            try std.testing.expectEqual(old_render, terminal_render.usage(candidate.renderer).content_revision);
+        var bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
+        const images = try terminal_render.planObservationImageBindings(baseline_bindings[0..baseline_binding_count], terminal_render.usage(baseline), canonical.observation(), cut.history, &bindings);
+        try terminal_render.updateObservation(baseline, canonical.observation(), cut.history, images);
+        @memcpy(baseline_bindings[0..images.len], images);
+        baseline_binding_count = images.len;
+        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+    }
+    try std.testing.expectEqualDeep(held_commands, held.value.commands);
+    held.abandon();
+    // A complete leased frame must match the full projection after both free
+    // slots have warmed their content prefixes and then only the cursor moves.
+    const content_revision = terminal_render.usage(candidate.renderer).content_revision;
+    for ([_][]const u8{
+        "\x1b[1;2H", "\x1b[2;2H", "\x1b[2;3H", "\x1b[3;4H",
+        "\x1b[?25l", "\x1b[?25h", "\x1b[3 q",  "\x1b[0 q",
+    }) |bytes| {
+        try std.testing.expect((try canonical.feed(bytes)).stateChanged());
+        try candidate.publish(canonical.observation(), 0);
+        try std.testing.expectEqual(content_revision, terminal_render.usage(candidate.renderer).content_revision);
+        try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+        var latest = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+        defer latest.abandon();
+        try expectPresentationCommandsEqual(candidate.renderer, baseline, latest.value.commands);
+    }
+
+    // A same-size return after two resizes cannot alias older row identities.
+    try canonical.resize(3, 6);
+    try canonical.resize(4, 8);
+    try candidate.refresh(canonical.observation(), 0);
+    try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+    try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+    // An externally reset renderer cannot reuse an older private base.
+    try terminal_render.resetCaches(candidate.renderer);
+    try terminal_render.resetCaches(baseline);
+    try std.testing.expect((try canonical.feed("\x1b[3;2H")).stateChanged());
+    try candidate.refresh(canonical.observation(), 0);
+    try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+    try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+
+    var small = try Terminal.init(allocator, 2, 4);
+    defer small.deinit();
+    var limited_config = config;
+    limited_config.command_capacity = 1;
+    var limited_fonts = try OwnedFonts.init(allocator, config.fonts);
+    const limited = PresentationState.initWithFonts(allocator, &limited_fonts, limited_config, small.observation()) catch |failure| {
+        limited_fonts.deinit();
+        return failure;
+    };
+    defer limited.deinit(allocator);
+    try std.testing.expect((try small.feed("A")).stateChanged());
+    try std.testing.expectError(error.CommandLimit, limited.refresh(small.observation(), 0));
+    try std.testing.expect((try small.feed("\r\x1b[2K\x1b[2;1H")).stateChanged());
+    try limited.refresh(small.observation(), 0);
+    try terminal_render.updateObservation(baseline, small.observation(), 0, &.{});
+    try expectPresentationCommandsEqual(limited.renderer, baseline, null);
+}
+
+fn expectPresentationCommandsEqual(candidate: *terminal_render.Renderer, baseline: *terminal_render.Renderer, published: ?[]const terminal_render.Command) !void {
+    var commands: [2][512]terminal_render.Command = undefined;
+    var uploads: [2][terminal_render.maximum_external_images + 1]terminal_render.FrameResourceUpload = undefined;
+    var removals: [2][terminal_render.maximum_external_images + 1]terminal_render.ResourceRef = undefined;
+    var pixels: [2][512 * 512]u8 = undefined;
+    var residency: [terminal_render.maximum_external_images]terminal_render.Residency = undefined;
+    var frames: [2]terminal_render.Frame = undefined;
+    var external_storage: [terminal_render.maximum_external_images]terminal_render.FrameExternalResource = undefined;
+    for ([_]*terminal_render.Renderer{ candidate, baseline }, 0..) |renderer, index| {
+        const missing = try terminal_render.missingExternalResources(renderer, &.{}, &external_storage);
+        for (missing, 0..) |external, i| residency[i] = .{ .resource = external.resource, .format = external.format, .size = external.size };
+        frames[index] = try terminal_render.frame(renderer, residency[0..missing.len], .{
+            .commands = &commands[index],
+            .uploads = &uploads[index],
+            .removals = &removals[index],
+            .pixels = &pixels[index],
+        });
+    }
+    try std.testing.expectEqualDeep(frames[0].commands, frames[1].commands);
+    if (published) |commands_value| try std.testing.expectEqualDeep(frames[0].commands, commands_value);
 }

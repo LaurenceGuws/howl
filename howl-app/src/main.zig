@@ -231,8 +231,11 @@ const App = struct {
     fn syncVisible(self: *App) void {
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const t = maybe.?;
-            for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p|
-                if (p.owner) |owner| owner.setVisible(index == self.active and (!t.tree.zoomed or slot == t.tree.active));
+            for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p| {
+                const visible = index == self.active and (!t.tree.zoomed or slot == t.tree.active);
+                if (!visible) p.canvas.invalidateContent();
+                if (p.owner) |owner| owner.setVisible(visible);
+            };
         }
     }
     fn selectTab(self: *App, index: u8) !void {
@@ -1045,6 +1048,13 @@ const App = struct {
         if (try self.chromeEvent(value)) return;
         self.input_timestamp = value.common.timestamp;
         switch (value.type) {
+            c.SDL_EVENT_RENDER_TARGETS_RESET => {
+                for (self.tabs[0..self.tab_count]) |tab_value| {
+                    for (tab_value.?.panes) |maybe_pane| {
+                        if (maybe_pane) |p| p.canvas.invalidateContent();
+                    }
+                }
+            },
             c.SDL_EVENT_QUIT, c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => self.running = false,
             c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
                 const press = value.type == c.SDL_EVENT_KEY_DOWN;

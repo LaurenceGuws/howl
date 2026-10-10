@@ -133,12 +133,21 @@ pub const Usage = struct {
     atlas_entries: usize,
     command_capacity: usize,
     revision: u64,
+    content_revision: u64,
     resource_generation: u64,
     resource_high_water: u64,
 };
 
+/// Identifies a complete content prefix already stored in the same command buffer.
+/// Valid only for this Renderer lifetime, while that prefix remains unmodified.
+pub const RetainedContent = struct {
+    revision: u64,
+    commands: []const frame_vocabulary.Command,
+};
+
 /// Supplies caller-owned scratch receiving one backend-facing frame transaction.
 pub const FrameBuffers = struct {
+    retained_content: ?RetainedContent = null,
     uploads: []frame_vocabulary.FrameResourceUpload,
     removals: []frame_vocabulary.ResourceRef,
     commands: []frame_vocabulary.Command,
@@ -148,6 +157,9 @@ pub const FrameBuffers = struct {
 /// Borrows one completed backend-facing frame until the next Renderer mutation.
 pub const Frame = struct {
     revision: u64,
+    content_revision: u64,
+    /// Commands before this boundary paint content; the suffix paints the cursor.
+    content_command_count: usize,
     uploads: []const frame_vocabulary.FrameResourceUpload,
     removals: []const frame_vocabulary.ResourceRef,
     commands: []const frame_vocabulary.Command,
@@ -321,6 +333,7 @@ const Impl = struct {
     placement_order: [limits.maximum_image_placements]u16 = undefined,
     frame_ready: bool = false,
     revision: u64 = 0,
+    content_revision: u64 = 0,
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
     atlas_resource_id: ?frame_vocabulary.ResourceId = null,
@@ -330,6 +343,11 @@ const Impl = struct {
     published_atlas_entries: usize = 0,
     surface: frame_vocabulary.Size = .{ .width = 1, .height = 1 },
     command_count: usize = 0,
+    atlas_visible: bool = false,
+    // Command spans indexed by painted physical row, including glyph overhang.
+    // Larger generic sources use the complete list; maintained hosts fit this bound.
+    cursor_rows: [limits.maximum_rows]RowSceneRow = @splat(.{}),
+    cursor_rows_ready: bool = false,
     cursor: ?Cursor = null,
 };
 
@@ -347,6 +365,7 @@ const PublishedImage = struct {
     image_id: u32,
     generation: u64,
     external: frame_vocabulary.ExternalResource,
+    visible: bool = false,
 };
 
 const ProjectedPlacement = struct {
@@ -579,6 +598,7 @@ pub fn usage(owner: *const Renderer) Usage {
         .atlas_entries = glyph_cache.atlasEntryCount(impl.atlas),
         .command_capacity = impl.commands.len,
         .revision = impl.revision,
+        .content_revision = impl.content_revision,
         .resource_generation = impl.resource_generation,
         .resource_high_water = impl.resource_high_water,
     };
@@ -614,6 +634,23 @@ pub fn updateSource(
         };
         return;
     }
+}
+
+/// Updates only cursor presentation against already prepared content. The caller
+/// must prove the source content unchanged; no source borrow survives this call.
+pub fn updateCursorSource(
+    comptime Source: type,
+    owner: *Renderer,
+    snapshot: *const Source.Snapshot,
+) Error!void {
+    const impl = rendererImpl(owner);
+    if (!impl.frame_ready) return error.InvalidView;
+    const surface = try contentSurfaceSize(Source.rows(snapshot), Source.columns(snapshot), impl.config.cell_size);
+    if (!std.meta.eql(surface, impl.surface)) return error.InvalidView;
+    const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
+    if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
+    impl.cursor = cursor;
+    impl.revision += 1;
 }
 
 fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
@@ -728,7 +765,10 @@ fn updateInnerOnce(
         );
         if (prior) |value| {
             if (value.image_id != published.image_id) return error.InvalidImageBinding;
-            if (!std.meta.eql(value, published) and
+            // Visibility belongs to placements; it may change without replacing
+            // the image occurrence or its immutable pixel/extent facts.
+            if ((value.generation != published.generation or
+                !std.meta.eql(value.external, published.external)) and
                 @backingInt(published.external.resource.generation) <=
                     @backingInt(value.external.resource.generation))
                 return error.InvalidImageBinding;
@@ -754,6 +794,10 @@ fn updateInnerOnce(
         &impl.placement_order,
     );
 
+    try indexCursorRows(impl, surface, command_count);
+    for (next_published_images[0..next_published_count]) |*published| {
+        published.visible = frame_vocabulary.resourceVisible(impl.commands[0..command_count], published.external.resource);
+    }
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
     const previous_revision = impl.revision;
@@ -765,8 +809,10 @@ fn updateInnerOnce(
             projection.background_end == 1 and try incrementalViewEligible(Source, snapshot, null));
 
     impl.revision = next_revision;
+    impl.content_revision = next_revision;
     impl.surface = surface;
     impl.command_count = command_count;
+    impl.atlas_visible = projection.has_raster;
     impl.cursor = cursor;
     impl.resource_high_water = next_resource_high_water;
     impl.atlas_resource_id = next_atlas_resource_id;
@@ -840,7 +886,7 @@ pub fn missingExternalResources(
     var needed: usize = 0;
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!published.visible) continue;
         if (frame_vocabulary.residencyMatches(residency, external.resource, external.format, external.size)) continue;
         if (needed == output.len) return error.ResourceLimit;
         output[needed] = .{
@@ -866,7 +912,7 @@ pub fn frame(
 
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!published.visible) continue;
         if (!frame_vocabulary.residencyMatches(residency, external.resource, external.format, external.size))
             return error.MissingExternalResource;
     }
@@ -876,10 +922,7 @@ pub fn frame(
         contentResource(impl.atlas_resource_id.?, impl.resource_generation)
     else
         null;
-    const atlas_required = if (atlas_ref) |value|
-        frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], value)
-    else
-        false;
+    const atlas_required = impl.atlas_visible;
     const atlas_upload = atlas_required and !frame_vocabulary.residencyMatches(
         residency,
         atlas_ref.?,
@@ -906,11 +949,23 @@ pub fn frame(
         if (buffers.pixels.len < atlas.pixels.len) return error.PixelLimit;
     }
 
-    var projected = try frame_vocabulary.projectPrepared(
-        impl.surface,
-        impl.commands[0..impl.command_count],
-        buffers.commands,
-    );
+    var projected = reuse: {
+        if (buffers.retained_content) |retained| {
+            if (retained.revision == impl.content_revision and
+                retained.commands.ptr == buffers.commands.ptr)
+            {
+                if (retained.commands.len > impl.command_count or retained.commands.len > buffers.commands.len)
+                    return error.InvalidView;
+                break :reuse buffers.commands[0..retained.commands.len];
+            }
+        }
+        break :reuse try frame_vocabulary.projectPrepared(
+            impl.surface,
+            impl.commands[0..impl.command_count],
+            buffers.commands,
+        );
+    };
+    const content_command_count = projected.len;
     var command_count = projected.len;
     try appendCursorCommands(impl, buffers.commands, &command_count);
     projected = buffers.commands[0..command_count];
@@ -941,6 +996,8 @@ pub fn frame(
 
     return .{
         .revision = impl.revision,
+        .content_revision = impl.content_revision,
+        .content_command_count = content_command_count,
         .uploads = buffers.uploads[0..upload_count],
         .removals = buffers.removals[0..removal_at],
         .commands = projected,
@@ -956,26 +1013,66 @@ fn residencyRequired(
     if (impl.atlas_resource_id) |id| {
         if (impl.resource_generation != 0) {
             const ref = contentResource(id, impl.resource_generation);
-            if (frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], ref) and
-                std.meta.eql(value.resource, ref))
+            if (impl.atlas_visible and std.meta.eql(value.resource, ref))
                 return value.format == .alpha8 and
                     std.meta.eql(value.size, frame_vocabulary.Size{ .width = atlas.width, .height = atlas.height });
         }
     }
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
-        if (!frame_vocabulary.resourceVisible(impl.commands[0..impl.command_count], external.resource)) continue;
+        if (!published.visible) continue;
         if (std.meta.eql(value.resource, external.resource))
             return value.format == external.format and std.meta.eql(value.size, external.size);
     }
     return false;
 }
 
+// Build the search index only with content. Spans describe actual clipped ink,
+// preserving combining glyphs, ligatures, DEC geometry and cross-row overhang.
+fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: usize) Error!void {
+    const height = impl.config.cell_size.height;
+    const rows = surface.height / height;
+    impl.cursor_rows_ready = rows <= impl.cursor_rows.len;
+    if (!impl.cursor_rows_ready) return;
+    @memset(&impl.cursor_rows, .{});
+    const whole = contentSurfaceRect(surface);
+    for (impl.commands[0..command_count], 0..) |command, index| switch (command) {
+        .alpha_mask => |mask| {
+            if (!mask.cursor_component) continue;
+            const clipped = (try frame_vocabulary.intersectRects(mask.destination, mask.clip)) orelse continue;
+            const ink = (try frame_vocabulary.intersectRects(clipped, whole)) orelse continue;
+            const first = @as(usize, @intCast(ink.y)) / height;
+            const last = (@as(usize, @intCast(ink.y)) + ink.height - 1) / height;
+            for (impl.cursor_rows[first .. last + 1]) |*span| {
+                if (span.count == 0) span.start = index;
+                span.count = index + 1 - span.start;
+            }
+        },
+        else => {},
+    };
+}
+
+fn cursorInputs(impl: *const Impl, cursor: Cursor) []const frame_vocabulary.Input {
+    const commands = impl.commands[0..impl.command_count];
+    if (!impl.cursor_rows_ready) return commands;
+    const height = impl.config.cell_size.height;
+    const first = @as(usize, @intCast(cursor.rect.y)) / height;
+    const last = (@as(usize, @intCast(cursor.rect.y)) + cursor.rect.height - 1) / height;
+    var start = commands.len;
+    var end: usize = 0;
+    for (impl.cursor_rows[first .. last + 1]) |span| {
+        if (span.count == 0) continue;
+        start = @min(start, span.start);
+        end = @max(end, span.start + span.count);
+    }
+    return if (end == 0) commands[0..0] else commands[start..end];
+}
+
 fn cursorCommandUpperBound(impl: *const Impl) Error!usize {
     const cursor = impl.cursor orelse return 0;
     var count: usize = 1;
     if (cursor.shape != .block) return count;
-    for (impl.commands[0..impl.command_count]) |command| switch (command) {
+    for (cursorInputs(impl, cursor)) |command| switch (command) {
         .alpha_mask => |value| {
             if (value.cursor_component and
                 (try frame_vocabulary.intersectRects(value.destination, cursor.rect)) != null)
@@ -1011,7 +1108,7 @@ fn appendCursorCommands(
     } }, commands, used);
     if (cursor.shape != .block) return;
 
-    for (impl.commands[0..impl.command_count]) |command| switch (command) {
+    for (cursorInputs(impl, cursor)) |command| switch (command) {
         .alpha_mask => |value| {
             if (!value.cursor_component) continue;
             const clip = (try frame_vocabulary.intersectRects(value.clip, cursor.clip)) orelse continue;
@@ -2700,4 +2797,57 @@ fn constStoreImpl(content: *const Store) *const StoreImpl {
     // zig-audit: acknowledge align_cast
     // reason: The originating StoreImpl allocation guarantees the concrete alignment recovered here.
     return @ptrCast(@alignCast(content));
+}
+
+test "painted-row cursor search equals the complete command oracle including clipped overhang" {
+    const resource = frame_vocabulary.ResourceView{
+        .resource = .{ .resource = try frame_vocabulary.ResourceId.init(1), .generation = @fromBackingInt(1) },
+        .format = .alpha8,
+        .size = .{ .width = 32, .height = 32 },
+        .source = .{ .x = 0, .y = 0, .width = 8, .height = 8 },
+    };
+    var inputs: [6]frame_vocabulary.Input = undefined;
+    // Deliberately cross physical rows and clip one glyph to a different row.
+    for ([_]frame_vocabulary.Rect{
+        .{ .x = 0, .y = -3, .width = 12, .height = 17 },
+        .{ .x = 8, .y = 7, .width = 17, .height = 18 },
+        .{ .x = 20, .y = 16, .width = 12, .height = 18 },
+        .{ .x = 0, .y = 18, .width = 20, .height = 12 },
+        .{ .x = 4, .y = 2, .width = 8, .height = 20 },
+        .{ .x = 30, .y = 0, .width = 8, .height = 8 },
+    }, 0..) |rect, index| {
+        inputs[index] = .{ .alpha_mask = .{
+            .destination = rect,
+            .clip = if (index == 4) .{ .x = 0, .y = 10, .width = 30, .height = 10 } else .{ .x = 0, .y = 0, .width = 30, .height = 30 },
+            .resource = resource,
+            .color = .{ .r = 20, .g = 30, .b = 40, .a = 255 },
+            .cursor_component = true,
+        } };
+    }
+    // These helpers access only geometry, commands, cursor and the index. No
+    // allocator, font cache, atlas or renderer lifetime is constructed here.
+    var impl: Impl = undefined;
+    impl.commands = &inputs;
+    impl.command_count = inputs.len;
+    impl.config.cell_size = .{ .width = 10, .height = 10 };
+    impl.surface = .{ .width = 30, .height = 30 };
+    var commands: [2][16]frame_vocabulary.Command = undefined;
+    for (0..3) |row| for (0..3) |column| {
+        impl.cursor = .{
+            .rect = .{ .x = @intCast(column * 10), .y = @intCast(row * 10), .width = 10, .height = 10 },
+            .clip = .{ .x = 0, .y = 0, .width = 30, .height = 30 },
+            .shape = .block,
+            .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+            .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        };
+        try indexCursorRows(&impl, impl.surface, inputs.len);
+        var indexed: usize = 0;
+        try appendCursorCommands(&impl, &commands[0], &indexed);
+        impl.cursor_rows_ready = false;
+        var complete: usize = 0;
+        try appendCursorCommands(&impl, &commands[1], &complete);
+        try std.testing.expectEqualDeep(commands[1][0..complete], commands[0][0..indexed]);
+    };
+    try indexCursorRows(&impl, .{ .width = 30, .height = (limits.maximum_rows + 1) * 10 }, inputs.len);
+    try std.testing.expect(!impl.cursor_rows_ready);
 }

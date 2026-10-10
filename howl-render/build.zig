@@ -99,6 +99,14 @@ pub fn build(b: *std.Build) void {
         source_semantics,
         text,
     );
+    const cursor_tests = b.addTest(.{
+        .name = "howl-render-cursor",
+        .root_module = renderer,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&cursor_tests.step);
+    test_step.dependOn(&b.addRunArtifact(cursor_tests).step);
     const adapter = adapterModule(
         b,
         target,

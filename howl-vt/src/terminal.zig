@@ -3071,6 +3071,7 @@ const EventEffect = struct {
     changed: bool,
     mutations: MutationSet = .{},
     suppress_owner_fallback: bool = false,
+    cursor_or_bracket_only: bool = false,
 };
 
 fn suppressOwnerFallback(event: SemanticEvent) bool {
@@ -3342,7 +3343,23 @@ fn applyParserEvent(
         .changed = changed,
         .mutations = mutations,
         .suppress_owner_fallback = suppressOwnerFallback(semantic),
+        .cursor_or_bracket_only = cursorOrBracketOnly(semantic),
     };
+}
+
+// Cursor visibility/blink and output bracketing cannot change terminal content.
+// Grouped DEC commands qualify only when every operand belongs to those owners.
+fn cursorOrBracketOnly(event: SemanticEvent) bool {
+    switch (event) {
+        .cursor_visible, .cursor_blink, .synchronized_output => return true,
+        .dec_mode_set, .dec_mode_reset => |modes| {
+            for (modes.params[0..modes.param_count]) |mode| {
+                if (mode != 2026 and mode != 25 and mode != 12) return false;
+            }
+            return true;
+        },
+        else => return false,
+    }
 }
 
 fn applySemanticWithPressure(
@@ -3947,6 +3964,7 @@ const TerminalStream = struct {
     // Transient feed-local facts, never retained on Terminal or per-byte results.
     synchronized_output: TerminalSynchronizedOutputProgress = .{},
     synchronized_output_held: bool = false,
+    content_mode_changed: bool = false,
 
     /// Creates a stream borrowing the terminal until the stream is discarded.
     fn init(terminal: *Terminal) TerminalStream {
@@ -4021,6 +4039,8 @@ const TerminalStream = struct {
                     !effect.suppress_owner_fallback and
                     !event_mutations.stateChanged())
                     event_mutations.mode = true;
+                self.content_mode_changed = self.content_mode_changed or
+                    (event_mutations.mode and !effect.cursor_or_bracket_only);
                 mutations.merge(event_mutations);
                 var ended = false;
                 if (event_mutations.mode) {
@@ -4063,7 +4083,7 @@ const TerminalStream = struct {
         self.synchronized_output_held = self.terminal.synchronizedOutput();
         var completed = false;
         const before = MutationObservation.capture(self.terminal);
-        defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
+        defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         var consumed: usize = 0;
         while (consumed < bytes.len) {
@@ -4090,7 +4110,7 @@ const TerminalStream = struct {
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
             summary.mutations.history_loss = true;
-        self.terminal.completeStreamMutation(summary.stateChanged());
+        self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         summary.synchronized_output = self.synchronized_output;
         completed = true;
         return summary;
@@ -4109,7 +4129,7 @@ const TerminalStream = struct {
         var consumed: usize = 0;
         var completed = false;
         const before = MutationObservation.capture(self.terminal);
-        defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
+        defer if (!completed) self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         while (consumed < bytes.len) {
             const byte = bytes[consumed];
@@ -4146,7 +4166,7 @@ const TerminalStream = struct {
         before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
         if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
             summary.mutations.history_loss = true;
-        self.terminal.completeStreamMutation(summary.stateChanged());
+        self.terminal.completeStreamMutation(summary.mutations, self.content_mode_changed);
         summary.synchronized_output = self.synchronized_output;
         completed = true;
         return .{
@@ -5171,6 +5191,7 @@ pub const Terminal = struct {
             );
             old_replies.deinit();
             advanceIdentity(&self.terminal.semantic_sequence);
+            self.terminal.content_sequence = self.terminal.semantic_sequence;
             self.terminal.allocator.destroy(state);
             self.state = null;
             self.terminal.resize_prepared = false;
@@ -5929,6 +5950,11 @@ pub const Terminal = struct {
             return self.terminal().semanticSequence();
         }
 
+        /// Copies canonical non-cursor mutation identity without lending mutable state.
+        pub fn contentSequence(self: *const Observation) u64 {
+            return self.terminal().contentSequence();
+        }
+
         /// Borrows canonical cells and cursor state at one history offset.
         pub fn semanticView(self: *const Observation, history_offset: u32) SemanticView {
             return self.terminal().semanticView(history_offset);
@@ -6068,6 +6094,7 @@ pub const Terminal = struct {
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
+    content_sequence: u64 = 1,
     resize_prepared: bool = false,
     // -------------------------------------------------------------------------
     // Construction and feed
@@ -6252,19 +6279,16 @@ pub const Terminal = struct {
         return progress;
     }
 
-    fn completeStreamMutation(
-        self: *Terminal,
-        state_changed: bool,
-    ) void {
-        const graphics_changed = self.graphics.evictBefore(
+    fn completeStreamMutation(self: *Terminal, accepted: MutationSet, content_mode_changed: bool) void {
+        var mutations = accepted;
+        mutations.images = self.graphics.evictBefore(
             self.screen_state.primary.historyRowBase(),
-        );
-        self.postApply(state_changed or graphics_changed);
-    }
-
-    /// Advances semantic mutation identity after routing.
-    fn postApply(self: *Terminal, state_changed: bool) void {
-        if (state_changed) advanceIdentity(&self.semantic_sequence);
+        ) or mutations.images;
+        if (!mutations.stateChanged()) return;
+        advanceIdentity(&self.semantic_sequence);
+        if (mutations.text or mutations.viewport or mutations.images or
+            mutations.title or mutations.icon or mutations.history_loss or content_mode_changed)
+            self.content_sequence = self.semantic_sequence;
     }
 
     // -------------------------------------------------------------------------
@@ -6434,6 +6458,7 @@ pub const Terminal = struct {
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
         return true;
     }
 
@@ -6454,6 +6479,7 @@ pub const Terminal = struct {
         );
         self.consequences.consumeHead(generation) catch return error.StaleColorPreferenceQuery;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     // -------------------------------------------------------------------------
@@ -7080,6 +7106,13 @@ pub const Terminal = struct {
         return self.semantic_sequence;
     }
 
+    /// Copies the latest non-cursor mutation identity. Cursor-only feeds leave it
+    /// stable, as does output bracketing; other mutations conservatively advance it. This is
+    /// canonical history, independent of whether an observer misses mutations.
+    pub fn contentSequence(self: *const Terminal) u64 {
+        return self.content_sequence;
+    }
+
     /// Borrows terminal cells and cursor state at one caller-selected history offset.
     ///
     /// The offset is clamped to retained primary history. VT retains no
@@ -7146,7 +7179,10 @@ pub const Terminal = struct {
             timestamp_ns / std.time.ns_per_ms,
             &virtual_visible,
         );
-        if (tick.semantic_changed) advanceIdentity(&self.semantic_sequence);
+        if (tick.semantic_changed) {
+            advanceIdentity(&self.semantic_sequence);
+            self.content_sequence = self.semantic_sequence;
+        }
         return .{ .changed = tick.changed, .next_ms = tick.next_ms };
     }
 
@@ -7276,6 +7312,7 @@ pub const Terminal = struct {
         }
         self.consequences.consumeHead(id) catch return error.StaleConsequence;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Returns the number of primary-history rows lost to bounded allocation failure.
@@ -7546,6 +7583,7 @@ pub const Terminal = struct {
         self.requireNoPreparedResize();
         try self.reply_buffer.consumePrefix(count);
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Drain and decode a pending OSC 52 clipboard-set consequence.
@@ -7571,6 +7609,7 @@ pub const Terminal = struct {
         };
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
         return decoded;
     }
 
@@ -7615,6 +7654,7 @@ pub const Terminal = struct {
         try clipboard_mod.appendQueryReply(&self.reply_buffer, self.allocator, request.selection, bytes);
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
         return true;
     }
 
@@ -7640,6 +7680,7 @@ pub const Terminal = struct {
         try output.append("\x1b\\");
         self.consequences.consumeHead(generation) catch return error.StalePointerShape;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Serializes one caller-supplied Kitty OSC 72 event without retaining caller borrows.
@@ -7755,6 +7796,7 @@ pub const Terminal = struct {
         try appendContainerReply(output, self.allocator, reply);
         self.consequences.consumeHead(generation) catch return error.StaleContainerRequest;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Declines one matching FIFO-head container query without fabricating state.
@@ -7776,6 +7818,7 @@ pub const Terminal = struct {
         self.consequences.consumeHead(generation) catch
             return error.StaleContainerRequest;
         advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 };
 
@@ -10702,4 +10745,44 @@ test "semantic row borrow matches copied cells through ring history alternate an
         for (current, 0..) |cell, col|
             try std.testing.expectEqualDeep(resized.cellInfoAt(@intCast(row), @intCast(col)), cell);
     }
+}
+
+test "content identity survives cursor movement and output bracketing but retains every content cut" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This proof observes canonical identities; the per-feed summary is independently covered.
+    _ = try terminal.feed("ABCDEFGH\x1b[2;1Hijklmnop");
+    const content = terminal.contentSequence();
+    const semantic = terminal.semanticSequence();
+    for ([_][]const u8{
+        "\x1b[1;3H",   "\x1b[3 q",  "\x1b[?25l",   "\x1b[?25h",
+        "\x1b[?2026h", "\x1b[2;4H", "\x1b[?2026l", "\x1b[?2026h\x1b[1;2H\x1b[?2026l",
+    }) |bytes| {
+        // zig-audit: acknowledge discard
+        // reason: This proof observes canonical identities; the per-feed summary is independently covered.
+        _ = try terminal.feed(bytes);
+        try std.testing.expectEqual(content, terminal.observation().contentSequence());
+    }
+    try std.testing.expect(terminal.semanticSequence() > semantic);
+    // A cursor-only tail cannot erase an unseen cell/color/geometry/alternate cut.
+    for ([_][]const u8{
+        "Z",             "\x1b[2K",         "\x1b]4;1;#102030\x07",
+        "\x1b[?2026;5h", "\x1b[?5l",        "\x1b[?1049h",
+        "\x1b[?1049l",   "\x1b[1;1H\x1b#6", "\x1bc",
+    }) |bytes| {
+        const before = terminal.contentSequence();
+        // zig-audit: acknowledge discard
+        // reason: This proof observes canonical identities; the per-feed summary is independently covered.
+        _ = try terminal.feed(bytes);
+        const after = terminal.contentSequence();
+        try std.testing.expect(after > before);
+        // zig-audit: acknowledge discard
+        // reason: This proof observes canonical identities; the per-feed summary is independently covered.
+        _ = try terminal.feed("\x1b[2;2H");
+        try std.testing.expectEqual(after, terminal.contentSequence());
+    }
+    const before = terminal.contentSequence();
+    try terminal.resize(4, 10);
+    try std.testing.expect(terminal.contentSequence() > before);
 }

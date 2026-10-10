@@ -24,6 +24,7 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
+  - keep the basic native cursor path independently qualified: content reuse, clipped glyph recoloring, complete immutable publications and visible-pane pixel composition, with CPU and memory tradeoffs measured separately
   - replace the Local Odin daily shell with the smallest direct Zig SDL howl-app; fully exclude Server and attachment/detach machinery from this app and retain Odin until Local qualification
   - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical Instance
   - pressure the shortest native path through howl-host: one in-process Instance, direct canonical VT observation, text/render and Vulkan/Wayland with no transported client or Server route

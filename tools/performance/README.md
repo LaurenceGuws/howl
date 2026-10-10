@@ -363,3 +363,31 @@ All 18 owned process trees and both private environments retired cleanly;
 temporary interposers/binaries/launchers were deleted. Exact stage counts, warm
 maps, artifacts, ordinary CPU folds and cleanup are in
 `night-20261010/sdl-boundary-20261010/RESULT.md` under the current workstream.
+
+
+## Cursor/content separation, 2026-10-10
+
+Against a fresh b2c67af Fast baseline, sixteen final 20-second controls used the
+same OpenGL renderer, private geometry, common payload and verified Fast TUI Zoo.
+Cursor60 terminal CPU falls from 21.87–22.08% to 2.23–2.38% of one core (89.5%).
+Same-session Kitty measures 1.82–1.92%, Foot 1.32%; both still lead this control.
+Unicode/background 4096 averages 56.79% before and 56.73% after at 240 producer fps.
+Heavy 65536 remains around 119 producer fps; no throughput win is claimed.
+CPU excludes producer/shell and reconciles duration-weighted stable PID intervals.
+
+VT now retains canonical content mutation identity separately from cursor facts.
+Render retains one content command list and indexes clipped cursor ink by physical
+row. Instance reuses unchanged prefixes in its existing three immutable frame
+slots; growth, aborted preparation or presentation changes invalidate reuse.
+Canvas retains physical content pixels beneath the cursor overlay and releases
+them when hidden. Cursor movement no longer rebuilds cells, shaping, full frame
+prefixes or full content geometry after warmup. No canonical observer authority
+or cursor animation clock was added.
+
+The cost is roughly 5–7 MiB more anonymous storage in paired warmed samples;
+cold memory outliers remain recorded. No owned-RAM or fastest-overall claim.
+Root, Safe/Fast, full-projection/slot/overhang/pixel/fractional proofs pass.
+Six fzf and six nvim cycles also return correctly in a private 1.25-scale GUI.
+All 32 experimental controls retired cleanly. Source diffs, hashes, stable CPU
+folds, memory samples and cleanup are retained at
+night-20261010/cursor-pristine-20261010/RESULT.md in the current workstream.
