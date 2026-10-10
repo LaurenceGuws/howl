@@ -339,40 +339,40 @@ def status(pid):
     except: pass
     return threads,vol,nvol
 
-def ticks(pid):
+def process_cpu(pid):
     try:
         s=Path(f'/proc/{pid}/stat').read_text(); r=s.rfind(')'); fields=s[r+2:].split()
-        return int(fields[11])+int(fields[12])
-    except:return 0
+        return s[s.index('(')+1:r], int(fields[19]), int(fields[11])+int(fields[12])
+    except:return None
 
 keys=['Rss','Pss','Pss_Anon','Pss_File','Private_Clean','Private_Dirty','Anonymous','AnonHugePages','Swap']
-prev_ticks=None; prev_t=None; prev_pids=None; prev_per_pid={}; target=time.monotonic()
+prev_t=None; prev_per_pid={}; target=time.monotonic()
 with output.open('w') as f:
     while True:
         now=time.monotonic(); pids=tree(root)
-        total={k:0 for k in keys}; threads=vol=nvol=cpu_ticks=0; per_pid=[]; current_per_pid={}
+        total={k:0 for k in keys}; threads=vol=nvol=0; per_pid=[]; current_per_pid={}
         for p in pids:
             m=metrics(p)
             for k in keys: total[k]+=m.get(k,0)
-            th,v,nv=status(p); threads+=th; vol+=v; nvol+=nv; pt=ticks(p); cpu_ticks+=pt
-            try: comm=Path(f'/proc/{p}/comm').read_text().strip()
-            except: comm='?'
-            pct=None if prev_t is None or p not in prev_per_pid else (pt-prev_per_pid[p])/hz/(now-prev_t)*100
-            per_pid.append({'pid':p,'comm':comm,'cpu_ticks':pt,'cpu_core_pct':pct,'threads':th,
+            th,v,nv=status(p); threads+=th; vol+=v; nvol+=nv
+            fact=process_cpu(p); comm,started,pt=fact if fact is not None else ('?',None,None)
+            prior=prev_per_pid.get(p); pct=None
+            if prior is not None and fact is not None and started==prior[0] and pt>=prior[1] and now>prev_t:
+                pct=(pt-prior[1])/hz/(now-prev_t)*100
+            per_pid.append({'pid':p,'comm':comm,'start_ticks':started,'cpu_ticks':pt,'cpu_core_pct':pct,'threads':th,
                             'anonymous_kib':m.get('Anonymous',0),'pss_kib':m.get('Pss',0),'rss_kib':m.get('Rss',0)})
-            current_per_pid[p]=pt
+            if fact is not None: current_per_pid[p]=(started,pt)
         core_pct=machine_pct=None
-        # Lifetime tick sums are comparable only while the same processes exist.
-        # An exited producer otherwise subtracts its entire lifetime from this interval.
-        if prev_ticks is not None and now>prev_t and set(pids)==prev_pids and cpu_ticks>=prev_ticks:
-            core_pct=(cpu_ticks-prev_ticks)/hz/(now-prev_t)*100
+        # A vanished/reused process is missing evidence, never a zero/negative delta.
+        if set(current_per_pid)==set(prev_per_pid) and all(v['cpu_core_pct'] is not None for v in per_pid):
+            core_pct=sum(v['cpu_core_pct'] for v in per_pid)
             machine_pct=core_pct/ncpu
         row={"t_ns":time.monotonic_ns(),"processes":len(pids),"threads":threads,
              "cpu_core_pct":core_pct,"cpu_machine_pct":machine_pct,
              "voluntary_ctxt_switches":vol,"nonvoluntary_ctxt_switches":nvol}
         row.update({k.lower()+"_kib":v for k,v in total.items()}); row["per_pid"]=per_pid
         f.write(json.dumps(row,separators=(',',':'))+'\n'); f.flush()
-        prev_ticks=cpu_ticks; prev_t=now; prev_pids=set(pids); prev_per_pid=current_per_pid
+        prev_t=now; prev_per_pid=current_per_pid
         if stop.exists() or not Path(f'/proc/{root}').exists(): break
         target += interval
         delay=target-time.monotonic()

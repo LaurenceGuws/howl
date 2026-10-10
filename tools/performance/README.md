@@ -391,3 +391,33 @@ Six fzf and six nvim cycles also return correctly in a private 1.25-scale GUI.
 All 32 experimental controls retired cleanly. Source diffs, hashes, stable CPU
 folds, memory samples and cleanup are retained at
 night-20261010/cursor-pristine-20261010/RESULT.md in the current workstream.
+
+
+## Static header presentation, 2026-10-10
+
+On the accepted cursor/content architecture (a2930ed), the two unchanged header
+symbols were still rendered into new SDL textures on every presentation. Five
+small rectangles now paint them through the existing caption lane; no retained
+text cache, owner or allocation was added. Cursor/content machinery is unchanged.
+
+Sixteen fresh-process controls use the same private geometry, font recipes,
+OpenGL hint and verified Fast producer as above. Cursor60 terminal CPU falls
+from 2.58–2.73% to 2.13–2.28% of one core (17.1%). Unicode/background maintains
+240Hz without a consistent CPU regression. Saturated heavy progress varies:
+121.1–123.7 producer fps before and117.6–122.4 after; no throughput equivalence
+or win is claimed. Four fixed-work heavy20Hz controls complete exactly400 frames
+each, with terminal CPU22.68–22.94% before and22.38–22.53% after.
+Same-session Kitty overlaps the new cursor range; Foot still leads.
+
+The sampler now reads each process name, start epoch and counters from one stat
+record, reports vanished facts as null and rejects reused/negative deltas.
+Tree CPU sums valid per-PID deltas. The previous accepted fold already rejected
+its bad producer-exit cut; earlier pristine results are unaffected. Five
+deterministic sampler fault cases and the fixed-work live controls pass.
+
+No general RAM, displayed-FPS or latency claim. App code adds14 lines and
+replaces2; the sampler replaces16 lines. Fast ELF grows4864 bytes, with writable
+data/bss unchanged. Root/Safe/Fast/audits and private fractional-scale
+Settings/New Tab GUI pass. Artifacts, raw stable CPU folds, memory samples,
+fault receipts and cleanup are in
+night-20261010/cursor-iterate-20261010/RESULT.md under the current workstream.

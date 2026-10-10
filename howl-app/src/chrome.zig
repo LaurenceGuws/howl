@@ -91,6 +91,18 @@ test "dragged chip preserves grab offset, reorders at midpoint and clamps outsid
     try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, 3, 1000));
 }
 
+/// Font-independent New Tab strokes in the existing 32x30 header box.
+pub const plus_icon: []const Rect = &.{
+    .{ .x = 10, .y = 14, .width = 11, .height = 1 },
+    .{ .x = 15, .y = 9, .width = 1, .height = 11 },
+};
+/// Font-independent Settings dots in the same header box.
+pub const settings_icon: []const Rect = &.{
+    .{ .x = 9, .y = 14, .width = 2, .height = 2 },
+    .{ .x = 15, .y = 14, .width = 2, .height = 2 },
+    .{ .x = 21, .y = 14, .width = 2, .height = 2 },
+};
+
 /// Switchyard maximize outline in the standard 42x26 caption box.
 pub const maximize_icon: []const Rect = &.{
     .{ .x = 15, .y = 7, .width = 12, .height = 1 },

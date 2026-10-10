@@ -1956,8 +1956,8 @@ const App = struct {
             try self.drawTab(self.active, rect);
             try outline(self.renderer, rect, colors.accent);
         }
-        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const u8{ "+", "⋯" }) |rect, label| {
-            try self.drawText(label, rect.x + 8, rect.y + 6);
+        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.settings_icon }) |rect, glyph| {
+            for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();
         var places: [layout.pane_limit]layout.Placement = undefined;
