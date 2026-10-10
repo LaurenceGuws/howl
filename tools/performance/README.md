@@ -248,3 +248,10 @@ are near scheduler tick resolution. All owned processes and the private
 environment retired. Raw per-PID receipts, binary/config hashes and the
 full/post-priming fold are in `night-20261010/CURSOR_RESULT.md` and
 `CURSOR_FOLDED.json` under the current workstream.
+
+The local app recipe leaves retained-row cache capacities at their zero defaults.
+Its direct VT source supplies no revision-relative repair hints, so the previous
+32768-command cache and row scratch were never used. Removing that reservation
+saves about 2.26MiB of requested buffer storage per pane; resident-memory impact
+requires a separate measurement. Transported renderer clients keep their own
+row-reuse configuration.
