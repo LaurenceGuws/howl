@@ -8,6 +8,15 @@ const render = instance.render.terminal;
 
 const resource_limit = render.maximum_external_images + 1;
 const batch_quads = 2048;
+const quad_indices = blk: {
+    @setEvalBranchQuota(batch_quads * 8);
+    var indices: [batch_quads * 6]c_int = undefined;
+    for (0..batch_quads) |quad| {
+        const vertex: c_int = @intCast(quad * 4);
+        indices[quad * 6 ..][0..6].* = .{ vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3 };
+    }
+    break :blk indices;
+};
 
 const Texture = struct {
     residency: render.Residency,
@@ -17,7 +26,6 @@ const Texture = struct {
 /// One graphical-thread scratch batch shared by all panes.
 pub const Geometry = struct {
     vertices: [batch_quads * 4]c.SDL_Vertex = undefined,
-    indices: [batch_quads * 6]c_int = undefined,
     count: usize = 0,
     texture: ?*c.SDL_Texture = null,
     clip: c.SDL_Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
@@ -25,7 +33,7 @@ pub const Geometry = struct {
     fn flush(self: *Geometry, renderer: *c.SDL_Renderer) !void {
         if (self.count == 0) return;
         if (!c.SDL_SetRenderClipRect(renderer, &self.clip) or
-            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &self.indices, @intCast(self.count * 6)))
+            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &quad_indices, @intCast(self.count * 6)))
             return error.SDLGeometry;
         self.count = 0;
     }
@@ -55,8 +63,6 @@ pub const Geometry = struct {
             .{ .position = .{ .x = dest.x + dest.w, .y = dest.y + dest.h }, .color = rgba, .tex_coord = .{ .x = source.x + source.w, .y = source.y + source.h } },
             .{ .position = .{ .x = dest.x, .y = dest.y + dest.h }, .color = rgba, .tex_coord = .{ .x = source.x, .y = source.y + source.h } },
         };
-        const vertex: c_int = @intCast(base);
-        self.indices[self.count * 6 ..][0..6].* = .{ vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3 };
         self.count += 1;
     }
 };

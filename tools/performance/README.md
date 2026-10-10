@@ -316,3 +316,18 @@ is retained. The cause of the mixed-workload regression is not established.
 All 36 owned process trees and three private environments retired cleanly.
 `CURSOR_REUSE_REJECTED.md` and the three variant receipts in the night workstream
 retain the decision and raw controls.
+
+The app Canvas now shares immutable quad indices instead of rebuilding them
+for each draw. Eight 20-second A/B/B/A cursor/Unicode controls preserved producer
+cadence and passed the existing Fast/Safe pixel, clipping and residency proofs.
+Cursor terminal CPU measured 21.62–21.82% before and 21.32–21.47% after.
+Unicode/background measured 55.54–58.68% before and 54.99–55.54% after; baseline
+variance prevents a headline Unicode improvement. This is a small draw cleanup,
+not a displayed-frame-rate or latency claim.
+
+Writable Geometry scratch decreases by 48KiB per window; one 48KiB read-only
+table replaces it. The linked Safe ELF grows by 130,987bytes, with read-only
+data increasing 49,152bytes and text decreasing 64bytes. No resident-RAM saving
+is inferred from startup peaks. All eight owned process trees and the private
+compositor retired cleanly. `QUAD_INDICES_RESULT.md`, raw/folded controls, ELF
+section sizes and artifact hashes are retained in the night workstream.
