@@ -641,3 +641,64 @@ gate logs and zero-process/zero-socket private-environment retirement are in
 `zig-app-20261008/night-20261010/shared-race-20261010` under the current Home
 workstream. The static `race.html` retains separate parent/reference and
 submission A/B cohorts. Temporary probes are retired after qualification.
+
+## Cursor index on demand, 2026-10-10
+
+A 2 ms gprofng clock profile of the current Fast binary places most sampled
+CPU in render derivation through the direct VT adapter, not canonical parsing.
+Hot PCs include repeated glyph placement and painted-row cursor indexing.
+The 30-second producer experiment includes startup/shutdown and is diagnostic;
+the timings below are independent ordinary runs without the profiler.
+
+Hidden, beam and underline cursors do not recolor glyph ink. Full content now
+builds the painted-row index only for a block cursor. A later cursor-only block
+transition builds it once from unchanged content commands. Content revision,
+immutable publications, clipped overhang and atlas/shape bounds stay the same.
+An interrupted index clears its ready flag before another cursor cut can use it.
+
+Twenty-four interleaved 20-second controls compare unchanged ccb5ac0 Fast with
+this change: three pairs for light cells, two for dense/rich/cursor/unbracketed,
+one for saturation. Private KWin 1920×1080 at scale 1; common 378×74 payload;
+Howl PTY 384×79; 240 emitted Hz, alnum/no backgrounds/synchronized output unless
+named. CPU is percent of one core excluding producer and shells, PSS is sampled
+terminal peak MiB, FPS measures emitted producer progress.
+
+| Canary (n per variant) | ccb5ac0 CPU / PSS / FPS | Cursor index on demand CPU / PSS / FPS |
+| --- | ---: | ---: |
+| Light cells (3) | 15.90–16.10% / 96.1–150.8 / 239.999 | 15.19–15.44% / 96.2–97.5 / 239.999 |
+| Dense cells (2) | 34.08–34.89% / 96.6–97.9 / 239.999 | 33.57–34.58% / 96.6–96.7 / 239.999 |
+| Rich cells (2) | 57.06–57.47% / 97.9–104.1 / 239.999 | 56.20–56.36% / 98.7–106.3 / 239.999 |
+| Cursor 240 Hz (2) | 1.92–1.97% / 85.8–90.2 / 239.999 | 1.97% / 85.9–86.2 / 239.999 |
+| Unbracketed (2) | 33.11–34.68% / 96.5–96.6 / 239.999 | 32.61–33.37% / 96.5–96.6 / 239.999 |
+| Saturation (1) | 103.23% / 96.8 / 118.979 | 103.54% / 96.5 / 119.696 |
+
+Light-cell mean CPU falls 4.12%, from 15.983% to
+15.325%. Rich and unbracketed controls also fall; dense ranges
+overlap and the first dense pair is higher. Cursor ranges overlap and its
+small increase remains recorded. All 22 non-saturation producers emit 4800
+frames with no skips. The single saturation pair remains a limited control.
+PSS varies, including a 150.8 MiB baseline light-cell outlier; no RAM saving,
+displayed-FPS or latency improvement is inferred.
+
+Four preceding forward/reverse controls with the same producer place unchanged
+Howl at 15.797–16.050% and Foot 1.28.0 at 3.696% terminal CPU, all at 239.999
+emitted fps without skips. Foot PTY is 384×77. Foot still leads light cells.
+These fresh controls remain separate from the earlier four-horse cohort,
+whose producer artifact differs despite the same TUI Zoo source and build mode.
+
+The retained full-command oracle now covers content mutations with a hidden
+cursor followed by hidden movement, beam display and a cursor-only block
+transition. Clipped-overhang equivalence and interrupted-index cleanup pass.
+App Fast/Safe, affected Render/Instance, root check/test (including protocol,
+VT simulation/fuzz), both audits, formatting and diff gates pass.
+
+Fast baseline cc52b5fb02a8a6ef418fcd2e77e19953f66aecca9713b2c31dd41d6eb51eed6e, 14687401 bytes.
+Fast candidate c595648fea7fdd7a8822f9f51ddfbc7724493e5a463ddf97c487dcb9f799ccf4, 14688638 bytes.
+Safe candidate aa23a5ac761ae46dec6d041da6f2e9d91290c317368af997a6c1bd8ff2df4f01, 14045494 bytes.
+Native producer 87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557, 5002344 bytes,
+source 3dbd021, Fast on the pinned Zig compiler. Safe qualification is separate
+from the Fast timing cohort; binary lengths are not a memory-saving measure.
+
+Raw identity-bound process folds, profiles/PC maps, proof logs and retirement
+receipts live at light-cells-20261010 under the current Home workstream.
+The static race overview adds this cohort without replacing the parent matrix.

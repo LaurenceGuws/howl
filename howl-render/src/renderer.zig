@@ -652,6 +652,10 @@ pub fn updateCursorSource(
     if (!std.meta.eql(surface, impl.surface)) return error.InvalidView;
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
+    if (cursor) |value| {
+        if (value.shape == .block and !impl.cursor_rows_ready)
+            try indexCursorRows(impl, surface, impl.command_count);
+    }
     impl.cursor = cursor;
     impl.revision += 1;
 }
@@ -797,12 +801,15 @@ fn updateInnerOnce(
         &impl.placement_order,
     );
 
-    try indexCursorRows(impl, surface, command_count);
     for (next_published_images[0..next_published_count]) |*published| {
         published.visible = frame_vocabulary.resourceVisible(impl.commands[0..command_count], published.external.resource);
     }
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
+    impl.cursor_rows_ready = false;
+    if (cursor) |value| {
+        if (value.shape == .block) try indexCursorRows(impl, surface, command_count);
+    }
     const previous_revision = impl.revision;
     const next_revision = impl.revision + 1;
 
@@ -1030,13 +1037,14 @@ fn residencyRequired(
     return false;
 }
 
-// Build the search index only with content. Spans describe actual clipped ink,
+// Index content once when a block cursor needs it. Spans describe clipped ink,
 // preserving combining glyphs, ligatures, DEC geometry and cross-row overhang.
 fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: usize) Error!void {
     const height = impl.config.cell_size.height;
     const rows = surface.height / height;
     impl.cursor_rows_ready = rows <= impl.cursor_rows.len;
     if (!impl.cursor_rows_ready) return;
+    errdefer impl.cursor_rows_ready = false;
     @memset(&impl.cursor_rows, .{});
     const whole = contentSurfaceRect(surface);
     for (impl.commands[0..command_count], 0..) |command, index| switch (command) {
@@ -2852,5 +2860,8 @@ test "painted-row cursor search equals the complete command oracle including cli
         try std.testing.expectEqualDeep(commands[1][0..complete], commands[0][0..indexed]);
     };
     try indexCursorRows(&impl, .{ .width = 30, .height = (limits.maximum_rows + 1) * 10 }, inputs.len);
+    try std.testing.expect(!impl.cursor_rows_ready);
+    inputs[1].alpha_mask.destination.height = 0;
+    try std.testing.expectError(error.InvalidRectangle, indexCursorRows(&impl, impl.surface, inputs.len));
     try std.testing.expect(!impl.cursor_rows_ready);
 }
