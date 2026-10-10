@@ -182,6 +182,17 @@ ordinary producer cleanup would otherwise clear the frozen view.
 
 At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Alacritty in a private 1920×1080 KWin environment at scale 1, with Howl at 10px and Iosevka reference recipes calibrated to 384 PTY columns, the same 378×74 TUI Zoo payload, 240 Hz target and 20-second trials. There were 40 successful fresh-process trials; the 4096/8192/65536 alnum doses were repeated in reverse horse order. Values below are producer fps / terminal CPU percent of one core, excluding TUI Zoo and the shell.
 
+Producer correction: the original TUI Zoo artifact generated only about27Hz
+at dose65536 even to `/dev/null`. Rebuilding its old source with explicit
+ReleaseFast holds240Hz to that sink. This table measures a pipeline near the
+original producer ceiling at heavy doses; maximum terminal consumption is not
+established. The8192 knee interpretation needs optimized-producer controls too.
+Raw trials and separated terminal CPU/RAM remain useful. Future receipts record
+`tui_zoo_build` (compiler, optimization, backend) from the actual executable's
+`build-info`, plus its path/hash. Unsupported older binaries record null.
+See `PRODUCER_CEILING_RESULT.md` in the night workstream. No Howl throughput
+improvement is attributed to changing the producer.
+
 | Canary | Howl | Foot | Kitty | Alacritty |
 |---|---:|---:|---:|---:|
 | alnum 16 | 240.0 / 18.5 | 240.0 / 3.5 | 240.0 / 24.6 | 240.0 / 13.6 |
@@ -192,9 +203,9 @@ At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Al
 | plain 4096 | 240.0 / 33.7 | 240.0 / 30.7 | 240.0 / 103.9 | 240.0 / 29.5 |
 | rain | 240.0 / 6.2 | 240.0 / 15.5 | 240.0 / 19.0 | 240.0 / 8.9 |
 
-This is a baseline, not a win claim. Howl sustains ordinary 240 Hz through 4096, but trails the references at 8192. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
+This is a baseline, not a win claim. Howl sustains ordinary 240 Hz through 4096, with lower recorded pipeline cadence than the references at 8192. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
 
-Raw receipts and CPU reconciliation are in `~/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/`: `REPORT.md`, `REFS.jsonl`, `FOLDED.json`, `runs/` and `CLEANUP.json`. Every stable interval reconciles per-PID and tree CPU; all 40 owned process trees and the private compositor retired cleanly. PSS is retained separately: the first Howl cold launch has a 1.6 GiB PSS outlier that is not explained by its 67 MiB anonymous footprint, so PSS must not be relabelled as owned host RAM. The normal ReleaseSafe dogfood binary and user settings were not changed.
+Raw receipts and CPU reconciliation are in `~/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/`: `REPORT.md`, `REFS.jsonl`, `FOLDED.json`, `runs/` and `CLEANUP.json`. Every stable interval reconciles per-PID and tree CPU; all 40 owned process trees and the private compositor retired cleanly. PSS is retained separately: the first Howl cold launch has a 1.6 GiB PSS outlier that is not explained by its 67 MiB anonymous footprint, so PSS must not be relabelled as owned host RAM. The normal ReleaseSafe dogfood binary and user settings were not changed during this baseline.
 
 ## Empty preedit repaint qualification, 2026-10-10
 

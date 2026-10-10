@@ -231,12 +231,21 @@ record_metadata() {
     howl_head=$(git -C "$REPO_ROOT" rev-parse HEAD)
     wmio_sha=$(sha256sum "$WMIO" | awk '{print $1}')
     HORSE_VERSION=$version HORSE_EXECUTABLE=$executable HORSE_SHA=$executable_sha HORSE_CONFIG_SHA=$config_sha \
-    TUI_HEAD=$tui_head TUI_SHA=$tui_sha HOWL_HEAD=$howl_head WMIO_SHA=$wmio_sha \
+    TUI_HEAD=$tui_head TUI_SHA=$tui_sha TUI_EXE=$TUI_ZOO HOWL_HEAD=$howl_head WMIO_SHA=$wmio_sha \
     RUN_DIR=$run_dir HORSE=$horse DOSE=$dose STABLE=$stable ROOT_PID=$root_pid RECT=$rect \
     COLS=$COLS ROWS=$ROWS FPS=$FPS DURATION_MS=$DURATION_MS GLYPH_SET=$GLYPH_SET BACKGROUND=$BACKGROUND \
     SYNCHRONIZED_OUTPUT=$SYNCHRONIZED_OUTPUT WORKLOAD=$WORKLOAD MONITOR=$MONITOR GRAPHICAL_ENVIRONMENT=$GRAPHICAL_ENVIRONMENT \
     python3 <<'PY' > "$run_dir/metadata.json"
-import json, os, platform, time
+import json, os, platform, subprocess, time
+producer_build = None
+try:
+    probe = subprocess.run([os.environ["TUI_EXE"], "build-info"], capture_output=True, text=True, timeout=3)
+    if probe.returncode == 0:
+        value = json.loads(probe.stderr)
+        if isinstance(value, dict) and value.get("type") == "tui_zoo.build/v1":
+            producer_build = value
+except (OSError, subprocess.TimeoutExpired, ValueError):
+    pass
 print(json.dumps({
   "schema":"howl-performance-index/v1",
   "captured_unix_ns":time.time_ns(),
@@ -259,7 +268,8 @@ print(json.dumps({
     "synchronized_output":os.environ["SYNCHRONIZED_OUTPUT"]=="1"
   },
   "source":{"howl":os.environ["HOWL_HEAD"],"tui_zoo":os.environ["TUI_HEAD"],
-            "tui_zoo_binary_sha256":os.environ["TUI_SHA"],"wmio_sha256":os.environ["WMIO_SHA"]},
+            "tui_zoo_binary_sha256":os.environ["TUI_SHA"],"tui_zoo_executable":os.environ["TUI_EXE"],
+            "tui_zoo_build":producer_build,"wmio_sha256":os.environ["WMIO_SHA"]},
   "host":{"node":platform.node(),"kernel":platform.release(),"machine":platform.machine()},
 },separators=(",",":")))
 PY
