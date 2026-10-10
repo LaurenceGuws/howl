@@ -303,3 +303,16 @@ Raw receipts, per-PID CPU folds, artifact identities and cleanup are in the
 current night workstream: `FAST_REFS_RESULT.md`, `FAST_REFS.jsonl`,
 `FAST_REFS_FOLDED.json`, `FAST_REFS_ARTIFACTS.json`, `FAST_REFS_CLEANUP.json`
 and `fast-producer-runs/`.
+
+A cursor-only projection experiment reused existing Renderer commands using
+Instance-owned live row/color provenance. Three variants passed root and app
+Fast/Safe proofs, including complete-frame equivalence, held-lease immutability
+and failed-refresh recovery. Across 36 A/B/B/A trials, cursor terminal CPU fell
+from about 22% to 14%, but Unicode/background CPU repeatedly increased. The
+smallest variant measured 55.85–55.95% before and 56.66–57.77% after at the same
+240 Hz producer target. Removing temporary snapshots reduced the penalty without
+eliminating it. The source was restored; no provenance cache or cursor-only API
+is retained. The cause of the mixed-workload regression is not established.
+All 36 owned process trees and three private environments retired cleanly.
+`CURSOR_REUSE_REJECTED.md` and the three variant receipts in the night workstream
+retain the decision and raw controls.
