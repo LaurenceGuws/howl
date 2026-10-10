@@ -108,7 +108,7 @@ pub const Renderer = opaque {};
 
 /// Process render knowledge shared by externally serialized terminal renderers.
 ///
-/// FontFaces remain caller-owned for this first ownership tranche and must
+/// FontFaces remain caller-owned and must
 /// outlive the Store. The Store owns retained shaping knowledge and reusable
 /// shape/raster scratch. Callers must serialize mutable Store use.
 // zig-audit: acknowledge opaque_type
@@ -462,13 +462,14 @@ pub fn resetStore(owner: *Store) void {
     glyph_cache.resetShapeCache(storeImpl(owner).shape_cache);
 }
 
-/// Allocates one bounded terminal Renderer producer.
+/// Allocates a private Store and one terminal Renderer. For matching terminals,
+/// create one Store and use initWithStore so native shaping knowledge is shared.
 ///
-/// The producer owns presentation caches and fixed scratch only. Every configured
-/// FontSet remains caller-owned and must outlive the Renderer. Missing style variants
-/// fall back deterministically to an available face. Every later Renderer operation is
-/// allocation-free.
-pub fn init(
+/// FontSets remain caller-owned and must outlive the Renderer. Serialize callers
+/// that share native faces, even with private Stores. Missing styles fall back
+/// deterministically. Shape/raster storage is fixed; command storage may grow
+/// within the configured command limit.
+pub fn initPrivate(
     allocator: std.mem.Allocator,
     fonts: FontFaces,
     config: Config,
@@ -578,16 +579,16 @@ pub fn deinit(owner: *Renderer) void {
     if (owned_store) |store| deinitStore(store);
 }
 
-/// Explicitly forgets private shaping and raster caches. The next successful
-/// update which uses glyphs publishes a newer atlas generation. Frames and
-/// refill queries are invalid until that successful update.
+/// Forgets this terminal atlas and command readiness; shared shaping stays intact.
+/// Use resetStore to forget process shaping knowledge. The next successful update
+/// using glyphs publishes a newer atlas generation. Frames and refill queries
+/// remain invalid until that update.
 pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     const impl = rendererImpl(owner);
     impl.frame_ready = false;
     impl.incremental_ready = false;
     impl.incremental_command_count = 0;
     try glyph_cache.resetAtlas(impl.atlas);
-    resetStore(impl.store);
 }
 
 /// Reports current terminal-local retained usage and resource publication counters.
@@ -612,22 +613,24 @@ pub fn updateSource(
     snapshot: *const Source.Snapshot,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
-    var cache_retried = false;
+    var atlas_retried = false;
+    var shape_retried = false;
     while (true) {
         updateInnerOnce(Source, owner, snapshot, image_bindings) catch |failure| switch (failure) {
             error.CommandLimit => {
                 if (!try growCommandStorage(owner)) return error.CommandLimit;
                 continue;
             },
-            error.CacheFull,
-            error.AtlasFull,
-            error.ShapeEntryFull,
-            error.ShapeScalarFull,
-            error.ShapeGlyphFull,
-            => {
-                if (cache_retried) return failure;
-                cache_retried = true;
+            error.CacheFull, error.AtlasFull => {
+                if (atlas_retried) return failure;
+                atlas_retried = true;
                 try resetCaches(owner);
+                continue;
+            },
+            error.ShapeEntryFull, error.ShapeScalarFull, error.ShapeGlyphFull => {
+                if (shape_retried) return failure;
+                shape_retried = true;
+                resetStore(rendererImpl(owner).store);
                 continue;
             },
             else => return failure,

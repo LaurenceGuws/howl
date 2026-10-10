@@ -167,13 +167,15 @@ const App = struct {
         const inherited = if (recipe.environment.len != 0) try profileEnvironment(allocator, self.init.environ_map, recipe.environment) else self.init.minimal.environ;
         defer if (recipe.environment.len != 0) inherited.block.deinit(allocator);
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
+        const presentation = try self.fonts.config(self.init.io, pixels);
+        errdefer self.fonts.collect();
         return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
             .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
             .rows = 37,
             .columns = 80,
-        }, self.fonts.config(pixels), self.wake_event, false);
+        }, presentation, self.wake_event, false);
     }
     fn createPane(self: *App, supplied: config.Profile, font_size: ?u16) !*Pane {
         const result = try allocator.create(Pane);
@@ -199,6 +201,7 @@ const App = struct {
         if (value.owner) |owner| self.keyboard.forget(owner);
         value.canvas.deinit();
         if (value.owner) |owner| owner.destroy();
+        self.fonts.collect();
         value.recipe.deinit();
         allocator.destroy(value);
     }
@@ -455,7 +458,8 @@ const App = struct {
             value.font_size = logical_size;
             return;
         };
-        const geometry = owner.reconfigure(self.fonts.config(pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
+        defer self.fonts.collect();
+        const geometry = owner.reconfigure(try self.fonts.config(self.init.io, pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
             value.font_failure = failure;
             return failure;
         };
@@ -498,6 +502,7 @@ const App = struct {
         try self.updateConfiguration(candidate, dir, target, true);
     }
     fn updateConfiguration(self: *App, candidate: *config.Config, dir: std.Io.Dir, target: []const u8, persist: bool) !void {
+        defer self.fonts.collect();
         const bindings = try keybindings.Bindings.fromOverrides(candidate.value.keybindings);
         var paths_changed = false;
         for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
@@ -528,7 +533,7 @@ const App = struct {
                     const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale));
                     // Stage presentation with the canonical grid unchanged. A failed save must
                     // not reset history through a temporary column change.
-                    change.geometry = try owner.reconfigure(fonts.config(pixels), null);
+                    change.geometry = try owner.reconfigure(try fonts.config(self.init.io, pixels), null);
                 }
             }
             changes[count] = change;
@@ -572,7 +577,11 @@ const App = struct {
             const p = change.pane;
             const owner = p.owner orelse continue;
             const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(p.font_size)) * self.scale));
-            const geometry = owner.reconfigure(self.fonts.config(pixels), null) catch |failure| {
+            const presentation = self.fonts.config(self.init.io, pixels) catch |failure| {
+                p.font_failure = failure;
+                continue;
+            };
+            const geometry = owner.reconfigure(presentation, null) catch |failure| {
                 p.font_failure = failure;
                 continue;
             };
@@ -2281,6 +2290,13 @@ test "pane content uses its whole layout owner and has a bounded positive config
     }
 }
 
+fn testFonts(a: std.mem.Allocator) !font_owner.Fonts {
+    var fonts: font_owner.Fonts = .{ .allocator = a };
+    errdefer fonts.deinit();
+    for (&fonts.paths) |*path| path.* = try a.dupe(u8, @import("test_fonts").primary_font);
+    return fonts;
+}
+
 test "SDL composition stays local, uses its caret area and clears before pane input ownership changes" {
     try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
@@ -2298,7 +2314,8 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     const geometry = try test_allocator.create(canvas.Geometry);
     defer test_allocator.destroy(geometry);
     geometry.* = .{};
-    var fonts: font_owner.Fonts = .{ .allocator = test_allocator, .paths = @splat(@import("test_fonts").primary_font) };
+    var fonts = try testFonts(test_allocator);
+    defer fonts.deinit();
     var ui_fonts = try font_owner.TextFonts.open(test_allocator, &fonts, 15);
     defer ui_fonts.deinit();
     var threaded = std.Io.Threaded.init(test_allocator, .{});
@@ -2309,7 +2326,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
         .rows = 4,
         .columns = 20,
         .history_rows = 8,
-    }, fonts.config(15), c.SDL_RegisterEvents(1), true);
+    }, try fonts.config(threaded.io(), 15), c.SDL_RegisterEvents(1), true);
     defer owner.destroy();
     var configuration = config.Config.defaults(test_allocator);
     defer configuration.deinit();
@@ -2464,7 +2481,8 @@ test "failed settings save restores fonts without changing canonical history or 
     defer c.SDL_DestroySurface(surface);
     const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
     defer c.SDL_DestroyRenderer(renderer);
-    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
     var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
     defer ui_fonts.deinit();
     var threaded = std.Io.Threaded.init(a, .{});
@@ -2497,7 +2515,7 @@ test "failed settings save restores fonts without changing canonical history or 
             .rows = 4,
             .columns = 20,
             .history_rows = 64,
-        }, fonts.config(size), c.SDL_RegisterEvents(1), true);
+        }, try fonts.config(threaded.io(), size), c.SDL_RegisterEvents(1), true);
         p.* = .{ .owner = owner, .recipe = recipe, .canvas = canvas.Canvas.init(a), .font_size = size, .font_overridden = index != 0, .rows = 4, .columns = 20 };
         count += 1;
     }
@@ -2587,7 +2605,8 @@ test "SDL drop events keep modal input owners isolated and copy event bytes befo
     const a = std.testing.allocator;
     const window = c.SDL_CreateWindow("drop proof", 1000, 650, 0) orelse return error.SDL;
     defer c.SDL_DestroyWindow(window);
-    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
     var threaded = std.Io.Threaded.init(a, .{});
     defer threaded.deinit();
     const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
@@ -2595,7 +2614,7 @@ test "SDL drop events keep modal input owners isolated and copy event bytes befo
         .command = "stty -echo; printf '\\033]0;READY\\007'; read line; printf '\\033]0;%s\\007' \"$line\"; sleep 30",
         .rows = 4,
         .columns = 20,
-    }, fonts.config(15), c.SDL_RegisterEvents(1), false);
+    }, try fonts.config(threaded.io(), 15), c.SDL_RegisterEvents(1), false);
     defer owner.destroy();
     var configuration = config.Config.defaults(a);
     defer configuration.deinit();
@@ -2711,7 +2730,8 @@ test "Local child keeps copied profile environment after caller retirement and t
     });
     var provided_live = true;
     defer if (provided_live) provided.block.deinit(a);
-    var fonts: font_owner.Fonts = .{ .allocator = a, .paths = @splat(@import("test_fonts").primary_font) };
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
     var threaded = std.Io.Threaded.init(a, .{});
     defer threaded.deinit();
     const owner = try terminal.Terminal.create(a, threaded.io(), provided, .{
@@ -2719,7 +2739,7 @@ test "Local child keeps copied profile environment after caller retirement and t
         .command = "stty -echo; read line; printf '\\033]0;%s|%s|%s|%s\\007' \"$HOWL_BASE\" \"$HOWL_OVERRIDE\" \"$HOWL_EMPTY\" \"$TERM\"; sleep 30",
         .rows = 4,
         .columns = 20,
-    }, fonts.config(15), c.SDL_RegisterEvents(1), false);
+    }, try fonts.config(threaded.io(), 15), c.SDL_RegisterEvents(1), false);
     defer owner.destroy();
     provided.block.deinit(a);
     provided_live = false;

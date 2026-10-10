@@ -634,7 +634,7 @@ fn createHostFromConnection(
     var fonts_live = true;
     defer if (fonts_live) fonts.deinit();
 
-    const terminal_renderer = terminal.init(
+    const terminal_renderer = terminal.initPrivate(
         allocator,
         terminal.FontFaces.single(fonts),
         contentConfig(cell_width, cell_height, atlas_extent),

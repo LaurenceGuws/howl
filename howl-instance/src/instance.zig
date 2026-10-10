@@ -102,7 +102,8 @@ pub const FontFamilyConfig = struct {
 /// The canonical cell lattice is derived from the regular font metrics. The
 /// caller does not separately choose PTY/VT and Render pixel geometry.
 pub const PresentationConfig = struct {
-    fonts: FontFamilyConfig,
+    /// Choose process sharing deliberately; private opens a separate native family.
+    text: union(enum) { private: FontFamilyConfig, shared: *PresentationStore },
     box_drawing: BoxDrawingConfig,
     shape_cache: terminal_render.ShapeCacheConfig,
     atlas: terminal_render.AtlasConfig,
@@ -113,6 +114,56 @@ pub const PresentationConfig = struct {
     incremental_row_capacity: u16 = 0,
     incremental_command_capacity: usize = 0,
 };
+
+/// Owns one fixed native font family, shared shape cache and reusable scratch.
+/// Matching terminals borrow this owner; atlases, commands and frames remain local.
+/// Mutable native faces are serialized internally. The supplied Io outlives all
+/// borrowers, including those surviving release of the caller's reference.
+// zig-audit: acknowledge opaque_type
+// reason: Only this module can retain, serialize, and release the native font and Store owner.
+pub const PresentationStore = opaque {};
+/// Reports font, bounded Store, or ownership admission failure.
+pub const PresentationStoreInitError = text.InitError || terminal_render.StoreInitError || error{PresentationStoreLimit};
+
+/// Creates one caller reference for a compatible font recipe and pixel size.
+/// Share the returned pointer through PresentationConfig.text.shared. Construction
+/// copies font sources; the input recipe does not need to survive this call.
+pub fn initPresentationStore(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    fonts: FontFamilyConfig,
+    config: terminal_render.StoreConfig,
+) PresentationStoreInitError!*PresentationStore {
+    const owner = try allocator.create(TextStore);
+    errdefer allocator.destroy(owner);
+    var owned_fonts = try OwnedFonts.init(allocator, fonts);
+    errdefer owned_fonts.deinit();
+    const store = try terminal_render.initStore(allocator, owned_fonts.faces(), config);
+    owner.* = .{ .allocator = allocator, .io = io, .fonts = owned_fonts, .store = store };
+    // zig-audit: acknowledge ptr_cast
+    // reason: The opaque handle preserves the address of this exact allocator-owned TextStore.
+    return @ptrCast(owner);
+}
+
+/// Releases the caller reference. Existing presented Instances retain the owner
+/// until their renderers retire; the caller must not reuse its released pointer.
+pub fn releasePresentationStore(store: *PresentationStore) void {
+    textStore(store).release();
+}
+
+/// Includes the caller's reference and all presented borrowers. Caller ownership
+/// must remain live; a count of one permits an embedder to retire an idle owner.
+pub fn presentationStoreReferences(store: *PresentationStore) u32 {
+    return textStore(store).references.load(.acquire);
+}
+
+/// Reads shared cache usage under the native-face claim.
+pub fn presentationStoreUsage(store: *PresentationStore) terminal_render.StoreUsage {
+    const owner = textStore(store);
+    owner.mutex.lockUncancelable(owner.io);
+    defer owner.mutex.unlock(owner.io);
+    return terminal_render.storeUsage(owner.store);
+}
 
 /// Reports the exact grid and cell lattice chosen for one presented surface.
 pub const PresentationGeometry = struct {
@@ -139,7 +190,7 @@ pub const Launch = struct {
 /// Reports construction failure before a instance becomes observable.
 pub const InitError = pty.InitError || pty.StartError || vt.Terminal.InitError;
 /// Reports construction failure before a presented Instance becomes observable.
-pub const PresentedInitError = InitError || text.InitError || terminal_render.InitError || terminal_render.Error;
+pub const PresentedInitError = InitError || PresentationStoreInitError || terminal_render.InitError || terminal_render.Error;
 /// Reports terminal input encoding, signal, or bounded write admission failure.
 pub const InputError = vt.Terminal.InputError || pty.TermiosSignalError || error{WriteQueueFull};
 /// Reports atomic PTY and VT geometry transition failure.
@@ -150,12 +201,12 @@ pub const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.ColorPreferenceReplyError || vt.Terminal.ContainerReplyError ||
     vt.Terminal.PointerShapeReplyError || error{WriteQueueFull};
 /// Reports a backend-frame request before presentation exists, or Render failure.
-pub const RenderError = terminal_render.Error || error{PresentationUnavailable};
+pub const RenderError = terminal_render.Error || error{ PresentationUnavailable, PresentationBusy };
 /// Reports publication preparation or bounded exchange failure.
 pub const PublishError = RenderError || std.mem.Allocator.Error || error{PublicationBusy};
 /// Reports transactional font/renderer replacement or canonical geometry failure.
 pub const ReconfigurePresentationError =
-    text.InitError || terminal_render.InitError || terminal_render.Error ||
+    PresentationStoreInitError || terminal_render.InitError || terminal_render.Error ||
     ResizeError || error{
         PresentationUnavailable,
         PublicationCapacityMismatch,
@@ -195,7 +246,8 @@ pub fn init(
 
 /// Constructs one PTY -> VT -> Render owner on one caller-serialized thread.
 ///
-/// Instance owns the supplied font family, canonical VT and Howl Renderer.
+/// Text ownership is explicit in PresentationConfig; Instance retains a shared
+/// owner or creates the requested private owner, alongside its VT and Renderer.
 /// Initial PTY/VT pixel geometry comes from the regular font metrics.
 pub fn initPresented(
     allocator: std.mem.Allocator,
@@ -203,11 +255,9 @@ pub fn initPresented(
     launch: Launch,
     presentation: PresentationConfig,
 ) PresentedInitError!*Instance {
-    var fonts = try OwnedFonts.init(allocator, presentation.fonts);
-    var fonts_live = true;
-    defer if (fonts_live) fonts.deinit();
-
-    const metrics = fonts.regular.metrics();
+    const store = try TextStore.acquire(allocator, presentation);
+    errdefer store.release();
+    const metrics = terminal_render.storeMetrics(store.store);
     var canonical_launch = launch;
     canonical_launch.cell_pixel_width = metrics.advance_width;
     canonical_launch.cell_pixel_height = metrics.line_height;
@@ -217,13 +267,12 @@ pub fn initPresented(
     try state.initInto(allocator, inherited_environment, canonical_launch);
     errdefer state.deinit();
 
-    state.presentation = try PresentationState.initWithFonts(
+    state.presentation = try PresentationState.initWithStore(
         allocator,
-        &fonts,
+        store,
         presentation,
         state.terminal.observation(),
     );
-    fonts_live = false;
 
     // zig-audit: acknowledge ptr_cast
     // reason: This boundary owns the concrete State allocation and adapts it to the stable opaque Instance handle without changing address or lifetime.
@@ -265,6 +314,8 @@ pub fn presented(instance: *const Instance) bool {
 /// Reports current Instance-owned Render usage without exposing mutable Renderer state.
 pub fn renderUsage(instance: *const Instance) error{PresentationUnavailable}!terminal_render.Usage {
     const presentation = stateConst(instance).presentation orelse return error.PresentationUnavailable;
+    presentation.store.mutex.lockUncancelable(presentation.store.io);
+    defer presentation.store.mutex.unlock(presentation.store.io);
     return terminal_render.usage(presentation.renderer);
 }
 
@@ -562,9 +613,54 @@ const OwnedFonts = struct {
     }
 };
 
+const TextStore = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    fonts: OwnedFonts,
+    store: *terminal_render.Store,
+    mutex: std.Io.Mutex = .init,
+    references: std.atomic.Value(u32) = .init(1),
+
+    fn acquire(allocator: std.mem.Allocator, config: PresentationConfig) PresentationStoreInitError!*TextStore {
+        switch (config.text) {
+            .private => |fonts| return textStore(try initPresentationStore(allocator, .failing, fonts, .{
+                .shape_cache = config.shape_cache,
+                .shaped_capacity = config.shaped_capacity,
+                .raster_bytes = config.raster_bytes,
+            })),
+            .shared => |shared| {
+                const owner = textStore(shared);
+                var before = owner.references.load(.monotonic);
+                while (true) {
+                    if (before >= 1024) return error.PresentationStoreLimit;
+                    before = owner.references.cmpxchgWeak(before, before + 1, .monotonic, .monotonic) orelse return owner;
+                }
+            },
+        }
+    }
+
+    fn release(self: *TextStore) void {
+        const before = self.references.fetchSub(1, .acq_rel);
+        std.debug.assert(before != 0);
+        if (before != 1) return;
+        terminal_render.deinitStore(self.store);
+        self.fonts.deinit();
+        self.allocator.destroy(self);
+    }
+};
+
+fn textStore(store: *PresentationStore) *TextStore {
+    // zig-audit: acknowledge align_cast
+    // reason: Every public handle originates from this module's aligned TextStore allocation.
+    const aligned: *align(@alignOf(TextStore)) PresentationStore = @alignCast(store);
+    // zig-audit: acknowledge ptr_cast
+    // reason: The opaque handle has the same address and concrete pointee layout as its TextStore owner.
+    return @ptrCast(aligned);
+}
+
 const PresentationState = struct {
     renderer: *terminal_render.Renderer,
-    fonts: OwnedFonts,
+    store: *TextStore,
     exchange: *publication.Exchange,
     image_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined,
     image_binding_count: usize = 0,
@@ -578,16 +674,16 @@ const PresentationState = struct {
     command_limit: usize,
     presentation_generation: u64 = 1,
 
-    fn initWithFonts(
+    fn initWithStore(
         allocator: std.mem.Allocator,
-        fonts: *OwnedFonts,
+        store: *TextStore,
         config: PresentationConfig,
         observation: *const Terminal.Observation,
     ) (terminal_render.InitError || terminal_render.Error)!*PresentationState {
-        const metrics = fonts.regular.metrics();
-        const renderer = try terminal_render.init(
+        const metrics = terminal_render.storeMetrics(store.store);
+        const renderer = try terminal_render.initWithStore(
             allocator,
-            fonts.faces(),
+            store.store,
             .{
                 .cell_size = .{
                     .width = metrics.advance_width,
@@ -624,26 +720,30 @@ const PresentationState = struct {
             config.command_limit;
         state.* = .{
             .renderer = renderer,
-            .fonts = fonts.*,
+            .store = store,
             .exchange = exchange,
             .atlas_pixel_capacity = atlas_pixel_capacity,
             .command_capacity = config.command_capacity,
             .command_limit = command_limit,
         };
-        try state.refresh(observation, 0);
+        // Construction is synchronous and may wait for one bounded projection.
+        // Runtime refresh below skips a busy Store so canonical service keeps moving.
+        store.mutex.lockUncancelable(store.io);
+        defer store.mutex.unlock(store.io);
+        try state.refreshClaimed(observation, 0);
         return state;
     }
 
     fn deinit(self: *PresentationState, allocator: std.mem.Allocator) void {
         publication.deinit(self.exchange);
         terminal_render.deinit(self.renderer);
-        self.fonts.deinit();
+        self.store.release();
         self.* = undefined;
         allocator.destroy(self);
     }
 
     fn cellSize(self: *const PresentationState) terminal_render.Size {
-        const metrics = self.fonts.regular.metrics();
+        const metrics = terminal_render.storeMetrics(self.store.store);
         return .{ .width = metrics.advance_width, .height = metrics.line_height };
     }
 
@@ -651,7 +751,7 @@ const PresentationState = struct {
         self: *PresentationState,
         observation: *const Terminal.Observation,
         history_offset: u32,
-    ) terminal_render.Error!void {
+    ) RenderError!void {
         const revision = observation.semanticSequence();
         const view = observation.semanticView(history_offset);
         if (self.terminal_revision != null and
@@ -671,6 +771,19 @@ const PresentationState = struct {
                 return;
             }
         }
+        if (!self.store.mutex.tryLock()) return error.PresentationBusy;
+        defer self.store.mutex.unlock(self.store.io);
+        try self.refreshClaimed(observation, view.history_offset);
+    }
+
+    fn refreshClaimed(
+        self: *PresentationState,
+        observation: *const Terminal.Observation,
+        history_offset: u32,
+    ) terminal_render.Error!void {
+        const revision = observation.semanticSequence();
+        const content_revision = observation.contentSequence();
+        const view = observation.semanticView(history_offset);
         var candidate: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
         const bindings = try terminal_render.planObservationImageBindings(
             self.image_bindings[0..self.image_binding_count],
@@ -976,11 +1089,10 @@ const State = struct {
         if (config.command_capacity != presentation.command_capacity)
             return error.PublicationCapacityMismatch;
 
-        var fonts = try OwnedFonts.init(self.allocator, config.fonts);
-        var fonts_live = true;
-        defer if (fonts_live) fonts.deinit();
-
-        const metrics = fonts.regular.metrics();
+        const store = try TextStore.acquire(self.allocator, config);
+        var store_live = true;
+        defer if (store_live) store.release();
+        const metrics = terminal_render.storeMetrics(store.store);
         const cell_size = terminal_render.Size{
             .width = metrics.advance_width,
             .height = metrics.line_height,
@@ -996,9 +1108,9 @@ const State = struct {
                 break :choose .{ rows, columns };
             },
         };
-        const renderer = try terminal_render.init(
+        const renderer = try terminal_render.initWithStore(
             self.allocator,
-            fonts.faces(),
+            store.store,
             .{
                 .cell_size = cell_size,
                 .box_drawing = config.box_drawing,
@@ -1019,19 +1131,24 @@ const State = struct {
         const old_revision = observation.semanticSequence();
         const old_content_revision = observation.contentSequence();
         var candidate_bindings: [terminal_render.maximum_external_images]terminal_render.ExternalImageBinding = undefined;
-        const bindings = try terminal_render.planObservationImageBindings(
-            &.{},
-            terminal_render.usage(renderer),
-            observation,
-            0,
-            &candidate_bindings,
-        );
-        try terminal_render.updateObservation(
-            renderer,
-            observation,
-            0,
-            bindings,
-        );
+        const bindings = prepare: {
+            store.mutex.lockUncancelable(store.io);
+            defer store.mutex.unlock(store.io);
+            const planned = try terminal_render.planObservationImageBindings(
+                &.{},
+                terminal_render.usage(renderer),
+                observation,
+                0,
+                &candidate_bindings,
+            );
+            try terminal_render.updateObservation(
+                renderer,
+                observation,
+                0,
+                planned,
+            );
+            break :prepare planned;
+        };
         const atlas_pixel_capacity = std.math.mul(
             usize,
             @as(usize, config.atlas.width),
@@ -1058,11 +1175,11 @@ const State = struct {
         }
 
         terminal_render.deinit(presentation.renderer);
-        presentation.fonts.deinit();
+        presentation.store.release();
         presentation.renderer = renderer;
         renderer_live = false;
-        presentation.fonts = fonts;
-        fonts_live = false;
+        presentation.store = store;
+        store_live = false;
         @memcpy(presentation.image_bindings[0..bindings.len], bindings);
         presentation.image_binding_count = bindings.len;
         presentation.terminal_revision = old_revision;
@@ -1911,7 +2028,7 @@ test "presented Instance owns direct VT to Render progression" {
             .history_rows = 8,
         },
         .{
-            .fonts = .{ .regular = .{ .path = font_config } },
+            .text = .{ .private = .{ .regular = .{ .path = font_config } } },
             .box_drawing = .{
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -1975,7 +2092,7 @@ test "presented publication grows frame command storage to configured limit" {
             .history_rows = 8,
         },
         .{
-            .fonts = .{ .regular = .{ .path = font_config } },
+            .text = .{ .private = .{ .regular = .{ .path = font_config } } },
             .box_drawing = .{
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -2026,7 +2143,7 @@ test "presented publication owns canonical VT image bytes and consumes residency
             .history_rows = 8,
         },
         .{
-            .fonts = .{ .regular = .{ .path = font_config } },
+            .text = .{ .private = .{ .regular = .{ .path = font_config } } },
             .box_drawing = .{
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -2109,7 +2226,7 @@ test "presentation reconfigure invalidates late old-generation residency" {
         .size = .{ .pixels = 24 },
     };
     const base_config = PresentationConfig{
-        .fonts = .{ .regular = .{ .path = first_font } },
+        .text = .{ .private = .{ .regular = .{ .path = first_font } } },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -2145,13 +2262,13 @@ test "presentation reconfigure invalidates late old-generation residency" {
 
     try serviceUntilContains(instance, "A");
     // A refresh failure after allocation must unwind the staged owner only once.
-    var staged_fonts = try OwnedFonts.init(std.testing.allocator, base_config.fonts);
-    defer staged_fonts.deinit();
+    const staged_store = try TextStore.acquire(std.testing.allocator, base_config);
+    defer staged_store.release();
     var limited = base_config;
     limited.command_capacity = 1;
-    try std.testing.expectError(error.CommandLimit, PresentationState.initWithFonts(
+    try std.testing.expectError(error.CommandLimit, PresentationState.initWithStore(
         std.testing.allocator,
-        &staged_fonts,
+        staged_store,
         limited,
         terminal(instance),
     ));
@@ -2175,7 +2292,7 @@ test "presentation reconfigure invalidates late old-generation residency" {
     try std.testing.expect(old_had_alpha);
 
     var next_config = base_config;
-    next_config.fonts = .{ .regular = .{ .path = second_font } };
+    next_config.text = .{ .private = .{ .regular = .{ .path = second_font } } };
     const next_cell = try reconfigurePresentation(instance, next_config);
     const canonical_cell = terminal(instance).cellPixelSize() orelse
         return error.MissingCellPixels;
@@ -2224,7 +2341,7 @@ test "presentation surface reconfigure derives canonical grid from new font metr
         .size = .{ .pixels = 24 },
     };
     const base_config = PresentationConfig{
-        .fonts = .{ .regular = .{ .path = first_font } },
+        .text = .{ .private = .{ .regular = .{ .path = first_font } } },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -2259,7 +2376,7 @@ test "presentation surface reconfigure derives canonical grid from new font metr
     defer deinit(value);
 
     var next_config = base_config;
-    next_config.fonts = .{ .regular = .{ .path = second_font } };
+    next_config.text = .{ .private = .{ .regular = .{ .path = second_font } } };
     const surface = terminal_render.Size{ .width = 640, .height = 360 };
     const geometry = try reconfigurePresentationSurface(
         value,
@@ -2290,10 +2407,10 @@ test "cursor and content cuts agree with complete projection across native mutat
     var canonical = try Terminal.initWithHistory(allocator, 4, 8, 8);
     defer canonical.deinit();
     const config = PresentationConfig{
-        .fonts = .{ .regular = .{ .path = .{
+        .text = .{ .private = .{ .regular = .{ .path = .{
             .primary = @import("test_fonts").primary_font,
             .size = .{ .pixels = 18 },
-        } } },
+        } } } },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -2304,15 +2421,15 @@ test "cursor and content cuts agree with complete projection across native mutat
         .raster_bytes = 512 * 512,
         .command_capacity = 256,
     };
-    var fonts = try OwnedFonts.init(allocator, config.fonts);
-    const candidate = PresentationState.initWithFonts(allocator, &fonts, config, canonical.observation()) catch |failure| {
-        fonts.deinit();
+    const fonts = try TextStore.acquire(allocator, config);
+    const candidate = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
+        fonts.release();
         return failure;
     };
     defer candidate.deinit(allocator);
     const cell = candidate.cellSize();
     try canonical.setCellPixelSize(cell.width, cell.height);
-    const baseline = try terminal_render.init(allocator, candidate.fonts.faces(), .{
+    const baseline = try terminal_render.initPrivate(allocator, candidate.store.fonts.faces(), .{
         .cell_size = candidate.cellSize(),
         .box_drawing = config.box_drawing,
         .shape_cache = config.shape_cache,
@@ -2409,9 +2526,9 @@ test "cursor and content cuts agree with complete projection across native mutat
     defer small.deinit();
     var limited_config = config;
     limited_config.command_capacity = 1;
-    var limited_fonts = try OwnedFonts.init(allocator, config.fonts);
-    const limited = PresentationState.initWithFonts(allocator, &limited_fonts, limited_config, small.observation()) catch |failure| {
-        limited_fonts.deinit();
+    const limited_fonts = try TextStore.acquire(allocator, limited_config);
+    const limited = PresentationState.initWithStore(allocator, limited_fonts, limited_config, small.observation()) catch |failure| {
+        limited_fonts.release();
         return failure;
     };
     defer limited.deinit(allocator);
@@ -2443,4 +2560,112 @@ fn expectPresentationCommandsEqual(candidate: *terminal_render.Renderer, baselin
     }
     try std.testing.expectEqualDeep(frames[0].commands, frames[1].commands);
     if (published) |commands_value| try std.testing.expectEqualDeep(frames[0].commands, commands_value);
+}
+
+test "shared text owner survives caller release and isolates cache pressure, stalled frames and canonical service" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var config = PresentationConfig{
+        .text = .{ .private = .{ .regular = .{ .path = .{
+            .primary = @import("test_fonts").primary_font,
+            .size = .{ .pixels = 18 },
+        } } } },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .shape_cache = .{ .entry_capacity = 4, .scalar_capacity = 16, .glyph_capacity = 16, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 32 },
+        .shaped_capacity = 32,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+    };
+    const shared = try initPresentationStore(a, threaded.io(), config.text.private, .{
+        .shape_cache = config.shape_cache,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+    });
+    var caller_live = true;
+    defer if (caller_live) releasePresentationStore(shared);
+    config.text = .{ .shared = shared };
+    const launch = Launch{ .shell = "/bin/sh", .command = "printf A; sleep 30", .rows = 2, .columns = 8, .history_rows = 8 };
+    const first = try initPresented(a, std.testing.environ, launch, config);
+    defer deinit(first);
+    const second = try initPresented(a, std.testing.environ, launch, config);
+    defer deinit(second);
+    try std.testing.expectEqual(@as(u32, 3), presentationStoreReferences(shared));
+    try serviceUntilContains(first, "A");
+    try serviceUntilContains(second, "A");
+    try publishRender(first);
+    const warm = presentationStoreUsage(shared);
+    try publishRender(second);
+    try std.testing.expectEqualDeep(warm, presentationStoreUsage(shared));
+
+    // Reject duplicated/mismatched Store bounds without touching the old surface.
+    var mismatch = config;
+    mismatch.raster_bytes -= 1;
+    try std.testing.expectError(error.InvalidConfig, reconfigurePresentation(second, mismatch));
+    try std.testing.expectEqual(@as(u32, 3), presentationStoreReferences(shared));
+
+    const one = stateMut(first).presentation.?;
+    const two = stateMut(second).presentation.?;
+    var held = acquirePublishedFrame(one.exchange) orelse return error.MissingPublication;
+    defer held.abandon();
+    var saved: [256]terminal_render.Command = undefined;
+    const commands = held.value.commands;
+    @memcpy(saved[0..commands.len], commands);
+    const first_usage = try renderUsage(first);
+    // A terminal atlas reset must not flush process shaping or its neighbour.
+    try terminal_render.resetCaches(two.renderer);
+    try std.testing.expectEqualDeep(warm, presentationStoreUsage(shared));
+    for ([_][]const u8{ "\r\x1b[2KB", "\r\x1b[2KC", "\r\x1b[2KD", "\r\x1b[2KE", "\r\x1b[2KF" }) |bytes| {
+        try std.testing.expect((try stateMut(second).terminal.feed(bytes)).stateChanged());
+        try publishRender(second);
+    }
+    const after = try renderUsage(first);
+    try std.testing.expectEqual(first_usage.resource_generation, after.resource_generation);
+    try std.testing.expectEqual(first_usage.atlas_entries, after.atlas_entries);
+    try std.testing.expectEqualDeep(saved[0..commands.len], commands);
+    try std.testing.expect(presentationStoreUsage(shared).shape.entries <= 4);
+
+    const owner = textStore(shared);
+    owner.references.store(1024, .monotonic);
+    try std.testing.expectError(error.PresentationStoreLimit, initPresented(a, std.testing.environ, launch, config));
+    try std.testing.expectEqual(@as(u32, 1024), owner.references.load(.monotonic));
+    owner.references.store(3, .monotonic);
+    owner.mutex.lockUncancelable(owner.io);
+    {
+        defer owner.mutex.unlock(owner.io);
+        // Cursor-only work requires no shared text claim.
+        try std.testing.expect((try stateMut(first).terminal.feed("\x1b[2;2H")).stateChanged());
+        try publishRender(first);
+        try std.testing.expect((try stateMut(first).terminal.feed("Z")).stateChanged());
+        try std.testing.expectError(error.PresentationBusy, publishRender(first));
+        // Canonical I/O still runs while another projection owns native text.
+        try input(second, .{ .bytes = "still canonical\n" });
+        const turn = try service(second, true, true, 0);
+        try std.testing.expect(!turn.stream_closed);
+    }
+    try publishRender(first);
+    releasePresentationStore(shared);
+    caller_live = false;
+    // Both instances own a reference even though the embedding owner has retired.
+    try publishRender(second);
+}
+
+fn storeAllocationProof(allocator: std.mem.Allocator) !void {
+    const store = try initPresentationStore(allocator, .failing, .{
+        .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } } },
+        .bold = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } } },
+    }, .{
+        .shape_cache = .{ .entry_capacity = 4, .scalar_capacity = 16, .glyph_capacity = 16, .max_sequence_scalars = 16 },
+        .shaped_capacity = 32,
+        .raster_bytes = 256 * 256,
+    });
+    defer releasePresentationStore(store);
+}
+
+test "shared text construction unwinds every Zig allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, storeAllocationProof, .{});
 }

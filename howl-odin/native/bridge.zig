@@ -2505,7 +2505,7 @@ fn nativePresentationConfig(
     }
     const fallbacks = fallback_storage.*[0..fallback_count];
     return .{
-        .fonts = .{
+        .text = .{ .private = .{
             .regular = .{ .path = .{
                 .primary = regular_path,
                 .fallbacks = fallbacks,
@@ -2526,7 +2526,7 @@ fn nativePresentationConfig(
                 .fallbacks = fallbacks,
                 .size = .{ .pixels = font_pixels },
             } } else null,
-        },
+        } },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -6167,7 +6167,7 @@ test "native presentation config retains two caller-owned fallback paths" {
         "cjk.ttc",
         17,
     );
-    const regular = switch (config.fonts.regular) {
+    const regular = switch (config.text.private.regular) {
         .path => |value| value,
         .memory => return error.UnexpectedMemoryFont,
     };

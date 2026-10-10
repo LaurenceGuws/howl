@@ -276,7 +276,7 @@ fn initRenderer(
         .width = metrics.advance_width,
         .height = metrics.line_height,
     };
-    const new_renderer = terminal.init(allocator, terminal.FontFaces.single(new_fonts), .{
+    const new_renderer = terminal.initPrivate(allocator, terminal.FontFaces.single(new_fonts), .{
         .cell_size = presentation_cell,
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },

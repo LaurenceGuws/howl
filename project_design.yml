@@ -63,3 +63,10 @@ workspace:
   distribution_root: forwards child-owned modules and artifacts without reconstructing their type identities
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module
+
+
+shared_presented_text:
+  - PresentationConfig requires an explicit private native family or a retained PresentationStore; matching app panes share one owner per recipe and physical pixel size
+  - PresentationStore owns native fonts and bounded shape/raster scratch; atlases, commands, residency and immutable frames remain terminal-local
+  - full runtime text projection tries the native-face claim and returns PresentationBusy on contention; cursor-only work and canonical PTY/VT service do not wait
+  - caller release and Instance retirement are reference-counted; idle app owners retire, and shape pressure never resets a neighbour atlas

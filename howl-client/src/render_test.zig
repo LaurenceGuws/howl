@@ -139,7 +139,7 @@ const Harness = struct {
         font_faces: terminal.FontFaces,
         config: terminal.Config,
     ) !Harness {
-        const owner = try terminal.init(allocator, font_faces, config);
+        const owner = try terminal.initPrivate(allocator, font_faces, config);
         errdefer terminal.deinit(owner);
         const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_external_images + 1);
         errdefer allocator.free(uploads);
@@ -267,7 +267,7 @@ fn firstRgba(commands: []const terminal.Command) ?@FieldType(terminal.Command, "
 }
 
 fn constructTerminalrenderer(allocator: std.mem.Allocator, font: *text.FontSet) !void {
-    const owner = try terminal.init(allocator, terminal.FontFaces.single(font), rendererConfig(64));
+    const owner = try terminal.initPrivate(allocator, terminal.FontFaces.single(font), rendererConfig(64));
     terminal.deinit(owner);
 }
 
@@ -301,6 +301,11 @@ test "two terminal renderers borrow one externally serialized process store" {
     try terminal.update(second, view);
     const after_second = terminal.storeUsage(store).shape;
     try std.testing.expectEqualDeep(after_first, after_second);
+
+    const neighbour = terminal.usage(second);
+    try terminal.resetCaches(first);
+    try std.testing.expectEqualDeep(after_second, terminal.storeUsage(store).shape);
+    try std.testing.expectEqualDeep(neighbour, terminal.usage(second));
 
     // Resetting the shared shape cache is explicit process-lane behavior; the
     // terminal-local atlases and completed command sets remain independently owned.
@@ -358,7 +363,7 @@ test "terminal renderer owns final atlas residency and recovers after backend lo
     try std.testing.expect(@backingInt(regenerated.frame.uploads[0].resource.generation) > @backingInt(first_resource.generation));
 }
 
-test "terminal renderer rolls bounded atlas cache on accumulated entry pressure" {
+test "terminal atlas pressure rolls only its atlas and preserves shaping knowledge" {
     var scalar_a = [_]u32{'A'};
     var scalar_b = [_]u32{'B'};
     var scalar_c = [_]u32{'C'};
@@ -398,7 +403,7 @@ test "terminal renderer rolls bounded atlas cache on accumulated entry pressure"
     const third = try host.present(view_c);
     const rolled = terminal.usage(host.renderer);
     try std.testing.expectEqual(@as(usize, 1), rolled.atlas_entries);
-    try std.testing.expectEqual(@as(usize, 1), rolled.shape.entries);
+    try std.testing.expectEqual(@as(usize, 3), rolled.shape.entries);
     try std.testing.expectEqual(@as(u64, 3), third.frame.revision);
     try std.testing.expectEqual(@as(usize, 1), third.frame.uploads.len);
     const third_atlas = third.frame.uploads[0].resource;
@@ -1111,7 +1116,7 @@ test "dense 40x120 terminal renderer is bounded and recovers from command exhaus
     const font = try terminalFont();
     defer font.deinit();
 
-    const limited = try terminal.init(std.testing.allocator, terminal.FontFaces.single(font), rendererConfig(command_count - 1));
+    const limited = try terminal.initPrivate(std.testing.allocator, terminal.FontFaces.single(font), rendererConfig(command_count - 1));
     defer terminal.deinit(limited);
     try std.testing.expectError(error.CommandLimit, terminal.update(limited, view));
     const failed = terminal.usage(limited);
@@ -1120,7 +1125,7 @@ test "dense 40x120 terminal renderer is bounded and recovers from command exhaus
 
     var lazy_config = rendererConfig(64);
     lazy_config.command_limit = command_count;
-    const lazy = try terminal.init(std.testing.allocator, terminal.FontFaces.single(font), lazy_config);
+    const lazy = try terminal.initPrivate(std.testing.allocator, terminal.FontFaces.single(font), lazy_config);
     defer terminal.deinit(lazy);
     try terminal.update(lazy, view);
     try std.testing.expect(terminal.usage(lazy).command_capacity >= command_count);
@@ -1431,9 +1436,9 @@ test "terminal renderer construction releases every staged allocation and valida
     try std.testing.checkAllAllocationFailures(std.testing.allocator, constructTerminalrenderer, .{font});
     var invalid = rendererConfig(64);
     invalid.cell_size.width = 0;
-    try std.testing.expectError(error.InvalidConfig, terminal.init(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
+    try std.testing.expectError(error.InvalidConfig, terminal.initPrivate(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
     invalid = rendererConfig(0);
-    try std.testing.expectError(error.InvalidConfig, terminal.init(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
+    try std.testing.expectError(error.InvalidConfig, terminal.initPrivate(std.testing.failing_allocator, terminal.FontFaces.single(font), invalid));
 }
 
 const VT = @import("howl_instance").Terminal;

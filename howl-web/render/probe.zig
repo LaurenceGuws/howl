@@ -150,7 +150,7 @@ fn execute(font_input: []u8) !void {
     const view = try client.view.project(allocator, &source);
     defer client.view.deinit(view);
 
-    const terminal_renderer = try terminal.init(allocator, terminal.FontFaces.single(fonts), .{
+    const terminal_renderer = try terminal.initPrivate(allocator, terminal.FontFaces.single(fonts), .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },

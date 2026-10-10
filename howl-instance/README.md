@@ -8,6 +8,43 @@ The HWLS framing documented below is the transport-neutral interaction vocabular
 
 `howl_instance_service` is an optional interaction module in this package. It borrows one already-created Instance and owns only bounded adopted HWLS streams, request decoding, publication scratch, and client-local backpressure. It creates no listener and owns no Instance, Session, Server, address, routing, authentication, or supervision lifetime. Embedders that use `howl_instance` directly do not import this service.
 
+## Presented text ownership
+
+A presented Instance owns its canonical VT, atlas, commands and three immutable
+publication slots. Its font/shaping choice is required in `PresentationConfig.text`:
+
+| Choice | Font and shape owner | Terminal-local state |
+| --- | --- | --- |
+| `.shared = store` | One `PresentationStore` reused by compatible terminals | One atlas, command set and exchange per Instance |
+| `.private = family` | A new native font family and Store for this Instance | The same terminal-local state |
+
+Create a shared owner with `initPresentationStore(allocator, io, family, bounds)`,
+then pass its pointer to matching `initPresented` and reconfiguration calls.
+The family fixes paths/bytes, styles, fallbacks and physical pixel size. Store
+bounds must match each borrower's shape/scratch configuration; mismatch fails
+before canonical geometry or the old presentation changes. Use another owner
+for a different font recipe or pixel size.
+
+Each successful presented construction/reconfiguration retains one reference.
+`releasePresentationStore` releases the embedding caller's reference; surviving
+Instances keep the native faces alive. Release the caller reference exactly once
+and stop using that pointer. The supplied Io must outlive the borrowers.
+`presentationStoreReferences` lets an owner retire idle entries (one caller
+reference, no Instance borrowers). There is no implicit global registry.
+
+Only full text projection takes the native-face claim. Runtime contention returns
+`PresentationBusy`; service PTY/VT normally and schedule a bounded retry.
+Cursor-only updates and immutable frame transfer do not take this claim, and no
+claim survives publication preparation. Synchronous construction/reconfiguration
+may wait for a bounded projection. A held frame or hidden observer cannot hold
+shared text. The owner admits at most 1023 Instance borrowers.
+
+Advanced Render embedders use `render.terminal.initStore` plus `initWithStore`
+and serialize the borrowed native faces themselves. The convenience constructor
+is deliberately named `initPrivate`. `resetStore` forgets shared shaping;
+`resetCaches` resets only the caller's terminal atlas. Each pressure retry is
+bounded independently, and one atlas does not flush the shared shape store.
+
 ## Framing
 
 Every message is one 12-byte header followed immediately by `payload_len`

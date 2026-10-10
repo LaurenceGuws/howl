@@ -518,3 +518,49 @@ Raw mapping cuts, recipes, artifact identities, lifecycle checks and cleanup
 receipts are in the active Home workstream at
 zig-app-20261008/night-20261010/live-memory-20261010. The final private GUI shows
 all four styles and CJK without an error; all owned processes/environment retired.
+
+
+### Shared text ownership, 2026-10-10
+
+The app now shares one native font family and Render Store per matching recipe
+and physical pixel size. Instance requires an explicit private/shared choice;
+[its embedding contract](../../howl-instance/README.md#presented-text-ownership)
+defines reference lifetime, serialization and busy retries. Atlases and immutable
+frames remain terminal-local. Shape and atlas pressure reset their own storage;
+bounds are unchanged.
+
+Three baseline/shared pairs used the same four-style Latin/CJK fixture and
+two tab cycles. Cold first processes remain recorded. The warm fresh-tab costs
+were:
+
+| Root app metric | Baseline 172d212 Safe, MiB/tab | Shared Safe, MiB/tab |
+| --- | --- | --- |
+| RSS | 32.3–36.1 | 12.7–14.8 |
+| PSS | 18.3–21.7 | 12.7–14.8 |
+| Anonymous | 15.6–17.3 | 9.1–14.8 |
+| Font mapping RSS, included above | 15.4 | 0 |
+
+One font family remained mapped across matching tabs. The same baseline ELF
+showed a smaller font residency step than the preceding 79–84 MiB capture; these
+cohorts are not interchangeable. A zero tick change in each ~3.75-second quiet
+cut is limited by CPU accounting resolution. Final screenshots decoded
+pixel-identical. Native retention and long-session behavior remain open.
+
+Three baseline/shared pairs per TUI Zoo case used 378×74, 240 Hz and 8 seconds.
+All 18 producers emitted 1920 frames with zero skips. Sampled root app CPU,
+excluding producer and shell, stayed close:
+
+| Case | Baseline one-core CPU | Shared one-core CPU |
+| --- | --- | --- |
+| Cursor 16 | 1.875–2.125% | 2.000–2.125% |
+| Background cells 16 | 15.750–16.125% | 16.000–16.375% |
+| Background cells 4096 | 56.500–58.750% | 56.375–58.375% |
+
+A final retry correction clears stale contention on each canonical service turn,
+so a hidden pane or synchronized hold cannot retain a 1 ms retry. Separate native
+controls qualify that artifact. The unstripped Safe ELF grew about 73 KiB.
+These are process memory/CPU and producer-progress controls, not displayed FPS,
+latency, leak freedom or fastest-overall proof. The old 1.6 GiB file-PSS trigger
+remains unexplained. Exact source/artifact/config identities, cut-level data,
+proof gates and retirement receipts are in the Home workstream at
+zig-app-20261008/night-20261010/shared-text-20261010.

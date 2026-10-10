@@ -180,6 +180,7 @@ const State = struct {
     new_frame: std.atomic.Value(bool) = .init(false),
     gate: policy.Gate = .{},
     // Block only the content/viewport which failed; canonical service remains independent.
+    store_busy: bool = false,
     blocked_presentation: ?struct { content_sequence: u64, history_offset: u32 } = null,
     history: policy.History = .{},
     selected: ?selection.Range = null,
@@ -605,6 +606,8 @@ const State = struct {
         @memcpy(self.status.title[0..self.status.title_len], title[0..self.status.title_len]);
         self.mutex.unlock(self.io);
         if (lifecycle_changed or title_changed or search_changed) self.notify();
+        // Only this turn's failed text claim earns a retry deadline.
+        self.store_busy = false;
         var published = false;
         const blocked = if (self.blocked_presentation) |failed|
             failed.content_sequence == observation.contentSequence() and failed.history_offset == self.history.offset
@@ -618,7 +621,8 @@ const State = struct {
             defer self.frame_mutex.unlock(self.io);
             std.debug.assert(self.credit.swap(false, .acq_rel));
             instance.publishRenderAt(self.value, self.history.offset) catch |failure| {
-                if (failure == error.PublicationBusy) {
+                if (failure == error.PublicationBusy or failure == error.PresentationBusy) {
+                    self.store_busy = failure == error.PresentationBusy;
                     self.credit.store(true, .release);
                     return result;
                 }
@@ -675,6 +679,7 @@ const State = struct {
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.gate.waitMs(now),
+                if (self.store_busy and self.visible.load(.acquire) and self.credit.load(.acquire)) @as(i32, 1) else null,
                 if (result.animation_wait_ms) |ms| @intCast(@min(ms, std.math.maxInt(i32))) else null,
             }) |deadline| {
                 if (deadline) |ms| timeout = if (timeout < 0) ms else @min(timeout, ms);
@@ -747,7 +752,7 @@ fn taskBytes(task: Task) []const u8 {
 
 fn testPresentation() instance.PresentationConfig {
     return .{
-        .fonts = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } },
+        .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
         .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
@@ -877,7 +882,7 @@ test "failed font construction frees the unobservable terminal owner" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     var presentation = testPresentation();
-    presentation.fonts.regular = .{ .path = .{ .primary = "/definitely-missing-howl-font.ttf", .size = .{ .pixels = 15 } } };
+    presentation.text.private.regular = .{ .path = .{ .primary = "/definitely-missing-howl-font.ttf", .size = .{ .pixels = 15 } } };
     const owner = Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
         .shell = "/bin/sh",
         .rows = 4,
@@ -1007,14 +1012,14 @@ test "font configuration rolls back failure and replaces geometry while an older
     const old_generation = held.value.presentation_generation;
     const old_size = held.value.cell_size;
     var invalid = testPresentation();
-    invalid.fonts.regular = .{ .path = .{ .primary = "/missing-howl-live-font.ttf", .size = .{ .pixels = 18 } } };
+    invalid.text.private.regular = .{ .path = .{ .primary = "/missing-howl-live-font.ttf", .size = .{ .pixels = 18 } } };
     try std.testing.expectError(error.FontOpen, owner.reconfigure(invalid, null));
     try std.testing.expectEqual(old_generation, held.value.presentation_generation);
     try std.testing.expectEqualDeep(old_size, held.value.cell_size);
     try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
     try waitTitle(owner, "CONTINUED");
     var larger = testPresentation();
-    larger.fonts.regular.path.size = .{ .pixels = 18 };
+    larger.text.private.regular.path.size = .{ .pixels = 18 };
     const surface: instance.render.terminal.Size = .{ .width = 200, .height = 150 };
     const geometry = try owner.reconfigure(larger, surface);
     try std.testing.expectEqual(surface.width / geometry.cell_size.width, geometry.columns);
@@ -1509,4 +1514,71 @@ test "owned file and text drops preserve exact canonical bracketed paste after c
     try waitTitle(owner, "EXACT");
     try std.testing.expect(owner.snapshot().failure == null);
     try std.testing.expect(!owner.state().new_frame.load(.acquire));
+}
+
+test "shared text serves concurrent workers while one observer stalls and native ownership retires" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var config = testPresentation();
+    // Bound each render below atlas capacity, but pressure the shared shape store.
+    config.shape_cache.entry_capacity = 4;
+    config.shape_cache.scalar_capacity = 16;
+    config.shape_cache.glyph_capacity = 16;
+    const shared = try instance.initPresentationStore(a, threaded.io(), config.text.private, .{
+        .shape_cache = config.shape_cache,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+    });
+    var caller_live = true;
+    defer if (caller_live) instance.releasePresentationStore(shared);
+    config.text = .{ .shared = shared };
+    var owners: [2]*Terminal = undefined;
+    var count: usize = 0;
+    defer for (owners[0..count]) |owner| owner.destroy();
+    for (&owners) |*slot| {
+        const command_text = try std.fmt.allocPrint(a, "printf '\\033]0;READY\\007'; read line; i=0; while [ $i -lt 200 ]; do printf '\\033[2J\\033[H\\033[1m{c}\\033[0m{c}\\033[3m{c}\\033[0m{c}'; i=$((i+1)); done; printf '\\033[2J\\033[HOK\\033]0;DONE\\007'; sleep 30", .{ @as(u8, 'A') + @as(u8, @intCast(count * 4)), @as(u8, 'B') + @as(u8, @intCast(count * 4)), @as(u8, 'C') + @as(u8, @intCast(count * 4)), @as(u8, 'D') + @as(u8, @intCast(count * 4)) });
+        defer a.free(command_text);
+        slot.* = try Terminal.create(a, threaded.io(), std.testing.environ, .{
+            .shell = "/bin/sh",
+            .command = command_text,
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 8,
+        }, config, c.SDL_RegisterEvents(1), true);
+        count += 1;
+    }
+    for (owners) |owner| try waitTitle(owner, "READY");
+    try waitFrame(owners[0]);
+    var held = instance.acquirePublishedFrame(owners[0].state().exchange) orelse return error.MissingFrame;
+    defer held.abandon();
+    const before = held.value.terminal_revision;
+    const command = held.value.commands[0];
+    instance.releasePresentationStore(shared);
+    caller_live = false;
+    for (owners) |owner| try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+    var attempts: u16 = 0;
+    var accepted_revision: ?u64 = null;
+    while (attempts < 5000) : (attempts += 1) {
+        const live = owners[1];
+        if (instance.acquirePublishedFrame(live.state().exchange)) |ready| {
+            var lease = ready;
+            accepted_revision = lease.value.terminal_revision;
+            try lease.release(&.{});
+            live.requestFrame();
+        }
+        const status = live.snapshot();
+        if (std.mem.eql(u8, status.title[0..status.title_len], "DONE") and accepted_revision == status.revision) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
+    try waitTitle(owners[0], "DONE");
+    for (owners) |owner| {
+        try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
+        try std.testing.expectEqual(@as(?PresentationFailure, null), owner.snapshot().presentation_failure);
+    }
+    try std.testing.expectEqual(before, held.value.terminal_revision);
+    try std.testing.expectEqualDeep(command, held.value.commands[0]);
 }

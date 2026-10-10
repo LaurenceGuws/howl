@@ -34,11 +34,11 @@ pub fn fontPixels(scale_120: u32) error{InvalidDisplayScale}!u16 {
 /// Builds the complete bounded configuration for one Instance-owned Renderer.
 pub fn config(font: FontPaths, pixels: u16) instance.PresentationConfig {
     return .{
-        .fonts = .{ .regular = .{ .path = .{
+        .text = .{ .private = .{ .regular = .{ .path = .{
             .primary = font.primary,
             .fallbacks = font.fallbacks,
             .size = .{ .pixels = pixels },
-        } } },
+        } } } },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },

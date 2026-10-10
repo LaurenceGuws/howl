@@ -92,7 +92,7 @@ pub const Error = renderer.Error;
 pub const validateResidencies = renderer.validateResidencies;
 
 /// Allocates one bounded terminal Renderer and private Store.
-pub const init = renderer.init;
+pub const initPrivate = renderer.initPrivate;
 /// Allocates one reusable process render Store.
 pub const initStore = renderer.initStore;
 /// Releases one process render Store.
@@ -107,7 +107,7 @@ pub const resetStore = renderer.resetStore;
 pub const initWithStore = renderer.initWithStore;
 /// Releases one terminal Renderer.
 pub const deinit = renderer.deinit;
-/// Explicitly forgets terminal-local shaping/raster caches.
+/// Forgets the terminal atlas; shared shaping remains intact.
 pub const resetCaches = renderer.resetCaches;
 /// Reports current Renderer usage and resource counters.
 pub const usage = renderer.usage;

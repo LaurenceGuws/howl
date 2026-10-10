@@ -158,7 +158,11 @@ experimental:
     C ABI or live canonical owner crosses the GUI. Bounded tabs/panes/layout,
     mappings/palette, owned semantic input, history/selection/copy/Find/scrollbar,
     desktop consequences/hyperlinks/drops and transactional fonts/scale/settings
-    share that singular path. Application allocations use the SMP allocator.
+    share that singular path. Matching panes share a retained PresentationStore
+    per immutable font recipe and physical pixel size; native faces and shape
+    scratch serialize only during text projection, while atlases and immutable
+    frames remain local. Idle text owners retire. Busy text defers projection,
+    never canonical service. Application allocations use the SMP allocator.
     One built-in Local recipe plus six custom shell/command/cwd/environment
     recipes use strict bounded app.json, independent of Odin config. Seven
     settings pages and the installed-font chooser retain atomic save/rollback.

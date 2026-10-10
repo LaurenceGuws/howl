@@ -1,3 +1,5 @@
+//! Owns the desktop font recipe and shared native text owners per physical size.
+
 const std = @import("std");
 const c = @import("desktop");
 const instance = @import("howl_instance");
@@ -6,6 +8,8 @@ const instance = @import("howl_instance");
 pub const Fonts = struct {
     allocator: std.mem.Allocator,
     paths: [6][]const u8 = @splat(""),
+    // At most 8 tabs × 8 panes, plus one staged replacement size.
+    stores: [65]?struct { pixels: u16, owner: *instance.PresentationStore } = @splat(null),
 
     /// Resolves saved paths, then environment paths, then exact installed family/style matches; required faces fail explicitly.
     pub fn discover(allocator: std.mem.Allocator, env: *const std.process.Environ.Map, saved: [6][]const u8) !Fonts {
@@ -39,22 +43,47 @@ pub const Fonts = struct {
 
     /// Frees the six owned path strings after all borrowers have retired.
     pub fn deinit(self: *Fonts) void {
+        for (self.stores) |slot| if (slot) |store| instance.releasePresentationStore(store.owner);
         for (self.paths) |path| if (path.len != 0) self.allocator.free(path);
         self.* = undefined;
     }
 
-    /// Borrows this live recipe for synchronous canonical presentation construction.
-    pub fn config(self: *const Fonts, pixels: u16) instance.PresentationConfig {
+    /// Releases idle native owners. Live Instances retain their own references.
+    pub fn collect(self: *Fonts) void {
+        for (&self.stores) |*slot| if (slot.*) |store| {
+            if (instance.presentationStoreReferences(store.owner) != 1) continue;
+            instance.releasePresentationStore(store.owner);
+            slot.* = null;
+        };
+    }
+
+    /// Borrows a matching text owner for the immediate construction/reconfigure
+    /// call. Io must outlive the Instances; do not retain this config across collect.
+    pub fn config(self: *Fonts, io: std.Io, pixels: u16) (instance.PresentationStoreInitError || error{PresentationStoreLimit})!instance.PresentationConfig {
+        const shape_cache: instance.render.terminal.ShapeCacheConfig = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 };
+        for (self.stores) |slot| if (slot) |store| {
+            if (store.pixels == pixels) return presentation(store.owner, shape_cache);
+        };
+        self.collect();
         const fallbacks = self.paths[4..6];
-        return .{
-            .fonts = .{
+        for (&self.stores) |*slot| if (slot.* == null) {
+            const owner = try instance.initPresentationStore(self.allocator, io, .{
                 .regular = .{ .path = .{ .primary = self.paths[0], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .italic = if (self.paths[1].len == 0) null else .{ .path = .{ .primary = self.paths[1], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .bold = if (self.paths[2].len == 0) null else .{ .path = .{ .primary = self.paths[2], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
                 .bold_italic = if (self.paths[3].len == 0) null else .{ .path = .{ .primary = self.paths[3], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
-            },
+            }, .{ .shape_cache = shape_cache, .shaped_capacity = 32, .raster_bytes = 512 * 512 });
+            slot.* = .{ .pixels = pixels, .owner = owner };
+            return presentation(owner, shape_cache);
+        };
+        return error.PresentationStoreLimit;
+    }
+
+    fn presentation(owner: *instance.PresentationStore, shape_cache: instance.render.terminal.ShapeCacheConfig) instance.PresentationConfig {
+        return .{
+            .text = .{ .shared = owner },
             .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
-            .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+            .shape_cache = shape_cache,
             .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
             .shaped_capacity = 32,
             .raster_bytes = 512 * 512,

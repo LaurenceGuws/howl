@@ -103,7 +103,7 @@ pub const InitError = direct.InitError;
 pub const Error = direct.Error;
 
 /// Allocates one bounded terminal Renderer and private Store.
-pub const init = direct.init;
+pub const initPrivate = direct.initPrivate;
 /// Allocates one reusable process render Store.
 pub const initStore = direct.initStore;
 /// Releases one process render Store.
@@ -118,7 +118,7 @@ pub const resetStore = direct.resetStore;
 pub const initWithStore = direct.initWithStore;
 /// Releases one terminal Renderer.
 pub const deinit = direct.deinit;
-/// Explicitly forgets terminal-local shaping/raster caches.
+/// Forgets the terminal atlas; shared shaping remains intact.
 pub const resetCaches = direct.resetCaches;
 /// Reports current Renderer usage and resource counters.
 pub const usage = direct.usage;
