@@ -702,3 +702,59 @@ from the Fast timing cohort; binary lengths are not a memory-saving measure.
 Raw identity-bound process folds, profiles/PC maps, proof logs and retirement
 receipts live at light-cells-20261010 under the current Home workstream.
 The static race overview adds this cohort without replacing the parent matrix.
+
+## Native row-reuse prototype rejected, 2026-10-10
+
+Instance compared existing non-consuming VT row generations and supplied bounded
+revision-relative repairs to the renderer. Complete immutable publications and
+atlas/shape limits stayed unchanged. Render/Instance and app Fast/Safe/pixel
+proofs passed. The native full-command oracle demonstrated an actual row patch
+and covered cursor, palette/DEC, history, alternate screen, resize, images and
+failure recovery.
+
+Fourteen ordinary fresh-process 20-second controls use the same producer ELF as
+the preceding cursor-index cohort, private KWin 1920x1080/scale1, common 378x74
+payload and 240 emitted Hz. There are two baseline and two candidate runs each
+for light/dense/rich in forward/reverse order, plus two Foot light references.
+CPU is percent of one core excluding producer and shell.
+
+| Canary (n=2 per variant) | Accepted 538f7b5 Fast | Rejected prototype |
+| --- | ---: | ---: |
+| Light cells | 14.99–15.19% | 16.35–16.40% |
+| Dense cells | 33.16–33.47% | 34.23–35.04% |
+| Rich cells | 53.57–54.79% | 56.30–57.37% |
+
+Mean CPU rises 8.56% light, 3.95% dense and 4.91% rich. Fresh Foot light CPU is
+3.44–3.65%. All emit 4800 frames/no skips except one rich candidate, 4799/one skip.
+Emitted progress is not displayed cadence or latency. Terminal peak PSS remains
+separate: baseline light 149–206MiB versus candidate 150–152MiB, dense 150 versus
+153–154MiB, rich 158 versus 160–165MiB. The baseline light anonymous/PSS outlier
+prevents a memory-saving claim. Howl PTY 384x79, Foot 384x77; payload extents match.
+
+A separate 2ms/30-second native clock profile records 9.60% exclusive sampled CPU
+in incremental eligibility scans, 3.39% inclusive in remembering command copies,
+and 12.18% exclusive in final frame projection. Glyph placement and shape/atlas
+resolution remain hot. These samples include startup/shutdown and do not
+completely explain the ordinary CPU regression.
+
+A bounded scalar diagnostic captured 44 repaired rows of 79: the existing
+max(1,rows/3) policy admits only 26 and chooses a full baseline. Sparse producer
+updates can accumulate between observations and touch many rows. This prototype
+pays full-view eligibility and command-cache copies while full rebuilds remain.
+One captured cut does not quantify total fallback frequency or prove row reuse
+cannot improve. The extra cache requests 114689 Input entries (the maintained full
+command envelope), not the older 32768-entry reservation; requested capacity and
+touched/resident memory are distinct.
+
+Decision: restore the exact accepted implementation. Before adding native reuse,
+measure coalesced changed sets and the break-even cost of retained rows versus
+cell/run paint spans. Row identities can narrow discovery; unchanged work should
+avoid full eligibility walks and whole-cache reconstruction. Complete immutable
+frames and exact clipping/resource/failure proofs remain requirements.
+
+Baseline Fast c595648fea7fdd7a8822f9f51ddfbc7724493e5a463ddf97c487dcb9f799ccf4.
+Rejected Fast 80d3890e8ed5962dcdb8e371ea554d5ee2843cadd5be3ed4720d0583c49865c9.
+Producer 87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557, source 3dbd021 Fast/stage2_llvm.
+Raw folds, rejected/instrumented patches, profile, scalar cut, correctness logs
+and retirement receipts live at row-reuse-20261010 under the current Home
+workstream. The qualified launch binary is untouched.
