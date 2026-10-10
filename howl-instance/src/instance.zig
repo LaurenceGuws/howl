@@ -629,10 +629,7 @@ const PresentationState = struct {
             .command_capacity = config.command_capacity,
             .command_limit = command_limit,
         };
-        state.refresh(observation, 0) catch |failure| {
-            allocator.destroy(state);
-            return failure;
-        };
+        try state.refresh(observation, 0);
         return state;
     }
 
@@ -2127,6 +2124,17 @@ test "presentation reconfigure invalidates late old-generation residency" {
     defer deinit(instance);
 
     try serviceUntilContains(instance, "A");
+    // A refresh failure after allocation must unwind the staged owner only once.
+    var staged_fonts = try OwnedFonts.init(std.testing.allocator, base_config.fonts);
+    defer staged_fonts.deinit();
+    var limited = base_config;
+    limited.command_capacity = 1;
+    try std.testing.expectError(error.CommandLimit, PresentationState.initWithFonts(
+        std.testing.allocator,
+        &staged_fonts,
+        limited,
+        terminal(instance),
+    ));
     try publishRender(instance);
     const exchange = try renderExchange(instance);
     var old = acquirePublishedFrame(exchange) orelse return error.MissingPublication;
