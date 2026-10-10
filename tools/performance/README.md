@@ -564,3 +564,80 @@ latency, leak freedom or fastest-overall proof. The old 1.6 GiB file-PSS trigger
 remains unexplained. Exact source/artifact/config identities, cut-level data,
 proof gates and retirement receipts are in the Home workstream at
 zig-app-20261008/night-20261010/shared-text-20261010.
+
+## Shared-owner and submission-boundary qualification, 2026-10-10
+
+At parent `2acbde1`, eight fresh native one/two/four-pane controls ran 19
+producers through 39,600 Unicode/background frames at 60/240 Hz with zero
+skipped slots. The final four-pane fixture exercised a 384-glyph union against
+the shared 256-entry glyph store, with each local atlas within its own bound.
+Reviewed final captures contained no failure panel. Three one→two→four→two→one
+pane cycles and repeated 18→19→18 font transitions preserved equal-recipe
+mapping reuse and retired the second size's mapping. Nineteen quiet cuts
+recorded zero root CPU ticks at sampler resolution. One-pane anonymous storage
+retained about 10 MiB after three cycles; this is not a leak-free claim.
+
+The current reference field is a separate 72-run cohort: nine cases, two fresh
+20-second runs each for Howl, Foot 1.28.0, Kitty 0.49.2 and Alacritty 0.17.0,
+forward then reverse order. All use a private 1920×1080 KWin output at scale 1,
+the common 378×74 payload and verified native Fast producer source `3dbd021`.
+Howl is Fast with LLVM codegen/selfhost linking on the pinned Zig compiler.
+Measured PTYs are Howl 384×79, Foot/Kitty 384×77 and Alacritty 384×80.
+
+Stable `(PID,start_ticks)` intervals separate terminal components, including
+Kitty helpers, from TUI Zoo and shell/marshal costs. The HTML shows terminal
+CPU, sampled peak PSS/anonymous memory and producer progress separately.
+Root-only and complete-tree folds remain available. Howl leads Foot/Kitty rich
+and Rain CPU; Foot still leads RAM and light cells, and Alacritty leads dense
+and rich CPU. Foot emits the most saturation frames with more CPU. These are
+observed ranges, not confidence intervals; no fastest-overall claim follows.
+
+Both sparse dose-16 Howl reference runs reproduce roughly 1.6 GiB peak PSS,
+with anonymous storage near 50–62 MiB. Raw `smaps` locates most growth in
+`/dev/nvidiactl`: many distinct mapping sizes above 4 MiB appear as the text
+grid fills. This identifies the resident mapping owner, not requested GPU
+bytes or NVIDIA alone as the faulty component.
+
+SDL 3.4.18's OpenGL queue merges adjacent same-texture geometry commands.
+Its expanded textured vertices cost 192 bytes/quad, so a nearly full grid
+passes 4 MiB despite our 2048-quad scratch bound. Local SDL source
+`7bbd9d5c2c6925e5824de4288a1ed0bed0c0e5f7` exposes that handoff.
+On installed NVIDIA 615.71.09, submitting each existing bounded batch with
+`SDL_FlushRenderer` prevents the growing merged upload. It adds no renderer,
+cache, allocation or GPU-completion wait.
+
+Twenty interleaved ordinary controls qualify the small change against the
+unchanged parent ELF. CPU is percent of one core; PSS is sampled peak MiB;
+FPS means emitted native frames/s.
+
+| Canary (n per variant) | Parent CPU / PSS / FPS | Bounded submission CPU / PSS / FPS |
+| --- | ---: | ---: |
+| small (3) | 18.11–18.92% / 1565.4–1634.4 / 239.999 | 16.15% / 92.9–96.0 / 239.999 |
+| dense (2) | 35.59–35.90% / 150.1–158.3 / 239.999 | 35.29–36.30% / 96.0–96.3 / 239.999 |
+| rich (2) | 58.73–60.00% / 109.7–118.0 / 239.999 | 55.14–55.64% / 97.8–106.4 / 239.999 |
+| cursor240 (1) | 1.87% / 98.4 / 239.999 | 1.97% / 88.5 / 239.999 |
+| unbracketed (1) | 36.00% / 155.5 / 239.999 | 33.62% / 99.3 / 239.999 |
+| saturation (1) | 104.30% / 122.8 / 115.388 | 103.13% / 96.0 / 117.474 |
+
+Light cells have three runs per variant, dense/rich two, the remaining cases
+one. Preserve the cursor pair's small CPU increase explicitly; that single
+pair cannot establish a regression or improvement. The sparse PSS reduction
+is repeatable across all three controls. This is a submission-boundary fix,
+not a new four-horse ranking: reference tables keep the parent artifact.
+
+Final pixels are identical for fixed native ASCII/oracle frames and a full
+mixed-style grid, with explicit OpenGL and ordinary SDL renderer selection.
+Oracle hashes agree; the renderer name is retained by a temporary external
+interposer. Final-frame parity does not prove displayed cadence or latency.
+The final ReleaseSafe dogfood artifact also matches both Fast fixture images
+exactly and passed app/root proofs, both audits, formatting and diff checks.
+Safe ELF: 14,040,993 bytes; matched Fast ELF: 14,687,401 bytes.
+No resident-RAM or cross-build binary-size saving is inferred from these lengths.
+A fresh matched btop race and end-to-end latency/display measurements remain
+open. Captain's running process and settings were preserved.
+
+Exact artifact hashes, stable-identity folds, mapping cuts, native images,
+gate logs and zero-process/zero-socket private-environment retirement are in
+`zig-app-20261008/night-20261010/shared-race-20261010` under the current Home
+workstream. The static `race.html` retains separate parent/reference and
+submission A/B cohorts. Temporary probes are retired after qualification.

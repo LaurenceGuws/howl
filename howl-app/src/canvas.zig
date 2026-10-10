@@ -32,8 +32,12 @@ pub const Geometry = struct {
 
     fn flush(self: *Geometry, renderer: *c.SDL_Renderer) !void {
         if (self.count == 0) return;
+        // SDL 3.4.18 merges adjacent geometry calls despite our scratch bound.
+        // NVIDIA 615.71.09 retained growing client-array uploads above 4 MiB.
+        // Submit each bounded batch before SDL can merge it into a whole grid.
         if (!c.SDL_SetRenderClipRect(renderer, &self.clip) or
-            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &quad_indices, @intCast(self.count * 6)))
+            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &quad_indices, @intCast(self.count * 6)) or
+            !c.SDL_FlushRenderer(renderer))
             return error.SDLGeometry;
         self.count = 0;
     }

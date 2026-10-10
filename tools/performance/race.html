@@ -1,307 +1,100 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>Howl · The race</title>
-<style>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Howl · The race</title><style>
 :root{color-scheme:dark;--bg:#111418;--panel:#191e24;--line:#303842;--text:#e4e8ed;--muted:#a8b1bd;--orange:#fe8c01}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,sans-serif}
 main{max-width:1160px;margin:auto;padding:36px 28px 64px}a{color:var(--orange);text-underline-offset:3px}nav{display:flex;gap:20px;flex-wrap:wrap;margin:22px 0}
 h1{font-size:clamp(30px,5vw,48px);line-height:1.1;letter-spacing:-1.2px;margin:8px 0 16px}h2{font-size:23px;margin:0 0 8px}h3{font-size:17px;margin:0 0 8px}p{margin:8px 0 14px}
 .kicker{color:var(--orange);font:12px/1.5 ui-monospace,monospace;letter-spacing:1.2px;text-transform:uppercase}.lede{max-width:800px;color:var(--muted);font-size:17px}
-.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:24px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px}.card p{color:var(--muted);margin-bottom:0}.number{font-size:25px;font-weight:650}
-section{scroll-margin-top:20px;margin-top:36px}.context{color:var(--muted);max-width:1000px}.tag{font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:4px 7px;display:inline-block;margin:0 8px 10px 0}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:24px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px}.card p{color:var(--muted);margin-bottom:0}
+section{scroll-margin-top:20px;margin-top:36px}.context{color:var(--muted);max-width:1000px}
 .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;min-width:700px;text-align:left}
 th,td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top}thead{background:#20262d}thead th{font-size:14px}tbody tr:last-child>*{border-bottom:0}tbody th{width:29%;font-weight:550}
-small{display:block;color:var(--muted);font-weight:400;font-size:12px;line-height:1.45;margin-top:5px}.bar{display:block;position:relative;isolation:isolate;font-size:16px;font-weight:600;padding:0 0 8px}
-.bar:after{content:"";position:absolute;z-index:-1;bottom:0;left:0;width:var(--w);height:3px;border-radius:2px;background:currentColor;opacity:.8}
-.howl{color:#fe8c01}.foot{color:#7cceab}.kitty{color:#c6a4ef}.alacritty{color:#87baf3}.unknown{color:var(--muted);font-size:13px}
+small{display:block;color:var(--muted);font-weight:400;font-size:12px;line-height:1.45;margin-top:5px}
+
+.howl{color:#fe8c01}.foot{color:#7cceab}.kitty{color:#c6a4ef}.alacritty{color:#87baf3}
 .note{border-left:3px solid var(--orange);padding:8px 16px;background:var(--panel);color:var(--muted);margin:16px 0}details{border:1px solid var(--line);border-radius:8px;margin-top:14px;padding:14px 18px}summary{cursor:pointer;font-weight:600}
 ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}.facts .card{padding:16px}footer{margin-top:32px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}code{font-size:.92em;overflow-wrap:anywhere}
-@media(max-width:720px){main{padding:24px 16px 40px}.cards,.facts{grid-template-columns:1fr}.number{font-size:23px}th,td{padding:12px}nav{gap:14px}.scroll table{min-width:640px}}
+@media(max-width:720px){main{padding:24px 16px 40px}.cards,.facts{grid-template-columns:1fr}th,td{padding:12px}nav{gap:14px}.scroll table{min-width:640px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-@media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.unknown{color:#444}.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
-</style>
-</head>
-<body><main>
-<header>
-<div class="kicker">Howl / race overview / snapshot 10 October 2026</div>
-<h1>Where the horses stand.</h1>
-<p class="lede">Cursor, rich cells, bulk output, memory. Separate races with separate costs. This is a qualified snapshot, refreshed with accepted evidence.</p>
-<nav aria-label="Race overview"><a href="#cursor">Cursor</a><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Producer progress</a><a href="#coverage">Other races</a><a href="#evidence">Evidence</a></nav>
+@media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
+</style></head><body><main>
+<header><div class="kicker">Howl · qualified controls · 10 October 2026</div><h1>Where the horses stand.</h1>
+<p class="lede">A fresh four-horse field, a shared-text stress test, and a bounded SDL submission fix. CPU, memory and producer progress remain separate. There is no single overall winner.</p>
+<nav aria-label="Race overview"><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
 <div class="cards">
-<div class="card"><div class="kicker">Latest matched cursor race</div><div class="number howl">2.13–2.28% CPU</div><p>Howl overlaps Kitty. Foot still leads. Fast build <code>fbab07e</code>, 60 Hz.</p></div>
-<div class="card"><div class="kicker">Full matrix · historical</div><div class="number foot">Foot leads memory</div><p>Smallest sampled anonymous footprint across all seven tracks. Howl <code>ec8a7f4</code>, before the cursor rewrite.</p></div>
-<div class="card"><div class="kicker">Accepted app · 172d212</div><div class="number">Recovery qualified</div><p>Fixed-work Safe controls pass. A full four-horse rerun of this build is still due.</p></div>
+<div class="card"><h3>CPU</h3><p>Howl's parent beats Foot and Kitty on rich cells and Rain. Foot leads light cells and cursor movement; Alacritty leads dense and rich CPU.</p></div>
+<div class="card"><h3>Memory</h3><p>Foot leads this field. The parent reproduces a 1.5–1.6 GiB sparse-cell PSS fault in NVIDIA device mappings; the qualified batch boundary keeps that control near 93–96 MiB.</p></div>
+<div class="card"><h3>Pressure</h3><p>At dose 65,536, Foot emits the most frames, using more CPU. Howl emits more than Kitty and Alacritty. This measures stdout backpressure, not displayed FPS.</p></div>
 </div>
-</header>
-<section id="cursor">
-<h2>Cursor movement over retained text</h2>
-<span class="tag">Latest matched references</span><span class="tag">Howl fbab07e · ReleaseFast</span><span class="tag">60 Hz · 20 seconds/run</span>
-<p class="context">TUI Zoo primes the viewport once, then emits cursor moves. Warm text stays put. CPU below belongs to the terminal, excluding the producer and shell. Lower is better.</p>
-<div class="scroll"><table><thead>
-<tr><th scope="col">Race</th>
-<th scope="col" class="howl">Howl app</th>
-<th scope="col" class="foot">Foot</th>
-<th scope="col" class="kitty">Kitty</th>
-<th scope="col" class="alacritty">Alacritty</th>
-</tr>
-</thead><tbody>
-<tr><th scope="row">Cursor 60 Hz<small>Retained ASCII · all 1,200 producer slots complete</small></th>
-<td class="howl"><span class="bar" style="--w:75.95%">2.13–2.28<small>% of one core · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:42.20%">1.27<small>% of one core · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:74.26%">1.97–2.23<small>% of one core · n=2</small></span></td>
-<td class="unknown">Not measured</td>
-</tr>
+<p class="note">The four-horse tables use parent <code>2acbde1</code> in ReleaseFast. The new submission-boundary build is a separate A/B cohort below. Its values are never substituted into the reference matrix.</p>
+<section id="cpu"><h2>Terminal CPU</h2>
+<p class="context">Two fresh 20-second runs per horse and case, forward then reverse order. Percent of one CPU core; values may exceed 100%. Terminal components include Kitty helpers and exclude the native producer and shell/marshal. These are observed ranges, not confidence intervals.</p>
+<div class="scroll"><table><thead><tr><th>Canary</th><th>Howl · parent</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
+<tr><th>Cursor · 60 Hz<small>Retained rich text, dose 16</small></th><td><span class="howl">1.77–1.97%</span></td><td><span class="foot">1.42–1.47%</span></td><td><span class="kitty">1.87–2.00%</span></td><td><span class="alacritty">11.34–11.44%</span></td></tr>
+<tr><th>Cursor · 240 Hz<small>Same retained-text path</small></th><td><span class="howl">1.87–1.92%</span></td><td><span class="foot">1.72–1.77%</span></td><td><span class="kitty">5.37–5.52%</span></td><td><span class="alacritty">12.25–13.11%</span></td></tr>
+<tr><th>Light cells<small>16 alnum cells / emitted frame</small></th><td><span class="howl">18.55–18.92%</span></td><td><span class="foot">3.49–3.54%</span></td><td><span class="kitty">27.14%</span></td><td><span class="alacritty">10.89–11.44%</span></td></tr>
+<tr><th>Dense cells<small>4096 alnum cells</small></th><td><span class="howl">37.37–38.28%</span></td><td><span class="foot">32.56–34.48%</span></td><td><span class="kitty">102.38–102.63%</span></td><td><span class="alacritty">28.61–29.47%</span></td></tr>
+<tr><th>Denser cells<small>8192 alnum cells</small></th><td><span class="howl">50.48–51.59%</span></td><td><span class="foot">52.20–52.50%</span></td><td><span class="kitty">106.63–107.35%</span></td><td><span class="alacritty">42.43–42.99%</span></td></tr>
+<tr><th>Rich cells<small>4096 Unicode cells + backgrounds</small></th><td><span class="howl">59.24–62.48%</span></td><td><span class="foot">90.83–95.44%</span></td><td><span class="kitty">77.16–78.03%</span></td><td><span class="alacritty">40.55–42.79%</span></td></tr>
+<tr><th>Unbracketed cells<small>4096 alnum, synchronized output off</small></th><td><span class="howl">38.02–38.28%</span></td><td><span class="foot">32.81–34.58%</span></td><td><span class="kitty">102.28–103.39%</span></td><td><span class="alacritty">28.51–28.66%</span></td></tr>
+<tr><th>Rain<small>Native diffed Rain canary</small></th><td><span class="howl">7.14–7.34%</span></td><td><span class="foot">15.90%</span></td><td><span class="kitty">18.23–18.53%</span></td><td><span class="alacritty">9.92–10.23%</span></td></tr>
+<tr><th>Saturation<small>65,536 alnum cells</small></th><td><span class="howl">103.69–104.35%</span></td><td><span class="foot">174.18–175.29%</span></td><td><span class="kitty">124.20–125.01%</span></td><td><span class="alacritty">96.91–96.96%</span></td></tr>
 </tbody></table></div>
-<p class="context">Alacritty was not rerun in this cohort. Latest accepted <code>172d212</code> is qualified separately in Safe; its costs are not substituted into this Fast comparison. <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-iterate-20261010/RESULT.md">Cursor report</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-iterate-20261010/FOLDED.json">Exact samples</a></p>
-</section>
-<section id="cpu">
-<h2>The broad field · terminal CPU</h2>
-<span class="tag">Historical matched matrix</span><span class="tag">Howl ec8a7f4 · ReleaseFast</span><span class="tag">Target 240 Hz · 44 trials</span>
-<p class="context">Same seven tracks, four horses. Lower CPU is better at equal completed work. The saturation row completes different amounts of work; judge it alongside producer progress.</p>
-<div class="scroll"><table><thead>
-<tr><th scope="col">Race</th>
-<th scope="col" class="howl">Howl app</th>
-<th scope="col" class="foot">Foot</th>
-<th scope="col" class="kitty">Kitty</th>
-<th scope="col" class="alacritty">Alacritty</th>
-</tr>
-</thead><tbody>
-<tr><th scope="row">Small edits<small>16 cells/slot · viewport gradually fills</small></th>
-<td class="howl"><span class="bar" style="--w:10.07%">18.08–18.13<small>% of one core · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:2.05%">3.65–3.70<small>% of one core · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:13.95%">25.06–25.11<small>% of one core · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:7.71%">13.27–13.87<small>% of one core · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Dense ASCII<small>4,096 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:18.65%">32.71–33.57<small>% of one core · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:17.52%">30.84–31.54<small>% of one core · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:57.22%">102.43–102.99<small>% of one core · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:15.67%">27.90–28.20<small>% of one core · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Denser ASCII<small>8,192 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:24.33%">43.44–43.80<small>% of one core · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:32.01%">56.96–57.62<small>% of one core · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:59.86%">107.19–107.75<small>% of one core · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:22.53%">40.10–40.56<small>% of one core · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Saturation<small>65,536 cells/slot · backpressure ceiling</small></th>
-<td class="howl"><span class="bar" style="--w:57.97%">103.90–104.35<small>% of one core · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:97.75%">174.73–175.95<small>% of one core · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:70.97%">125.57–127.75<small>% of one core · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:54.07%">96.40–97.32<small>% of one core · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Rich cells<small>Unicode + changing backgrounds · 4,096/slot</small></th>
-<td class="howl"><span class="bar" style="--w:30.66%">55.19<small>% of one core · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:52.35%">94.23<small>% of one core · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:41.63%">74.94<small>% of one core · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:21.07%">37.92<small>% of one core · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Unbracketed ASCII<small>4,096 cells/slot · no synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:18.54%">33.37<small>% of one core · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:17.36%">31.24<small>% of one core · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:57.97%">104.35<small>% of one core · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:15.53%">27.95<small>% of one core · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Rain<small>Animated TUI Zoo scene</small></th>
-<td class="howl"><span class="bar" style="--w:3.63%">6.53<small>% of one core · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:8.78%">15.80<small>% of one core · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:10.80%">19.44<small>% of one core · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:4.92%">8.86<small>% of one core · n=1</small></span></td>
-</tr>
+</section><section id="memory"><h2>Sampled peak memory</h2>
+<p class="context">Per-run sampled peaks in MiB, shown as the range across two runs. PSS charges shared pages proportionally and includes file/device residency; anonymous memory is a distinct measure. Terminal components include helpers. Root-only and complete-tree values remain in the raw folds.</p>
+<div class="scroll"><table><thead><tr><th>Canary</th><th>Howl · parent</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
+<tr><th>Cursor · 60 Hz<small>Retained rich text, dose 16</small></th><td><span class="howl">96.3–97.4 PSS</span><small>52.1–53.3 anonymous</small></td><td><span class="foot">26.1 PSS</span><small>13.5 anonymous</small></td><td><span class="kitty">126.5–130.9 PSS</span><small>79.5–81.5 anonymous</small></td><td><span class="alacritty">78.0–81.4 PSS</span><small>34.0–37.2 anonymous</small></td></tr>
+<tr><th>Cursor · 240 Hz<small>Same retained-text path</small></th><td><span class="howl">95.7–96.2 PSS</span><small>51.6–52.1 anonymous</small></td><td><span class="foot">26.1–29.7 PSS</span><small>13.5 anonymous</small></td><td><span class="kitty">129.7–132.6 PSS</span><small>81.4–83.2 anonymous</small></td><td><span class="alacritty">80.2 PSS</span><small>36.0 anonymous</small></td></tr>
+<tr><th>Light cells<small>16 alnum cells / emitted frame</small></th><td><span class="howl">1567.1–1583.0 PSS</span><small>50.6–62.2 anonymous</small></td><td><span class="foot">26.4–29.9 PSS</span><small>13.8 anonymous</small></td><td><span class="kitty">126.5–130.6 PSS</span><small>77.4–81.5 anonymous</small></td><td><span class="alacritty">79.1 PSS</span><small>35.2 anonymous</small></td></tr>
+<tr><th>Dense cells<small>4096 alnum cells</small></th><td><span class="howl">153.3–153.4 PSS</span><small>51.2 anonymous</small></td><td><span class="foot">27.9–29.9 PSS</span><small>15.3 anonymous</small></td><td><span class="kitty">127.8–129.5 PSS</span><small>79.6–79.9 anonymous</small></td><td><span class="alacritty">79.3–79.6 PSS</span><small>35.4 anonymous</small></td></tr>
+<tr><th>Denser cells<small>8192 alnum cells</small></th><td><span class="howl">128.0–130.9 PSS</span><small>50.6–53.5 anonymous</small></td><td><span class="foot">27.9–30.2 PSS</span><small>15.3 anonymous</small></td><td><span class="kitty">128.5–130.0 PSS</span><small>79.9–81.5 anonymous</small></td><td><span class="alacritty">78.7–79.8 PSS</span><small>34.7–35.5 anonymous</small></td></tr>
+<tr><th>Rich cells<small>4096 Unicode cells + backgrounds</small></th><td><span class="howl">105.9–106.6 PSS</span><small>58.2–58.8 anonymous</small></td><td><span class="foot">35.5–37.2 PSS</span><small>21.3–23.9 anonymous</small></td><td><span class="kitty">133.3–133.7 PSS</span><small>84.2–84.6 anonymous</small></td><td><span class="alacritty">80.7–81.9 PSS</span><small>35.7–37.1 anonymous</small></td></tr>
+<tr><th>Unbracketed cells<small>4096 alnum, synchronized output off</small></th><td><span class="howl">151.4–152.6 PSS</span><small>50.1–50.8 anonymous</small></td><td><span class="foot">27.9–28.0 PSS</span><small>15.3 anonymous</small></td><td><span class="kitty">127.6–131.3 PSS</span><small>78.9–82.2 anonymous</small></td><td><span class="alacritty">79.3–79.5 PSS</span><small>35.1–35.3 anonymous</small></td></tr>
+<tr><th>Rain<small>Native diffed Rain canary</small></th><td><span class="howl">73.9 PSS</span><small>34.8 anonymous</small></td><td><span class="foot">27.9–30.2 PSS</span><small>15.2 anonymous</small></td><td><span class="kitty">127.6–129.7 PSS</span><small>79.5–81.5 anonymous</small></td><td><span class="alacritty">75.3–75.4 PSS</span><small>31.3–31.4 anonymous</small></td></tr>
+<tr><th>Saturation<small>65,536 alnum cells</small></th><td><span class="howl">112.7–117.7 PSS</span><small>51.3–52.1 anonymous</small></td><td><span class="foot">29.8–30.2 PSS</span><small>13.8 anonymous</small></td><td><span class="kitty">127.0–135.4 PSS</span><small>79.1–86.9 anonymous</small></td><td><span class="alacritty">80.9–81.7 PSS</span><small>36.8–37.4 anonymous</small></td></tr>
 </tbody></table></div>
-<div class="note">This matrix predates the retained-content cursor rewrite and header cleanup. It describes the measured build, not today's full ranking. Rich cells, plain output and Rain have one sample per horse; the ASCII doses have two.</div>
-</section>
-<section id="memory">
-<h2>Sampled anonymous memory</h2>
-<p class="context">Peak MiB over the complete process tree, including startup and the producer. Same historical matrix as above. Lower is better for this sampled footprint; allocation ownership and GPU memory are not established.</p>
-<div class="scroll"><table><thead>
-<tr><th scope="col">Race</th>
-<th scope="col" class="howl">Howl app</th>
-<th scope="col" class="foot">Foot</th>
-<th scope="col" class="kitty">Kitty</th>
-<th scope="col" class="alacritty">Alacritty</th>
-</tr>
-</thead><tbody>
-<tr><th scope="row">Small edits<small>16 cells/slot · viewport gradually fills</small></th>
-<td class="howl"><span class="bar" style="--w:74.85%">56.03–104.79<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:12.18%">17.05<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:97.41%">84.24–136.37<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:61.87%">38.25–86.61<small>MiB · sampled tree peak · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Dense ASCII<small>4,096 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:42.68%">55.15–59.76<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:13.21%">18.46–18.49<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:60.73%">83.05–85.02<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:28.87%">39.13–40.41<small>MiB · sampled tree peak · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Denser ASCII<small>8,192 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:39.38%">54.46–55.14<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:13.12%">18.38<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:62.19%">84.75–87.07<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:27.58%">38.59–38.61<small>MiB · sampled tree peak · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Saturation<small>65,536 cells/slot · backpressure ceiling</small></th>
-<td class="howl"><span class="bar" style="--w:37.93%">52.63–53.11<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:12.13%">16.96–16.98<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:63.69%">86.50–89.17<small>MiB · sampled tree peak · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:28.52%">39.90–39.93<small>MiB · sampled tree peak · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Rich cells<small>Unicode + changing backgrounds · 4,096/slot</small></th>
-<td class="howl"><span class="bar" style="--w:42.48%">59.48<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:19.30%">27.02<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:59.89%">83.84<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:28.76%">40.27<small>MiB · sampled tree peak · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Unbracketed ASCII<small>4,096 cells/slot · no synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:38.52%">53.93<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:13.18%">18.45<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:59.20%">82.88<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:27.51%">38.52<small>MiB · sampled tree peak · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Rain<small>Animated TUI Zoo scene</small></th>
-<td class="howl"><span class="bar" style="--w:29.65%">41.52<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:13.25%">18.55<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:58.90%">82.46<small>MiB · sampled tree peak · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:26.58%">37.21<small>MiB · sampled tree peak · n=1</small></span></td>
-</tr>
+<p class="note">Both light-cell parent runs grow to roughly 1.6 GiB PSS while anonymous storage stays near 50–62 MiB. Mapping cuts locate most growth in <code>/dev/nvidiactl</code>. The app's 2048-quad scratch bound did not bound SDL's merged OpenGL draw.</p>
+</section><section id="progress"><h2>Producer progress</h2>
+<p class="context">Target 240 emitted frames/s except cursor60 at 60. A common 378×74 payload fits all measured PTYs. Native skipped-slot counts are retained below. Full geometry differs slightly between products.</p>
+<div class="scroll"><table><thead><tr><th>Canary</th><th>Howl · parent</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
+<tr><th>Cursor · 60 Hz<small>Retained rich text, dose 16</small></th><td><span class="howl">60.000 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">60.000 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">60.000 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">60.000 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Cursor · 240 Hz<small>Same retained-text path</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Light cells<small>16 alnum cells / emitted frame</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Dense cells<small>4096 alnum cells</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Denser cells<small>8192 alnum cells</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Rich cells<small>4096 Unicode cells + backgrounds</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.849 fps</span><small>Skipped slots: 3, 3</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Unbracketed cells<small>4096 alnum, synchronized output off</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Rain<small>Native diffed Rain canary</small></th><td><span class="howl">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="foot">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="kitty">239.999 fps</span><small>Skipped slots: 0, 0</small></td><td><span class="alacritty">239.999 fps</span><small>Skipped slots: 0, 0</small></td></tr>
+<tr><th>Saturation<small>65,536 alnum cells</small></th><td><span class="howl">110.280–120.370 fps</span><small>Skipped slots: 2594, 2393</small></td><td><span class="foot">142.645–142.791 fps</span><small>Skipped slots: 1944, 1947</small></td><td><span class="kitty">98.068–101.430 fps</span><small>Skipped slots: 2771, 2839</small></td><td><span class="alacritty">97.679–98.348 fps</span><small>Skipped slots: 2847, 2833</small></td></tr>
 </tbody></table></div>
-<p class="context">Anonymous memory is only one part of the cost. In both historical 16-cell trials, PSS grew during the 20-second run from 157–217 MiB to 1.62–1.67 GiB. Nearly all the increase was file-backed PSS, accompanied by private-dirty growth; anonymous memory peaked at 56–105 MiB. The exact mappings and owner remain unresolved. This repeated growth needs attribution; the anonymous table is not a complete RAM total.</p>
-</section>
-<section id="progress">
-<h2>Producer progress under pressure</h2>
-<p class="context">Completed producer slots per second at a 240 Hz target. Higher is better until the target is met. Same historical matrix; this measures PTY/backpressure progress, not displayed FPS or input latency.</p>
-<div class="scroll"><table><thead>
-<tr><th scope="col">Race</th>
-<th scope="col" class="howl">Howl app</th>
-<th scope="col" class="foot">Foot</th>
-<th scope="col" class="kitty">Kitty</th>
-<th scope="col" class="alacritty">Alacritty</th>
-</tr>
-</thead><tbody>
-<tr><th scope="row">Small edits<small>16 cells/slot · viewport gradually fills</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:100.00%">239.99–240.00<small>producer slots/s · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">239.99–240.00<small>producer slots/s · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Dense ASCII<small>4,096 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Denser ASCII<small>8,192 cells/slot · synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Saturation<small>65,536 cells/slot · backpressure ceiling</small></th>
-<td class="howl"><span class="bar" style="--w:52.81%">126.32–126.75<small>producer slots/s · n=2</small></span></td>
-<td class="foot"><span class="bar" style="--w:62.40%">148.97–149.75<small>producer slots/s · n=2</small></span></td>
-<td class="kitty"><span class="bar" style="--w:46.29%">108.91–111.10<small>producer slots/s · n=2</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:43.44%">101.71–104.25<small>producer slots/s · n=2</small></span></td>
-</tr>
-
-<tr><th scope="row">Rich cells<small>Unicode + changing backgrounds · 4,096/slot</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:99.96%">239.90<small>producer slots/s · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Unbracketed ASCII<small>4,096 cells/slot · no synchronized output</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-</tr>
-
-<tr><th scope="row">Rain<small>Animated TUI Zoo scene</small></th>
-<td class="howl"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="foot"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="kitty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-<td class="alacritty"><span class="bar" style="--w:100.00%">240.00<small>producer slots/s · n=1</small></span></td>
-</tr>
+</section><section id="boundary"><h2>One bound across the SDL handoff</h2>
+<p class="context">SDL 3.4.18 merges adjacent same-texture geometry calls. Its OpenGL backend expands each quad to six 32-byte vertices; a nearly full text grid passes 4 MiB. On NVIDIA 615.71.09, sparse growth produces many distinct retained device mappings above that size. Submitting each 2048-quad batch prevents the merge from widening the draw. No renderer replacement, extra cache or GPU-completion wait is added.</p>
+<div class="scroll"><table><thead><tr><th>Canary</th><th>Parent · unchanged ELF</th><th>Bounded submission</th></tr></thead><tbody>
+<tr><th>Light cells<small>16 alnum cells / emitted frame</small></th><td>18.11–18.92% CPU<small>1565.4–1634.4 MiB peak PSS · 239.999 producer fps<br>n=3 · skips 0, 0, 0</small></td><td>16.15% CPU<small>92.9–96.0 MiB peak PSS · 239.999 producer fps<br>n=3 · skips 0, 0, 0</small></td></tr>
+<tr><th>Dense cells<small>4096 alnum cells</small></th><td>35.59–35.90% CPU<small>150.1–158.3 MiB peak PSS · 239.999 producer fps<br>n=2 · skips 0, 0</small></td><td>35.29–36.30% CPU<small>96.0–96.3 MiB peak PSS · 239.999 producer fps<br>n=2 · skips 0, 0</small></td></tr>
+<tr><th>Rich cells<small>4096 Unicode cells + backgrounds</small></th><td>58.73–60.00% CPU<small>109.7–118.0 MiB peak PSS · 239.999 producer fps<br>n=2 · skips 0, 0</small></td><td>55.14–55.64% CPU<small>97.8–106.4 MiB peak PSS · 239.999 producer fps<br>n=2 · skips 0, 0</small></td></tr>
+<tr><th>Cursor · 240 Hz<small>Same retained-text path</small></th><td>1.87% CPU<small>98.4 MiB peak PSS · 239.999 producer fps<br>n=1 · skips 0</small></td><td>1.97% CPU<small>88.5 MiB peak PSS · 239.999 producer fps<br>n=1 · skips 0</small></td></tr>
+<tr><th>Unbracketed cells<small>4096 alnum, synchronized output off</small></th><td>36.00% CPU<small>155.5 MiB peak PSS · 239.999 producer fps<br>n=1 · skips 0</small></td><td>33.62% CPU<small>99.3 MiB peak PSS · 239.999 producer fps<br>n=1 · skips 0</small></td></tr>
+<tr><th>Saturation<small>65,536 alnum cells</small></th><td>104.30% CPU<small>122.8 MiB peak PSS · 115.388 producer fps<br>n=1 · skips 2492</small></td><td>103.13% CPU<small>96.0 MiB peak PSS · 117.474 producer fps<br>n=1 · skips 2451</small></td></tr>
 </tbody></table></div>
-<p class="context">Foot advances furthest at saturation; Howl is second in this cohort. All four hold the target through 8,192 ASCII cells. Lower terminal CPU at saturation can accompany less completed work.</p>
-</section>
-<section id="current">
-<h2>The accepted build's latest guard</h2>
-<span class="tag">172d212 · ReleaseSafe</span><span class="tag">A/B/B/A · 12 trials</span>
-<p class="context">Bounded projection failure now recovers when new content fits. Healthy fixed-work controls compare the previous and accepted Safe builds; these are correctness/regression controls, not another reference race.</p>
-<div class="scroll"><table><thead>
-<tr><th scope="col">Race</th>
-<th scope="col">fbab07e · Safe CPU</th>
-<th scope="col">172d212 · Safe CPU</th>
-<th scope="col">Completed work</th>
-</tr>
-</thead><tbody>
-<tr><th scope="row">Cursor · 60 Hz</th>
-<td>2.13–2.18%</td>
-<td>1.98–2.28%</td>
-<td>1200 slots/run · 0 skipped</td>
-</tr>
-
-<tr><th scope="row">Rich cells · 20 Hz</th>
-<td>13.67–13.72%</td>
-<td>13.52–13.67%</td>
-<td>400 slots/run · 0 skipped</td>
-</tr>
-
-<tr><th scope="row">Heavy ASCII · 20 Hz</th>
-<td>28.56–28.96%</td>
-<td>28.51–28.56%</td>
-<td>400 slots/run · 0 skipped</td>
-</tr>
+<p class="context">Twenty interleaved controls. Light cells have three runs per variant; dense and rich two; cursor, unbracketed and saturation one. Final pixels match exactly for native fixed-frame ASCII and a full mixed-style grid, both with explicit OpenGL and ordinary renderer selection (opengl). Oracle hashes also match. The final ReleaseSafe artifact also matches both Fast fixture images exactly. This is final-frame parity, not a display-cadence or latency proof.</p>
+</section><section id="ownership"><h2>Shared text owner under contention</h2>
+<p class="context">Eight native 1/2/4-pane runs at 60/240 Hz: 19 producers, 39,600 frames and zero skipped slots. Four rich panes then force a shared 256-entry glyph store through a 384-glyph union while each local atlas stays within its bound. Reviewed final captures contain no failure panel.</p>
+<p class="context">One process completed three 1→2→4→2→1 pane cycles and 18→19→18 font-size transitions. The regular font mapping count follows 1→2→1; equal-size panes keep one mapping per configured style. Nineteen quiet cuts record zero root CPU ticks at sampler resolution. One-pane anonymous storage remains about 10 MiB above the first cut after three cycles; retained pools have not been called leak-free.</p>
+</section><section id="limits"><h2>Races still missing</h2><div class="facts">
+<div class="card"><h3>Latency / displayed cadence</h3><p>No current matched measurement. Producer FPS cannot qualify either. A bounded native end-to-end measurement must precede fastest-overall claims.</p></div>
+<div class="card"><h3>Quiet / btop</h3><p>Current multi-pane quiet cuts pass at sampled tick resolution; a fresh matched periodic btop reference race remains open. Historical app-only CPU fixes were LLVM codegen and empty-preedit handling.</p></div>
+<div class="card"><h3>Correctness transitions</h3><p>Fractional placement, fzf/nvim screen transitions and atlas pressure remain correctness canaries. The rare second-buffer nvim AtlasFull trigger is not exactly reproduced.</p></div>
+<div class="card"><h3>Ownership / size</h3><p>Equal-recipe sharing is qualified. Within-family fallback-face duplication and per-pane retained pools remain candidates. No comparable four-horse source or full binary dependency census is claimed.</p></div>
+</div></section><section id="evidence"><h2>Conditions and receipts</h2>
+<p class="context">Private managed 1920×1080 KWin output, scale 1, OpenGL reference/control runs, IosevkaTerm Nerd Font benchmark recipes, 4096-row ordinary history. Measured PTYs: Howl 384×79; Foot and Kitty 384×77; Alacritty 384×80. Common payload: 378×74. Backgrounds off and alnum unless named; synchronized output on except unbracketed.</p>
+<p class="context">Howl uses Zig 0.17.0-dev.1980+e78ea8f2c, LLVM codegen and selfhost linking. Native TUI Zoo source <code>3dbd021</code>, ReleaseFast, LLVM. Installed references: Foot 1.28.0, Kitty 0.49.2, Alacritty 0.17.0. Exact hashes, metadata, stable process identities, mapping cuts and cleanup receipts are retained with this cohort.</p>
+<div class="scroll"><table><thead><tr><th>Artifact</th><th>Linked file</th><th>SHA-256</th></tr></thead><tbody>
+<tr><th>baseline</th><td>14687294 bytes</td><td><code>1c686b74273cbe843e35cb0a56e3ff731d396d805b225bc1f464406ef0ce949e</code></td></tr>
+<tr><th>candidate</th><td>14687401 bytes</td><td><code>cc52b5fb02a8a6ef418fcd2e77e19953f66aecca9713b2c31dd41d6eb51eed6e</code></td></tr>
+<tr><th>Native producer</th><td>5002336 bytes</td><td><code>8518661bfb45ae84c666c1fb2594a2a009308bf5bf3ec1f35c417289458015ae</code></td></tr>
 </tbody></table></div>
-<p class="context">CPU is percent of one core, terminal only. Two samples per build per case. Current dogfood ELF: <code>13,966,092 bytes</code> (13.32 MiB). Binary size is not resident memory. <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-atlas-20261010/RESULT.md">Recovery report</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-atlas-20261010/FOLDED.json">Exact samples</a></p>
-</section>
-<section id="coverage">
-<h2>Other races on the card</h2>
-<div class="facts">
-<div class="card"><h3>Quiet / periodic TUI</h3><p>Idle and btop expose accidental redraws and wake amplification. The app-only CPU fault was fixed; current accepted build has not had a fresh matched idle/btop reference race.</p></div>
-<div class="card"><h3>Latency / displayed cadence</h3><p>No current matched measurement. Producer progress alone cannot qualify either.</p></div>
-<div class="card"><h3>Scale / screen transitions</h3><p>Fractional placement, fzf/nvim transitions and atlas pressure are correctness canaries, not speed rankings. Exact rare second-buffer nvim AtlasFull trigger remains unresolved.</p></div>
-<div class="card"><h3>Source / binary / retained targets</h3><p>Track app source cost and ELF size with each change. No comparable four-horse source-size census or complete RAM ownership census is qualified here. SDL presentation and target memory are the next attribution work.</p></div>
-</div>
-<p class="context">Konsole, WezTerm, Ghostty and the older Howl hosts are outside these matched cohorts. Their absence does not mean they lost.</p>
-</section>
-<section id="evidence">
-<h2>Conditions and receipts</h2>
-<p class="context">Each table belongs to its named cohort. Ranges are observed minima–maxima, not confidence intervals. Bars use one common scale within each table and represent the high end of the range.</p>
-<details><summary>Shared setup and exact provenance</summary>
-<ul>
-<li>Home KDE/KWin Wayland, private 1920×1080 environment, scale 1. Howl SDL OpenGL. Fresh processes, 20-second trials.</li>
-<li>Common TUI Zoo payload: 378×74. Font recipes calibrated to 384 PTY columns. Howl PTY 384×79; Foot/Kitty 384×77; Alacritty 384×80. Full terminal geometry and nominal font sizes differ.</li>
-<li>Independent producer source <code>3dbd021</code>, ReleaseFast, LLVM, Zig <code>0.17.0-dev.1980+e78ea8f2c</code>. Producer SHA256 <code>87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557</code>.</li>
-<li>Old slow-producer heavy results are excluded. Optimized producer controls establish a different pressure test, not a Howl improvement.</li>
-<li>Terminal CPU folds duration-weight valid stable process identities and exclude the producer and shell. Memory is a complete-tree peak and includes them.</li>
-<li><a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/FAST_REFS_RESULT.md">44-trial matrix report</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/FAST_REFS_FOLDED.json">Matrix values and receipt paths</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/FAST_REFS_ARTIFACTS.json">Artifact hashes</a></li>
-<li><a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-iterate-20261010/RESULT.md">Latest matched cursor report</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-iterate-20261010/ARTIFACTS.json">Fast cursor artifacts</a></li>
-<li><a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/cursor-atlas-20261010/CHECKPOINT.json">Accepted app checkpoint</a> · <a href="README.md">Benchmark recipes and conclusions</a></li>
-</ul>
-</details>
-</section>
-<footer>One file. Open from disk and refresh after an evidence update. No server, polling, focus following or query language. HQL remains a joke until a table actually needs it.</footer>
-</main></body></html>
+<p><a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/RACE_FOLDED.json">72 reference folds</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/MAPPINGS_FOLDED.json">Parent mapping cuts</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/geometry-bound-control/RACE_FOLDED.json">20 boundary controls</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/geometry-pixels">OpenGL pixel proofs</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/geometry-default-pixels">Default renderer proofs</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/shared-race-20261010/OWNERSHIP_RESULT.md">Shared-owner result</a></p>
+<details><summary>Earlier cohorts remain separate</summary><p>Earlier cursor, field, backend and tab-memory evidence remains in <a href="file:///home/home/personal/howl/tools/performance/README.md">the performance record</a>. New producer ELF and product source are qualified together here; old scalars are not carried into this matrix.</p></details></section><footer>Static disk-open overview. No server, scripts, polling or focus follower. Raw receipts govern each value. Refresh after a qualified checkpoint.</footer></main></body></html>
