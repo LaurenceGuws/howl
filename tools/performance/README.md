@@ -203,7 +203,7 @@ improvement is attributed to changing the producer.
 | plain 4096 | 240.0 / 33.7 | 240.0 / 30.7 | 240.0 / 103.9 | 240.0 / 29.5 |
 | rain | 240.0 / 6.2 | 240.0 / 15.5 | 240.0 / 19.0 | 240.0 / 8.9 |
 
-This is a baseline, not a win claim. Howl sustains ordinary 240 Hz through 4096, with lower recorded pipeline cadence than the references at 8192. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
+This is a historical baseline. Its heavy-dose cadence is near the original producer ceiling; use the verified optimized-producer controls below for current pressure comparisons. Foot has the smallest anonymous footprint in these controls: approximately 19–27 MiB for its complete process tree, versus 44–67 MiB for Howl, 83–93 MiB for Kitty and 37–43 MiB for Alacritty. Producer cadence measures PTY/backpressure, not displayed fps or photon latency. Full PTY extents differ by three rows (Howl 384×79, Foot/Kitty 384×77, Alacritty 384×80); payload extents are identical. The 16-cell canary progressively fills the viewport, so it also pressures full-frame drawing of retained content.
 
 Raw receipts and CPU reconciliation are in `~/.local/state/workstreams/howl-current/zig-app-20261008/night-20261010/`: `REPORT.md`, `REFS.jsonl`, `FOLDED.json`, `runs/` and `CLEANUP.json`. Every stable interval reconciles per-PID and tree CPU; all 40 owned process trees and the private compositor retired cleanly. PSS is retained separately: the first Howl cold launch has a 1.6 GiB PSS outlier that is not explained by its 67 MiB anonymous footprint, so PSS must not be relabelled as owned host RAM. The normal ReleaseSafe dogfood binary and user settings were not changed during this baseline.
 
@@ -266,3 +266,40 @@ Its direct VT source supplies no revision-relative repair hints, so the previous
 saves about 2.26MiB of requested buffer storage per pane; resident-memory impact
 requires a separate measurement. Transported renderer clients keep their own
 row-reuse configuration.
+
+## Verified optimized producer, 2026-10-10
+
+At runtime `ec8a7f4`, 44 fresh-process 20-second trials repeated the same private
+geometry, calibrated font recipes, 378×74 payload and 240 Hz target. Every
+receipt verifies the actual TUI Zoo executable: source `3dbd021`, compiler
+`0.17.0-dev.1980+e78ea8f2c`, optimization `fast`, backend `stage2_llvm`, and
+artifact SHA256 `87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557`.
+Alnum doses ran in forward/reverse order; the remaining canaries ran once per
+horse. Values are producer fps / terminal CPU percent of one core, excluding
+producer and shell.
+
+| Canary | Howl | Foot | Kitty | Alacritty |
+|---|---:|---:|---:|---:|
+| alnum 16 | 240.0 / 18.1 | 240.0 / 3.7 | 240.0 / 25.1 | 240.0 / 13.3–13.9 |
+| alnum 4096 | 240.0 / 32.7–33.6 | 240.0 / 30.8–31.5 | 240.0 / 102.4–103.0 | 240.0 / 27.9–28.2 |
+| alnum 8192 | 240.0 / 43.4–43.8 | 240.0 / 57.0–57.6 | 240.0 / 107.2–107.8 | 240.0 / 40.1–40.6 |
+| alnum 65536 | 126.3–126.7 / 103.9–104.4 | 149.0–149.8 / 174.7–176.0 | 108.9–111.1 / 125.6–127.8 | 101.7–104.2 / 96.4–97.3 |
+| unicode-bg 4096 | 240.0 / 55.2 | 239.9 / 94.2 | 240.0 / 74.9 | 240.0 / 37.9 |
+| plain 4096 | 240.0 / 33.4 | 240.0 / 31.2 | 240.0 / 104.4 | 240.0 / 28.0 |
+| rain | 240.0 / 6.5 | 240.0 / 15.8 | 240.0 / 19.4 | 240.0 / 8.9 |
+
+All four sustain the target through 8192. At 65536, Foot has the greatest
+producer progress, followed by Howl, Kitty and Alacritty. Howl uses less terminal
+CPU than Foot at that dose, but completes less work; these are separate
+dimensions. The changed producer establishes a different pressure control, not
+a Howl runtime throughput improvement. Producer cadence does not prove displayed
+frame rate or latency.
+
+Peak complete-tree anonymous memory at 65536 was Howl 52.6–53.1 MiB, Foot
+17.0 MiB, Kitty 86.5–89.2 MiB and Alacritty 39.9 MiB. PSS and startup peaks
+remain separate; the cold Howl PSS outlier persists and is not owned-RAM evidence.
+All 44 owned process trees and the private compositor retired cleanly.
+Raw receipts, per-PID CPU folds, artifact identities and cleanup are in the
+current night workstream: `FAST_REFS_RESULT.md`, `FAST_REFS.jsonl`,
+`FAST_REFS_FOLDED.json`, `FAST_REFS_ARTIFACTS.json`, `FAST_REFS_CLEANUP.json`
+and `fast-producer-runs/`.
