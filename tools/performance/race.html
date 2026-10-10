@@ -20,9 +20,9 @@ ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
 </style></head><body><main>
-<header><div class="kicker">Howl · qualified controls · 10 October 2026</div><h1>Where the horses stand.</h1>
+<header><div class="kicker">Howl · qualified controls · 11 October 2026</div><h1>Where the horses stand.</h1>
 <p class="lede">A four-horse reference, shared-text stress, and separate SDL submission and cursor index controls. CPU, memory and producer progress remain separate. There is no single overall winner.</p>
-<nav aria-label="Race overview"><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Rejected row reuse</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
+<nav aria-label="Race overview"><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
 <div class="cards">
 <div class="card"><h3>CPU</h3><p>Howl's parent beats Foot and Kitty on rich cells and Rain. Foot leads light cells and cursor movement; Alacritty leads dense and rich CPU.</p></div>
 <div class="card"><h3>Memory</h3><p>Foot leads this field. The parent reproduces a 1.5–1.6 GiB sparse-cell PSS fault in NVIDIA device mappings; the qualified batch boundary keeps that control near 93–96 MiB.</p></div>
@@ -101,8 +101,21 @@ ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 <tr><th>Rich cells</th><td>53.57–54.79% CPU</td><td>56.30–57.37% CPU</td></tr>
 </tbody></table></div>
 <p class="context">Fourteen fresh 20-second controls: two forward/reverse runs per Howl variant and workload, plus two Foot light references at 3.44–3.65% CPU. All emit 4800/no skips except one rich candidate at 4799/one skip. CPU excludes producer and shells. PSS varies; no memory, displayed-cadence or latency gain is inferred.</p>
-<p class="context">A captured coalesced observation repairs 44 of 79 rows, exceeding the existing 26-row reuse cutoff. Eligibility scans and command-cache copying add costs while full projection stays hot. The next design question is retained paint-span cost and granularity across missed observations. This is a rejected experiment.</p>
+<p class="context">A captured coalesced observation repairs 44 of 79 rows, exceeding the existing 26-row reuse cutoff. Eligibility scans and command-cache copying add costs while full projection stays hot. The follow-up below tests wider cutoffs before choosing finer damage granularity. This original implementation was rejected.</p>
 <p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/row-reuse-20261010/RESULT.md">Decision and evidence</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/row-reuse-20261010/RACE_FOLDED.json">14 ordinary folds</a></p>
+</section><section id="cutoff"><h2>Wider row cutoff: useful sparse lever</h2>
+<p class="context">Twenty-six ordinary controls, n=2 per build and workload, compare the same prototype at 26, 52 and 78 repaired rows out of 79. The native cache capacity stays fixed. Values below are observed mean CPU as percent of one core, excluding producer and shell.</p>
+<div class="scroll"><table><thead><tr><th>Native policy</th><th>Light cells</th><th>Dense cells</th><th>Rich cells</th></tr></thead><tbody>
+<tr><th>Accepted build</th><td>15.47%</td><td>34.73%</td><td>58.07%</td></tr>
+<tr><th>26 rows</th><td>16.73%</td><td>34.76%</td><td>59.85%</td></tr>
+<tr><th>52 rows</th><td>13.80%</td><td>36.10%</td><td>58.68%</td></tr>
+<tr><th>78 rows</th><td>14.03%</td><td>35.59%</td><td>55.52%</td></tr>
+</tbody></table></div>
+<p class="context">The 52-row limit saves 10.80% light CPU versus the accepted build; 78 saves 9.33%. The 52-row dense mean is 3.93% higher. Rich ranges overlap and vary substantially, so their means qualify no gain or regression. Eight producer slots are skipped across 26 runs; emitted cadence is not displayed cadence or latency. Fresh Foot light controls are 3.90–3.95% CPU.</p>
+<p class="context">Separate scalar diagnostics capture 1,024 updates per variant: 44 row patches at the 26-row cutoff, 1,016 at 52, and 1,017 at 78; all median repair counts are 43. These instrumented cuts include startup and exclude uncaptured end-of-run tails, and are excluded from ordinary timing.</p>
+<p class="context">Each prototype reserves 7.875 MiB for 114,689 native Input entries, plus bounded metadata. Requested capacity is distinct from residency; PSS varies and no memory saving is qualified. The launch and accepted runtime remain unchanged.</p>
+<p class="context">VT already supplies non-consuming row identities. More semantic summaries or revision-covered spans may reduce rediscovery while each consumer keeps its own baseline and Render keeps font, pixel and paint decisions. First measure unsuitable-path cache maintenance and canonical VT cost; this sweep does not prove finer damage or additional queues are necessary.</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/cutoff-20261010/RESULT.md">Decision and conditions</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/cutoff-20261010/RACE_FOLDED.json">26 ordinary folds</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/cutoff-20261010/DIAGNOSTIC_FOLDED.json">Reuse counters</a></p>
 </section><section id="ownership"><h2>Shared text owner under contention</h2>
 <p class="context">Eight native 1/2/4-pane runs at 60/240 Hz: 19 producers, 39,600 frames and zero skipped slots. Four rich panes then force a shared 256-entry glyph store through a 384-glyph union while each local atlas stays within its bound. Reviewed final captures contain no failure panel.</p>
 <p class="context">One process completed three 1→2→4→2→1 pane cycles and 18→19→18 font-size transitions. The regular font mapping count follows 1→2→1; equal-size panes keep one mapping per configured style. Nineteen quiet cuts record zero root CPU ticks at sampler resolution. One-pane anonymous storage remains about 10 MiB above the first cut after three cycles; retained pools have not been called leak-free.</p>

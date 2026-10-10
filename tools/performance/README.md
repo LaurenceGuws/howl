@@ -758,3 +758,82 @@ Producer 87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557, sourc
 Raw folds, rejected/instrumented patches, profile, scalar cut, correctness logs
 and retirement receipts live at row-reuse-20261010 under the current Home
 workstream. The qualified launch binary is untouched.
+
+## Native row cutoff follow-up, 2026-10-11
+
+The wider limit works for the sparse workload. At 79 viewport rows, changing
+max(1, rows/3) from 26 to max(1, rows*2/3), 52, reduces observed sparse mean CPU
+10.80% against accepted runtime 538f7b5. Allowing 78 repairs saves 9.33%.
+The first experiment's single 44-row cut could not justify jumping to a finer
+damage design before testing this cheaper lever.
+
+| Native policy at 79 rows | Light mean CPU | Dense mean CPU | Rich mean CPU |
+| --- | ---: | ---: | ---: |
+| Accepted build | 15.47% | 34.73% | 58.07% |
+| 26 rows | 16.73% | 34.76% | 59.85% |
+| 52 rows | 13.80% | 36.10% | 58.68% |
+| 78 rows | 14.03% | 35.59% | 55.52% |
+
+Twenty-six ordinary fresh-process 20-second controls: two per build and each of
+three workloads, plus two fresh Foot light references 3.90–3.95% CPU.
+CPU is percent of one core excluding producer and shell. Exact baseline and
+original prototype ELFs reproduce the preceding experiment byte-for-byte.
+All three reuse variants differ in their cutoff alone at runtime; new native
+oracle cuts are tests only. Cache capacity remains 114689 Input entries, rows 192.
+Same producer 87ce7c10, common 378x74 payload, private 1920x1080 KWin scale 1,
+OpenGL, 240 emitted Hz/synchronized output. Howl PTY 384x79, Foot 384x77.
+Producer skips total 8 across 26 runs:
+one dense 78-row trial, two rich 26-row trials, both rich 52-row trials.
+Emitted progress is not displayed cadence or latency.
+
+The 52-row dense mean is 3.93% higher; candidate 36.05–36.15% versus
+baseline 33.82–35.65%. Dense 26/78 ranges overlap baseline.
+Rich ranges overlap substantially: baseline 55.14–61.01%, 52-row 56.40–60.96%,
+78-row 54.94–56.10%. Treat rich as inconclusive; its observed means do not
+qualify a gain or regression. The earlier cohort remains separate.
+
+Independent instrumented 20-second sparse runs captured cumulative 1024-update
+cuts, including startup: 26-row 44 patches/980 baselines; 52-row 1016/8;
+78-row 1017/7. All three median repaired-row counts 43, modes 43–44.
+This confirms that the policy blocks otherwise useful row reuse. These counters
+are diagnostic only, exclude uncaptured end-of-run tails, and are not timing or
+display-cadence measurements.
+
+Input is 72 bytes on the pinned native compiler. Each prototype requests 8257608
+bytes, 7.875 MiB, for its command cache, plus bounded row/repair metadata.
+The cutoffs change admission, not reservation. Touched/resident pages differ
+from requested capacity. Light baseline PSS 148.97–206.95 MiB includes the same
+cold anonymous outlier pattern as the preceding cohort. 52-row PSS 151.62–151.79,
+dense 152.92 versus baseline 149.01–149.90; rich overlaps. No RAM saving qualified.
+
+Native complete-command proofs cover two/three-row edits, bulk clear plus prompt
+span, held leases, cursor/style/palette/DEC/history/alternate screen, resize,
+images, failed projection and recovery. Instance/Render checks/tests and each
+Fast app/pixel proof pass.
+
+Decision: do not promote native row reuse by default from this sweep. Restore
+the accepted runtime exactly and keep the evidence. 52 is a useful measured
+sparse lever; further work should first reduce unsuitable-path eligibility/cache
+maintenance costs and evaluate workload-sensitive admission. This result does
+not prove that cell/span granularity is required.
+
+Captain's VT ownership proposal is sound as a design direction: VT owns
+non-consuming semantic damage; each consumer owns its baseline; Render owns
+font/pixel/resource/paint decisions. Existing VT row identities already supply
+the first part. More semantic extent/feature summaries or revision-covered
+coalesced spans may prevent rediscovery, but must earn their canonical mutation
+costs in VT-only as well as presentation controls. The workstream OWNERSHIP.md records
+bounded coverage, multiple observers, bulk-clear semantics and failure requirements.
+Additional asynchronous queues have no measured justification from this sweep.
+
+Exact source patches, ordinary folds, diagnostic patches/counters, native
+reservation proof and gate logs are retained under cutoff-20261010 in the current
+Home workstream. Qualified launch Safe
+aa23a5ac remains untouched. Cleanup and final gates are recorded separately.
+
+Artifact provenance:
+
+- Accepted build Fast: c595648fea7fdd7a8822f9f51ddfbc7724493e5a463ddf97c487dcb9f799ccf4.
+- 26 rows Fast: 80d3890e8ed5962dcdb8e371ea554d5ee2843cadd5be3ed4720d0583c49865c9.
+- 52 rows Fast: c08bad13f7c384a9397bfacc0c5887e607b194571f0632d0bf3c079abb06bb62.
+- 78 rows Fast: d823cc8e83edc2e08190f916303c58a032212c75fc7ab4cbacac60a3efaf4782.
