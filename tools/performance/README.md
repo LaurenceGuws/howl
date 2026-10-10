@@ -331,3 +331,35 @@ data increasing 49,152bytes and text decreasing 64bytes. No resident-RAM saving
 is inferred from startup peaks. All eight owned process trees and the private
 compositor retired cleanly. `QUAD_INDICES_RESULT.md`, raw/folded controls, ELF
 section sizes and artifact hashes are retained in the night workstream.
+## SDL backend boundary control, 2026-10-10
+
+At runtime `63a0f96`, twelve ordinary 20-second OpenGL/Vulkan/Vulkan/OpenGL
+controls used the same private geometry and verified Fast producer as above.
+Only SDL's installed `SDL_RENDER_DRIVER` hint changed; no product source changed.
+Terminal CPU excludes producer and shell, with stable PID intervals reconciled
+against the tree.
+
+| Canary | OpenGL terminal CPU | Vulkan terminal CPU | OpenGL / Vulkan producer fps |
+|---|---:|---:|---:|
+| cursor 60Hz | 22.13–22.33% | 32.91–36.00% | 60.0 / 60.0 |
+| Unicode/background 4096 | 59.14–61.32% | 80.86–81.22% | 240.0 / 239.8–239.9 |
+| alnum 65536 | 104.30–104.51% | 114.28–115.75% | 113.1–114.3 / 102.3–103.9 |
+
+These are same-session backend controls, not a new reference matrix or an
+attribution of change since the overnight measurements. Producer progress is not
+displayed FPS. Six separate instrumented diagnostics found roughly 104k vertices
+per cursor presentation with either backend; full content projection, publication
+and Canvas geometry remain. Block cursor publication scans the content command
+list both to count overlap and to append recoloured glyphs.
+
+Warm `smaps` cuts distinguish font files, driver libraries/device mappings and
+anonymous storage. OpenGL loaded a runtime LLVM library here; Vulkan did not.
+Lower Vulkan PSS does not establish lower owned RAM: rich/heavy peak anonymous
+memory increased. Anonymous mappings alone do not identify the allocating
+module. The current default renderer stays; direct native presentation remains
+an experiment requiring mixed-workload and memory controls.
+
+All 18 owned process trees and both private environments retired cleanly;
+temporary interposers/binaries/launchers were deleted. Exact stage counts, warm
+maps, artifacts, ordinary CPU folds and cleanup are in
+`night-20261010/sdl-boundary-20261010/RESULT.md` under the current workstream.
