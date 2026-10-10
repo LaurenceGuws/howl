@@ -180,7 +180,7 @@ ordinary producer cleanup would otherwise clear the frozen view.
 
 ## Local app reference control, 2026-10-10
 
-At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Alacritty in a private 1920×1080 KWin environment at scale 1, with Iosevka 10px, the same 378×74 TUI Zoo payload, 240 Hz target and 20-second trials. There were 40 successful fresh-process trials; the 4096/8192/65536 alnum doses were repeated in reverse horse order. Values below are producer fps / terminal CPU percent of one core, excluding TUI Zoo and the shell.
+At `5704b4b`, the new app was measured in ReleaseFast against Foot, Kitty and Alacritty in a private 1920×1080 KWin environment at scale 1, with Howl at 10px and Iosevka reference recipes calibrated to 384 PTY columns, the same 378×74 TUI Zoo payload, 240 Hz target and 20-second trials. There were 40 successful fresh-process trials; the 4096/8192/65536 alnum doses were repeated in reverse horse order. Values below are producer fps / terminal CPU percent of one core, excluding TUI Zoo and the shell.
 
 | Canary | Howl | Foot | Kitty | Alacritty |
 |---|---:|---:|---:|---:|
@@ -221,3 +221,30 @@ Root checks/tests/protocol/audits and both app optimization-mode proofs passed.
 A per-call probe rejected a header-text cache: rasterization and texture creation
 were only about 1–2% of measured app CPU. Temporary instrumentation stays outside
 accepted source.
+
+Use `HORSES_WORKLOAD=cursor` with `HORSES_DOSES=1` to pressure cursor movement over
+a populated retained viewport. TUI Zoo's `cells --cursor-only` primes ASCII cells
+once and then emits cursor moves; its receipt records `cursor_only: true`.
+This isolates presentation cost from bulk glyph/PTY production. Priming can
+contribute to host startup samples. Unicode/background options are incompatible.
+The independent TUI Zoo binary must include the mode; it has no terminal-specific
+knowledge or dependency.
+
+At `79fdc75`, 24 fresh-process controls used this canary at 1/60/240Hz,
+20 seconds each, in forward/reverse horse order with the same private geometry
+and calibrated font recipes as above. All producer frames completed without
+skipped slots. Terminal CPU excludes producer and shell:
+
+| Target Hz | Howl | Foot | Kitty | Alacritty |
+|---:|---:|---:|---:|---:|
+| 1 | 0.41–0.46% | 0.00–0.05% | 0.05% | 0.25% |
+| 60 | 21.77% | 1.52–1.77% | 2.13–2.28% | 14.13–14.23% |
+| 240 | 21.67–21.87% | 2.03–2.33% | 5.16–5.47% | 15.90–16.41% |
+
+This exposes a retained-content cursor cost; it does not identify its cause.
+Howl enables VSync and observer frame credit, so producer cadence is not displayed
+frame rate. Excluding the first second leaves the 60Hz gap intact. The 1Hz values
+are near scheduler tick resolution. All owned processes and the private
+environment retired. Raw per-PID receipts, binary/config hashes and the
+full/post-priming fold are in `night-20261010/CURSOR_RESULT.md` and
+`CURSOR_FOLDED.json` under the current workstream.

@@ -23,7 +23,7 @@ FPS=${HORSES_FPS:-240}
 DURATION_MS=${HORSES_DURATION_MS:-8000}
 GLYPH_SET=${HORSES_GLYPH_SET:-alnum}
 WORKLOAD=${HORSES_WORKLOAD:-cells}
-[[ $WORKLOAD == cells || $WORKLOAD == rain ]] || { echo "horses: invalid workload: $WORKLOAD" >&2; exit 1; }
+[[ $WORKLOAD == cells || $WORKLOAD == rain || $WORKLOAD == cursor ]] || { echo "horses: invalid workload: $WORKLOAD" >&2; exit 1; }
 BACKGROUND=${HORSES_BACKGROUND:-0}
 SAMPLE_MS=${HORSES_SAMPLE_MS:-250}
 SETTLE_MS=${HORSES_SETTLE_MS:-1200}
@@ -54,7 +54,7 @@ Environment:
   HORSES_COLS=192 HORSES_ROWS=47  required PTY/workload geometry
   HORSES_FPS=240                  semantic producer cadence
   HORSES_DURATION_MS=8000         duration per workload
-  HORSES_WORKLOAD=cells           cells|rain
+  HORSES_WORKLOAD=cells           cells|rain|cursor
   HORSES_GLYPH_SET=alnum          printable|alnum|unicode
   HORSES_BACKGROUND=0             random 256-color backgrounds
   HORSES_SAMPLE_MS=250            process-tree sample interval
@@ -700,8 +700,8 @@ run_one() {
     # explicit go gate. No workload bytes are emitted before sampling starts.
 
     local typed
-    printf -v typed 'HORSES_HOME_DIR=%q %q __runner %q %q %q %q %q %q %q %q %q %q' \
-        "$HOME_DIR" "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" "$BACKGROUND" "$WORKLOAD"
+    printf -v typed 'HORSES_HOME_DIR=%q TUI_ZOO=%q %q __runner %q %q %q %q %q %q %q %q %q %q' \
+        "$HOME_DIR" "$TUI_ZOO" "$SELF" "$run_dir" "$COLS" "$ROWS" "$FPS" "$DURATION_MS" "$dose" "$GLYPH_SET" "$SYNCHRONIZED_OUTPUT" "$BACKGROUND" "$WORKLOAD"
     wmio_data type --stable-id "$stable" --text "$typed" > "$run_dir/input-type.json"
     wmio_data key --stable-id "$stable" --key enter > "$run_dir/input-enter.json"
 
@@ -803,6 +803,7 @@ PY
     local args=(cells --dose "$dose" --fps "$fps" --duration-ms "$duration_ms" --cols "$cols" --rows "$rows" --glyph-set "$glyph_set")
     if [[ $sync == 1 ]]; then args+=(--synchronized-output); fi
     if [[ $background == 1 ]]; then args+=(--background); fi
+    if [[ $workload == cursor ]]; then args+=(--cursor-only); fi
     if [[ $workload == rain ]]; then
         args=(rain --fps "$fps" --duration-ms "$duration_ms" --cols "$cols" --rows "$rows")
         if [[ $sync == 1 ]]; then args+=(--synchronized-output); fi
