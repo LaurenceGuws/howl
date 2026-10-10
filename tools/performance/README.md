@@ -303,7 +303,12 @@ frame rate or latency.
 
 Peak complete-tree anonymous memory at 65536 was Howl 52.6–53.1 MiB, Foot
 17.0 MiB, Kitty 86.5–89.2 MiB and Alacritty 39.9 MiB. PSS and startup peaks
-remain separate; the cold Howl PSS outlier persists and is not owned-RAM evidence.
+remain separate. Both16-cell Howl trials show PSS growing during the20-second
+run from157–217MiB to1.62–1.67GiB, predominantly in Pss_File, with large
+Private_Dirty growth. Anonymous peaks are56–105MiB. Almost all PSS belongs to
+howl-app itself. Exact mapping/allocator attribution is unresolved; this is
+repeated growth, not merely a cold-start spike. Anonymous memory is not a
+complete RAM total. Later backend controls did not reproduce the large PSS.
 All 44 owned process trees and the private compositor retired cleanly.
 Raw receipts, per-PID CPU folds, artifact identities and cleanup are in the
 current night workstream: `FAST_REFS_RESULT.md`, `FAST_REFS.jsonl`,
