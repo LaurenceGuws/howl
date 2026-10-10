@@ -139,6 +139,9 @@ pub const Canvas = struct {
             self.count += 1;
             owned = false;
         }
+        // Feedback describes the resources just applied, while frame storage stays leased.
+        for (self.textures[0..self.count], 0..) |texture, index| residency[index] = texture.residency;
+        try lease.reportResidency(residency[0..self.count]);
         self.lease = lease;
     }
 
@@ -347,6 +350,66 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(@as(?terminal.Failure, null), owner.snapshot().failure);
+}
+
+test "repeated alternate-screen blank and text cuts retain exact backend residency" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const presentation: instance.PresentationConfig = .{
+        .fonts = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+        .command_limit = instance.render.limits.maximum_frame_commands,
+    };
+    const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033[?25lHELLO\\033]0;WARM\\007'; read line; printf '\\033[1;1H\\033]0;READY\\007'; i=0; while [ \"$i\" -lt 4 ]; do read line; printf '\\033[?1049h\\033[2J\\033[H\\033]0;BLANK\\007'; read line; printf 'HELLO\\033]0;TEXT\\007'; read line; printf '\\033[2J\\033[H\\033]0;EXIT-BLANK\\007'; read line; printf '\\033[?1049l\\033]0;MAIN\\007'; i=$((i+1)); done; read line",
+        .rows = 4,
+        .columns = 20,
+    }, presentation, 0, true);
+    defer owner.destroy();
+    const surface = c.SDL_CreateSurface(250, 100, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var backend = Canvas.init(std.testing.allocator);
+    defer backend.deinit();
+    const geometry = try std.testing.allocator.create(Geometry);
+    defer std.testing.allocator.destroy(geometry);
+    geometry.* = .{};
+    var previous_revision: u64 = 0;
+    for (0..18) |step| {
+        if (step != 0) try owner.submit(.{ .input = .{ .bytes = "GO\n" } });
+        const title = if (step == 0) "WARM" else if (step == 1) "READY" else ([_][]const u8{ "BLANK", "TEXT", "EXIT-BLANK", "MAIN" })[(step - 2) % 4];
+        var attempts: u16 = 0;
+        while (attempts < 5000) : (attempts += 1) {
+            try backend.update(renderer, owner);
+            const status = owner.snapshot();
+            if (status.failure) |failure| return failure;
+            if (status.presentation_failure) |failure| return failure;
+            if (std.mem.eql(u8, status.title[0..status.title_len], title)) {
+                if (backend.frame()) |value| if (value.terminal_revision == status.revision and value.terminal_revision != previous_revision) break;
+            }
+            owner.requestFrame();
+            try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+        }
+        if (attempts == 5000) return error.Timeout;
+        const value = backend.frame().?;
+        previous_revision = value.terminal_revision;
+        const blank = step >= 2 and (step - 2) % 2 == 0;
+        try std.testing.expectEqual(step >= 2 and (step - 2) % 4 != 3, value.alternate_screen);
+        errdefer std.debug.print("alternate texture failure at step {d}, title {s}, uploads {d}, removals {d}, textures {d}\n", .{ step, title, value.uploads.len, value.removals.len, backend.count });
+        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        try std.testing.expectEqual(@as(usize, if (blank) 0 else 1), backend.count);
+        owner.requestFrame();
+    }
 }
 
 test "fractional SDL projection preserves every pixel of joined generated blocks and rules" {

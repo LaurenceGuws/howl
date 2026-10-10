@@ -330,7 +330,7 @@ pub fn beginWrite(exchange: *Exchange) ?Writer {
     return .{ .exchange = exchange, .index = index };
 }
 
-/// Holds one immutable backend-thread publication until exact residency feedback is returned.
+/// Holds one immutable publication independently of current backend residency feedback.
 pub const Lease = struct {
     exchange: *Exchange,
     index: usize,
@@ -339,10 +339,11 @@ pub const Lease = struct {
 
     /// Releases this immutable frame and publishes the backend's exact current
     /// Render residency as the only feedback to the terminal producer.
-    /// Reports malformed/oversized residency feedback or a violated single-consumer mailbox contract.
+    /// Reports malformed/oversized feedback, a released lease, or a violated single-consumer mailbox contract.
     pub const ReleaseError = terminal.Error || error{
         ResidencyLimit,
         ResidencyMailboxBusy,
+        LeaseReleased,
     };
 
     /// Releases this lease and publishes only exact backend Render residency to the terminal thread.
@@ -357,10 +358,20 @@ pub const Lease = struct {
             impl.reader_active.store(false, .release);
             self.released = true;
         }
+        try self.reportResidency(residency);
+    }
+
+    /// Reports resources after applying uploads/removals, before granting another
+    /// projection credit. The immutable frame remains leased until release.
+    pub fn reportResidency(
+        self: *const Lease,
+        residency: []const terminal.Residency,
+    ) ReleaseError!void {
+        if (self.released) return error.LeaseReleased;
         if (residency.len > maximum_residencies) return error.ResidencyLimit;
         try terminal.validateResidencies(residency);
-        if (!reportResidency(
-            impl,
+        if (!publishResidency(
+            exchangeImpl(self.exchange),
             self.value.presentation_generation,
             residency,
         )) return error.ResidencyMailboxBusy;
@@ -473,7 +484,7 @@ fn retireReady(state: *std.atomic.Value(u8)) void {
     if (previous == null) return;
 }
 
-fn reportResidency(
+fn publishResidency(
     impl: *Impl,
     presentation_generation: u64,
     residency: []const terminal.Residency,
@@ -575,13 +586,14 @@ test "unpublished command storage grows without shrinking" {
     writer.abort();
 }
 
-test "lease feedback publishes only newest exact residency" {
+test "lease feedback tracks applied resources without releasing immutable frame storage" {
     const exchange = try init(std.testing.allocator, 1);
     defer deinit(exchange);
 
     var writer = beginWrite(exchange).?;
     writer.finish(1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
     var lease = acquireLatest(exchange).?;
+    defer lease.abandon();
 
     const resource = try terminal.ResourceId.init(9);
     const accepted = terminal.Residency{
@@ -589,12 +601,35 @@ test "lease feedback publishes only newest exact residency" {
         .format = .rgba8,
         .size = .{ .width = 2, .height = 3 },
     };
-    try lease.release(&.{accepted});
+    try lease.reportResidency(&.{accepted});
 
     var storage: [maximum_residencies]terminal.Residency = undefined;
-    const feedback = takeLatestResidency(exchange, 1, &storage).?;
+    var feedback = takeLatestResidency(exchange, 1, &storage).?;
     try std.testing.expectEqual(@as(usize, 1), feedback.len);
     try std.testing.expectEqualDeep(accepted, feedback[0]);
+    try lease.reportResidency(&.{accepted});
+    try lease.reportResidency(&.{});
+    feedback = takeLatestResidency(exchange, 1, &storage).?;
+    try std.testing.expectEqual(@as(usize, 0), feedback.len);
+    try std.testing.expect(!lease.released);
+    try std.testing.expectError(error.InvalidResidency, lease.reportResidency(&.{ accepted, accepted }));
+    const too_many: [maximum_residencies + 1]terminal.Residency = undefined;
+    try std.testing.expectError(error.ResidencyLimit, lease.reportResidency(&too_many));
+    try std.testing.expect(takeLatestResidency(exchange, 1, &storage) == null);
+
+    writer = beginWrite(exchange).?;
+    writer.finish(1, 2, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
+    try std.testing.expect(acquireLatest(exchange) == null);
+    try lease.release(&.{accepted});
+    try std.testing.expectError(error.LeaseReleased, lease.reportResidency(&.{}));
+    feedback = takeLatestResidency(exchange, 1, &storage).?;
+    try std.testing.expectEqual(@as(usize, 1), feedback.len);
+    try std.testing.expectEqualDeep(accepted, feedback[0]);
+
+    var latest = acquireLatest(exchange).?;
+    try std.testing.expectEqual(@as(u64, 2), latest.value.revision);
+    try latest.release(&.{});
 }
 
 const ConcurrentHold = struct {
