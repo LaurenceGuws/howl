@@ -475,3 +475,46 @@ Evidence and replay recipes remain in Home's active Howl workstream under
 zig-app-20261008/night-20261010/cursor-atlas-20261010. Temporary probes are retired
 after qualification. The maintained child-barrier proof covers failed projection,
 unchanged cursor-only credit, canonical service, and successful content recovery.
+
+### Tab memory attribution, 2026-10-10
+
+Captain reported about 585 MB after two hours of nvim/btop with three tabs and
+roughly 80 MB more per new tab. The pre-shutdown root app snapshot was 553.7 MiB
+RSS, 248.5 MiB PSS and 125.4 MiB anonymous. Its loaded ELF was fbab07e Safe;
+the current repo artifact is the 172d212 Safe runtime. These process metrics
+exclude child applications, and the reported display's unit was not confirmed.
+
+Three fresh private 1920×1080 OpenGL runs used Captain's four Iosevka faces at
+18 px, a small four-style Latin/CJK fixture, and the tab sequence
+1→2→3→2→1→2→3→2→1. Each state retained 16 snapshots over four seconds.
+The two warm runs' first openings showed these increments per tab:
+
+| Root app metric | Increment, MiB |
+| --- | --- |
+| RSS | 79.4–83.7 |
+| Font mapping RSS, included above | 61.0–64.9 |
+| PSS | 18.9–23.0 |
+| Anonymous | 13.8–18.3 |
+
+Every pane opens four independent native style font sets, each with the same
+Arabic/CJK fallback files. The three-tab live capture contained 12 CJK mappings:
+98.2 MiB summed RSS but 6.3 MiB PSS. Repeated mappings explain much of the visible
+RSS step; it is not an equivalent increase in private RAM. Mutable native faces
+remain exclusively owned by their workers.
+
+Closing tabs removes the added font mappings and about 9 MiB anonymous per tab.
+The warm runs still retained about 14.1 MiB anonymous after the first cycle and
+another 2.27 MiB after the second. Most of that residual was in [heap]; its
+consumer is not yet identified. A separate native allocator probe repeated all
+27 states: after the first cycle, the warm runs retained 6.3–8.6 MiB more in free
+native chunks and 3.21 MiB more in chunks reported in-use. The second cycle added
+only 80 KiB to native arena capacity and 28–29 KiB to reported in-use chunks,
+while process anonymous residency changed more. Allocator caches and the live
+consumer remain to be attributed. Cold runs stay recorded. Two cycles do not
+establish leak freedom, long-session behavior or a RAM improvement; neither
+control reproduces the historical 1.6 GiB file-PSS growth. No runtime code changed.
+
+Raw mapping cuts, recipes, artifact identities, lifecycle checks and cleanup
+receipts are in the active Home workstream at
+zig-app-20261008/night-20261010/live-memory-20261010. The final private GUI shows
+all four styles and CJK without an error; all owned processes/environment retired.
