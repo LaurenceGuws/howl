@@ -19,6 +19,9 @@ pub const text = @import("codec/text.zig");
 /// Complete/raw-delta text reuse, validation and borrowed observation lifetime.
 pub const cache = @import("codec/cache.zig");
 
+/// Immutable terminal observations, packed storage and bounded text projection.
+pub const view = @import("codec/view.zig");
+
 /// Publisher-selected encoding specialized on VT's read-only observation type.
 pub const encoder = @import("codec/encode.zig");
 
@@ -159,5 +162,6 @@ test {
     std.testing.refAllDecls(decoded);
     std.testing.refAllDecls(text);
     std.testing.refAllDecls(cache);
+    std.testing.refAllDecls(view);
     std.testing.refAllDecls(encoder);
 }

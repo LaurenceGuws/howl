@@ -102,6 +102,16 @@ test "optional encoder retains the complete 24-scalar VT cluster" {
     var cache = codec.cache.Cache.init(std.testing.allocator);
     defer cache.deinit();
     const cached = try cache.decode(geometry, .full, body.items);
+    const metadata = Encoder.metadata(terminal.observation().semanticView(0), terminal.semanticSequence());
+    const owned = try codec.view.project(std.testing.allocator, &.{
+        .metadata = &metadata,
+        .presentation = &cached.presentation,
+        .rows = cached.rows,
+        .hyperlinks = cached.hyperlinks,
+        .changed_rows = cached.changed_rows,
+        .row_shift = cached.row_shift,
+    });
+    defer codec.view.deinit(owned);
     const scalars = cached.rows[0].cells[0].scalars;
     try std.testing.expectEqualSlices(u32, text.rows[0].cells[0].scalars, scalars);
     var delta: std.ArrayList(u8) = .empty;
@@ -113,6 +123,12 @@ test "optional encoder retains the complete 24-scalar VT cluster" {
     try std.testing.expectEqual(scalars.ptr, reused.rows[0].cells[0].scalars.ptr);
     try std.testing.expectEqualSlices(u32, scalars, reused.rows[0].cells[0].scalars);
     try std.testing.expectEqualSlices(bool, &.{false}, reused.changed_rows);
+    cache.invalidate();
+    try std.testing.expectEqual(metadata.revision, codec.view.metadata(owned).revision);
+    try std.testing.expectEqual(vt.scalar.maximum_scalars, codec.view.scalars(owned).len);
+    try std.testing.expectEqual(@as(u32, 'e'), codec.view.scalars(owned)[0]);
+    for (codec.view.scalars(owned)[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x0301), scalar);
+    try std.testing.expectEqualSlices(bool, &.{true}, codec.view.changedRows(owned).?);
 }
 
 test "optional encoder bounds output without changing its caller's prefix" {

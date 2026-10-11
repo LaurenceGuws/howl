@@ -113,6 +113,15 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try std.testing.expect(codec.Row == @import("server_client").terminal.rich.Row);
     try std.testing.expect(!@hasField(codec.cache.View, "begin"));
     try std.testing.expect(!@hasField(codec.cache.View, "changed_rows_base_revision"));
+    const client_view = @import("server_client").terminal.view;
+    try std.testing.expect(codec.view.Row == client_view.Row);
+    try std.testing.expect(codec.view.Cell == client_view.Cell);
+    try std.testing.expect(codec.view.TextProjection == client_view.TextProjection);
+    try std.testing.expect(!@hasField(codec.view.Source, "begin"));
+    try std.testing.expect(!@hasField(codec.view.Source, "changed_rows_base_revision"));
+    try std.testing.expect(!@hasDecl(codec.view, "Begin"));
+    try std.testing.expect(@TypeOf(codec.view.projectInto) == fn ([]align(codec.view.storage_alignment) u8, *const codec.view.Source) codec.view.Error!*const codec.view.Snapshot);
+    try std.testing.expect(@TypeOf(codec.view.deinit) == fn (*codec.view.Snapshot) void);
     try std.testing.expect(!@hasDecl(vt, "codec"));
     try std.testing.expect(!@hasDecl(instance, "codec"));
     try std.testing.expect(!@hasDecl(render, "codec"));
