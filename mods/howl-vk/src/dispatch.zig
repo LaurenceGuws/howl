@@ -44,9 +44,17 @@ fn validate(raw: Raw) Error!ExternalImageDispatch {
 /// allocation or global mutable state.
 pub fn load(device: abi.VkDevice) Error!ExternalImageDispatch {
     return validate(.{
+        // zig-audit: acknowledge ptr_cast
+        // reason: vkGetDeviceProcAddr returns the C procedure for the exact vkGetMemoryFdKHR name; validate rejects null before publishing typed dispatch.
         .get_memory_fd = @ptrCast(abi.vkGetDeviceProcAddr(device, "vkGetMemoryFdKHR")),
+        // zig-audit: acknowledge ptr_cast
+        // reason: vkGetDeviceProcAddr returns the C procedure for the exact vkGetImageDrmFormatModifierPropertiesEXT name; validate rejects null before publishing typed dispatch.
         .get_modifier = @ptrCast(abi.vkGetDeviceProcAddr(device, "vkGetImageDrmFormatModifierPropertiesEXT")),
+        // zig-audit: acknowledge ptr_cast
+        // reason: vkGetDeviceProcAddr returns the C procedure for the exact vkGetSemaphoreFdKHR name; validate rejects null before publishing typed dispatch.
         .get_semaphore_fd = @ptrCast(abi.vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR")),
+        // zig-audit: acknowledge ptr_cast
+        // reason: vkGetDeviceProcAddr returns the C procedure for the exact vkImportSemaphoreFdKHR name; validate rejects null before publishing typed dispatch.
         .import_semaphore_fd = @ptrCast(abi.vkGetDeviceProcAddr(device, "vkImportSemaphoreFdKHR")),
     });
 }

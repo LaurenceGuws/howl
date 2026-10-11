@@ -17,6 +17,11 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const check = b.step("check", "Compile the platform PTY owner and lifecycle proofs");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     const run_tests = b.addRunArtifact(tests);
     run_tests.addPassthruArgs();

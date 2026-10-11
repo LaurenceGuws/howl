@@ -60,6 +60,7 @@ const Publication = struct {
     }
 };
 
+/// Copied worker scheduling and publication readiness facts.
 pub const PollState = struct {
     descriptor: i32,
     stream_closed: bool,
@@ -77,6 +78,7 @@ pub const PointerContext = struct {
     interaction: instance.Terminal.InteractionState,
 };
 
+/// Owns one in-process terminal worker and its presentation publication lifetime.
 pub const Owner = struct {
     value: *instance.Instance,
     descriptor: i32,
@@ -89,6 +91,7 @@ pub const Owner = struct {
     font: ?presentation.FontPaths = null,
     history: scrollback.State = .{},
 
+    /// Creates the local Instance worker and bounded publication/wake resources.
     pub fn init(
         allocator: std.mem.Allocator,
         inherited_environment: std.process.Environ,
@@ -139,12 +142,14 @@ pub const Owner = struct {
         };
     }
 
+    /// Stops and joins the worker before releasing its terminal resources.
     pub fn deinit(self: *Owner) void {
         closeDescriptor(self.publication_fd);
         instance.deinit(self.value);
         self.* = undefined;
     }
 
+    /// Returns copied worker readiness and lifecycle facts.
     pub fn pollState(self: *const Owner) PollState {
         return .{
             .descriptor = if (self.stream_closed and !self.write_pending) -1 else self.descriptor,
@@ -203,6 +208,7 @@ pub const Owner = struct {
         return serviced;
     }
 
+    /// Borrows the publication wake descriptor until owner retirement.
     pub fn publicationFd(self: *const Owner) i32 {
         return self.publication_fd;
     }
@@ -326,6 +332,7 @@ pub const Owner = struct {
     }
 };
 
+/// Reads checked monotonic nanoseconds or reports a clock failure.
 pub fn monotonicNs() error{Clock}!u64 {
     var now: std.posix.timespec = undefined;
     if (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.MONOTONIC, &now)) != .SUCCESS)
@@ -342,6 +349,8 @@ fn signal(descriptor: i32) void {
         if (result == @sizeOf(u64)) return;
         if (result < 0 and std.c.errno(result) == .INTR) continue;
         if (result < 0 and std.c.errno(result) == .AGAIN) return;
+        // zig-audit: acknowledge panic
+        // reason: The owner retains this live eventfd through worker shutdown; EINTR and saturation are handled, so another result violates the wake lifetime.
         @panic("local terminal eventfd signal failed");
     }
 }
@@ -358,7 +367,11 @@ fn drain(descriptor: i32) error{Signal}!void {
 }
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("local terminal descriptor cleanup failed");
+    const result = c.close(descriptor);
+    // Linux has already released the descriptor on EINTR; never retry a possibly reused fd.
+    // zig-audit: acknowledge panic
+    // reason: Linux releases close's fd on EINTR, which is accepted without retry; another failure violates this owner's exact descriptor lifetime.
+    if (result != 0 and std.c.errno(result) != .INTR) @panic("local terminal descriptor cleanup failed");
 }
 
 test "local terminal owner serializes service input and observation without an endpoint" {

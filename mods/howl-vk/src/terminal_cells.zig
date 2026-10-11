@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const vk = @import("abi.zig");
+/// Maximum retained terminal cell count in this GPU path.
 pub const maximum_cells: usize = 65_536;
 const maximum_panes: usize = 64;
 const maximum_instance_staging_bytes: usize = maximum_panes * maximum_cells * @sizeOf(Instance);
@@ -24,7 +25,9 @@ pub const glyph_slots: usize = 95 * 4;
 pub const staging_byte_limit: usize = maximum_batch_staging_bytes;
 /// Number of stable atlas columns used by mechanical slot placement.
 pub const glyph_atlas_columns: u16 = 20;
+/// Fixed row count used to pack stable glyph slots.
 pub const glyph_atlas_rows: u16 = 19;
+/// Sentinel for a terminal cell requiring no glyph sample.
 pub const blank_glyph: u16 = std.math.maxInt(u16);
 
 /// Maps one printable ASCII/style identity to its stable shared-font slot.
@@ -427,6 +430,8 @@ pub const FontGpu = struct {
 
     /// Allocates fixed residency and maximum first-use upload storage.
     pub fn init(allocator: std.mem.Allocator, limits: FontLimits) Error!FontGpu {
+        // zig-audit: acknowledge discard
+        // reason: glyphAtlasExtent validates these font limits here; the owned allocations below derive their own exact byte counts.
         _ = try glyphAtlasExtent(limits);
         const words = (glyph_slots + 63) / 64;
         const tile_bytes = std.math.mul(
@@ -556,6 +561,8 @@ pub const FontGpu = struct {
         if (vk.vkMapMemory(device, self.staging_memory, 0, staging_requirements.size, 0, &mapped) != vk.VK_SUCCESS or
             mapped == null)
             return error.StagingMap;
+        // zig-audit: acknowledge ptr_cast
+        // reason: Successful vkMapMemory supplies a non-null live mapped byte region; teardown unmaps it before freeing the memory.
         self.mapped = @ptrCast(mapped.?);
     }
 
@@ -1015,6 +1022,8 @@ pub const PaneResources = struct {
     ) void {
         if (self.descriptor != null) {
             const result = vk.vkFreeDescriptorSets(device, descriptor_pool, 1, &self.descriptor);
+            // zig-audit: acknowledge panic
+            // reason: This owner releases its exact live descriptor set before buffers/pool; a refused release violates the established Vulkan teardown lifetime.
             if (result != vk.VK_SUCCESS) @panic("terminal descriptor release failed");
         }
         if (self.row_buffer != null) vk.vkDestroyBuffer(device, self.row_buffer, null);
@@ -1441,6 +1450,8 @@ pub const Resources = struct {
         if (vk.vkMapMemory(device, self.staging_memory, 0, requirements.size, 0, &mapped) != vk.VK_SUCCESS or
             mapped == null)
             return error.StagingMap;
+        // zig-audit: acknowledge ptr_cast
+        // reason: Successful vkMapMemory supplies a non-null live mapped byte region; teardown unmaps it before freeing the memory.
         self.mapped = @ptrCast(mapped.?);
     }
 };
@@ -2277,6 +2288,8 @@ fn chargeBytes(
         return error.GpuMemoryLimit;
     if (total > limit) return error.GpuMemoryLimit;
     gpu_bytes.* = total;
+    // zig-audit: acknowledge catch_unreachable
+    // reason: owner_bytes is a subset of gpu_bytes; the preceding checked global addition and limit test also bound this owner's addition.
     owner_bytes.* = std.math.add(u64, owner_bytes.*, bytes) catch unreachable;
 }
 
@@ -2337,6 +2350,8 @@ fn createTerminalShader(
 ) Error!vk.VkShaderModule {
     var info = vk.VkShaderModuleCreateInfo{
         .codeSize = bytes.len,
+        // zig-audit: acknowledge ptr_cast
+        // reason: The shader input is align(4) SPIR-V bytes; this C view preserves its word alignment, byte count and call-bounded lifetime.
         .pCode = @ptrCast(bytes.ptr),
     };
     var result: vk.VkShaderModule = null;
@@ -2411,6 +2426,8 @@ fn createTerminalPipeline(
 }
 
 fn testSlot(codepoint: u8, bold: bool, italic: bool) u16 {
+    // zig-audit: acknowledge catch_unreachable
+    // reason: Each caller supplies a fixture character in the validated stable glyph domain; a rejected fixture must fail its proof.
     return stableGlyphSlot(codepoint, bold, italic) catch unreachable;
 }
 
@@ -2447,6 +2464,8 @@ fn prepareWithFont(
     rasters: []const GlyphRaster,
 ) !Prepared {
     try font.prepare(update.glyph_slots, rasters);
+    // zig-audit: acknowledge panic
+    // reason: Fixture cleanup must retire the pending font transaction; failure aborts the proof instead of leaving ambiguous prepared state.
     errdefer font.discard() catch @panic("test font discard failed");
     return store.prepare(update, font);
 }
@@ -2462,13 +2481,29 @@ fn testRaster(slot: u16, pixels: []const u8) GlyphRaster {
 
 fn testCommandBindings() CommandBindings {
     return .{
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .instance_staging = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .instance_storage = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .row_staging = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .row_storage = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .glyph_atlas = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .pipeline = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .layout = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .descriptor = @ptrFromInt(1),
     };
 }
@@ -3047,7 +3082,11 @@ test "blank first FontGpu batch initializes atlas only after completion" {
     var first_recorder = FontCommandRecorder{ .proof = &first_proof };
     try font.recordTransferCommands(
         &first_recorder,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(2),
     );
     try std.testing.expectEqual(@as(u8, 1), first_proof.barrier_count);
@@ -3077,7 +3116,11 @@ test "blank first FontGpu batch initializes atlas only after completion" {
     var later_recorder = FontCommandRecorder{ .proof = &later_proof };
     try font.recordTransferCommands(
         &later_recorder,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(2),
     );
     try std.testing.expectEqual(@as(u8, 0), later_proof.barrier_count);
@@ -3094,7 +3137,11 @@ test "FontGpu atlas transition rollback and fatal ownership remain exact" {
     var discarded_recorder = FontCommandRecorder{ .proof = &discarded_proof };
     try font.recordTransferCommands(
         &discarded_recorder,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(2),
     );
     try font.discard();
@@ -3106,7 +3153,11 @@ test "FontGpu atlas transition rollback and fatal ownership remain exact" {
     var retry_recorder = FontCommandRecorder{ .proof = &retry_proof };
     try font.recordTransferCommands(
         &retry_recorder,
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         @ptrFromInt(2),
     );
     try std.testing.expectEqual(@as(u8, 1), retry_proof.barrier_count);
@@ -3117,6 +3168,8 @@ test "FontGpu atlas transition rollback and fatal ownership remain exact" {
     try font.discard();
 
     try font.prepare(&.{}, &.{});
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     font.image = @ptrFromInt(3);
     try std.testing.expect(!font.completionReady());
     try std.testing.expectError(error.NoCandidate, font.complete());
@@ -3276,6 +3329,8 @@ test "glyph and sparse preparation failures preserve accepted ownership" {
         error.SparseUpdateLimit,
         blk: {
             try font.prepare(&.{slot}, &.{testRaster(slot, &pixels)});
+            // zig-audit: acknowledge panic
+            // reason: Fixture cleanup must retire the pending font transaction; failure aborts the proof instead of leaving ambiguous prepared state.
             defer font.discard() catch @panic("test font discard failed");
             break :blk store.prepare(overflow_update, &font);
         },
@@ -3356,14 +3411,28 @@ test "allocation and Vulkan command layouts are exact" {
 
 test "T017 terminal descriptor construction retains exact pane and font identities" {
     const resources = Resources{
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .sampler = @ptrFromInt(0x101),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .staging_buffer = @ptrFromInt(0x102),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .pipeline = @ptrFromInt(0x103),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .pipeline_layout = @ptrFromInt(0x104),
     };
     var pane = PaneResources{
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .instance_buffer = @ptrFromInt(0x201),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .row_buffer = @ptrFromInt(0x202),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .descriptor = @ptrFromInt(0x203),
         .instance_bytes = 672,
         .row_bytes = 20,
@@ -3374,7 +3443,11 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
         font.view = null;
         font.deinit();
     }
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     font.image = @ptrFromInt(0x301);
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     font.view = @ptrFromInt(0x302);
 
     const facts = try descriptorBindingFacts(&resources, &pane, &font);
@@ -3401,6 +3474,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqual(facts.atlas_image, bindings.glyph_atlas);
 
     var other_resources = resources;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_resources.sampler = @ptrFromInt(0x401);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3409,6 +3484,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqualDeep(retained, pane);
 
     var other_font = font;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_font.view = @ptrFromInt(0x402);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3417,6 +3494,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqualDeep(retained, pane);
 
     other_font = font;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_font.image = @ptrFromInt(0x403);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3441,6 +3520,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqualDeep(retained, pane);
 
     other_pane = pane;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_pane.descriptor = @ptrFromInt(0x404);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3449,6 +3530,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqualDeep(retained, pane);
 
     other_pane = pane;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_pane.instance_buffer = @ptrFromInt(0x405);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3457,6 +3540,8 @@ test "T017 terminal descriptor construction retains exact pane and font identiti
     try std.testing.expectEqualDeep(retained, pane);
 
     other_pane = pane;
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     other_pane.row_buffer = @ptrFromInt(0x406);
     try std.testing.expectError(
         error.InvalidIdentity,
@@ -3507,6 +3592,8 @@ test "malformed retained commands fail before the first Vulkan call" {
     }, &.{});
     try std.testing.expectEqual(ReplacementKind.initialization, candidate.replacement.?);
 
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     const command: vk.VkCommandBuffer = @ptrFromInt(1);
     const bindings = testCommandBindings();
     store.buffer_copies[0].srcOffset = 1;

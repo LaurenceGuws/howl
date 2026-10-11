@@ -94,6 +94,11 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(executable);
 
     const check = b.step("check", "Compile the native Vulkan performance host");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&executable.step);
     const run = b.addRunArtifact(executable);
     run.addPassthruArgs();

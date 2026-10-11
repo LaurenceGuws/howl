@@ -9,6 +9,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const check = b.step("check", "Compile the VT module and every owned proof");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     const test_step = b.step("test", "Run every owned VT proof");
 
     const unicode_digest_module = b.createModule(.{

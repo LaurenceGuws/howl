@@ -311,9 +311,9 @@ test "canceling real image receive releases owned frames and pixels" {
     const worker = try std.Thread.spawn(.{}, testCanceledImageReceive, .{&probe});
     {
         defer {
-            // zig-audit: acknowledge empty_catch
-            // reason: Deferred test cleanup is best-effort after the primary cancellation result; worker.join still guarantees teardown completion.
-            cancellation.cancel() catch {};
+            // zig-audit: acknowledge panic
+            // reason: This fixture must wake its blocked receiver before join; a failed cancellation aborts the proof instead of risking an indefinite join.
+            cancellation.cancel() catch @panic("image receive fixture cancellation failed");
             worker.join();
         }
         try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);

@@ -7,12 +7,14 @@ const ns_per_ms: u64 = std.time.ns_per_ms;
 const ns_per_s: u64 = std.time.ns_per_s;
 const maximum_rate: u32 = 1000;
 
+/// Copied key identity and repeatable semantic key.
 pub const Held = struct {
     keycode: u32,
     serial: u32,
     time: u32,
 };
 
+/// Owns one held key and its monotonic repeat schedule.
 pub const State = struct {
     rate: u32 = 0,
     delay_ms: u32 = 0,
@@ -20,6 +22,7 @@ pub const State = struct {
     next_ns: u64 = 0,
     period_ns: u64 = 0,
 
+    /// Applies compositor repeat rate/delay and resets the schedule.
     pub fn configure(self: *State, rate: u32, delay_ms: u32, now_ns: u64) void {
         self.rate = @min(rate, maximum_rate);
         self.delay_ms = delay_ms;
@@ -44,12 +47,14 @@ pub const State = struct {
         self.next_ns = now_ns +| @as(u64, self.delay_ms) *| ns_per_ms;
     }
 
+    /// Retires repeat state when the matching physical key is released.
     pub fn release(self: *State, keycode: u32) void {
         if (self.held) |held| {
             if (held.keycode == keycode) self.cancel();
         }
     }
 
+    /// Retires any held key and repeat deadline.
     pub fn cancel(self: *State) void {
         self.held = null;
         self.next_ns = 0;

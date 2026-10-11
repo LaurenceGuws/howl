@@ -428,17 +428,17 @@ pub const Owned = struct {
             var exit_code: u32 = 0;
             if (!GetExitCodeProcess(process, &exit_code).toBool())
                 // zig-audit: acknowledge panic
-                // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+                // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
                 @panic("ConPTY child exit query failed during teardown");
             if (exit_code == still_active) {
                 if (!TerminateProcess(process, 1).toBool())
                     // zig-audit: acknowledge panic
-                    // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+                    // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
                     @panic("ConPTY child termination failed during teardown");
             }
             if (WaitForSingleObject(process, stop_wait_ms) != wait_object_0)
                 // zig-audit: acknowledge panic
-                // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+                // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
                 @panic("ConPTY child did not stop within cleanup bound");
             closeHandle(process);
             self.process = null;
@@ -476,7 +476,7 @@ pub const Owned = struct {
         const count: u32 = @intCast(@min(bytes.len, @as(usize, std.math.maxInt(u32))));
         var written: u32 = 0;
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: WriteFile borrows count bytes from this already-bounded live input slice and retains no pointer after the synchronous call.
         if (!WriteFile(handle, @ptrCast(bytes.ptr), count, &written, null).toBool()) {
             return switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .NO_DATA, .PIPE_NOT_CONNECTED => error.ChildClosed,
@@ -507,7 +507,7 @@ pub const Owned = struct {
         ));
         var read_count: u32 = 0;
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: ReadFile writes at most count bytes into this already-bounded live output slice and retains no borrowed pointer.
         if (!ReadFile(handle, @ptrCast(buffer.ptr), count, &read_count, null).toBool()) {
             return switch (windows.GetLastError()) {
                 .BROKEN_PIPE, .PIPE_NOT_CONNECTED => error.EndOfStream,

@@ -9,5 +9,5 @@
         .howl_render = .{ .path = "../../../mods/howl-render" },
         .howl_text = .{ .path = "../../../mods/howl-text" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "probe.zig", "live.zig", "tests", "web", "fonts" },
+    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "probe.zig", "live.zig", "tests", "web", "fonts" },
 }

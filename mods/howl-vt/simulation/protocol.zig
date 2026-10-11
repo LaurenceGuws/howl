@@ -31,6 +31,7 @@ fn chunkLen(rand: std.Random, remaining: CaseOffset, max_chunk_len: ChunkLen) Ca
     return 1 + rand.uintLessThan(CaseOffset, @min(remaining, @as(CaseOffset, max_chunk_len)));
 }
 
+/// Bounds the deterministic protocol simulation workload.
 pub const DeterminismOptions = struct {
     iterations: IterationCount = 32,
     ops_per_case: OpCount = 64,
@@ -205,6 +206,7 @@ const ParserOutput = struct {
     }
 };
 
+/// Returns bounded protocol simulation options with an optional event limit.
 pub fn defaultOptions(events_max: ?OpCount) DeterminismOptions {
     return .{
         .iterations = 32,
@@ -213,6 +215,7 @@ pub fn defaultOptions(events_max: ?OpCount) DeterminismOptions {
     };
 }
 
+/// Runs the deterministic protocol smoke corpus.
 pub fn runSmoke(gpa: std.mem.Allocator) !void {
     const seeds = [_]u64{
         0x70726f746f3031,
@@ -238,6 +241,7 @@ fn copyFixedU8(data: []const u8) [parser_mod.max_intermediates]u8 {
     return out;
 }
 
+/// Runs a seeded protocol simulation and proves equivalent terminal results.
 pub fn runDeterminism(gpa: std.mem.Allocator, seed: u64, options: DeterminismOptions) !void {
     var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();

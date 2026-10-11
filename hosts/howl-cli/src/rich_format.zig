@@ -105,6 +105,7 @@ const EndRecord = struct {
     revision: u64,
 };
 
+/// Writes one rich snapshot in the selected CLI format.
 pub fn emitSnapshot(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -116,6 +117,7 @@ pub fn emitSnapshot(
     try emitNative(allocator, writer, &snapshot);
 }
 
+/// Receives, owns and releases one rich snapshot while writing it.
 pub fn receiveAndEmitSnapshot(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -126,6 +128,7 @@ pub fn receiveAndEmitSnapshot(
     try emitNative(allocator, writer, &snapshot);
 }
 
+/// Writes the native rich snapshot representation with allocator-owned temporary encoding.
 pub fn emitNative(allocator: std.mem.Allocator, writer: *std.Io.Writer, snapshot: *const client.rich.Snapshot) !void {
     const begin = snapshot.begin;
     try emitJson(writer, BeginRecord{
@@ -253,6 +256,8 @@ fn hexBytes(allocator: std.mem.Allocator, bytes: []const u8) std.mem.Allocator.E
     return output;
 }
 
+// zig-audit: acknowledge anytype
+// reason: The private JSON emitter formats distinct typed CLI records; it does not erase or return their error authority.
 fn emitJson(writer: *std.Io.Writer, value: anytype) !void {
     try std.json.Stringify.value(value, .{}, writer);
     try writer.writeByte('\n');

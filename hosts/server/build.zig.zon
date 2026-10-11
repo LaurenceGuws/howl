@@ -7,5 +7,5 @@
         .server = .{ .path = "../../mods/server" },
         .howl_instance = .{ .path = "../../mods/howl-instance" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
+    .paths = .{ ".zig-audit.json", "README.md", "build.zig", "build.zig.zon", "src" },
 }

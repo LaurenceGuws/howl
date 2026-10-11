@@ -269,7 +269,7 @@ fn consumeSleepResult(result: usize) void {
     switch (classifySleepResult(result)) {
         .success, .interrupted => return,
         // zig-audit: acknowledge panic
-        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+        // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
         .failure => @panic("PTY cleanup clock wait failed"),
     }
 }
@@ -358,7 +358,7 @@ fn copyEnvironmentEntry(
     entry: []const u8,
 ) void {
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // reason: The environment builder copies a NUL-terminated entry into owned bounded byte storage; this C pointer remains within that allocation until launch retirement.
     entries[index.*] = @ptrCast(bytes[offset.*..].ptr);
     @memcpy(bytes[offset.* .. offset.* + entry.len], entry);
     offset.* += entry.len;
@@ -376,7 +376,7 @@ fn copyEnvironmentOverride(
     value: []const u8,
 ) void {
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // reason: The environment builder copies a NUL-terminated entry into owned bounded byte storage; this C pointer remains within that allocation until launch retirement.
     entries[index.*] = @ptrCast(bytes[offset.*..].ptr);
     @memcpy(bytes[offset.* .. offset.* + name.len], name);
     offset.* += name.len;
@@ -759,7 +759,7 @@ pub const Owned = struct {
         requireCleanupSignal(sendGroupSignal(pid, .kill));
         const exit = waitLeaderExit(pid, stop_terminate_grace_ns) orelse
             // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+            // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
             @panic("PTY child leader survived SIGKILL");
         reapExitedLeader(pid, exit);
         self.child = .none;
@@ -834,7 +834,7 @@ pub const Owned = struct {
         const master = self.master_fd orelse return error.NotStarted;
         var attributes: posix.termios = undefined;
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: tcgetattr writes the Linux termios ABI into this concrete live termios record through its syscall pointer seam.
         const termios_result = linux.tcgetattr(@intCast(master), @ptrCast(&attributes));
         if (linux.errno(termios_result) != .SUCCESS)
             return error.TermiosQueryFailed;
@@ -947,9 +947,7 @@ fn reapExitedLeader(pid: posix.pid_t, expected: ChildExit) void {
 
 fn optionalZPtr(bytes: ?[:0]u8) ?[*:0]u8 {
     if (bytes) |value| {
-        // zig-audit: acknowledge ptr_from_int
-        // reason: The C ABI needs a different pointer type/constness; the address round-trip preserves the same borrowed allocation and lifetime.
-        return @ptrFromInt(@intFromPtr(value.ptr));
+        return value.ptr;
     }
     return null;
 }
@@ -974,10 +972,10 @@ fn requireCleanupSignal(result: SignalResult) void {
     switch (result) {
         .delivered, .target_missing => {},
         // zig-audit: acknowledge panic
-        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+        // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
         .permission_denied => @panic("PTY child cleanup signal permission denied"),
         // zig-audit: acknowledge panic
-        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+        // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
         .native_signal_failed => @panic("PTY child cleanup signal failed"),
     }
 }
@@ -1026,9 +1024,9 @@ fn requireExecutable(path: [:0]const u8) StartError!void {
 }
 
 fn cArg(path: [*:0]const u8) [*c]u8 {
-    // zig-audit: acknowledge ptr_from_int
-    // reason: The C ABI needs a different pointer type/constness; the address round-trip preserves the same borrowed allocation and lifetime.
-    return @ptrFromInt(@intFromPtr(path));
+    // zig-audit: acknowledge const_cast
+    // reason: Linux execve borrows these NUL-terminated argument bytes without writing them; its C argv type drops constness.
+    return @constCast(path);
 }
 
 // -- Child session, stdio, and exec ------------------------------------------
@@ -1108,24 +1106,24 @@ fn childProcess(
     if (command) |cmd| {
         const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-c"), cArg(cmd) };
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
         const envp: [*c]const [*c]u8 = @ptrCast(environment);
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
         if (linux.errno(linux.execve(shell_path.ptr, @ptrCast(argv[0..].ptr), @ptrCast(envp))) != .SUCCESS) childLaunchExit(status_fd, .exec);
         childLaunchExit(status_fd, .exec);
     }
 
     const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-i") };
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
     const envp: [*c]const [*c]u8 = @ptrCast(environment);
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
     // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+    // reason: The argv/environment tables are NUL-terminated and borrow live NUL-terminated strings; Linux execve consumes their pointer-array ABI only during child launch.
     if (linux.errno(linux.execve(shell_path.ptr, @ptrCast(argv[0..].ptr), @ptrCast(envp))) != .SUCCESS) childLaunchExit(status_fd, .exec);
     childLaunchExit(status_fd, .exec);
 }
@@ -1156,7 +1154,7 @@ fn waitChildWithDeadline(pid: posix.pid_t, timeout_ns: u64) bool {
             .alive => {},
             .reaped => return true,
             // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+            // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
             .failed => @panic("PTY bounded child wait failed"),
         }
         sleepStopSlice();
@@ -1165,7 +1163,7 @@ fn waitChildWithDeadline(pid: posix.pid_t, timeout_ns: u64) bool {
         .alive => false,
         .reaped => true,
         // zig-audit: acknowledge panic
-        // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+        // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
         .failed => @panic("PTY final child wait failed"),
     };
 }
@@ -1176,7 +1174,7 @@ fn waitLeaderExit(pid: posix.pid_t, timeout_ns: u64) ?ChildExit {
     while (slice_index < wait_slices) : (slice_index += 1) {
         switch (observeLeaderExitNoReap(pid) catch
             // zig-audit: acknowledge panic
-            // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+            // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
             @panic("PTY child exit observation failed during cleanup")) {
             .running => sleepStopSlice(),
             .exited => |exit| return exit,
@@ -1184,7 +1182,7 @@ fn waitLeaderExit(pid: posix.pid_t, timeout_ns: u64) ?ChildExit {
     }
     return switch (observeLeaderExitNoReap(pid) catch
         // zig-audit: acknowledge panic
-        // reason: Teardown has no safe recovery after ownership is committed; this failure means the OS/resource ownership invariant was broken.
+        // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
         @panic("PTY final child exit observation failed during cleanup")) {
         .running => null,
         .exited => |exit| exit,
@@ -1207,7 +1205,7 @@ fn waitChildBlocking(pid: posix.pid_t) void {
             .expected, .child => return,
             .interrupted => continue,
             // zig-audit: acknowledge panic
-            // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+            // reason: This synchronous teardown cannot claim released process ownership after failed or expired cleanup; it deliberately stops the process instead of silently leaking or reusing that lifetime.
             .zero, .unexpected_success, .unexpected_error => @panic("PTY child wait failed"),
         }
     }
@@ -1556,7 +1554,7 @@ test "failed termios query preserves owner state and delivers no signal" {
     try std.testing.expectEqual(
         linux.E.SUCCESS,
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: tcgetattr writes the Linux termios ABI into this concrete live termios record through its syscall pointer seam.
         linux.errno(linux.tcgetattr(@intCast(master), @ptrCast(&configured_termios))),
     );
     const configured_interrupt = configured_termios.cc[@backingInt(posix.V.INTR)];

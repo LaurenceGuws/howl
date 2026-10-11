@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const check = b.step("check", "Compile every maintained Zig package and audit the workspace");
     const tests = b.step("test", "Run the complete maintained Zig test graph");
+    const audit = b.step("audit", "Audit every maintained Zig package and Howl project invariants");
     // The manifest is the one child inventory. Missing child gates fail during
     // configuration; public modules/artifacts are forwarded from their owners.
     for (b.available_deps) |entry| {
@@ -17,6 +18,7 @@ pub fn build(b: *std.Build) void {
             std.mem.eql(u8, name, "howl_text") or
             std.mem.eql(u8, name, "howl_render");
         forward(b, name, child, check, tests, !composition_leaf);
+        audit.dependOn(childStep(child, "audit"));
     }
 
     const logger_tests = b.addTest(.{
@@ -51,10 +53,12 @@ pub fn build(b: *std.Build) void {
     check.dependOn(consumer);
     tests.dependOn(consumer);
 
-    const audit = b.step("audit", "Audit accepted Zig source and Howl project invariants");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));
     audit.dependOn(&zig_audit.step);
+    const consumer_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    consumer_audit.setCwd(b.path("test/consumer"));
+    audit.dependOn(&consumer_audit.step);
     const project_audit = b.addSystemCommand(&.{ "bash", "tools/audit_project.sh" });
     project_audit.setCwd(b.path("."));
     audit.dependOn(&project_audit.step);

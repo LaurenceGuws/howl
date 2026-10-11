@@ -6,9 +6,13 @@ const terminal_mod = @import("../src/howl_vt.zig");
 
 const Terminal = terminal_mod.Terminal;
 
+/// Minimum row count used by the scrollback simulation.
 pub const RowsMin: u16 = 1;
+/// Minimum column count used by the scrollback simulation.
 pub const ColsMin: u16 = 1;
+/// Maximum row count used by the scrollback simulation.
 pub const RowsMax: u16 = 80;
+/// Maximum column count used by the scrollback simulation.
 pub const ColsMax: u16 = 220;
 
 const BurstCount = u32;
@@ -20,6 +24,7 @@ const OpKind = enum {
     zoom_jitter,
 };
 
+/// Copied workload and final-content evidence from a scenario.
 pub const RunSummary = struct {
     structural_hash: u64,
     logical_hash: u64,
@@ -28,6 +33,7 @@ pub const RunSummary = struct {
     cols: u16,
 };
 
+/// One bounded generated screen/history operation.
 pub const ChurnStep = union(enum) {
     resize: struct { rows: u16, cols: u16 },
     zoom_jitter: struct {
@@ -39,12 +45,14 @@ pub const ChurnStep = union(enum) {
     },
 };
 
+/// Copied canonical geometry and content facts for divergence diagnostics.
 pub const CoreStateSummary = struct {
     rows: u16,
     cols: u16,
     history_count: u32,
 };
 
+/// Bounds canonical-content preservation and geometry churn.
 pub const PreservationOptions = struct {
     initial_rows: u16 = 24,
     initial_cols: u16 = 80,
@@ -53,11 +61,13 @@ pub const PreservationOptions = struct {
     churn_ops: ScenarioOpCount = 400,
 };
 
+/// Names canonical-content preservation failure.
 pub const InvariantError = error{
     RowBelowMinimum,
     ColBelowMinimum,
 };
 
+/// Runs a bounded seeded scrollback scenario and returns copied evidence.
 pub fn runScenario(allocator: std.mem.Allocator, seed: u64, op_count: ScenarioOpCount) !RunSummary {
     var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();
@@ -85,6 +95,7 @@ pub fn runScenario(allocator: std.mem.Allocator, seed: u64, op_count: ScenarioOp
     };
 }
 
+/// Proves canonical content survives bounded seeded geometry/history churn.
 pub fn runCanonicalPreservation(allocator: std.mem.Allocator, seed: u64, options: PreservationOptions) !void {
     var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();
@@ -135,18 +146,17 @@ pub fn runCanonicalPreservation(allocator: std.mem.Allocator, seed: u64, options
     }
 }
 
+/// Parses a decimal seed or a 40-digit hexadecimal commit identity.
 pub fn parseSeed(bytes: []const u8) !u64 {
     if (bytes.len == 40) {
-        const commit_hash = std.fmt.parseUnsigned(u160, bytes, 16) catch |err| switch (err) {
-            error.Overflow => unreachable,
-            error.InvalidCharacter => return error.InvalidSeed,
-        };
+        const commit_hash = std.fmt.parseUnsigned(u160, bytes, 16) catch return error.InvalidSeed;
         return @truncate(commit_hash);
     }
 
     return std.fmt.parseUnsigned(u64, bytes, 10) catch return error.InvalidSeed;
 }
 
+/// Returns bounded preservation options with an optional event limit.
 pub fn defaultPreservationOptions(events_max: ?ScenarioOpCount) PreservationOptions {
     var options: PreservationOptions = .{};
     options.churn_ops = events_max orelse options.churn_ops;

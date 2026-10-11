@@ -51,6 +51,11 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const check = b.step("check", "Compile the native Howl CLI");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
     check.dependOn(&runtime_tests.step);

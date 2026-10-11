@@ -29,6 +29,11 @@ pub fn build(b: *std.Build) void {
     });
     terminal_tests.root_module.linkSystemLibrary("vulkan", .{});
     const check = b.step("check", "Compile the curated Vulkan module");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     check.dependOn(&terminal_tests.step);
     const shader_receipt = b.step(

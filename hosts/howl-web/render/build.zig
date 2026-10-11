@@ -41,6 +41,11 @@ pub fn build(b: *std.Build) void {
     wasm.wasi_exec_model = .reactor;
 
     const check = b.step("check", "Run shared terminal renderer in Wasm on one bounded semantic view");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     const run = b.addSystemCommand(&.{ "node", "tests/check.mjs" });
     run.setCwd(b.path("."));
     run.addFileArg(wasm.getEmittedBin());

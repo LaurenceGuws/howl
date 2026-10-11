@@ -7,21 +7,29 @@
 
 const std = @import("std");
 
+/// Maximum number of retained host tabs.
 pub const max_tabs: u8 = 8;
+/// Maximum number of retained panes in one tab.
 pub const max_panes_per_tab: u8 = 8;
+/// Maximum total number of retained host panes.
 pub const max_panes: u8 = 32;
 const max_nodes_per_tab: u8 = max_panes_per_tab * 2 - 1;
 const no_node = std.math.maxInt(u8);
 
+/// Non-reused host tab identity.
 pub const TabId = enum(u32) { _ };
+/// Non-reused host pane identity.
 pub const PaneId = enum(u32) { _ };
+/// Axis dividing a pane's available surface.
 pub const SplitAxis = enum { horizontal, vertical };
 
+/// Validated cell-grid surface for host layout projection.
 pub const Surface = struct {
     width: u32,
     height: u32,
 };
 
+/// Integer cell-grid rectangle.
 pub const Rect = struct {
     x: u32,
     y: u32,
@@ -29,12 +37,14 @@ pub const Rect = struct {
     height: u32,
 };
 
+/// Pane identity, projected rectangle and focus fact.
 pub const Placement = struct {
     pane: PaneId,
     rect: Rect,
     focused: bool,
 };
 
+/// Identities assigned to a new tab and its initial pane.
 pub const CreatedTab = struct {
     tab: TabId,
     pane: PaneId,
@@ -97,16 +107,24 @@ const Tab = struct {
         while (true) switch (self.nodes[cursor]) {
             .pane => |pane| return pane,
             .split => |split| cursor = split.first,
+            // zig-audit: acknowledge unreachable
+            // reason: Traversal starts at the retained connected root; split children are initialized before publication, so a reachable node cannot be free.
             .free => unreachable,
         };
     }
 
     fn splitFocused(self: *Tab, pane: PaneId, axis: SplitAxis) error{PaneLimit}!void {
         if (self.pane_count == max_panes_per_tab) return error.PaneLimit;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: Each successful host tab/pane mutation keeps focus on an existing leaf; this synchronous lookup cannot lose it.
         const leaf = self.findPane(self.focused) orelse unreachable;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: The binary-tree budget is two nodes per allowed pane minus one; the preceding pane-capacity check reserves both split children.
         const first = self.findFree(leaf) orelse unreachable;
         var candidate = self.*;
         candidate.nodes[first] = .{ .pane = candidate.focused };
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: The binary-tree budget is two nodes per allowed pane minus one; the preceding pane-capacity check reserves both split children.
         const second = candidate.findFree(leaf) orelse unreachable;
         candidate.nodes[second] = .{ .pane = pane };
         candidate.nodes[leaf] = .{ .split = .{ .axis = axis, .first = first, .second = second } };
@@ -118,7 +136,11 @@ const Tab = struct {
     fn closeFocused(self: *Tab) error{LastPane}!PaneId {
         if (self.pane_count == 1) return error.LastPane;
         const retiring = self.focused;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: Each successful host tab/pane mutation keeps focus on an existing leaf; this synchronous lookup cannot lose it.
         const leaf = self.findPane(retiring) orelse unreachable;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: The focused leaf belongs to a connected tree with more than one pane, so it has one parent.
         const parent = self.findParent(leaf) orelse unreachable;
         const split = self.nodes[parent].split;
         const sibling = if (split.first == leaf) split.second else split.first;
@@ -139,6 +161,8 @@ const Tab = struct {
         count: *u8,
     ) void {
         switch (self.nodes[node_index]) {
+            // zig-audit: acknowledge unreachable
+            // reason: Traversal starts at the retained connected root; split children are initialized before publication, so a reachable node cannot be free.
             .free => unreachable,
             .pane => |pane| {
                 output[count.*] = pane;
@@ -213,6 +237,8 @@ const Tab = struct {
         count: *u8,
     ) error{GeometryLimit}!void {
         switch (self.nodes[node_index]) {
+            // zig-audit: acknowledge unreachable
+            // reason: Traversal starts at the retained connected root; split children are initialized before publication, so a reachable node cannot be free.
             .free => unreachable,
             .pane => |pane| {
                 output[count.*] = .{ .pane = pane, .rect = rect, .focused = pane == self.focused };
@@ -250,28 +276,34 @@ pub const Mux = struct {
     next_tab: u32 = 2,
     next_pane: u32 = 2,
 
+    /// Creates one initial tab containing one focused pane.
     pub fn init() Mux {
         var result = Mux{};
         result.tabs[0] = Tab.init(tabId(1), paneId(1));
         return result;
     }
 
+    /// Returns the number of retained tabs.
     pub fn tabCount(self: *const Mux) u8 {
         return self.tab_count;
     }
 
+    /// Returns the total number of retained panes.
     pub fn paneCount(self: *const Mux) u8 {
         return self.pane_count;
     }
 
+    /// Returns the active tab's exact identity.
     pub fn activeTab(self: *const Mux) TabId {
         return self.tabs[self.active_index].id;
     }
 
+    /// Returns the focused pane in the active tab.
     pub fn focusedPane(self: *const Mux) PaneId {
         return self.tabs[self.active_index].focused;
     }
 
+    /// Creates a bounded new tab and its initial pane, rejecting capacity/identity exhaustion.
     pub fn createTab(self: *Mux) error{ TabLimit, PaneLimit, IdExhausted }!CreatedTab {
         if (self.tab_count == max_tabs) return error.TabLimit;
         if (self.pane_count == max_panes) return error.PaneLimit;
@@ -288,6 +320,7 @@ pub const Mux = struct {
         return .{ .tab = tab, .pane = pane };
     }
 
+    /// Selects an existing tab and reports whether focus changed.
     pub fn switchTab(self: *Mux, id: TabId) error{StaleTab}!bool {
         const index = self.tabIndex(id) orelse return error.StaleTab;
         if (index == self.active_index) return false;
@@ -303,6 +336,7 @@ pub const Mux = struct {
         return true;
     }
 
+    /// Retires the active tab while preserving at least one live tab.
     pub fn closeActiveTab(self: *Mux) error{LastTab}!void {
         if (self.tab_count == 1) return error.LastTab;
         const index = self.active_index;
@@ -313,6 +347,7 @@ pub const Mux = struct {
         if (self.active_index == self.tab_count) self.active_index -= 1;
     }
 
+    /// Adds a pane beside the focused pane, rejecting capacity/identity exhaustion.
     pub fn splitFocused(self: *Mux, axis: SplitAxis) error{ PaneLimit, IdExhausted }!PaneId {
         if (self.pane_count == max_panes or self.tabs[self.active_index].pane_count == max_panes_per_tab)
             return error.PaneLimit;
@@ -324,12 +359,14 @@ pub const Mux = struct {
         return pane;
     }
 
+    /// Retires the focused pane while preserving one pane in its tab.
     pub fn closeFocused(self: *Mux) error{LastPane}!PaneId {
         const retired = try self.tabs[self.active_index].closeFocused();
         self.pane_count -= 1;
         return retired;
     }
 
+    /// Selects an existing pane and reports whether focus changed.
     pub fn focusPane(self: *Mux, pane: PaneId) error{StalePane}!bool {
         const tab = &self.tabs[self.active_index];
         if (tab.findPane(pane) == null) return error.StalePane;
@@ -352,6 +389,8 @@ pub const Mux = struct {
             tab.focused = next;
             return next;
         }
+        // zig-audit: acknowledge unreachable
+        // reason: The nonempty retained tab always keeps its focused pane among its connected leaves.
         unreachable;
     }
 
@@ -361,6 +400,8 @@ pub const Mux = struct {
         if (surface.width == 0 or surface.height == 0) return error.InvalidSurface;
         if (cells == 0) return false;
         const tab = &self.tabs[self.active_index];
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: Each successful host tab/pane mutation keeps focus on an existing leaf; this synchronous lookup cannot lose it.
         const leaf = tab.findPane(tab.focused) orelse unreachable;
         const parent = tab.findParent(leaf) orelse return false;
         const parent_rect = tab.nodeRect(parent, surface) orelse return error.InvalidSurface;
@@ -376,6 +417,7 @@ pub const Mux = struct {
         return true;
     }
 
+    /// Copies active-tab pane placements into caller-owned bounded storage.
     pub fn activeLayout(
         self: *const Mux,
         surface: Surface,
@@ -394,10 +436,14 @@ pub const Mux = struct {
         for (self.tabs[0..self.tab_count]) |tab| {
             if (tab.findPane(pane) == null) continue;
             const placed = tab.project(surface, &storage) catch |failure| switch (failure) {
+                // zig-audit: acknowledge unreachable
+                // reason: The output has max_panes_per_tab slots, matching the enforced per-tab leaf bound.
                 error.InsufficientOutput => unreachable,
                 else => |err| return err,
             };
             for (placed) |value| if (value.pane == pane) return value.rect;
+            // zig-audit: acknowledge unreachable
+            // reason: findPane admitted this exact pane in the unchanged tab; project visits every retained leaf once.
             unreachable;
         }
         return error.StalePane;

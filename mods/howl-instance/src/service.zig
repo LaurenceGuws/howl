@@ -925,7 +925,7 @@ pub const Service = struct {
         ));
         var read_count: u32 = 0;
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: ReadFile writes at most count bytes into this already-bounded live output slice and retains no borrowed pointer.
         if (!ReadFile(client.stream.read, @ptrCast(room.ptr), count, &read_count, null).toBool()) {
             switch (windows.GetLastError()) {
                 .NO_DATA => return false,
@@ -953,7 +953,7 @@ pub const Service = struct {
         ));
         var written: u32 = 0;
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: WriteFile borrows count bytes from this already-bounded live input slice and retains no pointer after the synchronous call.
         if (!WriteFile(client.stream.write, @ptrCast(bytes.ptr), count, &written, null).toBool()) {
             switch (windows.GetLastError()) {
                 .NO_DATA => return false,
@@ -1046,7 +1046,7 @@ pub const Service = struct {
                     .observe_delta => .delta,
                     .observe_packed => .packed_text,
                     // zig-audit: acknowledge unreachable
-                    // reason: The surrounding validation and exhaustive state machine exclude this branch; reaching it would prove an internal invariant violation.
+                    // reason: The enclosing request-kind arm admits only observe, observe_raw, observe_delta and observe_packed; kind is unchanged here.
                     else => unreachable,
                 };
             },

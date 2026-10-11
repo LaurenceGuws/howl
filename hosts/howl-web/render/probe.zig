@@ -5,6 +5,7 @@ const terminal = @import("howl_client_render");
 const render = terminal;
 const text = render.text;
 
+/// Traps unexpected Zig failures in the Wasm renderer proof.
 pub const panic = std.debug.FullPanic(trapPanic);
 fn trapPanic(_: []const u8, _: ?usize) noreturn {
     @trap();

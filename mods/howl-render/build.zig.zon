@@ -8,6 +8,7 @@
         .howl_text = .{ .path = "../howl-text" },
     },
     .paths = .{
+        ".zig-audit.json",
         "build.zig",
         "build.zig.zon",
         "src",

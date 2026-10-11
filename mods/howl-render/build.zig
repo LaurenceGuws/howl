@@ -26,9 +26,11 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile maintained howl-render proofs");
     const test_step = b.step("test", "Run maintained howl-render proofs");
-    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
-    audit.setCwd(b.path("."));
-    check.dependOn(&audit.step);
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
 
     if (!renderer_enabled) {
         // Freestanding consumers need a compile proof, not std's process-backed

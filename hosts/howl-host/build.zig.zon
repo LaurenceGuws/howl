@@ -8,5 +8,5 @@
         .howl_vk = .{ .path = "../../mods/howl-vk" },
         .howl_wayland = .{ .path = "../../mods/howl-wayland" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "test" },
+    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "src", "test" },
 }

@@ -92,9 +92,17 @@ const ClassifiedFailure = client.Error ||
     HostPacketError ||
     error{ Overflow, InvalidHost };
 
+// zig-audit: acknowledge opaque_type
+// reason: HostHandle hides its backing allocation from Dart; callers must return only original live handles from the matching constructor.
 const HostHandle = opaque {};
+// zig-audit: acknowledge opaque_type
+// reason: InterruptHandle hides its backing allocation from Dart; callers must return only original live handles from the matching constructor.
 const InterruptHandle = opaque {};
+// zig-audit: acknowledge opaque_type
+// reason: ControlHandle hides its backing allocation from Dart; callers must return only original live handles from the matching constructor.
 const ControlHandle = opaque {};
+// zig-audit: acknowledge opaque_type
+// reason: LocalInstanceHandle hides its backing allocation from Dart; callers must return only original live handles from the matching constructor.
 const LocalInstanceHandle = opaque {};
 
 const LocalInstance = struct {
@@ -158,6 +166,10 @@ fn posixProcessEnviron() std.process.Environ {
 
 fn localInstanceFromRaw(raw: ?*LocalInstanceHandle) ?*LocalInstance {
     const value = raw orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     return @ptrCast(@alignCast(value));
 }
 
@@ -211,6 +223,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
     };
 }
 
+/// Returns the native host ABI version.
 pub export fn howl_native_host_version() u32 {
     return 6;
 }
@@ -231,27 +244,38 @@ pub export fn howl_native_host_maximum_columns() u32 {
 pub export fn howl_native_interrupt_create() ?*InterruptHandle {
     const allocator = std.heap.c_allocator;
     const value = client.Interrupt.init(allocator) catch return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(value);
 }
 
+/// Wakes an owned interrupt; returns zero on success.
 pub export fn howl_native_interrupt_cancel(raw: ?*InterruptHandle) i32 {
     const value = raw orelse return 1;
-    const interrupt: *client.Interrupt = @ptrCast(@alignCast(value));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    const interrupt: *client.Interrupt = @ptrCast(value);
     interrupt.cancel() catch return 2;
     return 0;
 }
 
+/// Releases an owned interrupt; null is a no-op.
 pub export fn howl_native_interrupt_destroy(raw: ?*InterruptHandle) void {
     const value = raw orelse return;
-    const interrupt: *client.Interrupt = @ptrCast(@alignCast(value));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    const interrupt: *client.Interrupt = @ptrCast(value);
     interrupt.deinit();
 }
 
 fn interruptFromRaw(raw: ?*InterruptHandle) ?*client.Interrupt {
     const value = raw orelse return null;
-    return @ptrCast(@alignCast(value));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    return @ptrCast(value);
 }
 
+/// Creates an owned desktop Local Instance from bounded launch bytes.
 pub export fn howl_native_local_instance_create(
     shell_ptr: [*]const u8,
     shell_len: usize,
@@ -301,6 +325,8 @@ pub export fn howl_native_local_instance_create(
         return null;
     };
     value.instance_id = id;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(value);
 }
 
@@ -318,18 +344,25 @@ pub export fn howl_native_local_instance_destroy(raw: ?*LocalInstanceHandle) i32
     return 0;
 }
 
+/// Returns the minimum caller output capacity for a host packet.
 pub export fn howl_native_host_output_minimum_bytes() usize {
     return output_minimum_bytes;
 }
 
+/// Returns the pending image refill byte count, or zero when absent.
 pub export fn howl_native_host_image_refill_size(raw: ?*HostHandle) usize {
     const raw_host = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const pending = host.pending_image orelse return 0;
     const pixels = imageRefillPixelBytes(pending.external.size) catch return 0;
     return std.math.add(usize, image_refill_header_bytes, pixels) catch 0;
 }
 
+/// Copies a requested image refill into caller-owned bounded output.
 pub export fn howl_native_host_fetch_image_refill(
     raw: ?*HostHandle,
     output_ptr: [*]u8,
@@ -338,6 +371,10 @@ pub export fn howl_native_host_fetch_image_refill(
 ) i32 {
     output_len.* = 0;
     const raw_host = raw orelse return 2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const pending = host.pending_image orelse return 3;
     if (host.armed_live_after_revision != null) return 4;
@@ -670,9 +707,12 @@ fn createHostFromConnection(
     fonts_live = false;
     renderer_live = false;
     scratch_live = false;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(host);
 }
 
+/// Creates a transported direct host with caller-supplied endpoint and font bytes.
 pub export fn howl_native_host_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -731,6 +771,7 @@ pub export fn howl_native_host_create(
     );
 }
 
+/// Creates a host attached to an exact Server/Session/Instance occurrence.
 pub export fn howl_native_host_create_managed(
     server_endpoint_ptr: [*]const u8,
     server_endpoint_len: usize,
@@ -787,6 +828,7 @@ pub export fn howl_native_host_create_managed(
     );
 }
 
+/// Creates a host retaining the selected Local Instance.
 pub export fn howl_native_host_create_local(
     local_raw: ?*LocalInstanceHandle,
     primary_ptr: [*]const u8,
@@ -834,6 +876,10 @@ pub export fn howl_native_host_create_local(
         diagnostic_capacity,
         diagnostic_len,
     ) orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw));
     retainLocalInstance(local_instance);
     host.local_instance = local_instance;
@@ -856,9 +902,12 @@ fn createControlFromConnection(
     };
     control.* = .{ .allocator = allocator, .connection = connection };
     connection_live = false;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(control);
 }
 
+/// Creates a separate direct semantic-control connection.
 pub export fn howl_native_control_create(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -897,6 +946,7 @@ pub export fn howl_native_control_create(
     );
 }
 
+/// Creates control attached to the exact managed terminal occurrence.
 pub export fn howl_native_control_create_managed(
     server_endpoint_ptr: [*]const u8,
     server_endpoint_len: usize,
@@ -933,6 +983,7 @@ pub export fn howl_native_control_create_managed(
     );
 }
 
+/// Creates control retaining the selected Local Instance.
 pub export fn howl_native_control_create_local(
     local_raw: ?*LocalInstanceHandle,
     interrupt_raw: ?*InterruptHandle,
@@ -958,6 +1009,10 @@ pub export fn howl_native_control_create_local(
         diagnostic_capacity,
         diagnostic_len,
     ) orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const control: *Control = @ptrCast(@alignCast(raw));
     retainLocalInstance(local_instance);
     control.local_instance = local_instance;
@@ -970,6 +1025,7 @@ fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
     try std.json.Stringify.value(rendered, .{}, writer);
 }
 
+/// Copies the Server catalogue into caller-owned bounded output.
 pub export fn howl_native_server_tree(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -1048,8 +1104,13 @@ pub export fn howl_native_server_tree(
     return 0;
 }
 
+/// Releases owned control resources; null is a no-op.
 pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
     const raw_control = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const control: *Control = @ptrCast(@alignCast(raw_control));
     const allocator = control.allocator;
     const local_instance = control.local_instance;
@@ -1059,6 +1120,7 @@ pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
     if (local_instance) |value| releaseLocalInstance(value);
 }
 
+/// Sends bounded committed text through semantic control.
 pub export fn howl_native_control_committed_text(
     raw: ?*ControlHandle,
     bytes_ptr: [*]const u8,
@@ -1069,6 +1131,7 @@ pub export fn howl_native_control_committed_text(
     return 0;
 }
 
+/// Sends bounded paste bytes through semantic control.
 pub export fn howl_native_control_paste(
     raw: ?*ControlHandle,
     bytes_ptr: [*]const u8,
@@ -1079,6 +1142,7 @@ pub export fn howl_native_control_paste(
     return 0;
 }
 
+/// Validates and sends one named physical key.
 pub export fn howl_native_control_named_key(
     raw: ?*ControlHandle,
     key_value: u8,
@@ -1096,6 +1160,7 @@ pub export fn howl_native_control_named_key(
     return 0;
 }
 
+/// Validates and sends one Unicode physical key.
 pub export fn howl_native_control_unicode_key(
     raw: ?*ControlHandle,
     scalar: u32,
@@ -1113,6 +1178,7 @@ pub export fn howl_native_control_unicode_key(
     return 0;
 }
 
+/// Validates and sends one explicit focus transition.
 pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (focus_value < 1 or focus_value > 2) return 3;
@@ -1120,6 +1186,7 @@ pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i
     return 0;
 }
 
+/// Requests explicit terminal geometry through semantic control.
 pub export fn howl_native_control_resize(
     raw: ?*ControlHandle,
     rows: u16,
@@ -1130,6 +1197,7 @@ pub export fn howl_native_control_resize(
     return 0;
 }
 
+/// Validates and sends one child signal.
 pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     const signal: protocol.Signal = switch (signal_value) {
@@ -1144,6 +1212,7 @@ pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8)
     return 0;
 }
 
+/// Copies current interaction facts into caller-owned bounded output.
 pub export fn howl_native_control_interaction_state(
     raw: ?*ControlHandle,
     output_ptr: [*]u8,
@@ -1158,6 +1227,7 @@ pub export fn howl_native_control_interaction_state(
     return 0;
 }
 
+/// Validates and sends one semantic mouse event.
 pub export fn howl_native_control_mouse(
     raw: ?*ControlHandle,
     kind_value: u8,
@@ -1186,6 +1256,7 @@ pub export fn howl_native_control_mouse(
     return 0;
 }
 
+/// Copies requested terminal text into caller-owned bounded output.
 pub export fn howl_native_control_text_extract(
     raw: ?*ControlHandle,
     start_row: i32,
@@ -1220,11 +1291,20 @@ pub export fn howl_native_control_text_extract(
 
 fn controlFromRaw(raw: ?*ControlHandle) ?*Control {
     const value = raw orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     return @ptrCast(@alignCast(value));
 }
 
+/// Releases host resources and retained Local references; null is a no-op.
 pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     const raw_host = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const allocator = host.allocator;
     const observation_scratch = host.observation_scratch;
@@ -1250,6 +1330,10 @@ pub export fn howl_native_host_set_live_observe_pipeline(
 ) i32 {
     if (enabled > 1) return 3;
     const raw_host = raw orelse return 2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw_host));
     if (host.armed_live_after_revision != null) return 4;
     if (host.live_resync_required) return 4;
@@ -1257,6 +1341,7 @@ pub export fn howl_native_host_set_live_observe_pipeline(
     return 0;
 }
 
+/// Observes one frame into caller-owned bounded packet storage.
 pub export fn howl_native_host_observe(
     raw: ?*HostHandle,
     after_revision: u64,
@@ -1270,6 +1355,10 @@ pub export fn howl_native_host_observe(
     output_len.* = 0;
     if (output_capacity < output_minimum_bytes) return 1;
     const raw_host = raw orelse return 2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const residency_bytes: []const u8 = if (residency_len == 0)
         &.{}
@@ -1401,16 +1490,16 @@ fn observe(
     if (total > std.math.maxInt(u32) or hcr_len > std.math.maxInt(u32) or
         semantic.bytes_written > std.math.maxInt(u32))
         return error.IntegerOverflow;
-    const total_bytes: *[4]u8 = @ptrCast(output[8..12].ptr);
+    const total_bytes: *[4]u8 = output[8..12];
     std.mem.writeInt(u32, total_bytes, @intCast(total), .little);
-    const hcr_bytes: *[4]u8 = @ptrCast(output[16..20].ptr);
+    const hcr_bytes: *[4]u8 = output[16..20];
     std.mem.writeInt(u32, hcr_bytes, @intCast(hcr_len), .little);
     if (semantic.truncated) {
-        const flags_bytes: *[4]u8 = @ptrCast(output[20..24].ptr);
+        const flags_bytes: *[4]u8 = output[20..24];
         const flags = std.mem.readInt(u32, flags_bytes, .little) | (1 << 6);
         std.mem.writeInt(u32, flags_bytes, flags, .little);
     }
-    const semantic_bytes: *[4]u8 = @ptrCast(output[60..64].ptr);
+    const semantic_bytes: *[4]u8 = output[60..64];
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     if (host.live_observe_pipeline and history_offset == 0) {
         try host.raw_cache.sendDeltaRequest(&host.connection, begin.revision, 0);
@@ -1797,22 +1886,22 @@ const Writer = struct {
     }
 
     fn writeU16(self: *Writer, value: u16) HostPacketError!void {
-        const output: *[2]u8 = @ptrCast((try self.need(2)).ptr);
+        const output: *[2]u8 = (try self.need(2))[0..2];
         std.mem.writeInt(u16, output, value, .little);
     }
 
     fn writeU32(self: *Writer, value: u32) HostPacketError!void {
-        const output: *[4]u8 = @ptrCast((try self.need(4)).ptr);
+        const output: *[4]u8 = (try self.need(4))[0..4];
         std.mem.writeInt(u32, output, value, .little);
     }
 
     fn writeI32(self: *Writer, value: i32) HostPacketError!void {
-        const output: *[4]u8 = @ptrCast((try self.need(4)).ptr);
+        const output: *[4]u8 = (try self.need(4))[0..4];
         std.mem.writeInt(i32, output, value, .little);
     }
 
     fn writeU64(self: *Writer, value: u64) HostPacketError!void {
-        const output: *[8]u8 = @ptrCast((try self.need(8)).ptr);
+        const output: *[8]u8 = (try self.need(8))[0..8];
         std.mem.writeInt(u64, output, value, .little);
     }
 };

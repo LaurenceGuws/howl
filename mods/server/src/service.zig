@@ -65,6 +65,7 @@ const Client = struct {
     }
 };
 
+/// Owns bounded adopted control clients while borrowing the Server model.
 pub const Service = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -88,6 +89,7 @@ pub const Service = struct {
         };
     }
 
+    /// Closes all adopted clients and releases their buffers.
     pub fn deinit(self: *Service) void {
         for (&self.clients) |*maybe_client| {
             if (maybe_client.*) |*client| client.deinit(self.allocator);
@@ -96,6 +98,7 @@ pub const Service = struct {
         self.* = undefined;
     }
 
+    /// Returns the number of retained control clients.
     pub fn clientCount(self: *const Service) u16 {
         var count: u16 = 0;
         for (self.clients) |client| {
@@ -104,8 +107,10 @@ pub const Service = struct {
         return count;
     }
 
+    /// Maximum number of control readiness records returned by this service.
     pub const maximum_wait_descriptors: usize = maximum_clients;
 
+    /// Borrowed control descriptor and requested poll events.
     pub const WaitDescriptor = struct {
         fd: posix.fd_t,
         events: i16,
@@ -130,6 +135,7 @@ pub const Service = struct {
         return output[0..count];
     }
 
+    /// Reports adoption allocation, client-capacity, input-size or descriptor configuration failure.
     pub const AdoptError = std.mem.Allocator.Error || error{
         ClientCapacity,
         InitialInputTooLarge,
@@ -481,6 +487,8 @@ pub const Service = struct {
             const views = self.server.snapshotInstances(
                 session_view.id,
                 &instance_views_storage[session_index],
+                // zig-audit: acknowledge orelse_unreachable
+                // reason: snapshotSessions and snapshotInstances run synchronously against the same unchanged borrowed Server catalogue.
             ) orelse unreachable;
             for (views, 0..) |view, instance_index| {
                 instance_records[session_index][instance_index] = .{
@@ -616,6 +624,8 @@ const TestPeer = struct {
                     offset += result;
                 },
                 .INTR => continue,
+                // zig-audit: acknowledge empty_catch
+                // reason: This nonblocking test peer treats yield as a scheduling hint and retries the actual write; a refused hint loses no stream data.
                 .AGAIN => std.Thread.yield() catch {},
                 else => return error.TestSocketWriteFailed,
             }

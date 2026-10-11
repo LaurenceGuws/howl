@@ -7,6 +7,7 @@
         .howl_vt = .{ .path = "../.." },
     },
     .paths = .{
+        ".zig-audit.json",
         "build.zig",
         "build.zig.zon",
         "src",

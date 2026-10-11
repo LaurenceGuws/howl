@@ -40,6 +40,11 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const check = b.step("check", "Compile the Odin bridge and all its proofs");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&library.step);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run Odin bridge ownership and mapping proofs");

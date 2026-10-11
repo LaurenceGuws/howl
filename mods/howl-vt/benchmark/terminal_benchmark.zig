@@ -103,28 +103,52 @@ const CountingAllocator = struct {
 
     // std.mem.Allocator owns architecture-sized lengths and return addresses at this callback seam.
     // Translate them immediately into fixed-width benchmark counters below.
+    // zig-audit: acknowledge anyopaque
+    // reason: std.mem.Allocator.VTable requires opaque callback context; allocator() installs this live CountingAllocator as that context.
     fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        // zig-audit: acknowledge ptr_cast
+        // reason: allocator() supplied this exact CountingAllocator address to the vtable; the callback recovers the same live owner.
+        // zig-audit: acknowledge align_cast
+        // reason: The CountingAllocator address installed by allocator() retains its concrete allocation alignment through the vtable call.
         const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
         const ptr = self.child.rawAlloc(len, alignment, ret_addr) orelse return null;
         self.accountAlloc(len);
         return ptr;
     }
 
+    // zig-audit: acknowledge anyopaque
+    // reason: std.mem.Allocator.VTable requires opaque callback context; allocator() installs this live CountingAllocator as that context.
     fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        // zig-audit: acknowledge ptr_cast
+        // reason: allocator() supplied this exact CountingAllocator address to the vtable; the callback recovers the same live owner.
+        // zig-audit: acknowledge align_cast
+        // reason: The CountingAllocator address installed by allocator() retains its concrete allocation alignment through the vtable call.
         const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
         if (!self.child.rawResize(memory, alignment, new_len, ret_addr)) return false;
         self.accountResize(memory.len, new_len);
         return true;
     }
 
+    // zig-audit: acknowledge anyopaque
+    // reason: std.mem.Allocator.VTable requires opaque callback context; allocator() installs this live CountingAllocator as that context.
     fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        // zig-audit: acknowledge ptr_cast
+        // reason: allocator() supplied this exact CountingAllocator address to the vtable; the callback recovers the same live owner.
+        // zig-audit: acknowledge align_cast
+        // reason: The CountingAllocator address installed by allocator() retains its concrete allocation alignment through the vtable call.
         const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
         const ptr = self.child.rawRemap(memory, alignment, new_len, ret_addr) orelse return null;
         self.accountResize(memory.len, new_len);
         return ptr;
     }
 
+    // zig-audit: acknowledge anyopaque
+    // reason: std.mem.Allocator.VTable requires opaque callback context; allocator() installs this live CountingAllocator as that context.
     fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        // zig-audit: acknowledge ptr_cast
+        // reason: allocator() supplied this exact CountingAllocator address to the vtable; the callback recovers the same live owner.
+        // zig-audit: acknowledge align_cast
+        // reason: The CountingAllocator address installed by allocator() retains its concrete allocation alignment through the vtable call.
         const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
         self.child.rawFree(memory, alignment, ret_addr);
         self.live_bytes -|= memory.len;

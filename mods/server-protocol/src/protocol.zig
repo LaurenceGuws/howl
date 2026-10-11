@@ -6,19 +6,30 @@
 
 const std = @import("std");
 
+/// Version of the bounded Server control frame envelope.
 pub const framing_version: u8 = 1;
+/// Exact encoded control frame header length.
 pub const header_bytes: usize = 12;
+/// Upper bound on any control request payload.
 pub const maximum_request_payload_bytes: usize = 8 * 1024;
+/// Upper bound on any control frame payload.
 pub const maximum_payload_bytes: usize = 8 * 1024;
+/// Wire catalogue bound on simultaneous Sessions.
 pub const maximum_sessions: u16 = 16;
+/// Wire catalogue bound on Instances in one Session.
 pub const maximum_instances_per_session: u16 = 16;
+/// Maximum encoded Session name byte length.
 pub const maximum_session_name_bytes: usize = 64;
+/// Maximum encoded shell path byte length.
 pub const maximum_shell_bytes: usize = 1024;
+/// Maximum encoded command byte length.
 pub const maximum_command_bytes: usize = 4096;
+/// Maximum encoded working-directory byte length.
 pub const maximum_cwd_bytes: usize = 1024;
 
 const magic = [4]u8{ 'S', 'R', 'V', 'R' };
 
+/// Frozen control request and response frame tags.
 pub const Kind = enum(u8) {
     hello = 1,
     welcome = 2,
@@ -35,11 +46,13 @@ pub const Kind = enum(u8) {
     result = 13,
 };
 
+/// Control frame tag and bounded payload length.
 pub const Header = struct {
     kind: Kind,
     payload_len: u32,
 };
 
+/// Reports invalid magic, version, tag, reserved bytes or payload length.
 pub const HeaderError = error{
     InvalidMagic,
     UnsupportedFramingVersion,
@@ -48,14 +61,18 @@ pub const HeaderError = error{
     PayloadTooLarge,
 };
 
+/// Reports malformed or out-of-domain control payloads.
 pub const PayloadError = error{InvalidPayload};
+/// Reports invalid payload values or insufficient output capacity.
 pub const EncodeError = PayloadError || error{OutputTooSmall};
 
+/// Frozen retained Instance lifecycle tags.
 pub const InstanceState = enum(u8) {
     running = 1,
     exited = 2,
 };
 
+/// Frozen typed results for control operations.
 pub const ResultCode = enum(u8) {
     ok = 1,
     malformed = 2,
@@ -70,6 +87,7 @@ pub const ResultCode = enum(u8) {
     internal = 11,
 };
 
+/// Server incarnation, catalogue revision and bounded counts.
 pub const Status = struct {
     server_id: u64,
     tree_revision: u64,
@@ -79,19 +97,23 @@ pub const Status = struct {
     instances_per_session: u16 = maximum_instances_per_session,
 };
 
+/// Catalogue revision after which the client wants an observation.
 pub const ObserveTree = struct {
     after_revision: u64,
 };
 
+/// Session name borrowed for the duration of encoding.
 pub const CreateSession = struct {
     name: []const u8,
 };
 
+/// Exact nonzero Session/Instance occurrence selection.
 pub const InstanceIdentity = struct {
     session_id: u64,
     instance_id: u64,
 };
 
+/// Explicit process and geometry request with borrowed launch bytes.
 pub const CreateInstance = struct {
     session_id: u64,
     shell: []const u8,
@@ -102,6 +124,7 @@ pub const CreateInstance = struct {
     history_rows: u16,
 };
 
+/// Typed control result and resulting catalogue revision.
 pub const Result = struct {
     request_kind: Kind,
     code: ResultCode,
@@ -110,42 +133,62 @@ pub const Result = struct {
     tree_revision: u64 = 0,
 };
 
+/// Exact occurrence and catalogue revision at stream handoff.
 pub const AttachReady = struct {
     session_id: u64,
     instance_id: u64,
     tree_revision: u64,
 };
 
+/// Session facts with borrowed name and Instance records.
 pub const SessionRecord = struct {
     session_id: u64,
     name: []const u8,
     instances: []const InstanceRecord,
 };
 
+/// Copied Instance identity and lifecycle tag.
 pub const InstanceRecord = struct {
     instance_id: u64,
     state: InstanceState,
 };
 
+/// Catalogue header uses the Status wire representation.
 pub const TreeHeader = Status;
 
+/// Exact fixed payload sizes and variable-record prefix sizes.
 pub const payload_bytes = struct {
+    /// Encoded hello payload or prefix size in bytes.
     pub const hello: usize = 0;
+    /// Encoded welcome payload or prefix size in bytes.
     pub const welcome: usize = 32;
+    /// Encoded status payload or prefix size in bytes.
     pub const status: usize = 0;
+    /// Encoded status snapshot payload or prefix size in bytes.
     pub const status_snapshot: usize = 32;
+    /// Encoded observe tree payload or prefix size in bytes.
     pub const observe_tree: usize = 8;
+    /// Encoded create session header payload or prefix size in bytes.
     pub const create_session_header: usize = 8;
+    /// Encoded session identity payload or prefix size in bytes.
     pub const session_identity: usize = 8;
+    /// Encoded create instance header payload or prefix size in bytes.
     pub const create_instance_header: usize = 24;
+    /// Encoded instance identity payload or prefix size in bytes.
     pub const instance_identity: usize = 16;
+    /// Encoded attach ready payload or prefix size in bytes.
     pub const attach_ready: usize = 24;
+    /// Encoded result payload or prefix size in bytes.
     pub const result: usize = 32;
+    /// Encoded tree header payload or prefix size in bytes.
     pub const tree_header: usize = 32;
+    /// Encoded session record header payload or prefix size in bytes.
     pub const session_record_header: usize = 16;
+    /// Encoded Instance record size in bytes.
     pub const instance_record: usize = 16;
 };
 
+/// Validates and encodes header into caller-owned output.
 pub fn encodeHeader(output: *[header_bytes]u8, value: Header) error{PayloadTooLarge}!void {
     if (value.payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
     output.* = @splat(0);
@@ -155,6 +198,7 @@ pub fn encodeHeader(output: *[header_bytes]u8, value: Header) error{PayloadTooLa
     writeU32(output[8..12], value.payload_len);
 }
 
+/// Decodes and validates header from the exact wire payload.
 pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
     if (!std.mem.eql(u8, input[0..4], &magic)) return error.InvalidMagic;
     if (input[4] != framing_version) return error.UnsupportedFramingVersion;
@@ -165,6 +209,7 @@ pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
     return .{ .kind = kind, .payload_len = payload_len };
 }
 
+/// Validates and encodes status into caller-owned output.
 pub fn encodeStatus(output: *[payload_bytes.status_snapshot]u8, value: Status) PayloadError!void {
     try validateStatus(value);
     output.* = @splat(0);
@@ -176,6 +221,7 @@ pub fn encodeStatus(output: *[payload_bytes.status_snapshot]u8, value: Status) P
     writeU16(output[22..24], value.instances_per_session);
 }
 
+/// Decodes and validates status from the exact wire payload.
 pub fn decodeStatus(input: []const u8) PayloadError!Status {
     if (input.len != payload_bytes.status_snapshot or !allZero(input[24..32]))
         return error.InvalidPayload;
@@ -191,20 +237,24 @@ pub fn decodeStatus(input: []const u8) PayloadError!Status {
     return value;
 }
 
+/// Validates and encodes observe tree into caller-owned output.
 pub fn encodeObserveTree(output: *[payload_bytes.observe_tree]u8, value: ObserveTree) void {
     writeU64(output, value.after_revision);
 }
 
+/// Decodes and validates observe tree from the exact wire payload.
 pub fn decodeObserveTree(input: []const u8) PayloadError!ObserveTree {
     if (input.len != payload_bytes.observe_tree) return error.InvalidPayload;
     return .{ .after_revision = readU64(input) };
 }
 
+/// Validates a Session request and returns its exact encoded size.
 pub fn createSessionEncodedBytes(value: CreateSession) PayloadError!usize {
     try validateSessionName(value.name);
     return payload_bytes.create_session_header + value.name.len;
 }
 
+/// Validates and encodes create session into caller-owned output.
 pub fn encodeCreateSession(output: []u8, value: CreateSession) EncodeError![]const u8 {
     const needed = try createSessionEncodedBytes(value);
     if (output.len < needed) return error.OutputTooSmall;
@@ -215,6 +265,7 @@ pub fn encodeCreateSession(output: []u8, value: CreateSession) EncodeError![]con
     return encoded;
 }
 
+/// Decodes and validates create session from the exact wire payload.
 pub fn decodeCreateSession(input: []const u8) PayloadError!CreateSession {
     if (input.len < payload_bytes.create_session_header or !allZero(input[1..payload_bytes.create_session_header]))
         return error.InvalidPayload;
@@ -225,11 +276,13 @@ pub fn decodeCreateSession(input: []const u8) PayloadError!CreateSession {
     return value;
 }
 
+/// Validates and encodes session identity into caller-owned output.
 pub fn encodeSessionIdentity(output: *[payload_bytes.session_identity]u8, session_id: u64) PayloadError!void {
     if (session_id == 0) return error.InvalidPayload;
     writeU64(output, session_id);
 }
 
+/// Decodes and validates session identity from the exact wire payload.
 pub fn decodeSessionIdentity(input: []const u8) PayloadError!u64 {
     if (input.len != payload_bytes.session_identity) return error.InvalidPayload;
     const value = readU64(input);
@@ -237,6 +290,7 @@ pub fn decodeSessionIdentity(input: []const u8) PayloadError!u64 {
     return value;
 }
 
+/// Validates an Instance request and returns its exact encoded size.
 pub fn createInstanceEncodedBytes(value: CreateInstance) PayloadError!usize {
     try validateCreateInstance(value);
     return payload_bytes.create_instance_header + value.shell.len +
@@ -244,6 +298,7 @@ pub fn createInstanceEncodedBytes(value: CreateInstance) PayloadError!usize {
         (if (value.cwd) |text| text.len else 0);
 }
 
+/// Validates and encodes create instance into caller-owned output.
 pub fn encodeCreateInstance(output: []u8, value: CreateInstance) EncodeError![]const u8 {
     const needed = try createInstanceEncodedBytes(value);
     if (output.len < needed) return error.OutputTooSmall;
@@ -267,6 +322,7 @@ pub fn encodeCreateInstance(output: []u8, value: CreateInstance) EncodeError![]c
     return encoded;
 }
 
+/// Decodes and validates create instance from the exact wire payload.
 pub fn decodeCreateInstance(input: []const u8) PayloadError!CreateInstance {
     if (input.len < payload_bytes.create_instance_header or !allZero(input[20..24]))
         return error.InvalidPayload;
@@ -294,12 +350,14 @@ pub fn decodeCreateInstance(input: []const u8) PayloadError!CreateInstance {
     return value;
 }
 
+/// Validates and encodes instance identity into caller-owned output.
 pub fn encodeInstanceIdentity(output: *[payload_bytes.instance_identity]u8, value: InstanceIdentity) PayloadError!void {
     try validateInstanceIdentity(value);
     writeU64(output[0..8], value.session_id);
     writeU64(output[8..16], value.instance_id);
 }
 
+/// Decodes and validates instance identity from the exact wire payload.
 pub fn decodeInstanceIdentity(input: []const u8) PayloadError!InstanceIdentity {
     if (input.len != payload_bytes.instance_identity) return error.InvalidPayload;
     const value = InstanceIdentity{
@@ -310,6 +368,7 @@ pub fn decodeInstanceIdentity(input: []const u8) PayloadError!InstanceIdentity {
     return value;
 }
 
+/// Validates and encodes attach ready into caller-owned output.
 pub fn encodeAttachReady(output: *[payload_bytes.attach_ready]u8, value: AttachReady) PayloadError!void {
     try validateInstanceIdentity(.{ .session_id = value.session_id, .instance_id = value.instance_id });
     if (value.tree_revision == 0) return error.InvalidPayload;
@@ -318,6 +377,7 @@ pub fn encodeAttachReady(output: *[payload_bytes.attach_ready]u8, value: AttachR
     writeU64(output[16..24], value.tree_revision);
 }
 
+/// Decodes and validates attach ready from the exact wire payload.
 pub fn decodeAttachReady(input: []const u8) PayloadError!AttachReady {
     if (input.len != payload_bytes.attach_ready) return error.InvalidPayload;
     const value = AttachReady{
@@ -330,6 +390,7 @@ pub fn decodeAttachReady(input: []const u8) PayloadError!AttachReady {
     return value;
 }
 
+/// Validates and encodes result into caller-owned output.
 pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) PayloadError!void {
     if (!resultRequestKind(value.request_kind) or value.tree_revision == 0) return error.InvalidPayload;
     if (value.code == .ok) switch (value.request_kind) {
@@ -338,7 +399,7 @@ pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) PayloadErr
         .close_session => if (value.session_id == 0 or value.instance_id != 0) return error.InvalidPayload,
         .close_instance => if (value.session_id == 0 or value.instance_id == 0) return error.InvalidPayload,
         .attach_instance => return error.InvalidPayload,
-        else => unreachable,
+        else => return error.InvalidPayload,
     };
     output.* = @splat(0);
     output[0] = @backingInt(value.request_kind);
@@ -348,6 +409,7 @@ pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) PayloadErr
     writeU64(output[24..32], value.tree_revision);
 }
 
+/// Decodes and validates result from the exact wire payload.
 pub fn decodeResult(input: []const u8) PayloadError!Result {
     if (input.len != payload_bytes.result or !allZero(input[2..8])) return error.InvalidPayload;
     const request_kind = enumFromInt(Kind, input[0]) orelse return error.InvalidPayload;
@@ -365,6 +427,7 @@ pub fn decodeResult(input: []const u8) PayloadError!Result {
     return value;
 }
 
+/// Validates catalogue facts and returns their exact encoded byte count.
 pub fn treeEncodedBytes(status: Status, sessions: []const SessionRecord) PayloadError!usize {
     try validateTree(status, sessions);
     var total: usize = payload_bytes.tree_header;
@@ -376,6 +439,7 @@ pub fn treeEncodedBytes(status: Status, sessions: []const SessionRecord) Payload
     return total;
 }
 
+/// Validates and writes one bounded catalogue snapshot into caller-owned output.
 pub fn encodeTreeSnapshot(output: []u8, status: Status, sessions: []const SessionRecord) EncodeError![]const u8 {
     const needed = try treeEncodedBytes(status, sessions);
     if (output.len < needed) return error.OutputTooSmall;
@@ -404,6 +468,7 @@ pub fn encodeTreeSnapshot(output: []u8, status: Status, sessions: []const Sessio
     return output[0..needed];
 }
 
+/// Stateful bounded decoder borrowing one validated tree payload.
 pub const TreeDecoder = struct {
     input: []const u8,
     header: TreeHeader,
@@ -414,18 +479,21 @@ pub const TreeDecoder = struct {
     previous_session_id: u64 = 0,
     previous_instance_id: u64 = 0,
 
+    /// Session facts borrowed from the decoder's input.
     pub const DecodedSession = struct {
         session_id: u64,
         name: []const u8,
         instance_count: u16,
     };
 
+    /// Validates the tree header and starts decoding borrowed catalogue records.
     pub fn init(input: []const u8) PayloadError!TreeDecoder {
         if (input.len < payload_bytes.tree_header) return error.InvalidPayload;
         const header = try decodeStatus(input[0..payload_bytes.tree_header]);
         return .{ .input = input, .header = header };
     }
 
+    /// Decodes the next ordered Session record after its Instances are consumed.
     pub fn nextSession(self: *TreeDecoder) PayloadError!?DecodedSession {
         if (self.pending_instances != 0) return error.InvalidPayload;
         if (self.sessions_seen == self.header.session_count) {
@@ -454,6 +522,7 @@ pub const TreeDecoder = struct {
         return .{ .session_id = session_id, .name = name, .instance_count = instance_count };
     }
 
+    /// Decodes the next Instance belonging to the current Session.
     pub fn nextInstance(self: *TreeDecoder) PayloadError!InstanceRecord {
         if (self.pending_instances == 0) return error.InvalidPayload;
         if (self.offset + payload_bytes.instance_record > self.input.len) return error.InvalidPayload;

@@ -6,6 +6,7 @@ const render = terminal;
 const text = render.text;
 const p = client.protocol;
 
+/// Traps unexpected Zig failures at the Wasm host boundary.
 pub const panic = std.debug.FullPanic(trapPanic);
 fn trapPanic(_: []const u8, _: ?usize) noreturn {
     @trap();

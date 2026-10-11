@@ -6,5 +6,5 @@
     .dependencies = .{
         .howl_text = .{ .path = "../../../mods/howl-text" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "probe.zig", "tests", "web" },
+    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "probe.zig", "tests", "web" },
 }

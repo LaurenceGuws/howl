@@ -2,6 +2,7 @@
 
 const std = @import("std");
 
+/// Selects local history, terminal mouse or alternate-screen key routing.
 pub const WheelRoute = enum {
     history,
     terminal_mouse,
@@ -32,10 +33,12 @@ pub const State = struct {
     anchor_top_row: u64 = 0,
     anchor_valid: bool = false,
 
+    /// Reports whether the host is observing retained history.
     pub fn active(self: State) bool {
         return self.offset != 0;
     }
 
+    /// Returns host scrollback observation to the live terminal.
     pub fn reset(self: *State) void {
         self.* = .{};
     }

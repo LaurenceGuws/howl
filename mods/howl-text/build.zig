@@ -45,6 +45,11 @@ pub fn build(b: *std.Build) void {
     });
 
     const check = b.step("check", "Compile native text shaping and rasterization proofs");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     check.dependOn(&contract_tests.step);
     check.dependOn(&generated_tests.step);

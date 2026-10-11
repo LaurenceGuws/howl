@@ -195,9 +195,13 @@ fn runFallible(
     synchronization2.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
     var timeline = std.mem.zeroes(vk.VkPhysicalDeviceTimelineSemaphoreFeatures);
     timeline.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     synchronization2.pNext = @ptrCast(&timeline);
     var features = std.mem.zeroes(vk.VkPhysicalDeviceFeatures2);
     features.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     features.pNext = @ptrCast(&synchronization2);
     vk.vkGetPhysicalDeviceFeatures2(physical, &features);
     if (synchronization2.synchronization2 == 0 or timeline.timelineSemaphore == 0) return error.RequiredFeature;
@@ -222,10 +226,14 @@ fn runFallible(
     timeline.timelineSemaphore = vk.VK_TRUE;
     var device_info = std.mem.zeroes(vk.VkDeviceCreateInfo);
     device_info.sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     device_info.pNext = @ptrCast(&synchronization2);
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
     device_info.enabledExtensionCount = names.len;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This live array holds NUL-terminated names; Vulkan borrows exactly enabledExtensionCount entries during device creation.
     device_info.ppEnabledExtensionNames = @ptrCast(&names);
     var device: vk.VkDevice = undefined;
     if (vk.vkCreateDevice(physical, &device_info, null, &device) != vk.VK_SUCCESS) return error.VulkanDevice;
@@ -236,9 +244,17 @@ fn runFallible(
 
     const drm_fd = try openRenderNode(selected.render_major, selected.render_minor);
     defer closeDescriptor(drm_fd);
+    // zig-audit: acknowledge ptr_cast
+    // reason: The exact vkGetMemoryFdKHR lookup establishes the C procedure type; the subsequent load check rejects null.
     const get_memory_fd: vk.PFN_vkGetMemoryFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetMemoryFdKHR"));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The exact vkGetImageDrmFormatModifierPropertiesEXT lookup establishes the C procedure type; the subsequent load check rejects null.
     const get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetImageDrmFormatModifierPropertiesEXT"));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The exact vkGetSemaphoreFdKHR lookup establishes the C procedure type; the subsequent load check rejects null.
     const get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR"));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The exact vkImportSemaphoreFdKHR lookup establishes the C procedure type; the subsequent load check rejects null.
     const import_semaphore_fd: vk.PFN_vkImportSemaphoreFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkImportSemaphoreFdKHR"));
     if (get_memory_fd == null or get_modifier == null or get_semaphore_fd == null or import_semaphore_fd == null) return error.FunctionLoad;
 
@@ -289,6 +305,8 @@ fn runFallible(
     if (vk.vkAllocateCommandBuffers(device, &command_info, &command) != vk.VK_SUCCESS) return error.Command;
     var queue_active = false;
     defer if (queue_active) {
+        // zig-audit: acknowledge panic
+        // reason: Teardown must quiesce submitted work before freeing its backing resources; failure cannot safely continue resource retirement.
         if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) @panic("Render failed to quiesce Vulkan during cleanup");
     };
 
@@ -556,6 +574,8 @@ fn discardPending(
     prepared: published_scene.Prepared,
 ) void {
     scene.discardPrepared(prepared) catch |failure|
+        // zig-audit: acknowledge panic
+        // reason: Cleanup retires the exact prepared scene transaction; failure leaves ambiguous presentation ownership and cannot be silently accepted.
         @panic(@errorName(failure));
 }
 
@@ -684,6 +704,8 @@ fn establishInitialGeometry(
         cell_size,
     )) {
         try scene.discardPrepared(prepared.*);
+        // zig-audit: acknowledge discard
+        // reason: This request applies the exact surface policy; the surrounding owner tracks geometry/publication facts rather than its change boolean.
         _ = try requestSceneSurface(
             boundary,
             scene,
@@ -915,6 +937,8 @@ fn selectPhysical(instance: vk.VkInstance, feedback_device: u64) !Physical {
         drm.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT;
         var properties = std.mem.zeroes(vk.VkPhysicalDeviceProperties2);
         properties.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        // zig-audit: acknowledge ptr_cast
+        // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
         properties.pNext = @ptrCast(&drm);
         vk.vkGetPhysicalDeviceProperties2(device, &properties);
         const render_match = drm.hasRender != 0 and drm.renderMajor == feedback_major and drm.renderMinor == feedback_minor;
@@ -932,6 +956,8 @@ fn openRenderNode(major: i64, minor: i64) !i32 {
     for (128..256) |index| {
         const name_bytes = std.fmt.bufPrint(path[0 .. path.len - 1], "/dev/dri/renderD{d}", .{index}) catch return error.DrmOpen;
         path[name_bytes.len] = 0;
+        // zig-audit: acknowledge ptr_cast
+        // reason: The path buffer is explicitly NUL-terminated after bounded formatting and remains live for this native call.
         const name: [*:0]const u8 = @ptrCast(&path);
         var status: c.struct_stat = undefined;
         if (c.stat(name, &status) != 0) continue;
@@ -971,6 +997,8 @@ fn queryFormat(physical: vk.VkPhysicalDevice, modifier: u64) !bool {
     var external_info = std.mem.zeroes(vk.VkPhysicalDeviceExternalImageFormatInfo);
     external_info.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
     external_info.handleType = vk.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     external_info.pNext = @ptrCast(&modifier_info);
     var info = std.mem.zeroes(vk.VkPhysicalDeviceImageFormatInfo2);
     info.sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
@@ -978,11 +1006,15 @@ fn queryFormat(physical: vk.VkPhysicalDevice, modifier: u64) !bool {
     info.type = vk.VK_IMAGE_TYPE_2D;
     info.tiling = vk.VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
     info.usage = vk.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     info.pNext = @ptrCast(&external_info);
     var external = std.mem.zeroes(vk.VkExternalImageFormatProperties);
     external.sType = vk.VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
     var properties = std.mem.zeroes(vk.VkImageFormatProperties2);
     properties.sType = vk.VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     properties.pNext = @ptrCast(&external);
     if (vk.vkGetPhysicalDeviceImageFormatProperties2(physical, &info, &properties) != vk.VK_SUCCESS) return error.ImageFormat;
     const value = external.externalMemoryProperties;
@@ -1007,6 +1039,8 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     list.sType = vk.VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT;
     var properties = std.mem.zeroes(vk.VkFormatProperties2);
     properties.sType = vk.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     properties.pNext = @ptrCast(&list);
     vk.vkGetPhysicalDeviceFormatProperties2(physical, vk.VK_FORMAT_R8G8B8A8_UNORM, &properties);
     if (list.drmFormatModifierCount == 0 or list.drmFormatModifierCount > 64) return error.Modifier;
@@ -1087,9 +1121,13 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     var external = std.mem.zeroes(vk.VkExternalMemoryImageCreateInfo);
     external.sType = vk.VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
     external.handleTypes = vk.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     external.pNext = @ptrCast(&modifier_list);
     var info = std.mem.zeroes(vk.VkImageCreateInfo);
     info.sType = vk.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     info.pNext = @ptrCast(&external);
     info.imageType = vk.VK_IMAGE_TYPE_2D;
     info.format = vk.VK_FORMAT_R8G8B8A8_UNORM;
@@ -1117,9 +1155,13 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     var dedicated = std.mem.zeroes(vk.VkMemoryDedicatedAllocateInfo);
     dedicated.sType = vk.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
     dedicated.image = slot.image;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     export_info.pNext = if (dedicated_only) @ptrCast(&dedicated) else null;
     var allocation = std.mem.zeroes(vk.VkMemoryAllocateInfo);
     allocation.sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     allocation.pNext = @ptrCast(&export_info);
     allocation.allocationSize = requirements.size;
     allocation.memoryTypeIndex = memory_type orelse return error.Memory;
@@ -1200,6 +1242,8 @@ fn render(
     export_info.handleTypes = vk.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
     var semaphore_info = std.mem.zeroes(vk.VkSemaphoreCreateInfo);
     semaphore_info.sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The initialized Vulkan extension structure retains its exact sType and live storage through this synchronous pNext-chain call.
     semaphore_info.pNext = @ptrCast(&export_info);
     var completion: vk.VkSemaphore = undefined;
     if (vk.vkCreateSemaphore(device, &semaphore_info, null, &completion) !=
@@ -1314,9 +1358,15 @@ fn deadline() !i64 {
 }
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("Render descriptor cleanup failed");
+    const result = c.close(descriptor);
+    // Linux has already released the descriptor on EINTR; never retry a possibly reused fd.
+    // zig-audit: acknowledge panic
+    // reason: Linux releases close's fd on EINTR, which is accepted without retry; another failure violates this owner's exact descriptor lifetime.
+    if (result != 0 and std.c.errno(result) != .INTR) @panic("Render descriptor cleanup failed");
 }
 
 fn destroySyncobj(drm_fd: i32, handle: u32) void {
+    // zig-audit: acknowledge panic
+    // reason: This renderer exclusively owns the live DRM syncobj until teardown; failed retirement violates that resource lifetime.
     if (c.drmSyncobjDestroy(drm_fd, handle) != 0) @panic("Render syncobj cleanup failed");
 }

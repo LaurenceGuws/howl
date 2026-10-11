@@ -56,9 +56,12 @@ pub const ResourceGeneration = struct {
     resource: u64,
     generation: u64,
 
+    /// Largest representable nonzero resource identity.
     pub const max_identity: u64 = std.math.maxInt(u64);
+    /// Reports a zero resource identity or generation.
     pub const InitError = error{ InvalidIdentity, InvalidGeneration };
 
+    /// Constructs an exact nonzero resource/generation pair.
     pub fn init(
         resource: u64,
         generation: u64,
@@ -68,11 +71,13 @@ pub const ResourceGeneration = struct {
         return .{ .resource = resource, .generation = generation };
     }
 
+    /// Validates this pair and returns the resource identity.
     pub fn identity(self: ResourceGeneration) InitError!u64 {
         try self.validate();
         return self.resource;
     }
 
+    /// Rejects zero resource identity or generation.
     pub fn validate(self: ResourceGeneration) InitError!void {
         if (self.resource == 0) return error.InvalidIdentity;
         if (self.generation == 0) return error.InvalidGeneration;
@@ -440,6 +445,8 @@ pub const Context = struct {
                     vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
                 bound = pipeline_kind;
             }
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The recording contract requires the unchanged plan/placement already admitted by staging and preflightPlacedRecording, which checked every translated clip.
             const placed_clip = placedRect(item.clip, placement) catch unreachable;
             var scissor = recordingScissor(placed_clip, target);
             vk.vkCmdSetScissor(command, 0, 1, &scissor);
@@ -770,6 +777,8 @@ pub const Context = struct {
         if (vk.vkBindBufferMemory(device, self.staging_buffer, self.staging_memory, 0) != vk.VK_SUCCESS) return error.Buffer;
         var mapped: ?*u8 = null;
         if (vk.vkMapMemory(device, self.staging_memory, 0, requirements.size, 0, &mapped) != vk.VK_SUCCESS or mapped == null) return error.StagingMap;
+        // zig-audit: acknowledge ptr_cast
+        // reason: Successful vkMapMemory supplies a non-null live mapped byte region; teardown unmaps it before freeing the memory.
         self.mapped = @ptrCast(mapped.?);
     }
 
@@ -792,7 +801,9 @@ pub const Context = struct {
 /// presentation or producer policy. GPU-backed implementations may use the
 /// same candidate/commit protocol around physical allocations.
 pub const ResidencyStore = struct {
+    /// Bounds retained surface resources and upload pixel bytes.
     pub const Limits = struct { resources: usize, pixel_bytes: usize };
+    /// Reports invalid frames, resource/generation/capacity, allocation or pending-transaction failures.
     pub const StoreError = error{ OutOfMemory, InvalidFrame, Capacity, GenerationMismatch, ArithmeticOverflow, Pending };
     const Entry = struct { resource: ResourceGeneration, kind: Kind, width: u16, height: u16, stride: usize, pixel_start: usize, pixel_count: usize };
     allocator: std.mem.Allocator,
@@ -998,6 +1009,7 @@ pub const ResidencyStore = struct {
 /// Converts a complete generic frame into bounded Vulkan-ready geometry and
 /// full alpha/RGBA atlas candidates without naming producer domains.
 pub const FrameBuilder = struct {
+    /// Reports invalid frame composition, output capacity, arithmetic or allocation failure.
     pub const BuildError = error{ OutOfMemory, Capacity, InvalidFrame, ArithmeticOverflow };
     const Packed = struct { resource: ResourceGeneration, kind: Kind, x: u16, y: u16, width: u16, height: u16 };
     // Linear filtering may sample one texel beyond a resource when a logical
@@ -1040,6 +1052,7 @@ pub const FrameBuilder = struct {
         };
     }
 
+    /// Releases this builder's allocator-owned composition buffers.
     pub fn deinit(self: *FrameBuilder) void {
         self.allocator.free(self.commands);
         self.allocator.free(self.indices);
@@ -1615,6 +1628,8 @@ fn memoryType(properties: vk.VkPhysicalDeviceMemoryProperties, bits: u32, requir
 }
 
 fn shader(device: vk.VkDevice, bytes: []align(4) const u8) Error!vk.VkShaderModule {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The shader input is align(4) SPIR-V bytes; this C view preserves its word alignment, byte count and call-bounded lifetime.
     var info = vk.VkShaderModuleCreateInfo{ .codeSize = bytes.len, .pCode = @ptrCast(bytes.ptr) };
     var result: vk.VkShaderModule = null;
     if (vk.vkCreateShaderModule(device, &info, null, &result) != vk.VK_SUCCESS) return error.Shader;
@@ -1720,7 +1735,11 @@ test "placed generic layer translates local clips through the shared surface" {
     };
     const placement = Placement{ .x = 50, .y = 0, .width = 50, .height = 20 };
     const target = FrameTarget{
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .image = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .attachment = .{ .framebuffer = @ptrFromInt(1) },
         .attachment_width = 200,
         .attachment_height = 40,
@@ -1850,7 +1869,11 @@ test "recording preflight rejects a late collapsing physical scissor" {
 test "record prelude rejects malformed plans without changing atlas state" {
     var context = Context{};
     const target = FrameTarget{
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .image = @ptrFromInt(1),
+        // zig-audit: acknowledge ptr_from_int
+        // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
         .attachment = .{ .framebuffer = @ptrFromInt(1) },
         .attachment_width = 1,
         .attachment_height = 1,
@@ -1860,6 +1883,8 @@ test "record prelude rejects malformed plans without changing atlas state" {
         .graphics_queue_family = 0,
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
+    // zig-audit: acknowledge ptr_from_int
+    // reason: This CPU-only Vulkan proof uses synthetic handle identity for comparison or rejected admission; it never dereferences it or submits it to a live driver.
     const command: vk.VkCommandBuffer = @ptrFromInt(1);
     const before_alpha = context.atlas_initialized;
     const before_image = context.image_atlas_initialized;

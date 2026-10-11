@@ -24,6 +24,7 @@ fn argCount(argv: []const [:0]const u8) u16 {
     return @intCast(argv.len);
 }
 
+/// Runs the selected deterministic VT simulation.
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const gpa = init.gpa;

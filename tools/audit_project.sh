@@ -235,4 +235,67 @@ require(f'version: {snapshot["version"]}' in Path("project_version_scope.yml").r
         "project_version_scope.yml: workspace snapshot version mismatch")
 PYSNAPSHOT
 
+# A passing local checker must cover every owned Zig file, not only files with
+# findings. Package scopes partition Git-owned source; nested build roots audit
+# themselves and the root audit composes their named gates.
+python3 - <<'PYAUDIT' || status=1
+from pathlib import Path
+import json
+import re
+import subprocess
+
+root = Path.cwd()
+tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+packages = sorted({Path(path).parent for path in tracked if path.endswith("/build.zig") or path == "build.zig"})
+sources = subprocess.check_output(
+    ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.zig"],
+    text=True,
+).splitlines()
+
+def under(path, prefix):
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+scopes = {}
+for package in packages:
+    config_path = package / ".zig-audit.json"
+    if not config_path.is_file():
+        raise SystemExit(f"{package}: missing package zig-audit config")
+    config = json.loads(config_path.read_text())
+    if config.get("schema") != 2 or config.get("source") != "git" or config.get("minimum_ruleset", 0) < 3:
+        raise SystemExit(f"{config_path}: expected Git source acknowledgements at ruleset 3 or newer")
+    if set(config) - {"schema", "source", "minimum_ruleset", "include", "exclude"}:
+        raise SystemExit(f"{config_path}: unexpected config field")
+    for field in ("include", "exclude"):
+        values = config.get(field, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise SystemExit(f"{config_path}: {field} must contain source paths")
+    scopes[package] = config
+    build = (package / "build.zig").read_text()
+    if package != Path(".") and (
+        'b.step("audit",' not in build or 'check.dependOn(audit)' not in build
+        or 'zig_audit.setCwd(b.path("."))' not in build
+        or 'audit.dependOn(&zig_audit.step)' not in build
+    ):
+        raise SystemExit(f"{package}/build.zig: missing package-local audit/check gate")
+    manifest = (package / "build.zig.zon").read_text()
+    if '".zig-audit.json"' not in manifest[manifest.index(".paths"):]:
+        raise SystemExit(f"{package}/build.zig.zon: audit config absent from source distribution")
+
+for source in sources:
+    path = Path(source)
+    ancestors = [package for package in packages if path.is_relative_to(package)]
+    owner = max(ancestors, key=lambda package: len(package.parts))
+    selected = []
+    for package in ancestors:
+        relative = str(path.relative_to(package))
+        config = scopes[package]
+        included = not config.get("include") or any(under(relative, prefix) for prefix in config["include"])
+        excluded = any(under(relative, prefix) for prefix in config.get("exclude", []))
+        if included and not excluded:
+            selected.append(package)
+    if selected != [owner]:
+        raise SystemExit(f"{source}: expected only {owner} audit coverage, got {selected}")
+print(f"Howl audit coverage: {len(packages)} package roots / {len(sources)} Zig files")
+PYAUDIT
+
 exit "$status"

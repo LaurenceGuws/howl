@@ -3,9 +3,13 @@ const protocol = @import("howl_instance").protocol;
 const client = @import("howl_client");
 const rich_format = @import("rich_format.zig");
 
+/// Selects the shared client's compact snapshot detail.
 pub const Detail = client.snapshot.Detail;
+/// Shared client line geometry vocabulary.
 pub const LineGeometry = client.snapshot.LineGeometry;
+/// Allocator-owned compact snapshot returned by the shared client.
 pub const Snapshot = client.snapshot.Snapshot;
+/// Requests a compact snapshot through the shared client owner.
 pub const request = client.snapshot.request;
 
 const Geometry = struct { rows: u16, columns: u16 };
@@ -40,6 +44,7 @@ const Compact = struct {
     detail: Detail,
 };
 
+/// Writes one compact snapshot as JSON without taking its ownership.
 pub fn emitCompact(writer: *std.Io.Writer, value: *const Snapshot) !void {
     const begin = value.begin;
     try std.json.Stringify.value(Compact{
@@ -76,6 +81,7 @@ pub fn emitCompact(writer: *std.Io.Writer, value: *const Snapshot) !void {
     try writer.writeByte('\n');
 }
 
+/// Writes snapshot text without taking its ownership.
 pub fn emitText(writer: *std.Io.Writer, value: *const Snapshot) !void {
     for (value.lines) |line| {
         try writer.writeAll(line);

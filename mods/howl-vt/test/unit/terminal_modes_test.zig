@@ -22,7 +22,7 @@ var encode_scratch: Terminal.InputScratch = .{};
 
 fn encodeKey(terminal: *Terminal, key: Terminal.Key, mod: Modifier) []const u8 {
     // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
+    // reason: These fixed test key/mouse/focus inputs must encode successfully; a setup failure aborts the proof and is not an impossible production error.
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .key = .{ .key = key, .mods = mod } }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -30,7 +30,7 @@ fn encodeKey(terminal: *Terminal, key: Terminal.Key, mod: Modifier) []const u8 {
 
 fn encodeMouse(terminal: *Terminal, event: MouseEvent) []const u8 {
     // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
+    // reason: These fixed test key/mouse/focus inputs must encode successfully; a setup failure aborts the proof and is not an impossible production error.
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .mouse = event }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -38,7 +38,7 @@ fn encodeMouse(terminal: *Terminal, event: MouseEvent) []const u8 {
 
 fn encodeFocusIn(terminal: *Terminal) []const u8 {
     // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
+    // reason: These fixed test key/mouse/focus inputs must encode successfully; a setup failure aborts the proof and is not an impossible production error.
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .focus = .in }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -46,7 +46,7 @@ fn encodeFocusIn(terminal: *Terminal) []const u8 {
 
 fn encodeFocusOut(terminal: *Terminal) []const u8 {
     // zig-audit: acknowledge catch_unreachable
-    // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
+    // reason: These fixed test key/mouse/focus inputs must encode successfully; a setup failure aborts the proof and is not an impossible production error.
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .focus = .out }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -58,7 +58,7 @@ fn visibleView(terminal: *const Terminal, history_offset: u32) Terminal.Semantic
 
 fn write(terminal: *Terminal, bytes: []const u8) void {
     // zig-audit: acknowledge catch_unreachable
-    // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
+    // reason: This fixture must feed its complete bytes before assertions; a feed failure aborts the proof rather than accepting partial setup.
     feed(terminal, bytes) catch unreachable;
 }
 

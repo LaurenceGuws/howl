@@ -35,9 +35,11 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile the direct Zig SDL app and its proofs");
     check.dependOn(&app.step);
     check.dependOn(&tests.step);
-    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
-    audit.setCwd(b.path("."));
-    check.dependOn(&audit.step);
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     b.step("test", "Run application ownership and behavior proofs").dependOn(&b.addRunArtifact(tests).step);
     const run = b.addRunArtifact(app);
     run.addPassthruArgs();

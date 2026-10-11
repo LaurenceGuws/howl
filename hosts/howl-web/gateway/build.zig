@@ -19,6 +19,11 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{ .name = "howl-web-gateway", .root_module = module });
     const check = b.step("check", "Compile and test bounded gateway policy");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&exe.step);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run bounded gateway policy and live byte-bridge proofs");

@@ -12,8 +12,10 @@ pub const input_capacity: usize = 128;
 /// Bounds ordered pointer button/wheel occurrences awaiting Render projection.
 pub const pointer_event_capacity: usize = 32;
 
+/// Copied physical surface dimensions in pixels.
 pub const WindowSize = struct { width: u16, height: u16 };
 
+/// Copied compositor scaling state for the host surface.
 pub const DisplayScale = struct {
     /// Fractional-scale protocol units where 120 means 1x.
     scale_120: u32,
@@ -50,6 +52,7 @@ pub const GeometryRequest = struct {
     font_pixels: ?u16 = null,
 };
 
+/// Bounded semantic input delivered from Window to the terminal owner.
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
@@ -687,7 +690,11 @@ pub const Boundary = struct {
 };
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("shared descriptor cleanup failed");
+    const result = c.close(descriptor);
+    // Linux has already released the descriptor on EINTR; never retry a possibly reused fd.
+    // zig-audit: acknowledge panic
+    // reason: Linux releases close's fd on EINTR, which is accepted without retry; another failure violates this owner's exact descriptor lifetime.
+    if (result != 0 and std.c.errno(result) != .INTR) @panic("shared descriptor cleanup failed");
 }
 
 fn signal(descriptor: i32) void {
@@ -697,6 +704,8 @@ fn signal(descriptor: i32) void {
         if (result == @sizeOf(u64)) return;
         if (result < 0 and std.c.errno(result) == .INTR) continue;
         if (result < 0 and std.c.errno(result) == .AGAIN) return;
+        // zig-audit: acknowledge panic
+        // reason: The owner retains this live eventfd through worker shutdown; EINTR and saturation are handled, so another result violates the wake lifetime.
         @panic("eventfd write violated the live Boundary invariant");
     }
 }

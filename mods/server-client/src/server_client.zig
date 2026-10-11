@@ -2,13 +2,19 @@
 
 const std = @import("std");
 const transport = @import("client_transport");
+/// Pure Server control wire shared with the server model.
 pub const protocol = @import("server_protocol");
 
+/// Shared transport connection-stage vocabulary.
 pub const ConnectStage = transport.ConnectStage;
+/// Shared bounded transport connection diagnostic.
 pub const ConnectDiagnostic = transport.ConnectDiagnostic;
+/// Opaque cancellation wake owner from the shared transport.
 pub const Interrupt = transport.Interrupt;
+/// Owned cancellation capability from the shared transport.
 pub const Cancellation = transport.Cancellation;
 
+/// Reports transport, framing, decoding, connection-lifetime and typed Server rejection failures.
 pub const Error = std.mem.Allocator.Error || transport.Error || protocol.HeaderError ||
     protocol.PayloadError || error{
     StaleServerIncarnation,
@@ -27,11 +33,13 @@ pub const Error = std.mem.Allocator.Error || transport.Error || protocol.HeaderE
     Internal,
 };
 
+/// Allocator-owned control frame payload.
 pub const Frame = struct {
     allocator: std.mem.Allocator,
     kind: protocol.Kind,
     payload: []u8,
 
+    /// Releases owned payload/storage or stream resources and retires this value.
     pub fn deinit(self: *Frame) void {
         self.allocator.free(self.payload);
         self.* = undefined;
@@ -56,6 +64,7 @@ pub fn attach(allocator: std.mem.Allocator, target: Target, diagnostic: *Connect
     return server.attachInstance(target.server_id, .{ .session_id = target.session_id, .instance_id = target.instance_id });
 }
 
+/// Owns one negotiated Server control stream and incarnation/revision facts.
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     stream: transport.Stream,
@@ -63,11 +72,13 @@ pub const Connection = struct {
     tree_revision: u64,
     live: bool = true,
 
+    /// Opens and negotiates one Server control connection.
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
         var diagnostic: ConnectDiagnostic = .{};
         return connectDiagnosed(allocator, endpoint, &diagnostic);
     }
 
+    /// Opens a control connection while recording bounded transport diagnostics.
     pub fn connectDiagnosed(
         allocator: std.mem.Allocator,
         endpoint: []const u8,
@@ -77,6 +88,7 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
+    /// Opens a control connection with explicit diagnostics and cancellation.
     pub fn connectCancelable(
         allocator: std.mem.Allocator,
         endpoint: []const u8,
@@ -87,6 +99,7 @@ pub const Connection = struct {
         return connectTransport(allocator, stream, diagnostic);
     }
 
+    /// Releases owned payload/storage or stream resources and retires this value.
     pub fn deinit(self: *Connection) void {
         self.retire();
     }
@@ -96,16 +109,19 @@ pub const Connection = struct {
         self.live = false;
     }
 
+    /// Borrows this live control stream's readiness handle.
     pub fn readinessFd(self: *const Connection) error{ConnectionRetired}!transport.Handle {
         if (!self.live) return error.ConnectionRetired;
         return self.stream.readinessFd();
     }
 
+    /// Creates an owned cancellation capability for this live stream.
     pub fn cancellation(self: *const Connection) error{ ConnectionRetired, SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
         if (!self.live) return error.ConnectionRetired;
         return self.stream.cancellation();
     }
 
+    /// Requests current Server incarnation and catalogue counts.
     pub fn status(self: *Connection) Error!protocol.Status {
         try self.controlReady();
         try self.send(.status, &.{});
@@ -117,6 +133,7 @@ pub const Connection = struct {
         return value;
     }
 
+    /// Requests an owned catalogue snapshot newer than the supplied revision.
     pub fn observeTree(self: *Connection, after_revision: u64) Error!Tree {
         try self.controlReady();
         var payload: [protocol.payload_bytes.observe_tree]u8 = undefined;
@@ -131,9 +148,12 @@ pub const Connection = struct {
         return tree;
     }
 
+    /// Creates a named Session and returns its Server-assigned identity.
     pub fn createSession(self: *Connection, name: []const u8) Error!u64 {
         var payload: [protocol.payload_bytes.create_session_header + protocol.maximum_session_name_bytes]u8 = undefined;
         const encoded = protocol.encodeCreateSession(&payload, .{ .name = name }) catch |failure| switch (failure) {
+            // zig-audit: acknowledge unreachable
+            // reason: The fixed Session-name buffer holds the prefix plus the maximum validated name.
             error.OutputTooSmall => unreachable,
             else => |err| return err,
         };
@@ -141,6 +161,7 @@ pub const Connection = struct {
         return result.session_id;
     }
 
+    /// Requests closure of the exact Session identity.
     pub fn closeSession(self: *Connection, session_id: u64) Error!void {
         var payload: [protocol.payload_bytes.session_identity]u8 = undefined;
         try protocol.encodeSessionIdentity(&payload, session_id);
@@ -148,6 +169,7 @@ pub const Connection = struct {
         if (result.session_id != session_id or result.instance_id != 0) return error.UnexpectedFrame;
     }
 
+    /// Explicit Session selection and process/geometry request for a new Instance.
     pub const InstanceLaunch = struct {
         session_id: u64,
         shell: []const u8,
@@ -158,6 +180,7 @@ pub const Connection = struct {
         history_rows: u16,
     };
 
+    /// Requests one explicitly launched Instance and returns its exact identity.
     pub fn createInstance(self: *Connection, launch: InstanceLaunch) Error!protocol.InstanceIdentity {
         var payload: [protocol.maximum_request_payload_bytes]u8 = undefined;
         const encoded = protocol.encodeCreateInstance(&payload, .{
@@ -169,6 +192,8 @@ pub const Connection = struct {
             .columns = launch.columns,
             .history_rows = launch.history_rows,
         }) catch |failure| switch (failure) {
+            // zig-audit: acknowledge unreachable
+            // reason: The request buffer is maximum_request_payload_bytes; validated launch fields plus their prefix fit that exact wire bound.
             error.OutputTooSmall => unreachable,
             else => |err| return err,
         };
@@ -180,6 +205,7 @@ pub const Connection = struct {
         return .{ .session_id = result.session_id, .instance_id = result.instance_id };
     }
 
+    /// Requests closure of the exact Session/Instance occurrence.
     pub fn closeInstance(self: *Connection, identity: protocol.InstanceIdentity) Error!void {
         var payload: [protocol.payload_bytes.instance_identity]u8 = undefined;
         try protocol.encodeInstanceIdentity(&payload, identity);
@@ -214,6 +240,8 @@ pub const Connection = struct {
             try self.stream.finishHandshake(&diagnostic);
             reusable = true;
             try resultError(result.code);
+            // zig-audit: acknowledge unreachable
+            // reason: The preceding branch rejected ResultCode.ok; resultError returns an error for every remaining exhaustive result code.
             unreachable;
         }
         if (frame.kind != .attach_ready) return error.UnexpectedFrame;
@@ -280,27 +308,32 @@ pub const Connection = struct {
     }
 };
 
+/// Owns a successfully handed-off stream and its attach-ready facts.
 pub const Attached = struct {
     ready: protocol.AttachReady,
     stream: transport.Stream,
 
+    /// Releases owned payload/storage or stream resources and retires this value.
     pub fn deinit(self: *Attached) void {
         self.stream.deinit();
         self.* = undefined;
     }
 };
 
+/// Allocator-owned decoded Session catalogue.
 pub const Tree = struct {
     allocator: std.mem.Allocator,
     status: protocol.Status,
     sessions: []Session,
 
+    /// Borrowed name and Instance slice within an owned Tree.
     pub const Session = struct {
         id: u64,
         name: []u8,
         instances: []protocol.InstanceRecord,
     };
 
+    /// Releases owned payload/storage or stream resources and retires this value.
     pub fn deinit(self: *Tree) void {
         for (self.sessions) |session| {
             self.allocator.free(session.instances);
@@ -339,6 +372,7 @@ pub const Tree = struct {
     }
 };
 
+/// Constructs a control Connection from an already-owned transport stream.
 pub fn connectTransport(
     allocator: std.mem.Allocator,
     stream_value: transport.Stream,

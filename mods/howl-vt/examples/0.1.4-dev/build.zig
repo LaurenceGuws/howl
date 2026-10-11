@@ -23,6 +23,11 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(runtime);
     const check = b.step("check", "Compile the versioned VT runtime and contract tests");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&runtime.step);
 
     const tests_module = b.createModule(.{

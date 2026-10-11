@@ -42,6 +42,11 @@ pub fn build(b: *std.Build) void {
     });
 
     const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     check.dependOn(&service_tests.step);
     const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");

@@ -2,6 +2,7 @@
 const std = @import("std");
 const text = @import("howl_text");
 // Safety violations trap instead of pulling filesystem-backed stack tracing into the host.
+/// Traps unexpected Zig failures in the Wasm text proof.
 pub const panic = std.debug.FullPanic(trapPanic);
 fn trapPanic(_: []const u8, _: ?usize) noreturn {
     @trap();

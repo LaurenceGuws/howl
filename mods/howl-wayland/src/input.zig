@@ -166,6 +166,7 @@ const Storage = struct {
     revision: u64 = 0,
 };
 
+/// Owns bounded compositor keyboard/pointer state for one surface.
 pub const State = struct {
     /// Opaque-to-callers fixed storage; mutate only through State methods.
     storage: Storage = .{},

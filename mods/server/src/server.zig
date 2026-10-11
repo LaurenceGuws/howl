@@ -8,17 +8,23 @@ const server_protocol = @import("server_protocol");
 const session_mod = @import("session.zig");
 const howl_instance = @import("howl_instance");
 
+/// Nonzero identity of a Session within one Server incarnation.
 pub const SessionId = u64;
+/// Bound on simultaneously owned Sessions.
 pub const maximum_sessions: usize = 16;
+/// Bound on simultaneously owned Instances in each Session.
 pub const maximum_instances_per_session: usize = session_mod.maximum_instances;
+/// Copied Instance identity and lifecycle facts.
 pub const InstanceView = session_mod.InstanceView;
 
+/// Session identity/count facts with a name borrowed until the next mutation.
 pub const SessionView = struct {
     id: SessionId,
     name: []const u8,
     instance_count: u16,
 };
 
+/// Reports allocation, invalid name, duplicate name, capacity or identity exhaustion.
 pub const CreateSessionError = std.mem.Allocator.Error || error{
     InvalidName,
     NameExists,
@@ -36,26 +42,42 @@ const Storage = struct {
     sessions: [maximum_sessions]?*session_mod.Session = @splat(null),
     count: u16 = 0,
 };
+/// Opaque owner of the bounded Session catalogue and its nested Instance lifetimes.
+// zig-audit: acknowledge opaque_type
+// reason: Server hides its allocator-owned Session/Instance records so callers cannot bypass orchestration lifetime and capacity checks.
 pub const Server = opaque {
     fn stateMut(self: *Server) *Storage {
+        // zig-audit: acknowledge ptr_cast
+        // reason: Server.init creates a Storage allocation and publishes the same address; only this owner recovers or adapts its handle.
+        // zig-audit: acknowledge align_cast
+        // reason: Every Server handle originates from allocator.create(Storage), preserving Storage alignment until deinit.
         return @ptrCast(@alignCast(self));
     }
 
     fn stateConst(self: *const Server) *const Storage {
+        // zig-audit: acknowledge ptr_cast
+        // reason: Server.init creates a Storage allocation and publishes the same address; only this owner recovers or adapts its handle.
+        // zig-audit: acknowledge align_cast
+        // reason: Every Server handle originates from allocator.create(Storage), preserving Storage alignment until deinit.
         return @ptrCast(@alignCast(self));
     }
 
+    /// Allocates an empty Server for a caller-owned nonzero incarnation identity.
     pub fn init(allocator: std.mem.Allocator, id: u64) (std.mem.Allocator.Error || error{InvalidServerIdentity})!*Server {
         if (id == 0) return error.InvalidServerIdentity;
         const storage = try allocator.create(Storage);
         storage.* = .{ .allocator = allocator, .id = id };
+        // zig-audit: acknowledge ptr_cast
+        // reason: Server.init creates a Storage allocation and publishes the same address; only this owner recovers or adapts its handle.
         return @ptrCast(storage);
     }
 
+    /// Returns the immutable Server incarnation identity.
     pub fn identity(self: *const Server) u64 {
         return self.stateConst().id;
     }
 
+    /// Releases every nested Session and then this Server allocation.
     pub fn deinit(self: *Server) void {
         var index = self.stateMut().sessions.len;
         while (index != 0) {
@@ -68,14 +90,17 @@ pub const Server = opaque {
         self.stateMut().allocator.destroy(self.stateMut());
     }
 
+    /// Returns the number of retained Sessions.
     pub fn sessionCount(self: *const Server) u16 {
         return self.stateConst().count;
     }
 
+    /// Returns the current nonzero catalogue observation revision.
     pub fn treeRevision(self: *const Server) u64 {
         return self.stateConst().revision;
     }
 
+    /// Returns the total number of retained Instances across all Sessions.
     pub fn instanceCountTotal(self: *const Server) u16 {
         var total: u16 = 0;
         for (self.stateConst().sessions) |maybe_record| {
@@ -85,6 +110,7 @@ pub const Server = opaque {
         return total;
     }
 
+    /// Counts Instances with service work requiring a scheduler turn.
     pub fn turnInstanceCount(self: *const Server) u16 {
         var total: u16 = 0;
         for (self.stateConst().sessions) |maybe_record| {
@@ -94,6 +120,7 @@ pub const Server = opaque {
         return total;
     }
 
+    /// Returns pending-work status, or null for an unknown occurrence.
     pub fn instanceRequiresTurn(
         self: *const Server,
         session_id: SessionId,
@@ -103,6 +130,7 @@ pub const Server = opaque {
         return self.stateConst().sessions[index].?.instanceRequiresTurn(instance_id);
     }
 
+    /// Borrows a live Instance wait descriptor, or null when unavailable.
     pub fn instanceWaitDescriptor(
         self: *const Server,
         session_id: SessionId,
@@ -131,6 +159,7 @@ pub const Server = opaque {
         return output[0..count];
     }
 
+    /// Copies one Session's ordered Instance facts into caller-owned storage.
     pub fn snapshotInstances(
         self: *const Server,
         session_id: SessionId,
@@ -140,11 +169,14 @@ pub const Server = opaque {
         return self.stateConst().sessions[index].?.snapshotInstances(output);
     }
 
+    /// Validates and copies a unique name into a newly owned Session.
     pub fn createSession(self: *Server, name: []const u8) CreateSessionError!SessionId {
         server_protocol.validateSessionName(name) catch return error.InvalidName;
         if (self.findSessionByName(name) != null) return error.NameExists;
         if (self.stateMut().count == self.stateMut().sessions.len) return error.Capacity;
         if (self.stateMut().next_session_id == 0) return error.IdentityExhausted;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: The maintained count is checked below the fixed Session slot capacity before this synchronous free-slot lookup.
         const slot = self.freeSlot() orelse unreachable;
         const id = self.stateMut().next_session_id;
         const value = session_mod.Session.init(self.stateMut().allocator, id, name) catch |failure| switch (failure) {
@@ -159,6 +191,7 @@ pub const Server = opaque {
         return id;
     }
 
+    /// Destroys an existing Session and its Instances; returns whether it existed.
     pub fn closeSession(self: *Server, id: SessionId) bool {
         const index = self.findSessionIndex(id) orelse return false;
         if (self.stateMut().sessions[index]) |record| record.deinit();
@@ -168,8 +201,10 @@ pub const Server = opaque {
         return true;
     }
 
+    /// Reports Instance construction failure or a missing Session.
     pub const CreateInstanceError = session_mod.CreateInstanceError || error{SessionNotFound};
 
+    /// Creates one explicitly launched Instance inside the selected Session.
     pub fn createInstance(
         self: *Server,
         session_id: SessionId,
@@ -183,6 +218,7 @@ pub const Server = opaque {
         return instance_id;
     }
 
+    /// Closes one selected Instance and reports whether it existed.
     pub fn closeInstance(self: *Server, session_id: SessionId, instance_id: session_mod.InstanceId) bool {
         const index = self.findSessionIndex(session_id) orelse return false;
         const closed = self.stateMut().sessions[index].?.closeInstance(instance_id);
@@ -190,18 +226,22 @@ pub const Server = opaque {
         return closed;
     }
 
+    /// Returns the retained Instance count, or null for an unknown Session.
     pub fn instanceCount(self: *const Server, session_id: SessionId) ?u16 {
         const index = self.findSessionIndex(session_id) orelse return null;
         return self.stateConst().sessions[index].?.instanceCount();
     }
 
+    /// Returns copied lifecycle state, or null for an unknown occurrence.
     pub fn instanceState(self: *const Server, session_id: SessionId, instance_id: session_mod.InstanceId) ?session_mod.InstanceState {
         const index = self.findSessionIndex(session_id) orelse return null;
         return self.stateConst().sessions[index].?.instanceState(instance_id);
     }
 
+    /// Reports stream adoption failure or a missing Session.
     pub const AdoptClientError = session_mod.Session.AdoptClientError || error{SessionNotFound};
 
+    /// Transfers a connected stream to the selected Instance only on success.
     pub fn adoptClient(
         self: *Server,
         session_id: SessionId,
@@ -214,8 +254,10 @@ pub const Server = opaque {
         return self.stateMut().sessions[index].?.adoptClient(instance_id, fd, initial_input, preface_output);
     }
 
+    /// Reports Instance service failure or a missing Session.
     pub const TurnInstanceError = session_mod.Session.TurnInstanceError || error{SessionNotFound};
 
+    /// Services one selected Instance and advances catalogue revision on lifecycle change.
     pub fn turnInstance(
         self: *Server,
         session_id: SessionId,
@@ -227,6 +269,7 @@ pub const Server = opaque {
         if (outcome.state_changed) self.bumpRevision();
     }
 
+    /// Looks up an existing Session by its exact name.
     pub fn findSessionByName(self: *const Server, name: []const u8) ?SessionId {
         for (self.stateConst().sessions) |maybe_record| {
             const record = maybe_record orelse continue;

@@ -52,6 +52,7 @@ const StaticAsset = struct {
 
 const csp = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
+/// Runs the bounded loopback HTTP/WebSocket gateway.
 pub fn main(init: std.process.Init) !void {
     const config = parseArgs(init.minimal.args.vector) catch return usage(init);
     try serve(init, config);
@@ -159,6 +160,8 @@ fn connectionTask(
     defer release(active_http);
     var stream = stream_value;
     defer stream.close(init.io);
+    // zig-audit: acknowledge empty_catch
+    // reason: Each failed connection is retired by the surrounding stream/slot defers; this task isolates one peer failure from the listener.
     handleConnection(init, config, &stream, active_ws) catch {};
 }
 
@@ -278,6 +281,8 @@ fn handleWebSocket(
     // setup ends at exact attach before handing the fd to the Io byte pump.
     try attached.stream.finishHandshake(&diagnostic);
 
+    // zig-audit: acknowledge catch_unreachable
+    // reason: The fixed 127.0.0.1 literal is valid IPv4 and the port is already a u16; parsing cannot reject either.
     const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.server_port) catch unreachable;
     var upstream = Io.net.Stream{ .socket = .{
         .handle = attached.stream.readinessFd(),

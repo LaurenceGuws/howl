@@ -915,7 +915,7 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     maximum_text_snapshot_bytes,
     @as(usize, maximum_payload_bytes),
     // zig-audit: acknowledge catch_unreachable
-    // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
+    // reason: This compile-time frame count divides the fixed 4 MiB bound by a nonzero fixed payload limit; both constants fit usize.
 ) catch unreachable;
 
 /// Hard upper bound for one complete v10 observation response.

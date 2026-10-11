@@ -333,37 +333,63 @@ fn selectFeedback(state: *const State) ?shared.Feedback {
     return null;
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     const value = std.mem.span(interface);
+    // zig-audit: acknowledge ptr_cast
+    // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
     if (std.mem.eql(u8, value, "wl_compositor")) state.compositor = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_compositor_interface, @min(version, 6)));
     if (std.mem.eql(u8, value, "wl_compositor")) state.compositor_name = name;
     if (std.mem.eql(u8, value, "xdg_wm_base")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.xdg = @ptrCast(c.wl_registry_bind(registry, name, &c.xdg_wm_base_interface, @min(version, 7)));
         state.xdg_name = name;
     }
     if (std.mem.eql(u8, value, "zwp_linux_dmabuf_v1")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.dmabuf = @ptrCast(c.wl_registry_bind(registry, name, &c.zwp_linux_dmabuf_v1_interface, @min(version, 5)));
         state.dmabuf_name = name;
     }
     if (std.mem.eql(u8, value, "wp_linux_drm_syncobj_manager_v1")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.syncobj = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_linux_drm_syncobj_manager_v1_interface, 1));
         state.syncobj_name = name;
     }
     if (std.mem.eql(u8, value, "wp_fractional_scale_manager_v1")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.fractional_manager = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_fractional_scale_manager_v1_interface, 1));
         state.fractional_manager_name = name;
     }
     if (std.mem.eql(u8, value, "wp_viewporter")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.viewporter = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_viewporter_interface, 1));
         state.viewporter_name = name;
     }
     if (std.mem.eql(u8, value, "wl_seat")) {
+        // zig-audit: acknowledge ptr_cast
+        // reason: The registry name and exact interface descriptor select this proxy type; Window owns the returned Wayland proxy lifetime.
         state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 4)));
         state.seat_name = name;
     }
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or
         name == state.syncobj_name or name == state.fractional_manager_name or
@@ -375,7 +401,13 @@ fn inputFailure(state: *State) void {
     state.boundary.requestStop(.window);
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (seat != state.seat) return state.boundary.requestStop(.window);
     const keyboard_capability = (@as(u32, @intCast(c.WL_SEAT_CAPABILITY_KEYBOARD)) & capabilities) != 0;
@@ -406,7 +438,13 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) cal
     }
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn seatName(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (seat != state.seat or name == null) return state.boundary.requestStop(.window);
     if (std.mem.span(name).len > 64) state.boundary.requestStop(.window);
@@ -414,7 +452,13 @@ fn seatName(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.
 
 const seat_listener = c.wl_seat_listener{ .capabilities = seatCapabilities, .name = seatName };
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardKeymap(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or fd < 0) return state.boundary.requestStop(.window);
     defer closeDescriptor(fd);
@@ -444,22 +488,38 @@ fn keyboardKeymap(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, format: u3
     state.keyboard_semantic_modifiers = .{};
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardEnter(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface, keys: [*c]c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or surface != state.surface or keys == null)
         return state.boundary.requestStop(.window);
-    const key_array: *allowzero c.wl_array = &keys[0];
+    // zig-audit: acknowledge ptr_cast
+    // reason: The preceding check rejects null keys; the Wayland array remains valid throughout this callback.
+    const key_array: *c.wl_array = @ptrCast(keys);
     if (key_array.size != 0 and key_array.data == null) return state.boundary.requestStop(.window);
     const bytes: []const u8 = if (key_array.size == 0)
         &.{}
     else
+        // zig-audit: acknowledge ptr_cast
+        // reason: Wayland owns this callback's C array bytes; the preceding null/size checks bound the synchronous byte borrow.
         @as([*]const u8, @ptrCast(key_array.data))[0..key_array.size];
     const entered = wayland.input.keyboardEnter(serial, bytes) catch return state.boundary.requestStop(.window);
     if (entered.serial != serial) return state.boundary.requestStop(.window);
     state.boundary.publishInput(.{ .focus = true }) catch inputFailure(state);
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardLeave(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, _: u32, surface: ?*c.wl_surface) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or surface != state.surface)
         return state.boundary.requestStop(.window);
@@ -467,7 +527,13 @@ fn keyboardLeave(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, _: u32, sur
     state.boundary.publishInput(.{ .focus = false }) catch inputFailure(state);
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardKey(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, time: u32, key_value: u32, state_value: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard) return state.boundary.requestStop(.window);
     const key_state: wayland.input.KeyState = switch (state_value) {
@@ -530,7 +596,13 @@ fn publishKey(
     } });
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardModifiers(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard) return state.boundary.requestStop(.window);
     state.keyboard_modifiers = .{ .serial = serial, .depressed = depressed, .latched = latched, .locked = locked, .group = group };
@@ -540,7 +612,13 @@ fn keyboardModifiers(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial:
     }
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn keyboardRepeat(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (keyboard_value != state.keyboard or rate < 0 or delay < 0)
         return state.boundary.requestStop(.window);
@@ -568,21 +646,39 @@ fn pointerPosition(surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) ?shared.Poi
     return .{ .x = @intCast(x), .y = @intCast(y) };
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn pointerEnter(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer or surface != state.surface)
         return state.boundary.requestStop(.window);
     state.pointer_position = pointerPosition(surface_x, surface_y);
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn pointerLeave(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer or surface != state.surface)
         return state.boundary.requestStop(.window);
     state.pointer_position = null;
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
     const position = pointerPosition(surface_x, surface_y) orelse {
@@ -610,7 +706,13 @@ fn pointerButtonIdentity(button: u32) ?PointerButton {
     };
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, button: u32, button_state: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
     const mapped = pointerButtonIdentity(button) orelse return;
@@ -623,6 +725,8 @@ fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, but
     const next_buttons = switch (kind) {
         .press => state.pointer_buttons_down | mapped.bit,
         .release => state.pointer_buttons_down & ~mapped.bit,
+        // zig-audit: acknowledge unreachable
+        // reason: The preceding button_state switch admitted only press or release; kind is unchanged before this switch.
         else => unreachable,
     };
     state.pointer_buttons_down = next_buttons;
@@ -635,7 +739,13 @@ fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, but
     }) catch inputFailure(state);
 }
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, axis: u32, value: c.wl_fixed_t) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
     if (axis != c.WL_POINTER_AXIS_VERTICAL_SCROLL or value == 0) return;
@@ -657,7 +767,13 @@ const pointer_listener = c.wl_pointer_listener{
     .axis = pointerAxis,
 };
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn preferredScale(data: ?*anyopaque, scale: ?*c.wp_fractional_scale_v1, value: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (scale != state.fractional_scale or value == 0) {
         state.boundary.requestStop(.window);
@@ -670,20 +786,38 @@ fn preferredScale(data: ?*anyopaque, scale: ?*c.wp_fractional_scale_v1, value: u
 }
 const fractional_scale_listener = c.wp_fractional_scale_v1_listener{ .preferred_scale = preferredScale };
 
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (wm != state.xdg) state.boundary.requestStop(.window);
     c.xdg_wm_base_pong(state.xdg.?, serial);
 }
 const xdg_listener = c.xdg_wm_base_listener{ .ping = ping };
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn surfaceConfigure(data: ?*anyopaque, _: ?*c.xdg_surface, serial: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     c.xdg_surface_ack_configure(state.xdg_surface.?, serial);
     state.configured = true;
     state.configure_serial = serial;
 }
 const xdg_surface_listener = c.xdg_surface_listener{ .configure = surfaceConfigure };
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn topConfigure(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32, _: ?*c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (width < 0 or height < 0 or width > std.math.maxInt(u16) or height > std.math.maxInt(u16)) {
         state.boundary.requestStop(.window);
@@ -697,32 +831,68 @@ fn topConfigure(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32,
     }
     state.toplevel_configured = true;
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn topClose(data: ?*anyopaque, _: ?*c.xdg_toplevel) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     state.boundary.requestStop(null);
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn topBounds(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (width <= 0 or height <= 0) state.boundary.requestStop(.window);
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn topCaps(data: ?*anyopaque, _: ?*c.xdg_toplevel, capabilities: ?*c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (capabilities) |value| {
         if (value.size % @sizeOf(u32) != 0) state.boundary.requestStop(.window);
     }
 }
 const toplevel_listener = c.xdg_toplevel_listener{ .configure = topConfigure, .close = topClose, .configure_bounds = topBounds, .wm_capabilities = topCaps };
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (callback) |value| c.wl_callback_destroy(value);
     state.frame_callback = null;
 }
 const frame_listener = c.wl_callback_listener{ .done = frameDone };
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     state.feedback_complete = true;
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     installFormatTable(state, fd, size) catch state.boundary.requestStop(.window);
 }
@@ -730,25 +900,53 @@ fn copyDevice(array: ?*c.wl_array) u64 {
     const value = array orelse return 0;
     if (value.size < 8) return 0;
     var bytes: [8]u8 = undefined;
+    // zig-audit: acknowledge ptr_cast
+    // reason: Wayland owns this callback's C array bytes; the preceding null/size checks bound the synchronous byte borrow.
     @memcpy(&bytes, @as([*]const u8, @ptrCast(value.data))[0..8]);
     return std.mem.bytesToValue(u64, &bytes);
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     state.feedback_device = copyDevice(device);
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn trancheDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     state.tranche_device = 0;
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn trancheTarget(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     state.tranche_device = copyDevice(device);
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn trancheFormats(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, indices: ?*c.wl_array) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     const array = indices orelse return;
     if (array.size != 0 and array.data == null) return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: Wayland owns this callback's C array bytes; the preceding null/size checks bound the synchronous byte borrow.
     const bytes: []const u8 = if (array.size == 0) &.{} else @as([*]const u8, @ptrCast(array.data))[0..array.size];
     retainTrancheFormats(state, bytes);
 }
@@ -771,7 +969,13 @@ fn retainTrancheFormats(state: *State, indices: []const u8) void {
         state.format_count += 1;
     }
 }
+// zig-audit: acknowledge anyopaque
+// reason: Wayland's C listener ABI supplies opaque userdata; this Window registers its live State and retires listeners before State teardown.
 fn trancheFlags(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, flags: u32) callconv(.c) void {
+    // zig-audit: acknowledge ptr_cast
+    // reason: This callback recovers the exact live State address installed as Wayland listener userdata.
+    // zig-audit: acknowledge align_cast
+    // reason: Listener registration supplied this exact live State address; the callback preserves its concrete alignment.
     const state: *State = @ptrCast(@alignCast(data.?));
     if (state.feedback_complete or flags & ~@as(u32, 1) != 0) state.boundary.requestStop(.window);
 }
@@ -795,5 +999,9 @@ fn monotonicNs() !u64 {
 }
 
 fn closeDescriptor(descriptor: i32) void {
-    if (posix.close(descriptor) != 0) @panic("Window descriptor cleanup failed");
+    const result = posix.close(descriptor);
+    // Linux has already released the descriptor on EINTR; never retry a possibly reused fd.
+    // zig-audit: acknowledge panic
+    // reason: Linux releases close's fd on EINTR, which is accepted without retry; another failure violates this owner's exact descriptor lifetime.
+    if (result != 0 and std.c.errno(result) != .INTR) @panic("Window descriptor cleanup failed");
 }

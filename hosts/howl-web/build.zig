@@ -43,6 +43,11 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(wasm);
 
     const check = b.step("check", "Run the zero-import Wasm wire and terminal-renderer contract");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     const test_command = b.addSystemCommand(&.{ "node", "tests/check.mjs" });
     test_command.setCwd(b.path("."));
     test_command.addFileArg(wasm.getEmittedBin());
@@ -63,6 +68,7 @@ pub fn build(b: *std.Build) void {
     tests.dependOn(&test_command.step);
     inline for (.{ text, renderer, gateway }) |child| {
         check.dependOn(childStep(child, "check"));
+        audit.dependOn(childStep(child, "audit"));
         tests.dependOn(childStep(child, "test"));
         for (child.builder.getInstallStep().dependencies.items) |step| {
             const install = step.cast(std.Build.Step.InstallArtifact) orelse continue;
@@ -70,6 +76,8 @@ pub fn build(b: *std.Build) void {
         }
         for (child.builder.modules.keys(), child.builder.modules.values()) |name, module| {
             std.debug.assert(!b.modules.contains(name));
+            // zig-audit: acknowledge panic
+            // reason: Build graph construction cannot recover from allocation failure while forwarding the exact child module.
             b.modules.put(b.allocator, name, module) catch @panic("OOM");
         }
         for (child.builder.named_lazy_paths.keys(), child.builder.named_lazy_paths.values()) |name, path| {

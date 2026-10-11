@@ -3,6 +3,7 @@
 const std = @import("std");
 const client = @import("howl_client");
 
+/// Copied, bounded diagnostics for the current CLI operation.
 pub const Context = struct {
     operation: []const u8 = "unknown",
     connect_stage: ?client.ConnectStage = null,
@@ -10,10 +11,12 @@ pub const Context = struct {
     route_message: [512]u8 = undefined,
     route_message_len: usize = 0,
 
+    /// Clears previous diagnostics and borrows the new operation label.
     pub fn reset(self: *Context, operation: []const u8) void {
         self.* = .{ .operation = operation };
     }
 
+    /// Copies the transport diagnostic into this bounded context.
     pub fn captureConnect(self: *Context, diagnostic: *const client.ConnectDiagnostic) void {
         self.connect_stage = diagnostic.stage;
         self.os_error = diagnostic.os_error;
@@ -22,6 +25,7 @@ pub const Context = struct {
         self.route_message_len = count;
     }
 
+    /// Writes a JSON failure to stderr, falling back to its error name if output fails.
     pub fn emit(self: *const Context, init: std.process.Init, failure_name: []const u8) void {
         var buffer: [2048]u8 = undefined;
         var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);

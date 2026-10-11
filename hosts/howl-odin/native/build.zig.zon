@@ -10,5 +10,5 @@
         .howl_instance = .{ .path = "../../../mods/howl-instance" },
         .howl_render = .{ .path = "../../../mods/howl-render" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "bridge.zig" },
+    .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "bridge.zig" },
 }

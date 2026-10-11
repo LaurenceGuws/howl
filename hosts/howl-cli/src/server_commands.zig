@@ -5,6 +5,7 @@ const server_client = @import("server_client");
 const server_runtime = @import("server_runtime");
 const failure = @import("failure.zig");
 
+/// Dispatches Server management commands and reports their connection context.
 pub fn run(
     init: std.process.Init,
     args: []const [*:0]const u8,
@@ -387,6 +388,7 @@ fn isHelp(value: []const u8) bool {
     return std.mem.eql(u8, value, "--help") or std.mem.eql(u8, value, "-h");
 }
 
+/// Writes the Server command usage to the caller's output.
 pub fn printHelp(init: std.process.Init) !void {
     return printText(init, "usage:\n" ++
         "  howl server status ENDPOINT\n" ++

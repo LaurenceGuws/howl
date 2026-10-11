@@ -68,7 +68,7 @@ pub const Logger = struct {
             "{d:0>2}:{d:0>2}:{d:0>3}",
             .{ elapsed / 60_000, elapsed / 1_000 % 60, elapsed % 1_000 },
             // zig-audit: acknowledge catch_unreachable
-            // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
+            // reason: The 32-byte scratch fits decimal u64 minutes plus two-digit seconds and three-digit milliseconds.
         ) catch unreachable;
         writer.writeAll("{\"debug_time\":") catch return error.RecordTooLarge;
         std.json.Stringify.value(debug_time, .{}, &writer) catch return error.RecordTooLarge;
@@ -213,7 +213,7 @@ test "enabled tracing stops at its file bound" {
 fn writeMany(logger: *Logger, source: []const u8) void {
     for (0..32) |sequence| {
         // zig-audit: acknowledge panic
-        // reason: This path represents an internal invariant breach with no safe caller recovery; continuing would corrupt owned state.
+        // reason: This test worker cannot return a write failure to the test thread; failing the proof prevents a partial log from being accepted as complete.
         logger.write(.{ .source = source, .sequence = sequence }) catch @panic("trace write failed");
     }
 }

@@ -16,6 +16,8 @@ const terminal_render = @import("howl_client_render");
 const render = terminal_render;
 const native_instance = terminal_render.instance;
 
+// zig-audit: acknowledge opaque_type
+// reason: RuntimeHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const RuntimeHandle = opaque {};
 const query_declined: i32 = 6;
 const size_rejected: i32 = 8;
@@ -203,7 +205,11 @@ const NativePublication = struct {
     }
 };
 
+// zig-audit: acknowledge opaque_type
+// reason: NativeTerminalHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const NativeTerminalHandle = opaque {};
+// zig-audit: acknowledge opaque_type
+// reason: NativeCanvasHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const NativeCanvasHandle = opaque {};
 
 /// One claimed local Instance. Exactly one Odin terminal worker owns this value.
@@ -252,6 +258,8 @@ const NativeTerminal = struct {
         self.history_offset = view.history_offset;
         // Consume the backend's credit before work starts, so a concurrent
         // request for the following presentation remains available.
+        // zig-audit: acknowledge discard
+        // reason: The atomic swap consumes the current presentation credit; a concurrent later credit must remain pending.
         _ = self.render_requested.swap(false, .acq_rel);
         try native_instance.publishRenderAt(
             self.value,
@@ -404,6 +412,8 @@ const NativeTerminal = struct {
                 .revents = 0,
             },
         };
+        // zig-audit: acknowledge discard
+        // reason: Each exact revents mask is consumed below; the aggregate ready count adds no scheduling authority.
         _ = try posix.poll(&descriptors, effective_timeout);
         if (descriptors[1].revents & posix.POLL.IN != 0)
             self.drainWake();
@@ -456,6 +466,10 @@ fn closeNativeWake(fd: posix.fd_t) void {
 }
 
 fn nativeTerminalValue(raw: ?*NativeTerminalHandle) ?*NativeTerminal {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live NativeTerminal constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     return if (raw) |value| @ptrCast(@alignCast(value)) else null;
 }
 
@@ -610,6 +624,10 @@ const NativeCanvas = struct {
 };
 
 fn nativeCanvasValue(raw: ?*NativeCanvasHandle) ?*NativeCanvas {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live NativeCanvas constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     return if (raw) |value| @ptrCast(@alignCast(value)) else null;
 }
 
@@ -637,6 +655,10 @@ const Runtime = struct {
 };
 
 fn runtimeValue(raw: ?*RuntimeHandle) ?*Runtime {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Runtime constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     return if (raw) |value| @ptrCast(@alignCast(value)) else null;
 }
 
@@ -654,12 +676,16 @@ fn releaseRuntime(value: ?*Runtime) void {
     }
 }
 
+/// Allocates the bridge runtime and process-local Instance catalogue.
 pub export fn howl_odin_bridge_runtime_create() ?*RuntimeHandle {
     const value = std.heap.c_allocator.create(Runtime) catch return null;
     value.* = .{ .threaded = std.Io.Threaded.init(std.heap.page_allocator, .{ .environ = currentProcessEnviron() }) };
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(value);
 }
 
+/// Releases a bridge runtime after its claimed Local terminals are retired.
 pub export fn howl_odin_bridge_runtime_destroy(raw: ?*RuntimeHandle) void {
     const value = runtimeValue(raw) orelse return;
     std.debug.assert(value.borrowers.load(.acquire) == 0);
@@ -755,6 +781,7 @@ pub export fn howl_odin_bridge_native_local_instance_create(
     };
 }
 
+/// Destroys an unclaimed Local Instance and reports whether it existed.
 pub export fn howl_odin_bridge_native_local_instance_destroy(
     runtime_raw: ?*RuntimeHandle,
     id: u64,
@@ -763,6 +790,7 @@ pub export fn howl_odin_bridge_native_local_instance_destroy(
     return if (runtime.native_local.destroy(runtime.threaded.io(), id)) 0 else 2;
 }
 
+/// Exclusively claims one Local Instance for a terminal-thread owner.
 pub export fn howl_odin_bridge_native_terminal_claim(
     runtime_raw: ?*RuntimeHandle,
     id: u64,
@@ -837,9 +865,12 @@ pub export fn howl_odin_bridge_native_terminal_claim(
         return null;
     };
     retainRuntime(runtime);
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(owner);
 }
 
+/// Releases the terminal claim after its owner stops using the Instance.
 pub export fn howl_odin_bridge_native_terminal_release(
     raw: ?*NativeTerminalHandle,
 ) void {
@@ -862,6 +893,8 @@ pub export fn howl_odin_bridge_native_terminal_service(
     timestamp_ns: u64,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
+    // zig-audit: acknowledge discard
+    // reason: The C API reports typed service failure and later observation supplies progress facts; this turn summary is outside the foreign status contract.
     _ = owner.service(timestamp_ns) catch return 2;
     return 0;
 }
@@ -872,6 +905,8 @@ pub export fn howl_odin_bridge_native_terminal_wait(
     timeout_ms: i32,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
+    // zig-audit: acknowledge discard
+    // reason: The C API reports typed service failure and later observation supplies progress facts; this turn summary is outside the foreign status contract.
     _ = owner.waitAndService(timeout_ms) catch return 2;
     return 0;
 }
@@ -1362,6 +1397,7 @@ fn nativeSearch(
     return 0;
 }
 
+/// Sends bounded paste bytes through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_paste(
     raw: ?*NativeTerminalHandle,
     bytes_ptr: [*]const u8,
@@ -1378,6 +1414,7 @@ pub export fn howl_odin_bridge_native_terminal_send_paste(
     return 0;
 }
 
+/// Validates and sends one named physical key through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_named_key(
     raw: ?*NativeTerminalHandle,
     key_value: u8,
@@ -1398,6 +1435,7 @@ pub export fn howl_odin_bridge_native_terminal_send_named_key(
     return 0;
 }
 
+/// Validates and sends one Unicode physical key through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_unicode_key(
     raw: ?*NativeTerminalHandle,
     scalar: u32,
@@ -1420,6 +1458,7 @@ pub export fn howl_odin_bridge_native_terminal_send_unicode_key(
     return 0;
 }
 
+/// Validates and sends one semantic mouse event through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_mouse(
     raw: ?*NativeTerminalHandle,
     kind_value: u8,
@@ -1452,6 +1491,7 @@ pub export fn howl_odin_bridge_native_terminal_send_mouse(
     return 0;
 }
 
+/// Validates and sends an explicit focus transition through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_focus(
     raw: ?*NativeTerminalHandle,
     focus_value: u8,
@@ -1469,6 +1509,7 @@ pub export fn howl_odin_bridge_native_terminal_send_focus(
     return 0;
 }
 
+/// Requests explicit terminal geometry through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_resize(
     raw: ?*NativeTerminalHandle,
     rows: u16,
@@ -1498,6 +1539,7 @@ pub export fn howl_odin_bridge_native_terminal_send_resize(
     return 0;
 }
 
+/// Copies expanded semantic selection coordinates from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_selection_expand(
     raw: ?*NativeTerminalHandle,
     kind: u8,
@@ -1522,6 +1564,7 @@ pub export fn howl_odin_bridge_native_terminal_selection_expand(
     );
 }
 
+/// Copies selected text bytes from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_selection_extract(
     raw: ?*NativeTerminalHandle,
     start_row: i32,
@@ -1560,6 +1603,7 @@ pub export fn howl_odin_bridge_native_terminal_selection_extract(
     return 0;
 }
 
+/// Copies the selected hyperlink bytes from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_hyperlink_copy(
     raw: ?*NativeTerminalHandle,
     history_offset: u32,
@@ -1591,6 +1635,7 @@ pub export fn howl_odin_bridge_native_terminal_hyperlink_copy(
     return 0;
 }
 
+/// Copies bounded search matches from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_search_find(
     raw: ?*NativeTerminalHandle,
     query_ptr: [*]const u8,
@@ -1850,6 +1895,7 @@ fn nativeConsequenceView(
     return result;
 }
 
+/// Copies one pending consequence record from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_consequence_observe(
     raw: ?*NativeTerminalHandle,
     info: *ConsequenceInfo,
@@ -1881,6 +1927,7 @@ pub export fn howl_odin_bridge_native_terminal_consequence_observe(
     return 0;
 }
 
+/// Acknowledges one pending consequence from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_consequence_consume(
     raw: ?*NativeTerminalHandle,
     generation: u64,
@@ -1896,6 +1943,7 @@ pub export fn howl_odin_bridge_native_terminal_consequence_consume(
     return 0;
 }
 
+/// Replies to one pending consequence from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_consequence_reply(
     raw: ?*NativeTerminalHandle,
     generation: u64,
@@ -1998,6 +2046,7 @@ pub export fn howl_odin_bridge_native_terminal_consequence_reply(
     return 0;
 }
 
+/// Copies the last diagnostic bytes from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_copy_error(
     raw: ?*NativeTerminalHandle,
     output_ptr: [*]u8,
@@ -2066,6 +2115,8 @@ pub export fn howl_odin_bridge_native_terminal_reconfigure_presentation(
         secondary_fallback_ptr[0..secondary_fallback_len],
         font_pixels,
     );
+    // zig-audit: acknowledge discard
+    // reason: This request applies the owned presentation configuration; subsequent frame facts report its result rather than this change boolean.
     _ = native_instance.reconfigurePresentation(
         owner.value,
         config,
@@ -2082,6 +2133,7 @@ pub export fn howl_odin_bridge_native_terminal_reconfigure_presentation(
     return 0;
 }
 
+/// Allocates a canvas borrowing one claimed Local terminal.
 pub export fn howl_odin_bridge_native_canvas_create(
     exchange: ?*native_instance.RenderExchange,
 ) ?*NativeCanvasHandle {
@@ -2091,9 +2143,12 @@ pub export fn howl_odin_bridge_native_canvas_create(
         .allocator = std.heap.c_allocator,
         .exchange = value,
     };
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(canvas);
 }
 
+/// Releases canvas presentation storage without retiring its borrowed terminal.
 pub export fn howl_odin_bridge_native_canvas_destroy(
     raw: ?*NativeCanvasHandle,
 ) void {
@@ -2115,6 +2170,7 @@ pub export fn howl_odin_bridge_native_canvas_prepare(
     return 0;
 }
 
+/// Commits the canvas's prepared presentation frame.
 pub export fn howl_odin_bridge_native_canvas_accept(
     raw: ?*NativeCanvasHandle,
 ) i32 {
@@ -2126,6 +2182,7 @@ pub export fn howl_odin_bridge_native_canvas_accept(
     return 0;
 }
 
+/// Discards the canvas's prepared presentation frame.
 pub export fn howl_odin_bridge_native_canvas_discard(
     raw: ?*NativeCanvasHandle,
 ) i32 {
@@ -2137,6 +2194,7 @@ pub export fn howl_odin_bridge_native_canvas_discard(
     return 0;
 }
 
+/// Returns copied presentation generation facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_presentation_generation(
     raw: ?*NativeCanvasHandle,
 ) u64 {
@@ -2145,6 +2203,7 @@ pub export fn howl_odin_bridge_native_canvas_presentation_generation(
     return canvas.front.presentation_generation;
 }
 
+/// Returns copied background rgba facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_background_rgba(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2152,6 +2211,7 @@ pub export fn howl_odin_bridge_native_canvas_background_rgba(
     return canvas.front.background_rgba;
 }
 
+/// Returns copied surface width facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_surface_width(
     raw: ?*NativeCanvasHandle,
 ) u16 {
@@ -2160,6 +2220,7 @@ pub export fn howl_odin_bridge_native_canvas_surface_width(
     return canvas.front.surface.width;
 }
 
+/// Returns copied surface height facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_surface_height(
     raw: ?*NativeCanvasHandle,
 ) u16 {
@@ -2168,6 +2229,7 @@ pub export fn howl_odin_bridge_native_canvas_surface_height(
     return canvas.front.surface.height;
 }
 
+/// Returns copied cell width facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_cell_width(
     raw: ?*NativeCanvasHandle,
 ) u16 {
@@ -2176,6 +2238,7 @@ pub export fn howl_odin_bridge_native_canvas_cell_width(
     return canvas.front.cell_size.width;
 }
 
+/// Returns copied cell height facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_cell_height(
     raw: ?*NativeCanvasHandle,
 ) u16 {
@@ -2184,6 +2247,7 @@ pub export fn howl_odin_bridge_native_canvas_cell_height(
     return canvas.front.cell_size.height;
 }
 
+/// Returns copied frame revision facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_frame_revision(
     raw: ?*NativeCanvasHandle,
 ) u64 {
@@ -2192,6 +2256,7 @@ pub export fn howl_odin_bridge_native_canvas_frame_revision(
     return canvas.front.frame_revision;
 }
 
+/// Returns copied terminal revision facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_terminal_revision(
     raw: ?*NativeCanvasHandle,
 ) u64 {
@@ -2200,6 +2265,7 @@ pub export fn howl_odin_bridge_native_canvas_terminal_revision(
     return canvas.front.terminal_revision;
 }
 
+/// Returns copied history offset facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_history_offset(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2208,6 +2274,7 @@ pub export fn howl_odin_bridge_native_canvas_history_offset(
     return canvas.front.history_offset;
 }
 
+/// Returns copied history count facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_history_count(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2216,6 +2283,7 @@ pub export fn howl_odin_bridge_native_canvas_history_count(
     return canvas.front.history_count;
 }
 
+/// Returns copied history row base facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_history_row_base(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2224,6 +2292,7 @@ pub export fn howl_odin_bridge_native_canvas_history_row_base(
     return canvas.front.history_row_base;
 }
 
+/// Returns copied alternate screen facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_alternate_screen(
     raw: ?*NativeCanvasHandle,
 ) u8 {
@@ -2232,6 +2301,7 @@ pub export fn howl_odin_bridge_native_canvas_alternate_screen(
     return @intFromBool(canvas.front.alternate_screen);
 }
 
+/// Returns copied upload count facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_upload_count(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2240,6 +2310,7 @@ pub export fn howl_odin_bridge_native_canvas_upload_count(
     return @intCast(frame.uploads.len);
 }
 
+/// Returns copied removal count facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_removal_count(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2248,6 +2319,7 @@ pub export fn howl_odin_bridge_native_canvas_removal_count(
     return @intCast(frame.removals.len);
 }
 
+/// Returns copied command count facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_command_count(
     raw: ?*NativeCanvasHandle,
 ) u32 {
@@ -2256,6 +2328,7 @@ pub export fn howl_odin_bridge_native_canvas_command_count(
     return @intCast(frame.commands.len);
 }
 
+/// Copies one upload resource record from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_upload_info(
     raw: ?*NativeCanvasHandle,
     index: u32,
@@ -2275,6 +2348,7 @@ pub export fn howl_odin_bridge_native_canvas_upload_info(
     return 0;
 }
 
+/// Copies one upload pixel payload from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_upload_copy(
     raw: ?*NativeCanvasHandle,
     index: u32,
@@ -2302,6 +2376,7 @@ pub export fn howl_odin_bridge_native_canvas_upload_copy(
     return 0;
 }
 
+/// Copies one removal record from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_removal_info(
     raw: ?*NativeCanvasHandle,
     index: u32,
@@ -2315,6 +2390,7 @@ pub export fn howl_odin_bridge_native_canvas_removal_info(
     return 0;
 }
 
+/// Copies one draw command record from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_command_info(
     raw: ?*NativeCanvasHandle,
     index: u32,
@@ -2328,6 +2404,7 @@ pub export fn howl_odin_bridge_native_canvas_command_info(
     return 0;
 }
 
+/// Copies the last diagnostic bytes from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_copy_error(
     raw: ?*NativeCanvasHandle,
     output_ptr: [*]u8,
@@ -2341,6 +2418,7 @@ pub export fn howl_odin_bridge_native_canvas_copy_error(
     output_len.* = count;
 }
 
+/// Returns the C ABI NativeTerminalInfo byte size.
 pub export fn howl_odin_bridge_native_terminal_info_size() u32 {
     return @sizeOf(NativeTerminalInfo);
 }
@@ -2385,16 +2463,19 @@ pub export fn howl_odin_bridge_native_terminal_snapshot(
     return 0;
 }
 
+/// Allocates an owned transport interrupt.
 pub export fn howl_odin_bridge_interrupt_create() ?*client.Interrupt {
     return client.Interrupt.init(std.heap.c_allocator) catch null;
 }
 
+/// Wakes the owned transport interrupt; returns zero on success.
 pub export fn howl_odin_bridge_interrupt_cancel(value: ?*client.Interrupt) i32 {
     const token = value orelse return 1;
     token.cancel() catch return 2;
     return 0;
 }
 
+/// Releases an owned transport interrupt; null is a no-op.
 pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void {
     if (value) |token| token.deinit();
 }
@@ -2464,6 +2545,8 @@ fn connectForHost(
     };
 }
 
+// zig-audit: acknowledge opaque_type
+// reason: RenderHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const RenderHandle = opaque {};
 
 // Existing full-observation encoding preference, after endpoint validation.
@@ -2574,6 +2657,7 @@ const ExternalUpload = struct {
     fetched: client.images.Resource,
 };
 
+/// Copied C ABI metadata for one renderer upload resource.
 pub const RenderResourceInfo = extern struct {
     resource: u64 = 0,
     generation: u64 = 0,
@@ -2585,11 +2669,13 @@ pub const RenderResourceInfo = extern struct {
     _reserved: [3]u8 = @splat(0),
 };
 
+/// Copied C ABI metadata for one renderer resource removal.
 pub const RenderRemovalInfo = extern struct {
     resource: u64 = 0,
     generation: u64 = 0,
 };
 
+/// Copied C ABI draw command metadata.
 pub const RenderCommandInfo = extern struct {
     resource: u64 = 0,
     generation: u64 = 0,
@@ -2614,6 +2700,7 @@ pub const RenderCommandInfo = extern struct {
     _reserved: u8 = 0,
 };
 
+/// Copied C ABI match coordinates and search revision facts.
 pub const SearchMatchInfo = extern struct {
     cut_revision: u64 = 0,
     row: i32 = 0,
@@ -2627,6 +2714,7 @@ pub const SearchMatchInfo = extern struct {
     scanned_snapshots: u32 = 0,
 };
 
+/// Copied C ABI selection endpoints and shape.
 pub const SelectionRangeInfo = extern struct {
     start_row: i32 = 0,
     end_row: i32 = 0,
@@ -2638,6 +2726,7 @@ pub const SelectionRangeInfo = extern struct {
     _reserved: [2]u8 = @splat(0),
 };
 
+/// Copied C ABI keyboard, mouse and terminal interaction facts.
 pub const InteractionStateInfo = extern struct {
     terminal_revision: u64 = 0,
     flags: u32 = 0,
@@ -2647,6 +2736,7 @@ pub const InteractionStateInfo = extern struct {
     _reserved: u8 = 0,
 };
 
+/// Copied C ABI Local terminal observation and lifecycle facts.
 pub const NativeTerminalInfo = extern struct {
     revision: u64 = 0,
     terminal_revision: u64 = 0,
@@ -2669,6 +2759,7 @@ pub const NativeTerminalInfo = extern struct {
     _reserved: [4]u8 = @splat(0),
 };
 
+/// Copied C ABI row geometry and scalar-content bounds.
 pub const NativeRowShape = extern struct {
     content_end_exclusive: u16 = 0,
     wrapped: u8 = 0,
@@ -2876,6 +2967,7 @@ fn renderSurface(rows: u16, columns: u16, cell: terminal_render.Size) !terminal_
     return .{ .width = @intCast(width), .height = @intCast(height) };
 }
 
+/// Creates a renderer with owned bounded staging and font resources.
 pub export fn howl_odin_bridge_render_create(
     runtime_raw: ?*RuntimeHandle,
     interrupt: ?*client.Interrupt,
@@ -2980,6 +3072,8 @@ pub export fn howl_odin_bridge_render_create(
     };
     retainRuntime(runtime);
     accepted = true;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(value);
 }
 
@@ -3220,8 +3314,13 @@ fn initRenderFont(
     });
 }
 
+/// Releases renderer resources and copied frame storage.
 pub export fn howl_odin_bridge_render_destroy(raw: ?*RenderHandle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const allocator = renderer.allocator;
     clearExternalUploads(renderer);
@@ -3323,14 +3422,20 @@ fn prepareExternalUploads(
 
 // Synchronous diagnostic entry; the desktop instead prepares on its worker and
 // accepts only after the GUI has successfully installed every SDL resource.
+/// Obtains and prepares a transported observation at the requested history offset.
 pub export fn howl_odin_bridge_render_observe(raw: ?*RenderHandle, history_offset: u32) i32 {
     const result = howl_odin_bridge_render_prepare(raw, history_offset);
     if (result == 0) howl_odin_bridge_render_accept(raw);
     return result;
 }
 
+/// Discards the pending transported render frame.
 pub export fn howl_odin_bridge_render_discard(raw: ?*RenderHandle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     clearExternalUploads(renderer);
     renderer.frame_upload_count = 0;
@@ -3342,8 +3447,13 @@ pub export fn howl_odin_bridge_render_discard(raw: ?*RenderHandle) void {
         renderer.scratch.prepared_owner = null;
 }
 
+/// Commits the pending transported render frame.
 pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.front.frame_revision = renderer.frame_revision;
     renderer.front.begin = renderer.begin;
@@ -3355,8 +3465,13 @@ pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
         renderer.scratch.prepared_owner = null;
 }
 
+/// Prepares a frame from the retained transported observation.
 pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offset: u32) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     renderer.clearError();
     clearExternalUploads(renderer);
@@ -3382,8 +3497,13 @@ pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offse
 // The offered immutable view is borrowed only during this call. A stale offer
 // cannot roll back a renderer that observed farther ahead on its image channel.
 // Code 9 means this offer is ineligible, not a transport or terminal failure.
+/// Prepares a frame from a synchronously borrowed owned client view.
 pub export fn howl_odin_bridge_render_prepare_view(raw: ?*RenderHandle, view: ?*const client.view.Snapshot) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const snapshot = view orelse return 9;
     const pending_revision = if (renderer.begin) |begin| begin.revision else 0;
@@ -3393,10 +3513,19 @@ pub export fn howl_odin_bridge_render_prepare_view(raw: ?*RenderHandle, view: ?*
     return prepareProjectedView(renderer, snapshot);
 }
 
+/// Prepares a frame while borrowing the bridge's active rich observation loan.
 pub export fn howl_odin_bridge_render_prepare_rich_loan(raw: ?*RenderHandle, loan_raw: ?*Handle) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const loan_value = loan_raw orelse return 9;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(loan_value));
     if (!bridge.rich_loan_active or !bridge.rich_loan_taken) return 9;
     const snapshot = &(bridge.live_view orelse return 9);
@@ -3489,6 +3618,8 @@ fn prepareRichView(renderer: *Render, view: *const client.rich.View) i32 {
             .resource = external.external.resource,
             .format = external.external.format,
             .size = external.external.size,
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The retained domain is bounded to maximum_external_images plus one font resource; frame removals retire obsolete resources before these external residencies are installed.
         }) catch unreachable;
     }
     return 0;
@@ -3576,6 +3707,8 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
             .resource = external.external.resource,
             .format = external.external.format,
             .size = external.external.size,
+            // zig-audit: acknowledge catch_unreachable
+            // reason: The retained domain is bounded to maximum_external_images plus one font resource; frame removals retire obsolete resources before these external residencies are installed.
         }) catch unreachable;
     }
     return 0;
@@ -3628,80 +3761,137 @@ fn paddingBackground(presentation: *const client.rich.Presentation) u32 {
     return @as(u32, color.r) | (@as(u32, color.g) << 8) | (@as(u32, color.b) << 16) | (@as(u32, color.a) << 24);
 }
 
+/// Returns copied background rgba facts from the transported renderer.
 pub export fn howl_odin_bridge_render_background_rgba(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0xff211918;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *const Render = @ptrCast(@alignCast(value));
     return renderer.front.background_rgba;
 }
 
+/// Returns copied surface width facts from the transported renderer.
 pub export fn howl_odin_bridge_render_surface_width(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.front.surface.width;
 }
 
+/// Returns copied surface height facts from the transported renderer.
 pub export fn howl_odin_bridge_render_surface_height(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.front.surface.height;
 }
 
+/// Returns copied cell width facts from the transported renderer.
 pub export fn howl_odin_bridge_render_cell_width(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.cell_size.width;
 }
 
+/// Returns copied cell height facts from the transported renderer.
 pub export fn howl_odin_bridge_render_cell_height(raw: ?*RenderHandle) u16 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.cell_size.height;
 }
 
+/// Returns the renderer's maximum rows bound.
 pub export fn howl_odin_bridge_render_maximum_rows() u16 {
     return render.limits.maximum_rows;
 }
 
+/// Returns the renderer's maximum columns bound.
 pub export fn howl_odin_bridge_render_maximum_columns() u16 {
     return render.limits.maximum_columns;
 }
 
+/// Returns copied frame revision facts from the transported renderer.
 pub export fn howl_odin_bridge_render_frame_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return renderer.front.frame_revision;
 }
 
+/// Returns copied instance revision facts from the transported renderer.
 pub export fn howl_odin_bridge_render_instance_revision(raw: ?*RenderHandle) u64 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     return begin.revision;
 }
 
+/// Returns copied history offset facts from the transported renderer.
 pub export fn howl_odin_bridge_render_history_offset(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     return begin.history_offset;
 }
 
+/// Returns copied history count facts from the transported renderer.
 pub export fn howl_odin_bridge_render_history_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     return begin.history_count;
 }
 
+/// Returns copied history row base facts from the transported renderer.
 pub export fn howl_odin_bridge_render_history_row_base(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     return begin.history_row_base;
 }
 
+/// Returns copied alternate screen facts from the transported renderer.
 pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     return @intFromBool(begin.alternate_screen);
@@ -3724,6 +3914,10 @@ pub export fn howl_odin_bridge_render_selection_span(
     first.* = 0;
     last.* = 0;
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
     if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.front.selection_rows.len)
@@ -3740,20 +3934,35 @@ pub export fn howl_odin_bridge_render_selection_span(
     return 1;
 }
 
+/// Returns copied upload count facts from the transported renderer.
 pub export fn howl_odin_bridge_render_upload_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return @intCast(renderer.upload_count);
 }
 
+/// Returns copied removal count facts from the transported renderer.
 pub export fn howl_odin_bridge_render_removal_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return @intCast(renderer.removal_count);
 }
 
+/// Returns copied command count facts from the transported renderer.
 pub export fn howl_odin_bridge_render_command_count(raw: ?*RenderHandle) u32 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     return @intCast(renderer.command_count);
 }
@@ -3768,6 +3977,7 @@ fn fillRenderRemovalRef(resource: terminal_render.ResourceRef, output: *RenderRe
     output.generation = @backingInt(resource.generation);
 }
 
+/// Copies one upload resource record from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_upload_info(
     raw: ?*RenderHandle,
     index: u32,
@@ -3775,6 +3985,10 @@ pub export fn howl_odin_bridge_render_upload_info(
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
     if (index < renderer.frame_upload_count) {
@@ -3800,6 +4014,7 @@ pub export fn howl_odin_bridge_render_upload_info(
     return 0;
 }
 
+/// Copies one upload pixel payload from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_upload_copy(
     raw: ?*RenderHandle,
     index: u32,
@@ -3809,6 +4024,10 @@ pub export fn howl_odin_bridge_render_upload_copy(
 ) i32 {
     output_len.* = 0;
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.upload_count) return 2;
     if (index < renderer.frame_upload_count) {
@@ -3832,6 +4051,7 @@ pub export fn howl_odin_bridge_render_upload_copy(
     return 0;
 }
 
+/// Copies one removal record from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_removal_info(
     raw: ?*RenderHandle,
     index: u32,
@@ -3839,6 +4059,10 @@ pub export fn howl_odin_bridge_render_removal_info(
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.removal_count) return 2;
     if (renderer.scratch.prepared_owner != renderer) return 3;
@@ -3912,6 +4136,7 @@ fn fillRenderCommandInfo(
     }
 }
 
+/// Copies one draw command record from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_command_info(
     raw: ?*RenderHandle,
     index: u32,
@@ -3919,6 +4144,10 @@ pub export fn howl_odin_bridge_render_command_info(
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     if (index >= renderer.command_count) return 2;
     if (renderer.scratch.prepared_owner != renderer) return 3;
@@ -3926,6 +4155,7 @@ pub export fn howl_odin_bridge_render_command_info(
     return 0;
 }
 
+/// Copies the last diagnostic bytes from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_copy_error(
     raw: ?*RenderHandle,
     output_ptr: [*]u8,
@@ -3934,39 +4164,54 @@ pub export fn howl_odin_bridge_render_copy_error(
 ) void {
     output_len.* = 0;
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Render constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const count = @min(output_capacity, renderer.last_error_len);
     @memcpy(output_ptr[0..count], renderer.last_error[0..count]);
     output_len.* = count;
 }
 
+/// Returns the exact C ABI render resource record byte size.
 pub export fn howl_odin_bridge_render_resource_info_size() u32 {
     return @sizeOf(RenderResourceInfo);
 }
 
+/// Returns the exact C ABI render removal record byte size.
 pub export fn howl_odin_bridge_render_removal_info_size() u32 {
     return @sizeOf(RenderRemovalInfo);
 }
 
+/// Returns the exact C ABI render command record byte size.
 pub export fn howl_odin_bridge_render_command_info_size() u32 {
     return @sizeOf(RenderCommandInfo);
 }
 
+/// Returns the exact C ABI search match record byte size.
 pub export fn howl_odin_bridge_search_match_info_size() u32 {
     return @sizeOf(SearchMatchInfo);
 }
 
+/// Returns the exact C ABI selection range record byte size.
 pub export fn howl_odin_bridge_selection_range_info_size() u32 {
     return @sizeOf(SelectionRangeInfo);
 }
 
+/// Returns the exact C ABI interaction state record byte size.
 pub export fn howl_odin_bridge_interaction_state_info_size() u32 {
     return @sizeOf(InteractionStateInfo);
 }
 
+// zig-audit: acknowledge opaque_type
+// reason: Handle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const Handle = opaque {};
+// zig-audit: acknowledge opaque_type
+// reason: ConsequenceHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const ConsequenceHandle = opaque {};
 
+/// Copied C ABI metadata for one ordered terminal consequence.
 pub const ConsequenceInfo = extern struct {
     terminal_revision: u64 = 0,
     authority_client_id: u64 = 0,
@@ -4175,6 +4420,7 @@ fn fillNativeTerminalInfo(
     };
 }
 
+/// Returns the Odin bridge ABI version.
 pub export fn howl_odin_bridge_version() u32 {
     return 16;
 }
@@ -4183,6 +4429,7 @@ test "Odin bridge version tracks native local ownership ABI" {
     try std.testing.expectEqual(@as(u32, 16), howl_odin_bridge_version());
 }
 
+/// Opens an owned direct transported terminal bridge.
 pub export fn howl_odin_bridge_create(
     runtime_raw: ?*RuntimeHandle,
     interrupt: ?*client.Interrupt,
@@ -4236,11 +4483,18 @@ pub export fn howl_odin_bridge_create(
     };
     retainRuntime(runtime);
     accepted = true;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(bridge);
 }
 
+/// Releases an owned transported terminal bridge.
 pub export fn howl_odin_bridge_destroy(raw: ?*Handle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const allocator = bridge.allocator;
     if (bridge.reusable_view) |view| client.view.deinit(view);
@@ -4259,6 +4513,10 @@ pub export fn howl_odin_bridge_snapshot(
     history_offset: u32,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (bridge.rich_loan_active) {
@@ -4352,28 +4610,43 @@ fn standaloneLiveView(view: *const client.view.Snapshot) bool {
 /// survives further observation/bridge teardown, and must be destroyed once.
 pub export fn howl_odin_bridge_snapshot_take_rich_loan(raw: ?*Handle) ?*Handle {
     const value = raw orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     if (!bridge.rich_loan_active or bridge.rich_loan_taken or bridge.live_view == null) return null;
     bridge.rich_loan_taken = true;
     return raw;
 }
 
+/// Ends the bridge's active rich observation loan.
 pub export fn howl_odin_bridge_snapshot_release_rich_loan(raw: ?*Handle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.live_view = null;
     bridge.rich_loan_active = false;
     bridge.rich_loan_taken = false;
 }
 
+/// Transfers the bridge's reusable client view to the caller.
 pub export fn howl_odin_bridge_snapshot_take_view(raw: ?*Handle) ?*client.view.Snapshot {
     const value = raw orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const view = bridge.reusable_view;
     bridge.reusable_view = null;
     return view;
 }
 
+/// Releases a caller-owned client view; null is a no-op.
 pub export fn howl_odin_bridge_view_destroy(view: ?*client.view.Snapshot) void {
     if (view) |value| client.view.deinit(value);
 }
@@ -4385,7 +4658,11 @@ fn writeDisplayTitle(source: []const u8, output: []u8) usize {
     var input: usize = 0;
     var used: usize = 0;
     while (input < source.len) {
+        // zig-audit: acknowledge catch_unreachable
+        // reason: utf8ValidateSlice accepted the unchanged title before this scalar walk; every sequence remains within that validated slice.
         const width = std.unicode.utf8ByteSequenceLength(source[input]) catch unreachable;
+        // zig-audit: acknowledge catch_unreachable
+        // reason: utf8ValidateSlice accepted the unchanged title before this scalar walk; every sequence remains within that validated slice.
         const codepoint = std.unicode.utf8Decode(source[input..][0..width]) catch unreachable;
         const control = codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f) or
             (codepoint >= 0x2028 and codepoint <= 0x202e) or
@@ -4399,14 +4676,24 @@ fn writeDisplayTitle(source: []const u8, output: []u8) usize {
     return used;
 }
 
+/// Copies a display-safe UTF-8 title into caller-owned bounded output.
 pub export fn howl_odin_bridge_snapshot_title(raw: ?*Handle, output: [*]u8, capacity: usize) usize {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *const Bridge = @ptrCast(@alignCast(value));
     return writeDisplayTitle(bridge.display_title[0..bridge.display_title_len], output[0..capacity]);
 }
 
+/// Returns copied progress metadata from the retained observation.
 pub export fn howl_odin_bridge_snapshot_progress(raw: ?*Handle) u16 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *const Bridge = @ptrCast(@alignCast(value));
     return (@as(u16, @backingInt(bridge.task_progress.kind)) << 8) | bridge.task_progress.value;
 }
@@ -4421,6 +4708,7 @@ test "desktop property labels never leak controls or partial UTF-8 to chrome" {
     try std.testing.expectEqualStrings("λ", output[0..2]);
 }
 
+/// Copies bounded search matches from the transported terminal bridge into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_search_find(
     raw: ?*Handle,
     query_ptr: [*]const u8,
@@ -4433,6 +4721,10 @@ pub export fn howl_odin_bridge_search_find(
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (query_len == 0 or query_len > maximum_search_query_bytes or
@@ -4716,12 +5008,17 @@ fn fillSearchMatch(match: client.search.Match, output: *SearchMatchInfo) i32 {
     return 0;
 }
 
+/// Sends bounded committed text through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_text(
     raw: ?*Handle,
     bytes_ptr: [*]const u8,
     bytes_len: usize,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     client.actions.committedText(&bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
@@ -4731,12 +5028,17 @@ pub export fn howl_odin_bridge_send_text(
     return 0;
 }
 
+/// Sends bounded paste bytes through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_paste(
     raw: ?*Handle,
     bytes_ptr: [*]const u8,
     bytes_len: usize,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     client.actions.paste(&bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
@@ -4800,6 +5102,10 @@ pub export fn howl_odin_bridge_hyperlink_copy(
 ) i32 {
     output_len.* = 0;
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (expected_columns == 0 or expected_alternate_screen > 1) {
@@ -4862,6 +5168,10 @@ pub export fn howl_odin_bridge_selection_expand(
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if ((kind != 1 and kind != 2) or expected_columns == 0 or expected_alternate_screen > 1) {
@@ -4931,6 +5241,7 @@ pub export fn howl_odin_bridge_selection_expand(
     return 0;
 }
 
+/// Copies selected text bytes from the transported terminal bridge into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_selection_extract(
     raw: ?*Handle,
     start_row: i32,
@@ -4945,6 +5256,10 @@ pub export fn howl_odin_bridge_selection_extract(
 ) i32 {
     output_len.* = 0;
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (expected_columns == 0 or expected_alternate_screen > 1) {
@@ -4975,6 +5290,7 @@ pub export fn howl_odin_bridge_selection_extract(
     return 0;
 }
 
+/// Validates and sends one named physical key through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_named_key(
     raw: ?*Handle,
     key_value: u8,
@@ -4982,6 +5298,10 @@ pub export fn howl_odin_bridge_send_named_key(
     modifiers: u8,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (modifiers & ~protocol.typed_input.modifiers.known != 0) return 3;
@@ -4994,6 +5314,7 @@ pub export fn howl_odin_bridge_send_named_key(
     return 0;
 }
 
+/// Validates and sends one Unicode physical key through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_unicode_key(
     raw: ?*Handle,
     scalar: u32,
@@ -5001,6 +5322,10 @@ pub export fn howl_odin_bridge_send_unicode_key(
     modifiers: u8,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (modifiers & ~protocol.typed_input.modifiers.known != 0) return 3;
@@ -5012,12 +5337,17 @@ pub export fn howl_odin_bridge_send_unicode_key(
     return 0;
 }
 
+/// Copies current interaction facts from the transported terminal bridge into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_interaction_state(
     raw: ?*Handle,
     output: *InteractionStateInfo,
 ) i32 {
     output.* = .{};
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     const state = client.state.get(&bridge.connection) catch |failure| {
@@ -5037,6 +5367,7 @@ pub export fn howl_odin_bridge_interaction_state(
     return 0;
 }
 
+/// Validates and sends one semantic mouse event through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_mouse(
     raw: ?*Handle,
     kind_value: u8,
@@ -5050,6 +5381,10 @@ pub export fn howl_odin_bridge_send_mouse(
     pixel_y: u32,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (modifiers & ~protocol.typed_input.modifiers.known != 0 or
@@ -5073,11 +5408,16 @@ pub export fn howl_odin_bridge_send_mouse(
     return 0;
 }
 
+/// Validates and sends an explicit focus transition through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_focus(
     raw: ?*Handle,
     focus_value: u8,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     const focus = std.enums.fromInt(protocol.InputFocus, focus_value) orelse return 3;
@@ -5088,6 +5428,7 @@ pub export fn howl_odin_bridge_send_focus(
     return 0;
 }
 
+/// Requests explicit terminal geometry through the transported terminal bridge.
 pub export fn howl_odin_bridge_send_resize(
     raw: ?*Handle,
     rows: u16,
@@ -5097,6 +5438,10 @@ pub export fn howl_odin_bridge_send_resize(
     claim: u8,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     if (claim > 1) return 3;
@@ -5121,6 +5466,7 @@ pub export fn howl_odin_bridge_send_resize(
     return 0;
 }
 
+/// Copies the last diagnostic bytes from the transported terminal bridge into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_copy_error(
     raw: ?*Handle,
     output_ptr: [*]u8,
@@ -5129,70 +5475,92 @@ pub export fn howl_odin_bridge_copy_error(
 ) void {
     output_len.* = 0;
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     const count = @min(output_capacity, bridge.last_error_len);
     @memcpy(output_ptr[0..count], bridge.last_error[0..count]);
     output_len.* = count;
 }
 
+/// Returns copied revision facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_revision(raw: ?*Handle) u64 {
     return if (lastBegin(raw)) |begin| begin.revision else 0;
 }
 
+/// Returns copied terminal revision facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_terminal_revision(raw: ?*Handle) u64 {
     return if (lastBegin(raw)) |begin| begin.terminal_revision else 0;
 }
 
+/// Returns copied rows facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_rows(raw: ?*Handle) u16 {
     return if (lastBegin(raw)) |begin| begin.rows else 0;
 }
 
+/// Returns copied columns facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_columns(raw: ?*Handle) u16 {
     return if (lastBegin(raw)) |begin| begin.columns else 0;
 }
 
+/// Returns copied cursor row facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_row(raw: ?*Handle) u16 {
     return if (lastBegin(raw)) |begin| begin.cursor_row else 0;
 }
 
+/// Returns copied cursor column facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_column(raw: ?*Handle) u16 {
     return if (lastBegin(raw)) |begin| begin.cursor_column else 0;
 }
 
+/// Returns copied cursor visible facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_visible(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| @intFromBool(begin.cursor_visible) else 0;
 }
 
+/// Returns copied cursor shape facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_shape(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| begin.cursor_shape else 0;
 }
 
+/// Returns copied alternate screen facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_alternate_screen(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| @intFromBool(begin.alternate_screen) else 0;
 }
 
+/// Returns copied stream closed facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_stream_closed(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| @intFromBool(begin.stream_closed) else 0;
 }
 
+/// Returns copied child exited facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_child_exited(raw: ?*Handle) u8 {
     return if (lastBegin(raw)) |begin| @intFromBool(begin.child_exited) else 0;
 }
 
+/// Returns copied history count facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_count(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_count else 0;
 }
 
+/// Returns copied history offset facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_offset(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_offset else 0;
 }
 
+/// Returns copied history row base facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_row_base(raw: ?*Handle) u32 {
     return if (lastBegin(raw)) |begin| begin.history_row_base else 0;
 }
 
 fn lastBegin(raw: ?*Handle) ?protocol.SnapshotBegin {
     const value = raw orelse return null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live Bridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     return bridge.last_begin;
 }
@@ -5236,6 +5604,7 @@ fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
     try std.json.Stringify.value(rendered, .{}, writer);
 }
 
+/// Copies a Server catalogue into caller-owned bounded output.
 pub export fn howl_odin_bridge_server_tree(
     endpoint_ptr: [*]const u8,
     endpoint_len: usize,
@@ -5402,17 +5771,29 @@ pub export fn howl_odin_bridge_consequence_create(
     };
     retainRuntime(runtime);
     accepted = true;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
     return @ptrCast(bridge);
 }
 
+/// Returns the consequence connection's negotiated client identity.
 pub export fn howl_odin_bridge_consequence_client_id(raw: ?*ConsequenceHandle) u64 {
     const value = raw orelse return 0;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     return bridge.connection.client_id;
 }
 
+/// Acquires consequence observation authority for this connection.
 pub export fn howl_odin_bridge_consequence_acquire(raw: ?*ConsequenceHandle) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     client.consequences.acquire(&bridge.connection) catch |failure| {
@@ -5422,8 +5803,13 @@ pub export fn howl_odin_bridge_consequence_acquire(raw: ?*ConsequenceHandle) i32
     return 0;
 }
 
+/// Releases the owned consequence connection.
 pub export fn howl_odin_bridge_consequence_destroy(raw: ?*ConsequenceHandle) void {
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     const allocator = bridge.allocator;
     // Deliberately close rather than sending assign(no_client): endpoint disconnect
@@ -5433,6 +5819,7 @@ pub export fn howl_odin_bridge_consequence_destroy(raw: ?*ConsequenceHandle) voi
     allocator.destroy(bridge);
 }
 
+/// Returns the exact C ABI consequence record byte size.
 pub export fn howl_odin_bridge_consequence_info_size() u32 {
     return @sizeOf(ConsequenceInfo);
 }
@@ -5459,6 +5846,10 @@ pub export fn howl_odin_bridge_consequence_observe(
     info.* = .{};
     copied_len.* = 0;
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     var snapshot = client.consequences.observe(&bridge.connection, bridge.allocator) catch |failure| {
@@ -5481,11 +5872,16 @@ pub export fn howl_odin_bridge_consequence_observe(
     return 0;
 }
 
+/// Acknowledges one pending consequence from the consequence connection into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_consequence_consume(
     raw: ?*ConsequenceHandle,
     generation: u64,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     client.consequences.consume(&bridge.connection, generation) catch |failure| {
@@ -5495,6 +5891,7 @@ pub export fn howl_odin_bridge_consequence_consume(
     return 0;
 }
 
+/// Replies to one pending consequence from the consequence connection into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_consequence_reply(
     raw: ?*ConsequenceHandle,
     generation: u64,
@@ -5503,6 +5900,10 @@ pub export fn howl_odin_bridge_consequence_reply(
     body_len: usize,
 ) i32 {
     const value = raw orelse return 1;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     const kind: client.consequences.ReplyKind = switch (kind_raw) {
@@ -5526,6 +5927,7 @@ pub export fn howl_odin_bridge_consequence_reply(
     return 0;
 }
 
+/// Copies the last diagnostic bytes from the consequence connection into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_consequence_copy_error(
     raw: ?*ConsequenceHandle,
     output_ptr: [*]u8,
@@ -5534,6 +5936,10 @@ pub export fn howl_odin_bridge_consequence_copy_error(
 ) void {
     output_len.* = 0;
     const value = raw orelse return;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     const count = @min(output_capacity, bridge.last_error_len);
     @memcpy(output_ptr[0..count], bridge.last_error[0..count]);
@@ -5562,6 +5968,8 @@ test "discarding a prepared render releases shared scratch without publishing fr
     renderer.removal_count = 4;
     renderer.command_count = 5;
     renderer.pixel_count = 6;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     const handle: *RenderHandle = @ptrCast(&renderer);
 
     howl_odin_bridge_render_discard(handle);
@@ -5588,6 +5996,8 @@ test "render headers publish metadata and selection only on acceptance" {
     renderer.scratch = &scratch;
     // Eligible offers fail before accessing the deliberately undefined composer.
     renderer.cell_size = .{ .width = 0, .height = 0 };
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     const handle: *RenderHandle = @ptrCast(&renderer);
     var first_begin = std.mem.zeroes(protocol.SnapshotBegin);
     first_begin.revision = 6;
@@ -5728,6 +6138,8 @@ test "rich loan is single-take and release bounded without a connection" {
     bridge.live_view = rich;
     bridge.rich_loan_active = true;
     bridge.rich_loan_taken = false;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     const handle: *Handle = @ptrCast(&bridge);
 
     const loan = howl_odin_bridge_snapshot_take_rich_loan(handle).?;
@@ -5745,6 +6157,8 @@ test "live view transfer keeps exact immutable text and metadata without a conne
     const projected = try testReusableProjection(0, false);
     var bridge: Bridge = undefined;
     bridge.reusable_view = projected;
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     const handle: *Handle = @ptrCast(&bridge);
     const taken = howl_odin_bridge_snapshot_take_view(handle).?;
     defer howl_odin_bridge_view_destroy(taken);
@@ -5863,6 +6277,8 @@ test "native terminal claim services PTY directly and publishes Render" {
     var diagnostic: [160]u8 = undefined;
     var diagnostic_len: usize = 0;
     var raw: ?*NativeTerminalHandle = howl_odin_bridge_native_terminal_claim(
+        // zig-audit: acknowledge ptr_cast
+        // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
         @ptrCast(&runtime),
         id,
         &diagnostic,
@@ -5872,6 +6288,8 @@ test "native terminal claim services PTY directly and publishes Render" {
     defer {
         if (raw) |active| howl_odin_bridge_native_terminal_release(active);
         if (!runtime.native_local.empty())
+            // zig-audit: acknowledge discard
+            // reason: Deferred fixture cleanup may already have retired this Instance; either outcome leaves the test catalogue empty.
             _ = runtime.native_local.destroy(runtime.threaded.io(), id);
     }
     const owner = nativeTerminalValue(raw).?;
@@ -5890,6 +6308,8 @@ test "native terminal claim services PTY directly and publishes Render" {
 
     var attempts: usize = 0;
     while (attempts < 2000) : (attempts += 1) {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.service(attempts + 1);
         const view = native_instance.terminal(owner.value).semanticView(0);
         if (view.cellAt(0, 0) == 'N') break;
@@ -5936,6 +6356,8 @@ test "native terminal claim services PTY directly and publishes Render" {
     );
     attempts = 0;
     while (attempts < 2000) : (attempts += 1) {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         const view = native_instance.terminal(owner.value).semanticView(0);
         var found = false;
@@ -6031,6 +6453,8 @@ test "native stalled presentation never paces VT and a quiet request catches up"
     const initial_revision = first.value.terminal_revision;
 
     for (0..2000) |_| {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         if (native_instance.terminal(owner.value).semanticView(0).cellAt(0, 0) == 'F')
             break;
@@ -6043,6 +6467,8 @@ test "native stalled presentation never paces VT and a quiet request catches up"
     try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
 
     owner.requestRender();
+    // zig-audit: acknowledge discard
+    // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
     _ = try owner.waitAndService(100);
     var latest = native_instance.acquirePublishedFrame(exchange) orelse
         return error.MissingPublication;
@@ -6054,6 +6480,8 @@ test "native stalled presentation never paces VT and a quiet request catches up"
     // A presentation credit with no new terminal state neither republishes
     // nor causes an idle producer loop.
     owner.requestRender();
+    // zig-audit: acknowledge discard
+    // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
     _ = try owner.waitAndService(0);
     try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
     try std.testing.expect(!owner.render_pending);
@@ -6076,6 +6504,8 @@ test "native pending release cannot publish the next synchronized hold" {
     first.abandon();
 
     for (0..2000) |_| {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         const observation = native_instance.terminal(owner.value);
         if (observation.synchronizedOutput() and
@@ -6084,6 +6514,8 @@ test "native pending release cannot publish the next synchronized hold" {
     } else return error.Timeout;
     try std.testing.expect(owner.render_pending);
     owner.requestRender();
+    // zig-audit: acknowledge discard
+    // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
     _ = try owner.waitAndService(0);
     try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
     try std.testing.expect(owner.render_requested.load(.acquire));
@@ -6091,9 +6523,13 @@ test "native pending release cannot publish the next synchronized hold" {
 
     try std.testing.expectEqual(
         @as(i32, 0),
+        // zig-audit: acknowledge ptr_cast
+        // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
         howl_odin_bridge_native_terminal_send_text(@ptrCast(&owner), "\n".ptr, 1),
     );
     for (0..2000) |_| {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         if (!native_instance.terminal(owner.value).synchronizedOutput())
             break;
@@ -6124,6 +6560,8 @@ test "native quiet synchronized hold wakes on its publication deadline" {
     var first = native_instance.acquirePublishedFrame(exchange).?;
     first.abandon();
     for (0..2000) |_| {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         if (native_instance.terminal(owner.value).semanticView(0).cellAt(0, 0) == 'Q')
             break;
@@ -6131,8 +6569,12 @@ test "native quiet synchronized hold wakes on its publication deadline" {
     try std.testing.expect(native_instance.terminal(owner.value).synchronizedOutput());
 
     owner.requestRender();
+    // zig-audit: acknowledge discard
+    // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
     _ = try owner.waitAndService(0); // Drain the explicit wake before the quiet wait.
     const started = nativeNowNs(runtime.threaded.io());
+    // zig-audit: acknowledge discard
+    // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
     _ = try owner.waitAndService(-1);
     const elapsed = nativeNowNs(runtime.threaded.io()) - started;
     try std.testing.expect(elapsed < 3 * std.time.ns_per_s);
@@ -6179,6 +6621,8 @@ test "native presentation config retains two caller-owned fallback paths" {
 test "native row bounds preserve scalar semantics for clusters and history" {
     var terminal = try native_instance.Terminal.initWithHistory(std.testing.allocator, 4, 12, 6);
     defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This proof checks canonical scalar/history content; feed summary counters are independently covered by VT.
     _ = try terminal.feed("\x1b[1;2HA\xcc\x81\x1b[2;6H\xe4\xb8\xad\x1b[3;9H \xcc\x81\x1b[4;3H\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb");
     for (0..2) |_| {
         const view = terminal.semanticView(0);
@@ -6199,6 +6643,8 @@ test "native row bounds preserve scalar semantics for clusters and history" {
             try std.testing.expectEqual(expected_content, nativeLastContentColumn(&view, row));
             try std.testing.expectEqual(expected_search, nativeLastSearchColumn(&view, row));
         }
+        // zig-audit: acknowledge discard
+        // reason: This proof checks canonical scalar/history content; feed summary counters are independently covered by VT.
         _ = try terminal.feed("\r\n\x1b[8mhidden\x1b[0m\r\n");
     }
     const history = terminal.semanticView(1);
@@ -6231,6 +6677,8 @@ test "native forced viewport and font changes do not require presentation credit
     var initial = native_instance.acquirePublishedFrame(exchange).?;
     initial.abandon();
     for (0..2000) |_| {
+        // zig-audit: acknowledge discard
+        // reason: This bounded proof checks terminal/publication facts after the turn; the service summary is not its acceptance condition.
         _ = try owner.waitAndService(1);
         if (std.mem.eql(u8, native_instance.terminal(owner.value).title() orelse "", "FORCED-READY")) break;
     } else return error.Timeout;
@@ -6238,6 +6686,8 @@ test "native forced viewport and font changes do not require presentation credit
     try std.testing.expect(!owner.render_requested.load(.acquire));
     try std.testing.expect(native_instance.acquirePublishedFrame(exchange) == null);
 
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_publish_history(@ptrCast(&owner), 1));
     var history = native_instance.acquirePublishedFrame(exchange) orelse return error.MissingPublication;
     defer history.abandon();
@@ -6246,6 +6696,8 @@ test "native forced viewport and font changes do not require presentation credit
     const pixels = native_instance.terminal(owner.value).cellPixelSize().?;
     const cell_width: u16 = @intCast(pixels.width);
     const cell_height: u16 = @intCast(pixels.height);
+    // zig-audit: acknowledge ptr_cast
+    // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
     try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_send_resize(@ptrCast(&owner), 3, 24, cell_width, cell_height, 1));
     try std.testing.expectEqual(retained_surface, history.value.surface);
     // The exchange admits one backend lease; the forced update may publish
@@ -6257,6 +6709,8 @@ test "native forced viewport and font changes do not require presentation credit
     try std.testing.expectEqual(@as(u16, 3) * cell_height, resized.value.surface.height);
     const old_generation = resized.value.presentation_generation;
     try std.testing.expectEqual(@as(i32, 0), howl_odin_bridge_native_terminal_reconfigure_presentation(
+        // zig-audit: acknowledge ptr_cast
+        // reason: This proof lends its concrete stack owner as the matching opaque handle only during the synchronous test call.
         @ptrCast(&owner),
         fonts.primary_font.ptr,
         fonts.primary_font.len,

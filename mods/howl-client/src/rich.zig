@@ -1346,9 +1346,7 @@ fn decodeRow(
         const encoded = payload[offset..][0..protocol.text_v1.cell_header_bytes];
         const scalar_count = encoded[0];
         if (scalar_count > protocol.text_v1.maximum_cell_scalars) return error.InvalidSnapshot;
-        // zig-audit: acknowledge ptr_cast
-        // reason: encoded is a validated fixed-width cell header whose tail is exactly text_cell_attribute_bytes long for this comparison borrow.
-        const attributes: *const [text_cell_attribute_bytes]u8 = @ptrCast(encoded[1..].ptr);
+        const attributes: *const [text_cell_attribute_bytes]u8 = encoded[1..];
         var decoded: Cell = undefined;
         if (previous_attributes) |previous| {
             if (sameCellAttributes(attributes, previous)) {

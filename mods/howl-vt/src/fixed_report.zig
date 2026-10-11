@@ -1,6 +1,7 @@
 //! Stateless terminal identity, status, geometry, and checksum reply encoding.
 //!
 //! Callers project live state into small values and retain all state ownership.
+//! Insufficient encoding scratch reports ReplyLimit before retained output changes.
 
 const std = @import("std");
 const replies = @import("replies.zig");
@@ -33,9 +34,7 @@ pub fn appendPrimaryDeviceAttributes(
         encode_buffer,
         "?{d};22c",
         .{dec_conformance_level},
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -60,9 +59,7 @@ pub fn appendTitleStackPosition(
         encode_buffer,
         "{d};{d}#S",
         .{ current, maximum },
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -94,9 +91,7 @@ pub fn appendScreenExtent(
         encode_buffer,
         "{d};{d};1;1;1\"w",
         .{ view.rows, view.cols },
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -111,9 +106,7 @@ pub fn appendTerminalParameters(
         encode_buffer,
         "{d};1;1;128;128;1;0x",
         .{kind + 2},
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -128,9 +121,7 @@ pub fn appendRectChecksum(
         encode_buffer,
         "{d}!~{X:0>4}",
         .{ request_id, checksum },
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
-    ) catch unreachable;
+    ) catch return error.ReplyLimit;
     try output.appendString(.terminal, .dcs, payload);
 }
 
@@ -143,13 +134,9 @@ fn appendCursor(
     const row = cursorCoordinate(view.cursor_row, view.origin_top, view.origin_mode);
     const column = cursorCoordinate(view.cursor_col, view.origin_left, view.origin_mode);
     const payload = if (private)
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-        std.fmt.bufPrint(encode_buffer, "?{d};{d}R", .{ row, column }) catch unreachable
+        std.fmt.bufPrint(encode_buffer, "?{d};{d}R", .{ row, column }) catch return error.ReplyLimit
     else
-        // zig-audit: acknowledge catch_unreachable
-        // reason: The destination and encoded value are already bounded to fit; failure would contradict the established capacity/value invariant.
-        std.fmt.bufPrint(encode_buffer, "{d};{d}R", .{ row, column }) catch unreachable;
+        std.fmt.bufPrint(encode_buffer, "{d};{d}R", .{ row, column }) catch return error.ReplyLimit;
     try output.appendCsi(.terminal, payload);
 }
 
@@ -240,4 +227,32 @@ test "fixed report reply saturation preserves prior output" {
         appendPrimaryDeviceAttributes(&output, &scratch),
     );
     try std.testing.expectEqualSlices(u8, retained, output.bytes());
+}
+
+test "short report scratch rejects every encoder without changing prior replies" {
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    try output.append("kept");
+    var scratch: [1]u8 = undefined;
+    const view: CursorView = .{
+        .rows = std.math.maxInt(u16),
+        .cols = std.math.maxInt(u16),
+        .cursor_row = std.math.maxInt(u16),
+        .cursor_col = std.math.maxInt(u16),
+    };
+
+    try std.testing.expectError(error.ReplyLimit, appendPrimaryDeviceAttributes(&output, &scratch));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendTitleStackPosition(&output, &scratch, 65535, 65535));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendCursorPosition(&output, &scratch, view));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendDecCursorPosition(&output, &scratch, view));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendScreenExtent(&output, &scratch, view));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendTerminalParameters(&output, &scratch, 0));
+    try std.testing.expectEqualStrings("kept", output.bytes());
+    try std.testing.expectError(error.ReplyLimit, appendRectChecksum(&output, &scratch, 65535, 65535));
+    try std.testing.expectEqualStrings("kept", output.bytes());
 }

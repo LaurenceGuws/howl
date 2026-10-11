@@ -7,5 +7,5 @@
         .server_protocol = .{ .path = "../server-protocol" },
         .howl_instance = .{ .path = "../howl-instance" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src", "test" },
+    .paths = .{ ".zig-audit.json", "README.md", "build.zig", "build.zig.zon", "src", "test" },
 }

@@ -5,11 +5,23 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     // Compatibility spellings retained while platform scripts stop provisioning
     // a second text stack. Instance-owned Render now owns text on every target.
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "repo", "Deprecated: sources resolve through package dependencies");
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "ndk", "Deprecated: Instance-owned Render owns bundled Android text");
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "deps", "Deprecated: Instance-owned Render owns bundled platform text");
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "freetype-include", "Deprecated: text include override");
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "harfbuzz-include", "Deprecated: text include override");
+    // zig-audit: acknowledge discard
+    // reason: The maintained platform scripts still supply this deprecated spelling; registering it consumes the option while package dependencies own the actual text sources.
     _ = b.option([]const u8, "apple-sdk", "Deprecated: Instance-owned Render owns bundled Apple text");
 
     const bundled_render_text =
@@ -58,6 +70,11 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const check = b.step("check", "Compile the Flutter native host and all its proofs");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&object.step);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run native host presentation-lattice proofs");

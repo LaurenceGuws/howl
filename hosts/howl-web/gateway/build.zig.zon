@@ -6,5 +6,5 @@
     .dependencies = .{
         .server_client = .{ .path = "../../../mods/server-client" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src", "tests" },
+    .paths = .{ ".zig-audit.json", "README.md", "build.zig", "build.zig.zon", "src", "tests" },
 }

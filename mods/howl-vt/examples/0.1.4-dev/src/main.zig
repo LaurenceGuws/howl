@@ -3,6 +3,7 @@
 const std = @import("std");
 const howl_vt = @import("howl_vt");
 
+/// Runs the historical public VT embedding example.
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     var terminal = try howl_vt.Terminal.init(allocator, 2, 8);

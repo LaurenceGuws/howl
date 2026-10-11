@@ -2,6 +2,7 @@ const std = @import("std");
 const protocol = @import("howl_instance").protocol;
 const client = @import("howl_client");
 
+/// Reports invalid command-line key, modifier, focus or signal vocabulary.
 pub const Error = error{
     InvalidKey,
     InvalidKeyAction,
@@ -10,30 +11,41 @@ pub const Error = error{
     InvalidSignal,
 };
 
+/// Machine-readable confirmation of one successful semantic action.
 pub const Receipt = struct {
     schema: []const u8 = "howl.action/v1",
     operation: []const u8,
     result: []const u8 = "ok",
 };
 
+/// Writes one action receipt followed by a newline; forwards output failures.
 pub fn emitReceipt(writer: *std.Io.Writer, operation: []const u8) !void {
     try std.json.Stringify.value(Receipt{ .operation = operation }, .{}, writer);
     try writer.writeByte('\n');
 }
 
+/// Sends committed text through the shared client action owner.
 pub const committedText = client.actions.committedText;
+/// Sends a paste through the shared client action owner.
 pub const paste = client.actions.paste;
+/// Sends a named physical key through the shared client action owner.
 pub const namedKey = client.actions.namedKey;
+/// Sends a Unicode physical key through the shared client action owner.
 pub const unicodeKey = client.actions.unicodeKey;
+/// Sends an explicit focus transition through the shared client action owner.
 pub const focus = client.actions.focus;
+/// Requests explicit terminal geometry through the shared client action owner.
 pub const resize = client.actions.resize;
+/// Requests a child signal through the shared client action owner.
 pub const signal = client.actions.signal;
 
+/// A named protocol key or validated Unicode scalar.
 pub const PhysicalKey = union(enum) {
     named: protocol.InputKeyName,
     unicode: u32,
 };
 
+/// Parses a protocol key name or U+ hexadecimal Unicode scalar.
 pub fn parseKey(text: []const u8) Error!PhysicalKey {
     if (std.mem.startsWith(u8, text, "U+") or std.mem.startsWith(u8, text, "u+")) {
         if (text.len <= 2 or text.len > 8) return error.InvalidKey;
@@ -48,10 +60,12 @@ pub fn parseKey(text: []const u8) Error!PhysicalKey {
         return error.InvalidKey };
 }
 
+/// Parses only the frozen protocol key-action vocabulary.
 pub fn parseKeyAction(text: []const u8) Error!protocol.InputKeyAction {
     return std.meta.stringToEnum(protocol.InputKeyAction, text) orelse error.InvalidKeyAction;
 }
 
+/// Parses unique + separated modifier names into protocol bits.
 pub fn parseModifiers(text: []const u8) Error!u8 {
     if (text.len == 0) return 0;
     var result: u8 = 0;
@@ -81,12 +95,14 @@ pub fn parseModifiers(text: []const u8) Error!u8 {
     return result;
 }
 
+/// Parses in or out as an explicit focus transition.
 pub fn parseFocus(text: []const u8) Error!protocol.InputFocus {
     if (std.mem.eql(u8, text, "in")) return .in;
     if (std.mem.eql(u8, text, "out")) return .out;
     return error.InvalidFocus;
 }
 
+/// Parses only the supported child signal names.
 pub fn parseSignal(text: []const u8) Error!protocol.Signal {
     if (std.mem.eql(u8, text, "hangup")) return .hangup;
     if (std.mem.eql(u8, text, "interrupt")) return .interrupt;

@@ -86,9 +86,11 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&tests.step);
     check.dependOn(&local_tests.step);
     check.dependOn(&render_tests.step);
-    const audit = b.addSystemCommand(&.{ "zig-audit", "check" });
-    audit.setCwd(b.path("."));
-    check.dependOn(&audit.step);
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     const test_step = b.step("test", "Run native Howl client framing proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(local_tests).step);

@@ -79,6 +79,11 @@ pub fn build(b: *std.Build) void {
     wire.dependOn(&wire_command.step);
 
     const check = b.step("check", "Compile one canonical PTY and VT instance");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(wire);
     check.dependOn(&tests.step);
 

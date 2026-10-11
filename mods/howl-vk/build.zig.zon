@@ -5,6 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{},
     .paths = .{
+        ".zig-audit.json",
         "build.zig",
         "build.zig.zon",
         "LICENSES",

@@ -6,6 +6,7 @@
 const std = @import("std");
 const instance = @import("howl_instance");
 
+/// Default host-local font pixel size.
 pub const base_font_pixels: u16 = 16;
 const scale_denominator: u32 = 120;
 const atlas_extent: u16 = 512;

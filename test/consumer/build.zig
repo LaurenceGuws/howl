@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const check = b.step("check", "Compile the external consumer contract");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     b.step("test", "Run the external consumer contract").dependOn(&b.addRunArtifact(tests).step);
     b.default_step = check;

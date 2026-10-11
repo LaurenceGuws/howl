@@ -11,6 +11,7 @@ const model = @import("server_model");
 const control = @import("server_service");
 
 const maximum_accepts_per_turn: usize = 16;
+/// Maximum idle poll interval for the Server scheduler.
 pub const scheduler_wait_ms: i32 = 20;
 const idle_wait_ms: i32 = 1000;
 const TcpIpv4 = struct {
@@ -18,14 +19,17 @@ const TcpIpv4 = struct {
     port: u16,
 };
 
+/// Explicit IPv4 TCP or Unix control-listener selection.
 pub const ListenerSpec = union(enum) {
     unix: []const u8,
     tcp_loopback: u16,
     tcp_ipv4: TcpIpv4,
 };
 
+/// Reports an invalid explicit listener specification.
 pub const ParseError = error{InvalidListener};
 
+/// Parses supported explicit IPv4 TCP and Unix listener specifications.
 pub fn parseListener(text: []const u8) ParseError!ListenerSpec {
     if (std.mem.startsWith(u8, text, "unix:")) {
         const path = text["unix:".len..];
@@ -66,6 +70,7 @@ fn parseTcpIpv4(text: []const u8) ParseError!TcpIpv4 {
     return .{ .address = address, .port = port };
 }
 
+/// Chooses a nonzero process incarnation identity from caller-owned randomness.
 pub fn freshServerId(io: std.Io) u64 {
     while (true) {
         var bytes: [8]u8 = undefined;
@@ -113,6 +118,8 @@ const Listener = struct {
 
     fn endpointText(self: *const Listener, output: []u8) ![]const u8 {
         if (self.tcp_port) |port| {
+            // zig-audit: acknowledge orelse_unreachable
+            // reason: Both TCP listener constructors initialize tcp_address and tcp_port together; a published TCP listener cannot lack its address.
             const address = self.tcp_address orelse unreachable;
             return std.fmt.bufPrint(
                 output,
@@ -124,6 +131,7 @@ const Listener = struct {
     }
 };
 
+/// Owns the control listener, optional orchestration model and scheduling lifetime.
 pub const Runtime = struct {
     io: std.Io,
     listener: Listener,
@@ -132,6 +140,7 @@ pub const Runtime = struct {
     wait_cursor: usize = 0,
     next_reconcile_ns: i96 = 0,
 
+    /// Creates a listener and model for a caller-specified nonzero Server identity.
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -151,6 +160,7 @@ pub const Runtime = struct {
         };
     }
 
+    /// Creates a runtime with a fresh nonzero incarnation identity.
     pub fn initFresh(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -160,6 +170,7 @@ pub const Runtime = struct {
         return init(allocator, io, inherited_environment, listener_spec, freshServerId(io));
     }
 
+    /// Closes control clients, model and listener resources in ownership order.
     pub fn deinit(self: *Runtime) void {
         self.service.deinit();
         self.listener.deinit();
@@ -167,10 +178,12 @@ pub const Runtime = struct {
         self.* = undefined;
     }
 
+    /// Returns this runtime's Server incarnation identity.
     pub fn serverId(self: *const Runtime) u64 {
         return self.server.identity();
     }
 
+    /// Formats the bound listener into caller-owned output storage.
     pub fn endpointText(self: *const Runtime, output: []u8) ![]const u8 {
         return self.listener.endpointText(output);
     }
@@ -207,6 +220,7 @@ pub const Runtime = struct {
             try self.service.turn(0);
     }
 
+    /// Services the listener and bounded Instance work until runtime shutdown.
     pub fn run(self: *Runtime) !void {
         while (true) try self.turn();
     }
@@ -268,6 +282,8 @@ pub const Runtime = struct {
         }
 
         const before_poll = std.Io.Clock.awake.now(self.io).toNanoseconds();
+        // zig-audit: acknowledge catch_unreachable
+        // reason: The positive ns_per_ms divisor and nonnegative bounded remaining duration cannot trigger divCeil's arithmetic errors.
         const remaining_ms = std.math.divCeil(i96, @max(0, self.next_reconcile_ns - before_poll), std.time.ns_per_ms) catch unreachable;
         const wait_ms: i32 = @intCast(@min(timeout_ms, remaining_ms));
         const timeout: posix.timespec = .{
@@ -281,6 +297,8 @@ pub const Runtime = struct {
         const reconcile = now >= self.next_reconcile_ns;
         if (reconcile) self.next_reconcile_ns = now + idle_wait_ms * std.time.ns_per_ms;
         std.debug.assert(ready <= descriptor_count);
+        // zig-audit: acknowledge unreachable
+        // reason: The scheduler retains sole ownership of the live listener fd until run returns; POLLNVAL proves that lifetime was violated.
         if (descriptors[0].revents & posix.POLL.NVAL != 0) unreachable;
 
         var control_ready = false;
@@ -381,11 +399,15 @@ fn listenTcp(address_bytes: [4]u8, requested_port: u16) !TcpListener {
         fd,
         linux.SOL.SOCKET,
         linux.SO.REUSEADDR,
+        // zig-audit: acknowledge ptr_cast
+        // reason: SO_REUSEADDR consumes this live c_int through the syscall byte-buffer ABI for exactly this call.
         @ptrCast(&enabled),
         @sizeOf(c_int),
     )) != .SUCCESS) return error.SocketOptionFailed;
 
     var address = ipv4Address(address_bytes, requested_port);
+    // zig-audit: acknowledge ptr_cast
+    // reason: bind borrows this initialized concrete sockaddr through the generic syscall ABI for the supplied exact address length.
     if (linux.errno(linux.bind(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))) != .SUCCESS)
         return error.SocketBindFailed;
     if (linux.errno(linux.listen(fd, maximum_accepts_per_turn)) != .SUCCESS)
@@ -393,6 +415,8 @@ fn listenTcp(address_bytes: [4]u8, requested_port: u16) !TcpListener {
 
     var bound: linux.sockaddr.in = undefined;
     var length: linux.socklen_t = @sizeOf(linux.sockaddr.in);
+    // zig-audit: acknowledge ptr_cast
+    // reason: getsockname writes into live sockaddr.in storage; its exact length and family are checked before publication.
     if (linux.errno(linux.getsockname(fd, @ptrCast(&bound), &length)) != .SUCCESS or
         length != @sizeOf(linux.sockaddr.in) or bound.family != linux.AF.INET)
         return error.SocketNameFailed;
@@ -415,6 +439,8 @@ fn bindUnix(path: []const u8) !Listener {
 
     var address: linux.sockaddr.un = undefined;
     const length = try unixAddress(path, &address);
+    // zig-audit: acknowledge ptr_cast
+    // reason: bind borrows this initialized concrete sockaddr through the generic syscall ABI for the supplied exact address length.
     if (linux.errno(linux.bind(fd, @ptrCast(&address), length)) != .SUCCESS) return error.SocketBindFailed;
     // If identity cannot be established, fail closed rather than unlinking an
     // entry we cannot prove is ours. The directory must be owner-controlled.
@@ -429,6 +455,8 @@ fn bindUnix(path: []const u8) !Listener {
 fn completeUnix(bound: Listener) !Listener {
     var value = bound;
     errdefer value.deinit();
+    // zig-audit: acknowledge ptr_cast
+    // reason: Listener construction copied the bounded path into zero-initialized storage, retaining a NUL byte for this chmod call.
     if (linux.errno(linux.chmod(@ptrCast(&value.unix_path), 0o600)) != .SUCCESS) return error.SocketModeFailed;
     if (linux.errno(linux.listen(value.fd, maximum_accepts_per_turn)) != .SUCCESS) return error.SocketListenFailed;
     return value;
@@ -443,6 +471,8 @@ fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTo
 }
 
 fn ipv4Address(bytes: [4]u8, port: u16) linux.sockaddr.in {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The four owned address bytes are read through an align(1) u32 view; no stronger alignment or longer lifetime is assumed.
     const address: *align(1) const u32 = @ptrCast(&bytes);
     return .{
         .port = std.mem.nativeToBig(u16, port),
@@ -481,6 +511,8 @@ const PathIdentity = struct {
         var buffer: [109]u8 = @splat(0);
         @memcpy(buffer[0..path.len], path);
         var stat: linux.Statx = undefined;
+        // zig-audit: acknowledge ptr_cast
+        // reason: The bounded Unix path is copied into zero-initialized byte storage; this syscall borrows its live NUL-terminated address.
         if (linux.errno(linux.statx(linux.AT.FDCWD, @ptrCast(&buffer), linux.AT.SYMLINK_NOFOLLOW, .{ .INO = true, .TYPE = true }, &stat)) != .SUCCESS or
             !stat.mask.INO or !stat.mask.TYPE or stat.mode & linux.S.IFMT != linux.S.IFSOCK)
             return error.SocketIdentityFailed;
@@ -492,6 +524,8 @@ const PathIdentity = struct {
         if (!std.meta.eql(self, current)) return;
         var buffer: [109]u8 = @splat(0);
         @memcpy(buffer[0..path.len], path);
+        // zig-audit: acknowledge ptr_cast
+        // reason: The bounded Unix path is copied into zero-initialized byte storage; this syscall borrows its live NUL-terminated address.
         const result = linux.unlink(@ptrCast(&buffer));
         const errno = linux.errno(result);
         std.debug.assert(errno == .SUCCESS or errno == .NOENT);
@@ -551,6 +585,8 @@ test "runtime accepted TCP client disables Nagle before service ownership" {
     var address = ipv4Address(.{ 127, 0, 0, 1 }, runtime.listener.tcp_port.?);
     try std.testing.expectEqual(
         linux.E.SUCCESS,
+        // zig-audit: acknowledge ptr_cast
+        // reason: This test-owned sockaddr is initialized for the exact TCP/Unix connect ABI and remains live throughout the call.
         linux.errno(linux.connect(client_fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))),
     );
 
@@ -669,6 +705,8 @@ test "post-bind listen failure rolls back only its constructed Unix path" {
     // failure after successful bind/identity acquisition without a syscall mock.
     var address: linux.sockaddr.un = undefined;
     const length = try unixAddress(peer_path, &address);
+    // zig-audit: acknowledge ptr_cast
+    // reason: This test-owned sockaddr is initialized for the exact TCP/Unix connect ABI and remains live throughout the call.
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.connect(bound.fd, @ptrCast(&address), length)));
     owned = false; // completeUnix consumes construction, on success or failure.
     try std.testing.expectError(error.SocketListenFailed, completeUnix(bound));

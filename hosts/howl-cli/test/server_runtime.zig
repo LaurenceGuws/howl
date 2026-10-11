@@ -463,6 +463,8 @@ fn runtimeTestSleepOneMillisecond() void {
     const request = linux.timespec{ .sec = 0, .nsec = std.time.ns_per_ms };
     switch (linux.errno(linux.nanosleep(&request, null))) {
         .SUCCESS, .INTR => {},
+        // zig-audit: acknowledge panic
+        // reason: This test fixture retries interruption; any other nanosleep failure aborts its timing proof.
         else => @panic("runtime test nanosleep failed"),
     }
 }

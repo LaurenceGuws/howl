@@ -6,6 +6,7 @@ const server_client = @import("server_client");
 const failure = @import("failure.zig");
 const server_commands = @import("server_commands.zig");
 
+/// Runs the CLI and reports bounded machine-readable failures.
 pub fn main(init: std.process.Init) void {
     var context: failure.Context = .{};
     run(init, &context) catch |problem| {

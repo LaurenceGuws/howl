@@ -25,6 +25,7 @@ const StateRecord = struct {
     pointer_mode: u2,
 };
 
+/// Requests interaction state and writes one JSON observation.
 pub fn emit(connection: *client.Connection, writer: *std.Io.Writer) !void {
     const value = try client.state.get(connection);
     try std.json.Stringify.value(StateRecord{

@@ -28,7 +28,7 @@ const Output = struct {
 
     fn appendPhases(self: *Output, phases: parser_mod.PhaseActions) void {
         // zig-audit: acknowledge catch_unreachable
-        // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
+        // reason: This test observer must retain complete owned phases; allocation or copying failure aborts the proof instead of accepting partial evidence.
         owned_actions.appendOwnedPhases(std.testing.allocator, self.arena.allocator(), &self.actions, phases) catch unreachable;
     }
 };

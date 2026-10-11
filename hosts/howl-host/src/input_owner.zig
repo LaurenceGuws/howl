@@ -13,6 +13,7 @@ const instance = @import("howl_instance");
 const scrollback = @import("host_scrollback");
 const shared = @import("shared.zig");
 
+/// Host input projected into semantic terminal or local layout operations.
 pub const Command = union(enum) {
     ignored,
     committed_text: struct {
@@ -100,12 +101,16 @@ fn runFallible(
                         return error.InputTopologyMismatch;
                     if (geometry.font_pixels) |pixels| {
                         if (pixels == 0) return error.InputTopologyMismatch;
+                        // zig-audit: acknowledge discard
+                        // reason: This input command applies the requested presentation geometry; subsequent observation supplies authoritative dimensions.
                         _ = try owner.reconfigurePresentationSurface(
                             pixels,
                             geometry.width,
                             geometry.height,
                         );
                     } else {
+                        // zig-audit: acknowledge discard
+                        // reason: This input command applies the requested presentation geometry; subsequent observation supplies authoritative dimensions.
                         _ = try owner.resizeSurface(
                             geometry.width,
                             geometry.height,
@@ -161,6 +166,8 @@ fn deliverMouseLocal(
         context.interaction.alternate_scroll,
     );
     switch (route) {
+        // zig-audit: acknowledge discard
+        // reason: Wheel routing applies bounded history movement; the next observation supplies the resulting offset.
         .history => _ = try owner.scrollHistory(amount),
         .terminal_mouse => try owner.input(.{ .mouse = nativeMouse(mouse.value) }),
         .alternate_scroll => {
@@ -314,6 +321,7 @@ fn nativeNamedKey(value: u8) ?instance.KeyName {
     };
 }
 
+/// Projects one compositor key into a bounded host command.
 pub fn projectKey(key: wayland.input.Key) Command {
     const action: u8 = switch (key.state) {
         .pressed => 1,

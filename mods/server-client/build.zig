@@ -33,6 +33,11 @@ pub fn build(b: *std.Build) void {
     });
 
     const check = b.step("check", "Compile Server control client");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run Server control client proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);

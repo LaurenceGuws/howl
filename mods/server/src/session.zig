@@ -7,13 +7,18 @@ const std = @import("std");
 const howl_instance = @import("howl_instance");
 const instance_service = @import("howl_instance_service");
 
+/// Nonzero Instance identity within one Session lifetime.
 pub const InstanceId = u64;
+/// Bound on simultaneously retained Instances in one Session.
 pub const maximum_instances: usize = 16;
 
+/// Copied running or exited state of a retained Instance.
 pub const InstanceState = enum { running, exited };
 
+/// Reports whether a service turn changed retained lifecycle state.
 pub const TurnOutcome = struct { state_changed: bool = false };
 
+/// Copied Instance identity and lifecycle state.
 pub const InstanceView = struct {
     id: InstanceId,
     state: InstanceState,
@@ -32,12 +37,14 @@ const InstanceRecord = struct {
     }
 };
 
+/// Reports allocation, Instance/service construction, capacity or identity exhaustion.
 pub const CreateInstanceError = std.mem.Allocator.Error || howl_instance.InitError || instance_service.Service.InitError || error{
     Capacity,
     IdentityExhausted,
 };
 
 // Internal typed owner, reachable only through Server's private records.
+/// Server-private typed owner of a copied name and bounded Instance records.
 pub const Session = struct {
     allocator: std.mem.Allocator,
     id: u64,
@@ -46,6 +53,7 @@ pub const Session = struct {
     instances: [maximum_instances]?InstanceRecord = @splat(null),
     count: u16 = 0,
 
+    /// Allocates an empty Session and copies its validated name.
     pub fn init(allocator: std.mem.Allocator, id: u64, name: []const u8) !*Session {
         std.debug.assert(id != 0);
         @import("server_protocol").validateSessionName(name) catch return error.InvalidName;
@@ -59,6 +67,7 @@ pub const Session = struct {
         return storage;
     }
 
+    /// Releases nested services and Instances, the copied name and this allocation.
     pub fn deinit(self: *Session) void {
         var index = self.instances.len;
         while (index != 0) {
@@ -72,10 +81,12 @@ pub const Session = struct {
         self.allocator.destroy(self);
     }
 
+    /// Returns the number of retained Instances.
     pub fn instanceCount(self: *const Session) u16 {
         return self.count;
     }
 
+    /// Constructs and retains one explicitly launched Instance and its service.
     pub fn createInstance(
         self: *Session,
         io: std.Io,
@@ -84,6 +95,8 @@ pub const Session = struct {
     ) CreateInstanceError!InstanceId {
         if (self.count == self.instances.len) return error.Capacity;
         if (self.next_instance_id == 0) return error.IdentityExhausted;
+        // zig-audit: acknowledge orelse_unreachable
+        // reason: The maintained count is checked below the fixed Instance slot capacity before this synchronous free-slot lookup.
         const slot = self.freeSlot() orelse unreachable;
         const owned = try howl_instance.init(self.allocator, inherited_environment, launch);
         errdefer howl_instance.deinit(owned);
@@ -97,6 +110,7 @@ pub const Session = struct {
         return id;
     }
 
+    /// Releases a selected Instance and reports whether it existed.
     pub fn closeInstance(self: *Session, id: InstanceId) bool {
         const index = self.findInstanceIndex(id) orelse return false;
         if (self.instances[index]) |*record| record.deinit();
@@ -105,11 +119,13 @@ pub const Session = struct {
         return true;
     }
 
+    /// Returns copied lifecycle state, or null for an unknown Instance.
     pub fn instanceState(self: *const Session, instance_id: InstanceId) ?InstanceState {
         const index = self.findInstanceIndex(instance_id) orelse return null;
         return self.instances[index].?.state;
     }
 
+    /// Returns pending-work status, or null for an unknown Instance.
     pub fn instanceRequiresTurn(self: *const Session, instance_id: InstanceId) ?bool {
         const index = self.findInstanceIndex(instance_id) orelse return null;
         const record = self.instances[index].?;
@@ -118,6 +134,7 @@ pub const Session = struct {
         return record.service.requiresTurnWithoutPtyReadiness();
     }
 
+    /// Counts Instances requiring service work without new PTY readiness.
     pub fn turnInstanceCount(self: *const Session) u16 {
         var count: u16 = 0;
         for (self.instances) |maybe_record| {
@@ -131,6 +148,7 @@ pub const Session = struct {
         return count;
     }
 
+    /// Borrows a running Instance's wait descriptor, or null when absent/exited.
     pub fn instanceWaitDescriptor(
         self: *const Session,
         instance_id: InstanceId,
@@ -141,6 +159,7 @@ pub const Session = struct {
         return try record.service.waitDescriptor();
     }
 
+    /// Copies ordered Instance facts into caller-owned bounded storage.
     pub fn snapshotInstances(self: *const Session, output: *[maximum_instances]InstanceView) []const InstanceView {
         var count: usize = 0;
         for (self.instances) |maybe_record| {
@@ -155,8 +174,10 @@ pub const Session = struct {
         return output[0..count];
     }
 
+    /// Reports service adoption failure or a missing Instance.
     pub const AdoptClientError = instance_service.Service.AdoptError || error{InstanceNotFound};
 
+    /// Transfers a connected stream to an Instance service only on success.
     pub fn adoptClient(
         self: *Session,
         instance_id: InstanceId,
@@ -168,8 +189,10 @@ pub const Session = struct {
         return self.instances[index].?.service.adoptClient(fd, initial_input, preface_output);
     }
 
+    /// Reports service-turn failure or a missing Instance.
     pub const TurnInstanceError = instance_service.Service.TurnError || error{InstanceNotFound};
 
+    /// Services one Instance and reports its first transition to exited.
     pub fn turnInstance(self: *Session, instance_id: InstanceId, timeout_ms: i32) TurnInstanceError!TurnOutcome {
         const index = self.findInstanceIndex(instance_id) orelse return error.InstanceNotFound;
         const record = &self.instances[index].?;

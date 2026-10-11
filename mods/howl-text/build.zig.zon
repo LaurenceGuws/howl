@@ -16,6 +16,7 @@
         },
     },
     .paths = .{
+        ".zig-audit.json",
         "README.md",
         "build.zig",
         "build.zig.zon",

@@ -8,6 +8,7 @@
         .server_client = .{ .path = "../../../mods/server-client" },
     },
     .paths = .{
+        ".zig-audit.json",
         "build.zig",
         "build.zig.zon",
         "host.zig",

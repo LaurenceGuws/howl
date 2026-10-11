@@ -717,9 +717,9 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
     }
     if (c.FT_Get_Sfnt_Table(face, c.FT_SFNT_OS2)) |raw_os2| {
         // zig-audit: acknowledge ptr_cast
-        // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
+        // reason: FT_Get_Sfnt_Table with FT_SFNT_OS2 returns the face-owned TT_OS2 record, borrowed only during this metrics read.
         // zig-audit: acknowledge align_cast
-        // reason: The originating allocation/ABI preserves this type alignment; the cast asserts that invariant before recovering the concrete view.
+        // reason: FreeType's TT_OS2 table ABI supplies its concrete C record alignment while the retained face remains live.
         const os2: *const c.TT_OS2 = @ptrCast(@alignCast(raw_os2));
         if (lineFromFontUnits(
             os2.yStrikeoutPosition,
@@ -923,7 +923,7 @@ fn bitmapGeometry(bitmap: c.FT_Bitmap) BitmapGeometryError!BitmapGeometry {
     if (source_bytes > std.math.maxInt(usize) - source_address)
         return error.InvalidBitmap;
     // zig-audit: acknowledge ptr_from_int
-    // reason: The numeric address was derived from validated in-buffer raster storage; bounds and lifetime are established before pointer recovery.
+    // reason: FreeType owns the bitmap buffer and allocation extent; this function validates geometry and address arithmetic before recovering its lowest row address.
     const source: [*]const u8 = @ptrFromInt(source_address);
     return .{
         .mode = mode,
@@ -1069,9 +1069,7 @@ test "nonstandard gray levels normalize or reject exact samples" {
 
 test "bitmap geometry rejects hostile external input before slicing" {
     var byte: u8 = 0;
-    // zig-audit: acknowledge ptr_cast
-    // reason: This boundary owns or proves the concrete pointee layout; the cast only adapts it to the C/opaque ABI without changing address or lifetime.
-    const pointer: [*]u8 = @ptrCast(&byte);
+    const pointer: [*]u8 = std.mem.asBytes(&byte).ptr;
     try expectBitmapError(error.UnsupportedPixelMode, 0, 1, 1, 1, pointer);
     try expectBitmapError(error.InvalidBitmap, c.FT_PIXEL_MODE_GRAY, 2, 1, 1, pointer);
     try expectBitmapError(error.UnsupportedPixelMode, c.FT_PIXEL_MODE_GRAY2, 1, 1, 1, pointer);
@@ -1104,7 +1102,7 @@ test "bitmap geometry rejects hostile external input before slicing" {
         2,
         -1,
         // zig-audit: acknowledge ptr_from_int
-        // reason: This proof/ABI path needs a deterministic non-null opaque-handle sentinel; the synthetic pointer is never dereferenced.
+        // reason: This hostile bitmap fixture supplies an impossible byte-buffer address that bitmapGeometry must reject before any dereference.
         @ptrFromInt(1),
     );
     try std.testing.expectError(
@@ -1118,7 +1116,7 @@ test "bitmap geometry rejects hostile external input before slicing" {
         1,
         1,
         // zig-audit: acknowledge ptr_from_int
-        // reason: This proof/ABI path needs a deterministic non-null opaque-handle sentinel; the synthetic pointer is never dereferenced.
+        // reason: This hostile bitmap fixture supplies an impossible byte-buffer address that bitmapGeometry must reject before any dereference.
         @ptrFromInt(std.math.maxInt(usize)),
     );
     try std.testing.expectError(

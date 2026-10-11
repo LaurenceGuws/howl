@@ -10,6 +10,7 @@ pub const Error = error{ ContextUnavailable, InvalidKeymap, StateUnavailable, Ke
 const ContextStorage = struct { ptr: *c.struct_xkb_context };
 const KeymapStorage = struct { ptr: *c.struct_xkb_keymap };
 const StateStorage = struct { ptr: *c.struct_xkb_state };
+/// Owns one xkbcommon context and its lifetime.
 pub const Context = struct {
     /// Internal xkbcommon owner; callers use lifecycle methods only.
     storage: ContextStorage,
@@ -27,6 +28,7 @@ pub const Context = struct {
     }
 };
 
+/// Owns one compiled xkbcommon keymap.
 pub const Keymap = struct {
     /// Internal xkbcommon owner; mapped Wayland bytes are never retained.
     storage: KeymapStorage,
@@ -56,6 +58,7 @@ pub const Keymap = struct {
     }
 };
 
+/// Owns one xkbcommon state for a retained keymap.
 pub const State = struct {
     /// Internal mutable xkbcommon state owner.
     storage: StateStorage,

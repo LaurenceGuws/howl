@@ -34,6 +34,11 @@ pub fn build(b: *std.Build) void {
     run.addFileArg(native_text.path("testdata/primary.ttf"));
     run.addDirectoryArg(expected);
     const check = b.step("check", "Verify real native/Wasm text parity and the restricted runtime");
+    const audit = b.step("audit", "Audit every owned Zig source file");
+    const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
+    zig_audit.setCwd(b.path("."));
+    audit.dependOn(&zig_audit.step);
+    check.dependOn(audit);
     check.dependOn(&run.step);
     b.step("test", "Run the complete text canary proof graph").dependOn(check);
     b.default_step = check;
