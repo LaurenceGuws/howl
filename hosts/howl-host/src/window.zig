@@ -689,7 +689,7 @@ fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface_x: 
     state.boundary.publishPointerMotion(.{
         .kind = .move,
         .button = .none,
-        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .modifiers = shared.semanticModifiers(state.keyboard_semantic_modifiers),
         .buttons_down = state.pointer_buttons_down,
         .point = position,
     }) catch inputFailure(state);
@@ -733,7 +733,7 @@ fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, but
     state.boundary.publishPointerEvent(.{
         .kind = kind,
         .button = mapped.button,
-        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .modifiers = shared.semanticModifiers(state.keyboard_semantic_modifiers),
         .buttons_down = next_buttons,
         .point = position,
     }) catch inputFailure(state);
@@ -753,7 +753,7 @@ fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, axis: u32, va
     state.boundary.publishPointerEvent(.{
         .kind = .wheel,
         .button = if (value < 0) .wheel_up else .wheel_down,
-        .modifiers = shared.semanticModifierBits(state.keyboard_semantic_modifiers),
+        .modifiers = shared.semanticModifiers(state.keyboard_semantic_modifiers),
         .buttons_down = state.pointer_buttons_down,
         .point = position,
     }) catch inputFailure(state);

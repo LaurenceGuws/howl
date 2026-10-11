@@ -274,28 +274,28 @@ test "pointer motion coalesces while button and wheel occurrences stay ordered" 
     const first_motion = shared.PointerEvent{
         .kind = .move,
         .button = .none,
-        .modifiers = 1,
+        .modifiers = .{ .shift = true },
         .buttons_down = 0,
         .point = .{ .x = 10, .y = 20 },
     };
     const latest_motion = shared.PointerEvent{
         .kind = .move,
         .button = .none,
-        .modifiers = 4,
+        .modifiers = .{ .control = true },
         .buttons_down = 1,
         .point = .{ .x = 30, .y = 40 },
     };
     const press = shared.PointerEvent{
         .kind = .press,
         .button = .left,
-        .modifiers = 4,
+        .modifiers = .{ .control = true },
         .buttons_down = 1,
         .point = .{ .x = 30, .y = 40 },
     };
     const wheel = shared.PointerEvent{
         .kind = .wheel,
         .button = .wheel_down,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 1,
         .point = .{ .x = 31, .y = 41 },
     };
@@ -323,7 +323,7 @@ test "pointer occurrence queue is bounded without consuming motion state" {
     const motion = shared.PointerEvent{
         .kind = .move,
         .button = .none,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 0,
         .point = .{ .x = 7, .y = 9 },
     };
@@ -332,7 +332,7 @@ test "pointer occurrence queue is bounded without consuming motion state" {
         try value.publishPointerEvent(.{
             .kind = .wheel,
             .button = if (index % 2 == 0) .wheel_up else .wheel_down,
-            .modifiers = 0,
+            .modifiers = .{},
             .buttons_down = 0,
             .point = .{ .x = 7, .y = 9 },
         });
@@ -340,7 +340,7 @@ test "pointer occurrence queue is bounded without consuming motion state" {
     try std.testing.expectError(error.PointerEventLimit, value.publishPointerEvent(.{
         .kind = .press,
         .button = .left,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 1,
         .point = .{ .x = 7, .y = 9 },
     }));
@@ -348,8 +348,8 @@ test "pointer occurrence queue is bounded without consuming motion state" {
     for (0..shared.pointer_event_capacity) |_| try std.testing.expect(value.takePointer() != null);
 }
 
-test "semantic modifier bits are identical for keyboard and pointer transport" {
-    const bits = shared.semanticModifierBits(.{
+test "semantic modifiers preserve keyboard and pointer input facts" {
+    const bits = shared.semanticModifiers(.{
         .shift = true,
         .control = true,
         .alt = true,
@@ -359,7 +359,7 @@ test "semantic modifier bits are identical for keyboard and pointer transport" {
         .caps_lock = true,
         .num_lock = true,
     });
-    try std.testing.expectEqual(@as(u8, 0xff), bits);
+    try std.testing.expectEqualDeep(@TypeOf(bits){ .shift = true, .alt = true, .control = true, .super = true, .hyper = true, .meta = true, .caps_lock = true, .num_lock = true }, bits);
 }
 
 test "routed mouse input preserves target pane and canonical coordinates" {
@@ -371,10 +371,10 @@ test "routed mouse input preserves target pane and canonical coordinates" {
         .value = .{
             .kind = .press,
             .button = .right,
-            .modifiers = 5,
+            .mod = .{ .shift = true, .control = true },
             .buttons_down = 4,
             .row = 12,
-            .column = 34,
+            .col = 34,
             .pixel_x = 345,
             .pixel_y = 678,
         },
@@ -392,21 +392,21 @@ test "coalesced drag motion cannot cross an ordered release" {
     const press = shared.PointerEvent{
         .kind = .press,
         .button = .left,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 1,
         .point = .{ .x = 10, .y = 10 },
     };
     const drag = shared.PointerEvent{
         .kind = .move,
         .button = .none,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 1,
         .point = .{ .x = 20, .y = 20 },
     };
     const release = shared.PointerEvent{
         .kind = .release,
         .button = .left,
-        .modifiers = 0,
+        .modifiers = .{},
         .buttons_down = 0,
         .point = .{ .x = 20, .y = 20 },
     };

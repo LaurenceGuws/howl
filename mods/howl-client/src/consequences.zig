@@ -5,7 +5,7 @@
 //! payload plus typed protocol metadata. Host policy remains outside the client.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const client = @import("client.zig");
 
 /// Canonical consequence kind carried by one retained occurrence.

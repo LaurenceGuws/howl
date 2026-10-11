@@ -6,6 +6,9 @@
 
 const std = @import("std");
 
+/// Terminal interaction wire owned by this Server implementation.
+pub const terminal = @import("terminal.zig");
+
 /// Version of the bounded Server control frame envelope.
 pub const framing_version: u8 = 1;
 /// Exact encoded control frame header length.

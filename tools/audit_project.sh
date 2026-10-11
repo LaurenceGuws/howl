@@ -148,6 +148,27 @@ if grep -REn 'howl_render|howl_vt' hosts/howl-host/build.zig hosts/howl-host/bui
     status=1
 fi
 
+# Canonical machinery never imports Server communications or client ownership.
+# The workspace may build every consumer; each core package remains independent.
+python3 - <<'PYCORE' || status=1
+from pathlib import Path
+import re
+
+for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-render"):
+    root = Path("mods") / package
+    files = list((root / "src").rglob("*.zig")) + [root / "build.zig", root / "build.zig.zon"]
+    for path in files:
+        source = path.read_text()
+        forbidden = re.search(
+            r'(?:@import|addImport|b\.dependency)\(\s*"(?:server[^"]*|howl_client[^"]*|client_transport|howl_instance_protocol|howl_instance_service)"'
+            r'|\.(?:server[a-z_]*|howl_client[a-z_]*|client_transport)\s*=\s*\.\{',
+            source,
+        )
+        if forbidden:
+            print(f"{path}: canonical package depends on Server/client communications")
+            raise SystemExit(1)
+PYCORE
+
 # Every tracked Zig build root must be reachable through package declarations.
 # The external consumer intentionally depends inward on the distribution root;
 # its independent invocation is owned by the root consumer gate.

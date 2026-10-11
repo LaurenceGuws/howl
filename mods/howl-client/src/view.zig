@@ -5,7 +5,7 @@
 //! The backing layout is private and is not a C/FFI ABI.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const rich = @import("rich.zig");
 
 /// Reports projection allocation or rich-snapshot validation failures.

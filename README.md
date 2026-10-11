@@ -223,8 +223,8 @@ root.addImport("howl_render", howl.module("howl_render"));
 root.addImport("howl_text", howl.module("howl_text"));
 ```
 
-The public child names are retained, including `howl_local`, the Instance wire/service
-modules, Server modules, client transport, Vulkan and Wayland. Native binaries,
+Public modules include `howl_local`, Server control/terminal services and protocols,
+client transport, Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
 bridge libraries/objects and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
 The shared renderer consumes direct VT observation. Transported-client source

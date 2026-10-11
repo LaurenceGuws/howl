@@ -411,7 +411,7 @@ fn testReadExact(
 }
 
 test "Server routes an adopted HWLS stream by exact Session and Instance identity" {
-    const protocol = howl_instance.protocol;
+    const protocol = @import("server_protocol").terminal;
     const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
     const work = try server.createSession("work");

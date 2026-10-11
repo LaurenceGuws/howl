@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const howl_instance = @import("howl_instance");
-const instance_service = @import("howl_instance_service");
+const instance_service = @import("server_terminal_service");
 
 /// Nonzero Instance identity within one Session lifetime.
 pub const InstanceId = u64;

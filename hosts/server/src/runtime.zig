@@ -2,7 +2,7 @@
 //!
 //! Runtime owns listener/scheduling only. Server owns orchestration state; Session
 //! remains lifecycle identity/labeling; each Instance owns its own PTY/VT geometry
-//! and HWLS interaction service. Runtime owns no terminal grid or client layout.
+//! Server owns terminal interaction services. Runtime owns no terminal grid or client layout.
 
 const std = @import("std");
 const posix = std.posix;
@@ -625,7 +625,7 @@ test "runtime binds one explicit numeric IPv4 listener and reports that endpoint
 }
 
 test "one HWLS welcome allocation failure cannot escape the multi-Instance runtime" {
-    const protocol = @import("howl_instance").protocol;
+    const protocol = @import("server_protocol").terminal;
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var runtime = try Runtime.init(failing.allocator(), std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, 42);
     defer runtime.deinit();

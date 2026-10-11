@@ -29,10 +29,10 @@ test "root exposes the complete native consumer vocabulary" {
     _ = @import("howl_pty");
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("howl_instance_protocol");
+    _ = @import("server_protocol").terminal;
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
-    _ = @import("howl_instance_service");
+    _ = @import("server_terminal_service");
     // zig-audit: acknowledge discard
     // reason: This consumer proof resolves the named public module; it owns no runtime value to retire.
     _ = @import("client_transport");
@@ -99,4 +99,10 @@ test "Server clients share the wire without importing host ownership" {
     try std.testing.expect(!@hasDecl(client, "Runtime"));
     try std.testing.expect(!@hasDecl(protocol, "Server"));
     try std.testing.expect(!@hasDecl(protocol, "Runtime"));
+}
+
+test "Instance API has no remote protocol or client identity" {
+    try std.testing.expect(!@hasDecl(instance, "protocol"));
+    try std.testing.expect(!@hasDecl(instance, "ClientId"));
+    try std.testing.expect(!@hasDecl(instance, "ResizeAuthority"));
 }

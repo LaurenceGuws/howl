@@ -5,7 +5,7 @@
 //! it owns no terminal state, renderer resource cache, or residency policy.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const client = @import("client.zig");
 
 /// Reports transport, framing, allocation, and exact-resource validation failures.

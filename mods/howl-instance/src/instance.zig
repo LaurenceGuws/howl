@@ -7,8 +7,6 @@ const vt = @import("howl_vt");
 const terminal_render = howl_render.terminal;
 const publication = @import("publication.zig");
 
-/// Shared-instance wire and geometry-authority contract.
-pub const protocol = @import("howl_instance_protocol");
 /// Exact backend-neutral Render package composed by this Instance package.
 pub const render = howl_render;
 /// Exact text package instance used by this Instance package's Render owner.

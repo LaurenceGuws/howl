@@ -9,7 +9,7 @@ const windows = std.os.windows;
 const client = @import("howl_client");
 const transport = @import("client_transport");
 const instance = @import("howl_instance");
-const instance_service = @import("howl_instance_service");
+const instance_service = @import("server_terminal_service");
 
 const service_wait_ms: i32 = 20;
 const maximum_pending_admissions: usize = 8;

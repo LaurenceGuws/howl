@@ -4,7 +4,7 @@
 //! encoding remains owned by howl-vt on the Instance side.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const client = @import("client.zig");
 
 /// Reports local validation, transport, framing, and server action failures.

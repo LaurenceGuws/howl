@@ -8,7 +8,7 @@
 const impl = @import("client.zig");
 
 /// Frozen Instance interaction protocol shared with the attached endpoint.
-pub const protocol = @import("howl_instance_protocol");
+pub const protocol = @import("server_protocol").terminal;
 /// Common connection allocation, transport, framing, and handshake failures.
 pub const Error = impl.Error;
 /// Exact native transport setup stage used by connection diagnostics.

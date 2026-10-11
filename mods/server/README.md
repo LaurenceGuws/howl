@@ -17,14 +17,14 @@ it is a logical orchestration lifetime that may contain zero or more Instances. 
 a Session never launches a shell. Shell, command, cwd and terminal geometry belong only
 to explicit Instance creation.
 
-The Server model and control service remain listener-free. A server-managed Instance owns an optional `howl_instance_service` interaction service beside its concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service.
+The Server model and control service remain listener-free. Server owns an optional `server_terminal_service` interaction service beside each concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service.
 
 The foreground listener/scheduler lives in
 [hosts/server](../../hosts/server/README.md), outside this reusable package.
 
 ## Shared protocol
 
-[server-protocol](../server-protocol/README.md) owns the bounded control wire.
+[server-protocol](../server-protocol/README.md) owns the bounded control wire and terminal interaction wire.
 Client modules import that package directly, without this Server model or a host.
 
 ## Control service
@@ -34,13 +34,13 @@ Client modules import that package directly, without this Server model or a host
 `server_protocol`, performs exact CRUD through the Server model, serializes the
 read-only tree, and transfers an exact `(session_id, instance_id)` stream into
 that Instance's HWLS service. It does not turn Instances itself: a higher runtime
-must schedule control and Instance service turns independently.
+must schedule control and Server terminal service turns independently.
 
 The service borrows both Server and inherited environment lifetime. It creates no
 listener, endpoint address, daemon, child process, authentication policy, route,
 or supervision policy. On failed stream adoption the caller retains the fd; on
 successful Instance attach the fd changes ownership directly from control service
-to Instance service with no byte proxy.
+to Server terminal service with no byte proxy.
 
 ## Ownership and shutdown boundaries
 

@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const transport = @import("client_transport");
 
 /// Exact native transport setup stage used by connection diagnostics.

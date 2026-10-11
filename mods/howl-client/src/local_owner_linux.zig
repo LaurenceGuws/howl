@@ -8,7 +8,7 @@ const std = @import("std");
 const client = @import("howl_client");
 const transport = @import("client_transport");
 const instance = @import("howl_instance");
-const instance_service = @import("howl_instance_service");
+const instance_service = @import("server_terminal_service");
 
 const posix = std.posix;
 const service_wait_ms: i32 = 20;

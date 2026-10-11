@@ -4,7 +4,7 @@
 //! renderer, CLI schema, JSON representation, font, or platform presentation.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const client = @import("client.zig");
 
 /// Reports transport, framing, allocation, and rich-snapshot validation failures.

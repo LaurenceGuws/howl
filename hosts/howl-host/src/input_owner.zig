@@ -5,7 +5,6 @@
 //! dispatch and presentation never own terminal progress.
 
 const std = @import("std");
-const protocol = @import("howl_instance").protocol;
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
 const local_terminal = @import("local_terminal");
@@ -20,8 +19,8 @@ pub const Command = union(enum) {
         len: u8,
         bytes: [wayland.input.key_text_limit]u8,
     },
-    named: struct { key: u8, action: u8, modifiers: u8 },
-    unicode: struct { scalar: u32, action: u8, modifiers: u8 },
+    named: struct { key: instance.KeyName, action: instance.KeyAction, modifiers: instance.InputModifier },
+    unicode: struct { scalar: u21, action: instance.KeyAction, modifiers: instance.InputModifier },
 };
 
 /// Owns host input and PTY/VT service for the one direct in-process Instance.
@@ -146,7 +145,7 @@ fn deliverMouseLocal(
     mouse: shared.RoutedMouse,
 ) !void {
     if (mouse.value.kind != .wheel) {
-        try owner.input(.{ .mouse = nativeMouse(mouse.value) });
+        try owner.input(.{ .mouse = mouse.value });
         return;
     }
     const amount: i16 = switch (mouse.value.button) {
@@ -154,8 +153,7 @@ fn deliverMouseLocal(
         .wheel_down => -3,
         else => return error.InputTopologyMismatch,
     };
-    const force_history =
-        mouse.value.modifiers & protocol.typed_input.modifiers.shift != 0;
+    const force_history = mouse.value.mod.shift;
     const context = owner.pointerContext();
     const route = scrollback.routeWheel(
         context.history_active,
@@ -169,7 +167,7 @@ fn deliverMouseLocal(
         // zig-audit: acknowledge discard
         // reason: Wheel routing applies bounded history movement; the next observation supplies the resulting offset.
         .history => _ = try owner.scrollHistory(amount),
-        .terminal_mouse => try owner.input(.{ .mouse = nativeMouse(mouse.value) }),
+        .terminal_mouse => try owner.input(.{ .mouse = mouse.value }),
         .alternate_scroll => {
             const key: instance.KeyName = if (amount > 0) .up else .down;
             try owner.input(.{ .key = .{ .key = .{ .named = key }, .action = .press } });
@@ -194,141 +192,28 @@ fn deliverKeyLocal(owner: *local_terminal.Owner, key: wayland.input.Key) !void {
             try owner.input(.{ .bytes = bytes });
         },
         .named => |named| try owner.input(.{ .key = .{
-            .key = .{ .named = nativeNamedKey(named.key) orelse return error.InvalidKey },
-            .action = nativeAction(named.action) orelse return error.InvalidKey,
-            .mods = nativeModifiers(named.modifiers),
+            .key = .{ .named = named.key },
+            .action = named.action,
+            .mods = named.modifiers,
         } }),
         .unicode => |unicode| {
-            const scalar = std.math.cast(u21, unicode.scalar) orelse
-                return error.InvalidUnicodeScalar;
             try owner.input(.{ .key = .{
-                .key = try instance.Key.initUnicode(scalar),
-                .action = nativeAction(unicode.action) orelse return error.InvalidKey,
-                .mods = nativeModifiers(unicode.modifiers),
+                .key = try instance.Key.initUnicode(unicode.scalar),
+                .action = unicode.action,
+                .mods = unicode.modifiers,
             } });
         },
     }
 }
 
-fn nativeAction(value: u8) ?instance.KeyAction {
-    return switch (value) {
-        1 => .press,
-        2 => .repeat,
-        3 => .release,
-        else => null,
-    };
-}
-
-fn nativeModifiers(value: u8) instance.InputModifier {
-    return .{
-        .shift = value & protocol.typed_input.modifiers.shift != 0,
-        .alt = value & protocol.typed_input.modifiers.alt != 0,
-        .control = value & protocol.typed_input.modifiers.control != 0,
-        .super = value & protocol.typed_input.modifiers.super != 0,
-        .hyper = value & protocol.typed_input.modifiers.hyper != 0,
-        .meta = value & protocol.typed_input.modifiers.meta != 0,
-        .caps_lock = value & protocol.typed_input.modifiers.caps_lock != 0,
-        .num_lock = value & protocol.typed_input.modifiers.num_lock != 0,
-    };
-}
-
-fn nativeMouse(value: protocol.MouseInput) @FieldType(instance.Input, "mouse") {
-    return .{
-        .kind = switch (value.kind) {
-            .press => .press,
-            .release => .release,
-            .move => .move,
-            .wheel => .wheel,
-        },
-        .button = switch (value.button) {
-            .none => .none,
-            .left => .left,
-            .middle => .middle,
-            .right => .right,
-            .wheel_up => .wheel_up,
-            .wheel_down => .wheel_down,
-        },
-        .row = value.row,
-        .col = value.column,
-        .pixel_x = value.pixel_x,
-        .pixel_y = value.pixel_y,
-        .mod = nativeModifiers(value.modifiers),
-        .buttons_down = value.buttons_down,
-    };
-}
-
-fn nativeNamedKey(value: u8) ?instance.KeyName {
-    return switch (value) {
-        1 => .enter,
-        2 => .tab,
-        3 => .backspace,
-        4 => .escape,
-        5 => .up,
-        6 => .down,
-        7 => .left,
-        8 => .right,
-        9 => .insert,
-        10 => .delete,
-        11 => .home,
-        12 => .end,
-        13 => .page_up,
-        14 => .page_down,
-        15 => .left_shift,
-        16 => .right_shift,
-        17 => .left_control,
-        18 => .right_control,
-        19 => .left_alt,
-        20 => .right_alt,
-        21 => .left_super,
-        22 => .right_super,
-        23 => .left_hyper,
-        24 => .right_hyper,
-        25 => .left_meta,
-        26 => .right_meta,
-        27 => .caps_lock,
-        28 => .num_lock,
-        29 => .f1,
-        30 => .f2,
-        31 => .f3,
-        32 => .f4,
-        33 => .f5,
-        34 => .f6,
-        35 => .f7,
-        36 => .f8,
-        37 => .f9,
-        38 => .f10,
-        39 => .f11,
-        40 => .f12,
-        41 => .keypad_0,
-        42 => .keypad_1,
-        43 => .keypad_2,
-        44 => .keypad_3,
-        45 => .keypad_4,
-        46 => .keypad_5,
-        47 => .keypad_6,
-        48 => .keypad_7,
-        49 => .keypad_8,
-        50 => .keypad_9,
-        51 => .keypad_decimal,
-        52 => .keypad_add,
-        53 => .keypad_subtract,
-        54 => .keypad_multiply,
-        55 => .keypad_divide,
-        56 => .keypad_separator,
-        57 => .keypad_equal,
-        58 => .keypad_enter,
-        else => null,
-    };
-}
-
 /// Projects one compositor key into a bounded host command.
 pub fn projectKey(key: wayland.input.Key) Command {
-    const action: u8 = switch (key.state) {
-        .pressed => 1,
-        .repeated => 2,
-        .released => 3,
+    const action: instance.KeyAction = switch (key.state) {
+        .pressed => .press,
+        .repeated => .repeat,
+        .released => .release,
     };
-    const modifiers = shared.semanticModifierBits(key.semantic_modifiers);
+    const modifiers = shared.semanticModifiers(key.semantic_modifiers);
     if (namedKey(@backingInt(key.keysym))) |named|
         return .{ .named = .{ .key = named, .action = action, .modifiers = modifiers } };
 
@@ -346,57 +231,77 @@ pub fn projectKey(key: wayland.input.Key) Command {
     return .{ .committed_text = .{ .len = key.text_len, .bytes = key.text } };
 }
 
-fn namedKey(keysym: u32) ?u8 {
+fn namedKey(keysym: u32) ?instance.KeyName {
     return switch (keysym) {
-        0xff0d => 1, // Return
-        0xff09, 0xfe20 => 2, // Tab / ISO Left Tab
-        0xff08 => 3, // Backspace
-        0xff1b => 4, // Escape
-        0xff52 => 5,
-        0xff54 => 6,
-        0xff51 => 7,
-        0xff53 => 8,
-        0xff63 => 9, // Insert
-        0xffff => 10, // Delete
-        0xff50 => 11,
-        0xff57 => 12,
-        0xff55 => 13,
-        0xff56 => 14,
-        0xffe1 => 15,
-        0xffe2 => 16,
-        0xffe3 => 17,
-        0xffe4 => 18,
-        0xffe9 => 19,
-        0xffea => 20,
-        0xffeb => 21,
-        0xffec => 22,
-        0xffed => 23,
-        0xffee => 24,
-        0xffe7 => 25,
-        0xffe8 => 26,
-        0xffe5 => 27,
-        0xff7f => 28,
-        0xffbe...0xffc9 => @intCast(29 + (keysym - 0xffbe)), // F1..F12
-        0xffb0...0xffb9 => @intCast(41 + (keysym - 0xffb0)), // KP 0..9
-        0xffae => 51, // KP decimal
-        0xffab => 52,
-        0xffad => 53,
-        0xffaa => 54,
-        0xffaf => 55,
-        0xffac => 56, // KP separator
-        0xffbd => 57, // KP equal
-        0xff8d => 58, // KP enter
+        0xff0d => .enter, // Return
+        0xff09, 0xfe20 => .tab, // Tab / ISO Left Tab
+        0xff08 => .backspace, // Backspace
+        0xff1b => .escape, // Escape
+        0xff52 => .up,
+        0xff54 => .down,
+        0xff51 => .left,
+        0xff53 => .right,
+        0xff63 => .insert, // Insert
+        0xffff => .delete, // Delete
+        0xff50 => .home,
+        0xff57 => .end,
+        0xff55 => .page_up,
+        0xff56 => .page_down,
+        0xffe1 => .left_shift,
+        0xffe2 => .right_shift,
+        0xffe3 => .left_control,
+        0xffe4 => .right_control,
+        0xffe9 => .left_alt,
+        0xffea => .right_alt,
+        0xffeb => .left_super,
+        0xffec => .right_super,
+        0xffed => .left_hyper,
+        0xffee => .right_hyper,
+        0xffe7 => .left_meta,
+        0xffe8 => .right_meta,
+        0xffe5 => .caps_lock,
+        0xff7f => .num_lock,
+        0xffbe => .f1,
+        0xffbf => .f2,
+        0xffc0 => .f3,
+        0xffc1 => .f4,
+        0xffc2 => .f5,
+        0xffc3 => .f6,
+        0xffc4 => .f7,
+        0xffc5 => .f8,
+        0xffc6 => .f9,
+        0xffc7 => .f10,
+        0xffc8 => .f11,
+        0xffc9 => .f12,
+        0xffb0 => .keypad_0,
+        0xffb1 => .keypad_1,
+        0xffb2 => .keypad_2,
+        0xffb3 => .keypad_3,
+        0xffb4 => .keypad_4,
+        0xffb5 => .keypad_5,
+        0xffb6 => .keypad_6,
+        0xffb7 => .keypad_7,
+        0xffb8 => .keypad_8,
+        0xffb9 => .keypad_9,
+        0xffae => .keypad_decimal, // KP decimal
+        0xffab => .keypad_add,
+        0xffad => .keypad_subtract,
+        0xffaa => .keypad_multiply,
+        0xffaf => .keypad_divide,
+        0xffac => .keypad_separator, // KP separator
+        0xffbd => .keypad_equal, // KP equal
+        0xff8d => .keypad_enter, // KP enter
         else => null,
     };
 }
 
-fn unicodeKeysym(keysym: u32) ?u32 {
+fn unicodeKeysym(keysym: u32) ?u21 {
     if ((keysym >= 0x20 and keysym <= 0x7e) or
-        (keysym >= 0xa0 and keysym <= 0xff)) return keysym;
+        (keysym >= 0xa0 and keysym <= 0xff)) return @intCast(keysym);
     if (keysym >= 0x01000100 and keysym <= 0x0110ffff) {
         const scalar = keysym & 0x00ffffff;
         if (scalar >= 0xd800 and scalar <= 0xdfff) return null;
-        return scalar;
+        return @intCast(scalar);
     }
     return null;
 }
@@ -427,74 +332,55 @@ test "plain printable key commits text only on press and repeat" {
 
 test "control printable preserves typed physical transition and modifiers" {
     const projected = projectKey(makeKey('c', .pressed, "\x03", .{ .control = true, .num_lock = true }));
-    try std.testing.expectEqual(@as(u32, 'c'), projected.unicode.scalar);
-    try std.testing.expectEqual(@as(u8, 1), projected.unicode.action);
-    try std.testing.expectEqual(@as(u8, (1 << 2) | (1 << 7)), projected.unicode.modifiers);
+    try std.testing.expectEqual(@as(u21, 'c'), projected.unicode.scalar);
+    try std.testing.expectEqual(instance.KeyAction.press, projected.unicode.action);
+    try std.testing.expectEqualDeep(instance.InputModifier{ .control = true, .num_lock = true }, projected.unicode.modifiers);
 }
 
 test "named keys preserve release identity without relying on text" {
     const projected = projectKey(makeKey(0xff51, .released, "", .{ .alt = true }));
-    try std.testing.expectEqual(@as(u8, 7), projected.named.key);
-    try std.testing.expectEqual(@as(u8, 3), projected.named.action);
-    try std.testing.expectEqual(@as(u8, 1 << 1), projected.named.modifiers);
+    try std.testing.expectEqual(instance.KeyName.left, projected.named.key);
+    try std.testing.expectEqual(instance.KeyAction.release, projected.named.action);
+    try std.testing.expectEqualDeep(instance.InputModifier{ .alt = true }, projected.named.modifiers);
 }
 
 test "unicode encoded keysym maps to scalar for modified chords" {
     const projected = projectKey(makeKey(0x010003bb, .pressed, "λ", .{ .alt = true }));
-    try std.testing.expectEqual(@as(u32, 0x03bb), projected.unicode.scalar);
+    try std.testing.expectEqual(@as(u21, 0x03bb), projected.unicode.scalar);
 }
 
-test "local native modifiers preserve every protocol bit explicitly" {
-    const modifiers = nativeModifiers(
-        protocol.typed_input.modifiers.shift |
-            protocol.typed_input.modifiers.alt |
-            protocol.typed_input.modifiers.control |
-            protocol.typed_input.modifiers.super |
-            protocol.typed_input.modifiers.hyper |
-            protocol.typed_input.modifiers.meta |
-            protocol.typed_input.modifiers.caps_lock |
-            protocol.typed_input.modifiers.num_lock,
-    );
-    try std.testing.expect(modifiers.shift);
-    try std.testing.expect(modifiers.alt);
-    try std.testing.expect(modifiers.control);
-    try std.testing.expect(modifiers.super);
-    try std.testing.expect(modifiers.hyper);
-    try std.testing.expect(modifiers.meta);
-    try std.testing.expect(modifiers.caps_lock);
-    try std.testing.expect(modifiers.num_lock);
+test "semantic modifiers preserve every canonical flag" {
+    const projected = projectKey(makeKey('x', .repeated, "", .{
+        .shift = true,
+        .alt = true,
+        .control = true,
+        .super = true,
+        .hyper = true,
+        .meta = true,
+        .caps_lock = true,
+        .num_lock = true,
+    }));
+    try std.testing.expectEqual(instance.KeyAction.repeat, projected.unicode.action);
+    try std.testing.expectEqualDeep(instance.InputModifier{
+        .shift = true,
+        .alt = true,
+        .control = true,
+        .super = true,
+        .hyper = true,
+        .meta = true,
+        .caps_lock = true,
+        .num_lock = true,
+    }, projected.unicode.modifiers);
 }
 
-test "local named-key conversion preserves protocol identities and actions" {
-    try std.testing.expectEqual(instance.KeyName.up, nativeNamedKey(5).?);
-    try std.testing.expectEqual(instance.KeyName.f12, nativeNamedKey(40).?);
-    try std.testing.expectEqual(instance.KeyName.keypad_enter, nativeNamedKey(58).?);
-    try std.testing.expect(nativeNamedKey(0) == null);
-    try std.testing.expectEqual(instance.KeyAction.press, nativeAction(1).?);
-    try std.testing.expectEqual(instance.KeyAction.repeat, nativeAction(2).?);
-    try std.testing.expectEqual(instance.KeyAction.release, nativeAction(3).?);
-    try std.testing.expect(nativeAction(0) == null);
+test "named input preserves function and keypad keys without wire identities" {
+    try std.testing.expectEqual(instance.KeyName.f1, projectKey(makeKey(0xffbe, .pressed, "", .{})).named.key);
+    try std.testing.expectEqual(instance.KeyName.f12, projectKey(makeKey(0xffc9, .pressed, "", .{})).named.key);
+    try std.testing.expectEqual(instance.KeyName.keypad_0, projectKey(makeKey(0xffb0, .pressed, "", .{})).named.key);
+    try std.testing.expectEqual(instance.KeyName.keypad_enter, projectKey(makeKey(0xff8d, .pressed, "", .{})).named.key);
 }
 
-test "local mouse conversion preserves semantic route facts" {
-    const value = nativeMouse(.{
-        .kind = .wheel,
-        .button = .wheel_up,
-        .row = 7,
-        .column = 9,
-        .pixel_x = 13,
-        .pixel_y = 17,
-        .modifiers = protocol.typed_input.modifiers.control |
-            protocol.typed_input.modifiers.shift,
-        .buttons_down = 1,
-    });
-    try std.testing.expectEqual(instance.MouseEventKind.wheel, value.kind);
-    try std.testing.expectEqual(instance.MouseButton.wheel_up, value.button);
-    try std.testing.expectEqual(@as(u16, 7), value.row);
-    try std.testing.expectEqual(@as(u16, 9), value.col);
-    try std.testing.expectEqual(@as(u16, 13), value.pixel_x);
-    try std.testing.expectEqual(@as(u16, 17), value.pixel_y);
-    try std.testing.expect(value.mod.control);
-    try std.testing.expect(value.mod.shift);
-    try std.testing.expectEqual(@as(u8, 1), value.buttons_down);
+test "invalid Unicode keysyms do not become terminal input" {
+    try std.testing.expect(std.meta.activeTag(projectKey(makeKey(0x0100d800, .pressed, "", .{ .control = true }))) == .ignored);
+    try std.testing.expect(std.meta.activeTag(projectKey(makeKey(0x01110000, .pressed, "", .{ .alt = true }))) == .ignored);
 }

@@ -3,7 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const server_client = b.dependency("server_client", .{ .target = target, .optimize = optimize });
     const server = b.dependency("server_runtime", .{ .target = target, .optimize = optimize });
@@ -13,7 +12,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("howl_instance", instance.module("howl_instance"));
     module.addImport("howl_client", client.module("howl_client"));
 
     const root = b.createModule(.{
@@ -23,7 +21,6 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("howl_cli", module);
     root.addImport("howl_client", client.module("howl_client"));
-    root.addImport("howl_instance", instance.module("howl_instance"));
     root.addImport("server_client", server_client.module("server_client"));
     root.addImport("server_runtime", server.module("server_runtime"));
     const executable = b.addExecutable(.{ .name = "howl", .root_module = root });

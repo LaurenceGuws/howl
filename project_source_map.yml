@@ -47,12 +47,12 @@ experimental:
     turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
     experimental pure module `server_protocol` in mods/server-protocol. It encodes bounded
-    orchestration vocabulary that preserves Server -> Sessions -> Instances:
+    control and terminal-interaction wire. Control vocabulary preserves Server -> Sessions -> Instances:
     Session create carries only logical name, Instance create carries launch policy
     under an exact Session id, and attach identifies exact Session+Instance ids.
     It owns no listener, address, process, authentication or supervision policy
-  howl-instance-service: >-
-    optional module `howl_instance_service` inside the howl-instance package. It
+  server-terminal-service: >-
+    optional module `server_terminal_service` inside mods/server. It
     borrows one existing Instance and owns only bounded adopted HWLS client streams,
     request decoding, publication scratch and client-local backpressure. It has no
     listener, executable, address, Instance lifetime, Session/Server identity,
@@ -63,7 +63,7 @@ experimental:
     terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
     Instance identity is scoped by its owning Session and Session identity by Server.
     Exact Session+Instance routing may hand an already-connected stream into the
-    Instance-owned HWLS service. The Server model owns no listener or geometry;
+    Server-owned terminal service. The Server model owns no listener or geometry;
     hosts/server owns the single control listener/scheduler only
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction

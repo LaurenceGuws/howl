@@ -3,7 +3,7 @@
 const std = @import("std");
 const c = @import("host_c");
 const wayland = @import("howl_wayland");
-const protocol = @import("howl_instance").protocol;
+const instance = @import("howl_instance");
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
@@ -26,9 +26,9 @@ pub const PointerPoint = struct { x: u16, y: u16 };
 
 /// Copies one compositor pointer fact without guessing terminal geometry.
 pub const PointerEvent = struct {
-    kind: protocol.InputMouseKind,
-    button: protocol.InputMouseButton,
-    modifiers: u8,
+    kind: instance.MouseEventKind,
+    button: instance.MouseButton,
+    modifiers: instance.InputModifier,
     buttons_down: u8,
     point: PointerPoint,
 };
@@ -41,7 +41,7 @@ const SequencedPointer = struct {
 /// Routes one Render-projected semantic terminal mouse occurrence to Input.
 pub const RoutedMouse = struct {
     scene_index: u8,
-    value: protocol.MouseInput,
+    value: @FieldType(instance.Input, "mouse"),
 };
 
 /// Requests one canonical terminal surface, optionally replacing presentation scale.
@@ -60,18 +60,18 @@ pub const InputEvent = union(enum) {
     geometry: GeometryRequest,
 };
 
-/// Projects xkb-resolved semantic modifiers into the frozen typed-input bits.
-pub fn semanticModifierBits(value: wayland.input.SemanticModifiers) u8 {
-    var result: u8 = 0;
-    if (value.shift) result |= protocol.typed_input.modifiers.shift;
-    if (value.alt) result |= protocol.typed_input.modifiers.alt;
-    if (value.control) result |= protocol.typed_input.modifiers.control;
-    if (value.super) result |= protocol.typed_input.modifiers.super;
-    if (value.hyper) result |= protocol.typed_input.modifiers.hyper;
-    if (value.meta) result |= protocol.typed_input.modifiers.meta;
-    if (value.caps_lock) result |= protocol.typed_input.modifiers.caps_lock;
-    if (value.num_lock) result |= protocol.typed_input.modifiers.num_lock;
-    return result;
+/// Projects xkb-resolved semantic modifiers into canonical terminal input.
+pub fn semanticModifiers(value: wayland.input.SemanticModifiers) instance.InputModifier {
+    return .{
+        .shift = value.shift,
+        .alt = value.alt,
+        .control = value.control,
+        .super = value.super,
+        .hyper = value.hyper,
+        .meta = value.meta,
+        .caps_lock = value.caps_lock,
+        .num_lock = value.num_lock,
+    };
 }
 /// Bounds the DRM memory-plane facts copied for one slot.
 pub const plane_limit: usize = 4;

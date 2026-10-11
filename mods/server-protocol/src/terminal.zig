@@ -1,4 +1,4 @@
-//! Small transport-neutral contract for attaching to one shared Howl instance.
+//! Server-owned terminal interaction contract over an ordered byte stream.
 //!
 //! The wire is request-driven. A client has at most one outstanding observation
 //! request (`observe`, `observe_raw`, or `observe_delta`). The endpoint answers
@@ -33,7 +33,7 @@ pub const properties = @import("properties.zig");
 
 /// Exact version of the complete Howl instance wire carried in every frame header.
 ///
-/// Howl currently has one protocol, not a compatibility matrix. Change this
+/// This Server implementation has one terminal wire version. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
 pub const framing_version: u8 = 10;

@@ -1,6 +1,6 @@
 //! Coherent terminal interaction state for mode-aware native clients.
 
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const client = @import("client.zig");
 
 /// Reports connection, payload, or interaction-state framing failures.

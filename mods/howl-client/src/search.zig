@@ -6,7 +6,7 @@
 //! second terminal model.
 
 const std = @import("std");
-const protocol = @import("howl_instance_protocol");
+const protocol = @import("server_protocol").terminal;
 const rich = @import("rich.zig");
 const view = @import("view.zig");
 const selection = @import("selection.zig");

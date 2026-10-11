@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    runtime.addImport("server_protocol", b.dependency("server_protocol", .{ .target = target, .optimize = optimize }).module("server_protocol"));
     runtime.addImport("server_model", server.module("server"));
     runtime.addImport("server_service", server.module("server_service"));
     runtime.addImport("howl_instance", instance.module("howl_instance"));

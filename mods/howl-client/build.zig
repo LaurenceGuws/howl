@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("howl_instance_protocol", instance.module("howl_instance_protocol"));
+    module.addImport("server_protocol", b.dependency("server_protocol", .{ .target = target, .optimize = optimize }).module("server_protocol"));
     module.addImport("client_transport", transport.module("client_transport"));
 
     // Transitional transported presentation adapter. It depends outward on the
@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
     local.addImport("howl_client", module);
     local.addImport("client_transport", transport.module("client_transport"));
     local.addImport("howl_instance", instance.module("howl_instance"));
-    local.addImport("howl_instance_service", instance.module("howl_instance_service"));
+    local.addImport("server_terminal_service", b.dependency("server", .{ .target = target, .optimize = optimize }).module("server_terminal_service"));
     if (windows) local.linkSystemLibrary("kernel32", .{});
 
     const tests = b.addTest(.{

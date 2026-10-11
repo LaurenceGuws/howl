@@ -628,10 +628,10 @@ fn routePointerEvent(
             .value = .{
                 .kind = event.kind,
                 .button = event.button,
-                .modifiers = event.modifiers,
+                .mod = event.modifiers,
                 .buttons_down = event.buttons_down,
                 .row = @intCast(row_u32),
-                .column = @intCast(column_u32),
+                .col = @intCast(column_u32),
                 .pixel_x = pixel_x,
                 .pixel_y = pixel_y,
             },
