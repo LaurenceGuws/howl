@@ -16,6 +16,9 @@ pub const decoded = @import("codec/decoded.zig");
 /// Complete owned text observations with bounded raw/zlib/packed decoding.
 pub const text = @import("codec/text.zig");
 
+/// Complete/raw-delta text reuse, validation and borrowed observation lifetime.
+pub const cache = @import("codec/cache.zig");
+
 /// Publisher-selected encoding specialized on VT's read-only observation type.
 pub const encoder = @import("codec/encode.zig");
 
@@ -155,5 +158,6 @@ test {
     std.testing.refAllDecls(metadata);
     std.testing.refAllDecls(decoded);
     std.testing.refAllDecls(text);
+    std.testing.refAllDecls(cache);
     std.testing.refAllDecls(encoder);
 }

@@ -110,6 +110,9 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try std.testing.expect(!@hasField(codec.Metadata, "stream_closed"));
     try std.testing.expect(!@hasField(codec.Metadata, "leader_present"));
     try std.testing.expect(!@hasField(codec.Metadata, "you_are_leader"));
+    try std.testing.expect(codec.Row == @import("server_client").terminal.rich.Row);
+    try std.testing.expect(!@hasField(codec.cache.View, "begin"));
+    try std.testing.expect(!@hasField(codec.cache.View, "changed_rows_base_revision"));
     try std.testing.expect(!@hasDecl(vt, "codec"));
     try std.testing.expect(!@hasDecl(instance, "codec"));
     try std.testing.expect(!@hasDecl(render, "codec"));

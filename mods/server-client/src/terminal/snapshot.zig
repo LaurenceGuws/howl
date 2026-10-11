@@ -1,7 +1,7 @@
 //! Compact reasoning-friendly projection over the lossless native rich snapshot.
 //!
-//! `rich.zig` is the only text_v1 byte decoder. This module never parses the
-//! wire independently; it projects already-validated native terminal facts.
+//! rich.zig receives Server observations through the optional VT codec.
+//! This module projects validated terminal facts without parsing wire bytes.
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;

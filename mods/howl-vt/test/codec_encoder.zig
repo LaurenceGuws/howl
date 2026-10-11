@@ -99,6 +99,20 @@ test "optional encoder retains the complete 24-scalar VT cluster" {
     try std.testing.expectEqual(vt.scalar.maximum_scalars, text.rows[0].cells[0].scalars.len);
     try std.testing.expectEqual(@as(u32, 'e'), text.rows[0].cells[0].scalars[0]);
     for (text.rows[0].cells[0].scalars[1..]) |scalar| try std.testing.expectEqual(@as(u32, 0x0301), scalar);
+    var cache = codec.cache.Cache.init(std.testing.allocator);
+    defer cache.deinit();
+    const cached = try cache.decode(geometry, .full, body.items);
+    const scalars = cached.rows[0].cells[0].scalars;
+    try std.testing.expectEqualSlices(u32, text.rows[0].cells[0].scalars, scalars);
+    var delta: std.ArrayList(u8) = .empty;
+    defer delta.deinit(std.testing.allocator);
+    try delta.appendSlice(std.testing.allocator, body.items[0 .. codec.text_v1.record_header_bytes + codec.text_v1.presentation_bytes]);
+    try codec.encoder.appendRowShift(std.testing.allocator, &delta, 0);
+    try codec.encoder.appendRowReuse(std.testing.allocator, &delta);
+    const reused = try cache.decode(geometry, .delta, delta.items);
+    try std.testing.expectEqual(scalars.ptr, reused.rows[0].cells[0].scalars.ptr);
+    try std.testing.expectEqualSlices(u32, scalars, reused.rows[0].cells[0].scalars);
+    try std.testing.expectEqualSlices(bool, &.{false}, reused.changed_rows);
 }
 
 test "optional encoder bounds output without changing its caller's prefix" {

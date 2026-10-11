@@ -1,15 +1,13 @@
-//! Lossless native terminal snapshot model for `text_v1` and `text_delta_v2`.
+//! Server-framed observations over VT-owned terminal text values.
 //!
-//! This decoder preserves every transported terminal fact without choosing a
-//! renderer, CLI schema, JSON representation, font, or platform presentation.
+//! Server framing, request correlation, lifecycle and authority stay here.
+//! The optional VT codec owns text decoding and retained rows, scalars and links;
+//! this receiver chooses no renderer, CLI schema, font or platform presentation.
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
 const codec = @import("howl_vt_codec");
 const decodeGraphics = codec.decoded.decodeGraphics;
-const decodePresentation = codec.decoded.decodePresentation;
-const decodeRow = codec.decoded.decodeRow;
-const decodeHyperlink = codec.decoded.decodeHyperlink;
 const deinitRows = codec.decoded.deinitRows;
 const client = @import("client.zig");
 
@@ -95,11 +93,6 @@ pub const View = struct {
     row_shift: ?u16 = null,
 };
 
-const CachedRowRecord = struct {
-    encoded: []u8 = &.{},
-    link_ids: []u16 = &.{},
-};
-
 const CacheBaseline = struct {
     revision: u64,
     history_offset: u32,
@@ -116,25 +109,20 @@ const CacheBaseline = struct {
 pub const RawCache = struct {
     allocator: std.mem.Allocator,
     text_body: std.ArrayList(u8) = .empty,
-    rows: []Row = &.{},
-    row_records: []CachedRowRecord = &.{},
-    changed_rows: []bool = &.{},
+    decoded_text: codec.cache.Cache,
     baseline: ?CacheBaseline = null,
     pending_delta: ?CacheBaseline = null,
-    columns: u16 = 0,
-    hyperlinks: []Hyperlink = &.{},
     graphics: Graphics = .{},
     properties_storage: []u8 = &.{},
 
     /// Creates an empty reusable raw/delta observation cache.
     pub fn init(allocator: std.mem.Allocator) RawCache {
-        return .{ .allocator = allocator };
+        return .{ .allocator = allocator, .decoded_text = codec.cache.Cache.init(allocator) };
     }
 
     /// Releases all cached rows, hyperlinks, graphics, and framing scratch.
     pub fn deinit(self: *RawCache) void {
-        self.clearRows();
-        self.clearHyperlinks();
+        self.decoded_text.deinit();
         self.graphics.deinit(self.allocator);
         self.allocator.free(self.properties_storage);
         self.text_body.deinit(self.allocator);
@@ -151,13 +139,14 @@ pub const RawCache = struct {
     }
 
     // zig-audit: acknowledge anytype
-    // reason: One decoder body is shared by the real Connection and deterministic frame fixtures implementing the same receive contract.
+    // reason: The same frame receiver serves the real Connection and deterministic fixtures implementing its receive contract.
     fn receiveFrom(self: *RawCache, connection: anytype) Error!View {
         self.text_body.clearRetainingCapacity();
         const pending_delta = self.pending_delta;
         errdefer {
             self.pending_delta = null;
             self.baseline = null;
+            self.decoded_text.invalidate();
         }
         var total_bytes: usize = 0;
         var begin_frame = try connection.receive();
@@ -214,7 +203,7 @@ pub const RawCache = struct {
                         if (expected.revision == 0 or baseline.revision != expected.revision or
                             baseline.history_offset != expected.history_offset or
                             begin.terminal.history_offset != expected.history_offset or
-                            self.rows.len != begin.terminal.rows or self.columns != begin.terminal.columns)
+                            !self.decoded_text.canReuse(begin.terminal.geometry()))
                             return error.InvalidSnapshot;
                     }
                     var result = try self.decodeRaw(
@@ -249,243 +238,32 @@ pub const RawCache = struct {
         next_graphics: Graphics,
         allow_row_reuse: bool,
     ) Error!View {
-        if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
-            return error.SnapshotTooLarge;
+        errdefer self.baseline = null;
         const changed_rows_base_revision: ?u64 = if (self.baseline) |baseline|
             if (baseline.history_offset == begin.terminal.history_offset and
-                self.rows.len == begin.terminal.rows and self.columns == begin.terminal.columns)
+                self.decoded_text.canReuse(begin.terminal.geometry()))
                 baseline.revision
             else
                 null
         else
             null;
-        try self.ensureGeometry(begin.terminal.rows, begin.terminal.columns);
-        @memset(self.changed_rows, false);
-        var cache_mutated = false;
-        errdefer if (cache_mutated) self.invalidateRows();
-        var row_shift_seen = false;
-        var rows_up: u16 = 0;
-
-        var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-        var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-        var presentation: Presentation = undefined;
-        var presentation_seen = false;
-        var row_count: u16 = 0;
-        var phase: DecodePhase = .presentation;
-        var links: std.ArrayList(Hyperlink) = .empty;
-        errdefer {
-            for (links.items) |link| self.allocator.free(link.uri_bytes);
-            links.deinit(self.allocator);
-        }
-
-        var offset: usize = 0;
-        while (offset < encoded.len) {
-            if (encoded.len - offset < protocol.text_v1.record_header_bytes)
-                return error.InvalidSnapshot;
-            var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
-            @memcpy(&encoded_header, encoded[offset..][0..protocol.text_v1.record_header_bytes]);
-            const header = try protocol.decodeTextRecordHeader(&encoded_header);
-            const record_len = std.math.add(
-                usize,
-                protocol.text_v1.record_header_bytes,
-                header.payload_len,
-            ) catch return error.InvalidSnapshot;
-            if (record_len > encoded.len - offset) return error.InvalidSnapshot;
-            const record = encoded[offset..][0..record_len];
-            const payload = record[protocol.text_v1.record_header_bytes..];
-            switch (header.kind) {
-                .presentation => {
-                    if (phase != .presentation or presentation_seen) return error.InvalidSnapshot;
-                    presentation = try decodePresentation(payload);
-                    presentation_seen = true;
-                    phase = .rows;
-                },
-                .row_shift => {
-                    if (!allow_row_reuse or phase != .rows or !presentation_seen or
-                        row_shift_seen or row_count != 0)
-                        return error.InvalidSnapshot;
-                    rows_up = try protocol.decodeTextRowShift(payload);
-                    if (rows_up >= begin.terminal.rows and rows_up != 0) return error.InvalidSnapshot;
-                    if (rows_up != 0) {
-                        for (self.row_records) |cached_record|
-                            if (cached_record.encoded.len == 0) return error.InvalidSnapshot;
-                        self.rotateRowsUp(rows_up);
-                        cache_mutated = true;
-                    }
-                    row_shift_seen = true;
-                },
-                .row => {
-                    if (phase != .rows or !presentation_seen or row_count >= begin.terminal.rows)
-                        return error.InvalidSnapshot;
-                    if (allow_row_reuse and !row_shift_seen) return error.InvalidSnapshot;
-                    const row_index: usize = row_count;
-                    const cached = self.row_records[row_index].encoded;
-                    if (payload.len == 0) {
-                        if (!allow_row_reuse or cached.len == 0) return error.InvalidSnapshot;
-                        for (self.row_records[row_index].link_ids) |link_id| referenced[link_id] = true;
-                    } else if (cached.len != 0 and std.mem.eql(u8, cached, record)) {
-                        for (self.row_records[row_index].link_ids) |link_id| referenced[link_id] = true;
-                    } else {
-                        const replacement = try self.decodeCachedRow(begin, payload, record, &referenced);
-                        errdefer replacement.deinit(self.allocator);
-                        self.replaceRow(row_index, replacement);
-                        self.changed_rows[row_index] = true;
-                        cache_mutated = true;
-                    }
-                    row_count += 1;
-                    if (row_count == begin.terminal.rows) phase = .hyperlinks;
-                },
-                .hyperlink => {
-                    if (phase != .hyperlinks) return error.InvalidSnapshot;
-                    const link = try decodeHyperlink(self.allocator, payload, &referenced, &resolved);
-                    errdefer self.allocator.free(link.uri_bytes);
-                    try links.append(self.allocator, link);
-                },
-            }
-            offset += record_len;
-        }
-        if (!presentation_seen or row_count != begin.terminal.rows or allow_row_reuse != row_shift_seen)
-            return error.InvalidSnapshot;
-        for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
-            return error.InvalidSnapshot;
-
-        const accepted_links = try links.toOwnedSlice(self.allocator);
-        self.clearHyperlinks();
-        self.hyperlinks = accepted_links;
+        const text = try self.decoded_text.decode(
+            begin.terminal.geometry(),
+            if (allow_row_reuse) .delta else .full,
+            encoded,
+        );
         self.graphics.deinit(self.allocator);
         self.graphics = next_graphics;
         return .{
             .begin = begin,
-            .presentation = presentation,
-            .rows = self.rows,
-            .hyperlinks = self.hyperlinks,
+            .presentation = text.presentation,
+            .rows = text.rows,
+            .hyperlinks = text.hyperlinks,
             .graphics = self.graphics,
-            .changed_rows = self.changed_rows,
+            .changed_rows = text.changed_rows,
             .changed_rows_base_revision = changed_rows_base_revision,
-            .row_shift = if (rows_up == 0) null else rows_up,
+            .row_shift = text.row_shift,
         };
-    }
-
-    const RowReplacement = struct {
-        row: Row,
-        encoded: []u8,
-        link_ids: []u16,
-
-        fn deinit(self: RowReplacement, allocator: std.mem.Allocator) void {
-            deinitRows(allocator, @as(*const [1]Row, &self.row));
-            allocator.free(self.encoded);
-            allocator.free(self.link_ids);
-        }
-    };
-
-    fn decodeCachedRow(
-        self: *RawCache,
-        begin: protocol.SnapshotBegin,
-        payload: []const u8,
-        record: []const u8,
-        referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-    ) Error!RowReplacement {
-        const row = try decodeRow(self.allocator, begin.terminal.columns, payload, referenced);
-        errdefer deinitRows(self.allocator, @as(*const [1]Row, &row));
-        var link_count: usize = 0;
-        for (row.cells) |cell| {
-            if (cell.link_id != 0) link_count += 1;
-        }
-        const link_ids = try self.allocator.alloc(u16, link_count);
-        errdefer self.allocator.free(link_ids);
-        var used: usize = 0;
-        for (row.cells) |cell| {
-            if (cell.link_id == 0) continue;
-            link_ids[used] = @intCast(cell.link_id);
-            used += 1;
-        }
-        const copied = try self.allocator.dupe(u8, record);
-        return .{ .row = row, .encoded = copied, .link_ids = link_ids };
-    }
-
-    fn replaceRow(self: *RawCache, index: usize, replacement: RowReplacement) void {
-        std.debug.assert(index < self.rows.len);
-        if (self.row_records[index].encoded.len != 0) {
-            deinitRows(self.allocator, self.rows[index .. index + 1]);
-            self.allocator.free(self.row_records[index].encoded);
-            self.allocator.free(self.row_records[index].link_ids);
-        }
-        self.rows[index] = replacement.row;
-        self.row_records[index] = .{
-            .encoded = replacement.encoded,
-            .link_ids = replacement.link_ids,
-        };
-    }
-
-    fn rotateRowsUp(self: *RawCache, shift: u16) void {
-        std.debug.assert(shift > 0 and shift < self.rows.len);
-        const amount: usize = shift;
-        const retained = self.rows.len - amount;
-        for (0..amount) |index| self.clearCachedRow(index);
-        std.mem.copyForwards(Row, self.rows[0..retained], self.rows[amount..]);
-        std.mem.copyForwards(
-            CachedRowRecord,
-            self.row_records[0..retained],
-            self.row_records[amount..],
-        );
-        for (self.row_records[retained..]) |*record| record.* = .{};
-        for (self.rows[retained..]) |*row| row.* = undefined;
-    }
-
-    fn clearCachedRow(self: *RawCache, index: usize) void {
-        std.debug.assert(index < self.rows.len);
-        const record = &self.row_records[index];
-        if (record.encoded.len == 0) return;
-        deinitRows(self.allocator, self.rows[index .. index + 1]);
-        self.allocator.free(record.encoded);
-        self.allocator.free(record.link_ids);
-        record.* = .{};
-    }
-
-    fn ensureGeometry(self: *RawCache, rows: u16, columns: u16) Error!void {
-        if (rows == 0 or columns == 0) return error.InvalidSnapshot;
-        if (self.rows.len == rows and self.columns == columns) return;
-        self.clearRows();
-        self.rows = try self.allocator.alloc(Row, rows);
-        errdefer {
-            self.allocator.free(self.rows);
-            self.rows = &.{};
-        }
-        self.row_records = try self.allocator.alloc(CachedRowRecord, rows);
-        errdefer {
-            self.allocator.free(self.row_records);
-            self.row_records = &.{};
-        }
-        self.changed_rows = try self.allocator.alloc(bool, rows);
-        errdefer {
-            self.allocator.free(self.changed_rows);
-            self.changed_rows = &.{};
-        }
-        for (self.row_records) |*record| record.* = .{};
-        @memset(self.changed_rows, true);
-        self.columns = columns;
-    }
-
-    fn invalidateRows(self: *RawCache) void {
-        for (self.row_records, 0..) |_, index| self.clearCachedRow(index);
-        if (self.changed_rows.len != 0) @memset(self.changed_rows, true);
-    }
-
-    fn clearRows(self: *RawCache) void {
-        self.invalidateRows();
-        if (self.changed_rows.len != 0) self.allocator.free(self.changed_rows);
-        if (self.row_records.len != 0) self.allocator.free(self.row_records);
-        if (self.rows.len != 0) self.allocator.free(self.rows);
-        self.rows = &.{};
-        self.row_records = &.{};
-        self.changed_rows = &.{};
-        self.columns = 0;
-    }
-
-    fn clearHyperlinks(self: *RawCache) void {
-        for (self.hyperlinks) |link| self.allocator.free(link.uri_bytes);
-        if (self.hyperlinks.len != 0) self.allocator.free(self.hyperlinks);
-        self.hyperlinks = &.{};
     }
 
     /// Arms one revision-relative delta observation for this reusable cache.
@@ -648,7 +426,7 @@ const BufferedFrames = struct {
     }
 };
 
-// One decoder body, specialized only for owned socket frames or borrowed bytes.
+// One frame receiver, specialized only for owned socket frames or borrowed bytes.
 // zig-audit: acknowledge anytype
 // reason: The same decoder is exercised by the real Connection and the bounded in-memory frame reader used for exact offline decoding.
 fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
@@ -730,8 +508,6 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
         }
     }
 }
-
-const DecodePhase = enum { presentation, rows, hyperlinks };
 
 fn accountFrame(total: *usize, payload_len: usize) error{SnapshotTooLarge}!void {
     total.* = std.math.add(usize, total.*, protocol.header_bytes + payload_len) catch
@@ -967,59 +743,6 @@ test "buffered frames reject truncation trailing data and mismatched revision" {
     try std.testing.expectError(error.InvalidMagic, decodeFrames(std.testing.allocator, frames));
 }
 
-test "raw cache reuses byte-identical decoded rows" {
-    const allocator = std.testing.allocator;
-    var cache = RawCache.init(allocator);
-    defer cache.deinit();
-
-    const begin = protocol.SnapshotBegin{
-        .revision = 1,
-        .terminal = .{
-            .revision = 1,
-            .history_offset = 0,
-            .history_count = 0,
-            .history_row_base = 0,
-            .rows = 2,
-            .columns = 1,
-            .cursor_row = 0,
-            .cursor_column = 0,
-            .cursor_shape = 0,
-            .cursor_visible = true,
-            .cursor_blink = false,
-            .alternate_screen = false,
-        },
-        .stream_closed = false,
-        .child_exited = false,
-        .leader_present = false,
-        .you_are_leader = false,
-    };
-    const first_body = try testRawCacheBody(allocator, 'A', 'Z');
-    defer allocator.free(first_body);
-    const first = try cache.decodeRaw(begin, first_body, .{}, false);
-    try std.testing.expectEqualSlices(bool, &.{ true, true }, first.changed_rows.?);
-    try std.testing.expectEqual(@as(u32, 'A'), first.rows[0].cells[0].scalars[0]);
-    const first_row_cells = first.rows[0].cells.ptr;
-    const second_row_cells = first.rows[1].cells.ptr;
-
-    var second_begin = begin;
-    second_begin.revision = 2;
-    second_begin.terminal.revision = 2;
-    const second = try cache.decodeRaw(second_begin, first_body, .{}, false);
-    try std.testing.expectEqualSlices(bool, &.{ false, false }, second.changed_rows.?);
-    try std.testing.expectEqual(first_row_cells, second.rows[0].cells.ptr);
-    try std.testing.expectEqual(second_row_cells, second.rows[1].cells.ptr);
-
-    const changed_body = try testRawCacheBody(allocator, 'B', 'Z');
-    defer allocator.free(changed_body);
-    var third_begin = begin;
-    third_begin.revision = 3;
-    third_begin.terminal.revision = 3;
-    const third = try cache.decodeRaw(third_begin, changed_body, .{}, false);
-    try std.testing.expectEqualSlices(bool, &.{ true, false }, third.changed_rows.?);
-    try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
-    try std.testing.expectEqual(second_row_cells, third.rows[1].cells.ptr);
-}
-
 test "raw cache changed-row mask names its exact predecessor revision" {
     const allocator = std.testing.allocator;
     var cache = RawCache.init(allocator);
@@ -1069,103 +792,6 @@ test "raw cache changed-row mask names its exact predecessor revision" {
     try std.testing.expect(history_mismatch.changed_rows_base_revision == null);
 }
 
-test "raw cache accepts row reuse only in explicit delta bodies" {
-    const allocator = std.testing.allocator;
-    var cache = RawCache.init(allocator);
-    defer cache.deinit();
-
-    const begin = protocol.SnapshotBegin{
-        .revision = 1,
-        .terminal = .{
-            .revision = 1,
-            .history_offset = 0,
-            .history_count = 0,
-            .history_row_base = 0,
-            .rows = 2,
-            .columns = 1,
-            .cursor_row = 0,
-            .cursor_column = 0,
-            .cursor_shape = 0,
-            .cursor_visible = true,
-            .cursor_blink = false,
-            .alternate_screen = false,
-        },
-        .stream_closed = false,
-        .child_exited = false,
-        .leader_present = false,
-        .you_are_leader = false,
-    };
-    const baseline_body = try testRawCacheBody(allocator, 'A', 'Z');
-    defer allocator.free(baseline_body);
-    const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
-    try std.testing.expectEqual(@as(u32, 'A'), baseline.rows[0].cells[0].scalars[0]);
-
-    const delta_body = try testRawCacheDeltaBody(allocator, 'B');
-    defer allocator.free(delta_body);
-    var next_begin = begin;
-    next_begin.revision = 2;
-    next_begin.terminal.revision = 2;
-    const delta = try cache.decodeRaw(next_begin, delta_body, .{}, true);
-    try std.testing.expectEqualSlices(bool, &.{ true, false }, delta.changed_rows.?);
-    try std.testing.expect(delta.row_shift == null);
-    try std.testing.expectEqual(@as(u32, 'B'), delta.rows[0].cells[0].scalars[0]);
-    try std.testing.expectEqual(@as(u32, 'Z'), delta.rows[1].cells[0].scalars[0]);
-
-    var complete_only = RawCache.init(allocator);
-    defer complete_only.deinit();
-    const complete_baseline = try complete_only.decodeRaw(begin, baseline_body, .{}, false);
-    try std.testing.expectEqual(@as(u32, 'Z'), complete_baseline.rows[1].cells[0].scalars[0]);
-    try std.testing.expectError(
-        error.InvalidSnapshot,
-        complete_only.decodeRaw(next_begin, delta_body, .{}, false),
-    );
-}
-
-test "raw cache applies explicit upward shift before row reuse" {
-    const allocator = std.testing.allocator;
-    var cache = RawCache.init(allocator);
-    defer cache.deinit();
-
-    const begin = protocol.SnapshotBegin{
-        .revision = 1,
-        .terminal = .{
-            .revision = 1,
-            .history_offset = 0,
-            .history_count = 0,
-            .history_row_base = 0,
-            .rows = 2,
-            .columns = 1,
-            .cursor_row = 0,
-            .cursor_column = 0,
-            .cursor_shape = 0,
-            .cursor_visible = true,
-            .cursor_blink = false,
-            .alternate_screen = false,
-        },
-        .stream_closed = false,
-        .child_exited = false,
-        .leader_present = false,
-        .you_are_leader = false,
-    };
-    const baseline_body = try testRawCacheBody(allocator, 'A', 'Z');
-    defer allocator.free(baseline_body);
-    const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
-    const z_cells = baseline.rows[1].cells.ptr;
-
-    const shifted_body = try testRawCacheShiftedDeltaBody(allocator, 'B');
-    defer allocator.free(shifted_body);
-    var next_begin = begin;
-    next_begin.revision = 2;
-    next_begin.terminal.revision = 2;
-    next_begin.terminal.history_count = 1;
-    const shifted = try cache.decodeRaw(next_begin, shifted_body, .{}, true);
-    try std.testing.expectEqual(@as(?u16, 1), shifted.row_shift);
-    try std.testing.expectEqualSlices(bool, &.{ false, true }, shifted.changed_rows.?);
-    try std.testing.expectEqual(z_cells, shifted.rows[0].cells.ptr);
-    try std.testing.expectEqual(@as(u32, 'Z'), shifted.rows[0].cells[0].scalars[0]);
-    try std.testing.expectEqual(@as(u32, 'B'), shifted.rows[1].cells[0].scalars[0]);
-}
-
 fn testRawCacheDeltaBody(allocator: std.mem.Allocator, first: u32) ![]u8 {
     const full = try testRawCacheBody(allocator, first, 'Z');
     defer allocator.free(full);
@@ -1189,32 +815,6 @@ fn testRawCacheDeltaBody(allocator: std.mem.Allocator, first: u32) ![]u8 {
         .kind = .row,
         .payload_len = 0,
     });
-    return body;
-}
-
-fn testRawCacheShiftedDeltaBody(allocator: std.mem.Allocator, bottom: u32) ![]u8 {
-    const full = try testRawCacheBody(allocator, 'Z', bottom);
-    defer allocator.free(full);
-    const presentation_record = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
-    const shift_record = protocol.text_v1.record_header_bytes + protocol.text_delta_v2.row_shift_bytes;
-    const row_payload = protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + @sizeOf(u32);
-    const row_record = protocol.text_v1.record_header_bytes + row_payload;
-    const body = try allocator.alloc(u8, presentation_record + shift_record + protocol.text_v1.record_header_bytes + row_record);
-    @memcpy(body[0..presentation_record], full[0..presentation_record]);
-    var at = presentation_record;
-    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
-        .kind = .row_shift,
-        .payload_len = protocol.text_delta_v2.row_shift_bytes,
-    });
-    at += protocol.text_v1.record_header_bytes;
-    protocol.encodeTextRowShift(body[at..][0..protocol.text_delta_v2.row_shift_bytes], 1);
-    at += protocol.text_delta_v2.row_shift_bytes;
-    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
-        .kind = .row,
-        .payload_len = 0,
-    });
-    at += protocol.text_v1.record_header_bytes;
-    @memcpy(body[at..][0..row_record], full[presentation_record + row_record ..][0..row_record]);
     return body;
 }
 
@@ -1291,51 +891,12 @@ test "rich snapshots require exactly one coherent property packet and own its by
 }
 
 test "raw cached observations own properties and clear them independently of reused rows" {
-    const Packet = struct {
-        fn make(allocator: std.mem.Allocator, revision: u64, value: protocol.properties.View) ![]u8 {
-            const base = try testFramedSnapshot(allocator, .raw);
-            defer allocator.free(base);
-            const raw = try testRawCacheBody(allocator, 'A', 'Z');
-            defer allocator.free(raw);
-            var bytes: std.ArrayList(u8) = .empty;
-            errdefer bytes.deinit(allocator);
-            var offset: usize = 0;
-            while (offset < base.len) {
-                const header = try protocol.decodeHeader(base[offset..][0..protocol.header_bytes]);
-                var payload: []const u8 = base[offset + protocol.header_bytes ..][0..header.payload_len];
-                var scratch: [protocol.properties.maximum_bytes]u8 = undefined;
-                switch (header.kind) {
-                    .snapshot_begin => {
-                        var begin = try protocol.decodeSnapshotBegin(payload);
-                        begin.revision = revision;
-                        begin.terminal.revision = revision;
-                        begin.terminal.rows = 2;
-                        begin.terminal.columns = 1;
-                        protocol.encodeSnapshotBegin(scratch[0..protocol.payload_bytes.snapshot_begin], begin);
-                        payload = scratch[0..protocol.payload_bytes.snapshot_begin];
-                    },
-                    .snapshot_raw_data => payload = raw,
-                    .snapshot_properties => {
-                        const length = try protocol.properties.encode(&scratch, value);
-                        payload = scratch[0..length];
-                    },
-                    .snapshot_end => {
-                        protocol.encodeSnapshotEnd(scratch[0..protocol.payload_bytes.snapshot_end], .{ .revision = revision });
-                        payload = scratch[0..protocol.payload_bytes.snapshot_end];
-                    },
-                    else => {},
-                }
-                var framing: [protocol.header_bytes]u8 = undefined;
-                try protocol.encodeHeader(&framing, .{ .kind = header.kind, .payload_len = @intCast(payload.len) });
-                try bytes.appendSlice(allocator, &framing);
-                try bytes.appendSlice(allocator, payload);
-                offset += protocol.header_bytes + header.payload_len;
-            }
-            return bytes.toOwnedSlice(allocator);
-        }
-    };
     const allocator = std.testing.allocator;
-    const first_bytes = try Packet.make(allocator, 1, .{ .title = "cached title", .progress = .{ .kind = .normal, .value = 25 } });
+    const raw = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(raw);
+    var begin = testRowBegin(1);
+    begin.terminal.rows = 2;
+    const first_bytes = try testCachedFrames(allocator, begin, .snapshot_raw_data, raw, .{ .title = "cached title", .progress = .{ .kind = .normal, .value = 25 } });
     defer allocator.free(first_bytes);
     var cache = RawCache.init(allocator);
     defer cache.deinit();
@@ -1345,7 +906,8 @@ test "raw cached observations own properties and clear them independently of reu
     @memset(first_bytes, 0);
     try std.testing.expectEqualStrings("cached title", first.properties.title.?);
     try std.testing.expectEqual(@as(u8, 25), first.properties.progress.value);
-    const next_bytes = try Packet.make(allocator, 2, .{});
+    begin.revision = 2;
+    const next_bytes = try testCachedFrames(allocator, begin, .snapshot_raw_data, raw, .{});
     defer allocator.free(next_bytes);
     var next_reader = BufferedFrames{ .bytes = next_bytes };
     const next = try cache.receiveFrom(&next_reader);
@@ -1355,29 +917,135 @@ test "raw cached observations own properties and clear them independently of reu
     try std.testing.expectEqual(protocol.properties.ProgressKind.none, next.properties.progress.kind);
 }
 
-fn testRawCacheHyperlinkAllocation(allocator: std.mem.Allocator, body: []const u8) !void {
-    var cache = RawCache.init(allocator);
-    defer cache.deinit();
-    var begin = testRowBegin(1);
-    begin.terminal.rows = 2;
-    const view = try cache.decodeRaw(begin, body, .{}, false);
-    try std.testing.expectEqual(@as(usize, 1), view.hyperlinks.len);
-    try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, view.hyperlinks[0].uri_bytes);
+fn testCachedFrames(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    body_kind: protocol.Kind,
+    raw: []const u8,
+    value: protocol.properties.View,
+) ![]u8 {
+    const base = try testFramedSnapshot(allocator, .raw);
+    defer allocator.free(base);
+    var bytes: std.ArrayList(u8) = .empty;
+    errdefer bytes.deinit(allocator);
+    var offset: usize = 0;
+    while (offset < base.len) {
+        var header = try protocol.decodeHeader(base[offset..][0..protocol.header_bytes]);
+        var payload: []const u8 = base[offset + protocol.header_bytes ..][0..header.payload_len];
+        var scratch: [protocol.properties.maximum_bytes]u8 = undefined;
+        switch (header.kind) {
+            .snapshot_begin => {
+                protocol.encodeSnapshotBegin(scratch[0..protocol.payload_bytes.snapshot_begin], begin);
+                payload = scratch[0..protocol.payload_bytes.snapshot_begin];
+            },
+            .snapshot_raw_data => {
+                header.kind = body_kind;
+                payload = raw;
+            },
+            .snapshot_properties => {
+                const length = try protocol.properties.encode(&scratch, value);
+                payload = scratch[0..length];
+            },
+            .snapshot_end => {
+                protocol.encodeSnapshotEnd(scratch[0..protocol.payload_bytes.snapshot_end], .{ .revision = begin.revision });
+                payload = scratch[0..protocol.payload_bytes.snapshot_end];
+            },
+            else => {},
+        }
+        var framing: [protocol.header_bytes]u8 = undefined;
+        try protocol.encodeHeader(&framing, .{ .kind = header.kind, .payload_len = @intCast(payload.len) });
+        try bytes.appendSlice(allocator, &framing);
+        try bytes.appendSlice(allocator, payload);
+        offset += protocol.header_bytes + header.payload_len;
+    }
+    return bytes.toOwnedSlice(allocator);
 }
 
-test "raw cache hyperlink handoff unwinds at every allocation failure" {
-    const rows = try testRawCacheBody(std.testing.allocator, 'A', 'Z');
-    defer std.testing.allocator.free(rows);
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(std.testing.allocator);
-    try body.appendSlice(std.testing.allocator, rows);
-    const first_link = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes +
-        protocol.text_v1.record_header_bytes + protocol.text_v1.row_header_bytes + 31;
-    encodeU32(body.items[first_link..][0..4], 2);
-    const link = [_]u8{ 0, 0, 0, 2, 0, 4, 'A', 0, 0xff, 'Z' };
-    var header: [protocol.text_v1.record_header_bytes]u8 = undefined;
-    protocol.encodeTextRecordHeader(&header, .{ .kind = .hyperlink, .payload_len = link.len });
-    try body.appendSlice(std.testing.allocator, &header);
-    try body.appendSlice(std.testing.allocator, &link);
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testRawCacheHyperlinkAllocation, .{body.items});
+test "Server delta admission uses the accepted observation revision independently of VT revision" {
+    const allocator = std.testing.allocator;
+    const full = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(full);
+    const delta = try testRawCacheDeltaBody(allocator, 'B');
+    defer allocator.free(delta);
+    var begin = testRowBegin(1);
+    begin.terminal.rows = 2;
+    begin.revision = 100;
+    begin.terminal.revision = 7;
+    const first_packet = try testCachedFrames(allocator, begin, .snapshot_raw_data, full, .{});
+    defer allocator.free(first_packet);
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+    var first_reader = BufferedFrames{ .bytes = first_packet };
+    const first = try cache.receiveFrom(&first_reader);
+    try std.testing.expect(first.changed_rows_base_revision == null);
+    const retained = first.rows[1].cells.ptr;
+
+    begin.revision = 101; // Authority/lifecycle cut may change without VT revision.
+    const next_packet = try testCachedFrames(allocator, begin, .snapshot_delta_data, delta, .{});
+    defer allocator.free(next_packet);
+    cache.pending_delta = .{ .revision = 100, .history_offset = 0 };
+    var next_reader = BufferedFrames{ .bytes = next_packet };
+    const second = try cache.receiveFrom(&next_reader);
+    try std.testing.expectEqual(@as(u64, 7), second.begin.terminal.revision);
+    try std.testing.expectEqual(@as(?u64, 100), second.changed_rows_base_revision);
+    try std.testing.expectEqual(retained, second.rows[1].cells.ptr);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, second.changed_rows.?);
+    try std.testing.expect(cache.pending_delta == null);
+
+    cache.pending_delta = .{ .revision = 7, .history_offset = 0 }; // A VT revision cannot name delivery.
+    var wrong_reader = BufferedFrames{ .bytes = next_packet };
+    try std.testing.expectError(error.InvalidSnapshot, cache.receiveFrom(&wrong_reader));
+    try std.testing.expect(cache.baseline == null);
+    try std.testing.expect(cache.pending_delta == null);
+    try std.testing.expect(!cache.decoded_text.canReuse(begin.terminal.geometry()));
+
+    begin.revision = 102;
+    const recovered_packet = try testCachedFrames(allocator, begin, .snapshot_raw_data, full, .{});
+    defer allocator.free(recovered_packet);
+    var recovered_reader = BufferedFrames{ .bytes = recovered_packet };
+    const recovered = try cache.receiveFrom(&recovered_reader);
+    try std.testing.expect(recovered.changed_rows_base_revision == null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, recovered.changed_rows.?);
+}
+
+test "failed framing and unarmed delta clear Server and codec reuse state together" {
+    const allocator = std.testing.allocator;
+    const full = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(full);
+    const delta = try testRawCacheDeltaBody(allocator, 'B');
+    defer allocator.free(delta);
+    var begin = testRowBegin(1);
+    begin.terminal.rows = 2;
+    const first_packet = try testCachedFrames(allocator, begin, .snapshot_raw_data, full, .{});
+    defer allocator.free(first_packet);
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+    var reader = BufferedFrames{ .bytes = first_packet };
+    const first = try cache.receiveFrom(&reader);
+    try std.testing.expectEqual(@as(u32, 'A'), first.rows[0].cells[0].scalars[0]);
+
+    begin.revision = 2;
+    const unarmed_packet = try testCachedFrames(allocator, begin, .snapshot_delta_data, delta, .{});
+    defer allocator.free(unarmed_packet);
+    var unarmed_reader = BufferedFrames{ .bytes = unarmed_packet };
+    try std.testing.expectError(error.InvalidSnapshot, cache.receiveFrom(&unarmed_reader));
+    try std.testing.expect(cache.baseline == null);
+    try std.testing.expect(!cache.decoded_text.canReuse(begin.terminal.geometry()));
+
+    reader = .{ .bytes = first_packet };
+    const restored = try cache.receiveFrom(&reader);
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, restored.changed_rows.?);
+    const malformed = try allocator.dupe(u8, first_packet);
+    defer allocator.free(malformed);
+    protocol.encodeSnapshotEnd(malformed[malformed.len - protocol.payload_bytes.snapshot_end ..][0..protocol.payload_bytes.snapshot_end], .{ .revision = 99 });
+    cache.pending_delta = .{ .revision = 1, .history_offset = 0 };
+    var malformed_reader = BufferedFrames{ .bytes = malformed };
+    try std.testing.expectError(error.InvalidSnapshot, cache.receiveFrom(&malformed_reader));
+    try std.testing.expect(cache.baseline == null and cache.pending_delta == null);
+    try std.testing.expect(!cache.decoded_text.canReuse(begin.terminal.geometry()));
+
+    reader = .{ .bytes = first_packet };
+    const recovered = try cache.receiveFrom(&reader);
+    try std.testing.expect(recovered.changed_rows_base_revision == null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, recovered.changed_rows.?);
 }
