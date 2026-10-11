@@ -312,6 +312,7 @@ const Impl = struct {
     atlas: *Atlas,
     commands: []frame_vocabulary.Input,
     incremental_commands: []frame_vocabulary.Input,
+    commands_use_incremental_allocation: bool = false,
     incremental_rows: []IncrementalRowCommands,
     incremental_candidate_rows: []IncrementalRowCommands,
     incremental_repairs: []bool,
@@ -531,7 +532,11 @@ fn initWithStoreInner(
     errdefer glyph_cache.deinitAtlas(atlas);
     const commands = try allocator.alloc(frame_vocabulary.Input, config.command_capacity);
     errdefer allocator.free(commands);
-    const incremental_commands = try allocator.alloc(frame_vocabulary.Input, config.incremental_command_capacity);
+    const incremental_storage_limit = incrementalCommandLimit(config);
+    const incremental_commands = try allocator.alloc(
+        frame_vocabulary.Input,
+        @min(config.command_capacity, incremental_storage_limit),
+    );
     errdefer allocator.free(incremental_commands);
     const incremental_rows = try allocator.alloc(IncrementalRowCommands, config.incremental_row_capacity);
     errdefer allocator.free(incremental_rows);
@@ -660,10 +665,28 @@ pub fn updateCursorSource(
     impl.revision += 1;
 }
 
+fn incrementalCommandLimit(config: Config) usize {
+    return if (config.incremental_command_capacity == 0)
+        0
+    else
+        @min(config.incremental_command_capacity, commandLimit(config) - 1) + 1;
+}
+
 fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
     const impl = rendererImpl(owner);
-    const limit = commandLimit(impl.config);
-    if (impl.commands.len >= limit) return false;
+    const limit = if (impl.commands_use_incremental_allocation)
+        incrementalCommandLimit(impl.config)
+    else
+        commandLimit(impl.config);
+    if (impl.commands.len >= limit) {
+        if (!impl.commands_use_incremental_allocation) return false;
+        // Exhausting the glyph budget retries complete projection in normal storage.
+        std.mem.swap([]frame_vocabulary.Input, &impl.commands, &impl.incremental_commands);
+        impl.commands_use_incremental_allocation = false;
+        impl.incremental_ready = false;
+        impl.incremental_command_count = 0;
+        return true;
+    }
     const doubled = std.math.mul(usize, impl.commands.len, 2) catch limit;
     const next = @min(limit, @max(impl.commands.len + 1, doubled));
     const replacement = try impl.allocator.alloc(frame_vocabulary.Input, next);
@@ -685,11 +708,22 @@ fn updateInnerOnce(
     const store = storeImpl(impl.store);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
+    if (comptime Source.supports_incremental) if (impl.incremental_ready) {
+        std.mem.swap([]frame_vocabulary.Input, &impl.commands, &impl.incremental_commands);
+        impl.commands_use_incremental_allocation = !impl.commands_use_incremental_allocation;
+    };
+    const command_storage = impl.commands[0..@min(impl.commands.len, commandLimit(impl.config))];
+    if (impl.incremental_ready and impl.incremental_command_count >= impl.incremental_commands.len)
+        return error.InvalidView;
+    const cached_commands: []const frame_vocabulary.Input = if (impl.incremental_ready)
+        impl.incremental_commands[1..][0..impl.incremental_command_count]
+    else
+        &.{};
     const rows = Source.rows(snapshot);
     const surface = try contentSurfaceSize(rows, Source.columns(snapshot), impl.config.cell_size);
     const changed_rows = sourceChangedRows(Source, snapshot);
     const wants_incremental = changed_rows != null;
-    const incremental_plan = if (wants_incremental)
+    const incremental_candidate = if (wants_incremental)
         try planIncrementalRows(Source, owner, snapshot)
     else
         null;
@@ -703,9 +737,9 @@ fn updateInnerOnce(
         impl.atlas,
         store.shape_cache,
         surface,
-        impl.commands,
-        incremental_plan,
-        impl.incremental_commands,
+        command_storage,
+        incremental_candidate,
+        cached_commands,
         impl.incremental_rows,
         candidate_rows,
         impl.config.cell_size,
@@ -713,6 +747,7 @@ fn updateInnerOnce(
         store.shaped,
         store.raster,
     );
+    const incremental_plan = projection.incremental_plan;
     var command_count = projection.command_count;
     const atlas = glyph_cache.atlasView(impl.atlas);
     const atlas_entries = glyph_cache.atlasEntryCount(impl.atlas);
@@ -796,7 +831,7 @@ fn updateInnerOnce(
         surface,
         impl.config.cell_size,
         projection,
-        impl.commands,
+        command_storage,
         &command_count,
         &impl.placement_order,
     );
@@ -814,9 +849,7 @@ fn updateInnerOnce(
     const next_revision = impl.revision + 1;
 
     const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
-    const incremental_eligible = incremental_plan != null or
-        (incremental_enabled and projection.default_background_end == 1 and
-            projection.background_end == 1 and try incrementalViewEligible(Source, snapshot, null));
+    const incremental_eligible = incremental_enabled and projection.incremental_eligible;
 
     impl.revision = next_revision;
     impl.content_revision = next_revision;
@@ -868,7 +901,9 @@ pub fn rowScene(owner: *const Renderer) ?RowScene {
     const rows = @as(usize, impl.incremental_rows_count);
     if (rows == 0 or rows > impl.incremental_rows.len or rows > impl.incremental_repairs.len)
         return null;
-    if (impl.incremental_command_count > impl.incremental_commands.len) return null;
+    if (impl.incremental_command_count >= impl.commands.len or
+        impl.incremental_command_count >= impl.command_count)
+        return null;
     return .{
         .kind = impl.incremental_scene_kind,
         .revision = impl.incremental_scene_revision,
@@ -877,7 +912,7 @@ pub fn rowScene(owner: *const Renderer) ?RowScene {
         .surface = impl.surface,
         .cell_size = impl.config.cell_size,
         .background = impl.incremental_background,
-        .commands = impl.incremental_commands[0..impl.incremental_command_count],
+        .commands = impl.commands[1..][0..impl.incremental_command_count],
         .rows = impl.incremental_rows[0..rows],
         .repairs = impl.incremental_repairs[0..rows],
     };
@@ -1808,48 +1843,9 @@ fn sameIncrementalCellPresentation(
     return true;
 }
 
-fn incrementalRowLayerEligible(
-    comptime Source: type,
-    snapshot: *const Source.Snapshot,
-    row_index: usize,
-) Error!bool {
-    const presentation = Source.presentation(snapshot);
-    const row_count = Source.rowCount(snapshot);
-    if (presentation.reverse_screen or row_index >= row_count) return false;
-    const row = Source.rowAt(snapshot, row_index);
-    if (Source.lineGeometry(snapshot, row) != .single_width or
-        Source.rowCellCount(snapshot, row) != Source.columns(snapshot))
-        return false;
-    for (0..Source.columns(snapshot)) |column| {
-        const cell = Source.cellAt(snapshot, row, column);
-        if (!contentUsesPlainGeometry(Source, cell, Source.lineGeometry(snapshot, row)) or
-            blk: {
-                const style = Source.cellStyle(cell);
-                break :blk style.reverse or style.underline or style.strikethrough;
-            } or
-            Source.cellColor(cell, .background).kind != .default)
-            return false;
-    }
-    return true;
-}
-
-fn incrementalViewEligible(
-    comptime Source: type,
-    snapshot: *const Source.Snapshot,
-    changed_rows: ?[]const bool,
-) Error!bool {
-    const row_count = Source.rowCount(snapshot);
-    const graphics = Source.graphics(snapshot);
-    if (row_count != Source.rows(snapshot) or
-        Source.graphicsImageCount(graphics) != 0 or
-        Source.graphicsPlacementCount(graphics) != 0)
-        return false;
-    if (changed_rows) |changed| if (changed.len != row_count) return error.InvalidView;
-    for (0..row_count) |row_index| {
-        if (changed_rows) |changed| if (!changed[row_index]) continue;
-        if (!try incrementalRowLayerEligible(Source, snapshot, row_index)) return false;
-    }
-    return true;
+/// Returns the largest repair set admitted for one retained-row viewport.
+pub fn rowReuseLimit(row_count: u16) u16 {
+    return @intCast(@max(@as(u32, 1), @as(u32, row_count) * 2 / 3));
 }
 
 fn planIncrementalRows(
@@ -1882,19 +1878,16 @@ fn planIncrementalRows(
     for (repairs) |repair| if (repair) {
         repair_count += 1;
     };
-    if (repair_count > @max(@as(usize, 1), repairs.len / 3)) return null;
+    if (repair_count > rowReuseLimit(rows)) return null;
     if (shift != 0) {
         const exposed_first = @as(usize, rows - shift);
         for (repairs[exposed_first..]) |repair| if (!repair) return null;
     }
-    if (!try incrementalViewEligible(Source, snapshot, repairs)) return null;
-    const y_delta_value = std.math.mul(usize, shift, impl.config.cell_size.height) catch
-        return error.InvalidPresentationGeometry;
     return .{
         .shift = shift,
         .repairs = repairs,
-        .y_delta = std.math.cast(i32, y_delta_value) orelse
-            return error.InvalidPresentationGeometry,
+        // Cell eligibility and signed translation finish in the background pass.
+        .y_delta = 0,
     };
 }
 
@@ -1933,16 +1926,17 @@ fn rememberIncrementalCommands(
             impl.incremental_ready = false;
             return;
         };
-        if (end > impl.commands.len or
-            candidate.count > impl.incremental_commands.len - @min(used, impl.incremental_commands.len))
+        const expected_start = std.math.add(usize, used, 1) catch {
+            impl.incremental_ready = false;
+            return;
+        };
+        if (end > impl.command_count or candidate.start != expected_start or
+            candidate.count > impl.config.incremental_command_capacity -
+                @min(used, impl.config.incremental_command_capacity))
         {
             impl.incremental_ready = false;
             return;
         }
-        @memcpy(
-            impl.incremental_commands[used .. used + candidate.count],
-            impl.commands[candidate.start..end],
-        );
         impl.incremental_rows[row_index] = .{ .start = used, .count = candidate.count };
         used += candidate.count;
     }
@@ -1974,6 +1968,8 @@ const ContentProjection = struct {
     default_background_end: usize,
     background_end: usize,
     has_raster: bool,
+    incremental_eligible: bool,
+    incremental_plan: ?IncrementalPlan,
 };
 
 fn buildContentCommands(
@@ -2016,17 +2012,30 @@ fn buildContentCommands(
     // This required scan also records whether a decoration pass can produce
     // anything, avoiding a second full-grid walk for ordinary undecorated frames.
     var has_decorations = false;
+    const graphics = Source.graphics(snapshot);
+    var incremental_eligible = row_ranges != null and !presentation.reverse_screen and
+        Source.graphicsImageCount(graphics) == 0 and
+        Source.graphicsPlacementCount(graphics) == 0;
+    var active_plan = if (incremental_eligible) incremental_plan else null;
     for (0..row_count) |row_index| {
         const row = Source.rowAt(snapshot, row_index);
         const line_geometry = Source.lineGeometry(snapshot, row);
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, line_geometry);
+        // The retained plain-row cache proves clean rows have no background
+        // overrides or decorations. Changed rows are checked during this pass.
+        if (active_plan) |plan| if (!plan.repairs[row_index]) continue;
+        var row_eligible = incremental_eligible and line_geometry == .single_width;
         for (0..line_columns) |column| {
             const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
             has_decorations = has_decorations or style.underline or style.strikethrough;
             const reversed = style.reverse != presentation.reverse_screen;
-            if (!reversed and Source.cellColor(cell, .background).kind == .default) continue;
+            const default_cell_background = !reversed and Source.cellColor(cell, .background).kind == .default;
+            if (row_eligible) row_eligible = default_cell_background and
+                !style.reverse and !style.underline and !style.strikethrough and
+                contentUsesPlainGeometry(Source, cell, line_geometry);
+            if (default_cell_background) continue;
             const colors = try contentCellColors(Source, cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
             if (!std.meta.eql(colors.background, default_background))
@@ -2042,8 +2051,16 @@ fn buildContentCommands(
                     surface,
                 );
         }
+        incremental_eligible = incremental_eligible and row_eligible;
+        if (!incremental_eligible) active_plan = null;
     }
     const background_end = used;
+    if (active_plan) |*plan| {
+        const y_delta_value = std.math.mul(usize, plan.shift, cell_size.height) catch
+            return error.InvalidPresentationGeometry;
+        plan.y_delta = std.math.cast(i32, y_delta_value) orelse
+            return error.InvalidPresentationGeometry;
+    }
     const placeholder_resource = placeholderContentResource();
     var has_raster = false;
 
@@ -2111,7 +2128,7 @@ fn buildContentCommands(
         const row = Source.rowAt(snapshot, row_index);
         const line_geometry = Source.lineGeometry(snapshot, row);
         const row_start = used;
-        if (incremental_plan) |plan| {
+        if (active_plan) |plan| {
             if (!plan.repairs[row_index]) {
                 const source_row = row_index + @as(usize, plan.shift);
                 if (source_row >= rows or source_row >= incremental_rows.len)
@@ -2421,6 +2438,8 @@ fn buildContentCommands(
         .default_background_end = default_background_end,
         .background_end = background_end,
         .has_raster = has_raster,
+        .incremental_eligible = incremental_eligible,
+        .incremental_plan = active_plan,
     };
 }
 

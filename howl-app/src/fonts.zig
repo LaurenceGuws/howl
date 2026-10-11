@@ -89,6 +89,8 @@ pub const Fonts = struct {
             .raster_bytes = 512 * 512,
             .command_capacity = 4 * 1024,
             .command_limit = instance.render.limits.maximum_frame_commands,
+            .incremental_row_capacity = instance.render.limits.maximum_rows,
+            .incremental_command_capacity = instance.render.limits.maximum_frame_commands,
         };
     }
 };

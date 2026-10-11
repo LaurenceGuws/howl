@@ -16,6 +16,9 @@ pub const Source = struct {
         view: VT.SemanticView,
         colors: VT.Presentation,
         images: VT.Images,
+        revision: u64 = 0,
+        changed_rows_base_revision: ?u64 = null,
+        changed_rows: ?[]const bool = null,
     };
 
     /// Borrows a live row once per projection pass; history uses copied-cell fallback.
@@ -28,8 +31,38 @@ pub const Source = struct {
     pub const PresentationColor = VT.Rgb;
     /// Borrows one coherent canonical image/placement observation.
     pub const Graphics = VT.Images;
-    /// Direct VT observations expose no revision-relative changed-row contract.
-    pub const supports_incremental = false;
+    /// A synchronous owner may supply repairs from its non-consuming row identities.
+    pub const supports_incremental = true;
+
+    /// Returns the canonical content identity captured for these repairs.
+    pub fn observationRevision(snapshot: *const Snapshot) u64 {
+        return snapshot.revision;
+    }
+
+    /// Returns the clamped canonical viewport history offset.
+    pub fn historyOffset(snapshot: *const Snapshot) u32 {
+        return snapshot.view.history_offset;
+    }
+
+    /// Identifies the canonical active screen for repair provenance.
+    pub fn alternateScreen(snapshot: *const Snapshot) bool {
+        return snapshot.view.is_alternate_screen;
+    }
+
+    /// Returns the last complete source revision described by the repair hint.
+    pub fn changedRowsBaseRevision(snapshot: *const Snapshot) ?u64 {
+        return snapshot.changed_rows_base_revision;
+    }
+
+    /// Borrows synchronous owner-computed row repairs, or requests full projection.
+    pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
+        return snapshot.changed_rows;
+    }
+
+    /// Native repairs are position-relative and carry no scrolling translation.
+    pub fn rowShift(_: *const Snapshot) ?u16 {
+        return 0;
+    }
 
     /// Returns the declared visible terminal row count.
     pub fn rows(snapshot: *const Snapshot) u16 {

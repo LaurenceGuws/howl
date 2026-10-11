@@ -117,6 +117,8 @@ pub const missingExternalResources = renderer.missingExternalResources;
 pub const frame = renderer.frame;
 /// Borrows the current retained-row acceleration view when eligible.
 pub const rowScene = renderer.rowScene;
+/// Shares the retained-row repair budget with the synchronous observation owner.
+pub const rowReuseLimit = renderer.rowReuseLimit;
 
 /// Plans exact resource bindings for images visible in one canonical VT view.
 pub fn planObservationImageBindings(
@@ -146,10 +148,32 @@ pub fn updateObservation(
     history_offset: u32,
     image_bindings: []const ExternalImageBinding,
 ) Error!void {
+    return updateObservationRows(owner, observation, history_offset, null, image_bindings);
+}
+
+/// Borrows revision-relative repairs owned by the synchronous observation caller.
+/// The base must describe the same terminal occurrence and viewport; null builds
+/// a complete baseline. No row hint or VT borrow survives this update.
+pub const RowChanges = struct {
+    base_revision: ?u64,
+    rows: []const bool,
+};
+
+/// Projects a complete frame while reusing eligible unchanged row commands.
+pub fn updateObservationRows(
+    owner: *Renderer,
+    observation: *const VT.Observation,
+    history_offset: u32,
+    changes: ?RowChanges,
+    image_bindings: []const ExternalImageBinding,
+) Error!void {
     const snapshot: source_vt.Source.Snapshot = .{
         .view = observation.semanticView(history_offset),
         .colors = observation.presentation(),
         .images = observation.images(history_offset),
+        .revision = observation.contentSequence(),
+        .changed_rows_base_revision = if (changes) |value| value.base_revision else null,
+        .changed_rows = if (changes) |value| value.rows else null,
     };
     return renderer.updateSource(source_vt.Source, owner, &snapshot, image_bindings);
 }

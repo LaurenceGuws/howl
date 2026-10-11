@@ -673,6 +673,12 @@ const PresentationState = struct {
     command_capacity: usize,
     command_limit: usize,
     presentation_generation: u64 = 1,
+    row_reuse_capacity: u16,
+    row_generations: [render.limits.maximum_rows]u64 = @splat(0),
+    row_repairs: [render.limits.maximum_rows]bool = undefined,
+    row_rows: u16 = 0,
+    row_columns: u16 = 0,
+    row_alternate_screen: bool = false,
 
     fn initWithStore(
         allocator: std.mem.Allocator,
@@ -725,6 +731,7 @@ const PresentationState = struct {
             .atlas_pixel_capacity = atlas_pixel_capacity,
             .command_capacity = config.command_capacity,
             .command_limit = command_limit,
+            .row_reuse_capacity = config.incremental_row_capacity,
         };
         // Construction is synchronous and may wait for one bounded projection.
         // Runtime refresh below skips a busy Store so canonical service keeps moving.
@@ -792,12 +799,46 @@ const PresentationState = struct {
             view.history_offset,
             &candidate,
         );
-        try terminal_render.updateObservation(
+        var changes: ?terminal_render.RowChanges = null;
+        var captured_rows = false;
+        if (view.rows <= self.row_reuse_capacity and view.rows <= self.row_generations.len) {
+            const same_base = self.content_revision != null and
+                self.row_rows == view.rows and self.row_columns == view.cols and
+                self.terminal_history_offset == view.history_offset and
+                self.row_alternate_screen == view.is_alternate_screen;
+            var known = true;
+            var repaired_rows: u16 = 0;
+            for (0..view.rows) |row| {
+                const generation = view.rowGeneration(@intCast(row)) orelse {
+                    known = false;
+                    break;
+                };
+                self.row_repairs[row] = !same_base or self.row_generations[row] != generation;
+                repaired_rows += @intFromBool(self.row_repairs[row]);
+                self.row_generations[row] = generation;
+            }
+            captured_rows = known;
+            // Broad repairs use the direct full-projection lane. Keep the
+            // successful observer baseline without priming an unused cache.
+            if (known and (!same_base or repaired_rows <= terminal_render.rowReuseLimit(view.rows))) changes = .{
+                .base_revision = if (same_base) self.content_revision else null,
+                .rows = self.row_repairs[0..view.rows],
+            };
+        }
+        // Staging row scalars never leaves a usable baseline after failed work.
+        self.row_rows = 0;
+        try terminal_render.updateObservationRows(
             self.renderer,
             observation,
             view.history_offset,
+            changes,
             bindings,
         );
+        if (captured_rows) {
+            self.row_rows = view.rows;
+            self.row_columns = view.cols;
+            self.row_alternate_screen = view.is_alternate_screen;
+        }
         @memcpy(self.image_bindings[0..bindings.len], bindings);
         self.image_binding_count = bindings.len;
         self.terminal_revision = revision;
@@ -2420,6 +2461,8 @@ test "cursor and content cuts agree with complete projection across native mutat
         .shaped_capacity = 128,
         .raster_bytes = 512 * 512,
         .command_capacity = 256,
+        .incremental_row_capacity = 4,
+        .incremental_command_capacity = 256,
     };
     const fonts = try TextStore.acquire(allocator, config);
     const candidate = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
@@ -2442,6 +2485,19 @@ test "cursor and content cuts agree with complete projection across native mutat
 
     const cuts = [_]struct { bytes: []const u8, history: u32 = 0 }{
         .{ .bytes = "ABCDEFGH\x1b[2;1Hijklmnop\x1b[3;1Hqrstuvwx" },
+        .{ .bytes = "\x1b[2;2HX" }, // First small edit re-primes after broad repairs.
+        .{ .bytes = "\x1b[2;2HZ" },
+        .{ .bytes = "\x1b[4;2H\x1b[4mU\x1b[0m" },
+        .{ .bytes = "\x1b[4;2HR" },
+        .{ .bytes = "\x1b[4;2H\x1b[7mV\x1b[0m" },
+        .{ .bytes = "\x1b[4;2HR" },
+        .{ .bytes = "\x1b[4;2H\x1b[41mB\x1b[0m" },
+        .{ .bytes = "\x1b[4;2HR" },
+        .{ .bytes = "\x1b[4;1H\x1b#6" },
+        .{ .bytes = "\x1b[4;1H\x1b#5" },
+        .{ .bytes = "\x1b[1;2HX\x1b[3;2HY" },
+        .{ .bytes = "\x1b[1;3HJ\x1b[2;3HK\x1b[3;3HL" },
+        .{ .bytes = "\x1b[2J\x1b[1;1Hprompt> " },
         .{ .bytes = "\x1b[1;3H" },
         .{ .bytes = "\x1b[?2026h\x1b[3;2H\x1b[?2026l" },
         .{ .bytes = "\x1b[?2026;5h\x1b[?2026l" },
@@ -2492,6 +2548,23 @@ test "cursor and content cuts agree with complete projection across native mutat
         try terminal_render.updateObservation(baseline, canonical.observation(), cut.history, images);
         @memcpy(baseline_bindings[0..images.len], images);
         baseline_binding_count = images.len;
+        if (std.mem.eql(u8, cut.bytes, "\x1b[2;2HZ")) {
+            const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+            try std.testing.expectEqual(terminal_render.RowSceneKind.patch, scene.kind);
+            try std.testing.expect(scene.repairs[1]);
+            try std.testing.expect(!scene.repairs[0] and !scene.repairs[2] and !scene.repairs[3]);
+        }
+        if (std.mem.eql(u8, cut.bytes, "\x1b[1;2HX\x1b[3;2HY")) {
+            const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+            try std.testing.expectEqual(terminal_render.RowSceneKind.patch, scene.kind);
+        }
+        if (std.mem.eql(u8, cut.bytes, "\x1b[1;3HJ\x1b[2;3HK\x1b[3;3HL"))
+            try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+        if (std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[4mU\x1b[0m") or
+            std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[7mV\x1b[0m") or
+            std.mem.eql(u8, cut.bytes, "\x1b[4;2H\x1b[41mB\x1b[0m") or
+            std.mem.eql(u8, cut.bytes, "\x1b[4;1H\x1b#6"))
+            try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
         try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
     }
     try std.testing.expectEqualDeep(held_commands, held.value.commands);
@@ -2584,6 +2657,8 @@ test "shared text owner survives caller release and isolates cache pressure, sta
         .shaped_capacity = 32,
         .raster_bytes = 256 * 256,
         .command_capacity = 256,
+        .incremental_row_capacity = 4,
+        .incremental_command_capacity = 256,
     };
     const shared = try initPresentationStore(a, threaded.io(), config.text.private, .{
         .shape_cache = config.shape_cache,
@@ -2647,7 +2722,8 @@ test "shared text owner survives caller release and isolates cache pressure, sta
         try std.testing.expect((try stateMut(first).terminal.feed("Z")).stateChanged());
         try std.testing.expectError(error.PresentationBusy, publishRender(first));
         // Canonical I/O still runs while another projection owns native text.
-        try input(second, .{ .bytes = "still canonical\n" });
+        // Echo stays within the deliberately tiny whole-frame shape budget.
+        try input(second, .{ .bytes = "AAA\n" });
         const turn = try service(second, true, true, 0);
         try std.testing.expect(!turn.stream_closed);
     }
@@ -2672,4 +2748,153 @@ fn storeAllocationProof(allocator: std.mem.Allocator) !void {
 
 test "shared text construction unwinds every Zig allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, storeAllocationProof, .{});
+}
+
+test "row cache budgets preserve complete frames across fixed-buffer fallback and command limits" {
+    const allocator = std.testing.allocator;
+    for ([_]usize{ 4, 32, 512 }) |budget| {
+        var canonical = try Terminal.init(allocator, 4, 8);
+        defer canonical.deinit();
+        const config = PresentationConfig{
+            .text = .{ .private = .{ .regular = .{ .path = .{
+                .primary = @import("test_fonts").primary_font,
+                .size = .{ .pixels = 18 },
+            } } } },
+            .box_drawing = .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .shape_cache = .{ .entry_capacity = 128, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+            .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+            .shaped_capacity = 128,
+            .raster_bytes = 512 * 512,
+            .command_capacity = 1,
+            .command_limit = 64,
+            .incremental_row_capacity = 4,
+            .incremental_command_capacity = budget,
+        };
+        const fonts = try TextStore.acquire(allocator, config);
+        const candidate = PresentationState.initWithStore(allocator, fonts, config, canonical.observation()) catch |failure| {
+            fonts.release();
+            return failure;
+        };
+        defer candidate.deinit(allocator);
+        const cell = candidate.cellSize();
+        try canonical.setCellPixelSize(cell.width, cell.height);
+        const baseline = try terminal_render.initPrivate(allocator, candidate.store.fonts.faces(), .{
+            .cell_size = cell,
+            .box_drawing = config.box_drawing,
+            .shape_cache = config.shape_cache,
+            .atlas = config.atlas,
+            .shaped_capacity = config.shaped_capacity,
+            .raster_bytes = config.raster_bytes,
+            .command_capacity = 64,
+            .command_limit = 64,
+        });
+        defer terminal_render.deinit(baseline);
+        try std.testing.expect((try canonical.feed("\x1b[?25lABCD")).stateChanged());
+        try candidate.publish(canonical.observation(), 0);
+        try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+        const initial_scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        try std.testing.expectEqual(@as(usize, 4), initial_scene.commands.len);
+        try std.testing.expect(terminal_render.usage(candidate.renderer).command_capacity <= config.command_limit);
+        if (budget == 4) try std.testing.checkAllAllocationFailures(
+            allocator,
+            rowCommandBufferAllocationProof,
+            .{ candidate.store.fonts.faces(), cell, config },
+        );
+        var held = acquirePublishedFrame(candidate.exchange) orelse return error.MissingPublication;
+        defer held.abandon();
+        const held_commands = try allocator.dupe(terminal_render.Command, held.value.commands);
+        defer allocator.free(held_commands);
+        for ([_][]const u8{
+            "\x1b[2J\x1b[HABCDEFGH\x1b[2;1HABCDEFGH\x1b[3;1HABCDEFGH\x1b[4;1HABCDEFGH",
+            "\x1b[2J\x1b[HABCD",
+            "\x1b[1;2HZ",
+        }, 0..) |bytes, index| {
+            try std.testing.expect((try canonical.feed(bytes)).stateChanged());
+            try candidate.publish(canonical.observation(), 0);
+            try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+            try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+            try std.testing.expect(terminal_render.usage(candidate.renderer).command_capacity <= config.command_limit);
+            if (index < 2) {
+                try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+            } else {
+                const scene = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+                try std.testing.expect(scene.commands.len <= budget);
+                if (index != 0) try std.testing.expectEqual(@as(usize, 4), scene.commands.len);
+            }
+        }
+        const primed = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        try std.testing.expectEqual(terminal_render.RowSceneKind.baseline, primed.kind);
+        try std.testing.expect((try canonical.feed("\x1b[1;3HY")).stateChanged());
+        try candidate.publish(canonical.observation(), 0);
+        try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+        const patched = terminal_render.rowScene(candidate.renderer) orelse return error.MissingRowScene;
+        try std.testing.expectEqual(terminal_render.RowSceneKind.patch, patched.kind);
+        try std.testing.expect(patched.repairs[0]);
+        try std.testing.expect(!patched.repairs[1] and !patched.repairs[2] and !patched.repairs[3]);
+        // An oversized cache budget cannot widen the declared command limit.
+        try canonical.resize(4, 16);
+        try std.testing.expect((try canonical.feed("\x1b[2J\x1b[HABCDEFGHIJKLMNOP\x1b[2;1HABCDEFGHIJKLMNOP\x1b[3;1HABCDEFGHIJKLMNOP\x1b[4;1HABCDEFGHIJKLMNOP")).stateChanged());
+        try std.testing.expectError(error.CommandLimit, candidate.refresh(canonical.observation(), 0));
+        // Match failed atlas work before comparing exact resource generations.
+        try std.testing.expectError(error.CommandLimit, terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{}));
+        try std.testing.expect(terminal_render.rowScene(candidate.renderer) == null);
+        try std.testing.expect((try canonical.feed("\x1b[2J\x1b[HABCD")).stateChanged());
+        try candidate.publish(canonical.observation(), 0);
+        try terminal_render.updateObservation(baseline, canonical.observation(), 0, &.{});
+        try expectPresentationCommandsEqual(candidate.renderer, baseline, null);
+        try std.testing.expect(terminal_render.rowScene(candidate.renderer) != null);
+        try std.testing.expectEqualDeep(held_commands, held.value.commands);
+    }
+}
+
+fn rowCommandBufferAllocationProof(
+    allocator: std.mem.Allocator,
+    faces: terminal_render.FontFaces,
+    cell_size: terminal_render.Size,
+    config: PresentationConfig,
+) !void {
+    // Canonical mutations are outside the presentation allocator being faulted.
+    var canonical = try Terminal.init(std.testing.allocator, 4, 8);
+    defer canonical.deinit();
+    try canonical.setCellPixelSize(cell_size.width, cell_size.height);
+    const renderer = try terminal_render.initPrivate(allocator, faces, .{
+        .cell_size = cell_size,
+        .box_drawing = config.box_drawing,
+        .shape_cache = config.shape_cache,
+        .atlas = config.atlas,
+        .shaped_capacity = config.shaped_capacity,
+        .raster_bytes = config.raster_bytes,
+        .command_capacity = 1,
+        .command_limit = 64,
+        .incremental_row_capacity = 4,
+        .incremental_command_capacity = 4,
+    });
+    defer terminal_render.deinit(renderer);
+    const repairs = [_]bool{ true, true, true, true };
+    var base_revision: ?u64 = null;
+    for ([_][]const u8{
+        "\x1b[?25lABCD",
+        "\x1b[2J\x1b[HABCDEFGH\x1b[2;1HABCDEFGH\x1b[3;1HABCDEFGH\x1b[4;1HABCDEFGH",
+        "\x1b[2J\x1b[HABCD",
+        "\x1b[1;2HZ",
+    }, 0..) |bytes, index| {
+        try std.testing.expect((try canonical.feed(bytes)).stateChanged());
+        try terminal_render.updateObservationRows(renderer, canonical.observation(), 0, .{
+            .base_revision = base_revision,
+            .rows = &repairs,
+        }, &.{});
+        base_revision = canonical.observation().contentSequence();
+        try std.testing.expect(terminal_render.usage(renderer).command_capacity <= 64);
+        if (index == 1) {
+            try std.testing.expect(terminal_render.rowScene(renderer) == null);
+        } else {
+            const scene = terminal_render.rowScene(renderer) orelse return error.MissingRowScene;
+            try std.testing.expectEqual(@as(usize, 4), scene.commands.len);
+        }
+    }
 }

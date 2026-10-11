@@ -837,3 +837,114 @@ Artifact provenance:
 - 26 rows Fast: 80d3890e8ed5962dcdb8e371ea554d5ee2843cadd5be3ed4720d0583c49865c9.
 - 52 rows Fast: c08bad13f7c384a9397bfacc0c5887e607b194571f0632d0bf3c079abb06bb62.
 - 78 rows Fast: d823cc8e83edc2e08190f916303c58a032212c75fc7ab4cbacac60a3efaf4782.
+
+## Direct native row work accepted, 2026-10-11
+
+Native presentation now compares existing non-consuming VT row identities once
+per observation. Instance offers reuse only within the renderer repair budget:
+52 of 79 rows here. Broader changes request direct full projection while still
+committing a successful observer baseline. The next small edit can establish
+a full retained baseline, and later small edits patch it. VT state is unchanged.
+
+Render validates row eligibility while inspecting required backgrounds, skips
+known clean eligible rows, and retains the completed command buffer instead of
+copying every glyph back into a second cache. The same two private buffers grow
+within their existing limits. Complete owned frames, exact resources/clipping,
+and three immutable Instance publication slots keep their contracts.
+
+Four independent cohorts contain 80 fresh 20-second controls, n=2 per Howl build
+and workload plus two Foot light references per cohort. CPU is percent of one
+core excluding producer and shell; these are observed ranges, not confidence
+intervals. Do not pool separate cohorts or infer display FPS/latency.
+
+### Eligibility fusion
+
+| Build | Light CPU mean (range) | Dense | Rich |
+| --- | ---: | ---: | ---: |
+| accepted | 15.97% (15.59–16.35) | 35.95% (35.29–36.61) | 56.86% (56.71–57.01) |
+| old52 | 14.33% (14.18–14.48) | 36.25% (36.20–36.30) | 57.42% (56.96–57.87) |
+| fused52 | 13.72% (13.67–13.77) | 37.24% (36.61–37.87) | 57.26% (57.01–57.52) |
+
+### Retain completed output
+
+| Build | Light CPU mean (range) | Dense | Rich |
+| --- | ---: | ---: | ---: |
+| accepted | 15.52% (15.44–15.59) | 36.10% (36.10–36.10) | 58.05% (57.87–58.23) |
+| fused52 | 13.77% (13.72–13.82) | 37.21% (36.76–37.67) | 57.65% (57.22–58.08) |
+| cache52 | 13.49% (13.47–13.52) | 36.10% (35.90–36.30) | 58.56% (57.62–59.49) |
+
+### Bounded buffer growth
+
+| Build | Light CPU mean (range) | Dense | Rich |
+| --- | ---: | ---: | ---: |
+| accepted | 15.44% (15.39–15.49) | 37.90% (35.85–39.95) | 57.54% (57.06–58.02) |
+| cache52 | 13.52% (13.37–13.67) | 36.48% (36.20–36.76) | 58.46% (58.18–58.73) |
+| grow52 | 13.47% (13.47–13.47) | 36.13% (36.05–36.20) | 58.46% (57.87–59.04) |
+
+### Native repair-budget admission
+
+| Build | Light CPU mean (range) | Dense | Rich |
+| --- | ---: | ---: | ---: |
+| accepted | 15.75% (15.70–15.80) | 36.48% (35.90–37.06) | 58.18% (57.77–58.58) |
+| grow52 | 13.72% (13.52–13.92) | 35.95% (35.54–36.35) | 58.84% (58.38–59.29) |
+| admit52 | 13.80% (13.72–13.87) | 36.35% (35.80–36.91) | 58.05% (57.21–58.89) |
+
+Fusion alone saved 4.24% sparse CPU versus old52 but increased dense mean 2.72%.
+Retaining output removed the whole-cache glyph copy: sparse -2.02% and dense
+-2.99% versus fused52; dense mean then matched accepted. Growth preserved sparse
+savings and lowered sampled peaks against the fixed pool. Its dense accepted
+39.95% high trial remains beside 35.85%; no dense gain is qualified from that mean.
+
+Final admission saves 12.38% sparse CPU versus accepted in its cohort. Dense
+and rich ranges overlap accepted, so neither qualifies a gain or regression.
+Final Foot sparse CPU 3.75–3.80% remains far below native candidate 13.72–13.87%.
+The earlier growth-rich positive mean signal also overlaps; all raw runs remain.
+
+Total emitted frames 383994, skipped slots 6: two fixed-cache rich slots in the
+growth cohort and four grow52 rich slots in the admission cohort. All 80 runners
+were eligible; final admit52 trials have zero skips.
+
+Native Input is 72 bytes. Initial requested command storage across both buffers
+is 589824 bytes/0.5625 MiB versus 8552520 bytes/~8.1563 MiB for the fixed-cache
+prototype. Both retain the same two-buffer maximum 16515216 bytes, plus metadata.
+The fixed allocation no longer reserves its maximum at construction. Requested
+capacity is distinct from touched/resident memory. Growth sampled PSS means
+versus fixed were lower 1.75 MiB sparse, 1.48 MiB dense, 1.81 MiB rich in that cohort.
+
+Final sparse accepted has a cold anonymous outlier 90.38 MiB and a warm 40.83 MiB
+cut; candidate 42.17–42.19 MiB is about 1.35 MiB above the warm baseline. Dense
+candidate 41.39–42.30 versus 40.78–41.11 MiB also costs memory. Rich ranges overlap.
+There is no RAM-saving claim against accepted, and Foot still leads RAM.
+
+The common 378x74 payload leaves five blank rows of Howl 79 clean. An all-row-only
+bypass therefore misses this broad workload. One shared rowReuseLimit policy
+serves the renderer planner and native caller; no duplicate cutoff or extra
+row traversal was added. Source type selection remains comptime; workload
+reuse/fallback remains runtime. Source-neutral type names were not the CPU fix.
+
+Native full-command oracles cover sparse/broad edits, clear plus prompt,
+bypass/re-prime/patch, cursor, styles/palette/DEC, history/alternate screen,
+resize, images, exact command-limit failure/recovery and held leases. Budgets
+4/32/512 plus injected presentation allocation failures cover both buffer roles,
+cache growth and normal fallback. Two independent row caches sharing a text
+store retain pressure, neighbor reset, stalled lease and canonical-progress
+proofs. The tiny-cache PTY fixture now echoes known glyphs to remove scheduling
+dependence without raising its 4-entry pressure bound. Transported/root and
+Fast app/pixel proofs pass; final artifacts/gates recorded below.
+
+Same compiler 0.17.0-dev.1980+e78ea8f2c, Fast LLVM/selfhost linking; private
+1920x1080 KWin scale 1/OpenGL, 240 emitted Hz with synchronized output. Howl PTY
+384x79, Foot 384x77. Producer source 3dbd021, SHA
+87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557.
+
+Final timed Fast SHA 5a6273b04464803683915a550fa9a7ab20bb4f012af0b00811939816e1dcced9
+(14731092 bytes). Qualified Safe, final gates and retirement receipts remain
+under direct-20261011 in the Home workstream. The launch Safe aa23a5ac remains
+unchanged; this source checkpoint does not promote the live canary.
+
+Foot still skips clean cells as well as rows; this change uses row identities.
+Further cell/span work must earn its mutation, coverage, observer and lifetime
+costs against headless VT and presentation controls. Extra asynchronous queues
+have no measured justification. AtlasFull stays the unreproduced watch item.
+
+Final Safe SHA 9d2d44bfc583cff0d5d24bd40604bdbfb34133cf47535bb77151cc5f5d794dad (14084278 bytes) passes app/pixel proofs. The final Fast rebuild is byte-identical to the timed candidate.
