@@ -11,6 +11,9 @@ pub const decoded = @import("codec/decoded.zig");
 /// Complete owned text observations with bounded raw/zlib/packed decoding.
 pub const text = @import("codec/text.zig");
 
+/// Publisher-selected encoding specialized on VT's read-only observation type.
+pub const encoder = @import("codec/encode.zig");
+
 /// Complete bounded terminal properties; decoded slices borrow their packet.
 pub const properties = wire.properties;
 
@@ -146,4 +149,5 @@ test {
     std.testing.refAllDecls(wire);
     std.testing.refAllDecls(decoded);
     std.testing.refAllDecls(text);
+    std.testing.refAllDecls(encoder);
 }

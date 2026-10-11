@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
+    const codec = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt_codec");
 
     const protocol_module = b.dependency("server_protocol", .{
         .target = target,
@@ -17,6 +18,7 @@ pub fn build(b: *std.Build) void {
     });
     terminal_service.addImport("howl_instance", instance.module("howl_instance"));
     terminal_service.addImport("server_protocol", protocol_module);
+    terminal_service.addImport("howl_vt_codec", codec);
 
     const module = b.addModule("server", .{
         .root_source_file = b.path("src/server.zig"),

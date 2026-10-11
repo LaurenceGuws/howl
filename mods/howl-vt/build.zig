@@ -31,6 +31,22 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&codec_proofs.step);
     test_step.dependOn(&b.addRunArtifact(codec_proofs).step);
 
+    const encoder_root = b.createModule(.{
+        .root_source_file = b.path("test/codec_encoder.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    encoder_root.addImport("howl_vt", module);
+    encoder_root.addImport("howl_vt_codec", codec);
+    const encoder_proofs = b.addTest(.{
+        .name = "howl-vt-codec-encoder",
+        .root_module = encoder_root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&encoder_proofs.step);
+    test_step.dependOn(&b.addRunArtifact(encoder_proofs).step);
+
     const unicode_digest_module = b.createModule(.{
         .root_source_file = b.path("src/unicode_17_digest.zig"),
         .target = target,

@@ -13,6 +13,12 @@ const posix = if (native_windows) struct {} else std.posix;
 const linux = if (native_windows) struct {} else std.os.linux;
 const howl = @import("howl_instance");
 const protocol = @import("server_protocol").terminal;
+const codec = @import("howl_vt_codec");
+const vt_encoder = codec.encoder.Encoder(howl.Terminal.Observation);
+const terminalProperties = vt_encoder.properties;
+const countSnapshotGraphics = vt_encoder.countGraphics;
+const encodeSnapshotGraphics = vt_encoder.encodeGraphics;
+const imageVisible = vt_encoder.imageVisible;
 
 /// Owns the Windows service side of one listener-free in-process HWLS duplex stream.
 pub const WindowsAdoptedStream = struct {
@@ -68,8 +74,7 @@ const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payloa
 // Live history_offset=0 retains only semantic row generations instead.
 const maximum_delta_cells: usize =
     protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes;
-const delta_link_word_count: usize =
-    (@as(usize, protocol.text_v1.maximum_hyperlinks) + 1 + 63) / 64;
+const delta_link_word_count = codec.encoder.link_word_count;
 const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
@@ -1833,13 +1838,9 @@ pub const Service = struct {
         } else null;
         self.snapshot_body.clearRetainingCapacity();
         const body = &self.snapshot_body;
-        try self.appendPresentationRecord(machine, body, cursor_age_ns);
+        try vt_encoder.appendPresentation(self.allocator, machine, body, cursor_age_ns);
         if (delta_reuse_allowed) {
-            const record = try self.beginTextRecord(body, .row_shift);
-            var shift_payload: [protocol.text_delta_v2.row_shift_bytes]u8 = undefined;
-            protocol.encodeTextRowShift(&shift_payload, shifted_rows orelse 0);
-            try body.appendSlice(self.allocator, &shift_payload);
-            try finishTextRecord(body, record);
+            try codec.encoder.appendRowShift(self.allocator, body, shifted_rows orelse 0);
         }
 
         // Observe each visible VT row directly for this synchronous cut. Live
@@ -1896,48 +1897,13 @@ pub const Service = struct {
                 false;
             if (reusable) {
                 if (source_row.? != row) @memcpy(destination_links, source_links);
-                mergeSnapshotLinks(&referenced_links, destination_links);
-                var unchanged_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
-                protocol.encodeTextRecordHeader(&unchanged_header, .{ .kind = .row, .payload_len = 0 });
-                try body.appendSlice(self.allocator, &unchanged_header);
+                codec.encoder.mergeLinks(&referenced_links, destination_links);
+                try codec.encoder.appendRowReuse(self.allocator, body);
             } else {
                 if (delta) @memset(destination_links, 0);
-                const record = try self.beginTextRecord(body, .row);
-                var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
-                    @intFromBool(wrapped),
-                    richLineGeometry(geometry),
-                    @truncate(terminal_view.cols >> 8),
-                    @truncate(terminal_view.cols),
-                };
-                try body.appendSlice(self.allocator, &row_header);
-                var column: u16 = 0;
-                while (column < terminal_view.cols) : (column += 1) {
-                    const cell = terminal_view.cellInfoAt(row, column);
-                    if (delta)
-                        try noteSnapshotLink(cell, destination_links)
-                    else
-                        try noteSnapshotLink(cell, &referenced_links);
-                    var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
-                    const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
-                        terminal_view.cellScalarsAt(
-                            row,
-                            column,
-                            &scalar_storage,
-                        )
-                    else
-                        &.{};
-                    if (scalars.len > protocol.text_v1.maximum_cell_scalars)
-                        return error.InvalidSnapshot;
-                    if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
-                        if (scalars.len == 0 or scalars[0] != cell.codepoint)
-                            return error.InvalidSnapshot;
-                    } else if (scalars.len != 0) return error.InvalidSnapshot;
-                    try self.appendTextCell(body, cell, scalars);
-                    if (body.items.len > protocol.maximum_text_snapshot_bytes)
-                        return error.SnapshotTooLarge;
-                }
-                try finishTextRecord(body, record);
-                if (delta) mergeSnapshotLinks(&referenced_links, destination_links);
+                const row_links: []u64 = if (delta) destination_links else &referenced_links;
+                try vt_encoder.appendRow(self.allocator, body, terminal_view, row, row_links);
+                if (delta) codec.encoder.mergeLinks(&referenced_links, destination_links);
             }
 
             if (destination_cache) |value| {
@@ -1953,29 +1919,7 @@ pub const Service = struct {
             }
         }
 
-        for (referenced_links, 0..) |initial_word, word_index| {
-            var word = initial_word;
-            while (word != 0) {
-                const bit: usize = @intCast(@ctz(word));
-                word &= word - 1;
-                const link_id = word_index * 64 + bit;
-                if (link_id == 0 or link_id > protocol.text_v1.maximum_hyperlinks) continue;
-                const uri = machine.hyperlinkUri(@intCast(link_id)) orelse
-                    return error.InvalidSnapshot;
-                if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
-                    return error.InvalidSnapshot;
-                const record = try self.beginTextRecord(body, .hyperlink);
-                var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
-                encodeU32(link_header[0..4], @intCast(link_id));
-                link_header[4] = @truncate(uri.len >> 8);
-                link_header[5] = @truncate(uri.len);
-                try body.appendSlice(self.allocator, &link_header);
-                try body.appendSlice(self.allocator, uri);
-                try finishTextRecord(body, record);
-                if (body.items.len > protocol.maximum_text_snapshot_bytes)
-                    return error.SnapshotTooLarge;
-            }
-        }
+        try vt_encoder.appendHyperlinks(self.allocator, body, machine, &referenced_links);
         const body_bytes = body.items.len;
         if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
             body_bytes > std.math.maxInt(u32))
@@ -2119,25 +2063,6 @@ pub const Service = struct {
         }
     }
 
-    fn noteSnapshotLink(cell: howl.Terminal.Cell, referenced_links: []u64) !void {
-        const link_id = cell.attrs.link_id;
-        if (link_id == 0) return;
-        if (link_id > protocol.text_v1.maximum_hyperlinks or referenced_links.len != delta_link_word_count)
-            return error.InvalidSnapshot;
-        const link_index: usize = @intCast(link_id);
-        const word_index = link_index / 64;
-        const shift: u6 = @intCast(link_index % 64);
-        referenced_links[word_index] |= @as(u64, 1) << shift;
-    }
-
-    fn mergeSnapshotLinks(
-        referenced_links: *[delta_link_word_count]u64,
-        row_links: []const u64,
-    ) void {
-        std.debug.assert(row_links.len == delta_link_word_count);
-        for (referenced_links, row_links) |*destination, source| destination.* |= source;
-    }
-
     fn appendSnapshotCompressedData(
         self: *Service,
         output: *std.ArrayList(u8),
@@ -2204,96 +2129,6 @@ pub const Service = struct {
         }
     }
 
-    fn appendPresentationRecord(
-        self: *Service,
-        machine: *const howl.Terminal.Observation,
-        output: *std.ArrayList(u8),
-        cursor_age_ns: u64,
-    ) !void {
-        const record = try self.beginTextRecord(output, .presentation);
-        const payload_start = output.items.len;
-        const presentation = machine.presentation();
-        var fixed: [12]u8 = @splat(0);
-        encodeU64(fixed[0..8], cursor_age_ns);
-        if (presentation.cursor != null)
-            fixed[8] |= protocol.text_v1.presentation_presence.cursor;
-        if (presentation.cursor_text != null)
-            fixed[8] |= protocol.text_v1.presentation_presence.cursor_text;
-        if (presentation.selection_background != null)
-            fixed[8] |= protocol.text_v1.presentation_presence.selection_background;
-        if (presentation.selection_foreground != null)
-            fixed[8] |= protocol.text_v1.presentation_presence.selection_foreground;
-        if (presentation.reverse_screen)
-            fixed[9] |= protocol.text_v1.presentation_flags.reverse_screen;
-        try output.appendSlice(self.allocator, &fixed);
-        for (presentation.palette) |rgb| try appendRgba(self.allocator, output, rgb);
-        try appendRgba(self.allocator, output, presentation.foreground);
-        try appendRgba(self.allocator, output, presentation.background);
-        try appendOptionalRgba(self.allocator, output, presentation.cursor);
-        try appendOptionalRgba(self.allocator, output, presentation.cursor_text);
-        try appendOptionalRgba(self.allocator, output, presentation.selection_background);
-        try appendOptionalRgba(self.allocator, output, presentation.selection_foreground);
-        if (output.items.len - payload_start != protocol.text_v1.presentation_bytes)
-            return error.InvalidSnapshot;
-        try finishTextRecord(output, record);
-    }
-
-    fn appendTextCell(
-        self: *Service,
-        output: *std.ArrayList(u8),
-        cell: howl.Terminal.Cell,
-        scalars: []const u21,
-    ) !void {
-        var encoded: [protocol.text_v1.cell_header_bytes]u8 = @splat(0);
-        encoded[0] = @intCast(scalars.len);
-        encoded[1] = cell.width;
-        encoded[2] = cell.height;
-        encoded[3] = cell.x;
-        encoded[4] = cell.y;
-        encoded[5] = cell.subscale_n;
-        encoded[6] = cell.subscale_d;
-        encoded[7] = cell.vertical_align;
-        encoded[8] = cell.horizontal_align;
-        encoded[9] = @intFromBool(cell.semantic_width);
-        encoded[10] = cell.attrs.font;
-        encoded[11] = richBaseline(cell.attrs.baseline);
-        encoded[12] = richUnderlineStyle(cell.attrs.underline_style);
-        encoded[13] = richProtection(cell.attrs.protected);
-        const style = richStyle(cell.attrs);
-        encoded[14] = @truncate(style >> 8);
-        encoded[15] = @truncate(style);
-        try encodeRichColor(encoded[16..21], cell.attrs.fg);
-        try encodeRichColor(encoded[21..26], cell.attrs.bg);
-        try encodeRichColor(encoded[26..31], cell.attrs.underline_color);
-        encodeU32(encoded[31..35], cell.attrs.link_id);
-        try output.appendSlice(self.allocator, &encoded);
-        for (scalars) |scalar| {
-            var scalar_bytes: [4]u8 = undefined;
-            encodeU32(&scalar_bytes, scalar);
-            try output.appendSlice(self.allocator, &scalar_bytes);
-        }
-    }
-
-    const TextRecordOffsets = struct {
-        record_header: usize,
-        payload_start: usize,
-        kind: protocol.TextRecordKind,
-    };
-
-    fn beginTextRecord(
-        self: *Service,
-        output: *std.ArrayList(u8),
-        kind: protocol.TextRecordKind,
-    ) !TextRecordOffsets {
-        const record_header = output.items.len;
-        try output.appendNTimes(self.allocator, 0, protocol.text_v1.record_header_bytes);
-        return .{
-            .record_header = record_header,
-            .payload_start = output.items.len,
-            .kind = kind,
-        };
-    }
-
     // -------------------------------------------------------------------------
     // Response framing
     // -------------------------------------------------------------------------
@@ -2338,167 +2173,6 @@ fn terminalImage(
             return candidate;
     }
     return null;
-}
-
-fn terminalProperties(machine: *const howl.Terminal.Observation) protocol.properties.View {
-    const directory = machine.workingDirectory();
-    const shell = machine.shellIntegration();
-    const mark = machine.shellMark();
-    const progress = machine.taskProgress();
-    return .{
-        .title = machine.title(),
-        .icon = machine.icon(),
-        .directory = if (directory) |value| .{
-            .kind = switch (value.kind) {
-                .uri => .uri,
-                .path => .path,
-            },
-            .value = value.value,
-        } else null,
-        .remote_host = machine.remoteHost(),
-        .shell = if (shell) |value| .{ .version = value.version, .name = value.shell } else null,
-        .mark = .{
-            .generation = mark.generation,
-            .kind = mark.kind,
-            .status = mark.status,
-            .metadata = mark.metadata,
-        },
-        .progress = .{
-            .kind = switch (progress.kind) {
-                .none => .none,
-                .normal => .normal,
-                .failure => .failure,
-                .indeterminate => .indeterminate,
-                .paused => .paused,
-            },
-            .value = progress.value,
-        },
-    };
-}
-
-const SnapshotGraphicsCounts = struct {
-    images: u16,
-    placements: u16,
-    payload_bytes: usize,
-};
-
-fn countSnapshotGraphics(images: *const howl.Terminal.Images) !SnapshotGraphicsCounts {
-    var image_count: usize = 0;
-    var image_index: usize = 0;
-    while (image_index < images.imageCount()) : (image_index += 1) {
-        const image = images.image(image_index) orelse return error.InvalidSnapshot;
-        if (imageVisible(images, image.id)) image_count += 1;
-    }
-    var placement_count: usize = 0;
-    // Images borrows one immutable cut. Count can scan Unicode-placeholder
-    // cells, so never repeat that scan for each ordinary image placement.
-    const placement_slots = images.placementCount();
-    var placement_index: usize = 0;
-    while (placement_index < placement_slots) : (placement_index += 1) {
-        if (images.placement(placement_index) != null) placement_count += 1;
-    }
-    if (image_count > protocol.graphics_v2.maximum_images or
-        placement_count > protocol.graphics_v2.maximum_placements)
-        return error.InvalidSnapshot;
-    const image_bytes = std.math.mul(usize, image_count, protocol.graphics_v2.image_bytes) catch
-        return error.SnapshotTooLarge;
-    const placement_bytes = std.math.mul(
-        usize,
-        placement_count,
-        protocol.graphics_v2.placement_bytes,
-    ) catch return error.SnapshotTooLarge;
-    const payload_bytes = std.math.add(
-        usize,
-        protocol.graphics_v2.manifest_header_bytes + image_bytes,
-        placement_bytes,
-    ) catch return error.SnapshotTooLarge;
-    return .{
-        .images = @intCast(image_count),
-        .placements = @intCast(placement_count),
-        .payload_bytes = payload_bytes,
-    };
-}
-
-fn encodeSnapshotGraphics(
-    images: *const howl.Terminal.Images,
-    counts: SnapshotGraphicsCounts,
-    output: []u8,
-) !void {
-    if (output.len != counts.payload_bytes) return error.InvalidSnapshot;
-
-    var header: [protocol.graphics_v2.manifest_header_bytes]u8 = undefined;
-    protocol.encodeSnapshotGraphicsHeader(&header, .{
-        .generation = images.generation,
-        .content_generation = images.content_generation,
-        .cell_pixel_width = images.cell_pixel_width,
-        .cell_pixel_height = images.cell_pixel_height,
-        .image_count = counts.images,
-        .placement_count = counts.placements,
-    });
-    @memcpy(output[0..header.len], &header);
-    var offset: usize = header.len;
-
-    var image_index: usize = 0;
-    while (image_index < images.imageCount()) : (image_index += 1) {
-        const image = images.image(image_index) orelse return error.InvalidSnapshot;
-        if (!imageVisible(images, image.id)) continue;
-        var encoded: [protocol.graphics_v2.image_bytes]u8 = undefined;
-        protocol.encodeSnapshotImage(&encoded, .{
-            .image_id = image.id,
-            .generation = image.generation,
-            .width = image.width,
-            .height = image.height,
-        });
-        @memcpy(output[offset..][0..encoded.len], &encoded);
-        offset += encoded.len;
-    }
-
-    // Images borrows one immutable cut. Count can scan Unicode-placeholder
-    // cells, so never repeat that scan for each ordinary image placement.
-    const placement_slots = images.placementCount();
-    var placement_index: usize = 0;
-    while (placement_index < placement_slots) : (placement_index += 1) {
-        const placement = images.placement(placement_index) orelse continue;
-        if (!imagePresent(images, placement.image_id)) return error.InvalidSnapshot;
-        var encoded: [protocol.graphics_v2.placement_bytes]u8 = undefined;
-        protocol.encodeSnapshotImagePlacement(&encoded, .{
-            .image_id = placement.image_id,
-            .generation = placement.generation,
-            .row = placement.row,
-            .column = placement.col,
-            .source_x = placement.source_x,
-            .source_y = placement.source_y,
-            .source_width = placement.source_width,
-            .source_height = placement.source_height,
-            .cell_x = placement.cell_x,
-            .cell_y = placement.cell_y,
-            .pixel_width = placement.pixel_width,
-            .pixel_height = placement.pixel_height,
-            .z = placement.z,
-        });
-        @memcpy(output[offset..][0..encoded.len], &encoded);
-        offset += encoded.len;
-    }
-    if (offset != output.len) return error.InvalidSnapshot;
-}
-
-fn imageVisible(images: *const howl.Terminal.Images, image_id: u32) bool {
-    const placement_slots = images.placementCount();
-    var index: usize = 0;
-    while (index < placement_slots) : (index += 1) {
-        const placement = images.placement(index) orelse continue;
-        if (placement.image_id == image_id) return true;
-    }
-    return false;
-}
-
-fn imagePresent(images: *const howl.Terminal.Images, image_id: u32) bool {
-    var index: usize = 0;
-    while (index < images.imageCount()) : (index += 1) {
-        const image = images.image(index) orelse continue;
-        if (image.id == image_id) return true;
-    }
-    return false;
 }
 
 fn typedKeyName(value: u32) ?howl.KeyName {
@@ -2606,20 +2280,6 @@ fn typedMouseButton(value: protocol.InputMouseButton) howl.MouseButton {
     };
 }
 
-fn finishTextRecord(output: *std.ArrayList(u8), offsets: Service.TextRecordOffsets) !void {
-    const payload_len = output.items.len - offsets.payload_start;
-    if (payload_len > std.math.maxInt(u32)) return error.SnapshotTooLarge;
-    var record_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
-    protocol.encodeTextRecordHeader(&record_header, .{
-        .kind = offsets.kind,
-        .payload_len = @intCast(payload_len),
-    });
-    @memcpy(
-        output.items[offsets.record_header..offsets.payload_start],
-        &record_header,
-    );
-}
-
 fn viewRowExactlyReusable(
     view: howl.Terminal.SemanticView,
     row: u16,
@@ -2637,99 +2297,6 @@ fn viewRowExactlyReusable(
             return false;
     }
     return true;
-}
-
-fn richLineGeometry(value: howl.Terminal.LineGeometry) u8 {
-    return switch (value) {
-        .single_width => 0,
-        .double_width => 1,
-        .double_height_top => 2,
-        .double_height_bottom => 3,
-    };
-}
-
-fn richBaseline(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.baseline)) u8 {
-    return switch (value) {
-        .normal => 0,
-        .raised => 1,
-        .lowered => 2,
-    };
-}
-
-fn richUnderlineStyle(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.underline_style)) u8 {
-    return switch (value) {
-        .straight => 0,
-        .double => 1,
-        .curly => 2,
-        .dotted => 3,
-        .dashed => 4,
-    };
-}
-
-fn richProtection(value: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.protected)) u8 {
-    return switch (value) {
-        .none => 0,
-        .iso => 1,
-        .dec => 2,
-    };
-}
-
-fn richStyle(attrs: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs)) u16 {
-    var result: u16 = 0;
-    if (attrs.bold) result |= protocol.text_v1.style.bold;
-    if (attrs.dim) result |= protocol.text_v1.style.dim;
-    if (attrs.italic) result |= protocol.text_v1.style.italic;
-    if (attrs.blink) result |= protocol.text_v1.style.blink;
-    if (attrs.blink_fast) result |= protocol.text_v1.style.blink_fast;
-    if (attrs.reverse) result |= protocol.text_v1.style.reverse;
-    if (attrs.invisible) result |= protocol.text_v1.style.invisible;
-    if (attrs.underline) result |= protocol.text_v1.style.underline;
-    if (attrs.strikethrough) result |= protocol.text_v1.style.strikethrough;
-    return result;
-}
-
-fn encodeRichColor(output: []u8, color: @TypeOf(@as(howl.Terminal.Cell, undefined).attrs.fg)) !void {
-    std.debug.assert(output.len == protocol.text_v1.color_bytes);
-    const kind: protocol.TextColorKind = switch (color.colorKind()) {
-        .default => .default,
-        .indexed => .indexed,
-        .rgb => .rgb,
-    };
-    var encoded: [protocol.text_v1.color_bytes]u8 = undefined;
-    try protocol.encodeTextColor(&encoded, .{
-        .kind = kind,
-        .value = color.colorValue(),
-    });
-    @memcpy(output, &encoded);
-}
-
-fn appendRgba(
-    allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
-    rgb: @TypeOf(@as(howl.Terminal.Presentation, undefined).palette[0]),
-) !void {
-    try output.appendSlice(allocator, &.{ rgb.r, rgb.g, rgb.b, rgb.a });
-}
-
-fn appendOptionalRgba(
-    allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
-    rgb: ?@TypeOf(@as(howl.Terminal.Presentation, undefined).palette[0]),
-) !void {
-    if (rgb) |value| return appendRgba(allocator, output, value);
-    try output.appendSlice(allocator, &.{ 0, 0, 0, 0 });
-}
-
-fn encodeU64(output: []u8, value: u64) void {
-    std.debug.assert(output.len == 8);
-    output[0] = @truncate(value >> 56);
-    output[1] = @truncate(value >> 48);
-    output[2] = @truncate(value >> 40);
-    output[3] = @truncate(value >> 32);
-    output[4] = @truncate(value >> 24);
-    output[5] = @truncate(value >> 16);
-    output[6] = @truncate(value >> 8);
-    output[7] = @truncate(value);
 }
 
 fn configureAdoptedStream(stream: AdoptedStream) error{SocketOptionFailed}!void {
@@ -2962,19 +2529,19 @@ test "delta hyperlink row bits preserve bounded identities and merge exactly" {
     const first_id: u32 = 1;
     const last_id: u32 = protocol.text_v1.maximum_hyperlinks;
     cell.attrs.link_id = first_id;
-    try Service.noteSnapshotLink(cell, cache.rowLinks(0));
+    try codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(0));
     cell.attrs.link_id = last_id;
-    try Service.noteSnapshotLink(cell, cache.rowLinks(1));
+    try codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(1));
 
     var merged: [delta_link_word_count]u64 = @splat(0);
-    Service.mergeSnapshotLinks(&merged, cache.rowLinks(0));
-    Service.mergeSnapshotLinks(&merged, cache.rowLinks(1));
+    codec.encoder.mergeLinks(&merged, cache.rowLinks(0));
+    codec.encoder.mergeLinks(&merged, cache.rowLinks(1));
     try std.testing.expect((merged[first_id / 64] & (@as(u64, 1) << @as(u6, @intCast(first_id % 64)))) != 0);
     try std.testing.expect((merged[last_id / 64] & (@as(u64, 1) << @as(u6, @intCast(last_id % 64)))) != 0);
     for (cache.rowLinks(2)) |word| try std.testing.expectEqual(@as(u64, 0), word);
 
     cell.attrs.link_id = protocol.text_v1.maximum_hyperlinks + 1;
-    try std.testing.expectError(error.InvalidSnapshot, Service.noteSnapshotLink(cell, cache.rowLinks(2)));
+    try std.testing.expectError(error.InvalidSnapshot, codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(2)));
 }
 
 test "live delta uses row generations and reuses unchanged rows" {

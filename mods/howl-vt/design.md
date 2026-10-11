@@ -8,7 +8,9 @@ observation payload encoding/validation. Its text, graphics and property grammar
 and decoded cells, scalar banks, palettes, links and manifests have no Server,
 socket, live terminal parser or renderer dependency. Complete text decoding
 returns one explicit owner for rows, scalar banks and URI bytes; raw, zlib and
-packed zlib bodies share the same validation and cleanup. The normal
+packed zlib bodies share the same validation and cleanup. Publishers separately
+specialize `codec.encoder.Encoder` on VT's read-only `Observation` type for
+text, property and graphics encoding; the codec imports no live parser. The normal
 `howl_vt` root never imports or re-exports this codec; local observation remains a
 direct borrow. The codec does not schedule, publish or deliver observations.
 
@@ -128,6 +130,7 @@ protocol; it is not an embedder failure.
   `src/codec/wire.zig` owns portable payload grammar/packing,
   `src/codec/decoded.zig` owns decoded values, validation and allocation cleanup,
   `src/codec/text.zig` owns complete text-body decoding/allocation lifetime,
+  `src/codec/encode.zig` specializes synchronous read-only VT encoding,
   and `src/codec/properties.zig` owns bounded properties and borrowed decode.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
