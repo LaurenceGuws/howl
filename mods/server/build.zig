@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    terminal_service.addImport("howl_instance", instance.module("howl_instance"));
+    terminal_service.addImport("howl_instance", instance.module("howl_instance_headless"));
     terminal_service.addImport("server_protocol", protocol_module);
     terminal_service.addImport("howl_vt_codec", codec);
 
@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addImport("server_protocol", protocol_module);
-    module.addImport("howl_instance", instance.module("howl_instance"));
+    module.addImport("howl_instance", instance.module("howl_instance_headless"));
     module.addImport("server_terminal_service", terminal_service);
 
     const tests = b.addTest(.{
@@ -43,7 +43,7 @@ pub fn build(b: *std.Build) void {
     });
     service_module.addImport("server_model", module);
     service_module.addImport("server_protocol", protocol_module);
-    service_module.addImport("howl_instance", instance.module("howl_instance"));
+    service_module.addImport("howl_instance", instance.module("howl_instance_headless"));
     const service_tests = b.addTest(.{
         .name = "server-service",
         .root_module = service_module,

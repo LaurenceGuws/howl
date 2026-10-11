@@ -4,6 +4,8 @@
 
 An embedder may use `howl-vt` directly and omit PTY/Instance composition entirely. Higher-level Session/Server orchestration is optional and must depend on Instance; Instance never depends on it.
 
+The package exports two compile-time entry points. `howl_instance` keeps optional direct Render presentation; `howl_instance_headless` exposes only PTY/VT operations and imports no Render or Text module. Server selects the latter. Both select the same private lifetime and service implementation and retain the exact child-owned PTY/VT module identities. Their opaque Instance handles belong to the selected composition and cannot be exchanged. Neither entry point imports the optional VT codec.
+
 ## Presented text ownership
 
 A presented Instance owns its canonical VT, atlas, commands and three immutable

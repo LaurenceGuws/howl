@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     runtime.addImport("server_protocol", b.dependency("server_protocol", .{ .target = target, .optimize = optimize }).module("server_protocol"));
     runtime.addImport("server_model", server.module("server"));
     runtime.addImport("server_service", server.module("server_service"));
-    runtime.addImport("howl_instance", instance.module("howl_instance"));
+    runtime.addImport("howl_instance", instance.module("howl_instance_headless"));
     const proofs = b.addTest(.{
         .name = "server-runtime",
         .root_module = runtime,

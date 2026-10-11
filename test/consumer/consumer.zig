@@ -139,3 +139,19 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try codec.encodeTextColor(&bytes, color);
     try std.testing.expectEqualDeep(color, try codec.decodeTextColor(&bytes));
 }
+
+test "Server selects presentation-free Instance with the canonical VT identity" {
+    const headless = @import("howl_instance_headless");
+    const server = @import("server");
+    try std.testing.expect(headless.Terminal == vt.Terminal);
+    try std.testing.expect(headless.Instance != instance.Instance);
+    try std.testing.expect(@TypeOf(headless.terminal) == fn (*const headless.Instance) *const vt.Terminal.Observation);
+    try std.testing.expect(@typeInfo(headless.Instance) == .@"opaque");
+    inline for (.{
+        "render",            "text",           "initPresented", "presented",       "PresentationConfig",
+        "PresentationStore", "RenderExchange", "renderFrame",   "publishRender",   "reconfigurePresentation",
+        "protocol",          "codec",          "ClientId",      "ResizeAuthority",
+    }) |name| try std.testing.expect(!@hasDecl(headless, name));
+    const create = @typeInfo(@TypeOf(server.Server.createInstance)).@"fn";
+    try std.testing.expect(create.param_types[4] == headless.Launch);
+}
