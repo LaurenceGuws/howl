@@ -69,12 +69,6 @@ const pipe_nowait: u32 = 0x0000_0001;
 const maximum_clients: usize = 32;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
-// Historical delta fallback never admits more mirrored cells than could fit
-// even as fixed text_v1 cell headers in one otherwise-empty bounded body.
-// Live history_offset=0 retains only semantic row generations instead.
-const maximum_delta_cells: usize =
-    protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes;
-const delta_link_word_count = codec.encoder.link_word_count;
 const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
@@ -392,101 +386,6 @@ const Client = struct {
 // Canonical Instance service
 // =============================================================================
 
-const DeltaRowCache = struct {
-    const Entry = struct {
-        generation: ?u64 = null,
-        wrapped: bool = false,
-        geometry: howl.Terminal.LineGeometry = .single_width,
-        valid: bool = false,
-    };
-
-    // Live views use row generations and retain no cell mirror. Historical
-    // windows lack row provenance, so they keep the previous exact-cell fallback.
-    cells: []howl.Terminal.Cell = &.{},
-    entries: []Entry = &.{},
-    links: []u64 = &.{},
-    row_count: u16 = 0,
-    column_count: u16 = 0,
-    history_offset: u32 = 0,
-    revision: u64 = 0,
-    row_origin: ?u64 = null,
-
-    fn deinit(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
-        self.clear(allocator);
-        self.* = undefined;
-    }
-
-    fn clear(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
-        if (self.links.len != 0) allocator.free(self.links);
-        if (self.entries.len != 0) allocator.free(self.entries);
-        if (self.cells.len != 0) allocator.free(self.cells);
-        self.* = .{};
-    }
-
-    fn invalidate(self: *DeltaRowCache) void {
-        for (self.entries) |*entry| entry.valid = false;
-        self.revision = 0;
-    }
-
-    fn ensure(
-        self: *DeltaRowCache,
-        allocator: std.mem.Allocator,
-        rows: u16,
-        columns: u16,
-        history_offset: u32,
-    ) !void {
-        const link_word_count = std.math.mul(usize, rows, delta_link_word_count) catch
-            return error.SnapshotTooLarge;
-        if (self.row_count == rows and self.column_count == columns and
-            self.history_offset == history_offset and self.entries.len == rows and
-            self.links.len == link_word_count)
-            return;
-        self.clear(allocator);
-        const cell_count = std.math.mul(usize, rows, columns) catch
-            return error.SnapshotTooLarge;
-        if (cell_count == 0 or cell_count > maximum_delta_cells)
-            return error.SnapshotTooLarge;
-        if (history_offset != 0) {
-            self.cells = try allocator.alloc(howl.Terminal.Cell, cell_count);
-            errdefer {
-                allocator.free(self.cells);
-                self.cells = &.{};
-            }
-        }
-        self.entries = try allocator.alloc(Entry, rows);
-        errdefer {
-            allocator.free(self.entries);
-            self.entries = &.{};
-        }
-        self.links = try allocator.alloc(u64, link_word_count);
-        errdefer {
-            allocator.free(self.links);
-            self.links = &.{};
-        }
-        @memset(self.links, 0);
-        for (self.entries) |*entry| entry.* = .{};
-        self.row_count = rows;
-        self.column_count = columns;
-        self.history_offset = history_offset;
-    }
-
-    fn rowCells(self: *DeltaRowCache, row: u16, columns: u16) []howl.Terminal.Cell {
-        std.debug.assert(row < self.row_count);
-        std.debug.assert(columns == self.column_count);
-        std.debug.assert(self.history_offset != 0 and self.cells.len != 0);
-        const start = @as(usize, row) * columns;
-        std.debug.assert(start + columns <= self.cells.len);
-        return self.cells[start .. start + columns];
-    }
-
-    fn rowLinks(self: *DeltaRowCache, row: u16) []u64 {
-        std.debug.assert(row < self.row_count);
-        const start = @as(usize, row) * delta_link_word_count;
-        std.debug.assert(start + delta_link_word_count <= self.links.len);
-        return self.links[start .. start + delta_link_word_count];
-    }
-};
-
 /// Owns bounded HWLS interaction state around one borrowed PTY+VT Instance.
 pub const Service = struct {
     // -------------------------------------------------------------------------
@@ -517,9 +416,10 @@ pub const Service = struct {
     // Rich snapshots are serialized synchronously on the service turn, so
     // retain bounded scratch across observer cuts instead of returning the
     // same hot allocations to the allocator every frame.
-    // Bounded exact visible-row mirror owned only by the revision-relative
-    // delta lane. Complete observation lanes never allocate or maintain it.
-    delta_rows: DeltaRowCache = .{},
+    // Optional codec retains live generations or exact historical cells only
+    // for delta observations; Server separately names the delivered predecessor.
+    delta_rows: vt_encoder.DeltaCache = .{},
+    delta_revision: u64 = 0,
     snapshot_body: std.ArrayList(u8) = .empty,
     snapshot_packed: std.ArrayList(u8) = .empty,
     snapshot_compressed: std.Io.Writer.Allocating,
@@ -1809,117 +1709,35 @@ pub const Service = struct {
             protocol.text_v1.no_cursor_movement_age_ns
         else
             observed_ns -| terminal_view.cursor_movement_timestamp_ns;
-        var referenced_links: [delta_link_word_count]u64 = @splat(0);
-
-        if (delta) try self.delta_rows.ensure(
-            self.allocator,
-            terminal_view.rows,
-            terminal_view.cols,
-            terminal_view.history_offset,
-        );
-        errdefer if (delta) self.delta_rows.invalidate();
-        const delta_reuse_allowed = delta and request.after_revision != 0 and
-            request.after_revision == self.delta_rows.revision and
-            self.delta_rows.history_offset == terminal_view.history_offset and
-            self.delta_rows.row_count == terminal_view.rows and
-            self.delta_rows.column_count == terminal_view.cols;
-        const current_row_origin: ?u64 = if (terminal_view.is_alternate_screen or
-            terminal_view.history_offset > terminal_view.history_count)
-            null
-        else
-            @as(u64, terminal_view.history_row_base) + terminal_view.history_count - terminal_view.history_offset;
-        const shifted_rows: ?u16 = if (delta_reuse_allowed and
-            self.delta_rows.row_origin != null and current_row_origin != null and
-            current_row_origin.? > self.delta_rows.row_origin.?)
-        blk: {
-            const distance = current_row_origin.? - self.delta_rows.row_origin.?;
-            if (distance >= terminal_view.rows) break :blk null;
-            break :blk std.math.cast(u16, distance);
-        } else null;
+        // Delivery correlation stays here; the optional codec owns row reuse.
+        // Any failure, including graphics/framing/output allocation after encoding,
+        // revokes the provisional text cut and its Server predecessor identity.
+        errdefer if (delta) {
+            self.delta_rows.invalidate();
+            self.delta_revision = 0;
+        };
         self.snapshot_body.clearRetainingCapacity();
         const body = &self.snapshot_body;
-        try vt_encoder.appendPresentation(self.allocator, machine, body, cursor_age_ns);
-        if (delta_reuse_allowed) {
-            try codec.encoder.appendRowShift(self.allocator, body, shifted_rows orelse 0);
-        }
-
-        // Observe each visible VT row directly for this synchronous cut. Live
-        // delta retention compares VT-owned row generations; historical windows
-        // keep the exact full-row mirror because history provenance is unavailable.
-        var row: u16 = 0;
-        while (row < terminal_view.rows) : (row += 1) {
-            const wrapped = terminal_view.rowWrapped(row);
-            const geometry = terminal_view.lineGeometry(row);
-            const destination_cache: ?*DeltaRowCache.Entry = if (delta)
-                &self.delta_rows.entries[@as(usize, row)]
-            else
-                null;
-            const exact_mirror = delta and self.delta_rows.cells.len != 0;
-            const generation = if (delta and !exact_mirror)
-                terminal_view.rowGeneration(row)
-            else
-                null;
-            const destination_cells: []howl.Terminal.Cell = if (exact_mirror)
-                self.delta_rows.rowCells(row, terminal_view.cols)
-            else
-                &.{};
-            const source_row: ?u16 = if (shifted_rows) |shift| blk: {
-                const shifted = std.math.add(u16, row, shift) catch break :blk null;
-                if (shifted >= terminal_view.rows) break :blk null;
-                break :blk shifted;
-            } else if (delta) row else null;
-            const source_cache: ?*const DeltaRowCache.Entry = if (source_row) |source|
-                &self.delta_rows.entries[@as(usize, source)]
-            else
-                null;
-            const source_cells: []const howl.Terminal.Cell = if (exact_mirror) blk: {
-                const source = source_row orelse break :blk &.{};
-                break :blk self.delta_rows.rowCells(source, terminal_view.cols);
-            } else &.{};
-            const destination_links: []u64 = if (delta)
-                self.delta_rows.rowLinks(row)
-            else
-                &.{};
-            const source_links: []const u64 = if (source_row) |source|
-                if (delta) self.delta_rows.rowLinks(source) else &.{}
-            else
-                &.{};
-
-            const reusable = if (source_cache) |value|
-                delta_reuse_allowed and value.valid and
-                    value.wrapped == wrapped and value.geometry == geometry and
-                    if (exact_mirror)
-                        viewRowExactlyReusable(terminal_view, row, source_cells)
-                    else
-                        generation != null and value.generation != null and
-                            generation.? == value.generation.?
-            else
-                false;
-            if (reusable) {
-                if (source_row.? != row) @memcpy(destination_links, source_links);
-                codec.encoder.mergeLinks(&referenced_links, destination_links);
-                try codec.encoder.appendRowReuse(self.allocator, body);
-            } else {
-                if (delta) @memset(destination_links, 0);
-                const row_links: []u64 = if (delta) destination_links else &referenced_links;
-                try vt_encoder.appendRow(self.allocator, body, terminal_view, row, row_links);
-                if (delta) codec.encoder.mergeLinks(&referenced_links, destination_links);
-            }
-
-            if (destination_cache) |value| {
-                if (exact_mirror) {
-                    var column: u16 = 0;
-                    while (column < terminal_view.cols) : (column += 1)
-                        destination_cells[column] = terminal_view.cellInfoAt(row, column);
-                }
-                value.generation = generation;
-                value.wrapped = wrapped;
-                value.geometry = geometry;
-                value.valid = true;
-            }
-        }
-
-        try vt_encoder.appendHyperlinks(self.allocator, body, machine, &referenced_links);
+        const delta_reuse_allowed = if (delta)
+            (try self.delta_rows.appendText(
+                self.allocator,
+                body,
+                machine,
+                request.history_offset,
+                cursor_age_ns,
+                request.after_revision != 0 and request.after_revision == self.delta_revision,
+            )) == .delta
+        else blk: {
+            const geometry = try vt_encoder.appendText(
+                self.allocator,
+                body,
+                machine,
+                request.history_offset,
+                cursor_age_ns,
+            );
+            std.debug.assert(geometry.rows == terminal_view.rows and geometry.columns == terminal_view.cols);
+            break :blk false;
+        };
         const body_bytes = body.items.len;
         if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
             body_bytes > std.math.maxInt(u32))
@@ -2046,10 +1864,7 @@ pub const Service = struct {
         client.output_offset = 0;
         client.snapshot_images.deinit(self.allocator);
         client.snapshot_images = snapshot_images;
-        if (delta) {
-            self.delta_rows.revision = self.observation_revision;
-            self.delta_rows.row_origin = current_row_origin;
-        }
+        if (delta) self.delta_revision = self.observation_revision;
     }
 
     fn appendSnapshotCompressedData(
@@ -2269,25 +2084,6 @@ fn typedMouseButton(value: protocol.InputMouseButton) howl.MouseButton {
     };
 }
 
-fn viewRowExactlyReusable(
-    view: howl.Terminal.SemanticView,
-    row: u16,
-    cached: []const howl.Terminal.Cell,
-) bool {
-    if (cached.len != view.cols) return false;
-    for (cached, 0..) |before, column| {
-        const now = view.cellInfoAt(row, @intCast(column));
-        // Cell owns the base scalar and up to three combining scalars inline.
-        // Longer clusters use a VT sidecar; conservatively re-encode such rows
-        // rather than retaining a parallel scalar cache here.
-        if (now.combining_len > now.combining.len or
-            before.combining_len > before.combining.len or
-            !std.meta.eql(now, before))
-            return false;
-    }
-    return true;
-}
-
 fn configureAdoptedStream(stream: AdoptedStream) error{SocketOptionFailed}!void {
     if (comptime native_windows) {
         var mode = pipe_nowait;
@@ -2484,55 +2280,6 @@ fn semanticViewContains(view: howl.Terminal.SemanticView, needle: []const u8) bo
     return false;
 }
 
-test "delta row cache keeps live provenance compact and historical fallback exact" {
-    var cache: DeltaRowCache = .{};
-    defer cache.deinit(std.testing.allocator);
-
-    try cache.ensure(std.testing.allocator, 4, 24, 0);
-    try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
-    try std.testing.expectEqual(@as(usize, 0), cache.cells.len);
-    try std.testing.expectEqual(@as(usize, 4 * delta_link_word_count), cache.links.len);
-    cache.entries[0] = .{ .generation = 41, .valid = true };
-    cache.revision = 7;
-    try cache.ensure(std.testing.allocator, 4, 24, 0);
-    try std.testing.expectEqual(@as(?u64, 41), cache.entries[0].generation);
-    try std.testing.expect(cache.entries[0].valid);
-    try std.testing.expectEqual(@as(u64, 7), cache.revision);
-
-    try cache.ensure(std.testing.allocator, 4, 24, 1);
-    try std.testing.expectEqual(@as(usize, 4), cache.entries.len);
-    try std.testing.expectEqual(@as(usize, 4 * 24), cache.cells.len);
-    try std.testing.expectEqual(@as(usize, 4 * delta_link_word_count), cache.links.len);
-    for (cache.entries) |entry| try std.testing.expect(!entry.valid);
-}
-
-test "delta hyperlink row bits preserve bounded identities and merge exactly" {
-    var cache: DeltaRowCache = .{};
-    defer cache.deinit(std.testing.allocator);
-    try cache.ensure(std.testing.allocator, 3, 8, 0);
-
-    var terminal = try howl.Terminal.init(std.testing.allocator, 1, 1);
-    defer terminal.deinit();
-    var cell = terminal.semanticView(0).cellInfoAt(0, 0);
-
-    const first_id: u32 = 1;
-    const last_id: u32 = protocol.text_v1.maximum_hyperlinks;
-    cell.attrs.link_id = first_id;
-    try codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(0));
-    cell.attrs.link_id = last_id;
-    try codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(1));
-
-    var merged: [delta_link_word_count]u64 = @splat(0);
-    codec.encoder.mergeLinks(&merged, cache.rowLinks(0));
-    codec.encoder.mergeLinks(&merged, cache.rowLinks(1));
-    try std.testing.expect((merged[first_id / 64] & (@as(u64, 1) << @as(u6, @intCast(first_id % 64)))) != 0);
-    try std.testing.expect((merged[last_id / 64] & (@as(u64, 1) << @as(u6, @intCast(last_id % 64)))) != 0);
-    for (cache.rowLinks(2)) |word| try std.testing.expectEqual(@as(u64, 0), word);
-
-    cell.attrs.link_id = protocol.text_v1.maximum_hyperlinks + 1;
-    try std.testing.expectError(error.InvalidSnapshot, codec.encoder.noteLink(cell.attrs.link_id, cache.rowLinks(2)));
-}
-
 test "live delta uses row generations and reuses unchanged rows" {
     const allocator = std.testing.allocator;
     const instance = try howl.init(allocator, std.testing.environ, .{
@@ -2576,11 +2323,7 @@ test "live delta uses row generations and reuses unchanged rows" {
         }
     }
     try std.testing.expect(baseline_complete and saw_raw and baseline_revision != 0);
-    try std.testing.expectEqual(@as(usize, 0), service.delta_rows.cells.len);
-    for (service.delta_rows.entries) |entry| {
-        try std.testing.expect(entry.valid);
-        try std.testing.expect(entry.generation != null);
-    }
+    try std.testing.expectEqual(baseline_revision, service.delta_revision);
 
     var input_payload = [_]u8{ @backingInt(protocol.InputKind.bytes), 'X' };
     try peer.sendFrame(&service, .input, &input_payload);
@@ -2620,7 +2363,7 @@ test "live delta uses row generations and reuses unchanged rows" {
         }
     }
     try std.testing.expect(delta_complete and saw_delta and !saw_delta_raw);
-    try std.testing.expectEqual(@as(usize, 0), service.delta_rows.cells.len);
+    try std.testing.expect(service.delta_revision > baseline_revision);
 
     var offset: usize = 0;
     var row_records: usize = 0;
@@ -2904,6 +2647,11 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
         try std.testing.expectEqual(@as(usize, 1), service.clientCount());
         try std.testing.expect(service.hasClient(good_id));
         try std.testing.expectError(error.TestPeerClosed, bad.readAvailable());
+        if (mode) |encoding| if (encoding == .delta) {
+            try std.testing.expectEqual(@as(u64, 0), service.delta_revision);
+            try std.testing.expect(!service.delta_rows.complete);
+            for (service.delta_rows.entries) |entry| try std.testing.expect(!entry.valid);
+        };
     }
 
     var observe: [protocol.payload_bytes.observe]u8 = undefined;
@@ -2929,6 +2677,56 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
     while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "OOM_SURVIVOR")) : (turns += 1)
         try service.turn(1);
     try std.testing.expect(semanticViewContains(howl.terminal(instance).semanticView(0), "OOM_SURVIVOR"));
+}
+
+test "failed Server output queuing revokes provisional codec rows and delivery revision" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 4,
+        .columns = 24,
+        .history_rows = 16,
+    });
+    defer howl.deinit(instance);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var service = try Service.init(failing.allocator(), std.testing.io, instance);
+    defer service.deinit();
+    var peer = try TestPeer.adopt(std.testing.allocator, &service);
+    defer peer.deinit();
+    const client = &service.clients[0].?;
+    try service.queueTextSnapshot(client, .{ .after_revision = 0, .history_offset = 0 }, .delta);
+    try std.testing.expect(service.delta_rows.complete);
+    const baseline = service.delta_revision;
+    try std.testing.expect(baseline != 0);
+    // Retain the text/row capacity but force allocation only when Server output
+    // is reserved, after a complete delta body has already been encoded.
+    client.output.clearAndFree(failing.allocator());
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.ClientResponseOutOfMemory, service.queueTextSnapshot(
+        client,
+        .{ .after_revision = baseline, .history_offset = 0 },
+        .delta,
+    ));
+    try std.testing.expect(failing.has_induced_failure);
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(@as(usize, 0), client.output.items.len);
+    try std.testing.expectEqual(@as(u64, 0), service.delta_revision);
+    try std.testing.expect(!service.delta_rows.complete);
+    for (service.delta_rows.entries) |entry| try std.testing.expect(!entry.valid);
+    var record: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    const shift_offset = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
+    @memcpy(&record, service.snapshot_body.items[shift_offset..][0..record.len]);
+    try std.testing.expectEqual(protocol.TextRecordKind.row_shift, (try protocol.decodeTextRecordHeader(&record)).kind);
+    const row_offset = shift_offset + record.len + codec.text_delta_v2.row_shift_bytes;
+    @memcpy(&record, service.snapshot_body.items[row_offset..][0..record.len]);
+    try std.testing.expectEqual(@as(u32, 0), (try protocol.decodeTextRecordHeader(&record)).payload_len);
+    // Even the formerly correct Server revision now produces a complete body.
+    try service.queueTextSnapshot(client, .{ .after_revision = baseline, .history_offset = 0 }, .delta);
+    @memcpy(&record, service.snapshot_body.items[shift_offset..][0..record.len]);
+    const first_row = try protocol.decodeTextRecordHeader(&record);
+    try std.testing.expectEqual(protocol.TextRecordKind.row, first_row.kind);
+    try std.testing.expect(first_row.payload_len != 0);
+    try std.testing.expectEqual(service.observation_revision, service.delta_revision);
 }
 
 test "canonical VT allocation failure still escapes the client containment boundary" {

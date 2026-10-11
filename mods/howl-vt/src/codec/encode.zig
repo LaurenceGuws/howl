@@ -60,6 +60,233 @@ pub fn Encoder(comptime Observation: type) type {
         const Presentation = @TypeOf(@as(*const Observation, undefined).presentation());
         const Images = @TypeOf(@as(*const Observation, undefined).images(0));
 
+        const Encoding = @This();
+
+        /// Optional retained terminal rows; no Server revision or delivery policy.
+        pub const DeltaCache = struct {
+            const Entry = struct {
+                generation: ?u64 = null,
+                wrapped: bool = false,
+                geometry: LineGeometry = .single_width,
+                valid: bool = false,
+            };
+
+            // Live views use row generations and retain no cell mirror. Historical
+            // windows lack row provenance, so they keep the previous exact-cell fallback.
+            cells: []Cell = &.{},
+            entries: []Entry = &.{},
+            links: []u64 = &.{},
+            row_count: u16 = 0,
+            column_count: u16 = 0,
+            history_offset: u32 = 0,
+            complete: bool = false,
+            alternate_screen: bool = false,
+            row_origin: ?u64 = null,
+
+            /// Releases retained row provenance, historical cell mirrors and link sets.
+            pub fn deinit(self: *DeltaCache, allocator: std.mem.Allocator) void {
+                self.clear(allocator);
+                self.* = undefined;
+            }
+
+            fn clear(self: *DeltaCache, allocator: std.mem.Allocator) void {
+                if (self.links.len != 0) allocator.free(self.links);
+                if (self.entries.len != 0) allocator.free(self.entries);
+                if (self.cells.len != 0) allocator.free(self.cells);
+                self.* = .{};
+            }
+
+            /// Revokes every row-reuse right after encoding or downstream delivery failure.
+            pub fn invalidate(self: *DeltaCache) void {
+                for (self.entries) |*entry| entry.valid = false;
+                self.complete = false;
+                self.row_origin = null;
+            }
+
+            /// A complete body or an explicit delta body using the authorized predecessor.
+            pub const Mode = enum { full, delta };
+
+            /// Appends a terminal cut, retaining live row generations or exact history cells.
+            /// One cache belongs to one stable Observation owner. The caller authorizes
+            /// delivery identity independently through allow_reuse.
+            /// On every failure, the output prefix survives and all cached facts invalidate.
+            /// Successful encoding is provisional: downstream failure must invalidate it.
+            pub fn appendText(
+                self: *DeltaCache,
+                allocator: std.mem.Allocator,
+                output: *std.ArrayList(u8),
+                machine: *const Observation,
+                history_offset: u32,
+                cursor_age_ns: u64,
+                allow_reuse: bool,
+            ) values.Error!Mode {
+                const start = output.items.len;
+                errdefer output.shrinkRetainingCapacity(start);
+                errdefer self.invalidate();
+                const view = machine.semanticView(history_offset);
+                try self.ensure(allocator, view.rows, view.cols, view.history_offset);
+                // Numeric row generations are local to their screen bank.
+                if (self.alternate_screen != view.is_alternate_screen) self.invalidate();
+                const mode: Mode = if (allow_reuse and self.complete) .delta else .full;
+                const current_row_origin: ?u64 = if (view.is_alternate_screen or
+                    view.history_offset > view.history_count)
+                    null
+                else
+                    @as(u64, view.history_row_base) + view.history_count - view.history_offset;
+                const shifted_rows: ?u16 = if (mode == .delta and
+                    self.row_origin != null and current_row_origin != null and
+                    current_row_origin.? > self.row_origin.?)
+                blk: {
+                    const distance = current_row_origin.? - self.row_origin.?;
+                    if (distance >= view.rows) break :blk null;
+                    break :blk std.math.cast(u16, distance);
+                } else null;
+                var referenced_links: Links = @splat(0);
+                try Encoding.appendPresentation(allocator, machine, output, cursor_age_ns);
+                if (mode == .delta) try appendRowShift(allocator, output, shifted_rows orelse 0);
+
+                // Upward rotation reads later source rows before earlier destinations
+                // overwrite them. No second provenance or historical cell bank is needed.
+                var row: u16 = 0;
+                while (row < view.rows) : (row += 1) {
+                    const wrapped = view.rowWrapped(row);
+                    const geometry = view.lineGeometry(row);
+                    const destination_cache = &self.entries[row];
+                    const exact_mirror = self.cells.len != 0;
+                    const generation = if (!exact_mirror) view.rowGeneration(row) else null;
+                    const destination_cells: []Cell = if (exact_mirror)
+                        self.rowCells(row, view.cols)
+                    else
+                        &.{};
+                    const source_row: ?u16 = if (shifted_rows) |shift| blk: {
+                        const shifted = std.math.add(u16, row, shift) catch break :blk null;
+                        if (shifted >= view.rows) break :blk null;
+                        break :blk shifted;
+                    } else row;
+                    const source_cache: ?*const Entry = if (source_row) |source|
+                        &self.entries[source]
+                    else
+                        null;
+                    const source_cells: []const Cell = if (exact_mirror) blk: {
+                        const source = source_row orelse break :blk &.{};
+                        break :blk self.rowCells(source, view.cols);
+                    } else &.{};
+                    const destination_links = self.rowLinks(row);
+                    const source_links: []const u64 = if (source_row) |source|
+                        self.rowLinks(source)
+                    else
+                        &.{};
+                    const reusable = if (source_cache) |value|
+                        mode == .delta and value.valid and
+                            value.wrapped == wrapped and value.geometry == geometry and
+                            if (exact_mirror)
+                                rowExactlyReusable(view, row, source_cells)
+                            else
+                                generation != null and value.generation != null and
+                                    generation.? == value.generation.?
+                    else
+                        false;
+                    if (reusable) {
+                        if (source_row.? != row) @memcpy(destination_links, source_links);
+                        mergeLinks(&referenced_links, destination_links);
+                        try appendRowReuse(allocator, output);
+                    } else {
+                        @memset(destination_links, 0);
+                        try Encoding.appendRow(allocator, output, view, row, destination_links);
+                        mergeLinks(&referenced_links, destination_links);
+                    }
+                    if (exact_mirror) {
+                        var column: u16 = 0;
+                        while (column < view.cols) : (column += 1)
+                            destination_cells[column] = view.cellInfoAt(row, column);
+                    }
+                    destination_cache.* = .{
+                        .generation = generation,
+                        .wrapped = wrapped,
+                        .geometry = geometry,
+                        .valid = true,
+                    };
+                }
+                try Encoding.appendHyperlinks(allocator, output, machine, &referenced_links);
+                self.complete = true;
+                self.alternate_screen = view.is_alternate_screen;
+                self.row_origin = current_row_origin;
+                return mode;
+            }
+
+            fn rowExactlyReusable(view: SemanticView, row: u16, cached: []const Cell) bool {
+                if (cached.len != view.cols) return false;
+                for (cached, 0..) |before, column| {
+                    const now = view.cellInfoAt(row, @intCast(column));
+                    // Long clusters use a VT sidecar. Re-encode those rows rather than
+                    // retaining a parallel scalar bank with stale sidecar identities.
+                    if (now.combining_len > now.combining.len or
+                        before.combining_len > before.combining.len or
+                        !std.meta.eql(now, before))
+                        return false;
+                }
+                return true;
+            }
+
+            fn ensure(
+                self: *DeltaCache,
+                allocator: std.mem.Allocator,
+                rows: u16,
+                columns: u16,
+                history_offset: u32,
+            ) AppendError!void {
+                const retained_word_count = std.math.mul(usize, rows, link_word_count) catch
+                    return error.SnapshotTooLarge;
+                if (self.row_count == rows and self.column_count == columns and
+                    self.history_offset == history_offset and self.entries.len == rows and
+                    self.links.len == retained_word_count)
+                    return;
+                self.clear(allocator);
+                const cell_count = std.math.mul(usize, rows, columns) catch
+                    return error.SnapshotTooLarge;
+                if (cell_count == 0 or cell_count > protocol.maximum_text_snapshot_bytes / protocol.text_v1.cell_header_bytes)
+                    return error.SnapshotTooLarge;
+                if (history_offset != 0) {
+                    self.cells = try allocator.alloc(Cell, cell_count);
+                    errdefer {
+                        allocator.free(self.cells);
+                        self.cells = &.{};
+                    }
+                }
+                self.entries = try allocator.alloc(Entry, rows);
+                errdefer {
+                    allocator.free(self.entries);
+                    self.entries = &.{};
+                }
+                self.links = try allocator.alloc(u64, retained_word_count);
+                errdefer {
+                    allocator.free(self.links);
+                    self.links = &.{};
+                }
+                @memset(self.links, 0);
+                for (self.entries) |*entry| entry.* = .{};
+                self.row_count = rows;
+                self.column_count = columns;
+                self.history_offset = history_offset;
+            }
+
+            fn rowCells(self: *DeltaCache, row: u16, columns: u16) []Cell {
+                std.debug.assert(row < self.row_count);
+                std.debug.assert(columns == self.column_count);
+                std.debug.assert(self.history_offset != 0 and self.cells.len != 0);
+                const start = @as(usize, row) * columns;
+                std.debug.assert(start + columns <= self.cells.len);
+                return self.cells[start .. start + columns];
+            }
+
+            fn rowLinks(self: *DeltaCache, row: u16) []u64 {
+                std.debug.assert(row < self.row_count);
+                const start = @as(usize, row) * link_word_count;
+                std.debug.assert(start + link_word_count <= self.links.len);
+                return self.links[start .. start + link_word_count];
+            }
+        };
+
         /// Captures terminal facts from the same synchronous semantic viewport cut.
         pub fn metadata(view: SemanticView, revision: u64) facts.Metadata {
             return .{
@@ -558,4 +785,21 @@ fn encodeU32(output: []u8, value: u32) void {
     output[1] = @truncate(value >> 16);
     output[2] = @truncate(value >> 8);
     output[3] = @truncate(value);
+}
+
+test "delta hyperlink memberships preserve bounded identities and merge exactly" {
+    var rows: [3]Links = @splat(@splat(0));
+    const first_id: u32 = 1;
+    const last_id: u32 = protocol.text_v1.maximum_hyperlinks;
+    try noteLink(first_id, &rows[0]);
+    try noteLink(last_id, &rows[1]);
+    var merged: Links = @splat(0);
+    mergeLinks(&merged, &rows[0]);
+    mergeLinks(&merged, &rows[1]);
+    try std.testing.expect((merged[first_id / 64] & (@as(u64, 1) << @as(u6, @intCast(first_id % 64)))) != 0);
+    try std.testing.expect((merged[last_id / 64] & (@as(u64, 1) << @as(u6, @intCast(last_id % 64)))) != 0);
+    for (rows[2]) |word| try std.testing.expectEqual(@as(u64, 0), word);
+    try std.testing.expectError(error.InvalidSnapshot, noteLink(last_id + 1, &rows[2]));
+    for (rows[2]) |word| try std.testing.expectEqual(@as(u64, 0), word);
+    try std.testing.expectError(error.InvalidSnapshot, noteLink(first_id, rows[2][0..1]));
 }

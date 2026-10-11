@@ -15,7 +15,7 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
-  howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
+  howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
     hosts/server foreground `server_runtime` module owning exactly one Server control listener,
     one Server model/control service and bounded cooperative scheduling. The Server

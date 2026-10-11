@@ -14,6 +14,13 @@ text, property and graphics encoding; the codec imports no live parser. The norm
 `howl_vt` root never imports or re-exports this codec; local observation remains a
 direct borrow. The codec does not schedule, publish or deliver observations.
 
+The optional encoder's DeltaCache retains screen-local row generations for live
+views, exact copied cells for historical views, and bounded row link memberships.
+Changing screen bank, history offset or geometry requires a complete text baseline.
+The caller authorizes the exact delivery predecessor; the cache holds no Server
+revision. Encoding is provisional until the caller queues the whole observation:
+a downstream failure must invalidate the cache before another delta is allowed.
+
 ## Ownership
 
 VT owns:

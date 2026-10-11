@@ -22,7 +22,7 @@ pub const cache = @import("codec/cache.zig");
 /// Immutable terminal observations, packed storage and bounded text projection.
 pub const view = @import("codec/view.zig");
 
-/// Publisher-selected encoding specialized on VT's read-only observation type.
+/// Read-only VT encoding and optional retained terminal delta rows.
 pub const encoder = @import("codec/encode.zig");
 
 /// Complete bounded terminal properties; decoded slices borrow their packet.

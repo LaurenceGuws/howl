@@ -111,6 +111,10 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try std.testing.expect(!@hasField(codec.Metadata, "leader_present"));
     try std.testing.expect(!@hasField(codec.Metadata, "you_are_leader"));
     try std.testing.expect(codec.Row == @import("server_client").terminal.rich.Row);
+    const Delta = codec.encoder.Encoder(vt.Terminal.Observation).DeltaCache;
+    try std.testing.expect(!@hasField(Delta, "revision"));
+    try std.testing.expect(!@hasField(Delta, "client"));
+    try std.testing.expect(@TypeOf(Delta.appendText) == fn (*Delta, std.mem.Allocator, *std.ArrayList(u8), *const vt.Terminal.Observation, u32, u64, bool) codec.decoded.Error!Delta.Mode);
     try std.testing.expect(!@hasField(codec.cache.View, "begin"));
     try std.testing.expect(!@hasField(codec.cache.View, "changed_rows_base_revision"));
     const client_view = @import("server_client").terminal.view;
