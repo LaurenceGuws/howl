@@ -1,6 +1,6 @@
 //! C-shaped seam from the Odin desktop shell to canonical Howl owners.
 //!
-//! Transported Direct/Server routes retain `howl-client` as decoder/action owner.
+//! Transported Direct/Server routes retain `server-client` as decoder/action owner.
 //! Local instead claims one in-process Instance on one terminal thread and publishes
 //! immutable Render frames. Odin gets bounded presentation facts and semantic
 //! operations without importing Zig backing layouts.
@@ -8,13 +8,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
-const client = @import("howl_client");
+const client = @import("server_client").terminal;
 const server_client = @import("server_client");
 const protocol = client.protocol;
 
-const terminal_render = @import("howl_client_render");
+const terminal_render = @import("server_client_render");
 const render = terminal_render;
-const native_instance = terminal_render.instance;
+const native_instance = @import("howl_instance");
 
 // zig-audit: acknowledge opaque_type
 // reason: RuntimeHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.

@@ -1,4 +1,4 @@
-//! Reusable native client for one existing Howl Instance endpoint.
+//! Terminal interaction client for one Server-owned HWLS endpoint.
 //!
 //! This package owns client-side endpoint parsing, the frozen framed connection,
 //! handshake, bounded frame I/O, and request-result mechanics. It owns no PTY,
@@ -7,7 +7,7 @@
 
 const impl = @import("client.zig");
 
-/// Frozen Instance interaction protocol shared with the attached endpoint.
+/// Server-owned terminal interaction protocol shared with the endpoint.
 pub const protocol = @import("server_protocol").terminal;
 /// Common connection allocation, transport, framing, and handshake failures.
 pub const Error = impl.Error;

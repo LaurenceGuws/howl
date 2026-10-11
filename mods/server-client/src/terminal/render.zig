@@ -1,20 +1,14 @@
-//! Transitional transported-client adapter for canonical Howl Render.
+//! Server terminal-view adapter for canonical Howl Render.
 //!
-//! The renderer itself remains direct-VT and source-neutral internally. This
-//! client-owned edge exists only while HWLS consumers are being removed.
+//! Transported storage adapts outward to the direct renderer; canonical Render
+//! never imports the Server wire or client.
 
-const client = @import("howl_client");
-const canonical = @import("howl_instance").render;
+const client = @import("terminal_client");
+const canonical = @import("howl_render");
 const semantic = canonical.adapter;
 const source_client = @import("render_source.zig");
 const direct = canonical.terminal;
 
-/// Exact Instance package used by this transitional adapter graph.
-///
-/// Native embedders consume this only while their transported-client branch is
-/// being removed; it preserves one module identity instead of instantiating a
-/// second howl_instance package beside howl-client.
-pub const instance = @import("howl_instance");
 /// Exact text package instance used by this transported Render adapter.
 pub const text = canonical.text;
 /// Exact shared Render limits used by this transported Render adapter.

@@ -1,7 +1,9 @@
-//! Native client for the bounded Server -> Sessions -> Instances control wire.
+//! Client for Server control and terminal-interaction streams.
 
 const std = @import("std");
 const transport = @import("client_transport");
+/// Terminal operations and observations after direct or exact Server attach.
+pub const terminal = @import("terminal_client");
 /// Pure Server control wire shared with the server model.
 pub const protocol = @import("server_protocol");
 

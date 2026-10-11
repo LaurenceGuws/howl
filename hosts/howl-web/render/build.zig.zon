@@ -4,8 +4,8 @@
     .fingerprint = 0xe1189fb0b1fd9b10,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
+        .server_client = .{ .path = "../../../mods/server-client" },
         .howl_web_text = .{ .path = "../text" },
-        .howl_client = .{ .path = "../../../mods/howl-client" },
         .howl_render = .{ .path = "../../../mods/howl-render" },
         .howl_text = .{ .path = "../../../mods/howl-text" },
     },

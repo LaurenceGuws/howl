@@ -5,8 +5,8 @@
 //! filesystem socket, Session, or Server in this route.
 
 const std = @import("std");
-const client = @import("howl_client");
-const transport = @import("client_transport");
+const client = @import("server_client").terminal;
+const Stream = @FieldType(client.Connection, "stream");
 const instance = @import("howl_instance");
 const instance_service = @import("server_terminal_service");
 
@@ -105,7 +105,7 @@ pub const Owner = struct {
         if (!admission.accepted) return error.AdmissionFailed;
         service_owned = true;
 
-        const stream = transport.Stream.adopt(pair[0], diagnostic, interrupt) catch |failure| {
+        const stream = Stream.adopt(pair[0], diagnostic, interrupt) catch |failure| {
             client_owned = false; // Stream.adopt owns the fd even on failure.
             return failure;
         };

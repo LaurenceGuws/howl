@@ -13,8 +13,6 @@
     "hosts/howl-web/render": "0.1.6-dev",
     "hosts/howl-web/text": "0.1.6-dev",
     "hosts/server": "0.1.6-dev",
-    "mods/client-transport": "0.1.6-dev",
-    "mods/howl-client": "0.1.6-dev",
     "mods/howl-instance": "0.1.6-dev",
     "mods/howl-pty": "0.1.6-dev",
     "mods/howl-render": "0.1.6-dev",

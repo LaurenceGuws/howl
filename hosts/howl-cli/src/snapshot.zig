@@ -1,6 +1,6 @@
 const std = @import("std");
-const protocol = @import("howl_client").protocol;
-const client = @import("howl_client");
+const protocol = @import("server_client").terminal.protocol;
+const client = @import("server_client").terminal;
 const rich_format = @import("rich_format.zig");
 
 /// Selects the shared client's compact snapshot detail.

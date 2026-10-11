@@ -1,7 +1,7 @@
 //! One bounded CLI error context so failures remain machine-readable.
 
 const std = @import("std");
-const client = @import("howl_client");
+const client = @import("server_client").terminal;
 
 /// Copied, bounded diagnostics for the current CLI operation.
 pub const Context = struct {

@@ -4,8 +4,8 @@
 //! that already-decoded native model for explicit `howl snapshot --rich` output.
 
 const std = @import("std");
-const protocol = @import("howl_client").protocol;
-const client = @import("howl_client");
+const protocol = @import("server_client").terminal.protocol;
+const client = @import("server_client").terminal;
 
 const Rgba = client.rich.Rgba;
 const SemanticColor = struct { kind: []const u8, value: u32 };

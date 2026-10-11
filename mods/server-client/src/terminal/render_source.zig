@@ -1,11 +1,11 @@
-//! Adapts howl-client semantic views to the terminal renderer source contract.
+//! Adapts Server terminal-client semantic views to the terminal renderer source contract.
 //!
 //! This file owns storage/lifetime adaptation only. It does not render, shape,
 //! rasterize, retain backend resources, or interpret terminal protocol bytes.
 
 const std = @import("std");
-const client = @import("howl_client");
-const semantic = @import("howl_instance").render.adapter;
+const client = @import("terminal_client");
+const semantic = @import("howl_render").adapter;
 const View = client.view;
 const Rich = client.rich;
 

@@ -4,7 +4,7 @@
 //! earns its own platform PTY owner.
 
 const std = @import("std");
-const client = @import("howl_client");
+const client = @import("server_client").terminal;
 
 /// Reports that listener-free Local ownership is unavailable on this target.
 pub const Error = error{LocalUnsupported};

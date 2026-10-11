@@ -23,16 +23,14 @@ composition:
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
   - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
-  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through howl-client's listener-free desktop owner, while Android/iOS remain client-only
+  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through its private desktop owner, while Android/iOS remain client-only
   - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:
   - server-protocol
   - server-runtime
   - server-client
-  - client-transport
   - server
-  - howl-client
   - howl-cli
   - howl-render
   - howl-host

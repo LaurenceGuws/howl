@@ -9,8 +9,6 @@
         .howl_instance = .{ .path = "mods/howl-instance" },
         .howl_text = .{ .path = "mods/howl-text" },
         .howl_render = .{ .path = "mods/howl-render" },
-        .client_transport = .{ .path = "mods/client-transport" },
-        .howl_client = .{ .path = "mods/howl-client" },
         .server_protocol = .{ .path = "mods/server-protocol" },
         .server_runtime = .{ .path = "hosts/server" },
         .server = .{ .path = "mods/server" },

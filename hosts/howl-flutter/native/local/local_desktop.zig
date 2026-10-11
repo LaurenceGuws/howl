@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const client = @import("howl_client");
+const client = @import("server_client").terminal;
 const instance = @import("howl_instance");
 const local_instance = switch (builtin.os.tag) {
     .linux => @import("local_owner_linux.zig"),

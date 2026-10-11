@@ -6,8 +6,8 @@
 
 const std = @import("std");
 const windows = std.os.windows;
-const client = @import("howl_client");
-const transport = @import("client_transport");
+const client = @import("server_client").terminal;
+const Stream = @FieldType(client.Connection, "stream");
 const instance = @import("howl_instance");
 const instance_service = @import("server_terminal_service");
 
@@ -195,7 +195,7 @@ pub const Owner = struct {
         if (!admission.accepted) return error.AdmissionFailed;
         service_owned = false;
 
-        const stream = transport.Stream.adoptPipe(
+        const stream = Stream.adoptPipe(
             pair.client_read,
             pair.client_write,
             pair.client_read_event,

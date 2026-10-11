@@ -169,6 +169,20 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
             raise SystemExit(1)
 PYCORE
 
+# Server clients consume communications; process/Instance owners are test fixtures.
+python3 - <<'PYCLIENT' || status=1
+from pathlib import Path
+import re
+
+root = Path("mods/server-client/src")
+files = [root / "server_client.zig"] + list((root / "terminal").glob("*.zig")) + list((root / "transport").glob("*.zig"))
+for path in files:
+    if path.name == "render_test.zig":
+        continue
+    if re.search(r'@import\(\s*"(?:howl_instance|howl_pty|server_model|server_service|server_terminal_service)"', path.read_text()):
+        raise SystemExit(f"{path}: Server client imports canonical process or service ownership")
+PYCLIENT
+
 # Every tracked Zig build root must be reachable through package declarations.
 # The external consumer intentionally depends inward on the distribution root;
 # its independent invocation is owned by the root consumer gate.

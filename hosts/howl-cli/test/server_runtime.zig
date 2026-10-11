@@ -1,7 +1,7 @@
 const std = @import("std");
 const runtime_mod = @import("server_runtime");
 const server_client = @import("server_client");
-const howl_client = @import("howl_client");
+const howl_client = @import("server_client").terminal;
 
 const Pump = struct {
     runtime: *runtime_mod.Runtime,

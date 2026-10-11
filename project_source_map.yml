@@ -27,17 +27,12 @@ experimental:
     geometry, pane/split layout, renderer, authentication, discovery, persistence or
     service-supervision policy
   server-client: >-
-    native control client for one explicit Server stream. Depends only on
-    server_protocol plus shared client-transport; owns status/tree decoding,
-    typed Session/Instance CRUD and exact attach. Successful attach consumes the
-    control connection and returns the same stream for ordinary HWLS; no proxy,
-    listener, Server model, discovery, authentication or supervision ownership
-  client-transport: >-
-    protocol-neutral native Unix/numeric-IPv4 TCP ordered-stream module shared by
-    the Instance client and Server control client. Owns cancellation, descriptor
-    lifetime, bounded connect deadlines and transport diagnostics only; no protocol,
-    Instance/Session/Server, discovery, authentication or route-selection policy.
-    Its package check includes its complete ruleset-3 zig-audit source gate
+    mods/server-client owns Server control and terminal interaction clients plus
+    private Unix/numeric-IPv4 transport, bounded deadlines and cancellation.
+    server_client.terminal exposes snapshots, state, actions, search, selection,
+    images and consequences. Exact attach consumes the control stream and
+    continues terminal interaction on the same stream. Neither client imports
+    Instance, PTY, Server model or process ownership.
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,
     owns only bounded adopted control streams and long-poll state, decodes
@@ -65,16 +60,6 @@ experimental:
     Exact Session+Instance routing may hand an already-connected stream into the
     Server-owned terminal service. The Server model owns no listener or geometry;
     hosts/server owns the single control listener/scheduler only
-  howl-client: >-
-    reusable UI-agnostic client engine for one explicit Howl Instance interaction
-    stream. The ordinary howl_client module owns Unix/numeric-IPv4 TCP carriage,
-    cancellation, bounded framed I/O, snapshots/state/actions/search/selection/images/
-    consequences and owned semantic views while owning no PTY, VT, Instance, Session,
-    Server, SSH subprocess, discovery, routing, authentication or supervision policy.
-    The separate optional howl_local module owns one listener-free desktop Local
-    Instance backed by Linux PTY or Windows ConPTY and admits ordinary HWLS streams;
-    importing howl_client never opts a consumer into that process lifetime. Its
-    package check includes its complete ruleset-3 zig-audit source gate
   howl-cli: >-
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
@@ -85,11 +70,11 @@ experimental:
     Instance, Session, Server, listener, discovery, authentication or supervision
   howl-render: >-
     backend-independent terminal-frame projection backed by howl-text. Thin source
-    adapters accept canonical VT Observation, validated borrowed howl-client.rich,
-    or owned howl-client.view storage while the source-neutral renderer itself
+    adapters accept canonical VT Observation, validated borrowed server_client.terminal.rich,
+    or owned server_client.terminal.view storage while the source-neutral renderer itself
     knows no VT owner, client transport, window system, or graphics backend. The
     direct facade consumes VT observation. Transported-client adapters live in
-    the separate howl_client_render module owned by mods/howl-client and depend
+    the separate server_client_render module owned by mods/server-client and depend
     outward on the same renderer without pulling Client into Render. The
     package separately exposes dependency-free `howl_render_limits` for wire-only
     consumers; its full root re-exports the exact howl-text module instance so
@@ -110,8 +95,8 @@ experimental:
     identity then transitions the same fd into ordinary HWLS with no proxy. Dart
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
     history/selection/native-size UX remains Instance-only after handoff. On Linux
-    and Windows the Local route owns one in-process Instance through howl-client's
-    listener-free howl_local owner; Android and iOS remain client-only. Flutter owns
+    and Windows the Local route owns one in-process Instance through its private
+    listener-free desktop owner (pending direct migration); Android and iOS remain client-only. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,

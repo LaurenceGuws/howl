@@ -7,7 +7,7 @@ The live terminal path is:
 ```text
 howl-instance / howl-vt
         ↓
-howl-client.rich → howl-client.view
+server-client.rich → server-client.view
         ↓
 howl-render.terminal.Renderer → final terminal Frame
         ↓
@@ -18,7 +18,7 @@ Flutter resource lease + batched Canvas backend
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
-Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, then forwards them through `howl-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
+Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, then forwards them through `server-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
 ## Android
 
@@ -102,7 +102,7 @@ resulting viewport inset and bounds each request with a requested-vs-observed
 visibility assertion.
 
 Copy is likewise presentation-local. With no active selection it writes the
-current live or scrolled viewport's bounded `howl-client.view.writeVisibleText`
+current live or scrolled viewport's bounded `server-client.view.writeVisibleText`
 projection. With an active selection, Flutter retains only stable canonical
 cell endpoints and asks the Instance client to extract the exact UTF-8 range. Viewport
 scrolling therefore does not retarget selected text, and eviction, bank or
@@ -152,7 +152,7 @@ is unchanged. No policy
 is imposed on the Web, Odin or Vulkan hosts, and canonical Instance progress never
 waits for a client display boundary.
 
-Android accessibility is projected from the same immutable `howl-client.view`
+Android accessibility is projected from the same immutable `server-client.view`
 used by the native renderer; Flutter does not OCR its Canvas or maintain a
 second terminal model. The private native host reserves one bounded ~5 MiB
 worst-case Canvas/semantic packet for the shared maintained-client command
@@ -260,9 +260,9 @@ changing Remote attach semantics.
 ## Ownership notes
 
 - `howl-instance` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
-- `howl-client.rich` remains the single `text_v1` byte parser.
-- `howl-client.view` is immutable, explicitly owned native semantic state.
-- `howl-client`'s optional `howl_local` module owns listener-free desktop Local
+- `server-client.rich` remains the single `text_v1` byte parser.
+- `server-client.view` is immutable, explicitly owned native semantic state.
+- Flutter's private Local owner owns listener-free desktop Local
   Instance/PTY lifecycle; mobile does not import that ownership policy.
 - `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.
 - `howl-render.terminal.Renderer` owns bounded shape/atlas caches and emits complete terminal frames.

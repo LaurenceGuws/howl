@@ -5,8 +5,8 @@ pub fn build(b: *std.Build) void {
     const native_target = b.standardTargetOptions(.{});
     const native_optimize = b.standardOptimizeOption(.{});
     const target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
-    const client = b.dependency("howl_client", .{ .target = target, .optimize = .ReleaseSafe });
-    const client_module = client.module("howl_client");
+    const client = b.dependency("server_client", .{ .target = target, .optimize = .ReleaseSafe });
+    const client_module = client.module("server_client");
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = .ReleaseSafe,
@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseSafe,
     });
-    root.addImport("howl_client", client_module);
+    root.addImport("server_client", client_module);
     root.addImport("limits", render.module("howl_render_limits"));
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;

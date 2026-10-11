@@ -1,5 +1,5 @@
 const std = @import("std");
-const client = @import("howl_client");
+const client = @import("server_client").terminal;
 
 const StateRecord = struct {
     schema: []const u8 = "howl.state/v1",

@@ -76,17 +76,11 @@ supervision remain outside Howl.
 
 ## Native clients
 
-`howl-client` provides the reusable UI-neutral `howl_client` module for one explicit
-Instance HWLS stream. That ordinary client owns bounded framed I/O,
-snapshot/state/action/search/selection/image/consequence clients and shared
-Unix/numeric-IPv4 transport mechanics, with no terminal or orchestration lifetime. The
-separate optional `howl_local` module owns one listener-free desktop Local Instance
-backed by Linux PTY or Windows ConPTY; importing the ordinary client never opts a
-consumer into process ownership.
-
-`server-client` is the corresponding native client for one explicit Server control
-stream. It owns typed Server status/tree decoding, Session/Instance CRUD and exact
-Instance attach.
+`server-client` owns native Server control and terminal-interaction clients.
+`server_client.terminal` supplies bounded observations, actions, selection, search,
+images and consequences; private transport retains bounded deadlines and cancellation.
+Control operations inspect the tree, perform Session/Instance CRUD and attach an exact
+Instance stream. Local terminal ownership belongs to each host.
 
 `howl-cli` builds the machine-friendly `howl` executable with two deliberately distinct
 command families:
@@ -223,12 +217,12 @@ root.addImport("howl_render", howl.module("howl_render"));
 root.addImport("howl_text", howl.module("howl_text"));
 ```
 
-Public modules include `howl_local`, Server control/terminal services and protocols,
-client transport, Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
+Public modules include Server control/terminal services and protocols, server_client,
+Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
 bridge libraries/objects and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
 The shared renderer consumes direct VT observation. Transported-client source
-adapters are exported separately as howl_client_render by mods/howl-client;
+adapters are exported separately as server_client_render by mods/server-client;
 they depend outward on the same renderer and preserve its text type identity.
 Consumers should pin an immutable repository tag or commit.
 

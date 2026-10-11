@@ -152,7 +152,7 @@ test "typed Server client errors leave control connection usable" {
 }
 
 // Hostile wire proofs use the public clients and owned native socketpairs.
-const hwls = @import("howl_client");
+const hwls = client.terminal;
 const protocol = client.protocol;
 const posix = std.posix;
 

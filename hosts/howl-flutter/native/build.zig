@@ -26,19 +26,28 @@ pub fn build(b: *std.Build) void {
 
     const bundled_render_text =
         target.result.os.tag != .linux or target.result.abi == .android;
-    const client_dependency = b.dependency("howl_client", .{
+    const client_dependency = b.dependency("server_client", .{
         .target = target,
         .optimize = optimize,
         .bundled_render_text = bundled_render_text,
     });
-    const client = client_dependency.module("howl_client");
-    const local = client_dependency.module("howl_local");
-    const terminal = client_dependency.module("howl_client_render");
+    const client = client_dependency.module("server_client");
+    const terminal = client_dependency.module("server_client_render");
 
-    const server_client = b.dependency("server_client", .{
+    const instance = if (bundled_render_text)
+        b.dependency("howl_instance", .{ .target = target, .optimize = optimize, .bundled_render_text = true })
+    else
+        b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
+    const desktop = (target.result.os.tag == .linux and target.result.abi != .android) or target.result.os.tag == .windows;
+    const local = b.createModule(.{
+        .root_source_file = b.path(if (desktop) "local/local_desktop.zig" else "local/local_unsupported.zig"),
         .target = target,
         .optimize = optimize,
-    }).module("server_client");
+    });
+    local.addImport("server_client", client);
+    local.addImport("howl_instance", instance.module("howl_instance"));
+    local.addImport("server_terminal_service", b.dependency("server", .{ .target = target, .optimize = optimize }).module("server_terminal_service"));
+    if (target.result.os.tag == .windows) local.linkSystemLibrary("kernel32", .{});
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),
@@ -47,9 +56,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .pic = true,
     });
-    root.addImport("howl_client", client);
-    root.addImport("howl_local", local);
-    root.addImport("server_client", server_client);
+    root.addImport("local_owner", local);
+    root.addImport("server_client", client);
     root.addImport("terminal", terminal);
 
     const object = b.addObject(.{

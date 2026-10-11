@@ -10,8 +10,6 @@
     "hosts/howl-odin/native",
     "hosts/howl-web",
     "hosts/server",
-    "mods/client-transport",
-    "mods/howl-client",
     "mods/howl-instance",
     "mods/howl-pty",
     "mods/howl-render",

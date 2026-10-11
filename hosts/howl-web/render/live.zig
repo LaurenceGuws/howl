@@ -1,7 +1,7 @@
 //! Live browser renderer: framed Howl snapshot bytes -> shared view/text/terminal-renderer state.
 const std = @import("std");
-const client = @import("howl_client");
-const terminal = @import("howl_client_render");
+const client = @import("server_client").terminal;
+const terminal = @import("server_client_render");
 const render = terminal;
 const text = render.text;
 const p = client.protocol;
