@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
     test_command.setCwd(b.path("."));
     test_command.addFileArg(wasm.getEmittedBin());
     check.dependOn(&test_command.step);
-    const live = b.step("live", "Test this Wasm client against a caller-supplied disposable direct HWLS Instance endpoint");
+    const live = b.step("live", "Test this Wasm client against a caller-supplied disposable exact Server Instance");
     const live_command = b.addSystemCommand(&.{ "node", "tests/live.mjs" });
     live_command.setCwd(b.path("."));
     live_command.addFileArg(wasm.getEmittedBin());

@@ -57,7 +57,7 @@ Server
 ```
 
 A **Session** is lifecycle identity/labeling for an Instance lineage. It owns no PTY,
-VT, HWLS service, geometry, renderer, pane, split, or surface layout. Session creation
+VT, Server terminal service, geometry, renderer, pane, split, or surface layout. Session creation
 never launches a shell.
 
 A hosted **Server runtime** owns exactly one control listener, the Server tree, and
@@ -68,8 +68,10 @@ results in explicit per-Instance geometry mutations.
 
 There is no per-Instance listener in the Server runtime. A Server client requests an
 exact `(session_id, instance_id)` and the accepted control stream is transferred into
-the Server-owned terminal service beside that Instance. After `attach_ready`, the same byte stream speaks
-unchanged HWLS. No Server-side byte proxy sits in the terminal path.
+the Server-owned terminal service beside that Instance. One complete `attach_ready` response carries Server, Session, Instance, tree revision
+and client identity; the same SRVR version 2 stream is then dedicated to that Instance.
+Separate catalog/CRUD connections stay in Server control. There is no second handshake.
+Disconnect leaves the Instance alive; explicit close ends it. No Server-side byte proxy sits in the terminal path.
 
 Transport reachability, authentication, discovery, public routing and service
 supervision remain outside Howl.
@@ -86,13 +88,13 @@ Instance stream. Local terminal ownership belongs to each host.
 command families:
 
 ```text
-howl instance ...   # interaction with one Instance, direct or exact Server-routed
+howl instance ...   # interaction with one exact Server-selected Instance
 howl server ...     # Server tree / Session / Instance orchestration
 ```
 
 The CLI is a frontend/composition root, not an architectural owner. Instance commands
-share one target grammar: a direct HWLS endpoint or
-`--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`. The latter performs exact Server
+share one exact target grammar:
+`--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`. This performs exact Server
 attach only to obtain the Instance stream; snapshot/input/resize semantics remain
 Instance-owned. In particular, `howl server session create` creates only logical Session identity, while
 `howl server instance create` is the only orchestration command that accepts
@@ -104,13 +106,12 @@ Flutter, Web, the native Vulkan Host and Odin clients are pressure canaries rath
 compatibility surfaces. They may iterate rapidly, but none may duplicate terminal
 semantics or move presentation policy into VT/PTY/Instance/Server.
 
-Flutter currently exercises desktop Local, direct HWLS, and Server-selected Instance
-routes. Linux and Windows Local use a private worker owning one in-process Instance
+Flutter exercises desktop Local and exact Server-selected Instance routes. Linux and Windows Local use a private worker owning one in-process Instance
 with direct semantic commands and copied canonical observations; Android and iOS
 remain client-only. Its small app shell may persist explicit labelled Server
-endpoints, but that is application configuration, not Server discovery. Odin also
-exposes explicit Server-selected Instance startup while preserving its Local/direct
-lanes; after attach its existing render/input workers remain ordinary HWLS clients.
+endpoints, but that is application configuration, not Server discovery. Odin exposes exact Server-selected startup and direct Local launch profiles.
+Its transported workers independently attach to that Instance; endpoint-only saved
+Attach profiles report that Server selection is required.
 
 howl-app is the direct Local-only Zig/SDL shell beside Odin. Its graphical thread
 borrows immutable Render leases; matching panes share native fonts and bounded
@@ -121,15 +122,16 @@ The Vulkan Host is deliberately different: it is the native direct-embed perform
 canary only. It owns one in-process Instance and projects canonical VT observation
 directly through text/render/Vulkan/Wayland. Its build disables transported client
 render sources and contains no server-client, endpoint, Session, Server,
-or HWLS route.
+or transported terminal route.
 
 The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
-exact Server-selected Instance through `server-client` attach and then carries unchanged
-HWLS over WebSocket; it does not require or recreate a per-Instance listener.
+exact Server-selected Instance through `server-client`. Each WebSocket first receives
+the common ready response, then carries Server terminal traffic. No per-Instance
+listener is created.
 
 ### Current consequence consumers
 
-`server_client.terminal.consequences` provides the HWLS consequence client; host policy is opt-in.
+`server_client.terminal.consequences` provides the Server terminal consequence client; host policy is opt-in.
 Current maintained source has one explicit product policy owner:
 
 | Surface | Consequence authority today |

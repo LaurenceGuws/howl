@@ -27,6 +27,12 @@ terminal APIs in [src/client](src/client), with private transport beneath it.
 These are independent module imports from this same package; neither client nor
 wire-only consumers import the Server model, Instance, PTY or live VT.
 
+All connections use one SRVR version 2 envelope. Catalog/CRUD connections stay in
+Server control; each successful attachment dedicates its stream to one exact
+Instance. A single ready response carries Server, Session, Instance, tree revision
+and client identity for both native and browser consumers. Disconnect releases the
+attachment; only explicit close destroys the Instance. UI owns tabs and layout.
+
 | Module | Selected ownership |
 | --- | --- |
 | `server_runtime` | listeners, scheduling and shutdown over the Server owner |

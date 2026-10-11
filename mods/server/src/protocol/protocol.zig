@@ -1,18 +1,17 @@
-//! Bounded transport-neutral control wire for Server -> Sessions -> Instances.
-//!
-//! This protocol owns orchestration vocabulary only. HWLS remains the interaction
-//! protocol of one concrete Instance after exact Session+Instance attachment.
-//! Session creation contains no shell, command, cwd or terminal geometry.
+//! Bounded Server control and dedicated Instance-attachment wire.
+//! Successful attachment establishes terminal interaction on that same connection.
+//! Session creation contains no process or terminal geometry policy.
 
 const std = @import("std");
+const framing = @import("framing.zig");
 
 /// Terminal interaction wire owned by this Server implementation.
 pub const terminal = @import("terminal.zig");
 
 /// Version of the bounded Server control frame envelope.
-pub const framing_version: u8 = 1;
+pub const framing_version: u8 = framing.version;
 /// Exact encoded control frame header length.
-pub const header_bytes: usize = 12;
+pub const header_bytes: usize = framing.header_bytes;
 /// Upper bound on any control request payload.
 pub const maximum_request_payload_bytes: usize = 8 * 1024;
 /// Upper bound on any control frame payload.
@@ -29,8 +28,6 @@ pub const maximum_shell_bytes: usize = 1024;
 pub const maximum_command_bytes: usize = 4096;
 /// Maximum encoded working-directory byte length.
 pub const maximum_cwd_bytes: usize = 1024;
-
-const magic = [4]u8{ 'S', 'R', 'V', 'R' };
 
 /// Frozen control request and response frame tags.
 pub const Kind = enum(u8) {
@@ -50,19 +47,10 @@ pub const Kind = enum(u8) {
 };
 
 /// Control frame tag and bounded payload length.
-pub const Header = struct {
-    kind: Kind,
-    payload_len: u32,
-};
+pub const Header = framing.Header(Kind);
 
-/// Reports invalid magic, version, tag, reserved bytes or payload length.
-pub const HeaderError = error{
-    InvalidMagic,
-    UnsupportedFramingVersion,
-    InvalidReservedBits,
-    UnknownKind,
-    PayloadTooLarge,
-};
+/// Reports invalid framing before any control payload is admitted.
+pub const HeaderError = framing.Error;
 
 /// Reports malformed or out-of-domain control payloads.
 pub const PayloadError = error{InvalidPayload};
@@ -138,9 +126,11 @@ pub const Result = struct {
 
 /// Exact occurrence and catalogue revision at stream handoff.
 pub const AttachReady = struct {
+    server_id: u64,
     session_id: u64,
     instance_id: u64,
     tree_revision: u64,
+    client_id: terminal.ClientId,
 };
 
 /// Session facts with borrowed name and Instance records.
@@ -180,7 +170,7 @@ pub const payload_bytes = struct {
     /// Encoded instance identity payload or prefix size in bytes.
     pub const instance_identity: usize = 16;
     /// Encoded attach ready payload or prefix size in bytes.
-    pub const attach_ready: usize = 24;
+    pub const attach_ready: usize = 40;
     /// Encoded result payload or prefix size in bytes.
     pub const result: usize = 32;
     /// Encoded tree header payload or prefix size in bytes.
@@ -193,23 +183,12 @@ pub const payload_bytes = struct {
 
 /// Validates and encodes header into caller-owned output.
 pub fn encodeHeader(output: *[header_bytes]u8, value: Header) error{PayloadTooLarge}!void {
-    if (value.payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
-    output.* = @splat(0);
-    @memcpy(output[0..4], &magic);
-    output[4] = framing_version;
-    output[5] = @backingInt(value.kind);
-    writeU32(output[8..12], value.payload_len);
+    return framing.encode(Kind, maximum_payload_bytes, output, value);
 }
 
-/// Decodes and validates header from the exact wire payload.
+/// Rejects terminal tags and oversized control payloads before allocation.
 pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
-    if (!std.mem.eql(u8, input[0..4], &magic)) return error.InvalidMagic;
-    if (input[4] != framing_version) return error.UnsupportedFramingVersion;
-    if (input[6] != 0 or input[7] != 0) return error.InvalidReservedBits;
-    const kind = enumFromInt(Kind, input[5]) orelse return error.UnknownKind;
-    const payload_len = readU32(input[8..12]);
-    if (payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
-    return .{ .kind = kind, .payload_len = payload_len };
+    return framing.decode(Kind, maximum_payload_bytes, input);
 }
 
 /// Validates and encodes status into caller-owned output.
@@ -373,24 +352,32 @@ pub fn decodeInstanceIdentity(input: []const u8) PayloadError!InstanceIdentity {
 
 /// Validates and encodes attach ready into caller-owned output.
 pub fn encodeAttachReady(output: *[payload_bytes.attach_ready]u8, value: AttachReady) PayloadError!void {
-    try validateInstanceIdentity(.{ .session_id = value.session_id, .instance_id = value.instance_id });
-    if (value.tree_revision == 0) return error.InvalidPayload;
-    writeU64(output[0..8], value.session_id);
-    writeU64(output[8..16], value.instance_id);
-    writeU64(output[16..24], value.tree_revision);
+    try validateAttachReady(value);
+    writeU64(output[0..8], value.server_id);
+    writeU64(output[8..16], value.session_id);
+    writeU64(output[16..24], value.instance_id);
+    writeU64(output[24..32], value.tree_revision);
+    writeU64(output[32..40], value.client_id);
 }
 
-/// Decodes and validates attach ready from the exact wire payload.
+/// Decodes one complete accepted attachment, including terminal client identity.
 pub fn decodeAttachReady(input: []const u8) PayloadError!AttachReady {
     if (input.len != payload_bytes.attach_ready) return error.InvalidPayload;
     const value = AttachReady{
-        .session_id = readU64(input[0..8]),
-        .instance_id = readU64(input[8..16]),
-        .tree_revision = readU64(input[16..24]),
+        .server_id = readU64(input[0..8]),
+        .session_id = readU64(input[8..16]),
+        .instance_id = readU64(input[16..24]),
+        .tree_revision = readU64(input[24..32]),
+        .client_id = readU64(input[32..40]),
     };
-    try validateInstanceIdentity(.{ .session_id = value.session_id, .instance_id = value.instance_id });
-    if (value.tree_revision == 0) return error.InvalidPayload;
+    try validateAttachReady(value);
     return value;
+}
+
+fn validateAttachReady(value: AttachReady) PayloadError!void {
+    try validateInstanceIdentity(.{ .session_id = value.session_id, .instance_id = value.instance_id });
+    if (value.server_id == 0 or value.tree_revision == 0 or value.client_id == terminal.no_client)
+        return error.InvalidPayload;
 }
 
 /// Validates and encodes result into caller-owned output.
@@ -813,4 +800,32 @@ test "tree decoder requires encoder strict identity ordering without allocation"
             try std.testing.expectEqual(@as(?TreeDecoder.DecodedSession, null), try decoder.nextSession());
         }
     }
+}
+
+comptime {
+    for (@typeInfo(Kind).@"enum".field_values) |control| {
+        for (@typeInfo(terminal.Kind).@"enum".field_values) |interaction| {
+            if (control == interaction)
+                @compileError("Server control and terminal tags must be disjoint");
+        }
+    }
+}
+
+test "one Server envelope rejects cross-phase tags and complete attachment identity is exact" {
+    var header: [header_bytes]u8 = undefined;
+    try terminal.encodeHeader(&header, .{ .kind = .observe, .payload_len = 0 });
+    try std.testing.expectEqual(framing_version, header[4]);
+    try std.testing.expectError(error.UnknownKind, decodeHeader(&header));
+    try encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = payload_bytes.attach_ready });
+    try std.testing.expectError(error.UnknownKind, terminal.decodeHeader(&header));
+    var bytes: [payload_bytes.attach_ready]u8 = undefined;
+    const ready = AttachReady{ .server_id = 91, .session_id = 7, .instance_id = 3, .tree_revision = 4, .client_id = 0xf123_4567_89ab_cdef };
+    try encodeAttachReady(&bytes, ready);
+    try std.testing.expectEqualDeep(ready, try decodeAttachReady(&bytes));
+    for (0..5) |field| {
+        var invalid = bytes;
+        @memset(invalid[field * 8 ..][0..8], 0);
+        try std.testing.expectError(error.InvalidPayload, decodeAttachReady(&invalid));
+    }
+    try std.testing.expectError(error.InvalidPayload, decodeAttachReady(bytes[0..24]));
 }

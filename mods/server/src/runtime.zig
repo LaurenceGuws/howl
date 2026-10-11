@@ -624,7 +624,7 @@ test "runtime binds one explicit numeric IPv4 listener and reports that endpoint
     try std.testing.expect(std.mem.startsWith(u8, endpoint, "tcp://127.0.0.1:"));
 }
 
-test "one HWLS welcome allocation failure cannot escape the multi-Instance runtime" {
+test "one attachment observation allocation failure cannot escape the multi-Instance runtime" {
     const protocol = @import("server_protocol").terminal;
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var runtime = try Runtime.init(failing.allocator(), std.testing.io, std.testing.environ, .{ .tcp_loopback = 0 }, 42);
@@ -649,15 +649,34 @@ test "one HWLS welcome allocation failure cannot escape the multi-Instance runti
     defer closeFd(bad[1]);
     var adopted = false;
     defer if (!adopted) closeFd(bad[0]);
-    var hello: [protocol.header_bytes]u8 = undefined;
-    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
-    try runtime.server.adoptClient(sid, first, bad[0], &hello, &.{});
+    var observation: [protocol.header_bytes + protocol.payload_bytes.observe]u8 = undefined;
+    try protocol.encodeHeader(observation[0..protocol.header_bytes], .{ .kind = .observe_raw, .payload_len = protocol.payload_bytes.observe });
+    protocol.encodeObserve(observation[protocol.header_bytes..], .{});
+    try runtime.server.adoptClient(sid, first, bad[0], &observation);
     adopted = true;
     failing.fail_index = failing.alloc_index;
-    try runtime.turn();
+    var failed_turns: usize = 0;
+    while (!failing.has_induced_failure and failed_turns < 100) : (failed_turns += 1) try runtime.turn();
     try std.testing.expect(failing.has_induced_failure);
     failing.fail_index = std.math.maxInt(usize);
     try std.testing.expectEqual(@as(u16, 2), runtime.server.instanceCountTotal());
+    const wire = @import("server_protocol");
+    var bad_ready: [wire.header_bytes + wire.payload_bytes.attach_ready]u8 = undefined;
+    var drained: usize = 0;
+    for (0..100) |_| {
+        if (drained == bad_ready.len) break;
+        const raw = linux.read(bad[1], bad_ready[drained..].ptr, bad_ready.len - drained);
+        switch (linux.errno(raw)) {
+            .SUCCESS => {
+                try std.testing.expect(raw > 0 and raw <= bad_ready.len - drained);
+                drained += raw;
+            },
+            .AGAIN, .INTR => try runtime.turn(),
+            else => return error.TestReadFailed,
+        }
+    }
+    try std.testing.expectEqual(bad_ready.len, drained);
+    try std.testing.expectEqual(first, (try wire.decodeAttachReady(bad_ready[wire.header_bytes..])).instance_id);
     var byte: [1]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), linux.read(bad[1], &byte, 1));
 
@@ -666,9 +685,9 @@ test "one HWLS welcome allocation failure cannot escape the multi-Instance runti
     defer closeFd(good[1]);
     var good_adopted = false;
     defer if (!good_adopted) closeFd(good[0]);
-    try runtime.server.adoptClient(sid, second, good[0], &hello, &.{});
+    try runtime.server.adoptClient(sid, second, good[0], &.{});
     good_adopted = true;
-    var frame: [protocol.header_bytes + protocol.payload_bytes.welcome]u8 = undefined;
+    var frame: [wire.header_bytes + wire.payload_bytes.attach_ready]u8 = undefined;
     var received: usize = 0;
     var turns: usize = 0;
     while (received < frame.len and turns < 100) : (turns += 1) {
@@ -684,7 +703,8 @@ test "one HWLS welcome allocation failure cannot escape the multi-Instance runti
         }
     }
     try std.testing.expectEqual(frame.len, received);
-    try std.testing.expectEqual(protocol.Kind.welcome, (try protocol.decodeHeader(frame[0..protocol.header_bytes])).kind);
+    try std.testing.expectEqual(wire.Kind.attach_ready, (try wire.decodeHeader(frame[0..wire.header_bytes])).kind);
+    try std.testing.expectEqual(second, (try wire.decodeAttachReady(frame[wire.header_bytes..])).instance_id);
 }
 
 test "post-bind listen failure rolls back only its constructed Unix path" {

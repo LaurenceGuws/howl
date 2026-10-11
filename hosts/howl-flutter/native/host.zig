@@ -608,18 +608,7 @@ fn connectManagedInstance(
         return null;
     };
 
-    var instance_diagnostic: client.ConnectDiagnostic = .{};
-    return client.connectTransport(allocator, attached.stream, &instance_diagnostic) catch |failure| {
-        writeManagedConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            "instance_handshake",
-            failure,
-            instance_diagnostic,
-        );
-        return null;
-    };
+    return attached.connection;
 }
 
 fn createHost(
@@ -723,65 +712,6 @@ fn createHost(
     // zig-audit: acknowledge ptr_cast
     // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(host);
-}
-
-/// Creates a transported direct host with caller-supplied endpoint and font bytes.
-pub export fn howl_native_host_create(
-    endpoint_ptr: [*]const u8,
-    endpoint_len: usize,
-    primary_ptr: [*]const u8,
-    primary_len: usize,
-    fallback_ptr: [*]const u8,
-    fallback_len: usize,
-    secondary_fallback_ptr: ?[*]const u8,
-    secondary_fallback_len: usize,
-    font_pixels: u16,
-    cell_width: u16,
-    cell_height: u16,
-    interrupt_raw: ?*InterruptHandle,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*HostHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    if (endpoint_len == 0 or primary_len == 0 or
-        font_pixels == 0 or cell_width == 0 or cell_height == 0)
-    {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
-        return null;
-    }
-    const allocator = std.heap.c_allocator;
-    var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectCancelable(
-        allocator,
-        endpoint_ptr[0..endpoint_len],
-        &connect_diagnostic,
-        interruptFromRaw(interrupt_raw),
-    ) catch |failure| {
-        writeConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            failure,
-            connect_diagnostic,
-        );
-        return null;
-    };
-    return createHost(
-        connection,
-        primary_ptr,
-        primary_len,
-        fallback_ptr,
-        fallback_len,
-        secondary_fallback_ptr,
-        secondary_fallback_len,
-        font_pixels,
-        cell_width,
-        cell_height,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    );
 }
 
 /// Creates a host attached to an exact Server/Session/Instance occurrence.
@@ -912,45 +842,6 @@ fn createControlFromConnection(
     // zig-audit: acknowledge ptr_cast
     // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(control);
-}
-
-/// Creates a separate direct semantic-control connection.
-pub export fn howl_native_control_create(
-    endpoint_ptr: [*]const u8,
-    endpoint_len: usize,
-    interrupt_raw: ?*InterruptHandle,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?*ControlHandle {
-    resetCreateDiagnostic(diagnostic_len);
-    if (endpoint_len == 0) {
-        writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_endpoint");
-        return null;
-    }
-    const allocator = std.heap.c_allocator;
-    var connect_diagnostic: client.ConnectDiagnostic = .{};
-    const connection = client.Connection.connectCancelable(
-        allocator,
-        endpoint_ptr[0..endpoint_len],
-        &connect_diagnostic,
-        interruptFromRaw(interrupt_raw),
-    ) catch |failure| {
-        writeConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            failure,
-            connect_diagnostic,
-        );
-        return null;
-    };
-    return createControlFromConnection(
-        connection,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    );
 }
 
 /// Creates control attached to the exact managed terminal occurrence.

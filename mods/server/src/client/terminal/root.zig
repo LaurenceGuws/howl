@@ -1,7 +1,7 @@
-//! Terminal interaction client for one Server-owned HWLS endpoint.
+//! Terminal interaction APIs for one established dedicated Server attachment.
 //!
-//! This package owns client-side endpoint parsing, the frozen framed connection,
-//! handshake, bounded frame I/O, and request-result mechanics. It owns no PTY,
+//! This module owns bounded terminal frame I/O and request-result mechanics.
+//! Server control owns construction and the common ready response. It owns no PTY,
 //! VT, Instance lifecycle, discovery, renderer, CLI presentation, or platform UI.
 //! Native hosts use explicit Unix or numeric-IPv4 TCP streams. Byte-entry consumers need no subprocess.
 
@@ -15,16 +15,14 @@ pub const Error = impl.Error;
 pub const ConnectStage = impl.ConnectStage;
 /// Bounded native transport diagnostic retained across setup.
 pub const ConnectDiagnostic = impl.ConnectDiagnostic;
-/// Owned decoded HWLS frame type.
+/// Owned decoded Server terminal frame type.
 pub const Frame = impl.Frame;
 /// Independently owned duplicate used to wake blocked receive.
 pub const Cancellation = impl.Cancellation;
 /// Caller-owned interrupt token for setup and I/O cancellation.
 pub const Interrupt = impl.Interrupt;
-/// One established HWLS connection owner.
+/// One established Server terminal connection owner.
 pub const Connection = impl.Connection;
-/// Completes the HWLS handshake over an already-owned transport stream.
-pub const connectTransport = impl.connectTransport;
 
 /// Canonical client-side Instance mutation requests.
 pub const actions = @import("actions.zig");

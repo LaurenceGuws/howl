@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl Instance v10 wire-vector decoder and validator.
+"""Independent Server wire v2 vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -17,49 +17,16 @@ import zlib
 from pathlib import Path
 
 
-MAGIC = b"HWLS"
-FRAMING_VERSION = 10
+MAGIC = b"SRVR"
+FRAMING_VERSION = 2
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
 MAXIMUM_PACKED_TEXT_BYTES = MAXIMUM_TEXT_SNAPSHOT_BYTES + 0xFFFF
 
-KINDS = {
-    1: "hello",
-    2: "welcome",
-    3: "observe",
-    4: "snapshot_begin",
-    5: "snapshot_data",
-    6: "snapshot_end",
-    7: "input",
-    8: "assign_leader",
-    9: "resize",
-    10: "signal",
-    11: "result",
-    12: "interaction_state",
-    13: "interaction_state_snapshot",
-    14: "assign_consequence_leader",
-    15: "consequence_observe",
-    16: "consequence_begin",
-    17: "consequence_data",
-    18: "consequence_end",
-    19: "consequence_consume",
-    20: "consequence_reply",
-    21: "text_extract",
-    22: "text_extract_data",
-    23: "snapshot_graphics",
-    24: "image_request",
-    25: "image_begin",
-    26: "image_data",
-    27: "image_end",
-    28: "observe_raw",
-    29: "snapshot_raw_data",
-    30: "observe_delta",
-    31: "snapshot_delta_data",
-    32: "snapshot_properties",
-    33: "observe_packed",
-    34: "snapshot_packed_data",
-}
+CONTROL_KINDS = {1: 'hello', 2: 'welcome', 3: 'status', 4: 'status_snapshot', 5: 'observe_tree', 6: 'tree_snapshot', 7: 'create_session', 8: 'close_session', 9: 'create_instance', 10: 'close_instance', 11: 'attach_instance', 12: 'attach_ready', 13: 'control_result'}
+TERMINAL_KINDS = {32: 'observe', 33: 'snapshot_begin', 34: 'snapshot_data', 35: 'snapshot_end', 36: 'input', 37: 'assign_leader', 38: 'resize', 39: 'signal', 40: 'result', 41: 'interaction_state', 42: 'interaction_state_snapshot', 43: 'assign_consequence_leader', 44: 'consequence_observe', 45: 'consequence_begin', 46: 'consequence_data', 47: 'consequence_end', 48: 'consequence_consume', 49: 'consequence_reply', 50: 'text_extract', 51: 'text_extract_data', 52: 'snapshot_graphics', 53: 'image_request', 54: 'image_begin', 55: 'image_data', 56: 'image_end', 57: 'observe_raw', 58: 'snapshot_raw_data', 59: 'observe_delta', 60: 'snapshot_delta_data', 61: 'snapshot_properties', 62: 'observe_packed', 63: 'snapshot_packed_data'}
+KINDS = CONTROL_KINDS | TERMINAL_KINDS
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
 KEY_KINDS = {1: "named", 2: "unicode"}
@@ -181,8 +148,29 @@ def decode_hello(payload: bytes) -> dict:
 
 
 def decode_welcome(payload: bytes) -> dict:
-    require(len(payload) == 8, "welcome_size")
-    return {"client_id": u64(payload)}
+    require(len(payload) == 32, "welcome_size")
+    require(payload[24:] == bytes(8), "welcome_reserved")
+    server_id, revision, sessions, instances, session_capacity, instance_capacity = struct.unpack(">QQHHHH", payload[:24])
+    require(server_id != 0 and revision != 0, "welcome_identity")
+    require(0 < session_capacity <= 16 and 0 < instance_capacity <= 16, "welcome_capacity")
+    require(sessions <= session_capacity and instances <= sessions * instance_capacity, "welcome_counts")
+    return {"server_id": server_id, "tree_revision": revision, "session_count": sessions,
+            "instance_count": instances, "session_capacity": session_capacity,
+            "instances_per_session": instance_capacity}
+
+
+def decode_attach_ready(payload: bytes) -> dict:
+    require(len(payload) == 40, "attach_ready_size")
+    values = struct.unpack(">QQQQQ", payload)
+    require(all(value != 0 for value in values), "attach_ready_identity")
+    return dict(zip(("server_id", "session_id", "instance_id", "tree_revision", "client_id"), values))
+
+
+def decode_attach_instance(payload: bytes) -> dict:
+    require(len(payload) == 16, "attach_instance_size")
+    session_id, instance_id = struct.unpack(">QQ", payload)
+    require(session_id != 0 and instance_id != 0, "attach_instance_identity")
+    return {"session_id": session_id, "instance_id": instance_id}
 
 
 def decode_observe(payload: bytes) -> dict:
@@ -273,7 +261,7 @@ def decode_interaction_state_snapshot(payload: bytes) -> dict:
 
 def decode_result(payload: bytes) -> dict:
     require(len(payload) == 2, "result_size")
-    require(payload[0] in KINDS, "result_request_kind")
+    require(payload[0] in TERMINAL_KINDS, "result_request_kind")
     require(payload[1] in RESULT_CODES, "result_code")
     return {
         "request_kind": KINDS[payload[0]],
@@ -911,35 +899,42 @@ def decode_text_extract_data(payload: bytes) -> dict:
 def decode_fixed_payload(kind: int, payload: bytes) -> dict:
     if kind == 1:
         return decode_hello(payload)
-    if kind == 2:
+    if kind in (2, 4):
         return decode_welcome(payload)
-    if kind in (3, 28, 30, 33):
-        return decode_observe(payload)
-    if kind == 4:
-        return decode_snapshot_begin(payload)
-    if kind == 6:
-        return decode_snapshot_end(payload)
-    if kind == 7:
-        return decode_input(payload)
-    if kind == 8:
-        return decode_assign_leader(payload)
-    if kind == 9:
-        return decode_resize(payload)
-    if kind == 10:
-        return decode_signal(payload)
     if kind == 11:
-        return decode_result(payload)
+        return decode_attach_instance(payload)
     if kind == 12:
-        return decode_interaction_state(payload)
-    if kind == 13:
-        return decode_interaction_state_snapshot(payload)
-    if 14 <= kind <= 20:
+        return decode_attach_ready(payload)
+    if kind in CONTROL_KINDS:
+        # Control operations have Zig semantic proofs; this corpus witnesses their framing.
         return {"bytes_hex": payload.hex()}
-    if kind == 21:
+    if kind in (32, 57, 59, 62):
+        return decode_observe(payload)
+    if kind == 33:
+        return decode_snapshot_begin(payload)
+    if kind == 35:
+        return decode_snapshot_end(payload)
+    if kind == 36:
+        return decode_input(payload)
+    if kind == 37:
+        return decode_assign_leader(payload)
+    if kind == 38:
+        return decode_resize(payload)
+    if kind == 39:
+        return decode_signal(payload)
+    if kind == 40:
+        return decode_result(payload)
+    if kind == 41:
+        return decode_interaction_state(payload)
+    if kind == 42:
+        return decode_interaction_state_snapshot(payload)
+    if 43 <= kind <= 49:
+        return {"bytes_hex": payload.hex()}
+    if kind == 50:
         return decode_text_extract(payload)
-    if kind == 22:
+    if kind == 51:
         return decode_text_extract_data(payload)
-    if kind == 24:
+    if kind == 53:
         return decode_image_request(payload)
     reject("snapshot_data_without_begin")
 
@@ -961,14 +956,14 @@ def decode_stream(data: bytes) -> dict:
         kind = header[5]
         require(kind in KINDS, "header_kind")
         payload_len = u32(header[8:12])
-        require(payload_len <= MAXIMUM_PAYLOAD_BYTES, "payload_limit")
+        require(payload_len <= (8 * 1024 if kind in CONTROL_KINDS else MAXIMUM_PAYLOAD_BYTES), "payload_limit")
         offset += HEADER_BYTES
         require(len(data) - offset >= payload_len, "truncated_frame")
         payload = data[offset : offset + payload_len]
         offset += payload_len
 
         name = KINDS[kind]
-        if kind == 4:
+        if kind == 33:
             require(snapshot is None and image_resource is None, "snapshot_nested")
             decoded = decode_snapshot_begin(payload)
             baseline = None
@@ -979,10 +974,10 @@ def decode_stream(data: bytes) -> dict:
                         baseline = prior
                         break
             snapshot = new_snapshot(decoded, pending_delta_request, baseline)
-        elif kind in (5, 29, 31, 34):
+        elif kind in (34, 58, 60, 63):
             require(snapshot is not None, "snapshot_data_without_begin")
             require(snapshot["graphics"] is None, "snapshot_graphics_order")
-            encoding = {5: "compressed", 29: "raw", 31: "delta", 34: "packed"}[kind]
+            encoding = {34: "compressed", 58: "raw", 60: "delta", 63: "packed"}[kind]
             if encoding == "delta":
                 require(snapshot["delta_request"] is not None, "snapshot_delta_request")
             require(snapshot["body_encoding"] is None or snapshot["body_encoding"] == encoding, "snapshot_data_encoding")
@@ -991,34 +986,34 @@ def decode_stream(data: bytes) -> dict:
             require(len(snapshot["encoded_body"]) + len(payload) <= encoded_limit, "snapshot_text_limit")
             snapshot["encoded_body"].extend(payload)
             decoded = {"bytes": len(payload)}
-        elif kind == 23:
+        elif kind == 52:
             require(snapshot is not None, "snapshot_graphics_without_begin")
             require(snapshot["graphics"] is None, "snapshot_graphics_duplicate")
             decoded = decode_snapshot_graphics(payload, snapshot["begin"])
             snapshot["graphics"] = decoded
-        elif kind == 32:
+        elif kind == 61:
             require(snapshot is not None and snapshot["graphics"] is not None, "properties_order")
             require(snapshot["properties"] is None, "properties_duplicate")
             decoded = decode_properties(payload)
             snapshot["properties"] = decoded
-        elif kind == 6:
+        elif kind == 35:
             require(snapshot is not None, "snapshot_end_without_begin")
             decoded = decode_snapshot_end(payload)
             snapshots.append(finish_snapshot(snapshot, decoded))
             if snapshot["delta_request"] is not None:
                 pending_delta_request = None
             snapshot = None
-        elif kind == 25:
+        elif kind == 54:
             require(snapshot is None and image_resource is None, "image_begin_nested")
             decoded = decode_image_begin(payload)
             image_resource = {"begin": decoded, "bytes": 0}
-        elif kind == 26:
+        elif kind == 55:
             require(image_resource is not None, "image_data_without_begin")
             require(0 < len(payload) <= GRAPHICS_DATA_CHUNK_BYTES, "image_data_size")
             require(image_resource["bytes"] + len(payload) <= image_resource["begin"]["byte_count"], "image_data_bytes")
             image_resource["bytes"] += len(payload)
             decoded = {"bytes": len(payload)}
-        elif kind == 27:
+        elif kind == 56:
             require(image_resource is not None, "image_end_without_begin")
             decoded = decode_image_end(payload)
             begin = image_resource["begin"]
@@ -1029,7 +1024,7 @@ def decode_stream(data: bytes) -> dict:
         else:
             require(snapshot is None and image_resource is None, "snapshot_interleaved")
             decoded = decode_fixed_payload(kind, payload)
-            if kind == 30:
+            if kind == 59:
                 pending_delta_request = decoded
         frames.append({"kind": name, "payload": decoded})
 
@@ -1076,7 +1071,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.instance.wire.v10/vectors", "document_schema")
+    require(document.get("schema") == "howl.server.wire.v2/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -1089,7 +1084,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v10-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

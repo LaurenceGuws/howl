@@ -387,27 +387,11 @@ pub const Service = struct {
         const identity = protocol.decodeInstanceIdentity(payload) catch
             return self.queueMalformed(index, client, .attach_instance, 0, 0);
 
-        var ready_payload: [protocol.payload_bytes.attach_ready]u8 = undefined;
-        protocol.encodeAttachReady(&ready_payload, .{
-            .session_id = identity.session_id,
-            .instance_id = identity.instance_id,
-            .tree_revision = self.server.treeRevision(),
-        }) catch return self.queueResult(index, client, .attach_instance, .internal, identity.session_id, identity.instance_id);
-        var preface: [protocol.header_bytes + protocol.payload_bytes.attach_ready]u8 = undefined;
-        var ready_header: [protocol.header_bytes]u8 = undefined;
-        protocol.encodeHeader(&ready_header, .{
-            .kind = .attach_ready,
-            .payload_len = ready_payload.len,
-        }) catch return self.queueResult(index, client, .attach_instance, .internal, identity.session_id, identity.instance_id);
-        @memcpy(preface[0..protocol.header_bytes], &ready_header);
-        @memcpy(preface[protocol.header_bytes..], &ready_payload);
-
         self.server.adoptClient(
             identity.session_id,
             identity.instance_id,
             client.fd,
             client.input[0..client.input_len],
-            &preface,
         ) catch |failure| {
             const code: protocol.ResultCode = switch (failure) {
                 error.SessionNotFound => .session_not_found,
@@ -786,7 +770,7 @@ test "tree observer wakes on explicit Instance creation under its Session" {
     try std.testing.expect((try decoder.nextSession()) == null);
 }
 
-test "exact attach transfers one control stream into unchanged HWLS" {
+test "exact attachment queues ready before pipelined terminal interaction" {
     const server = try model.Server.init(std.testing.allocator, 0x53);
     defer server.deinit();
     const work = try server.createSession("work");
@@ -807,9 +791,9 @@ test "exact attach transfers one control stream into unchanged HWLS" {
     var identity: [protocol.payload_bytes.instance_identity]u8 = undefined;
     try protocol.encodeInstanceIdentity(&identity, .{ .session_id = work, .instance_id = instance_id });
     try peer.sendFrame(.attach_instance, &identity);
-    var hwls_hello: [instance_protocol.header_bytes]u8 = undefined;
-    try instance_protocol.encodeHeader(&hwls_hello, .{ .kind = .hello, .payload_len = 0 });
-    try peer.sendRaw(&hwls_hello);
+    var pipelined: [instance_protocol.header_bytes]u8 = undefined;
+    try instance_protocol.encodeHeader(&pipelined, .{ .kind = .interaction_state, .payload_len = 0 });
+    try peer.sendRaw(&pipelined);
 
     var control_turns: usize = 0;
     while (control_turns < 8) : (control_turns += 1) try service.turn(0);
@@ -828,30 +812,30 @@ test "exact attach transfers one control stream into unchanged HWLS" {
     try std.testing.expectEqual(work, attached.session_id);
     try std.testing.expectEqual(instance_id, attached.instance_id);
 
-    var welcome_header: ?instance_protocol.Header = null;
+    try std.testing.expectEqual(server.identity(), attached.server_id);
+    try std.testing.expect(attached.client_id != instance_protocol.no_client);
+    var response_header: ?instance_protocol.Header = null;
     turns = 0;
-    while (turns < 10_000 and welcome_header == null) : (turns += 1) {
+    while (turns < 10_000 and response_header == null) : (turns += 1) {
         try peer.readAvailable();
         if (peer.incoming.items.len >= instance_protocol.header_bytes) {
-            var encoded: [instance_protocol.header_bytes]u8 = undefined;
-            @memcpy(&encoded, peer.incoming.items[0..instance_protocol.header_bytes]);
-            welcome_header = try instance_protocol.decodeHeader(&encoded);
+            response_header = try instance_protocol.decodeHeader(peer.incoming.items[0..instance_protocol.header_bytes]);
             peer.consume(instance_protocol.header_bytes);
             break;
         }
         try server.turnInstance(work, instance_id, 1);
     }
-    const header = welcome_header orelse return error.TestTimeout;
-    try std.testing.expectEqual(instance_protocol.Kind.welcome, header.kind);
-    try std.testing.expectEqual(@as(u32, instance_protocol.payload_bytes.welcome), header.payload_len);
+    const header = response_header orelse return error.TestTimeout;
+    try std.testing.expectEqual(instance_protocol.Kind.interaction_state_snapshot, header.kind);
+    try std.testing.expectEqual(@as(u32, instance_protocol.payload_bytes.interaction_state_snapshot), header.payload_len);
     turns = 0;
     while (peer.incoming.items.len < header.payload_len and turns < 10_000) : (turns += 1) {
         try server.turnInstance(work, instance_id, 1);
         try peer.readAvailable();
     }
     if (peer.incoming.items.len < header.payload_len) return error.TestTimeout;
-    const hwls_welcome = try instance_protocol.decodeWelcome(peer.incoming.items[0..header.payload_len]);
-    try std.testing.expect(hwls_welcome.client_id != instance_protocol.no_client);
+    const state = try instance_protocol.decodeInteractionStateSnapshot(peer.incoming.items[0..header.payload_len]);
+    try std.testing.expect(state.terminal_revision != 0);
     peer.consume(header.payload_len);
 }
 

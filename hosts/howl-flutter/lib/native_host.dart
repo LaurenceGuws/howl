@@ -674,40 +674,6 @@ Future<String> _fontconfigFile(String family) async {
   return path;
 }
 
-typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Uint16,
-  ffi.Uint16,
-  ffi.Uint16,
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Size>,
-);
-typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  int,
-  int,
-  int,
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Size>,
-);
 typedef _CreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
@@ -1105,9 +1071,6 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
-  final create = dylib.lookupFunction<_CreateNative, _CreateDart>(
-    'howl_native_host_create',
-  );
   final createManaged = dylib
       .lookupFunction<_CreateManagedNative, _CreateManagedDart>(
         'howl_native_host_create_managed',
@@ -1185,23 +1148,6 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
   final host = switch (route) {
-    0 => create(
-      endpointPointer,
-      endpointBytes.length,
-      primaryPointer,
-      primaryBytes.length,
-      fallbackPointer,
-      fallbackBytes.length,
-      secondaryFallbackPointer,
-      secondaryFallbackBytes.length,
-      fontPixels,
-      cellWidth,
-      lineHeight,
-      interrupt,
-      diagnosticPointer,
-      _nativeCreateDiagnosticBytes,
-      diagnosticLength,
-    ),
     1 => createManaged(
       endpointPointer,
       endpointBytes.length,
@@ -1621,22 +1567,6 @@ enum _NativeControlOperation {
   close,
 }
 
-typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Size>,
-);
-typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Size>,
-);
 typedef _ControlCreateManagedNative = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
@@ -1791,9 +1721,6 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final localInstanceAddress = init[8]! as int;
   final commands = ReceivePort();
   final dylib = _nativeHostLibrary();
-  final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
-    'howl_native_control_create',
-  );
   final createManaged = dylib
       .lookupFunction<_ControlCreateManagedNative, _ControlCreateManagedDart>(
         'howl_native_control_create_managed',
@@ -1851,14 +1778,6 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final diagnosticPointer = calloc<ffi.Uint8>(_nativeCreateDiagnosticBytes);
   final diagnosticLength = calloc<ffi.Size>();
   final control = switch (route) {
-    0 => create(
-      endpointPointer,
-      endpointBytes.length,
-      interrupt,
-      diagnosticPointer,
-      _nativeCreateDiagnosticBytes,
-      diagnosticLength,
-    ),
     1 => createManaged(
       endpointPointer,
       endpointBytes.length,

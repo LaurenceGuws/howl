@@ -29,17 +29,9 @@ fn attachInstance(
     var control = try connectServer(endpoint);
     var control_live = true;
     defer if (control_live) control.deinit();
-    var attached = try control.attachInstance(control.server_id, identity);
+    const attached = try control.attachInstance(control.server_id, identity);
     control_live = false;
-    var diagnostic: howl_client.ConnectDiagnostic = .{};
-    const connection = try howl_client.connectTransport(
-        std.testing.allocator,
-        attached.stream,
-        &diagnostic,
-    );
-    attached = undefined;
-    try std.testing.expectEqual(howl_client.ConnectStage.ready, diagnostic.stage);
-    return connection;
+    return attached.connection;
 }
 
 test "one Server hosts independently-sized Instances without owning a shared grid" {

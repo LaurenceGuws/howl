@@ -1,10 +1,11 @@
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef void *(*create_fn)(const uint8_t *, size_t);
+typedef void *(*create_fn)(const uint8_t *, size_t, uint64_t, uint64_t, uint64_t, void *, uint8_t *, size_t, size_t *);
 typedef void (*destroy_fn)(void *);
 typedef int32_t (*bytes_fn)(void *, const uint8_t *, size_t);
 typedef int32_t (*named_fn)(void *, uint8_t, uint8_t, uint8_t);
@@ -33,8 +34,8 @@ static void send_ascii(bytes_fn committed, void *control, const char *name, cons
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s LIB ENDPOINT\n", argv[0]);
+    if (argc != 6) {
+        fprintf(stderr, "usage: %s LIB SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n", argv[0]);
         return 64;
     }
 
@@ -44,7 +45,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    create_fn create = (create_fn)symbol(lib, "howl_native_control_create");
+    create_fn create = (create_fn)symbol(lib, "howl_native_control_create_managed");
     destroy_fn destroy = (destroy_fn)symbol(lib, "howl_native_control_destroy");
     bytes_fn committed = (bytes_fn)symbol(lib, "howl_native_control_committed_text");
     bytes_fn paste = (bytes_fn)symbol(lib, "howl_native_control_paste");
@@ -56,9 +57,24 @@ int main(int argc, char **argv) {
     interaction_fn interaction = (interaction_fn)symbol(lib, "howl_native_control_interaction_state");
 
     const uint8_t *endpoint = (const uint8_t *)argv[2];
-    void *control = create(endpoint, strlen(argv[2]));
+    uint64_t ids[3];
+    for (size_t index = 0; index < 3; ++index) {
+        char *end = NULL;
+        errno = 0;
+        const char *text = argv[index + 3];
+        unsigned long long value = strtoull(text, &end, 10);
+        if (errno || end == text || *end || !value || *text == '-') {
+            fprintf(stderr, "invalid nonzero Instance identity\n");
+            return 64;
+        }
+        ids[index] = (uint64_t)value;
+    }
+    uint8_t diagnostic[512];
+    size_t diagnostic_len = 0;
+    void *control = create(endpoint, strlen(argv[2]), ids[0], ids[1], ids[2],
+                           NULL, diagnostic, sizeof(diagnostic), &diagnostic_len);
     if (!control) {
-        fprintf(stderr, "control create failed\n");
+        fprintf(stderr, "control create failed: %.*s\n", (int)diagnostic_len, diagnostic);
         return 4;
     }
 

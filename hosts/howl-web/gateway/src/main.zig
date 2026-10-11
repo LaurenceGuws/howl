@@ -1,4 +1,4 @@
-//! Owns Howl Web's loopback origin, exact Server attach, then protocol-blind HWLS byte bridge.
+//! Owns Howl Web's loopback origin, exact Server attach, then protocol-blind Server terminal byte bridge.
 const std = @import("std");
 const Io = std.Io;
 const posix = std.posix;
@@ -262,7 +262,7 @@ fn handleWebSocket(
 
     // Do not connect to Server control until HTTP origin/authentication and the
     // complete WebSocket upgrade contract have passed. After exact attach, the same
-    // fd is ordinary HWLS and this gateway returns to protocol-blind byte pumping.
+    // fd is ordinary Server terminal and this gateway returns to protocol-blind byte pumping.
     var endpoint_storage: [64]u8 = undefined;
     const endpoint = std.fmt.bufPrint(
         &endpoint_storage,
@@ -277,21 +277,24 @@ fn handleWebSocket(
         .instance_id = config.instance_id,
     }, &diagnostic, null) catch return respondText(request, .service_unavailable, "upstream unavailable\n", "text/plain; charset=utf-8");
     defer attached.deinit();
-    // The browser, not this protocol-blind gateway, constructs HWLS. Native
-    // setup ends at exact attach before handing the fd to the Io byte pump.
-    try attached.stream.finishHandshake(&diagnostic);
-
     // zig-audit: acknowledge catch_unreachable
     // reason: The fixed 127.0.0.1 literal is valid IPv4 and the port is already a u16; parsing cannot reject either.
     const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.server_port) catch unreachable;
     var upstream = Io.net.Stream{ .socket = .{
-        .handle = attached.stream.readinessFd(),
+        .handle = attached.connection.readinessFd(),
         .address = upstream_address,
     } };
 
     var ws = request.respondWebSocket(.{ .key = key, .extra_headers = &.{
         .{ .name = "cache-control", .value = "no-store" },
     } }) catch return;
+    try ws.flush();
+    // Forward the same accepted ready state; the browser sends no second hello.
+    const protocol = server_client.protocol;
+    var ready_frame: [protocol.header_bytes + protocol.payload_bytes.attach_ready]u8 = undefined;
+    try protocol.encodeHeader(ready_frame[0..protocol.header_bytes], .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
+    try protocol.encodeAttachReady(ready_frame[protocol.header_bytes..], attached.ready);
+    try ws.writeMessage(&ready_frame, .binary);
     try ws.flush();
     var upstream_write_buffer: [upstream_chunk_bytes]u8 = undefined;
     var upstream_writer = upstream.writer(init.io, &upstream_write_buffer);

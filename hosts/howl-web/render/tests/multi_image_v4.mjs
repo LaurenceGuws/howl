@@ -35,8 +35,8 @@ function parseFrames(bytes) {
   const frames = [];
   let offset = 0;
   while (offset < bytes.length) {
-    assert.equal(bytes.toString('ascii', offset, offset + 4), 'HWLS');
-    assert.equal(bytes[offset + 4], 10);
+    assert.equal(bytes.toString('ascii', offset, offset + 4), 'SRVR');
+    assert.equal(bytes[offset + 4], 2);
     assert.equal(bytes[offset + 6], 0);
     assert.equal(bytes[offset + 7], 0);
     const kind = bytes[offset + 5];
@@ -52,8 +52,8 @@ function parseFrames(bytes) {
 
 function encodeFrame(kind, payload) {
   const result = Buffer.alloc(12 + payload.length);
-  result.write('HWLS', 0, 4, 'ascii');
-  result[4] = 10;
+  result.write('SRVR', 0, 4, 'ascii');
+  result[4] = 2;
   result[5] = kind;
   result.writeUInt32BE(payload.length, 8);
   payload.copy(result, 12);
@@ -122,13 +122,13 @@ function encodeGraphics() {
   return result;
 }
 
-const corpus = JSON.parse(await readFile('../../../mods/server/protocol/v10-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../../mods/server/protocol/vectors.json', 'utf8'));
 const frozen = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(frozen?.hex);
 const originalFrames = parseFrames(Buffer.from(frozen.hex, 'hex'));
-assert.equal(originalFrames.filter(frame => frame.kind === 23).length, 1);
+assert.equal(originalFrames.filter(frame => frame.kind === 52).length, 1);
 const snapshot = Buffer.concat(originalFrames.map(frame =>
-  encodeFrame(frame.kind, frame.kind === 23 ? encodeGraphics() : frame.payload)));
+  encodeFrame(frame.kind, frame.kind === 52 ? encodeGraphics() : frame.payload)));
 assert.ok(snapshot.length <= w.rv_snapshot_capacity());
 
 const loadSnapshot = () => bytesAt(w.rv_snapshot_ptr(), snapshot.length).set(snapshot);

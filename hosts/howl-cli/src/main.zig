@@ -91,10 +91,7 @@ fn versionCommand(init: std.process.Init) !void {
     try stdout.interface.flush();
 }
 
-const InstanceTarget = union(enum) {
-    direct: []const u8,
-    server: server_client.Target,
-};
+const InstanceTarget = server_client.Target;
 
 const ParsedInstanceTarget = struct {
     target: InstanceTarget,
@@ -102,24 +99,17 @@ const ParsedInstanceTarget = struct {
 };
 
 fn parseInstanceTarget(args: []const [*:0]const u8) error{InvalidArguments}!ParsedInstanceTarget {
-    if (args.len == 0) return error.InvalidArguments;
-    if (!std.mem.eql(u8, std.mem.span(args[0]), "--server")) {
-        return .{
-            .target = .{ .direct = std.mem.span(args[0]) },
-            .args = args[1..],
-        };
-    }
-    if (args.len < 5) return error.InvalidArguments;
+    if (args.len < 5 or !std.mem.eql(u8, std.mem.span(args[0]), "--server")) return error.InvalidArguments;
     const server_id = parseNonzeroIdentity(std.mem.span(args[2])) catch return error.InvalidArguments;
     const session_id = parseNonzeroIdentity(std.mem.span(args[3])) catch return error.InvalidArguments;
     const instance_id = parseNonzeroIdentity(std.mem.span(args[4])) catch return error.InvalidArguments;
     return .{
-        .target = .{ .server = .{
+        .target = .{
             .endpoint = std.mem.span(args[1]),
             .server_id = server_id,
             .session_id = session_id,
             .instance_id = instance_id,
-        } },
+        },
         .args = args[5..],
     };
 }
@@ -135,32 +125,12 @@ fn connect(
     target: InstanceTarget,
     context: *failure.Context,
 ) !client.Connection {
-    switch (target) {
-        .direct => |endpoint| {
-            var diagnostic: client.ConnectDiagnostic = .{};
-            return client.Connection.connectDiagnosed(init.gpa, endpoint, &diagnostic) catch |problem| {
-                context.captureConnect(&diagnostic);
-                return problem;
-            };
-        },
-        .server => |managed| {
-            var server_diagnostic: server_client.ConnectDiagnostic = .{};
-            const attached = server_client.attach(init.gpa, managed, &server_diagnostic, null) catch |problem| {
-                captureServerConnect(context, &server_diagnostic);
-                return problem;
-            };
-
-            var instance_diagnostic: client.ConnectDiagnostic = .{};
-            return client.connectTransport(
-                init.gpa,
-                attached.stream,
-                &instance_diagnostic,
-            ) catch |problem| {
-                context.captureConnect(&instance_diagnostic);
-                return problem;
-            };
-        },
-    }
+    var diagnostic: server_client.ConnectDiagnostic = .{};
+    const attached = server_client.attach(init.gpa, target, &diagnostic, null) catch |problem| {
+        captureServerConnect(context, &diagnostic);
+        return problem;
+    };
+    return attached.connection;
 }
 
 fn captureServerConnect(
@@ -340,7 +310,6 @@ fn printInstanceHelp(init: std.process.Init) !void {
         "  howl instance signal TARGET hangup|interrupt|resize-notify|kill|terminate\n" ++
         "\n" ++
         "TARGET:\n" ++
-        "  ENDPOINT\n" ++
         "  --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n");
 }
 
@@ -364,7 +333,7 @@ fn printInstanceOperationHelp(init: std.process.Init, operation: []const u8) !vo
     else
         return error.InvalidArguments;
     try printHelp(init, text);
-    return printHelp(init, "TARGET: ENDPOINT | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n");
+    return printHelp(init, "TARGET: --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID\n");
 }
 
 fn printHelp(init: std.process.Init, text: []const u8) !void {

@@ -14,6 +14,7 @@
 //! immediate snapshot, which also gives history scrolling a non-waiting path.
 
 const std = @import("std");
+const framing = @import("framing.zig");
 const codec = @import("howl_vt_codec");
 
 /// Bounded complete terminal-property payload grammar.
@@ -32,14 +33,10 @@ pub const properties = codec.properties;
 // Wire framing, attach, and observation vocabulary
 // =============================================================================
 
-/// Exact version of the Server terminal interaction wire in every frame header.
-///
-/// This Server implementation has one terminal wire version. Change this
-/// value when the wire contract changes instead of accumulating negotiation
-/// branches for clients we do not maintain.
-pub const framing_version: u8 = 10;
-/// Exact byte width of every frame header.
-pub const header_bytes: usize = 12;
+/// Shared Server framing version.
+pub const framing_version: u8 = framing.version;
+/// Shared Server envelope width.
+pub const header_bytes: usize = framing.header_bytes;
 /// Hard upper bound admitted for one frame payload.
 pub const maximum_payload_bytes: u32 = 1024 * 1024;
 /// Hard upper bound the node-local endpoint admits for one client request payload.
@@ -51,79 +48,60 @@ pub const image_data_chunk_bytes: usize = 256 * 1024;
 /// Sentinel used only where an optional client identity is serialized.
 pub const no_client: ClientId = 0;
 
-const magic = [4]u8{ 'H', 'W', 'L', 'S' };
-
 /// Stable connection-local identity. Zero means no client/leader.
 pub const ClientId = u64;
 
 /// Frames carried unchanged over any ordered byte stream, including Unix or TCP sockets.
 pub const Kind = enum(u8) {
-    hello = 1,
-    welcome = 2,
-    observe = 3,
-    snapshot_begin = 4,
-    snapshot_data = 5,
-    snapshot_end = 6,
-    input = 7,
-    assign_leader = 8,
-    resize = 9,
-    signal = 10,
-    result = 11,
-    interaction_state = 12,
-    interaction_state_snapshot = 13,
-    assign_consequence_leader = 14,
-    consequence_observe = 15,
-    consequence_begin = 16,
-    consequence_data = 17,
-    consequence_end = 18,
-    consequence_consume = 19,
-    consequence_reply = 20,
-    text_extract = 21,
-    text_extract_data = 22,
-    snapshot_graphics = 23,
-    image_request = 24,
-    image_begin = 25,
-    image_data = 26,
-    image_end = 27,
+    observe = 32,
+    snapshot_begin = 33,
+    snapshot_data = 34,
+    snapshot_end = 35,
+    input = 36,
+    assign_leader = 37,
+    resize = 38,
+    signal = 39,
+    result = 40,
+    interaction_state = 41,
+    interaction_state_snapshot = 42,
+    assign_consequence_leader = 43,
+    consequence_observe = 44,
+    consequence_begin = 45,
+    consequence_data = 46,
+    consequence_end = 47,
+    consequence_consume = 48,
+    consequence_reply = 49,
+    text_extract = 50,
+    text_extract_data = 51,
+    snapshot_graphics = 52,
+    image_request = 53,
+    image_begin = 54,
+    image_data = 55,
+    image_end = 56,
     /// Requests the same rich observation with raw text_v1 record bytes.
-    observe_raw = 28,
+    observe_raw = 57,
     /// Carries raw bounded text_v1 record bytes for one `observe_raw` response.
-    snapshot_raw_data = 29,
+    snapshot_raw_data = 58,
     /// Requests a row-delta observation from `after_revision`, with raw fallback.
-    observe_delta = 30,
+    observe_delta = 59,
     /// Carries `text_delta_v2`: explicit row shift plus full or reused rows.
-    snapshot_delta_data = 31,
+    snapshot_delta_data = 60,
     /// Complete live terminal properties belonging to the same snapshot cut.
-    snapshot_properties = 32,
+    snapshot_properties = 61,
     /// Requests complete text_v1 through lossless row-run transport packing.
-    observe_packed = 33,
+    observe_packed = 62,
     /// Carries Huffman-zlib compressed text_pack_v1 bytes for one packed response.
-    snapshot_packed_data = 34,
+    snapshot_packed_data = 63,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
-pub const Header = struct {
-    kind: Kind,
-    payload_len: u32,
-};
+pub const Header = framing.Header(Kind);
 
-/// Rejects malformed or unsupported framing before payload allocation/read.
-pub const HeaderError = error{
-    InvalidMagic,
-    UnsupportedFramingVersion,
-    InvalidReservedBits,
-    UnknownKind,
-    PayloadTooLarge,
-};
+/// Rejects malformed framing before any terminal payload is admitted.
+pub const HeaderError = framing.Error;
 
 /// Rejects a fixed message payload whose size or enum values are invalid.
 pub const PayloadError = error{InvalidPayload};
-
-/// Handshake response. The empty `hello` frame exists only to establish an
-/// explicit attach boundary; the endpoint returns this connection-local id.
-pub const Welcome = struct {
-    client_id: ClientId,
-};
 
 /// Long-poll style observation request. Revision zero means initial attach.
 pub const Observe = struct {
@@ -672,10 +650,6 @@ pub const AssignLeader = struct {
 
 /// Exact fixed payload widths for v1 messages.
 pub const payload_bytes = struct {
-    /// `hello` is an empty attach token.
-    pub const hello: usize = 0;
-    /// `Welcome` carries only the connection-local client id.
-    pub const welcome: usize = 8;
     /// `Observe` payload bytes.
     pub const observe: usize = 12;
     /// `SnapshotBegin` payload bytes.
@@ -812,18 +786,6 @@ pub const ConsequenceAuthority = struct {
 // =============================================================================
 
 // -- Attach, observation, and rich snapshot codecs ---------------------------
-
-/// Encodes the attach response. The framing version already identifies the
-/// complete wire contract, so no second version/features negotiation lives here.
-pub fn encodeWelcome(output: *[payload_bytes.welcome]u8, value: Welcome) void {
-    writeU64(output[0..8], value.client_id);
-}
-
-/// Decodes one exact attach response.
-pub fn decodeWelcome(input: []const u8) PayloadError!Welcome {
-    if (input.len != payload_bytes.welcome) return error.InvalidPayload;
-    return .{ .client_id = readU64(input[0..8]) };
-}
 
 /// Encodes one observation request.
 pub fn encodeObserve(output: *[payload_bytes.observe]u8, value: Observe) void {
@@ -1517,23 +1479,12 @@ pub fn decodeResult(input: []const u8) PayloadError!Result {
 
 /// Encodes one fixed header without allocation.
 pub fn encodeHeader(output: *[header_bytes]u8, header: Header) error{PayloadTooLarge}!void {
-    if (header.payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
-    output.* = @splat(0);
-    @memcpy(output[0..4], &magic);
-    output[4] = framing_version;
-    output[5] = @backingInt(header.kind);
-    writeU32(output[8..12], header.payload_len);
+    return framing.encode(Kind, maximum_payload_bytes, output, header);
 }
 
-/// Decodes and validates one fixed header before any payload is admitted.
+/// Rejects control tags and oversized terminal payloads before allocation.
 pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
-    if (!std.mem.eql(u8, input[0..4], &magic)) return error.InvalidMagic;
-    if (input[4] != framing_version) return error.UnsupportedFramingVersion;
-    if (input[6] != 0 or input[7] != 0) return error.InvalidReservedBits;
-    const kind = enumFromInt(Kind, input[5]) orelse return error.UnknownKind;
-    const payload_len = readU32(input[8..12]);
-    if (payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
-    return .{ .kind = kind, .payload_len = payload_len };
+    return framing.decode(Kind, maximum_payload_bytes, input);
 }
 
 fn writeU32(output: []u8, value: u32) void {
@@ -1627,11 +1578,6 @@ test "wire integers round trip beyond one byte" {
     try encodeHeader(&header_bytes_out, .{ .kind = .snapshot_data, .payload_len = 0x000f_a2b3 });
     const header = try decodeHeader(&header_bytes_out);
     try std.testing.expectEqual(@as(u32, 0x000f_a2b3), header.payload_len);
-
-    var welcome_bytes: [payload_bytes.welcome]u8 = undefined;
-    encodeWelcome(&welcome_bytes, .{ .client_id = 0xf123_4567_89ab_cdef });
-    const welcome = try decodeWelcome(&welcome_bytes);
-    try std.testing.expectEqual(@as(ClientId, 0xf123_4567_89ab_cdef), welcome.client_id);
 
     var resize_bytes: [payload_bytes.resize]u8 = undefined;
     encodeResize(&resize_bytes, .{ .rows = 512, .columns = 1025 });

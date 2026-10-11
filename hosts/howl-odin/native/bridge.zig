@@ -2480,43 +2480,12 @@ pub export fn howl_odin_bridge_interrupt_destroy(value: ?*client.Interrupt) void
     if (value) |token| token.deinit();
 }
 
-const RouteKind = enum(u8) {
-    direct = 0,
-    server = 1,
-};
-
-const ConnectTarget = struct {
-    kind: RouteKind,
-    endpoint: []const u8,
-    server_id: u64 = 0,
-    session_id: u64 = 0,
-    instance_id: u64 = 0,
-};
+const ConnectTarget = server_client.Target;
 
 fn targetFromAbi(kind_raw: u8, endpoint: []const u8, server_id: u64, session_id: u64, instance_id: u64) !ConnectTarget {
-    const kind: RouteKind = switch (kind_raw) {
-        0 => .direct,
-        1 => .server,
-        else => return error.InvalidEndpoint,
-    };
-    return switch (kind) {
-        .direct => blk: {
-            if (endpoint.len == 0) return error.InvalidEndpoint;
-            if (server_id != 0 or session_id != 0 or instance_id != 0) return error.InvalidEndpoint;
-            break :blk .{ .kind = .direct, .endpoint = endpoint };
-        },
-        .server => blk: {
-            if (endpoint.len == 0) return error.InvalidEndpoint;
-            if (server_id == 0 or session_id == 0 or instance_id == 0) return error.InvalidEndpoint;
-            break :blk .{
-                .kind = .server,
-                .endpoint = endpoint,
-                .server_id = server_id,
-                .session_id = session_id,
-                .instance_id = instance_id,
-            };
-        },
-    };
+    if (kind_raw != 1 or endpoint.len == 0 or server_id == 0 or session_id == 0 or instance_id == 0)
+        return error.InvalidEndpoint;
+    return .{ .endpoint = endpoint, .server_id = server_id, .session_id = session_id, .instance_id = instance_id };
 }
 
 fn connectForHost(
@@ -2526,35 +2495,13 @@ fn connectForHost(
     diagnostic: *client.ConnectDiagnostic,
 ) (client.Error || server_client.Error)!client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
-    return switch (target.kind) {
-        .direct => client.Connection.connectCancelable(
-            std.heap.c_allocator,
-            target.endpoint,
-            diagnostic,
-            interrupt,
-        ),
-        .server => blk: {
-            const attached = try server_client.attach(std.heap.c_allocator, .{
-                .endpoint = target.endpoint,
-                .server_id = target.server_id,
-                .session_id = target.session_id,
-                .instance_id = target.instance_id,
-            }, diagnostic, interrupt);
-            break :blk try client.connectTransport(std.heap.c_allocator, attached.stream, diagnostic);
-        },
-    };
+    const attached = try server_client.attach(std.heap.c_allocator, target, diagnostic, interrupt);
+    return attached.connection;
 }
 
 // zig-audit: acknowledge opaque_type
 // reason: RenderHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const RenderHandle = opaque {};
-
-// Existing full-observation encoding preference, after endpoint validation.
-// TCP retains compression; Unix retains its measured raw-snapshot default.
-// View reuse below is independent of this heuristic and sends no extra bytes.
-fn rawObservationTarget(target: ConnectTarget) bool {
-    return target.kind == .direct and std.mem.startsWith(u8, target.endpoint, "unix:");
-}
 
 fn requestObservation(
     connection: *client.Connection,
@@ -2634,11 +2581,6 @@ fn nativePresentationConfig(
     };
 }
 
-test "only validated transported Unix endpoints avoid same-machine text compression" {
-    try std.testing.expect(rawObservationTarget(try targetFromAbi(0, "unix:/run/user/1000/howl.sock", 0, 0, 0)));
-    try std.testing.expect(!rawObservationTarget(try targetFromAbi(0, "tcp://127.0.0.1:43127", 0, 0, 0)));
-    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(2, "", 0, 0, 7));
-}
 const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
@@ -3064,7 +3006,7 @@ pub export fn howl_odin_bridge_render_create(
         .allocator = allocator,
         .runtime = runtime,
         .connection = connection,
-        .raw_observation = rawObservationTarget(target),
+        .raw_observation = false,
         .lane = lane,
         .terminal_renderer = terminal_renderer,
         .cell_size = cell_size,
@@ -4478,7 +4420,7 @@ pub export fn howl_odin_bridge_create(
         .allocator = allocator,
         .runtime = runtime,
         .connection = connection,
-        .raw_observation = rawObservationTarget(target),
+        .raw_observation = false,
         .live_raw_cache = client.rich.RawCache.init(allocator),
     };
     retainRuntime(runtime);
@@ -6184,15 +6126,10 @@ test "only self-contained live views may cross the observation connection bounda
     try std.testing.expect(!standaloneLiveView(image));
 }
 
-test "Odin bridge transported route ABI admits only direct and Server targets" {
-    const direct = try targetFromAbi(0, "unix:/tmp/howl.sock", 0, 0, 0);
-    try std.testing.expectEqual(RouteKind.direct, direct.kind);
-    try std.testing.expectEqualStrings("unix:/tmp/howl.sock", direct.endpoint);
-    try std.testing.expectEqual(@as(u64, 0), direct.session_id);
-    try std.testing.expectEqual(@as(u64, 0), direct.instance_id);
+test "Odin bridge remote route requires exact Server identity" {
+    try std.testing.expectError(error.InvalidEndpoint, targetFromAbi(0, "unix:/tmp/howl.sock", 0, 0, 0));
 
     const managed = try targetFromAbi(1, "tcp://127.0.0.1:43130", 91, 7, 3);
-    try std.testing.expectEqual(RouteKind.server, managed.kind);
     try std.testing.expectEqual(@as(u64, 91), managed.server_id);
     try std.testing.expectEqual(@as(u64, 7), managed.session_id);
     try std.testing.expectEqual(@as(u64, 3), managed.instance_id);

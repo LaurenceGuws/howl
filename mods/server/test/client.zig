@@ -49,7 +49,7 @@ fn adoptedPair(service: *server_service.Service) !transport.Stream {
     return .{ .fd = pair[1] };
 }
 
-test "Server client preserves Session Instance hierarchy and exact attach stream" {
+test "dedicated attachments preserve separate control and Instance lifetime" {
     const server = try model.Server.init(std.testing.allocator, 0x91);
     defer server.deinit();
     var service = server_service.Service.init(
@@ -60,6 +60,18 @@ test "Server client preserves Session Instance hierarchy and exact attach stream
     );
     defer service.deinit();
 
+    // Adopt before starting the sole service owner; the peer endpoints remain
+    // independently owned until each constructor consumes one.
+    var streams: [3]transport.Stream = undefined;
+    var streams_live: [3]bool = @splat(false);
+    defer for (&streams, streams_live) |*stream, live| {
+        if (live) stream.deinit();
+    };
+    for (&streams, &streams_live) |*stream, *live| {
+        stream.* = try adoptedPair(&service);
+        live.* = true;
+    }
+
     var pump = Pump{ .service = &service, .server = server };
     const worker = try std.Thread.spawn(.{}, Pump.run, .{&pump});
     defer {
@@ -69,13 +81,13 @@ test "Server client preserves Session Instance hierarchy and exact attach stream
     }
 
     var diagnostic: client.ConnectDiagnostic = .{};
+    streams_live[0] = false;
     var connection = try client.connectTransport(
         std.testing.allocator,
-        try adoptedPair(&service),
+        streams[0],
         &diagnostic,
     );
-    var connection_live = true;
-    defer if (connection_live) connection.deinit();
+    defer connection.deinit();
     try std.testing.expectEqual(@as(u64, 0x91), connection.server_id);
     try std.testing.expectEqual(client.ConnectStage.ready, diagnostic.stage);
 
@@ -102,12 +114,40 @@ test "Server client preserves Session Instance hierarchy and exact attach stream
     try std.testing.expectEqual(@as(usize, 1), tree.sessions[0].instances.len);
     try std.testing.expectEqual(identity.instance_id, tree.sessions[0].instances[0].instance_id);
 
-    var attached = try connection.attachInstance(connection.server_id, identity);
-    connection_live = false;
-    defer attached.deinit();
+    streams_live[1] = false;
+    var attachment_control = try client.connectTransport(std.testing.allocator, streams[1], &diagnostic);
+    defer attachment_control.deinit();
+    var attached = try attachment_control.attachInstance(connection.server_id, identity);
+    var attached_live = true;
+    defer if (attached_live) attached.deinit();
+    try std.testing.expectEqual(connection.server_id, attached.ready.server_id);
     try std.testing.expectEqual(work, attached.ready.session_id);
     try std.testing.expectEqual(identity.instance_id, attached.ready.instance_id);
+    try std.testing.expectEqual(attached.ready.client_id, attached.connection.client_id);
     try std.testing.expect(attached.ready.tree_revision >= tree.status.tree_revision);
+    try std.testing.expectError(error.ConnectionRetired, attachment_control.status());
+    const first_client_id = attached.ready.client_id;
+    const initial_state = try client.terminal.state.get(&attached.connection);
+    try std.testing.expect(initial_state.terminal_revision != 0);
+
+    try std.testing.expectEqual(@as(u16, 1), (try connection.status()).instance_count);
+    attached.deinit();
+    attached_live = false;
+    try std.testing.expectEqual(@as(u16, 1), (try connection.status()).instance_count);
+
+    streams_live[2] = false;
+    var reattachment_control = try client.connectTransport(std.testing.allocator, streams[2], &diagnostic);
+    defer reattachment_control.deinit();
+    var reattached = try reattachment_control.attachInstance(connection.server_id, identity);
+    defer reattached.deinit();
+    try std.testing.expectEqual(identity.instance_id, reattached.ready.instance_id);
+    try std.testing.expect(reattached.ready.client_id != first_client_id);
+    const resumed_state = try client.terminal.state.get(&reattached.connection);
+    try std.testing.expect(resumed_state.terminal_revision >= initial_state.terminal_revision);
+
+    try connection.closeInstance(identity);
+    try std.testing.expectEqual(@as(u16, 0), (try connection.status()).instance_count);
+    try std.testing.expectError(error.ConnectionClosed, reattached.connection.receive());
 }
 
 test "typed Server client errors leave control connection usable" {
@@ -152,7 +192,7 @@ test "typed Server client errors leave control connection usable" {
 }
 
 // Hostile wire proofs use the public clients and owned native socketpairs.
-const hwls = client.terminal;
+const terminal = client.terminal;
 const protocol = client.protocol;
 const posix = std.posix;
 
@@ -250,7 +290,7 @@ test "only pre-send validation and complete typed attach rejection are reusable"
 
 fn readyFrame(peer: *transport.Stream, session_id: u64) !void {
     var ready: [protocol.payload_bytes.attach_ready]u8 = undefined;
-    try protocol.encodeAttachReady(&ready, .{ .session_id = session_id, .instance_id = 3, .tree_revision = 2 });
+    try protocol.encodeAttachReady(&ready, .{ .server_id = 91, .session_id = session_id, .instance_id = 3, .tree_revision = 2, .client_id = 71 });
     try frame(peer, .attach_ready, &ready);
 }
 
@@ -293,7 +333,7 @@ test "new Server incarnation rejects both observer and control before attach sen
     }
 }
 
-test "one construction deadline spans Server welcome attach and ordinary HWLS welcome" {
+test "one setup deadline ends at Server attachment-ready" {
     for (0..3) |phase| {
         const fds = try hostilePair();
         var peer: transport.Stream = .{ .fd = fds[1] };
@@ -314,19 +354,19 @@ test "one construction deadline spans Server welcome attach and ordinary HWLS we
         if (phase == 1) {
             // Complete header, partial body: deadline must apply to receive too.
             var header: [protocol.header_bytes]u8 = undefined;
-            try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = 24 });
+            try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
             try peer.write(&header);
             try peer.write(&.{0});
             try std.testing.expectError(error.SocketConnectTimedOut, c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 }));
             try std.testing.expectError(error.ConnectionRetired, c.status());
         } else {
             try readyFrame(&peer, 7);
-            const attached = try c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
-            try std.testing.expectEqual(fds[0], attached.stream.fd);
-            try std.testing.expectEqual(deadline, attached.stream.handshake_deadline_ms);
-            try peer.write("H");
-            try std.testing.expectError(error.SocketConnectTimedOut, hwls.connectTransport(std.testing.allocator, attached.stream, &diagnostic));
-            try std.testing.expectEqual(posix.E.BADF, posix.errno(posix.system.fcntl(fds[0], posix.F.GETFD, @as(usize, 0))));
+            var attached = try c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
+            defer attached.deinit();
+            try std.testing.expectEqual(fds[0], attached.connection.stream.fd);
+            try std.testing.expect(attached.connection.stream.handshake_deadline_ms == null);
+            try std.testing.expectEqual(@as(u64, 71), attached.connection.client_id);
+            try std.testing.expectError(error.ConnectionRetired, c.status());
         }
     }
 }
@@ -353,7 +393,7 @@ test "Interrupt cancels partial attach body and retires connection" {
     var c = client.Connection{ .stream = try transport.Stream.adopt(fds[0], &diagnostic, interrupt), .allocator = std.testing.allocator, .server_id = 91, .tree_revision = 1 };
     defer c.deinit();
     var header: [protocol.header_bytes]u8 = undefined;
-    try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = 24 });
+    try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
     try peer.write(&header);
     try peer.write(&.{0});
     var probe: AttachProbe = .{ .connection = &c };
@@ -367,18 +407,20 @@ test "Interrupt cancels partial attach body and retires connection" {
 
 const SetupProbe = struct {
     stream: transport.Stream,
-    hwls_phase: bool,
-    result: ?(client.Error || hwls.Error) = null,
+    terminal_id: ?u64,
+    result: ?(client.Error || terminal.Error) = null,
 
     fn run(self: *SetupProbe) void {
-        var diagnostic: client.ConnectDiagnostic = .{};
-        if (self.hwls_phase) {
-            var connection = hwls.connectTransport(std.testing.allocator, self.stream, &diagnostic) catch |err| {
+        if (self.terminal_id) |id| {
+            var connection = terminal.Connection{ .allocator = std.testing.allocator, .stream = self.stream, .client_id = id };
+            defer connection.deinit();
+            var response = connection.receive() catch |err| {
                 self.result = err;
                 return;
             };
-            connection.deinit();
+            response.deinit();
         } else {
+            var diagnostic: client.ConnectDiagnostic = .{};
             var connection = client.connectTransport(std.testing.allocator, self.stream, &diagnostic) catch |err| {
                 self.result = err;
                 return;
@@ -388,8 +430,8 @@ const SetupProbe = struct {
     }
 };
 
-test "Interrupt covers partial Server welcome and survives handoff into partial HWLS welcome" {
-    for ([_]bool{ false, true }) |hwls_phase| {
+test "Interrupt covers partial Server welcome and survives into attached terminal receive" {
+    for ([_]bool{ false, true }) |terminal_phase| {
         const fds = try hostilePair();
         var peer: transport.Stream = .{ .fd = fds[1] };
         defer peer.deinit();
@@ -397,17 +439,19 @@ test "Interrupt covers partial Server welcome and survives handoff into partial 
         defer interrupt.deinit();
         var diagnostic: client.ConnectDiagnostic = .{};
         var stream = try transport.Stream.adopt(fds[0], &diagnostic, interrupt);
-        if (hwls_phase) {
+        var terminal_id: ?u64 = null;
+        if (terminal_phase) {
             try welcomeFrame(&peer, 91);
             var control = try client.connectTransport(std.testing.allocator, stream, &diagnostic);
             defer control.deinit();
             try readyFrame(&peer, 7);
             const attached = try control.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
-            stream = attached.stream;
+            stream = attached.connection.stream;
+            terminal_id = attached.connection.client_id;
             try std.testing.expectEqual(interrupt, stream.interrupt.?);
         }
-        try peer.write(if (hwls_phase) "H" else "S");
-        var probe: SetupProbe = .{ .stream = stream, .hwls_phase = hwls_phase };
+        try peer.write("S");
+        var probe: SetupProbe = .{ .stream = stream, .terminal_id = terminal_id };
         const worker = try std.Thread.spawn(.{}, SetupProbe.run, .{&probe});
         try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
         try interrupt.cancel();

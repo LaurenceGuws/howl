@@ -30,7 +30,7 @@ FLUTTER=/path/to/flutter \
 ANDROID_NDK_ROOT=/path/to/android-ndk \
 JAVA_HOME=/path/to/jdk21 \
 ./build-android.sh profile \
-  --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127 \
+  --dart-define=HOWL_SERVER_ENDPOINT=tcp://127.0.0.1:43127 \
   --dart-define=HOWL_GEOMETRY_LEADER=true
 ```
 
@@ -40,7 +40,7 @@ not otherwise mutate canonical geometry.
 
 The wrapper always performs a clean Flutter build with `--target-platform android-arm64`, verifies that no other ABI entered the APK, and requires `libhowl_native_host.so`. Gradle independently refuses a non-arm64 Flutter target or a missing generated host library.
 
-Physical Note10 pressure also covers the route-less app shell: fresh app data opens the button-only connection shell, a saved Server endpoint persists through Android DataStore, no-argument relaunch returns to that selected Server browser, exact running-Instance selection transitions through Server attach into ordinary HWLS, and leaving the terminal closes its managed observer/control streams before returning to the browser. The test route may be supplied externally through ADB reverse, so Android shell qualification does not depend on WARP/LAN reachability.
+Physical Note10 pressure also covers the route-less app shell: fresh app data opens the button-only connection shell, a saved Server endpoint persists through Android DataStore, no-argument relaunch returns to that selected Server browser, exact running-Instance selection transitions through Server attach into its dedicated Server terminal connection, and leaving the terminal closes its managed observer/control streams before returning to the browser. The test route may be supplied externally through ADB reverse, so Android shell qualification does not depend on WARP/LAN reachability.
 
 `native/build-android.sh` builds the host explicitly; Gradle only verifies and packages the result. The native dependency furnace pins the pressure-proven FreeType and HarfBuzz revisions as static arm64 libraries and links them into one app-private host `.so`. Android does not depend on its private platform FreeType/HarfBuzz ABI.
 
@@ -144,7 +144,7 @@ disposal. There is no frame queue or unbounded asynchronous image retirement.
 
 The Flutter host selects its existing native observation policy locally: Unix
 uses live row deltas, raw-cache reuse and native request prearming, retaining
-its display-boundary coalescing; TCP uses framing-v10 packed complete snapshots.
+its display-boundary coalescing; TCP uses Server v2 packed complete snapshots.
 `useLiveDeltas` names that coupled native policy, not Dart display scheduling.
 Complete history snapshots also use packed carriage. Packed transport reconstructs
 exact frozen `text_v1` before the native rich decoder, so Canvas/semantic ownership
@@ -190,16 +190,12 @@ flutter build linux --release
 Select the route when the artifact runs:
 
 ```sh
-# direct HWLS Instance
-./build/linux/x64/release/bundle/howl_flutter tcp://127.0.0.1:43127
-
-# Server browser -> exact Session + Instance -> same-stream HWLS
+# Server browser -> exact Session + Instance -> dedicated terminal attachment
 ./build/linux/x64/release/bundle/howl_flutter --server tcp://127.0.0.1:43130
 ```
 
-`HOWL_ENDPOINT` / `HOWL_SOCKET` are direct-route environment fallbacks.
-`HOWL_SERVER_ENDPOINT` selects Server-browser mode. A compiled endpoint remains an
-optional deployment override, not a requirement of the standard artifact.
+`HOWL_SERVER_ENDPOINT` selects the Server browser. A compiled Server endpoint is an
+optional deployment override; a normal artifact may start with no endpoint.
 
 The Linux bundle installs `libhowl_native_host.so` into its existing `$ORIGIN/lib` directory and refuses to build if the native host is missing. Linux uses the system FreeType/HarfBuzz libraries.
 
@@ -240,7 +236,6 @@ not expose Local. A saved selected Server becomes the startup surface on the nex
 no-argument launch. Explicit launch routes still override that startup choice:
 
 ```text
-howl_flutter ENDPOINT           direct HWLS Instance
 howl_flutter --server ENDPOINT  transient Server browser
 ```
 
@@ -285,14 +280,13 @@ The measurement and migration evidence is recorded in `../docs/2026-08-30-native
 
 ## Server-managed Instance construction
 
-The app-private native host has three constructors sharing native rendering and
+The app-private native host has two routes sharing native rendering and
 copied FFI packets:
 
-- direct mode connects an explicit HWLS Instance endpoint exactly as before;
 - managed mode connects one explicit Server endpoint, checks the expected
   `server_id` against its welcome, requests the exact `(session_id, instance_id)`,
-  receives `attach_ready`, and hands that same stream into the ordinary HWLS
-  client handshake;
+  receives the complete `attach_ready` identity and owns that established terminal
+  connection. Each observer/control connection attaches independently;
 - Local mode creates one direct in-process Instance. Typed mutations and const
   observation projections run on its private canonical worker; frame/text/image
   packets are copied through the same private Dart ABI.

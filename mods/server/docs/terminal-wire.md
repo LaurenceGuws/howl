@@ -10,17 +10,17 @@ payload bytes. There are no transport delimiters between frames.
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
-| 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `10` |
+| 0 | 4 | ASCII `SRVR` |
+| 4 | 1 | framing version, currently `2` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
 
-One frame payload is at most 1 MiB. The node-local endpoint accepts at most
+One frame payload is at most 1 MiB. The Server attachment accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
 be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
-v10 observation additionally carries one graphics manifest of at most 857,116
+Server observation additionally carries one graphics manifest of at most 857,116
 bytes, one properties packet of at most 6,180 bytes, and bounded frame headers.
 Exact image pixels use separate resource transactions.
 
@@ -28,57 +28,73 @@ Frame kinds are:
 
 | Value | Kind | Direction |
 | ---: | --- | --- |
-| 1 | `hello` | client → endpoint |
-| 2 | `welcome` | endpoint → client |
-| 3 | `observe` | client → endpoint |
-| 4 | `snapshot_begin` | endpoint → client |
-| 5 | `snapshot_data` | endpoint → client |
-| 6 | `snapshot_end` | endpoint → client |
-| 7 | `input` | client → endpoint |
-| 8 | `assign_leader` | client → endpoint |
-| 9 | `resize` | client → endpoint |
-| 10 | `signal` | client → endpoint |
-| 11 | `result` | endpoint → client |
-| 12 | `interaction_state` | client → endpoint |
-| 13 | `interaction_state_snapshot` | endpoint → client |
-| 14 | `assign_consequence_leader` | client → endpoint |
-| 15 | `consequence_observe` | client → endpoint |
-| 16 | `consequence_begin` | endpoint → client |
-| 17 | `consequence_data` | endpoint → client |
-| 18 | `consequence_end` | endpoint → client |
-| 19 | `consequence_consume` | client → endpoint |
-| 20 | `consequence_reply` | client → endpoint |
-| 21 | `text_extract` | client → endpoint |
-| 22 | `text_extract_data` | endpoint → client |
-| 23 | `snapshot_graphics` | endpoint → client |
-| 24 | `image_request` | client → endpoint |
-| 25 | `image_begin` | endpoint → client |
-| 26 | `image_data` | endpoint → client |
-| 27 | `image_end` | endpoint → client |
-| 28 | `observe_raw` | client → endpoint |
-| 29 | `snapshot_raw_data` | endpoint → client |
-| 30 | `observe_delta` | client → endpoint |
-| 31 | `snapshot_delta_data` | endpoint → client |
-| 32 | `snapshot_properties` | endpoint → client |
-| 33 | `observe_packed` | client → endpoint |
-| 34 | `snapshot_packed_data` | endpoint → client |
+| 32 | `observe` | client → endpoint |
+| 33 | `snapshot_begin` | endpoint → client |
+| 34 | `snapshot_data` | endpoint → client |
+| 35 | `snapshot_end` | endpoint → client |
+| 36 | `input` | client → endpoint |
+| 37 | `assign_leader` | client → endpoint |
+| 38 | `resize` | client → endpoint |
+| 39 | `signal` | client → endpoint |
+| 40 | `result` | endpoint → client |
+| 41 | `interaction_state` | client → endpoint |
+| 42 | `interaction_state_snapshot` | endpoint → client |
+| 43 | `assign_consequence_leader` | client → endpoint |
+| 44 | `consequence_observe` | client → endpoint |
+| 45 | `consequence_begin` | endpoint → client |
+| 46 | `consequence_data` | endpoint → client |
+| 47 | `consequence_end` | endpoint → client |
+| 48 | `consequence_consume` | client → endpoint |
+| 49 | `consequence_reply` | client → endpoint |
+| 50 | `text_extract` | client → endpoint |
+| 51 | `text_extract_data` | endpoint → client |
+| 52 | `snapshot_graphics` | endpoint → client |
+| 53 | `image_request` | client → endpoint |
+| 54 | `image_begin` | endpoint → client |
+| 55 | `image_data` | endpoint → client |
+| 56 | `image_end` | endpoint → client |
+| 57 | `observe_raw` | client → endpoint |
+| 58 | `snapshot_raw_data` | endpoint → client |
+| 59 | `observe_delta` | client → endpoint |
+| 60 | `snapshot_delta_data` | endpoint → client |
+| 61 | `snapshot_properties` | endpoint → client |
+| 62 | `observe_packed` | client → endpoint |
+| 63 | `snapshot_packed_data` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
 framing failure or an inbound request payload above 64 KiB.
 
-## Attach handshake
+## Attachment readiness
 
-The first client frame is an empty `hello`. The frame header version is the
-complete Howl wire compatibility boundary; there is no second protocol-version
-or feature-negotiation matrix. When the wire changes, change the frame version
-instead of accumulating compatibility branches for clients Howl does not
-maintain.
+A new connection starts in Server control: empty `hello`, then `welcome` with the
+Server's current status. The client validates the expected Server incarnation and
+requests `attach_instance` with the exact nonzero Session and Instance IDs.
+Successful admission returns one `attach_ready` payload, exactly 40 bytes:
 
-The endpoint replies with `welcome`, exactly eight bytes containing one nonzero
-connection-local client id. That id is not a durable node identity. It exists
-only for this endpoint connection lifetime and for explicit authority such as
-geometry leadership.
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 8 | Server incarnation |
+| 8 | 8 | Session identity |
+| 16 | 8 | Instance identity |
+| 24 | 8 | Server tree revision |
+| 32 | 8 | attachment-local client identity |
+
+All five fields are nonzero big-endian u64 values. This ready response completes
+attachment construction for native and browser consumers. There is no terminal
+hello or second welcome. The same stream is then dedicated to that exact Instance,
+and accepts only the terminal kinds listed above. The Server queues ready before any
+response to already-buffered terminal input.
+
+Control uses kinds 1–13 and an 8 KiB payload ceiling. Terminal interaction uses
+kinds 32–63 and a 1 MiB response ceiling; terminal requests remain at most 64 KiB.
+Both phases use the same SRVR version 2 envelope. Wrong-phase kinds are framing
+failures. Version 2 is the complete wire boundary; no legacy Server terminal decoder is kept.
+
+The client identity lasts only for this attachment, including explicit geometry
+or consequence leadership. Detaching releases that authority and the stream;
+the Server's Instance and PTY/VT remain alive. Explicit Instance close ends their
+lifetime. Separate catalog/CRUD connections remain Server control connections.
 
 ## Interaction state
 
@@ -124,7 +140,7 @@ Bits 13..31 are reserved and must be zero.
 
 ## Host consequences
 
-VT retains caller-neutral protocol consequences in one bounded global order. HWLS
+VT retains caller-neutral protocol consequences in one bounded global order. Server terminal
 allows one explicit consequence authority to observe that order and either consume an
 occurrence or provide a typed reply. When no client owns consequence authority,
 Instance applies a deterministic headless policy so canonical PTY/VT progress never
@@ -193,7 +209,7 @@ progress may continue while those already-copied bytes drain to the observer.
 text transport envelope; snapshot semantics, history selection, graphics
 manifests, revisions, and `text_v1` records are identical.
 
-`observe_packed` is the framing-v10 complete carriage lane used by maintained
+`observe_packed` is the Server v2 complete carriage lane used by maintained
 managed/mobile clients. It does not define a second terminal model. The endpoint
 losslessly packs the exact complete `text_v1` body by preserving record headers,
 carrying presentation/hyperlink records verbatim, and replacing repeated complete
@@ -666,7 +682,7 @@ It belongs to the same immutable cut and needs no second query or title socket.
 Metadata-only mutation wakes ordinary observers; a new attachment receives the
 current values. Missing, duplicate, malformed or wrongly ordered packets fail validation.
 Historical v8/v9 bundles must be rebuilt as matching bundles; current peers use
-one exact framing-v10 boundary.
+one exact Server v2 boundary.
 
 The payload is `properties_v1`, at most 6,180 bytes. Multi-byte fields are big-endian.
 
@@ -777,7 +793,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd mods/server
-python3 tools/validate_vectors.py protocol/v10-vectors.json
+python3 tools/validate_vectors.py protocol/vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

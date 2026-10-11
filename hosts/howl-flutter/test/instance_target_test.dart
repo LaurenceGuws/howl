@@ -3,19 +3,6 @@ import 'package:howl_flutter/howl_endpoint.dart';
 import 'package:howl_flutter/instance_target.dart';
 
 void main() {
-  test('direct target carries no orchestration identity', () {
-    final endpoint = HowlEndpoint.parse('tcp://127.0.0.1:43127');
-    final target = DirectHowlInstanceTarget(endpoint);
-    expect(target.route, HowlInstanceRoute.direct);
-    expect(target.managed, isFalse);
-    expect(target.local, isFalse);
-    expect(target.endpointText, 'tcp://127.0.0.1:43127');
-    expect(target.serverId, '0');
-    expect(target.nativeServerId, 0);
-    expect(target.sessionId, '0');
-    expect(target.instanceId, '0');
-  });
-
   test(
     'managed target preserves exact Server Session and Instance identity',
     () {

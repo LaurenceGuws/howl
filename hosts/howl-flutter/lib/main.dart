@@ -39,22 +39,18 @@ import 'visible_viewport.dart';
 const int _nativeImageSnapshotSupersessionLimit = 8;
 
 Future<void> main(List<String> args) async {
-  const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
   const compiledServerEndpoint = String.fromEnvironment('HOWL_SERVER_ENDPOINT');
-  HowlLaunchTarget? launch;
+  String? serverEndpoint;
   try {
-    launch = resolveHowlLaunch(
+    serverEndpoint = resolveHowlServerEndpoint(
       args: args,
-      compiledEndpoint: compiledEndpoint,
       compiledServerEndpoint: compiledServerEndpoint,
-      environmentEndpoint: Platform.environment['HOWL_ENDPOINT'],
-      environmentSocket: Platform.environment['HOWL_SOCKET'],
       environmentServerEndpoint: Platform.environment['HOWL_SERVER_ENDPOINT'],
     );
   } on HowlLaunchException catch (error) {
     if (error.code != 'missing_endpoint') {
       stderr.writeln(
-        'usage: howl_flutter ENDPOINT | howl_flutter --server ENDPOINT '
+        'usage: howl_flutter --server ENDPOINT '
         '[${error.code}]',
       );
       exitCode = 64;
@@ -62,9 +58,9 @@ Future<void> main(List<String> args) async {
     }
   }
   HowlEndpoint? endpoint;
-  if (launch != null) {
+  if (serverEndpoint != null) {
     try {
-      endpoint = HowlEndpoint.parse(launch.endpoint);
+      endpoint = HowlEndpoint.parse(serverEndpoint);
     } on HowlEndpointException catch (error) {
       stderr.writeln('invalid Howl endpoint: ${error.code}');
       exitCode = 64;
@@ -76,7 +72,6 @@ Future<void> main(List<String> args) async {
   const compiledGeometryLeader = String.fromEnvironment('HOWL_GEOMETRY_LEADER');
   runApp(
     HowlApp(
-      launch: launch,
       endpoint: endpoint,
       geometryLeader: geometryLeaderEnabled(
         compiledValue: compiledGeometryLeader,
@@ -89,31 +84,21 @@ Future<void> main(List<String> args) async {
 final class HowlApp extends StatelessWidget {
   const HowlApp({
     super.key,
-    required this.launch,
     required this.endpoint,
     required this.geometryLeader,
   });
 
-  final HowlLaunchTarget? launch;
   final HowlEndpoint? endpoint;
   final bool geometryLeader;
 
   @override
   Widget build(BuildContext context) {
-    final launchValue = launch;
-    final endpointValue = endpoint;
-    final initialServer = launchValue?.managed == true ? endpointValue : null;
-    final initialInstance =
-        launchValue?.managed == false && endpointValue != null
-        ? DirectHowlInstanceTarget(endpointValue)
-        : null;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Howl',
       theme: ThemeData.dark(useMaterial3: false),
       home: HowlAppShell(
-        initialServerEndpoint: initialServer,
-        initialInstanceTarget: initialInstance,
+        initialServerEndpoint: endpoint,
         localEnabled: Platform.isLinux || Platform.isWindows,
         terminalBuilder: (context, target, onStaleTarget) => HowlTerminal(
           key: ValueKey<String>(target.diagnosticLabel),

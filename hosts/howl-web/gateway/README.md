@@ -2,24 +2,18 @@
 
 This package owns the node-local browser transport edge for the experimental Howl Web
 client. It binds loopback, admits bounded HTTP/WebSocket traffic, performs one exact
-Server attach, and then becomes a protocol-blind HWLS byte bridge.
+Server attach, and then becomes a protocol-blind Server terminal byte bridge.
 
-The path is:
+Each browser WebSocket creates a Server control connection, verifies the configured
+Server incarnation, and requests the exact Session/Instance. The gateway consumes
+the complete ready response and forwards it as the first binary WebSocket message.
+The native socket then belongs to that dedicated attachment; Wasm completes
+construction from the same ready response.
 
-```text
-browser WebSocket
-      ↓
-howl-web-gateway
-      ↓ server_protocol hello + attach(session_id, instance_id)
-Server control listener
-      ↓ attach_ready; same TCP fd handed to Instance
-ordinary HWLS stream
-```
-
-The gateway parses **Server control only for the attach handshake**. After `attach_ready`
-it does not parse HWLS frames, terminal state, PTY bytes, or renderer data. It owns no
-PTY, VT, Instance, Session or Server lifetime and does not discover or choose identities;
-the operator supplies the exact Server port, Session ID and Instance ID.
+After ready, the gateway pumps opaque bytes. It parses no terminal state, PTY bytes
+or renderer data, and owns no PTY, VT, Instance, Session or Server lifetime. The
+operator supplies the Server port and all three exact nonzero IDs. Disconnecting a
+WebSocket releases only that attachment.
 
 The process binds **only `127.0.0.1`**. Public delivery belongs to an external edge such
 as Cloudflare Tunnel/Access; do not bind this gateway to a non-loopback address or treat

@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const transport = @import("client_transport");
-/// Terminal operations and observations after direct or exact Server attach.
+/// Terminal operations and observations after exact Server attachment.
 pub const terminal = @import("terminal_client");
 /// Pure Server control wire shared with the server model.
 pub const protocol = @import("server_protocol");
@@ -56,8 +56,7 @@ pub const Target = struct {
     instance_id: u64,
 };
 
-/// Obtains only the exact Instance stream. The ordinary HWLS constructor owns
-/// the remaining setup deadline and completes construction after this handoff.
+/// Establishes one complete dedicated attachment to an exact Server occurrence.
 pub fn attach(allocator: std.mem.Allocator, target: Target, diagnostic: *ConnectDiagnostic, interrupt: ?*Interrupt) Error!Attached {
     if (target.server_id == 0 or target.session_id == 0 or target.instance_id == 0) return error.InvalidPayload;
     const stream = try transport.Stream.connectCancelable(target.endpoint, diagnostic, interrupt);
@@ -87,7 +86,7 @@ pub const Connection = struct {
         diagnostic: *ConnectDiagnostic,
     ) Error!Connection {
         const stream = try transport.Stream.connectDiagnosed(endpoint, diagnostic);
-        return connectTransport(allocator, stream, diagnostic);
+        return completeControlTransport(allocator, stream, diagnostic);
     }
 
     /// Opens a control connection with explicit diagnostics and cancellation.
@@ -98,7 +97,7 @@ pub const Connection = struct {
         interrupt: ?*Interrupt,
     ) Error!Connection {
         const stream = try transport.Stream.connectCancelable(endpoint, diagnostic, interrupt);
-        return connectTransport(allocator, stream, diagnostic);
+        return completeControlTransport(allocator, stream, diagnostic);
     }
 
     /// Releases owned payload/storage or stream resources and retires this value.
@@ -248,12 +247,18 @@ pub const Connection = struct {
         }
         if (frame.kind != .attach_ready) return error.UnexpectedFrame;
         const ready = try protocol.decodeAttachReady(frame.payload);
+        if (ready.server_id != expected_server_id) return error.StaleServerIncarnation;
         if (ready.session_id != identity.session_id or ready.instance_id != identity.instance_id)
             return error.UnexpectedFrame;
         try self.acceptRevision(ready.tree_revision);
-        const stream = self.stream;
+        try self.stream.finishHandshake(&diagnostic);
+        const connection = terminal.Connection{
+            .allocator = self.allocator,
+            .stream = self.stream,
+            .client_id = ready.client_id,
+        };
         self.live = false;
-        return .{ .ready = ready, .stream = stream };
+        return .{ .ready = ready, .connection = connection };
     }
 
     fn requestResult(self: *Connection, kind: protocol.Kind, payload: []const u8) Error!protocol.Result {
@@ -270,7 +275,7 @@ pub const Connection = struct {
     }
 
     // Choosing a control operation completes Server-only construction. Observe
-    // may then long-poll indefinitely; attach instead carries setup into HWLS.
+    // may then long-poll indefinitely; attach completes its setup at attach_ready.
     fn controlReady(self: *Connection) Error!void {
         if (!self.live) return error.ConnectionRetired;
         var diagnostic: ConnectDiagnostic = .{};
@@ -313,11 +318,11 @@ pub const Connection = struct {
 /// Owns a successfully handed-off stream and its attach-ready facts.
 pub const Attached = struct {
     ready: protocol.AttachReady,
-    stream: transport.Stream,
+    connection: terminal.Connection,
 
-    /// Releases owned payload/storage or stream resources and retires this value.
+    /// Detaches this client while leaving the server Instance alive.
     pub fn deinit(self: *Attached) void {
-        self.stream.deinit();
+        self.connection.deinit();
         self.* = undefined;
     }
 };
@@ -407,6 +412,43 @@ pub fn connectTransport(
         .server_id = status.server_id,
         .tree_revision = status.tree_revision,
     };
+}
+
+fn completeControlTransport(
+    allocator: std.mem.Allocator,
+    stream: transport.Stream,
+    diagnostic: *ConnectDiagnostic,
+) Error!Connection {
+    var connection = try connectTransport(allocator, stream, diagnostic);
+    errdefer connection.deinit();
+    try connection.stream.finishHandshake(diagnostic);
+    return connection;
+}
+
+test "control construction ends its deadline at welcome instead of the first operation" {
+    var fds: [2]std.posix.fd_t = undefined;
+    const result = std.posix.system.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds);
+    try std.testing.expectEqual(std.posix.E.SUCCESS, std.posix.errno(result));
+    var peer = transport.Stream{ .fd = fds[1] };
+    defer peer.deinit();
+    var diagnostic: ConnectDiagnostic = .{};
+    const stream = try transport.Stream.adopt(fds[0], &diagnostic, null);
+    var header: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&header, .{ .kind = .welcome, .payload_len = protocol.payload_bytes.welcome });
+    var payload: [protocol.payload_bytes.welcome]u8 = undefined;
+    try protocol.encodeStatus(&payload, .{
+        .server_id = 91,
+        .tree_revision = 1,
+        .session_count = 0,
+        .instance_count = 0,
+    });
+    try peer.write(&header);
+    try peer.write(&payload);
+    var connection = try completeControlTransport(std.testing.allocator, stream, &diagnostic);
+    defer connection.deinit();
+    try std.testing.expectEqual(@as(u64, 91), connection.server_id);
+    try std.testing.expect(connection.stream.handshake_deadline_ms == null);
+    try std.testing.expectEqual(ConnectStage.ready, diagnostic.stage);
 }
 
 fn resultError(code: protocol.ResultCode) Error!void {

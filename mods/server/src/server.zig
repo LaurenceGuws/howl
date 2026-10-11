@@ -248,10 +248,14 @@ pub const Server = opaque {
         instance_id: session_mod.InstanceId,
         fd: std.posix.fd_t,
         initial_input: []const u8,
-        preface_output: []const u8,
     ) AdoptClientError!void {
         const index = self.findSessionIndex(session_id) orelse return error.SessionNotFound;
-        return self.stateMut().sessions[index].?.adoptClient(instance_id, fd, initial_input, preface_output);
+        return self.stateMut().sessions[index].?.adoptClient(instance_id, fd, initial_input, .{
+            .server_id = self.identity(),
+            .session_id = session_id,
+            .instance_id = instance_id,
+            .tree_revision = self.treeRevision(),
+        });
     }
 
     /// Reports Instance service failure or a missing Session.
@@ -410,7 +414,7 @@ fn testReadExact(
     if (offset != output.len) return error.TestTimeout;
 }
 
-test "Server routes an adopted HWLS stream by exact Session and Instance identity" {
+test "Server routes an adopted Server terminal stream by exact Session and Instance identity" {
     const protocol = @import("server_protocol").terminal;
     const server = try Server.init(std.testing.allocator, 41);
     defer server.deinit();
@@ -430,20 +434,22 @@ test "Server routes an adopted HWLS stream by exact Session and Instance identit
     defer testCloseFd(pair[1]);
     try testSetNonblocking(pair[1]);
 
-    var hello: [protocol.header_bytes]u8 = undefined;
-    try protocol.encodeHeader(&hello, .{ .kind = .hello, .payload_len = 0 });
-    try server.adoptClient(work, instance_id, pair[0], &hello, &.{});
+    try server.adoptClient(work, instance_id, pair[0], &.{});
     service_owns = true;
 
-    var header_bytes: [protocol.header_bytes]u8 = undefined;
+    const control = @import("server_protocol");
+    var header_bytes: [control.header_bytes]u8 = undefined;
     try testReadExact(server, work, instance_id, pair[1], &header_bytes);
-    const header = try protocol.decodeHeader(&header_bytes);
-    try std.testing.expectEqual(protocol.Kind.welcome, header.kind);
-    try std.testing.expectEqual(@as(u32, protocol.payload_bytes.welcome), header.payload_len);
-    var welcome_bytes: [protocol.payload_bytes.welcome]u8 = undefined;
-    try testReadExact(server, work, instance_id, pair[1], &welcome_bytes);
-    const welcome = try protocol.decodeWelcome(&welcome_bytes);
-    try std.testing.expect(welcome.client_id != protocol.no_client);
+    const header = try control.decodeHeader(&header_bytes);
+    try std.testing.expectEqual(control.Kind.attach_ready, header.kind);
+    try std.testing.expectEqual(@as(u32, control.payload_bytes.attach_ready), header.payload_len);
+    var ready_bytes: [control.payload_bytes.attach_ready]u8 = undefined;
+    try testReadExact(server, work, instance_id, pair[1], &ready_bytes);
+    const ready = try control.decodeAttachReady(&ready_bytes);
+    try std.testing.expectEqual(server.identity(), ready.server_id);
+    try std.testing.expectEqual(work, ready.session_id);
+    try std.testing.expectEqual(instance_id, ready.instance_id);
+    try std.testing.expect(ready.client_id != protocol.no_client);
 }
 
 test "identity routing failure retains caller stream ownership" {
@@ -466,14 +472,14 @@ test "identity routing failure retains caller stream ownership" {
 
     try std.testing.expectError(
         error.SessionNotFound,
-        server.adoptClient(work + 100, instance_id, pair[0], &.{}, &.{}),
+        server.adoptClient(work + 100, instance_id, pair[0], &.{}),
     );
     const session_flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(session_flags));
 
     try std.testing.expectError(
         error.InstanceNotFound,
-        server.adoptClient(work, instance_id + 100, pair[0], &.{}, &.{}),
+        server.adoptClient(work, instance_id + 100, pair[0], &.{}),
     );
     const instance_flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(instance_flags));

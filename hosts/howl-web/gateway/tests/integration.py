@@ -44,17 +44,22 @@ def recv_exact(conn: socket.socket, size: int) -> bytes:
 
 def server_frame(kind: int, payload: bytes = b'') -> bytes:
     assert len(payload) <= 8 * 1024
-    return b'SRVR' + bytes((1, kind, 0, 0)) + struct.pack('!I', len(payload)) + payload
+    return b'SRVR' + bytes((2, kind, 0, 0)) + struct.pack('!I', len(payload)) + payload
 
 
 def recv_server_frame(conn: socket.socket) -> tuple[int, bytes]:
     header = recv_exact(conn, 12)
     assert header[:4] == b'SRVR'
-    assert header[4] == 1
+    assert header[4] == 2
     assert header[6:8] == b'\0\0'
     size = struct.unpack('!I', header[8:12])[0]
     assert size <= 8 * 1024
     return header[5], recv_exact(conn, size)
+
+
+def ready_frame(client_id: int) -> bytes:
+    return server_frame(12, struct.pack(
+        '!QQQQQ', SERVER_ID, SESSION_ID, INSTANCE_ID, TREE_REVISION, client_id))
 
 
 class AttachedEchoServer:
@@ -87,9 +92,9 @@ class AttachedEchoServer:
             except (socket.timeout, OSError):
                 continue
             self.accepted += 1
-            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+            threading.Thread(target=self._serve, args=(conn, self.accepted), daemon=True).start()
 
-    def _serve(self, conn: socket.socket) -> None:
+    def _serve(self, conn: socket.socket, client_id: int) -> None:
         with conn:
             conn.settimeout(3)
             try:
@@ -113,7 +118,7 @@ class AttachedEchoServer:
                 self.attached.append(identity)
                 conn.sendall(server_frame(
                     12,
-                    struct.pack('!QQQ', SESSION_ID, INSTANCE_ID, TREE_REVISION),
+                    struct.pack('!QQQQQ', self.server_id, SESSION_ID, INSTANCE_ID, TREE_REVISION, client_id),
                 ))
 
                 while data := conn.recv(65536):
@@ -122,10 +127,10 @@ class AttachedEchoServer:
                 return
 
 
-def read_head(sock: socket.socket) -> tuple[int, dict[str, str], bytes]:
+def read_head(sock: socket.socket, chunk_size: int = 4096) -> tuple[int, dict[str, str], bytes]:
     data = b''
     while b'\r\n\r\n' not in data:
-        chunk = sock.recv(4096)
+        chunk = sock.recv(chunk_size)
         if not chunk: raise AssertionError('HTTP EOF before headers')
         data += chunk
         if len(data) > 65536: raise AssertionError('HTTP headers unexpectedly large')
@@ -163,7 +168,9 @@ def ws_open(port: int, host: str, origin: str | None, access: bool, key: str = K
         f'Sec-WebSocket-Key: {key}\r\n{origin_header}{access_header}\r\n'
     )
     sock.sendall(request.encode())
-    status, headers, rest = read_head(sock)
+    status, headers, rest = read_head(sock, 1)
+    # Read the HTTP preface bytewise so a coalesced first ready message remains
+    # on this socket for the WebSocket frame reader.
     if status == 101: assert not rest
     return sock, status, headers
 
@@ -276,6 +283,7 @@ def main() -> None:
             deadline = time.monotonic()+2
             while server.accepted < 1 and time.monotonic() < deadline: time.sleep(.01)
             assert server.accepted == 1
+            assert recv_frame(one) == (2, ready_frame(1))
             send_masked(one, 2, b'opaque-howl-bytes')
             assert recv_frame(one) == (2, b'opaque-howl-bytes')
 
@@ -290,9 +298,10 @@ def main() -> None:
                 stream_total += len(stream_chunk)
 
             peers = []
-            for _ in range(5):
+            for index in range(5):
                 peer, status, _ = ws_open(listen, host, origin, True)
                 assert status == 101
+                assert recv_frame(peer) == (2, ready_frame(index + 2))
                 peers.append(peer)
             deadline = time.monotonic()+2
             while server.accepted < 6 and time.monotonic() < deadline: time.sleep(.01)

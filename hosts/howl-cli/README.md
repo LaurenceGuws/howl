@@ -4,15 +4,14 @@
 
 Two command families stay deliberately distinct:
 
-- `howl instance ...` performs snapshots/state/input/resize/focus/signals against one exact Instance. Its target may be a direct HWLS endpoint or `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`; the managed route consumes Server attach internally and then uses the same ordinary HWLS client.
+- `howl instance ...` performs snapshots/state/input/resize/focus/signals against one exact Instance. Its target is `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID`. The client validates the Server incarnation and completes one dedicated attachment at the shared ready response.
 - `howl server run LISTEN` hosts one foreground Server runtime and its single control listener.
 - `howl server ...` client commands talk to one explicit Server control stream for status/tree inspection and exact Session/Instance lifecycle CRUD.
 
 The Instance target grammar is shared by every interaction command:
 
 ```text
-TARGET = ENDPOINT
-       | --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
+TARGET = --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
 
 howl instance snapshot TARGET --text
 howl instance type TARGET 'hello'
@@ -25,7 +24,7 @@ semantics remain Instance-owned; no snapshot/input/resize command becomes Server
 Server orchestration preserves the ownership tree. `server session create` creates only logical Session identity. `server instance create` is the only command that accepts shell/command/cwd/geometry. IDs and revisions are emitted as decimal JSON strings where they may exceed JavaScript's exact integer range.
 
 The Server runtime owns no terminal geometry or presentation layout. `server instance create`
-selects the initial canonical geometry for that Instance; later HWLS resize mutates that same
+selects the initial canonical geometry for that Instance; later Server terminal resize mutates that same
 Instance geometry. Multiple Instances may be shown on one app surface, but panes/splits and
 surface composition remain client-side.
 

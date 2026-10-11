@@ -34,7 +34,7 @@ This is intentionally replaceable runtime scheduling policy, not Session or Inst
 TCP accept policy is part of the runtime's interactive carriage contract. Every accepted
 TCP stream has `TCP_NODELAY` enabled before it enters `server_service`; option failure
 retires that accepted fd instead of silently degrading request/response latency. Exact
-Instance attach transfers the same configured fd onward to HWLS. Unix listeners do not
+Instance attach transfers the same configured fd onward to its dedicated terminal service. Unix listeners do not
 receive TCP policy. Any deployment relay/proxy in front of the Server creates additional
 TCP legs and must configure NODELAY on those owned sockets independently; endpoint
 configuration cannot reach through a proxy and tune its sockets.

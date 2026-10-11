@@ -31,20 +31,20 @@ const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
 selectRendererFrameV3(w);
 
-const corpus = JSON.parse(await readFile('../../../mods/server/protocol/v10-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../../mods/server/protocol/vectors.json', 'utf8'));
 const test = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(test?.hex);
 const snapshot = Buffer.from(test.hex, 'hex');
 let offset = 0;
 let graphicsFound = false;
 while (offset < snapshot.length) {
-  assert.equal(snapshot.toString('ascii', offset, offset + 4), 'HWLS');
-  assert.equal(snapshot[offset + 4], 10);
+  assert.equal(snapshot.toString('ascii', offset, offset + 4), 'SRVR');
+  assert.equal(snapshot[offset + 4], 2);
   const kind = snapshot[offset + 5];
   const length = snapshot.readUInt32BE(offset + 8);
   const end = offset + 12 + length;
   assert.ok(end <= snapshot.length);
-  if (kind === 23) graphicsFound = true;
+  if (kind === 52) graphicsFound = true;
   offset = end;
 }
 assert.equal(offset, snapshot.length);

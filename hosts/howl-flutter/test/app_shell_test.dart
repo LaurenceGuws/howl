@@ -180,10 +180,13 @@ void main() {
   );
 
   testWidgets(
-    'direct launch stays terminal-first but shell menu remains available',
+    'exact Instance launch stays terminal-first with shell navigation',
     (tester) async {
-      final target = DirectHowlInstanceTarget(
-        HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+      final target = ManagedHowlInstanceTarget(
+        serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+        serverId: '91',
+        sessionId: '7',
+        instanceId: '3',
       );
       await tester.pumpWidget(
         MaterialApp(
@@ -191,12 +194,12 @@ void main() {
             connections: HowlServerConnections(_MemoryStore()),
             initialInstanceTarget: target,
             terminalBuilder: (_, value, _) =>
-                Text(value.endpointText, key: const Key('direct-terminal')),
+                Text(value.endpointText, key: const Key('selected-terminal')),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('direct-terminal')), findsOneWidget);
+      expect(find.byKey(const Key('selected-terminal')), findsOneWidget);
       expect(find.byKey(const Key('howl-shell-menu')), findsOneWidget);
     },
   );
@@ -375,8 +378,11 @@ void main() {
   testWidgets('explicit launch route is visible while saved-route read fails', (
     tester,
   ) async {
-    final target = DirectHowlInstanceTarget(
-      HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+    final target = ManagedHowlInstanceTarget(
+      serverEndpoint: HowlEndpoint.parse('tcp://127.0.0.1:43127'),
+      serverId: '91',
+      sessionId: '7',
+      instanceId: '3',
     );
     final connections = HowlServerConnections(_ThrowingReadStore());
     await tester.pumpWidget(

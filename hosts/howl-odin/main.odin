@@ -3020,9 +3020,7 @@ create_target_instance_view :: proc(
     view := allocate_instance_view(ownership)
     if view == nil do return nil
     valid_target := len(endpoint) < len(view.endpoint)
-    if route_kind == .Direct {
-        valid_target = valid_target && len(endpoint) > 0 && server_id == 0 && session_id == 0 && instance_id == 0
-    } else if route_kind == .Server {
+    if route_kind == .Server {
         valid_target = valid_target && len(endpoint) > 0 && server_id != 0 && session_id != 0 && instance_id != 0
     } else if route_kind == .Local {
         valid_target = valid_target && len(endpoint) == 0 && server_id == 0 && session_id == 0 && instance_id != 0
@@ -3071,10 +3069,6 @@ create_target_instance_view :: proc(
     )
     if view.control_thread == nil || view.observer_thread == nil do publish_initial_error(view, "Instance I/O worker creation failed")
     return view
-}
-
-create_instance_view :: proc(endpoint: string, ownership: Instance_Ownership) -> ^Instance_View {
-    return create_target_instance_view(.Direct, endpoint, 0, 0, 0, ownership)
 }
 
 create_server_instance_view :: proc(
@@ -4940,8 +4934,7 @@ profile_view :: proc(app: ^App, profile_index: int) -> (view: ^Instance_View, ti
     if profile.mode == .Launch {
         return create_owned_profile_instance_view(app, profile, profile_index), title
     }
-    endpoint := profile_endpoint(profile)
-    view = create_instance_view(endpoint, .Attached)
+    view = create_error_instance_view("Select an Instance through its Server", .Attached)
     if view != nil {
         view.profile_index = profile_index
         view.profile_font_pixels = profile.font_pixels
@@ -5034,7 +5027,7 @@ recover_active_instance :: proc(app: ^App) -> bool {
         if view.route_kind == .Server {
             replacement = create_server_instance_view(endpoint, view.server_id, view.session_id, view.instance_id)
         } else {
-            replacement = create_instance_view(endpoint, view.ownership)
+            return false
         }
         if replacement != nil {
             replacement.profile_index = -1

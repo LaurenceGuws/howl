@@ -213,7 +213,6 @@ Native_Row_Shape :: struct {
 }
 
 Bridge_Route_Kind :: enum u8 {
-    Direct = 0,
     Server = 1,
     Local = 2,
 }

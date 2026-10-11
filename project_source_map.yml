@@ -24,15 +24,16 @@ experimental:
     direct rotating service turns. Fully quiescent
     exited Instances remain attachable but consume no scheduler work. Exact attach
     transfers the same fd downward
-    into HWLS; no per-Instance listener/proxy exists. Runtime owns no terminal grid,
+    into dedicated Server terminal interaction; no per-Instance listener/proxy exists. Runtime owns no terminal grid,
     geometry, pane/split layout, renderer, authentication, discovery, persistence or
     service-supervision policy
   server-client: >-
     mods/server src/client owns Server control and terminal interaction clients plus
     private Unix/numeric-IPv4 transport, bounded deadlines and cancellation.
     server_client.terminal exposes snapshots, state, actions, search, selection,
-    images and consequences. Exact attach consumes the control stream and
-    continues terminal interaction on the same stream. Neither client imports
+    images and consequences. Each attachment has its own connection, completing at one shared ready response;
+    catalog/CRUD connections remain separate. Attach checks exact Server incarnation,
+    Session and Instance identities and preserves the same stream. Neither client imports
     Instance, PTY, Server model or process ownership.
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,
@@ -43,16 +44,18 @@ experimental:
     turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
     experimental pure module `server_protocol` in mods/server src/protocol. It encodes bounded
-    control and terminal-interaction wire. Control vocabulary preserves Server -> Sessions -> Instances:
+    control and terminal interaction using one SRVR version 2 envelope and disjoint phase
+    tags. One attachment-ready carries all occurrence identities, tree revision and
+    client ID; no terminal hello/welcome remains. Control preserves Server -> Sessions -> Instances:
     Session create carries only logical name, Instance create carries launch policy
     under an exact Session id, and attach identifies exact Session+Instance ids.
     It owns no listener, address, process, authentication or supervision policy
   server-terminal-service: >-
     optional module `server_terminal_service` inside mods/server. It
-    borrows one existing Instance and owns only bounded adopted HWLS client streams,
+    borrows one existing Instance and owns only bounded dedicated attachment streams,
     request decoding, publication scratch and client-local backpressure. It has no
-    listener, executable, address, Instance lifetime, Session/Server identity,
-    routing, authentication or supervision policy
+    listener, executable, address, canonical lifetime or identity allocation. It encodes
+    ready from owner-supplied context and owns no routing, authentication or supervision policy
   server: >-
     mods/server optional listener-free orchestration model/service above the Howl terminal family. The exact owner
     tree is Server -> Sessions -> Instances. Session creation never launches a
@@ -64,9 +67,9 @@ experimental:
   howl-cli: >-
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
-    Instance interaction accepts either a direct HWLS endpoint or an explicit
-    `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` route that consumes exact attach
-    before continuing as ordinary HWLS. Session create carries no launch policy;
+    Instance interaction requires
+    `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` and completes a dedicated
+    attachment at the common ready response. Session create carries no launch policy;
     Instance create owns shell/command/cwd/geometry inputs. The CLI owns no PTY, VT,
     Instance, Session, Server, listener, discovery, authentication or supervision
   howl-render: >-
@@ -90,16 +93,15 @@ experimental:
     maintained native graphical client canary with a deliberately small app shell.
     The shell may start route-less, persists only explicit labelled Server endpoints
     plus the selected saved Server, and exposes them through a button-opened drawer
-    whose edge-drag gesture is disabled. Direct HWLS remains available; Server mode
-    performs one validated native tree query, presents Session labels + Instance
+    whose edge-drag gesture is disabled. Server mode performs one validated native tree query, presents Session labels + Instance
     lineage, and on running-Instance selection attaches exact Session+Instance
-    identity then transitions the same fd into ordinary HWLS with no proxy. Dart
+    identity and client ID in one ready response, with no second handshake or proxy. Dart
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
     history/selection/native-size UX remains Instance-only after handoff. On Linux
     and Windows the Local route owns one in-process Instance through its private
     direct desktop worker. Semantic mutations and synchronous const observation
     projections use Instance directly; only copied frame/text/image packets reach
-    Dart. Local creates no HWLS service, handshake or stream. Android and iOS remain client-only. Flutter owns
+    Dart. Local creates no Server terminal service, handshake or stream. Android and iOS remain client-only. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,
@@ -114,24 +116,25 @@ experimental:
     maintained WebAssembly wire/text/render/browser canary. Browser presentation/input/
     history/selection stays client-owned; the loopback WebSocket gateway performs exact
     Server Session+Instance attach through server-client and becomes protocol-blind once
-    the same fd enters ordinary HWLS. It owns no PTY/VT/Instance/Session/Server lifetime
-    and requires no per-Instance listener. The low-level Node `live` step remains a
-    direct-HWLS wire pressure seam only. Chromium is the primary fast lane and
+    it forwards the common ready as the first WebSocket message and enters dedicated
+    terminal interaction. It owns no PTY/VT/Instance/Session/Server lifetime
+    and requires no per-Instance listener. The low-level Node `live` step negotiates an exact disposable Server Instance
+    and feeds the real Wasm ready/terminal frames under single-byte delivery. Chromium is the primary fast lane and
     Safari/Home-Screen the WebKit/PWA canary; outside the core gate
   howl-odin: >-
     experimental Odin/SDL3 graphical Instance client with tabs/splits, profiles,
-    settings/actions and history/selection. Direct Attach profiles consume explicit HWLS
-    Instance streams; transient `--server` startup uses server-client exact
-    Session+Instance attach and then the same transported observer/control/render/
-    consequence workers. Local launch profiles instead create one fully presented
+    settings/actions and history/selection. Transient `--server` startup uses exact Server,
+    Session and Instance identities for independent transported observer/control/render/
+    consequence attachments. Old endpoint-only Attach profiles report that Server
+    Instance selection is required. Local launch profiles instead create one fully presented
     in-process Instance (Linux PTY or Windows ConPTY) claimed by one terminal worker.
     That worker owns PTY/VT service, semantic input, resize, history, search, selection,
     hyperlink/consequence handling and Render production; SDL consumes immutable Render
     publications through NativeCanvas on the graphical thread. Local has no HWLS,
     transported observer/control/render workers, listener or service worker. Target
-    identity includes route+endpoint+Session+Instance so distinct Server-owned Instances
-    never share consequence authority accidentally. Direct Attach and Server-selected
-    routes remain non-owning ordinary HWLS attachments. Its desktop font owner resolves
+    identity includes route+endpoint+Server+Session+Instance so distinct Server-owned Instances
+    never share consequence authority accidentally. Server-selected routes are
+    non-owning dedicated terminal attachments. Its desktop font owner resolves
     regular/italic/bold/bold-italic files plus fallbacks and supplies independent
     howl-text FontSets to the shared Render face-family contract. No sibling
     daemon/socket path exists. Outside the core gate

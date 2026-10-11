@@ -10,7 +10,7 @@ The browser owns presentation and browser input policy only. Canonical terminal 
 remains in one Howl **Instance**:
 
 Instance owns PTY, VT and canonical geometry. The Server-owned terminal service
-borrows that Instance and exposes HWLS on explicitly attached streams. Web wire/Wasm
+borrows that Instance and exposes Server terminal interaction on dedicated attachment streams. Web wire/Wasm
 consumes those streams and projects through shared text/render machinery into browser
 resources.
 
@@ -57,29 +57,29 @@ zig build gateway-install
 
 ## Live gateway route
 
-The maintained browser gateway now follows the same Server topology as Flutter and the
-native CLI. It accepts one loopback Server port plus exact Session and Instance IDs,
-performs the bounded `server-client` attach handshake, consumes `attach_ready`, and then
-bridges ordinary HWLS bytes without further protocol interpretation.
+The browser gateway follows the same topology as Flutter and the native CLI. The
+operator supplies a loopback Server port and exact Server, Session and Instance IDs.
+The gateway checks the incarnation, completes attachment at the common ready response,
+and forwards that response as the first binary WebSocket message. Wasm accepts it as
+its established state; there is no browser hello or second welcome.
 
-The browser remains unaware of Server framing. Its existing observer/control/history/
-image WebSockets each become independent HWLS clients of the selected Instance through
-the gateway. Server still publishes no per-Instance listener and the gateway introduces
-no Server-side byte proxy.
+Each observer/control/history/image WebSocket independently attaches to the selected
+Instance. The gateway then pumps opaque ordered bytes. Server publishes no per-Instance
+listener. The gateway owns no canonical lifetime or terminal semantics.
 
-The gateway black-box gate proves fail-closed admission before any Server connection,
-exact identity attachment for all admitted WebSockets, bounded capacity and long-lived
-binary streaming. A real-runtime canary additionally proved:
+The black-box gate verifies fail-closed HTTP admission before any Server connection,
+exact identity and client ID in the first ready message, independent attachments,
+bounded capacity and long-lived binary streaming.
 
-```text
-real Server -> real Session -> real Instance
-           -> Web gateway -> WebSocket HWLS hello -> real HWLS welcome
+The disposable Node/Wasm pressure command is:
+
+```sh
+zig build live -- SERVER_LOOPBACK_PORT SERVER_ID SESSION_ID INSTANCE_ID
 ```
 
-The low-level `zig build live -- PORT` Node/Wasm check is intentionally narrower: it
-still expects a caller-supplied disposable **direct HWLS** endpoint and is retained only
-as a wire pressure tool. It is not the browser product route and must not motivate a
-per-Instance listener or standalone Instance daemon.
+It negotiates the Server welcome, requests that exact Instance, and feeds the shared
+ready response and terminal traffic into the real Wasm under single-byte delivery.
+It is a private runtime/wire proof; browser platform qualification remains separate.
 
 ## Browser interaction policy
 
@@ -100,7 +100,7 @@ does not create Server geometry or Session pane semantics.
 ## Gateway and delivery boundary
 
 `gateway/` binds loopback, serves a closed static route table and bridges binary
-WebSocket messages to one explicit upstream byte stream without parsing HWLS. Public
+WebSocket messages to one explicit upstream byte stream after forwarding the complete Server ready response. Public
 identity remains an external delivery-edge concern such as Cloudflare Access; the
 gateway's optional assertion check is only an origin-misrouting guard.
 

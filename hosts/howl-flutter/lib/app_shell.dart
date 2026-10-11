@@ -388,19 +388,6 @@ final class _ServerDrawer extends StatelessWidget {
                 onTap: onBackToServer,
               ),
               const Divider(height: 1),
-            ] else if (activeInstance
-                case final DirectHowlInstanceTarget target?) ...<Widget>[
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.bolt, size: 19),
-                title: const Text('Direct Instance'),
-                subtitle: Text(
-                  target.endpointText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Divider(height: 1),
             ],
             if (localEnabled) ...<Widget>[
               ListTile(

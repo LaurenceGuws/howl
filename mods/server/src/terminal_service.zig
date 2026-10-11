@@ -1,4 +1,4 @@
-//! Optional HWLS interaction service for one existing Howl Instance.
+//! Optional Server terminal interaction service for one existing Howl Instance.
 //!
 //! Service borrows Instance lifetime and owns only bounded adopted client streams,
 //! request decoding, publication scratch and client-local backpressure. It creates no
@@ -12,7 +12,8 @@ const windows = std.os.windows;
 const posix = if (native_windows) struct {} else std.posix;
 const linux = if (native_windows) struct {} else std.os.linux;
 const howl = @import("howl_instance");
-const protocol = @import("server_protocol").terminal;
+const server_protocol = @import("server_protocol");
+const protocol = server_protocol.terminal;
 const codec = @import("howl_vt_codec");
 const vt_encoder = codec.encoder.Encoder(howl.Terminal.Observation);
 const terminalProperties = vt_encoder.properties;
@@ -20,7 +21,7 @@ const countSnapshotGraphics = vt_encoder.countGraphics;
 const encodeSnapshotGraphics = vt_encoder.encodeGraphics;
 const imageVisible = vt_encoder.imageVisible;
 
-/// Owns the Windows service side of one listener-free in-process HWLS duplex stream.
+/// Owns the Windows service side of one listener-free in-process Server terminal duplex stream.
 pub const WindowsAdoptedStream = struct {
     read: windows.HANDLE,
     write: windows.HANDLE,
@@ -73,7 +74,6 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 // Retain ordinary snapshot/result output across request cycles without letting
 // one unusually large response permanently multiply by every client slot.
 const client_output_retain_bytes: usize = 512 * 1024;
-const maximum_adopt_preface_bytes: usize = 4096;
 const lifecycle_poll_ms: i32 = 100;
 // Windows anonymous pipes are bounded byte streams. Keep each nonblocking
 // service write comfortably below the 64 KiB Local pair capacity so a large
@@ -345,12 +345,19 @@ comptime {
         @compileError("typed key legacy-text bound must match canonical VT scratch bound");
 }
 
+/// Server-selected occurrence and catalogue revision used for one attachment.
+pub const AttachContext = struct {
+    server_id: u64,
+    session_id: u64,
+    instance_id: u64,
+    tree_revision: u64,
+};
+
 const ObserveMode = enum { compressed, raw, delta, packed_text };
 
 const Client = struct {
     stream: AdoptedStream,
     id: protocol.ClientId,
-    phase: enum { hello, ready } = .hello,
     input: []u8 = &.{},
     input_len: usize = 0,
     output: std.ArrayList(u8) = .empty,
@@ -386,7 +393,7 @@ const Client = struct {
 // Canonical Instance service
 // =============================================================================
 
-/// Owns bounded HWLS interaction state around one borrowed PTY+VT Instance.
+/// Owns bounded Server terminal interaction state around one borrowed PTY+VT Instance.
 pub const Service = struct {
     // -------------------------------------------------------------------------
     // Retained interaction owners
@@ -621,7 +628,7 @@ pub const Service = struct {
         };
     }
 
-    /// Returns the bounded number of currently attached HWLS client streams.
+    /// Returns the bounded number of currently attached Server terminal client streams.
     pub fn clientCount(self: *const Service) u16 {
         var count: u16 = 0;
         for (self.clients) |client| {
@@ -660,36 +667,44 @@ pub const Service = struct {
     }
 
     /// Exact admission failures for an already-connected client stream.
-    pub const AdoptError = std.mem.Allocator.Error || error{
+    pub const AdoptError = std.mem.Allocator.Error || server_protocol.PayloadError || error{
         ClientCapacity,
         InitialInputTooLarge,
-        PrefaceTooLarge,
+        PayloadTooLarge,
         SocketOptionFailed,
     };
 
-    /// Adopts one connected stream into the ordinary bounded Instance client table.
-    /// On success this service owns `stream`; on failure the caller retains ownership.
-    /// `initial_input` is parsed only after `preface_output` has fully drained.
+    /// Adopts one exact attachment and queues its complete Server-ready response.
+    /// On success this service owns the stream; failure leaves it with the caller.
+    /// Buffered terminal input is parsed only after attachment-ready has drained.
     pub fn adoptClient(
         self: *Service,
         stream: AdoptedStream,
         initial_input: []const u8,
-        preface_output: []const u8,
+        context: AttachContext,
     ) AdoptError!void {
         if (initial_input.len > input_buffer_bytes) return error.InitialInputTooLarge;
-        if (preface_output.len > maximum_adopt_preface_bytes) return error.PrefaceTooLarge;
         const slot = self.freeClientSlot() orelse return error.ClientCapacity;
+        const ready = server_protocol.AttachReady{
+            .server_id = context.server_id,
+            .session_id = context.session_id,
+            .instance_id = context.instance_id,
+            .tree_revision = context.tree_revision,
+            .client_id = self.next_client_id,
+        };
+        var preface: [server_protocol.header_bytes + server_protocol.payload_bytes.attach_ready]u8 = undefined;
+        try server_protocol.encodeAttachReady(preface[server_protocol.header_bytes..], ready);
+        try server_protocol.encodeHeader(preface[0..server_protocol.header_bytes], .{ .kind = .attach_ready, .payload_len = server_protocol.payload_bytes.attach_ready });
 
         const input = try self.allocator.alloc(u8, input_buffer_bytes);
         errdefer self.allocator.free(input);
         @memcpy(input[0..initial_input.len], initial_input);
-
         var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(self.allocator);
-        try output.appendSlice(self.allocator, preface_output);
-
+        try output.appendSlice(self.allocator, &preface);
         try configureAdoptedStream(stream);
         const id = self.nextClientId();
+        std.debug.assert(id == ready.client_id);
         self.clients[slot] = .{
             .stream = stream,
             .id = id,
@@ -907,22 +922,6 @@ pub const Service = struct {
 
     fn handleFrame(self: *Service, index: usize, kind: protocol.Kind, payload: []const u8) !void {
         const client = if (self.clients[index]) |*active| active else return;
-        if (client.phase == .hello) {
-            if (kind != .hello) {
-                self.closeClient(index);
-                return;
-            }
-            if (payload.len != protocol.payload_bytes.hello) {
-                self.closeClient(index);
-                return;
-            }
-            client.phase = .ready;
-            var encoded: [protocol.payload_bytes.welcome]u8 = undefined;
-            protocol.encodeWelcome(&encoded, .{ .client_id = client.id });
-            try self.queueFrame(client, .welcome, &encoded);
-            return;
-        }
-
         switch (kind) {
             .observe, .observe_raw, .observe_delta, .observe_packed => {
                 const request = protocol.decodeObserve(payload) catch {
@@ -2117,7 +2116,7 @@ const TestPeer = struct {
         errdefer closeFd(pair[0]);
         errdefer closeFd(pair[1]);
         try setNonblocking(pair[1]);
-        try service.adoptClient(pair[0], &.{}, &.{});
+        try service.adoptClient(pair[0], &.{}, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1 });
         return .{ .allocator = allocator, .fd = pair[1] };
     }
 
@@ -2182,6 +2181,30 @@ const TestPeer = struct {
     }
 };
 
+fn awaitAttachReady(peer: *TestPeer, service: *Service) !server_protocol.AttachReady {
+    const size = server_protocol.header_bytes + server_protocol.payload_bytes.attach_ready;
+    for (0..10_000) |_| {
+        try peer.readAvailable();
+        if (peer.incoming.items.len >= size) {
+            const header = try server_protocol.decodeHeader(peer.incoming.items[0..server_protocol.header_bytes]);
+            try std.testing.expectEqual(server_protocol.Kind.attach_ready, header.kind);
+            try std.testing.expectEqual(@as(u32, server_protocol.payload_bytes.attach_ready), header.payload_len);
+            const ready = try server_protocol.decodeAttachReady(peer.incoming.items[server_protocol.header_bytes..size]);
+            const remaining = peer.incoming.items.len - size;
+            std.mem.copyForwards(u8, peer.incoming.items[0..remaining], peer.incoming.items[size..]);
+            peer.incoming.shrinkRetainingCapacity(remaining);
+            return ready;
+        }
+        try service.turn(1);
+    }
+    return error.TestTimeout;
+}
+
+fn expectAttachReady(peer: *TestPeer, service: *Service) !void {
+    const ready = try awaitAttachReady(peer, service);
+    try std.testing.expect(ready.client_id != protocol.no_client);
+}
+
 fn awaitTestFrame(peer: *TestPeer, service: *Service) !TestFrame {
     var turns: usize = 0;
     while (turns < 10_000) : (turns += 1) {
@@ -2227,10 +2250,7 @@ test "live delta uses row generations and reuses unchanged rows" {
     var peer = try TestPeer.adopt(allocator, &service);
     defer peer.deinit();
 
-    try peer.sendFrame(&service, .hello, &.{});
-    var welcome = try awaitTestFrame(&peer, &service);
-    defer welcome.deinit(allocator);
-    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+    try expectAttachReady(&peer, &service);
 
     var observe: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
@@ -2325,7 +2345,7 @@ test "live delta uses row generations and reuses unchanged rows" {
     try std.testing.expect(reused_rows >= 1);
 }
 
-test "adopted HWLS stream drives one borrowed Instance without owning its lifetime" {
+test "adopted Server terminal stream drives one borrowed Instance without owning its lifetime" {
     const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "cat",
@@ -2341,11 +2361,7 @@ test "adopted HWLS stream drives one borrowed Instance without owning its lifeti
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
 
-    try peer.sendFrame(&service, .hello, &.{});
-    var welcome_frame = try awaitTestFrame(&peer, &service);
-    defer welcome_frame.deinit(std.testing.allocator);
-    try std.testing.expectEqual(protocol.Kind.welcome, welcome_frame.kind);
-    const welcome = try protocol.decodeWelcome(welcome_frame.payload);
+    const welcome = try awaitAttachReady(&peer, &service);
     try std.testing.expect(welcome.client_id != protocol.no_client);
 
     const text = "SERVICE_OK\n";
@@ -2386,10 +2402,7 @@ test "packed observation reconstructs one coherent complete text_v1 cut" {
     var peer = try TestPeer.adopt(allocator, &service);
     defer peer.deinit();
 
-    try peer.sendFrame(&service, .hello, &.{});
-    var welcome = try awaitTestFrame(&peer, &service);
-    defer welcome.deinit(allocator);
-    try std.testing.expectEqual(protocol.Kind.welcome, welcome.kind);
+    try expectAttachReady(&peer, &service);
 
     var observe: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&observe, .{ .after_revision = 0, .history_offset = 0 });
@@ -2492,13 +2505,48 @@ test "failed client adoption retains caller stream ownership" {
     defer closeFd(pair[0]);
     defer closeFd(pair[1]);
 
-    var oversized: [maximum_adopt_preface_bytes + 1]u8 = @splat(0);
+    var oversized: [input_buffer_bytes + 1]u8 = @splat(0);
     try std.testing.expectError(
-        error.PrefaceTooLarge,
-        service.adoptClient(pair[0], &.{}, &oversized),
+        error.InitialInputTooLarge,
+        service.adoptClient(pair[0], &oversized, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1 }),
     );
     const flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(flags));
+}
+
+test "attachment admission allocation failures preserve caller fd and client identity" {
+    const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 2,
+        .columns = 8,
+    });
+    defer howl.deinit(instance);
+    var service = try Service.init(std.testing.allocator, std.testing.io, instance);
+    defer service.deinit();
+
+    // Both allocations precede ownership transfer: the input buffer, then the
+    // output containing the complete ready message. Neither commits a slot/ID.
+    for (0..2) |failure_index| {
+        var pair: [2]posix.fd_t = undefined;
+        const result = posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
+        try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(result));
+        defer closeFd(pair[0]);
+        defer closeFd(pair[1]);
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = failure_index });
+        service.allocator = failing.allocator();
+        defer service.allocator = std.testing.allocator;
+        try std.testing.expectError(error.OutOfMemory, service.adoptClient(pair[0], &.{}, .{
+            .server_id = 1,
+            .session_id = 1,
+            .instance_id = 1,
+            .tree_revision = 1,
+        }));
+        try std.testing.expectEqual(@as(u16, 0), service.clientCount());
+        try std.testing.expectEqual(@as(protocol.ClientId, 1), service.next_client_id);
+        const flags = linux.fcntl(pair[0], linux.F.GETFD, @as(usize, 0));
+        try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(flags));
+    }
 }
 
 test "quiescent exited Instance sleeps until a client attaches" {
@@ -2529,7 +2577,7 @@ test "quiescent exited Instance sleeps until a client attaches" {
     try std.testing.expect(!service.hasRetainedWork());
 }
 
-test "response and snapshot allocation failures retire only the affected HWLS client" {
+test "response and snapshot allocation failures retire only the affected Server terminal client" {
     // The canonical owner uses its own allocator here, so every injected failure
     // is provably response/materialization-local rather than a PTY/VT failure.
     const instance = try howl.init(std.testing.allocator, std.testing.environ, .{
@@ -2545,20 +2593,14 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
     defer service.deinit();
     var good = try TestPeer.adopt(std.testing.allocator, &service);
     defer good.deinit();
-    try good.sendFrame(&service, .hello, &.{});
-    var welcome = try awaitTestFrame(&good, &service);
-    defer welcome.deinit(std.testing.allocator);
-    const good_id = (try protocol.decodeWelcome(welcome.payload)).client_id;
+    const good_id = (try awaitAttachReady(&good, &service)).client_id;
 
-    // Fresh clients exercise both first response allocation and each observation
-    // materializer, with a healthy client retained throughout.
-    for ([_]?ObserveMode{ null, .raw, .compressed, .delta, .packed_text }) |mode| {
+    // Each observation materializer fails independently, with a healthy client retained.
+    for ([_]ObserveMode{ .raw, .compressed, .delta, .packed_text }) |encoding| {
         var bad = try TestPeer.adopt(std.testing.allocator, &service);
         defer bad.deinit();
-        try bad.sendFrame(&service, .hello, &.{});
-        if (mode) |encoding| {
-            var bad_welcome = try awaitTestFrame(&bad, &service);
-            defer bad_welcome.deinit(std.testing.allocator);
+        try expectAttachReady(&bad, &service);
+        {
             var request: [protocol.payload_bytes.observe]u8 = undefined;
             protocol.encodeObserve(&request, .{ .after_revision = 0, .history_offset = 0 });
             try bad.sendFrame(&service, switch (encoding) {
@@ -2579,11 +2621,11 @@ test "response and snapshot allocation failures retire only the affected HWLS cl
         try std.testing.expectEqual(@as(usize, 1), service.clientCount());
         try std.testing.expect(service.hasClient(good_id));
         try std.testing.expectError(error.TestPeerClosed, bad.readAvailable());
-        if (mode) |encoding| if (encoding == .delta) {
+        if (encoding == .delta) {
             try std.testing.expectEqual(@as(u64, 0), service.delta_revision);
             try std.testing.expect(!service.delta_rows.complete);
             for (service.delta_rows.entries) |entry| try std.testing.expect(!entry.valid);
-        };
+        }
     }
 
     var observe: [protocol.payload_bytes.observe]u8 = undefined;
@@ -2675,9 +2717,7 @@ test "canonical VT allocation failure still escapes the client containment bound
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
-    try peer.sendFrame(&service, .hello, &.{});
-    var welcome = try awaitTestFrame(&peer, &service);
-    defer welcome.deinit(std.testing.allocator);
+    try expectAttachReady(&peer, &service);
 
     failing.fail_index = failing.alloc_index;
     try howl.input(instance, .{ .bytes = "go\n" });
@@ -2866,9 +2906,7 @@ test "stalled observer cannot stop canonical synchronized frames or final lifecy
     defer service.deinit();
     var peer = try TestPeer.adopt(std.testing.allocator, &service);
     defer peer.deinit();
-    try peer.sendFrame(&service, .hello, &.{});
-    var welcome = try awaitTestFrame(&peer, &service);
-    defer welcome.deinit(std.testing.allocator);
+    try expectAttachReady(&peer, &service);
     var turns: usize = 0;
     while (turns < 2_000 and !semanticViewContains(howl.terminal(instance).semanticView(0), "READY")) : (turns += 1)
         try service.turn(1);

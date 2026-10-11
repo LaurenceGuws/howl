@@ -28,13 +28,12 @@ display change may retain the last already-accepted canonical Canvas frame until
 its replacement frame is accepted, but a replacement failure discards that
 retained frame and exposes the exact failure.
 
-Direct attached observation keeps the existing lossless raw-snapshot policy on
-validated Unix sockets; TCP attachments retain compression, including loopback. The
-transient `--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` startup route connects to
-one Server, consumes exact attach, and then every Odin observer/control/render/
-consequence worker continues over ordinary HWLS on that selected Instance. The bridge
-keeps cancellation active through Server connect, attach, HWLS handshake, and blocked
-worker I/O. No per-Instance listener or byte proxy is introduced. The daily Odin build keeps
+Server attachments retain the existing compressed observation policy. The transient
+`--server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID` startup route connects to
+one Server. Every observer/control/render/consequence worker independently attaches
+to that exact Instance and completes construction at the common ready response.
+Cancellation stays active through connect, ready and blocked worker I/O. No
+per-Instance listener or byte proxy is introduced. The daily Odin build keeps
 debug symbols, assertions and bounds checks while explicitly selecting `-o:speed`.
 Contained texture quads share a pane clip; actual clipped/overhanging content keeps
 its exact requested clip. These are host-side cost reductions, not a new protocol,
@@ -350,7 +349,8 @@ howl-odin --server SERVER_ENDPOINT SERVER_ID SESSION_ID INSTANCE_ID
 ```
 
 The normal no-argument launch still uses the configured profile catalogue. Persistent
-Server profile editing is not yet claimed by this checkpoint.
+Server profile editing is not yet claimed. Old endpoint-only Attach profiles report
+“Select an Instance through its Server”; Local Launch profiles retain direct composition.
 
 The accepted Windows product canary builds the same Odin package for `windows_amd64`
 against a Windows bridge DLL. The pinned Odin compiler can emit the Windows COFF object
@@ -373,8 +373,8 @@ all changes use existing Instance observer wakeups. Clearing the canonical state
 removes the strip. Directory/remote-host/shell-mark properties also survive the
 shared transport but have no automatic desktop execution behavior or new UI yet.
 
-This uses the matching framing-v10 client/Instance bundle. Rebuilding source does
-not update an independently running remote, mobile or browser Instance service.
+This uses the matching Server v2 client/Server bundle. Rebuilding source does
+not update an independently running Server deployment.
 
 
 ## Compact desktop frame
@@ -500,5 +500,5 @@ stale; explicitly browse/select the new Server instead of silently reconnecting 
 its reused Session/Instance numbers. This is target identity, not authentication.
 
 The native `create`, `render_create`, and `consequence_create` ABI now takes
-`server_id` before Session/Instance IDs (zero for direct targets). Rebuild the Odin
+`server_id` before Session/Instance IDs (nonzero for every Server target; Local retains its distinct route). Rebuild the Odin
 caller and native bridge together; no legacy endpoint-plus-pair fallback is kept.

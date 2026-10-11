@@ -1,14 +1,8 @@
 import 'howl_endpoint.dart';
 
-enum HowlInstanceRoute { direct, managed, local }
+enum HowlInstanceRoute { managed, local }
 
-/// Identifies one concrete Howl Instance connection route.
-///
-/// Direct mode already has an HWLS endpoint. Managed mode reaches the same HWLS
-/// Instance by first connecting to one Server and selecting exact
-/// Server-incarnation+Session+Instance identity. Local mode owns one canonical
-/// Instance inside the desktop process and exposes ordinary HWLS connections to
-/// the same observer/control presentation path.
+/// Selects an exact Server occurrence or a direct in-process Local Instance.
 sealed class HowlInstanceTarget {
   const HowlInstanceTarget();
 
@@ -17,7 +11,10 @@ sealed class HowlInstanceTarget {
   String get endpointText => transportEndpoint?.toString() ?? '';
   bool get managed => route == HowlInstanceRoute.managed;
   bool get local => route == HowlInstanceRoute.local;
-  int get nativeRoute => route.index;
+  int get nativeRoute => switch (route) {
+    HowlInstanceRoute.managed => 1,
+    HowlInstanceRoute.local => 2,
+  };
   String get serverId => '0';
 
   // Convert exact decimal identities only at the private Uint64 FFI seam.
@@ -29,23 +26,10 @@ sealed class HowlInstanceTarget {
   String get instanceId => '0';
 
   String get diagnosticLabel => switch (route) {
-    HowlInstanceRoute.direct => 'instance=$endpointText',
     HowlInstanceRoute.managed =>
       'server=$endpointText incarnation=$serverId session=$sessionId instance=$instanceId',
     HowlInstanceRoute.local => 'local instance',
   };
-}
-
-final class DirectHowlInstanceTarget extends HowlInstanceTarget {
-  const DirectHowlInstanceTarget(this.endpoint);
-
-  final HowlEndpoint endpoint;
-
-  @override
-  HowlEndpoint get transportEndpoint => endpoint;
-
-  @override
-  HowlInstanceRoute get route => HowlInstanceRoute.direct;
 }
 
 final class ManagedHowlInstanceTarget extends HowlInstanceTarget {

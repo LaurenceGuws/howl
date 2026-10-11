@@ -2,6 +2,7 @@
 const std = @import("std");
 const client = @import("server_client").terminal;
 const p = client.protocol;
+const server_protocol = @import("server_client").protocol;
 const rich = client.rich;
 const limits = @import("limits");
 
@@ -251,7 +252,6 @@ export fn hw_reset() u32 {
     image_started = false;
     selection_len = 0;
     phase = 1;
-    if (!queue(.hello, &.{})) return fail("HelloEncodingFailed");
     return 1;
 }
 
@@ -533,16 +533,17 @@ fn acceptLiveEnvelope(kind: p.Kind) !void {
 }
 
 fn acceptFrame() u32 {
-    const header = p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
     const payload = packet[p.header_bytes..needed];
+    if (phase == 1) {
+        const header = server_protocol.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
+        if (header.kind != .attach_ready) return fail("ExpectedAttachReady");
+        const ready = server_protocol.decodeAttachReady(payload) catch |err| return fail(@errorName(err));
+        identity = ready.client_id;
+        phase = 2;
+        return 1;
+    }
+    const header = p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
     switch (phase) {
-        1 => {
-            if (header.kind != .welcome) return fail("ExpectedWelcome");
-            const welcome = p.decodeWelcome(payload) catch |err| return fail(@errorName(err));
-            if (welcome.client_id == 0) return fail("ZeroIdentity");
-            identity = welcome.client_id;
-            phase = 2;
-        },
         3 => {
             if (live_passthrough) {
                 acceptLiveEnvelope(header.kind) catch |err| return fail(@errorName(err));
@@ -698,8 +699,11 @@ export fn hw_feed(length: usize) u32 {
         used += count;
         if (used != needed) continue;
         if (needed == p.header_bytes) {
-            const header = p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
-            needed = p.header_bytes + header.payload_len;
+            const payload_len = if (phase == 1)
+                (server_protocol.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err))).payload_len
+            else
+                (p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err))).payload_len;
+            needed = p.header_bytes + payload_len;
             if (used != needed) continue;
         }
         const accepted = acceptFrame();

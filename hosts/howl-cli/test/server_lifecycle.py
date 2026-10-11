@@ -25,7 +25,7 @@ def invoke(*args):
 
 
 def frame(kind, payload=b''):
-    return b'SRVR' + bytes([1, kind, 0, 0]) + struct.pack('>I', len(payload)) + payload
+    return b'SRVR' + bytes([2, kind, 0, 0]) + struct.pack('>I', len(payload)) + payload
 
 
 def exact(peer, count):
@@ -39,6 +39,7 @@ def exact(peer, count):
 
 def receive(peer):
     header = exact(peer, 12)
+    assert header[:5] == b'SRVR\x02' and header[6:8] == bytes(2)
     return header[5], exact(peer, struct.unpack('>I', header[8:])[0])
 
 

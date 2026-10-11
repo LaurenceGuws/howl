@@ -4,9 +4,21 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import net from 'node:net';
 
-const [wasmPath, portText] = process.argv.slice(2);
+const [wasmPath, portText, serverText, sessionText, instanceText] = process.argv.slice(2);
 if (!/^\d+$/.test(portText ?? '') || Number(portText) < 1 || Number(portText) > 65535)
-  throw new Error('usage: zig build live -- ANNOUNCED_DISPOSABLE_LOOPBACK_PORT');
+  throw new Error('usage: zig build live -- SERVER_LOOPBACK_PORT SERVER_ID SESSION_ID INSTANCE_ID');
+const ids = [serverText, sessionText, instanceText].map(value => {
+  if (!/^[1-9][0-9]*$/.test(value ?? '')) throw new Error('exact nonzero Server/Session/Instance IDs required');
+  const id = BigInt(value);
+  if (id > 0xffffffffffffffffn) throw new Error('Instance identity exceeds u64');
+  return id;
+});
+function serverFrame(kind, payload = Buffer.alloc(0)) {
+  const frame = Buffer.alloc(12 + payload.length);
+  frame.write('SRVR'); frame[4] = 2; frame[5] = kind;
+  frame.writeUInt32BE(payload.length, 8); payload.copy(frame, 12);
+  return frame;
+}
 const module = await WebAssembly.compile(await readFile(wasmPath));
 const w = (await WebAssembly.instantiate(module)).exports;
 const text = () => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.hw_text_ptr(), w.hw_text_len()));
@@ -36,8 +48,27 @@ async function attach() {
   failure = undefined;
   socket = net.createConnection({host:'127.0.0.1', port:Number(portText)});
   socket.on('error', fault);
+  let welcome = Buffer.alloc(0);
   socket.on('data', bytes => {
     try {
+      if (welcome !== undefined) {
+        // Only the 44-byte Server welcome is intercepted. The common ready
+        // response and every terminal frame go directly into the real Wasm.
+        const needed = 44 - welcome.length;
+        const copied = Math.min(needed, bytes.length);
+        welcome = Buffer.concat([welcome, bytes.subarray(0, copied)]);
+        bytes = bytes.subarray(copied);
+        if (welcome.length < 44) return;
+        assert.equal(welcome.subarray(0, 4).toString(), 'SRVR');
+        assert.equal(welcome[4], 2); assert.equal(welcome[5], 2);
+        assert.equal(welcome.readUInt16BE(6), 0);
+        assert.equal(welcome.readUInt32BE(8), 32);
+        assert.equal(welcome.readBigUInt64BE(12), ids[0], 'stale Server incarnation');
+        const identity = Buffer.alloc(16);
+        identity.writeBigUInt64BE(ids[1]); identity.writeBigUInt64BE(ids[2], 8);
+        welcome = undefined;
+        socket.write(serverFrame(11, identity));
+      }
       // Deliberate single-byte deliveries pressure header and snapshot boundaries.
       for (const byte of bytes) {
         new Uint8Array(w.memory.buffer, w.hw_input_ptr(), 1)[0] = byte;
@@ -49,7 +80,7 @@ async function attach() {
     } catch (e) { fault(e); }
   });
   await new Promise((resolve, reject) => {socket.once('connect', resolve); socket.once('error', reject);});
-  send(); await waitFor(2);
+  socket.write(serverFrame(1)); await waitFor(2);
   return w.hw_identity();
 }
 async function observe(immediate) {

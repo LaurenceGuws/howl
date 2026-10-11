@@ -183,10 +183,10 @@ pub const Session = struct {
         instance_id: InstanceId,
         fd: std.posix.fd_t,
         initial_input: []const u8,
-        preface_output: []const u8,
+        context: instance_service.AttachContext,
     ) AdoptClientError!void {
         const index = self.findInstanceIndex(instance_id) orelse return error.InstanceNotFound;
-        return self.instances[index].?.service.adoptClient(fd, initial_input, preface_output);
+        return self.instances[index].?.service.adoptClient(fd, initial_input, context);
     }
 
     /// Reports service-turn failure or a missing Instance.

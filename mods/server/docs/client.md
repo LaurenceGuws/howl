@@ -5,33 +5,31 @@ It owns private Unix/numeric-IPv4 TCP transport and both bounded Server control
 and terminal interaction clients. `server_client.terminal` supplies terminal actions,
 observations, selection, search, image retrieval and consequence handling.
 
-It can inspect status/tree state, create or close Sessions, create or close Instances,
-and attach one exact `(server_id, session_id, instance_id)`. Successful attach consumes the Server
-control connection and returns the same connected byte stream after `attach_ready`;
-the caller may then hand that stream to `server_client.terminal` for HWLS interaction. There is no
-proxy and this client module owns no listener, Server/Session/Instance lifetime, discovery,
-authentication, or supervision policy.
+It can inspect status/tree state, create or close Sessions and Instances, and attach
+one exact nonzero (server_id, session_id, instance_id). A client keeps a catalog/CRUD
+control connection and opens one independent connection for each attachment.
+Successful attachment returns the same connected stream in an established terminal
+Connection plus the full ready identity. It owns no listener, canonical lifetime,
+discovery, authentication or supervision policy.
 
-`Target` retains endpoint plus all three nonzero identities. `attach(allocator,
-target, diagnostic, interrupt)` compares the expected Server incarnation with the
-welcome **before sending attach**, returning `StaleServerIncarnation` on mismatch.
-Every observer/control/reconnect lane must retain the same selected target; endpoint
-reuse never implicitly selects a new Server. Fresh control browsing/CRUD may still
-learn the current identity from an endpoint.
+Target retains endpoint and all three nonzero identities. attach(allocator, target,
+diagnostic, interrupt) checks the expected Server incarnation against welcome before
+sending attach. Endpoint reuse never selects a new Server implicitly. Fresh control
+browsing may learn the current incarnation from an endpoint.
 
-Transport connect, Server welcome, attach, and the ordinary HWLS welcome share one
-15-second deadline and caller-owned Interrupt. Server welcome retains that scope;
-choosing a control operation instead completes Server-only construction and permits
-indefinite established observations. Attaching later on an established control
-connection starts a fresh bounded attach/HWLS scope. HWLS alone completes native
-Instance construction. The protocol-blind Web gateway ends its native scope at attach
-because the browser owns HWLS construction.
+Transport connect, Server welcome and attachment-ready share one 15-second setup
+deadline and caller-owned Interrupt. Ready ends native construction; established
+observations have no construction deadline. An ordinary control constructor instead
+finishes at welcome, so idle control does not retain an expired setup deadline.
+Attaching later starts its own bounded admission scope. The Web gateway forwards the
+same ready response as the first binary WebSocket message; Wasm uses it directly.
+There is no second terminal hello/welcome.
 
-`Connection.attachInstance(expected_server_id, identity)` consumes on success.
-Only local pre-send validation and a fully validated typed rejection permit reuse.
-Framing, transport, allocation, or inconsistent attach responses retire and close the
-connection; further operations return `ConnectionRetired` and `deinit` remains safe.
-A create-instance success for a different Session also retires the connection.
+Connection.attachInstance consumes that setup connection on success. Local pre-send
+validation and a fully validated typed rejection permit reuse. Framing, transport,
+allocation or inconsistent attachment responses retire it; deinit remains safe.
+Detaching releases only that attachment. Closing an Instance through Server control
+is the explicit lifetime operation.
 
 ## Module boundary
 
@@ -42,12 +40,12 @@ The same package owns the independently selected server_runtime listener/schedul
 
 ## Terminal interaction
 
-It owns explicit endpoint parsing, portable POSIX connection/handshake, bounded framed I/O,
+It owns explicit endpoint parsing, portable POSIX connection and attachment, bounded framed I/O,
 coherent interaction-state retrieval, canonical semantic client operations including
-mouse facts, and one lossless framing-v10 snapshot model with frozen `text_v1`,
+mouse facts, and one lossless Server v2 snapshot model with frozen `text_v1`,
 `graphics_v2`, and complete bounded `properties_v1` state. Its rich, cached, and
 coarse projections retain property bytes with the same snapshot lifetime.
-Complete packed observation is transport-only: framing-v10 `observe_packed`
+Complete packed observation is transport-only: Server v2 `observe_packed`
 inflates `text_pack_v1`, reconstructs byte-identical frozen `text_v1`, then reuses
 the same rich decoder as compressed/raw complete snapshots. Revision-relative
 `RawCache` remains a distinct local/live optimization; there is still one semantic

@@ -166,7 +166,7 @@ pub fn build(b: *std.Build) void {
         check.dependOn(&sigpipe.step);
         tests.dependOn(&b.addRunArtifact(sigpipe).step);
     }
-    const vectors = b.addSystemCommand(&.{ "python3", "tools/validate_vectors.py", "protocol/v10-vectors.json" });
+    const vectors = b.addSystemCommand(&.{ "python3", "tools/validate_vectors.py", "protocol/vectors.json" });
     vectors.setCwd(b.path("."));
     const wire = b.step("wire", "Validate the Server terminal wire corpus");
     wire.dependOn(&vectors.step);
