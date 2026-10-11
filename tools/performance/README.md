@@ -948,3 +948,65 @@ costs against headless VT and presentation controls. Extra asynchronous queues
 have no measured justification. AtlasFull stays the unreproduced watch item.
 
 Final Safe SHA 9d2d44bfc583cff0d5d24bd40604bdbfb34133cf47535bb77151cc5f5d794dad (14084278 bytes) passes app/pixel proofs. The final Fast rebuild is byte-identical to the timed candidate.
+
+## Accepted sparse-cost attribution and rejected glyph bounds, 2026-10-11
+
+Two separate 2 ms/30-second clock profiles sample accepted de75777 Fast,
+byte-identical to the final native-row candidate above. Sparse exclusive samples
+place 56.49% in native render update and 22.95% in complete frame projection;
+font-atlas and shape resolution add 3.97% and 3.80%. Dense canonical
+service-boundary parsing is 27.92% and plain ASCII writes 9.76%.
+These include startup/shutdown and can alter scheduling/coalescing. They are
+attribution, not ordinary CPU, display cadence/latency or driver-internal proofs.
+
+GNU and LLVM addr2line agree on hot inline glyph-placement and frame-validation
+locations. gprofng's displayed Zig source-line numbers are distorted. Signed
+26.6-to-pixel floor conversion already compiles to an arithmetic shift; the hot
+range check uses optional/error-result handling around it.
+
+An explicit equivalent signed guard preserves negative floor rounding, i32 bounds
+and exact InvalidPresentationGeometry. Native/render/Instance/transported/Fast
+app/pixel proofs pass, including boundary and negative-overhang tests. Separate
+ordinary controls compare it with accepted de75777 using the same compiler and
+producer, fresh processes and private 1920x1080 KWin/scale 1/OpenGL. Payload 378x74,
+Howl PTY 384x79, Foot 384x77, synchronized 240 emitted Hz; each run 20 seconds.
+CPU is percent of one core excluding producer and shell. Ranges are observed,
+not confidence intervals.
+
+| Build (n=3 per case) | Sparse CPU mean (range) | Dense | Styled |
+| --- | ---: | ---: | ---: |
+| Accepted de75777 | 13.42% (13.32–13.57) | 32.56% (32.30–32.96) | 54.68% (54.18–55.04) |
+| Explicit glyph bounds | 13.08% (13.06–13.11) | 31.78% (31.70–31.90) | 55.04% (54.58–55.54) |
+
+Sparse saves 2.51%, dense 2.38%; all three pairs each improve. Styled mean rises
+0.65%, with overlapping ranges and two positive pairs. Two fresh Foot sparse
+references are 3.544% each, retaining the gap.
+
+A separate six-run reverse-order styled follow-up gives accepted 54.87%
+(54.63–55.04), candidate 55.26% (54.98–55.59): mean +0.71%, all three pairs positive
+(+0.09%, +1.76%, +0.28%). Keep these cohorts separate. The repeated direction,
+five of six styled pairs, rejects this micro-optimization despite its sparse
+and dense gains. Source remains de75777; no glyph-bound change is accepted.
+
+All 26 ordinary runs emit 124800 frames/no skips. The two clock diagnostics emit
+14400/no skips separately. Cold anonymous/PSS outliers exist in the initial
+accepted run and follow-up candidate; no RAM saving or regression is inferred.
+The rejected change adds no allocation/capacity/retained state. Its Fast ELF is
+86 bytes smaller, which does not establish a memory or universal speed gain.
+
+Accepted Fast 5a6273b04464803683915a550fa9a7ab20bb4f012af0b00811939816e1dcced9;
+rejected b7d902ea7d789a1b7e83bec6f4a4b3cd662e4678d0ad6318e0f6c0890bdaf7f0.
+Producer 87ce7c1038f2737493c8f89a14cd386dc27ccb0a958887855e986687a5c48557,
+clean source 3dbd021, Zig 0.17.0-dev.1980+e78ea8f2c Fast LLVM/selfhost.
+Raw profiles, agreeing PC maps, rejected patch/proofs and both ordinary cohorts
+remain under sparse-profile-20261011 in the current Home workstream.
+
+Next investigate reuse of validated final-frame work while preserving exact
+resources, clipping, command bounds, error recovery and held-slot lifetimes.
+The hot service-boundary function is canonical VT parsing and mutation; it is
+not a renderer pre-scan or justification for VT-owned rendering queues.
+Clean row translation is smaller; pixel row/span batching needs separate
+missed-frame/resource/overhang provenance and display measurements.
+After qualification, Captain authorized installing accepted Safe 9d2d44bf at the
+existing app launch path. Promotion is atomic, previous aa23a5ac is retained as
+rollback, and open sessions are not restarted. The rejected Fast is never installed.
