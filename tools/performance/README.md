@@ -1010,3 +1010,49 @@ missed-frame/resource/overhang provenance and display measurements.
 After qualification, Captain authorized installing accepted Safe 9d2d44bf at the
 existing app launch path. Promotion is atomic, previous aa23a5ac is retained as
 rollback, and open sessions are not restarted. The rejected Fast is never installed.
+
+## btop retained memory and EGL discovery, 2026-10-11
+
+Captain reports a fresh btop startup peak near 800 MiB and retained RSS near
+333 MiB. Read-only live PID/start and ELF identity confirm installed Safe 9d2d44bf:
+about 340 MiB status RSS, 224 MiB rollup PSS and 49 MiB anonymous at baseline.
+The live peak counter does not show 800 MiB. RSS/PSS/anonymous, virtual size,
+GPU VRAM and whole desktop memory are separate; the original peak remains open.
+
+Twelve fresh lifecycle controls keep exact previous Safe aa23a5ac and installed
+Safe 9d2d44bf, copied Iosevka 18 config and btop 1.4.7. Root status/statm sample
+about 20 ms, rollup 200 ms; phase maps separate shell, btop and returned shell.
+Private KWin 6.7.5 owns D-Bus/HOME/XDG/seat. Physical WMIO queries currently fail
+unsupported_environment, so these are matched private controls, not an exact
+physical window match. Four 1920x1080/scale 1 runs use SIGTERM btop exit; four
+inset 3825x2142/scale 1.7 and four same-ELF vendor controls use normal q exits.
+The failed exact fractional maximum placement and its cleanup remain recorded.
+
+Warm previous/installed after-btop RSS is about 326 versus 326–327 MiB at scale 1,
+329–330 versus 331 MiB at scale 1.7. No 115 MiB new-build increase is reproduced.
+First-context anonymous outliers occur with either build; none is dropped or
+attributed exclusively to Howl. All sampled root peaks stay below 398 MiB;
+this does not explain Captain's reported 800 MiB reading.
+
+Four separate instrumented identity checks find opengl on NVIDIA RTX 3060
+for both builds. Default EGL discovery also maps Mesa libgallium and LLVM.
+Selecting only the installed NVIDIA EGL provider removes both libraries while
+SDL renderer and GPU remain the same. These diagnostics are separate from the
+uninstrumented same-ELF btop controls:
+
+| Same installed Safe, normal btop exit | After RSS | After PSS | After anonymous |
+| --- | ---: | ---: | ---: |
+| Default discovery, n=2 | 326.83–326.88 MiB | 124.35–124.39 MiB | 43.08–43.09 MiB |
+| NVIDIA-only, warm n=1 | 221.96 MiB | 88.62 MiB | 38.70 MiB |
+| NVIDIA-only, first cold context | 290.48 MiB | 145.45 MiB | 89.16 MiB |
+
+Only the per-process __EGL_VENDOR_LIBRARY_FILENAMES changes. Warm RSS decreases
+104.89 MiB and PSS 35.75 MiB; the cold row remains explicit and cohorts are not
+pooled. Map removal supports attribution, not a universal cold/warm or owned-RAM
+saving. No CPU, display latency, VRAM or exact-pixel qualification is inferred.
+
+Source, installed launch and user config stay unchanged. This is a concrete
+host launch-policy experiment; next qualify CPU and pixels before promotion.
+Keep provider selection out of VT/core ownership and retain the SDL submission
+bound. Exact artifacts, raw phase samples/maps, the failed probe, diagnostics and
+folds live under memory-btop-20261011 in the current Home workstream.
