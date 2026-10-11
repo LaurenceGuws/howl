@@ -4,7 +4,7 @@
     .version = "0.1.6-dev",
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
-        .server_client = .{ .path = "../../mods/server-client" },
+        .server = .{ .path = "../../mods/server" },
         .howl_web_text = .{ .path = "text" },
         .howl_web_render = .{ .path = "render" },
         .howl_web_gateway = .{ .path = "gateway" },

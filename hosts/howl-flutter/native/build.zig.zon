@@ -5,7 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .howl_instance = .{ .path = "../../../mods/howl-instance" },
-        .server_client = .{ .path = "../../../mods/server-client" },
+        .server = .{ .path = "../../../mods/server" },
     },
     .paths = .{
         ".zig-audit.json",

@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
 
     const bundled_render_text =
         target.result.os.tag != .linux or target.result.abi == .android;
-    const client_dependency = b.dependency("server_client", .{
+    const client_dependency = b.dependency("server", .{
         .target = target,
         .optimize = optimize,
         .bundled_render_text = bundled_render_text,

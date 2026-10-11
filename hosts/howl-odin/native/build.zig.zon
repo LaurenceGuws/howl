@@ -4,7 +4,7 @@
     .fingerprint = 0xc6fd145e88a928bf,
     .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
-        .server_client = .{ .path = "../../../mods/server-client" },
+        .server = .{ .path = "../../../mods/server" },
         .howl_instance = .{ .path = "../../../mods/howl-instance" },
         .howl_render = .{ .path = "../../../mods/howl-render" },
     },

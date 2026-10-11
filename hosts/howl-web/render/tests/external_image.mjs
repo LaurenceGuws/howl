@@ -31,7 +31,7 @@ const symbol = await readFile(symbolPath);
 assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
 selectRendererFrameV3(w);
 
-const corpus = JSON.parse(await readFile('../../../mods/server-protocol/protocol/v10-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../../mods/server/protocol/v10-vectors.json', 'utf8'));
 const test = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(test?.hex);
 const snapshot = Buffer.from(test.hex, 'hex');

@@ -17,7 +17,7 @@ accepted:
 experimental:
   howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
-    hosts/server foreground `server_runtime` module owning exactly one Server control listener,
+    mods/server foreground `server_runtime` module owning exactly one Server control listener,
     one Server model/control service and bounded cooperative scheduling. The Server
     listener, exact control-socket readiness masks and dormant live PTYs share one
     aggregate poll; Server terminal-client work and Instance timer/write work receive
@@ -28,7 +28,7 @@ experimental:
     geometry, pane/split layout, renderer, authentication, discovery, persistence or
     service-supervision policy
   server-client: >-
-    mods/server-client owns Server control and terminal interaction clients plus
+    mods/server src/client owns Server control and terminal interaction clients plus
     private Unix/numeric-IPv4 transport, bounded deadlines and cancellation.
     server_client.terminal exposes snapshots, state, actions, search, selection,
     images and consequences. Exact attach consumes the control stream and
@@ -42,7 +42,7 @@ experimental:
     Server-owned terminal service beside the selected Instance. It owns no listener/address/process, does not
     turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
-    experimental pure module `server_protocol` in mods/server-protocol. It encodes bounded
+    experimental pure module `server_protocol` in mods/server src/protocol. It encodes bounded
     control and terminal-interaction wire. Control vocabulary preserves Server -> Sessions -> Instances:
     Session create carries only logical name, Instance create carries launch policy
     under an exact Session id, and attach identifies exact Session+Instance ids.
@@ -60,7 +60,7 @@ experimental:
     Instance identity is scoped by its owning Session and Session identity by Server.
     Exact Session+Instance routing may hand an already-connected stream into the
     Server-owned terminal service. The Server model owns no listener or geometry;
-    hosts/server owns the single control listener/scheduler only
+    the same package's server_runtime entry point owns the single control listener/scheduler
   howl-cli: >-
     machine-friendly native CLI with two explicit semantic lanes: Instance interaction
     under `howl instance ...`, and Server orchestration under `howl server ...`.
@@ -75,7 +75,7 @@ experimental:
     or owned server_client.terminal.view storage while the source-neutral renderer itself
     knows no VT owner, client transport, window system, or graphics backend. The
     direct facade consumes VT observation. Transported-client adapters live in
-    the separate server_client_render module owned by mods/server-client and depend
+    the separate server_client_render module owned by mods/server and depend
     outward on the same renderer without pulling Client into Render. The
     package separately exposes dependency-free `howl_render_limits` for wire-only
     consumers; its full root re-exports the exact howl-text module instance so

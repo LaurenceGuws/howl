@@ -6,11 +6,7 @@ or a local terminal host.
 
 The ownership tree is exact:
 
-```text
-Server
-└── Sessions
-    └── Instances
-```
+Server owns Sessions; each Session owns its concrete Instance lifetimes.
 
 An Instance is one concrete Howl terminal occurrence. A Session is not an Instance:
 it is a logical orchestration lifetime that may contain zero or more Instances. Creating
@@ -19,13 +15,31 @@ to explicit Instance creation.
 
 The Server model and control service remain listener-free. Server owns an optional `server_terminal_service` interaction service beside each concrete Instance; Server routes already-connected streams by exact Session + Instance identity into that service.
 
-The foreground listener/scheduler lives in
-[hosts/server](../../hosts/server/README.md), outside this reusable package.
+The foreground listener/scheduler is this package's `server_runtime` entry point,
+composed by the existing CLI. It selects presentation-free Instance and consumes
+the optional VT codec; local terminal composition does not import this package.
 
 ## Shared protocol
 
-[server-protocol](../server-protocol/README.md) owns the bounded control wire and terminal interaction wire.
-Client modules import that package directly, without this Server model or a host.
+`server_protocol` owns the bounded control and terminal-interaction wire in
+[src/protocol](src/protocol). `server_client` owns the connection/control and
+terminal APIs in [src/client](src/client), with private transport beneath it.
+These are independent module imports from this same package; neither client nor
+wire-only consumers import the Server model, Instance, PTY or live VT.
+
+| Module | Selected ownership |
+| --- | --- |
+| `server_runtime` | listeners, scheduling and shutdown over the Server owner |
+| `server` | listener-free Server/Session/Instance lifetime model |
+| `server_service` | bounded adopted control streams and exact routing |
+| `server_terminal_service` | bounded adopted terminal streams and observation delivery |
+| `server_protocol` | pure Server wire plus optional VT observation codec |
+| `server_client` | control/attachment/terminal APIs and private transport |
+| `server_client_render` | optional client observation adapter to Howl Render |
+
+`zig build check test` proves the complete family. `zig build wire` validates its
+wire corpus. The [runtime](docs/runtime.md), [client](docs/client.md) and
+[protocol](docs/protocol.md) contracts retain the current connection behavior.
 
 ## Control service
 
@@ -52,6 +66,5 @@ identity/state and borrow const names.
 Session names use the same model/wire contract: 1–64 ASCII bytes from `[A-Za-z0-9._-]`.
 Invalid names change neither counts, identity issuance nor tree revision.
 
-The listener/scheduler and its shutdown policy live in
-[hosts/server](../../hosts/server/README.md). This package is optional reusable
-orchestration above Instance, not part of the terminal core.
+The listener/scheduler and ordinary shutdown policy are owned by this package's
+runtime. This family remains optional orchestration above Instance.

@@ -776,7 +776,7 @@ The minimal client implementation order is:
 Before connecting a new language implementation, run the independent corpus:
 
 ```sh
-cd mods/server-protocol
+cd mods/server
 python3 tools/validate_vectors.py protocol/v10-vectors.json
 ```
 

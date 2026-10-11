@@ -1,90 +1,176 @@
+//! Owns the optional Server family and independently selectable consumer graphs.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
-    const codec = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt_codec");
+    const bundled = b.option(bool, "bundled_render_text", "Build the client render adapter with bundled howl-text") orelse false;
+    const windows = target.result.os.tag == .windows;
+    const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
+    const codec = vt.module("howl_vt_codec");
+    const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize }).module("howl_instance_headless");
 
-    const protocol_module = b.dependency("server_protocol", .{
+    const protocol = b.addModule("server_protocol", .{
+        .root_source_file = b.path("src/protocol/protocol.zig"),
         .target = target,
         .optimize = optimize,
-    }).module("server_protocol");
+    });
+    protocol.addImport("howl_vt_codec", codec);
 
     const terminal_service = b.addModule("server_terminal_service", .{
         .root_source_file = b.path("src/terminal_service.zig"),
         .target = target,
         .optimize = optimize,
     });
-    terminal_service.addImport("howl_instance", instance.module("howl_instance_headless"));
-    terminal_service.addImport("server_protocol", protocol_module);
+    terminal_service.addImport("howl_instance", instance);
+    terminal_service.addImport("server_protocol", protocol);
     terminal_service.addImport("howl_vt_codec", codec);
-
-    const module = b.addModule("server", .{
+    const model = b.addModule("server", .{
         .root_source_file = b.path("src/server.zig"),
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("server_protocol", protocol_module);
-    module.addImport("howl_instance", instance.module("howl_instance_headless"));
-    module.addImport("server_terminal_service", terminal_service);
-
-    const tests = b.addTest(.{
-        .name = "server",
-        .root_module = module,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-
-    const service_module = b.addModule("server_service", .{
+    model.addImport("server_protocol", protocol);
+    model.addImport("howl_instance", instance);
+    model.addImport("server_terminal_service", terminal_service);
+    const service = b.addModule("server_service", .{
         .root_source_file = b.path("src/service.zig"),
         .target = target,
         .optimize = optimize,
     });
-    service_module.addImport("server_model", module);
-    service_module.addImport("server_protocol", protocol_module);
-    service_module.addImport("howl_instance", instance.module("howl_instance_headless"));
-    const service_tests = b.addTest(.{
-        .name = "server-service",
-        .root_module = service_module,
-        .use_llvm = false,
-        .use_lld = false,
+    service.addImport("server_model", model);
+    service.addImport("server_protocol", protocol);
+    service.addImport("howl_instance", instance);
+    const runtime = b.addModule("server_runtime", .{
+        .root_source_file = b.path("src/runtime.zig"),
+        .target = target,
+        .optimize = optimize,
     });
+    runtime.addImport("server_protocol", protocol);
+    runtime.addImport("server_model", model);
+    runtime.addImport("server_service", service);
+    runtime.addImport("howl_instance", instance);
 
-    const check = b.step("check", "Compile Server -> Sessions -> Instances ownership");
+    const transport = b.createModule(.{
+        .root_source_file = b.path(if (windows) "src/client/transport/transport_windows.zig" else "src/client/transport/transport.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (windows) transport.linkSystemLibrary("ws2_32", .{});
+    const terminal = b.createModule(.{
+        .root_source_file = b.path("src/client/terminal/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal.addImport("server_protocol", protocol);
+    terminal.addImport("howl_vt_codec", codec);
+    terminal.addImport("client_transport", transport);
+    const client = b.addModule("server_client", .{
+        .root_source_file = b.path("src/client/server_client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    client.addImport("server_protocol", protocol);
+    client.addImport("client_transport", transport);
+    client.addImport("terminal_client", terminal);
+
+    const render = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = bundled });
+    const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = bundled });
+    const adapter = b.addModule("server_client_render", .{
+        .root_source_file = b.path("src/client/terminal/render.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    adapter.addImport("terminal_client", terminal);
+    adapter.addImport("howl_render", render.module("howl_render"));
+
+    const control_tests = b.createModule(.{
+        .root_source_file = b.path("test/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    control_tests.addImport("server_client", client);
+    control_tests.addImport("server_model", model);
+    control_tests.addImport("server_service", service);
+    control_tests.addImport("client_transport", transport);
+    const render_tests = b.createModule(.{
+        .root_source_file = b.path("src/client/terminal/render_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    render_tests.addImport("terminal_client", terminal);
+    render_tests.addImport("server_client_render", adapter);
+    render_tests.addImport("howl_vt", vt.module("howl_vt"));
+    render_tests.addImport("test_fonts", text.module("howl_text_test_fonts"));
+    const owner = b.createModule(.{
+        .root_source_file = b.path("test/owner.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    owner.addImport("server", model);
+    const terminal_wire = b.createModule(.{
+        .root_source_file = b.path("src/protocol/terminal.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_wire.addImport("howl_vt_codec", codec);
+
+    // Public client composition receives only these independently selected roots.
+    const client_boundary = b.createModule(.{
+        .root_source_file = b.path("test/client_boundary.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    client_boundary.addImport("server_client", client);
+    client_boundary.addImport("server_protocol", protocol);
+
+    const check = b.step("check", "Compile the optional Server family and its consumer proofs");
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));
     audit.dependOn(&zig_audit.step);
     check.dependOn(audit);
-    check.dependOn(&tests.step);
-    check.dependOn(&service_tests.step);
-    const test_step = b.step("test", "Run Server -> Sessions -> Instances ownership proofs");
-    test_step.dependOn(&b.addRunArtifact(tests).step);
-    test_step.dependOn(&b.addRunArtifact(service_tests).step);
-    if (target.result.os.tag == .linux) {
-        const terminal_proofs = b.addTest(.{
-            .name = "server-terminal-service",
-            .root_module = terminal_service,
-            .use_llvm = false,
-            .use_lld = false,
-        });
-        check.dependOn(&terminal_proofs.step);
-        test_step.dependOn(&b.addRunArtifact(terminal_proofs).step);
+    const tests = b.step("test", "Run Server runtime, wire, client and render proofs");
+    inline for (.{
+        .{ "server", model },
+        .{ "server-service", service },
+        .{ "server-runtime", runtime },
+        .{ "server-owner-api", owner },
+        .{ "server-protocol", protocol },
+        .{ "server-terminal-wire", terminal_wire },
+        .{ "server-client", control_tests },
+        .{ "server-client-boundary", client_boundary },
+        .{ "server-terminal-client", terminal },
+        .{ "server-client-render", render_tests },
+        .{ "server-client-transport", transport },
+    }) |proof| {
+        const artifact = b.addTest(.{ .name = proof[0], .root_module = proof[1], .use_llvm = false, .use_lld = false });
+        check.dependOn(&artifact.step);
+        tests.dependOn(&b.addRunArtifact(artifact).step);
     }
-    const boundary_root = b.createModule(.{
-        .root_source_file = b.path("test/owner.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    boundary_root.addImport("server", module);
-    const boundary = b.addTest(.{
-        .name = "server-owner-api",
-        .root_module = boundary_root,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&boundary.step);
-    test_step.dependOn(&b.addRunArtifact(boundary).step);
+    if (target.result.os.tag == .linux) {
+        const artifact = b.addTest(.{ .name = "server-terminal-service", .root_module = terminal_service, .use_llvm = false, .use_lld = false });
+        check.dependOn(&artifact.step);
+        tests.dependOn(&b.addRunArtifact(artifact).step);
+    }
+    if (!windows) {
+        // Separate process so the proof owns SIGPIPE policy.
+        const sigpipe_root = b.createModule(.{
+            .root_source_file = b.path("test/transport_sigpipe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        sigpipe_root.addImport("client_transport", transport);
+        const sigpipe = b.addExecutable(.{ .name = "server-transport-sigpipe", .root_module = sigpipe_root });
+        check.dependOn(&sigpipe.step);
+        tests.dependOn(&b.addRunArtifact(sigpipe).step);
+    }
+    const vectors = b.addSystemCommand(&.{ "python3", "tools/validate_vectors.py", "protocol/v10-vectors.json" });
+    vectors.setCwd(b.path("."));
+    const wire = b.step("wire", "Validate the Server terminal wire corpus");
+    wire.dependOn(&vectors.step);
+    check.dependOn(wire);
+    tests.dependOn(wire);
     b.default_step = check;
 }

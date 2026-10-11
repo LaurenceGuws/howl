@@ -11,10 +11,10 @@ Reusable packages live in [mods/](mods/README.md); application and runtime
 composition lives in [hosts/](hosts/README.md). Core is an ownership/capability
 designation, not a synonym for every package in mods.
 
-Server control wire is [mods/server-protocol](mods/server-protocol/README.md).
-The optional model/service is [mods/server](mods/server/README.md), and listener
-plus scheduling policy is [hosts/server](hosts/server/README.md), composed by
-the existing CLI. A remote client depends on the wire, never the host runtime.
+The optional Server family lives in [mods/server](mods/server/README.md).
+Its one package exports independent runtime, model/service, wire, client and
+client-render modules. The existing CLI composes its listener/scheduler; remote
+clients select only the wire/client graph.
 
 Each package owns its build.zig.zon version. [snapshot.json](snapshot.json) records
 the exact tested package versions and Zig pin; VERSION names that combination.
@@ -223,7 +223,7 @@ Vulkan and Wayland. Instance exports only its direct canonical APIs. Native bina
 bridge libraries/objects and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
 The shared renderer consumes direct VT observation. Transported-client source
-adapters are exported separately as server_client_render by mods/server-client;
+adapters are exported separately as server_client_render by mods/server;
 they depend outward on the same renderer and preserve its text type identity.
 Consumers should pin an immutable repository tag or commit.
 

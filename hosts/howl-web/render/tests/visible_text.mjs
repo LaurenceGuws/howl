@@ -33,7 +33,7 @@ selectRendererFrameV3(w);
 assert.equal(w.rv_text_len(), 0);
 assert.equal(w.rv_text_truncated(), 0);
 
-const corpus = JSON.parse(await readFile('../../../mods/server-protocol/protocol/v10-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../../mods/server/protocol/v10-vectors.json', 'utf8'));
 const vector = corpus.cases.find(value => value.id === 'snapshot_text_v1_complete');
 assert.ok(vector?.hex);
 const snapshot = Buffer.from(vector.hex, 'hex');

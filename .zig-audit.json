@@ -9,7 +9,6 @@
     "hosts/howl-host",
     "hosts/howl-odin/native",
     "hosts/howl-web",
-    "hosts/server",
     "mods/howl-instance",
     "mods/howl-pty",
     "mods/howl-render",
@@ -18,8 +17,6 @@
     "mods/howl-vt",
     "mods/howl-wayland",
     "mods/server",
-    "mods/server-client",
-    "mods/server-protocol",
     "test/consumer"
   ]
 }

@@ -9,7 +9,7 @@ It can inspect status/tree state, create or close Sessions, create or close Inst
 and attach one exact `(server_id, session_id, instance_id)`. Successful attach consumes the Server
 control connection and returns the same connected byte stream after `attach_ready`;
 the caller may then hand that stream to `server_client.terminal` for HWLS interaction. There is no
-proxy and this package owns no listener, Server/Session/Instance lifetime, discovery,
+proxy and this client module owns no listener, Server/Session/Instance lifetime, discovery,
 authentication, or supervision policy.
 
 `Target` retains endpoint plus all three nonzero identities. `attach(allocator,
@@ -33,12 +33,12 @@ Framing, transport, allocation, or inconsistent attach responses retire and clos
 connection; further operations return `ConnectionRetired` and `deinit` remains safe.
 A create-instance success for a different Session also retires the connection.
 
-## Package boundary
+## Module boundary
 
 Production server_client imports server_protocol and its own private transport
-and terminal modules. The client imports no Instance, PTY or Server model. The model/service dependency in this package's build
-is used only by integration proofs; it is not imported by the client module.
-The server listener/scheduler is hosted separately under hosts/server.
+and terminal modules. The client imports no Instance, PTY or Server model. The family's model/service modules
+are used only by integration proofs; they are not imported by the client module.
+The same package owns the independently selected server_runtime listener/scheduler.
 
 ## Terminal interaction
 

@@ -12,7 +12,6 @@
     "hosts/howl-web/gateway": "0.1.6-dev",
     "hosts/howl-web/render": "0.1.6-dev",
     "hosts/howl-web/text": "0.1.6-dev",
-    "hosts/server": "0.1.6-dev",
     "mods/howl-instance": "0.1.6-dev",
     "mods/howl-pty": "0.1.6-dev",
     "mods/howl-render": "0.1.6-dev",
@@ -21,8 +20,6 @@
     "mods/howl-vt": "0.1.6-dev",
     "mods/howl-vt/examples/0.1.4-dev": "0.1.4-dev",
     "mods/howl-wayland": "0.1.6-dev",
-    "mods/server-client": "0.1.6-dev",
-    "mods/server-protocol": "0.1.6-dev",
     "mods/server": "0.1.6-dev",
     "test/consumer": "0.1.6-dev"
   }

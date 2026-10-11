@@ -1,10 +1,9 @@
-# Server host runtime
+# Server runtime
 
-This package exports server_runtime for the existing howl server run CLI.
-It composes [the optional model/service](../../mods/server/README.md) and Instance.
-It publishes no new executable and belongs to hosts because it chooses listener,
-scheduling and shutdown policy. Remote clients import
-[the shared protocol](../../mods/server-protocol/README.md), never this runtime.
+The Server family's `server_runtime` entry point serves the existing
+`howl server run` CLI. It composes the [listener-free model/service](../README.md)
+and presentation-free Instance. It owns listener, scheduling and shutdown policy.
+Remote clients select the [shared wire](protocol.md) and client module instead.
 
 ## Runtime
 
@@ -45,7 +44,7 @@ and cell-pixel lattice in its VT/PTy lifetime. A graphical client may compose mu
 Instances onto one surface and choose their individual geometries, but that pane/layout
 composition remains entirely client-side.
 
-## Host ownership and shutdown
+## Listener ownership and shutdown
 
 Unix listener startup refuses any existing pathname, including stale sockets. Removing
 an explicitly identified stale endpoint is the caller's responsibility. The endpoint's
