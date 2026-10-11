@@ -111,6 +111,8 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try std.testing.expect(!@hasField(codec.Metadata, "leader_present"));
     try std.testing.expect(!@hasField(codec.Metadata, "you_are_leader"));
     try std.testing.expect(codec.Row == @import("server_client").terminal.rich.Row);
+    try std.testing.expect(!@hasField(codec.text.Compressed, "revision"));
+    try std.testing.expect(@TypeOf(codec.text.Compressor.compress) == fn (*codec.text.Compressor, codec.text.Compression, []const u8) codec.decoded.Error!codec.text.Compressed);
     const Delta = codec.encoder.Encoder(vt.Terminal.Observation).DeltaCache;
     try std.testing.expect(!@hasField(Delta, "revision"));
     try std.testing.expect(!@hasField(Delta, "client"));

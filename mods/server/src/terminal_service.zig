@@ -421,10 +421,7 @@ pub const Service = struct {
     delta_rows: vt_encoder.DeltaCache = .{},
     delta_revision: u64 = 0,
     snapshot_body: std.ArrayList(u8) = .empty,
-    snapshot_packed: std.ArrayList(u8) = .empty,
-    snapshot_compressed: std.Io.Writer.Allocating,
-    snapshot_flate_work: []u8,
-    snapshot_compressor: *std.compress.flate.Compress,
+    text_compressor: codec.text.Compressor,
 
     // -------------------------------------------------------------------------
     // Construction and lifecycle loop
@@ -435,19 +432,14 @@ pub const Service = struct {
         io: std.Io,
         instance: *howl.Instance,
     ) !Service {
-        const snapshot_flate_work = try allocator.alloc(u8, std.compress.flate.max_window_len);
-        errdefer allocator.free(snapshot_flate_work);
-        const snapshot_compressor = try allocator.create(std.compress.flate.Compress);
-        errdefer allocator.destroy(snapshot_compressor);
+        const text_compressor = try codec.text.Compressor.init(allocator);
 
         return .{
             .allocator = allocator,
             .io = io,
             .instance = instance,
             .terminal_revision = howl.terminal(instance).semanticSequence(),
-            .snapshot_compressed = .init(allocator),
-            .snapshot_flate_work = snapshot_flate_work,
-            .snapshot_compressor = snapshot_compressor,
+            .text_compressor = text_compressor,
         };
     }
 
@@ -474,10 +466,7 @@ pub const Service = struct {
         }
         self.delta_rows.deinit(self.allocator);
         self.snapshot_body.deinit(self.allocator);
-        self.snapshot_packed.deinit(self.allocator);
-        self.snapshot_compressed.deinit();
-        self.allocator.free(self.snapshot_flate_work);
-        self.allocator.destroy(self.snapshot_compressor);
+        self.text_compressor.deinit();
         self.* = undefined;
     }
 
@@ -1743,56 +1732,11 @@ pub const Service = struct {
             body_bytes > std.math.maxInt(u32))
             return error.SnapshotTooLarge;
 
-        var compressed: []const u8 = &.{};
-        var encoded_bytes = body_bytes;
-        if (packed_mode) {
-            protocol.packTextV1(self.allocator, body.items, &self.snapshot_packed) catch |failure| switch (failure) {
-                error.InvalidPayload => return error.InvalidSnapshot,
-                else => |value| return value,
-            };
-            if (self.snapshot_packed.items.len == 0 or
-                self.snapshot_packed.items.len > protocol.text_pack_v1.maximum_body_bytes or
-                self.snapshot_packed.items.len > std.math.maxInt(u32))
-                return error.SnapshotTooLarge;
-            self.snapshot_compressed.writer.end = 0;
-            try self.snapshot_compressed.ensureTotalCapacity(64);
-            self.snapshot_compressor.* = try std.compress.flate.Compress.init(
-                &self.snapshot_compressed.writer,
-                self.snapshot_flate_work,
-                .zlib,
-                .fastest,
-            );
-            try self.snapshot_compressor.writer.writeAll(self.snapshot_packed.items);
-            try self.snapshot_compressor.finish();
-            compressed = self.snapshot_compressed.written();
-            encoded_bytes = std.math.add(
-                usize,
-                protocol.text_pack_v1.compressed_header_bytes,
-                compressed.len,
-            ) catch return error.SnapshotTooLarge;
-        } else if (!raw) {
-            // Reinitialize compression state in retained storage. The writer
-            // buffer, DEFLATE work window, and compressor allocation survive
-            // between compressed cuts.
-            self.snapshot_compressed.writer.end = 0;
-            try self.snapshot_compressed.ensureTotalCapacity(64);
-            self.snapshot_compressor.* = try std.compress.flate.Compress.init(
-                &self.snapshot_compressed.writer,
-                self.snapshot_flate_work,
-                .zlib,
-                .fastest,
-            );
-            try self.snapshot_compressor.writer.writeAll(body.items);
-            try self.snapshot_compressor.finish();
-            compressed = self.snapshot_compressed.written();
-            encoded_bytes = std.math.add(
-                usize,
-                protocol.text_v1.compressed_header_bytes,
-                compressed.len,
-            ) catch return error.SnapshotTooLarge;
-        }
-        if (encoded_bytes == 0 or encoded_bytes > protocol.maximum_text_snapshot_bytes)
-            return error.SnapshotTooLarge;
+        const compressed: ?codec.text.Compressed = if (raw)
+            null
+        else
+            try self.text_compressor.compress(if (packed_mode) .packed_zlib else .zlib, body.items);
+        const encoded_bytes = if (compressed) |*value| value.size() else body_bytes;
         const data_frames = std.math.divCeil(
             usize,
             encoded_bytes,
@@ -1830,24 +1774,12 @@ pub const Service = struct {
                 body.items,
                 if (delta_reuse_allowed) .snapshot_delta_data else .snapshot_raw_data,
             );
-        } else if (packed_mode) {
-            var prefix: [protocol.text_pack_v1.compressed_header_bytes]u8 = undefined;
-            encodeU32(prefix[0..4], @intCast(body_bytes));
-            encodeU32(prefix[4..8], @intCast(self.snapshot_packed.items.len));
-            try self.appendSnapshotCompressedData(
-                &client.output,
-                &prefix,
-                compressed,
-                .snapshot_packed_data,
-            );
         } else {
-            var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
-            encodeU32(&raw_len, @intCast(body_bytes));
             try self.appendSnapshotCompressedData(
                 &client.output,
-                &raw_len,
-                compressed,
-                .snapshot_data,
+                compressed.?.prefix(),
+                compressed.?.data,
+                if (packed_mode) .snapshot_packed_data else .snapshot_data,
             );
         }
 

@@ -8,7 +8,9 @@ observation payload encoding/validation. Its text, graphics and property grammar
 and decoded cells, scalar banks, palettes, links and manifests have no Server,
 socket, live terminal parser or renderer dependency. Complete text decoding
 returns one explicit owner for rows, scalar banks and URI bytes; raw, zlib and
-packed zlib bodies share the same validation and cleanup. Publishers separately
+packed zlib bodies share the same validation and cleanup. The optional text
+compressor owns reusable packed/output buffers and DEFLATE storage, returning a
+copied length prefix beside borrowed compressed bytes for framing without a copy. Publishers separately
 specialize `codec.encoder.Encoder` on VT's read-only `Observation` type for
 text, property and graphics encoding; the codec imports no live parser. The normal
 `howl_vt` root never imports or re-exports this codec; local observation remains a

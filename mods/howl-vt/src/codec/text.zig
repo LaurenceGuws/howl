@@ -6,6 +6,116 @@ const values = @import("decoded.zig");
 /// Exact full-text body encodings; delta reuse is a separate baseline contract.
 pub const Encoding = enum { raw, zlib, packed_zlib };
 
+/// Complete body carriage selected independently of any socket framing.
+pub const Compression = enum { zlib, packed_zlib };
+
+/// Copies the length prefix and borrows compressed bytes until the compressor's
+/// next call or deinitialization. Prefix and data remain separate for direct framing.
+pub const Compressed = struct {
+    header: union(Compression) {
+        zlib: [wire.text_v1.compressed_header_bytes]u8,
+        packed_zlib: [wire.text_pack_v1.compressed_header_bytes]u8,
+    },
+    data: []const u8,
+
+    /// Borrows the exact zlib or packed-zlib length prefix from this value.
+    pub fn prefix(self: *const Compressed) []const u8 {
+        return switch (self.header) {
+            .zlib => &self.header.zlib,
+            .packed_zlib => &self.header.packed_zlib,
+        };
+    }
+
+    /// Reports the validated complete payload size, including its length prefix.
+    pub fn size(self: *const Compressed) usize {
+        return self.prefix().len + self.data.len;
+    }
+};
+
+/// Retains compression output, packed-record scratch and a DEFLATE window.
+/// It owns no observation delivery, connection, Server revision or scheduling.
+pub const Compressor = struct {
+    allocator: std.mem.Allocator,
+    packed_body: std.ArrayList(u8) = .empty,
+    output: std.Io.Writer.Allocating,
+    work: []u8,
+    compressor: *std.compress.flate.Compress,
+
+    /// Allocates the same work window and compressor storage used across all cuts.
+    pub fn init(allocator: std.mem.Allocator) std.mem.Allocator.Error!Compressor {
+        const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+        errdefer allocator.free(work);
+        const compressor = try allocator.create(std.compress.flate.Compress);
+        errdefer allocator.destroy(compressor);
+        return .{
+            .allocator = allocator,
+            .output = .init(allocator),
+            .work = work,
+            .compressor = compressor,
+        };
+    }
+
+    /// Releases all retained compression and packing allocations.
+    pub fn deinit(self: *Compressor) void {
+        self.packed_body.deinit(self.allocator);
+        self.output.deinit();
+        self.allocator.free(self.work);
+        self.allocator.destroy(self.compressor);
+        self.* = undefined;
+    }
+
+    /// Wraps one nonempty bounded raw body. Packed carriage also validates record
+    /// layout; zlib does not re-parse the caller's already encoded terminal records.
+    /// Every call expires prior borrowed bytes, including failed calls. Failure
+    /// clears partial output; the next call reinitializes compression in place.
+    pub fn compress(self: *Compressor, mode: Compression, body: []const u8) values.Error!Compressed {
+        self.output.writer.end = 0;
+        self.packed_body.clearRetainingCapacity();
+        errdefer {
+            self.output.writer.end = 0;
+            self.packed_body.clearRetainingCapacity();
+        }
+        if (body.len == 0 or body.len > wire.maximum_text_snapshot_bytes)
+            return error.SnapshotTooLarge;
+        if (mode == .packed_zlib) {
+            wire.packTextV1(self.allocator, body, &self.packed_body) catch |failure| switch (failure) {
+                error.InvalidPayload => return error.InvalidSnapshot,
+                else => |err| return err,
+            };
+            if (self.packed_body.items.len == 0 or self.packed_body.items.len > wire.text_pack_v1.maximum_body_bytes)
+                return error.SnapshotTooLarge;
+        }
+        try self.output.ensureTotalCapacity(64);
+        // This writer is owned allocating memory, not caller I/O. With bounded
+        // input, its WriteFailed can only report allocation failure.
+        self.compressor.* = std.compress.flate.Compress.init(
+            &self.output.writer,
+            self.work,
+            .zlib,
+            .fastest,
+        ) catch return error.OutOfMemory;
+        const input = if (mode == .packed_zlib) self.packed_body.items else body;
+        self.compressor.writer.writeAll(input) catch return error.OutOfMemory;
+        self.compressor.finish() catch return error.OutOfMemory;
+        const data = self.output.written();
+        var result: Compressed = .{
+            .header = switch (mode) {
+                .zlib => .{ .zlib = undefined },
+                .packed_zlib => .{ .packed_zlib = undefined },
+            },
+            .data = data,
+        };
+        const header: []u8 = switch (mode) {
+            .zlib => &result.header.zlib,
+            .packed_zlib => &result.header.packed_zlib,
+        };
+        writeU32(header[0..4], @intCast(body.len));
+        if (mode == .packed_zlib) writeU32(header[4..8], @intCast(self.packed_body.items.len));
+        if (result.size() > wire.maximum_text_snapshot_bytes) return error.SnapshotTooLarge;
+        return result;
+    }
+};
+
 /// Owns one complete text observation; no slice borrows encoded input.
 pub const Text = struct {
     allocator: std.mem.Allocator,
@@ -429,4 +539,94 @@ test "full text rejects missing links and delta-only records" {
         .raw,
         extra.items,
     ));
+}
+
+test "retained compression preserves complete text and copies bounded length prefixes" {
+    const allocator = std.testing.allocator;
+    const body = try testBody(allocator);
+    defer allocator.free(body);
+    var compressor = try Compressor.init(allocator);
+    defer compressor.deinit();
+    const work = compressor.work.ptr;
+    const state = compressor.compressor;
+    for ([_]Compression{ .zlib, .packed_zlib, .zlib, .packed_zlib }) |mode| {
+        const encoded = try compressor.compress(mode, body);
+        try std.testing.expectEqual(work, compressor.work.ptr);
+        try std.testing.expectEqual(state, compressor.compressor);
+        try std.testing.expectEqual(encoded.data.ptr, compressor.output.written().ptr);
+        try std.testing.expectEqual(body.len, readU32(encoded.prefix()[0..4]));
+        if (mode == .packed_zlib) {
+            try std.testing.expectEqual(compressor.packed_body.items.len, readU32(encoded.prefix()[4..8]));
+        } else {
+            try std.testing.expectEqual(@as(usize, 0), compressor.packed_body.items.len);
+        }
+        var joined: std.ArrayList(u8) = .empty;
+        defer joined.deinit(allocator);
+        try joined.appendSlice(allocator, encoded.prefix());
+        try joined.appendSlice(allocator, encoded.data);
+        try std.testing.expectEqual(encoded.size(), joined.items.len);
+        var text = try decode(allocator, .{ .rows = 1, .columns = 2 }, if (mode == .zlib) .zlib else .packed_zlib, joined.items);
+        defer text.deinit();
+        try std.testing.expectEqualSlices(u32, &.{ 'e', 0x0301 }, text.rows[0].cells[0].scalars);
+        try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, text.hyperlinks[0].uri_bytes);
+        try std.testing.expectEqual(@as(u8, 0x7f), text.presentation.palette[0].r);
+    }
+}
+
+fn testCompressAllocation(allocator: std.mem.Allocator, body: []const u8) !void {
+    var compressor = try Compressor.init(allocator);
+    defer compressor.deinit();
+    for ([_]Compression{ .zlib, .packed_zlib }) |mode| {
+        const result = compressor.compress(mode, body) catch |err| {
+            try std.testing.expectEqual(@as(usize, 0), compressor.output.written().len);
+            try std.testing.expectEqual(@as(usize, 0), compressor.packed_body.items.len);
+            return err;
+        };
+        try std.testing.expectEqual(body.len, readU32(result.prefix()[0..4]));
+        try std.testing.expect(result.data.len != 0);
+    }
+}
+
+test "compression allocation failure releases partial construction and reusable output" {
+    const body = try testBody(std.testing.allocator);
+    defer std.testing.allocator.free(body);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testCompressAllocation, .{body});
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var compressor = try Compressor.init(failing.allocator());
+    defer compressor.deinit();
+    const first = try compressor.compress(.zlib, body);
+    try std.testing.expect(first.data.len != 0);
+    const random_body = try std.testing.allocator.alloc(u8, 128 * 1024);
+    defer std.testing.allocator.free(random_body);
+    var random = std.Random.DefaultPrng.init(0x6121_3213_abc1_4431);
+    random.random().bytes(random_body);
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, compressor.compress(.zlib, random_body));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 0), compressor.output.written().len);
+    failing.fail_index = std.math.maxInt(usize);
+    const recovered = try compressor.compress(.zlib, random_body);
+    const inflated = try inflate(std.testing.allocator, recovered.data, @intCast(random_body.len));
+    defer std.testing.allocator.free(inflated);
+    try std.testing.expectEqualSlices(u8, random_body, inflated);
+}
+
+test "compression rejects empty oversized and malformed packed bodies then recovers" {
+    const allocator = std.testing.allocator;
+    const body = try testBody(allocator);
+    defer allocator.free(body);
+    var compressor = try Compressor.init(allocator);
+    defer compressor.deinit();
+    const oversize = try allocator.alloc(u8, wire.maximum_text_snapshot_bytes + 1);
+    defer allocator.free(oversize);
+    for ([_]Compression{ .zlib, .packed_zlib }) |mode| {
+        try std.testing.expectError(error.SnapshotTooLarge, compressor.compress(mode, &.{}));
+        try std.testing.expectError(error.SnapshotTooLarge, compressor.compress(mode, oversize));
+    }
+    try std.testing.expectError(error.InvalidSnapshot, compressor.compress(.packed_zlib, body[0 .. body.len - 1]));
+    try std.testing.expectEqual(@as(usize, 0), compressor.output.written().len);
+    try std.testing.expectEqual(@as(usize, 0), compressor.packed_body.items.len);
+    const recovered = try compressor.compress(.packed_zlib, body);
+    try std.testing.expect(recovered.size() <= wire.maximum_text_snapshot_bytes);
+    try std.testing.expectEqual(body.len, readU32(recovered.prefix()[0..4]));
 }
