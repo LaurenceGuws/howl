@@ -145,7 +145,7 @@ waits for presentation policy:
 | color-preference query | reply `dark` |
 | media copy, bell, legacy control, DCS, string control | consume |
 
-`howl-client.consequences` exposes the authority/observe/consume/reply mechanism but
+`server_client.terminal.consequences` exposes the authority/observe/consume/reply mechanism but
 does not choose host policy. A direct `howl-vt` embedder that bypasses Instance owns
 its own consequence policy; VT itself never opens files, steals focus, accesses a
 clipboard, or performs another host side effect.

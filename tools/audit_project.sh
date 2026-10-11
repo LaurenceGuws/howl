@@ -183,6 +183,18 @@ for path in files:
         raise SystemExit(f"{path}: Server client imports canonical process or service ownership")
 PYCLIENT
 
+# Flutter's desktop worker cannot regain an internal client/service/wire route.
+python3 - <<'PYLOCAL' || status=1
+from pathlib import Path
+import re
+
+path = Path("hosts/howl-flutter/native/local.zig")
+imports = re.findall(r'@import\(\s*"([^"]+)"', path.read_text())
+for name in imports:
+    if name not in ("std", "builtin", "howl_instance"):
+        raise SystemExit(f"{path}: Local worker imports noncanonical owner {name}")
+PYLOCAL
+
 # Every tracked Zig build root must be reachable through package declarations.
 # The external consumer intentionally depends inward on the distribution root;
 # its independent invocation is owned by the root consumer gate.

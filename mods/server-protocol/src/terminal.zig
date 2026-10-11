@@ -31,7 +31,7 @@ pub const properties = @import("properties.zig");
 // Wire framing, attach, and observation vocabulary
 // =============================================================================
 
-/// Exact version of the complete Howl instance wire carried in every frame header.
+/// Exact version of the Server terminal interaction wire in every frame header.
 ///
 /// This Server implementation has one terminal wire version. Change this
 /// value when the wire contract changes instead of accumulating negotiation

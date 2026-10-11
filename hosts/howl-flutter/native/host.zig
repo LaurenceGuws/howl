@@ -2,11 +2,13 @@ const std = @import("std");
 const builtin = @import("builtin");
 const client = @import("server_client").terminal;
 const local = @import("local_owner");
+const native_instance = @import("howl_instance");
 const server_client = @import("server_client");
 const protocol = client.protocol;
-const terminal = @import("terminal");
-const text = terminal.text;
-const limits = terminal.limits;
+const terminal = native_instance.render.terminal;
+const transported_render = @import("server_client_render");
+const text = native_instance.text;
+const limits = native_instance.render.limits;
 
 const host_header_bytes: usize = 64;
 const global_header_bytes: usize = 16;
@@ -108,14 +110,14 @@ const LocalInstanceHandle = opaque {};
 const LocalInstance = struct {
     allocator: std.mem.Allocator,
     threaded: std.Io.Threaded,
-    state: local.State = .{},
-    instance_id: u64,
+    owner: *local.Owner,
     borrowers: std.atomic.Value(u32) = .init(0),
 };
 
 const Control = struct {
     allocator: std.mem.Allocator,
-    connection: client.Connection,
+    connection: ?client.Connection = null,
+    interrupt: ?*NativeInterrupt = null,
     local_instance: ?*LocalInstance = null,
 };
 
@@ -128,7 +130,8 @@ const PendingImage = struct {
 
 const Host = struct {
     allocator: std.mem.Allocator,
-    connection: client.Connection,
+    connection: ?client.Connection = null,
+    interrupt: ?*NativeInterrupt = null,
     local_instance: ?*LocalInstance = null,
     raw_cache: client.rich.RawCache,
     cell_size: terminal.Size,
@@ -238,41 +241,57 @@ pub export fn howl_native_host_maximum_columns() u32 {
     return limits.maximum_columns;
 }
 
-/// Caller-owned cancellation exists before connection setup and is borrowed by
-/// every native worker in one Flutter transport lifetime. The caller cancels
-/// first, waits for all borrowers to exit, then destroys this handle exactly once.
+const NativeInterrupt = struct {
+    allocator: std.mem.Allocator,
+    transport: *client.Interrupt,
+    canceled: std.atomic.Value(bool) = .init(false),
+};
+
+/// Caller cancels first, joins every worker, then destroys this borrowed token.
 pub export fn howl_native_interrupt_create() ?*InterruptHandle {
     const allocator = std.heap.c_allocator;
-    const value = client.Interrupt.init(allocator) catch return null;
+    const value = allocator.create(NativeInterrupt) catch return null;
+    const transport = client.Interrupt.init(allocator) catch {
+        allocator.destroy(value);
+        return null;
+    };
+    value.* = .{ .allocator = allocator, .transport = transport };
     // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
+    // reason: The opaque FFI handle preserves this exact NativeInterrupt allocation.
     return @ptrCast(value);
 }
 
-/// Wakes an owned interrupt; returns zero on success.
+/// Cancels both direct Local requests and remote transport I/O.
 pub export fn howl_native_interrupt_cancel(raw: ?*InterruptHandle) i32 {
-    const value = raw orelse return 1;
-    // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
-    const interrupt: *client.Interrupt = @ptrCast(value);
-    interrupt.cancel() catch return 2;
+    const value = nativeInterruptFromRaw(raw) orelse return 1;
+    value.canceled.store(true, .release);
+    value.transport.cancel() catch return 2;
     return 0;
 }
 
-/// Releases an owned interrupt; null is a no-op.
+/// Releases the token after every borrower has retired; null is a no-op.
 pub export fn howl_native_interrupt_destroy(raw: ?*InterruptHandle) void {
-    const value = raw orelse return;
+    const value = nativeInterruptFromRaw(raw) orelse return;
+    const allocator = value.allocator;
+    value.transport.deinit();
+    allocator.destroy(value);
+}
+
+fn nativeInterruptFromRaw(raw: ?*InterruptHandle) ?*NativeInterrupt {
+    const value = raw orelse return null;
     // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
-    const interrupt: *client.Interrupt = @ptrCast(value);
-    interrupt.deinit();
+    // reason: Only interrupt_create produces this live FFI allocation.
+    // zig-audit: acknowledge align_cast
+    // reason: The matching constructor preserves NativeInterrupt alignment.
+    return @ptrCast(@alignCast(value));
 }
 
 fn interruptFromRaw(raw: ?*InterruptHandle) ?*client.Interrupt {
-    const value = raw orelse return null;
-    // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
-    return @ptrCast(value);
+    return if (nativeInterruptFromRaw(raw)) |value| value.transport else null;
+}
+
+fn localCancellation(interrupt: ?*NativeInterrupt) ?*const std.atomic.Value(bool) {
+    return if (interrupt) |value| &value.canceled else null;
 }
 
 /// Creates an owned desktop Local Instance from bounded launch bytes.
@@ -291,7 +310,10 @@ pub export fn howl_native_local_instance_create(
     diagnostic_len: *usize,
 ) ?*LocalInstanceHandle {
     resetCreateDiagnostic(diagnostic_len);
-    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0) {
+    if (shell_len == 0 or rows == 0 or columns == 0 or history_rows == 0 or
+        rows > limits.maximum_rows or columns > limits.maximum_columns or
+        @as(u32, rows) * columns > limits.maximum_cells)
+    {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_launch");
         return null;
     }
@@ -306,37 +328,37 @@ pub export fn howl_native_local_instance_create(
             std.heap.page_allocator,
             .{ .environ = currentProcessEnviron() },
         ),
-        .instance_id = 0,
+        .owner = undefined,
     };
-    const id = local.create(
-        &value.state,
+    value.owner = local.init(
+        allocator,
         value.threaded.io(),
         currentProcessEnviron(),
-        shell_ptr[0..shell_len],
-        command_ptr[0..command_len],
-        cwd_ptr[0..cwd_len],
-        rows,
-        columns,
-        history_rows,
+        .{
+            .shell = shell_ptr[0..shell_len],
+            .command = if (command_len == 0) null else command_ptr[0..command_len],
+            .cwd = if (cwd_len == 0) null else cwd_ptr[0..cwd_len],
+            .rows = rows,
+            .columns = columns,
+            .history_rows = history_rows,
+        },
     ) catch |failure| {
         value.threaded.deinit();
         allocator.destroy(value);
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "local_create", failure);
         return null;
     };
-    value.instance_id = id;
     // zig-audit: acknowledge ptr_cast
     // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
     return @ptrCast(value);
 }
 
-/// Returns 0 on destruction and 2 while any Host/Control connection still
+/// Returns 0 on destruction and 2 while any Host/Control handle still
 /// borrows the Local Instance. The caller must retire those handles first.
 pub export fn howl_native_local_instance_destroy(raw: ?*LocalInstanceHandle) i32 {
     const value = localInstanceFromRaw(raw) orelse return 1;
     if (value.borrowers.load(.acquire) != 0) return 2;
-    if (!local.destroy(&value.state, value.threaded.io(), value.instance_id)) return 3;
-    std.debug.assert(local.empty(&value.state));
+    local.deinit(value.owner);
     value.threaded.deinit();
     const allocator = value.allocator;
     value.* = undefined;
@@ -382,8 +404,25 @@ pub export fn howl_native_host_fetch_image_refill(
     if (required == 0 or required > maximum_image_refill_bytes) return 4;
     if (output_capacity < required) return 1;
 
+    if (host.local_instance) |value| {
+        var context = ImageProjection{ .pending = pending, .output = output_ptr[0..required] };
+        output_len.* = local.query(value.owner, localCancellation(host.interrupt), .{ .context = &context, .project = projectImage }) catch |failure| {
+            if (failure == error.LocalRejected) {
+                host.pending_image = null;
+                return 5;
+            }
+            return switch (classifyFailure(failure)) {
+                .canceled => 7,
+                .stale => 8,
+                .transport => 6,
+                .permanent => 4,
+            };
+        };
+        return 0;
+    }
+
     var fetched = client.images.request(
-        &host.connection,
+        &host.connection.?,
         host.allocator,
         pending.binding.image_id,
         pending.binding.generation,
@@ -428,11 +467,12 @@ const FailureClass = enum(u8) {
 
 fn classifyFailure(failure: ClassifiedFailure) FailureClass {
     return switch (failure) {
-        error.ConnectionCanceled => .canceled,
+        error.ConnectionCanceled, error.LocalCanceled => .canceled,
         error.StaleServerIncarnation,
         error.SessionNotFound,
         error.InstanceNotFound,
         error.Unavailable,
+        error.LocalUnavailable,
         => .stale,
         error.SocketConnectFailed,
         error.SocketConnectTimedOut,
@@ -582,35 +622,8 @@ fn connectManagedInstance(
     };
 }
 
-fn connectLocalInstance(
-    value: *LocalInstance,
-    interrupt: ?*client.Interrupt,
-    diagnostic_ptr: [*]u8,
-    diagnostic_capacity: usize,
-    diagnostic_len: *usize,
-) ?client.Connection {
-    var diagnostic: client.ConnectDiagnostic = .{};
-    return local.connect(
-        &value.state,
-        value.threaded.io(),
-        value.instance_id,
-        &diagnostic,
-        interrupt,
-    ) catch |failure| {
-        writeManagedConnectDiagnostic(
-            diagnostic_ptr,
-            diagnostic_capacity,
-            diagnostic_len,
-            "local_connect",
-            failure,
-            diagnostic,
-        );
-        return null;
-    };
-}
-
-fn createHostFromConnection(
-    connection_value: client.Connection,
+fn createHost(
+    connection_value: ?client.Connection,
     primary_ptr: [*]const u8,
     primary_len: usize,
     fallback_ptr: [*]const u8,
@@ -627,19 +640,19 @@ fn createHostFromConnection(
     const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
         var connection = connection_value;
-        connection.deinit();
+        if (connection) |*value| value.deinit();
         return null;
     };
     const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", failure);
         var connection = connection_value;
-        connection.deinit();
+        if (connection) |*value| value.deinit();
         return null;
     };
     const allocator = std.heap.c_allocator;
     var connection = connection_value;
     var connection_live = true;
-    defer if (connection_live) connection.deinit();
+    defer if (connection_live) if (connection) |*value| value.deinit();
 
     var raw_cache = client.rich.RawCache.init(allocator);
     var raw_cache_live = true;
@@ -682,7 +695,7 @@ fn createHostFromConnection(
     var renderer_live = true;
     defer if (renderer_live) terminal.deinit(terminal_renderer);
 
-    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch |failure| {
+    const observation_scratch = allocator.alloc(u8, if (connection != null) observation_scratch_bytes else 0) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "observation_scratch", failure);
         return null;
     };
@@ -754,7 +767,7 @@ pub export fn howl_native_host_create(
         );
         return null;
     };
-    return createHostFromConnection(
+    return createHost(
         connection,
         primary_ptr,
         primary_len,
@@ -811,7 +824,7 @@ pub export fn howl_native_host_create_managed(
         diagnostic_capacity,
         diagnostic_len,
     ) orelse return null;
-    return createHostFromConnection(
+    return createHost(
         connection,
         primary_ptr,
         primary_len,
@@ -854,15 +867,8 @@ pub export fn howl_native_host_create_local(
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_arguments");
         return null;
     }
-    const connection = connectLocalInstance(
-        local_instance,
-        interruptFromRaw(interrupt_raw),
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    ) orelse return null;
-    const raw = createHostFromConnection(
-        connection,
+    const raw = createHost(
+        null,
         primary_ptr,
         primary_len,
         fallback_ptr,
@@ -883,6 +889,7 @@ pub export fn howl_native_host_create_local(
     const host: *Host = @ptrCast(@alignCast(raw));
     retainLocalInstance(local_instance);
     host.local_instance = local_instance;
+    host.interrupt = nativeInterruptFromRaw(interrupt_raw);
     return raw;
 }
 
@@ -996,27 +1003,17 @@ pub export fn howl_native_control_create_local(
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_local_instance");
         return null;
     };
-    const connection = connectLocalInstance(
-        local_instance,
-        interruptFromRaw(interrupt_raw),
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    ) orelse return null;
-    const raw = createControlFromConnection(
-        connection,
-        diagnostic_ptr,
-        diagnostic_capacity,
-        diagnostic_len,
-    ) orelse return null;
-    // zig-audit: acknowledge ptr_cast
-    // reason: The FFI contract supplies the original live handle from the matching native constructor; this cast preserves that allocation's address and lifetime.
-    // zig-audit: acknowledge align_cast
-    // reason: The FFI caller must return the matching constructor's original live allocation; recovering its concrete owner asserts that preserved alignment.
-    const control: *Control = @ptrCast(@alignCast(raw));
+    const allocator = std.heap.c_allocator;
+    const control = allocator.create(Control) catch |failure| {
+        writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "control_alloc", failure);
+        return null;
+    };
+    control.* = .{ .allocator = allocator, .interrupt = nativeInterruptFromRaw(interrupt_raw) };
     retainLocalInstance(local_instance);
     control.local_instance = local_instance;
-    return raw;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The opaque Control handle preserves this exact allocator-owned control.
+    return @ptrCast(control);
 }
 
 fn writeJsonIdentity(writer: *std.Io.Writer, value: u64) !void {
@@ -1114,7 +1111,7 @@ pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
     const control: *Control = @ptrCast(@alignCast(raw_control));
     const allocator = control.allocator;
     const local_instance = control.local_instance;
-    control.connection.deinit();
+    if (control.connection) |*value| value.deinit();
     control.* = undefined;
     allocator.destroy(control);
     if (local_instance) |value| releaseLocalInstance(value);
@@ -1127,7 +1124,11 @@ pub export fn howl_native_control_committed_text(
     bytes_len: usize,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.committedText(&control.connection, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
+    if (control.local_instance) |value| {
+        local.input(value.owner, localCancellation(control.interrupt), .{ .bytes = bytes_ptr[0..bytes_len] }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
+    client.actions.committedText(&control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1138,7 +1139,11 @@ pub export fn howl_native_control_paste(
     bytes_len: usize,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.paste(&control.connection, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
+    if (control.local_instance) |value| {
+        local.input(value.owner, localCancellation(control.interrupt), .{ .paste = bytes_ptr[0..bytes_len] }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
+    client.actions.paste(&control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1151,8 +1156,17 @@ pub export fn howl_native_control_named_key(
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (key_value < 1 or key_value > 58 or action_value < 1 or action_value > 3) return 3;
+    if (control.local_instance) |value| {
+        const key = nativeNamedKey(key_value) orelse return 3;
+        local.input(value.owner, localCancellation(control.interrupt), .{ .key = .{
+            .key = .{ .named = key },
+            .action = nativeKeyAction(action_value).?,
+            .mods = nativeModifiers(modifiers),
+        } }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
     client.actions.namedKey(
-        &control.connection,
+        &control.connection.?,
         @fromBackingInt(@intCast(key_value)),
         @fromBackingInt(@intCast(action_value)),
         modifiers,
@@ -1169,8 +1183,18 @@ pub export fn howl_native_control_unicode_key(
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (action_value < 1 or action_value > 3) return 3;
+    if (control.local_instance) |value| {
+        if (scalar > 0x10ffff or (scalar >= 0xd800 and scalar <= 0xdfff)) return 3;
+        const key = native_instance.Key.initUnicode(@intCast(scalar)) catch return 3;
+        local.input(value.owner, localCancellation(control.interrupt), .{ .key = .{
+            .key = key,
+            .action = nativeKeyAction(action_value).?,
+            .mods = nativeModifiers(modifiers),
+        } }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
     client.actions.unicodeKey(
-        &control.connection,
+        &control.connection.?,
         scalar,
         @fromBackingInt(@intCast(action_value)),
         modifiers,
@@ -1182,7 +1206,11 @@ pub export fn howl_native_control_unicode_key(
 pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (focus_value < 1 or focus_value > 2) return 3;
-    client.actions.focus(&control.connection, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
+    if (control.local_instance) |value| {
+        local.input(value.owner, localCancellation(control.interrupt), .{ .focus = if (focus_value == 1) .in else .out }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
+    client.actions.focus(&control.connection.?, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1193,13 +1221,29 @@ pub export fn howl_native_control_resize(
     columns: u16,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    client.actions.resize(&control.connection, rows, columns) catch |failure| return controlFailureCode(failure);
+    if (control.local_instance) |value| {
+        local.resize(value.owner, localCancellation(control.interrupt), rows, columns) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
+    client.actions.resize(&control.connection.?, rows, columns) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
 /// Validates and sends one child signal.
 pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
+    if (control.local_instance) |value| {
+        const signal: native_instance.Signal = switch (signal_value) {
+            1 => .hangup,
+            2 => .interrupt,
+            3 => .resize_notify,
+            9 => .kill,
+            15 => .terminate,
+            else => return 3,
+        };
+        local.signal(value.owner, localCancellation(control.interrupt), signal) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
     const signal: protocol.Signal = switch (signal_value) {
         1 => .hangup,
         2 => .interrupt,
@@ -1208,7 +1252,7 @@ pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8)
         15 => .terminate,
         else => return 3,
     };
-    client.actions.signal(&control.connection, signal) catch |failure| return controlFailureCode(failure);
+    client.actions.signal(&control.connection.?, signal) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1219,8 +1263,14 @@ pub export fn howl_native_control_interaction_state(
     output_capacity: usize,
 ) i32 {
     const control = controlFromRaw(raw) orelse return 1;
-    if (output_capacity < protocol.payload_bytes.interaction_state_snapshot) return 3;
-    const state = client.state.get(&control.connection) catch |failure| return controlFailureCode(failure);
+    if (output_capacity < interaction_packet_bytes) return 3;
+    if (control.local_instance) |value| {
+        var context = InteractionProjection{ .output = output_ptr[0..interaction_packet_bytes] };
+        const count = local.query(value.owner, localCancellation(control.interrupt), .{ .context = &context, .project = projectInteraction }) catch |failure| return controlFailureCode(failure);
+        std.debug.assert(count == interaction_packet_bytes);
+        return 0;
+    }
+    const state = client.state.get(&control.connection.?) catch |failure| return controlFailureCode(failure);
     var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
     protocol.encodeInteractionStateSnapshot(&encoded, state);
     @memcpy(output_ptr[0..encoded.len], &encoded);
@@ -1243,7 +1293,36 @@ pub export fn howl_native_control_mouse(
     const control = controlFromRaw(raw) orelse return 1;
     if (kind_value < 1 or kind_value > 4 or button_value > 5 or pixels_present > 1)
         return 3;
-    client.actions.mouse(&control.connection, .{
+    if (control.local_instance) |value| {
+        const kind: native_instance.MouseEventKind = switch (kind_value) {
+            1 => .press,
+            2 => .release,
+            3 => .move,
+            4 => .wheel,
+            else => return 3,
+        };
+        const button: native_instance.MouseButton = switch (button_value) {
+            0 => .none,
+            1 => .left,
+            2 => .middle,
+            3 => .right,
+            4 => .wheel_up,
+            5 => .wheel_down,
+            else => return 3,
+        };
+        local.input(value.owner, localCancellation(control.interrupt), .{ .mouse = .{
+            .kind = kind,
+            .button = button,
+            .mod = nativeModifiers(modifiers),
+            .buttons_down = buttons_down,
+            .row = row,
+            .col = column,
+            .pixel_x = if (pixels_present == 1) pixel_x else null,
+            .pixel_y = if (pixels_present == 1) pixel_y else null,
+        } }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
+    client.actions.mouse(&control.connection.?, .{
         .kind = @fromBackingInt(@intCast(kind_value)),
         .button = @fromBackingInt(@intCast(button_value)),
         .modifiers = modifiers,
@@ -1272,8 +1351,19 @@ pub export fn howl_native_control_text_extract(
     output_len.* = 0;
     const control = controlFromRaw(raw) orelse return 1;
     if (columns == 0 or alternate_screen > 1) return 3;
+    if (control.local_instance) |value| {
+        var context = TextProjection{
+            .allocator = control.allocator,
+            .columns = columns,
+            .alternate_screen = alternate_screen == 1,
+            .range = .{ .start = .{ .row = start_row, .col = start_column }, .end = .{ .row = end_row, .col = end_column } },
+            .output = output_ptr[0..output_capacity],
+        };
+        output_len.* = local.query(value.owner, localCancellation(control.interrupt), .{ .context = &context, .project = projectText }) catch |failure| return controlFailureCode(failure);
+        return 0;
+    }
     const selected = client.selection.extract(
-        &control.connection,
+        &control.connection.?,
         control.allocator,
         .{
             .anchor = .{ .row = start_row, .column = start_column },
@@ -1312,7 +1402,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     terminal.deinit(host.renderer);
     host.fonts.deinit();
     host.raw_cache.deinit();
-    host.connection.deinit();
+    if (host.connection) |*value| value.deinit();
     host.* = undefined;
     allocator.free(observation_scratch);
     allocator.destroy(host);
@@ -1382,6 +1472,263 @@ pub export fn howl_native_host_observe(
     return 0;
 }
 
+const interaction_packet_bytes: usize = 20;
+
+// Private FFI ids remain version-locked with Dart, independent of Server enums.
+fn nativeNamedKey(value: u8) ?native_instance.KeyName {
+    const names = [_]native_instance.KeyName{
+        .enter,        .tab,          .backspace,    .escape,        .up,       .down,      .left,       .right,       .insert,         .delete,      .home,            .end,             .page_up,       .page_down,
+        .left_shift,   .right_shift,  .left_control, .right_control, .left_alt, .right_alt, .left_super, .right_super, .left_hyper,     .right_hyper, .left_meta,       .right_meta,      .caps_lock,     .num_lock,
+        .f1,           .f2,           .f3,           .f4,            .f5,       .f6,        .f7,         .f8,          .f9,             .f10,         .f11,             .f12,             .keypad_0,      .keypad_1,
+        .keypad_2,     .keypad_3,     .keypad_4,     .keypad_5,      .keypad_6, .keypad_7,  .keypad_8,   .keypad_9,    .keypad_decimal, .keypad_add,  .keypad_subtract, .keypad_multiply, .keypad_divide, .keypad_separator,
+        .keypad_equal, .keypad_enter,
+    };
+    if (value == 0 or value > names.len) return null;
+    return names[value - 1];
+}
+
+fn nativeKeyAction(value: u8) ?native_instance.KeyAction {
+    return switch (value) {
+        1 => .press,
+        2 => .repeat,
+        3 => .release,
+        else => null,
+    };
+}
+
+fn nativeModifiers(value: u8) native_instance.InputModifier {
+    return .{
+        .shift = value & 1 != 0,
+        .alt = value & 2 != 0,
+        .control = value & 4 != 0,
+        .super = value & 8 != 0,
+        .hyper = value & 16 != 0,
+        .meta = value & 32 != 0,
+        .caps_lock = value & 64 != 0,
+        .num_lock = value & 128 != 0,
+    };
+}
+
+const InteractionProjection = struct { output: []u8 };
+// zig-audit: acknowledge anyopaque
+// reason: The worker borrows the matching live InteractionProjection context and completes before its caller can retire storage.
+fn projectInteraction(raw: *anyopaque, observation: *const native_instance.Terminal.Observation, _: local.Facts) local.ProjectionError!usize {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The synchronous query receives exactly its live InteractionProjection context.
+    // zig-audit: acknowledge align_cast
+    // reason: The caller retains the original stack context until worker completion.
+    const context: *InteractionProjection = @ptrCast(@alignCast(raw));
+    const output = context.output;
+    const state = observation.interactionState();
+    @memset(output, 0);
+    std.mem.writeInt(u64, output[0..8], observation.semanticSequence(), .big);
+    var flags: u32 = 0;
+    inline for (.{
+        "keyboard_action_mode", "auto_repeat",   "newline_mode",                "application_cursor_keys", "application_keypad",
+        "meta_sends_escape",    "report_key_up", "bracketed_paste",             "focus_reporting",         "termios_signals",
+        "alternate_scroll",     "paste_events",  "inband_resize_notifications",
+    }, 0..) |name, bit| {
+        if (@field(state, name)) flags |= @as(u32, 1) << bit;
+    }
+    std.mem.writeInt(u32, output[8..12], flags, .big);
+    output[12] = switch (state.mouse_tracking) {
+        .off => 0,
+        .x10 => 1,
+        .normal => 2,
+        .button_event => 3,
+        .any_event => 4,
+    };
+    output[13] = switch (state.mouse_protocol) {
+        .none => 0,
+        .utf8 => 1,
+        .sgr => 2,
+        .sgr_pixel => 3,
+        .urxvt => 4,
+    };
+    output[14] = @bitCast(state.modify_other_keys);
+    output[15] = state.kitty_keyboard_flags;
+    std.mem.writeInt(u16, output[16..18], state.key_format_resource_4, .big);
+    output[18] = state.pointer_mode;
+    return output.len;
+}
+
+const TextProjection = struct {
+    allocator: std.mem.Allocator,
+    columns: u16,
+    alternate_screen: bool,
+    range: native_instance.Terminal.TextRange,
+    output: []u8,
+};
+// zig-audit: acknowledge anyopaque
+// reason: The worker borrows the matching live TextProjection context and completes before its caller can retire storage.
+fn projectText(raw: *anyopaque, observation: *const native_instance.Terminal.Observation, _: local.Facts) local.ProjectionError!usize {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The synchronous query receives exactly its live TextProjection context.
+    // zig-audit: acknowledge align_cast
+    // reason: The caller retains the original stack context until worker completion.
+    const context: *TextProjection = @ptrCast(@alignCast(raw));
+    const view = observation.semanticView(0);
+    if (context.columns != view.cols or context.alternate_screen != view.is_alternate_screen) return error.LocalRejected;
+    const selected = try observation.copyText(context.allocator, context.range, context.output.len);
+    defer context.allocator.free(selected);
+    if (selected.len > context.output.len) return error.BufferTooSmall;
+    @memcpy(context.output[0..selected.len], selected);
+    return selected.len;
+}
+
+const ImageProjection = struct { pending: PendingImage, output: []u8 };
+// zig-audit: acknowledge anyopaque
+// reason: The worker borrows the matching live ImageProjection context and completes before its caller can retire storage.
+fn projectImage(raw: *anyopaque, observation: *const native_instance.Terminal.Observation, _: local.Facts) local.ProjectionError!usize {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The synchronous query receives exactly its live ImageProjection context.
+    // zig-audit: acknowledge align_cast
+    // reason: The caller retains the original stack context until worker completion.
+    const context: *ImageProjection = @ptrCast(@alignCast(raw));
+    const pending = context.pending;
+    const images = observation.images(0);
+    for (0..images.imageCount()) |index| {
+        const image = images.image(index) orelse return error.InvalidFrame;
+        if (image.id != pending.binding.image_id or image.generation != pending.binding.generation) continue;
+        if (image.width != pending.external.size.width or image.height != pending.external.size.height or pending.external.format != .rgba8)
+            return error.InvalidFrame;
+        try writeImageRefill(context.output, pending, image.pixels);
+        return context.output.len;
+    }
+    return error.LocalRejected;
+}
+
+const ObservationProjection = struct { host: *Host, history_offset: u32, residency_bytes: []const u8, output: []u8 };
+// zig-audit: acknowledge anyopaque
+// reason: The worker borrows the matching live ObservationProjection context and completes before its caller can retire storage.
+fn projectObservation(raw: *anyopaque, observation: *const native_instance.Terminal.Observation, facts: local.Facts) local.ProjectionError!usize {
+    // zig-audit: acknowledge ptr_cast
+    // reason: The synchronous query receives exactly its live ObservationProjection context and output buffers.
+    // zig-audit: acknowledge align_cast
+    // reason: The caller retains the original stack context until worker completion.
+    const context: *ObservationProjection = @ptrCast(@alignCast(raw));
+    const host = context.host;
+    const output = context.output;
+    if (output.len < output_minimum_bytes) return error.BufferTooSmall;
+    const residency = try decodeResidencies(host, context.residency_bytes);
+    const view = observation.semanticView(context.history_offset);
+    const surface = try surfaceSize(view.rows, view.cols, host.cell_size);
+    var candidate: [maximum_terminal_images]HostImageBinding = undefined;
+    const bindings = terminal.planObservationImageBindings(host.image_bindings[0..host.image_binding_count], terminal.usage(host.renderer), observation, view.history_offset, &candidate) catch return error.InvalidHost;
+    try terminal.updateObservation(host.renderer, observation, view.history_offset, bindings);
+    @memcpy(host.image_bindings[0..bindings.len], bindings);
+    host.image_binding_count = bindings.len;
+    const frame = terminal.frame(host.renderer, residency, .{
+        .uploads = &host.frame_uploads,
+        .removals = &host.frame_removals,
+        .commands = &host.frame_commands,
+        .pixels = &host.frame_pixels,
+    }) catch |failure| switch (failure) {
+        error.MissingExternalResource => {
+            try prepareImageRefill(host, residency);
+            return error.ImageRefillRequired;
+        },
+        else => return failure,
+    };
+    host.pending_image = null;
+    var writer = Writer{ .bytes = output };
+    try writeHostHeader(&writer, .{
+        .revision = facts.revision,
+        .terminal_revision = observation.semanticSequence(),
+        .stream_closed = facts.stream_closed,
+        .child_exited = facts.child_exited,
+        .leader_present = false,
+        .you_are_leader = false,
+        .alternate_screen = view.is_alternate_screen,
+        .rows = view.rows,
+        .columns = view.cols,
+        .cursor_row = view.cursor_row,
+        .cursor_column = view.cursor_col,
+        .cursor_visible = view.cursor_visible,
+        .history_offset = view.history_offset,
+        .history_count = view.history_count,
+        .history_row_base = view.history_row_base,
+    });
+    const hcr_start = writer.offset;
+    try writeGlobalHeader(&writer, surface);
+    try writeFrame(&writer, frame, 1);
+    const hcr_len = writer.offset - hcr_start;
+    if (writer.offset > render_packet_budget) return error.BufferTooSmall;
+    for (0..view.rows) |row| {
+        const end = localRowContentEnd(&view, @intCast(row));
+        try writer.writeU16(end | (if (view.rowWrapped(@intCast(row))) @as(u16, 1) << 15 else 0));
+    }
+    const semantic_start = writer.offset;
+    const semantic = try writeLocalVisibleText(&view, output[semantic_start .. semantic_start + semantic_capacity]);
+    writer.offset += semantic.bytes_written;
+    std.mem.writeInt(u32, output[8..12], @intCast(writer.offset), .little);
+    std.mem.writeInt(u32, output[16..20], @intCast(hcr_len), .little);
+    std.mem.writeInt(u32, output[60..64], @intCast(semantic.bytes_written), .little);
+    if (semantic.truncated) {
+        const flags = std.mem.readInt(u32, output[20..24], .little);
+        std.mem.writeInt(u32, output[20..24], flags | (1 << 6), .little);
+    }
+    return writer.offset;
+}
+
+fn localRowContentEnd(view: *const native_instance.Terminal.SemanticView, row: u16) u16 {
+    var column = view.cols;
+    while (column > 0) {
+        column -= 1;
+        const cell = view.cellInfoAt(row, column);
+        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+        const values = view.cellScalarsAt(row, column, &scalars);
+        if (cell.x != 0 or cell.y != 0 or values.len == 0 or values[0] == ' ') continue;
+        return @intCast(@min(@as(u32, view.cols), @as(u32, column) + @max(cell.width, 1)));
+    }
+    return 0;
+}
+
+fn localLastTextCell(view: *const native_instance.Terminal.SemanticView, row: u16) ?u16 {
+    var column = view.cols;
+    while (column > 0) {
+        column -= 1;
+        const cell = view.cellInfoAt(row, column);
+        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
+        if (cell.x == 0 and cell.y == 0 and !cell.attrs.invisible and view.cellScalarsAt(row, column, &scalars).len != 0) return column;
+    }
+    return null;
+}
+
+fn writeLocalVisibleText(view: *const native_instance.Terminal.SemanticView, output: []u8) local.ProjectionError!struct { bytes_written: usize, truncated: bool } {
+    var last_row = view.rows;
+    while (last_row > 0 and localLastTextCell(view, last_row - 1) == null) last_row -= 1;
+    var used: usize = 0;
+    for (0..last_row) |row_index| {
+        const row: u16 = @intCast(row_index);
+        if (row > 0) {
+            if (used == output.len) return .{ .bytes_written = used, .truncated = true };
+            output[used] = '\n';
+            used += 1;
+        }
+        const last = localLastTextCell(view, row) orelse continue;
+        for (0..@as(usize, last) + 1) |column_index| {
+            const column: u16 = @intCast(column_index);
+            const cell = view.cellInfoAt(row, column);
+            if (cell.x != 0 or cell.y != 0) continue;
+            var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
+            const scalars = view.cellScalarsAt(row, column, &storage);
+            if (cell.attrs.invisible or scalars.len == 0) {
+                if (used == output.len) return .{ .bytes_written = used, .truncated = true };
+                output[used] = ' ';
+                used += 1;
+            } else for (scalars) |scalar| {
+                var encoded: [4]u8 = undefined;
+                const count = std.unicode.utf8Encode(scalar, &encoded) catch return error.InvalidFrame;
+                if (count > output.len - used) return .{ .bytes_written = used, .truncated = true };
+                @memcpy(output[used..][0..count], encoded[0..count]);
+                used += count;
+            }
+        }
+    }
+    return .{ .bytes_written = used, .truncated = false };
+}
+
 fn receiveRich(
     host: *Host,
     allocator: std.mem.Allocator,
@@ -1390,7 +1737,7 @@ fn receiveRich(
 ) !client.rich.Snapshot {
     if (host.armed_live_after_revision != null) return error.InvalidHost;
     return client.rich.requestPacked(
-        &host.connection,
+        &host.connection.?,
         allocator,
         after_revision,
         history_offset,
@@ -1414,10 +1761,10 @@ fn receiveLiveRich(
         // delta-lane fallback instead of guessing that stale caller revision.
         if (after_revision != 0 and !host.live_resync_required)
             return error.InvalidHost;
-        try host.raw_cache.sendDeltaRequest(&host.connection, 0, 0);
+        try host.raw_cache.sendDeltaRequest(&host.connection.?, 0, 0);
         host.live_resync_required = false;
     }
-    const snapshot = try host.raw_cache.receive(&host.connection);
+    const snapshot = try host.raw_cache.receive(&host.connection.?);
     host.armed_live_after_revision = null;
     return snapshot;
 }
@@ -1429,6 +1776,10 @@ fn observe(
     residency_bytes: []const u8,
     output: []u8,
 ) ClassifiedFailure!usize {
+    if (host.local_instance) |value| {
+        var context = ObservationProjection{ .host = host, .history_offset = history_offset, .residency_bytes = residency_bytes, .output = output };
+        return local.query(value.owner, localCancellation(host.interrupt), .{ .context = &context, .project = projectObservation, .after_revision = after_revision, .presentation = true });
+    }
     if (output.len < output_minimum_bytes) return error.BufferTooSmall;
     const residency = try decodeResidencies(host, residency_bytes);
     var scratch = std.heap.FixedBufferAllocator.init(host.observation_scratch);
@@ -1464,7 +1815,7 @@ fn observe(
     host.pending_image = null;
 
     var writer = Writer{ .bytes = output };
-    try writeHostHeader(&writer, begin);
+    try writeHostHeader(&writer, transportedFacts(begin));
     const hcr_start = writer.offset;
     try writeGlobalHeader(&writer, surface);
     try writeFrame(&writer, frame, 1);
@@ -1502,7 +1853,7 @@ fn observe(
     const semantic_bytes: *[4]u8 = output[60..64];
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     if (host.live_observe_pipeline and history_offset == 0) {
-        try host.raw_cache.sendDeltaRequest(&host.connection, begin.revision, 0);
+        try host.raw_cache.sendDeltaRequest(&host.connection.?, begin.revision, 0);
         host.armed_live_after_revision = begin.revision;
         host.live_resync_required = false;
     }
@@ -1517,13 +1868,13 @@ fn updateHostRendererRich(
     if (graphics.images.len > maximum_terminal_images)
         return error.InvalidHost;
     var candidate: [maximum_terminal_images]HostImageBinding = undefined;
-    const bindings = terminal.planExternalImageBindings(
+    const bindings = transported_render.planExternalImageBindings(
         host.image_bindings[0..host.image_binding_count],
         terminal.usage(host.renderer),
         graphics.images,
         &candidate,
     ) catch return error.InvalidHost;
-    try terminal.updateRichWithImageBindings(host.renderer, view, bindings);
+    try transported_render.updateRichWithImageBindings(host.renderer, view, bindings);
     @memcpy(host.image_bindings[0..bindings.len], bindings);
     host.image_binding_count = bindings.len;
 }
@@ -1796,7 +2147,45 @@ test "native host image refill packet carries exact terminal identity" {
     );
 }
 
-fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
+const HostFacts = struct {
+    revision: u64,
+    terminal_revision: u64,
+    stream_closed: bool,
+    child_exited: bool,
+    leader_present: bool,
+    you_are_leader: bool,
+    alternate_screen: bool,
+    rows: u16,
+    columns: u16,
+    cursor_row: u16,
+    cursor_column: u16,
+    cursor_visible: bool,
+    history_offset: u32,
+    history_count: u32,
+    history_row_base: u32,
+};
+
+fn transportedFacts(begin: client.view.Begin) HostFacts {
+    return .{
+        .revision = begin.revision,
+        .terminal_revision = begin.terminal_revision,
+        .stream_closed = begin.stream_closed,
+        .child_exited = begin.child_exited,
+        .leader_present = begin.leader_present,
+        .you_are_leader = begin.you_are_leader,
+        .alternate_screen = begin.alternate_screen,
+        .rows = begin.rows,
+        .columns = begin.columns,
+        .cursor_row = begin.cursor_row,
+        .cursor_column = begin.cursor_column,
+        .cursor_visible = begin.cursor_visible,
+        .history_offset = begin.history_offset,
+        .history_count = begin.history_count,
+        .history_row_base = begin.history_row_base,
+    };
+}
+
+fn writeHostHeader(writer: *Writer, begin: HostFacts) !void {
     const magic = try writer.need(4);
     @memcpy(magic, "HNH1");
     try writer.writeU16(3);
@@ -2120,4 +2509,190 @@ test "Flutter Local owner cannot retire while native clients borrow it" {
     try std.testing.expectEqual(@as(i32, 2), howl_native_local_instance_destroy(raw));
     releaseLocalInstance(value);
     try std.testing.expectEqual(@as(i32, 0), howl_native_local_instance_destroy(raw));
+}
+
+const TestLocal = struct {
+    owner: *LocalInstanceHandle,
+    control: *ControlHandle,
+    interrupt: *InterruptHandle,
+
+    fn init(command: []const u8) !TestLocal {
+        var diagnostic: [512]u8 = undefined;
+        var length: usize = 0;
+        const owner = howl_native_local_instance_create("/bin/sh".ptr, 7, command.ptr, command.len, "".ptr, 0, 4, 16, 16, &diagnostic, diagnostic.len, &length) orelse {
+            std.debug.print("Local creation: {s}\n", .{diagnostic[0..length]});
+            return error.LocalCreationFailed;
+        };
+        errdefer {
+            const result = howl_native_local_instance_destroy(owner);
+            std.debug.assert(result == 0);
+        }
+        const interrupt = howl_native_interrupt_create() orelse return error.InterruptCreationFailed;
+        errdefer howl_native_interrupt_destroy(interrupt);
+        const control = howl_native_control_create_local(owner, interrupt, &diagnostic, diagnostic.len, &length) orelse return error.ControlCreationFailed;
+        return .{ .owner = owner, .control = control, .interrupt = interrupt };
+    }
+
+    fn deinit(self: *TestLocal) void {
+        const canceled = howl_native_interrupt_cancel(self.interrupt);
+        std.debug.assert(canceled == 0);
+        howl_native_control_destroy(self.control);
+        const result = howl_native_local_instance_destroy(self.owner);
+        std.debug.assert(result == 0);
+        howl_native_interrupt_destroy(self.interrupt);
+    }
+
+    fn host(self: *TestLocal) !*HostHandle {
+        var diagnostic: [512]u8 = undefined;
+        var length: usize = 0;
+        const font = @import("test_fonts").primary_font;
+        return howl_native_host_create_local(self.owner, font.ptr, font.len, "".ptr, 0, null, 0, 16, 10, 20, self.interrupt, &diagnostic, diagnostic.len, &length) orelse {
+            std.debug.print("Local Host: {s}\n", .{diagnostic[0..length]});
+            return error.HostCreationFailed;
+        };
+    }
+};
+
+fn copiedSemantic(packet: []const u8) ![]const u8 {
+    if (packet.len < host_header_bytes) return error.InvalidPacket;
+    const hcr = std.mem.readInt(u32, packet[16..20], .little);
+    const rows = std.mem.readInt(u16, packet[52..54], .little);
+    const count = std.mem.readInt(u32, packet[60..64], .little);
+    const start = host_header_bytes + hcr + @as(usize, rows) * @sizeOf(u16);
+    if (start > packet.len or count != packet.len - start) return error.InvalidPacket;
+    return packet[start..];
+}
+
+fn observeUntil(host: *HostHandle, output: []u8, needle: []const u8) ![]const u8 {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
+    defer threaded.deinit();
+    const started = std.Io.Clock.awake.now(threaded.io());
+    while (started.durationTo(std.Io.Clock.awake.now(threaded.io())).toMilliseconds() < 2000) {
+        var length: usize = 0;
+        const result = howl_native_host_observe(host, 0, 0, null, 0, output.ptr, output.len, &length);
+        if (result != 0) return error.ObservationFailed;
+        const packet = output[0..length];
+        if (std.mem.indexOf(u8, try copiedSemantic(packet), needle) != null) return packet;
+    }
+    return error.Timeout;
+}
+
+test "Flutter Local FFI presents copied canonical frames, Unicode, geometry and extraction without a connection" {
+    if (comptime builtin.os.tag != .linux or builtin.abi == .android) return error.SkipZigTest;
+    var fixture = try TestLocal.init("stty -echo; printf 'A\\314\\201中'; printf '\\033]0;READY\\007'; while IFS= read -r line; do printf '%s\\n' \"$line\"; done");
+    defer fixture.deinit();
+    const raw_host = try fixture.host();
+    defer howl_native_host_destroy(raw_host);
+    // zig-audit: acknowledge ptr_cast
+    // reason: The proof inspects the matching live Host allocation returned by the Local constructor.
+    // zig-audit: acknowledge align_cast
+    // reason: The constructor retains the original Host alignment.
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    try std.testing.expect(host.connection == null);
+    try std.testing.expectEqual(@as(usize, 0), host.observation_scratch.len);
+    try std.testing.expect(controlFromRaw(fixture.control).?.connection == null);
+    try std.testing.expectEqual(@as(i32, 2), howl_native_local_instance_destroy(fixture.owner));
+    try std.testing.expectEqual(@as(i32, 0), howl_native_host_set_live_observe_pipeline(raw_host, 1));
+    const output = try std.testing.allocator.alloc(u8, output_minimum_bytes);
+    defer std.testing.allocator.free(output);
+    const first = try observeUntil(raw_host, output, "Á中");
+    try std.testing.expectEqualSlices(u8, "HNH1", first[0..4]);
+    try std.testing.expectEqualSlices(u8, "HCR1", first[host_header_bytes..][0..4]);
+    const selection_start = host_header_bytes + std.mem.readInt(u32, first[16..20], .little);
+    try std.testing.expectEqual(@as(u16, 3), std.mem.readInt(u16, first[selection_start..][0..2], .little));
+    var selected: [128]u8 = undefined;
+    var selected_len: usize = 0;
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_text_extract(fixture.control, 0, 0, 0, 2, 16, 0, &selected, selected.len, &selected_len));
+    try std.testing.expectEqualStrings("Á中", selected[0..selected_len]);
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_resize(fixture.control, 3, 12));
+    var length: usize = 0;
+    try std.testing.expectEqual(@as(i32, 0), howl_native_host_observe(raw_host, 0, 0, null, 0, output.ptr, output.len, &length));
+    try std.testing.expectEqual(@as(u16, 3), std.mem.readInt(u16, output[52..54], .little));
+    try std.testing.expectEqual(@as(u16, 12), std.mem.readInt(u16, output[54..56], .little));
+    try std.testing.expect(howl_native_control_text_extract(fixture.control, 0, 0, 0, 1, 16, 0, &selected, selected.len, &selected_len) != 0);
+    const typed = "Zebra";
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_committed_text(fixture.control, typed.ptr, typed.len));
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_named_key(fixture.control, 1, 1, 0));
+    const echo = try observeUntil(raw_host, output, typed);
+    try std.testing.expect(std.mem.indexOf(u8, try copiedSemantic(echo), typed) != null);
+    const lines = "r1\nr2\nr3\nr4\n";
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_committed_text(fixture.control, lines.ptr, lines.len));
+    const live_tail = try observeUntil(raw_host, output, "r4");
+    try std.testing.expect(std.mem.readInt(u32, live_tail[44..48], .little) > 0);
+    // A second copied view has its own renderer and no SPSC consumer claim.
+    const history_host = try fixture.host();
+    defer howl_native_host_destroy(history_host);
+    try std.testing.expectEqual(@as(i32, 0), howl_native_host_observe(history_host, 0, 1, null, 0, output.ptr, output.len, &length));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, output[40..44], .little));
+    try std.testing.expect(controlFromRaw(fixture.control).?.connection == null);
+}
+
+test "Flutter Local failed presentation leaves no borrower; copied interaction facts preserve the private ABI" {
+    if (comptime builtin.os.tag != .linux or builtin.abi == .android) return error.SkipZigTest;
+    var fixture = try TestLocal.init("printf '\\033[?2004h\\033[?1006h\\033[?1003h'; exec sleep 30");
+    defer fixture.deinit();
+    var diagnostic: [512]u8 = undefined;
+    var length: usize = 0;
+    const missing = "/this-font-does-not-exist";
+    try std.testing.expect(howl_native_host_create_local(fixture.owner, missing.ptr, missing.len, "".ptr, 0, null, 0, 16, 10, 20, fixture.interrupt, &diagnostic, diagnostic.len, &length) == null);
+    const native = localInstanceFromRaw(fixture.owner).?;
+    try std.testing.expectEqual(@as(u32, 1), native.borrowers.load(.acquire));
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
+    defer threaded.deinit();
+    var encoded: [interaction_packet_bytes]u8 = undefined;
+    const started = std.Io.Clock.awake.now(threaded.io());
+    while (true) {
+        try std.testing.expectEqual(@as(i32, 0), howl_native_control_interaction_state(fixture.control, &encoded, encoded.len));
+        const state = try protocol.decodeInteractionStateSnapshot(&encoded);
+        if (state.bracketed_paste and state.mouse_protocol == .sgr and state.mouse_tracking == .any_event) break;
+        if (started.durationTo(std.Io.Clock.awake.now(threaded.io())).toMilliseconds() > 2000) return error.Timeout;
+    }
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_named_key(fixture.control, 0, 1, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_unicode_key(fixture.control, 0xd800, 1, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_mouse(fixture.control, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    try std.testing.expectEqual(@as(i32, 0), howl_native_interrupt_cancel(fixture.interrupt));
+    try std.testing.expectEqual(@as(i32, 6), howl_native_control_focus(fixture.control, 1));
+}
+
+test "Flutter Local refills an exact canonical image generation into copied private packets" {
+    if (comptime builtin.os.tag != .linux or builtin.abi == .android) return error.SkipZigTest;
+    var fixture = try TestLocal.init("printf '\\033_Ga=T,f=32,s=2,v=2,i=17;AQIDBAUGBwgJCgsMDQ4PEA==\\033\\\\'; exec sleep 30");
+    defer fixture.deinit();
+    const raw_host = try fixture.host();
+    defer howl_native_host_destroy(raw_host);
+    const output = try std.testing.allocator.alloc(u8, output_minimum_bytes);
+    defer std.testing.allocator.free(output);
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
+    defer threaded.deinit();
+    const started = std.Io.Clock.awake.now(threaded.io());
+    var length: usize = 0;
+    while (true) {
+        const result = howl_native_host_observe(raw_host, 0, 0, null, 0, output.ptr, output.len, &length);
+        if (result == 5) break;
+        try std.testing.expectEqual(@as(i32, 0), result);
+        if (started.durationTo(std.Io.Clock.awake.now(threaded.io())).toMilliseconds() > 2000) return error.Timeout;
+    }
+    const required = howl_native_host_image_refill_size(raw_host);
+    try std.testing.expectEqual(image_refill_header_bytes + 16, required);
+    var refill: [image_refill_header_bytes + 16]u8 = undefined;
+    try std.testing.expectEqual(@as(i32, 0), howl_native_host_fetch_image_refill(raw_host, &refill, refill.len, &length));
+    try std.testing.expectEqual(required, length);
+    try std.testing.expectEqualSlices(u8, "HIR1", refill[0..4]);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, refill[image_refill_header_bytes..]);
+    var residency: [residency_record_bytes]u8 = @splat(0);
+    @memcpy(residency[0..16], refill[16..32]);
+    residency[16] = refill[36];
+    @memcpy(residency[18..22], refill[38..42]);
+    try std.testing.expectEqual(@as(i32, 0), howl_native_host_observe(raw_host, 0, 0, &residency, residency.len, output.ptr, output.len, &length));
+    // Dropped backend residency requests a serial refill without touching Instance.
+    try std.testing.expectEqual(@as(i32, 5), howl_native_host_observe(raw_host, 0, 0, null, 0, output.ptr, output.len, &length));
+    // zig-audit: acknowledge ptr_cast
+    // reason: The proof inspects only the matching live Local Host and its presentation-owned pending generation.
+    // zig-audit: acknowledge align_cast
+    // reason: The constructor retains the original Host alignment.
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    host.pending_image.?.binding.generation += 1;
+    try std.testing.expectEqual(@as(i32, 5), howl_native_host_fetch_image_refill(raw_host, &refill, refill.len, &length));
+    try std.testing.expectEqual(@as(usize, 0), length);
+    try std.testing.expect(host.pending_image == null);
 }

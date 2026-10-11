@@ -1,4 +1,4 @@
-//! Exposes the pure Server control wire without runtime or terminal ownership.
+//! Exposes pure Server control and terminal wire without runtime or terminal ownership.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {

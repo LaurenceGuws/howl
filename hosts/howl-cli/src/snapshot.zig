@@ -89,8 +89,7 @@ pub fn emitText(writer: *std.Io.Writer, value: *const Snapshot) !void {
     }
 }
 
-/// Temporary rich formatting bridge. Lossless decoding moves into howl-client
-/// before this Cairn step is complete.
+/// Formats an owned, validated Server terminal-client rich observation.
 pub fn requestRich(
     connection: *client.Connection,
     writer: *std.Io.Writer,

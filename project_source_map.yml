@@ -19,8 +19,8 @@ experimental:
     hosts/server foreground `server_runtime` module owning exactly one Server control listener,
     one Server model/control service and bounded cooperative scheduling. The Server
     listener, exact control-socket readiness masks and dormant live PTYs share one
-    aggregate poll; only Instance-internal client/timer/write work receives direct
-    rotating service turns. Fully quiescent
+    aggregate poll; Server terminal-client work and Instance timer/write work receive
+    direct rotating service turns. Fully quiescent
     exited Instances remain attachable but consume no scheduler work. Exact attach
     transfers the same fd downward
     into HWLS; no per-Instance listener/proxy exists. Runtime owns no terminal grid,
@@ -38,7 +38,7 @@ experimental:
     owns only bounded adopted control streams and long-poll state, decodes
     server_protocol, performs CRUD through exact Server/Session/Instance identities,
     serializes read-only tree state and transfers attach streams directly into the
-    selected Instance HWLS service. It owns no listener/address/process, does not
+    Server-owned terminal service beside the selected Instance. It owns no listener/address/process, does not
     turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
     experimental pure module `server_protocol` in mods/server-protocol. It encodes bounded
@@ -96,14 +96,16 @@ experimental:
     keeps no authoritative Server mirror; terminal presentation/input/viewport/
     history/selection/native-size UX remains Instance-only after handoff. On Linux
     and Windows the Local route owns one in-process Instance through its private
-    listener-free desktop owner (pending direct migration); Android and iOS remain client-only. Flutter owns
+    direct desktop worker. Semantic mutations and synchronous const observation
+    projections use Instance directly; only copied frame/text/image packets reach
+    Dart. Local creates no HWLS service, handshake or stream. Android and iOS remain client-only. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,
     services its PTY/VT lifetime directly, borrows canonical Terminal.Observation for
     synchronous projection, and renders through howl-text/howl-render/Vulkan/Wayland.
     Its howl-render dependency disables transported client sources. Host has no
-    howl-client, client transport, HWLS, server-client, Server, Session, endpoint or
+    client transport, HWLS, server-client, Server, Session, endpoint or
     remote-target route; outside the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
@@ -125,7 +127,7 @@ experimental:
     That worker owns PTY/VT service, semantic input, resize, history, search, selection,
     hyperlink/consequence handling and Render production; SDL consumes immutable Render
     publications through NativeCanvas on the graphical thread. Local has no HWLS,
-    howl-client observer/control/render workers, listener or service worker. Target
+    transported observer/control/render workers, listener or service worker. Target
     identity includes route+endpoint+Session+Instance so distinct Server-owned Instances
     never share consequence authority accidentally. Direct Attach and Server-selected
     routes remain non-owning ordinary HWLS attachments. Its desktop font owner resolves

@@ -68,7 +68,7 @@ results in explicit per-Instance geometry mutations.
 
 There is no per-Instance listener in the Server runtime. A Server client requests an
 exact `(session_id, instance_id)` and the accepted control stream is transferred into
-that Instance's ordinary HWLS service. After `attach_ready`, the same byte stream speaks
+the Server-owned terminal service beside that Instance. After `attach_ready`, the same byte stream speaks
 unchanged HWLS. No Server-side byte proxy sits in the terminal path.
 
 Transport reachability, authentication, discovery, public routing and service
@@ -105,8 +105,9 @@ compatibility surfaces. They may iterate rapidly, but none may duplicate termina
 semantics or move presentation policy into VT/PTY/Instance/Server.
 
 Flutter currently exercises desktop Local, direct HWLS, and Server-selected Instance
-routes. Linux and Windows Local own one listener-free in-process Instance; Android and
-iOS remain client-only. Its small app shell may persist explicit labelled Server
+routes. Linux and Windows Local use a private worker owning one in-process Instance
+with direct semantic commands and copied canonical observations; Android and iOS
+remain client-only. Its small app shell may persist explicit labelled Server
 endpoints, but that is application configuration, not Server discovery. Odin also
 exposes explicit Server-selected Instance startup while preserving its Local/direct
 lanes; after attach its existing render/input workers remain ordinary HWLS clients.
@@ -119,7 +120,7 @@ private or shared text ownership; see [the lifetime contract](mods/howl-instance
 The Vulkan Host is deliberately different: it is the native direct-embed performance
 canary only. It owns one in-process Instance and projects canonical VT observation
 directly through text/render/Vulkan/Wayland. Its build disables transported client
-render sources and contains no howl-client, server-client, endpoint, Session, Server,
+render sources and contains no server-client, endpoint, Session, Server,
 or HWLS route.
 
 The Web wire/renderer/gateway proofs remain maintained. The browser gateway reaches an
@@ -128,7 +129,7 @@ HWLS over WebSocket; it does not require or recreate a per-Instance listener.
 
 ### Current consequence consumers
 
-`howl-client` provides the generic HWLS consequence client, but host policy is opt-in.
+`server_client.terminal.consequences` provides the HWLS consequence client; host policy is opt-in.
 Current maintained source has one explicit product policy owner:
 
 | Surface | Consequence authority today |

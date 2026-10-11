@@ -38,16 +38,12 @@ pub fn build(b: *std.Build) void {
         b.dependency("howl_instance", .{ .target = target, .optimize = optimize, .bundled_render_text = true })
     else
         b.dependency("howl_instance", .{ .target = target, .optimize = optimize });
-    const desktop = (target.result.os.tag == .linux and target.result.abi != .android) or target.result.os.tag == .windows;
     const local = b.createModule(.{
-        .root_source_file = b.path(if (desktop) "local/local_desktop.zig" else "local/local_unsupported.zig"),
+        .root_source_file = b.path("local.zig"),
         .target = target,
         .optimize = optimize,
     });
-    local.addImport("server_client", client);
     local.addImport("howl_instance", instance.module("howl_instance"));
-    local.addImport("server_terminal_service", b.dependency("server", .{ .target = target, .optimize = optimize }).module("server_terminal_service"));
-    if (target.result.os.tag == .windows) local.linkSystemLibrary("kernel32", .{});
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),
@@ -57,8 +53,10 @@ pub fn build(b: *std.Build) void {
         .pic = true,
     });
     root.addImport("local_owner", local);
+    root.addImport("howl_instance", instance.module("howl_instance"));
+    root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     root.addImport("server_client", client);
-    root.addImport("terminal", terminal);
+    root.addImport("server_client_render", terminal);
 
     const object = b.addObject(.{
         .name = "howl_flutter_native_host",
@@ -77,6 +75,12 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const local_tests = b.addTest(.{
+        .name = "howl_flutter_direct_local_tests",
+        .root_module = local,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     const check = b.step("check", "Compile the Flutter native host and all its proofs");
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
@@ -85,6 +89,8 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     check.dependOn(&object.step);
     check.dependOn(&tests.step);
+    check.dependOn(&local_tests.step);
     const test_step = b.step("test", "Run native host presentation-lattice proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(local_tests).step);
 }

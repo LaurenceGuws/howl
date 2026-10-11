@@ -250,20 +250,32 @@ Selecting a running Instance turns the body into the unchanged terminal canary v
 provides a simple Back to Server action. Exited Instances remain lifecycle history in
 the browser and are not openable.
 
-Selecting Local creates one native Local owner for the terminal widget lifetime.
-Observer, control, and history workers each borrow ordinary HWLS connections to that
-same Instance. The owner refuses destruction while any worker still borrows it; after
-the workers retire, closing the Flutter terminal destroys the Instance and its owned
-shell. Local owns canonical geometry, so Flutter leads resize for that route without
-changing Remote attach semantics.
+Selecting Local creates one private native worker owning a direct Instance for the
+terminal widget lifetime. Control submits typed Instance input, resize and signals.
+Live and history hosts project const canonical observation on that worker and copy
+their frame, text and exact image-generation packets into caller-owned storage.
+There is no Local HWLS service, handshake or stream. Each presentation host keeps its
+own fonts, renderer and backend residency; Local allocates no transported observation
+decode arena.
+
+The worker services PTY/VT progress without observers. Its queue admits at most 32
+outstanding requests, with presentation waiters limited to 16 so they cannot exhaust
+control admission. Waiting observations release the queue mutex; cancellation retires
+them. Synchronized output respects the release point before unread output continues.
+
+The owner refuses destruction while any host/control handle still borrows it. Callers
+cancel and join their workers, retire those handles, then destroy the owner; its
+canonical worker retires the Instance; destruction joins that worker before releasing
+host state and its I/O lifetime. Local owns
+canonical geometry, so Flutter leads resize for that route.
 
 ## Ownership notes
 
 - `howl-instance` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
-- `server-client.rich` remains the single `text_v1` byte parser.
-- `server-client.view` is immutable, explicitly owned native semantic state.
-- Flutter's private Local owner owns listener-free desktop Local
-  Instance/PTY lifecycle; mobile does not import that ownership policy.
+- `server_client.terminal.rich` owns remote `text_v1` parsing; Local reads canonical observation directly.
+- `server_client.terminal.view` is immutable, explicitly owned transported semantic state.
+- Flutter's private Local worker owns direct desktop Instance/PTY lifetime.
+  Android/iOS remain remote consumers and cannot construct Local.
 - `howl-text` owns native metrics, fallback, ordinary shaping/rasterization, and the Kitty-derived generated terminal drawing glyphs.
 - `howl-render.terminal.Renderer` owns bounded shape/atlas caches and emits complete terminal frames.
 - Flutter owns only platform capture, viewport/history UX, copied resource lifetime, and backend batching.
@@ -273,23 +285,29 @@ The measurement and migration evidence is recorded in `../docs/2026-08-30-native
 
 ## Server-managed Instance construction
 
-The app-private native host now has three connection constructors with one common
-presentation/control implementation:
+The app-private native host has three constructors sharing native rendering and
+copied FFI packets:
 
 - direct mode connects an explicit HWLS Instance endpoint exactly as before;
 - managed mode connects one explicit Server endpoint, checks the expected
   `server_id` against its welcome, requests the exact `(session_id, instance_id)`,
   receives `attach_ready`, and hands that same stream into the ordinary HWLS
   client handshake;
-- Local mode creates one platform-owned Instance in-process and opens ordinary HWLS
-  observer/control/history streams to it without a listener, endpoint, Server, or
-  Session.
+- Local mode creates one direct in-process Instance. Typed mutations and const
+  observation projections run on its private canonical worker; frame/text/image
+  packets are copied through the same private Dart ABI.
 
-After construction/attach, observer/control/rendering code is identical across all
-three routes.
-The native seam does not proxy bytes and does not import Server layout or geometry
-state. Server routing chooses an Instance; that Instance remains the sole owner of
-its canonical terminal geometry.
+Remote routes use Server terminal-client decoding and transported render adapters.
+Local uses Instance and canonical Render directly. The native seam imports no Server
+model or listener, and Server routing only chooses an Instance; canonical geometry
+remains owned by that Instance.
+
+Linux native proofs cover Local input, resize, copied live/history frames, interaction
+state, text extraction, exact image generations, cancellation, construction failure,
+borrower teardown and synchronized-output release. The Windows worker compiles and the
+FFI passes semantic checking, but full Windows binary emission remains blocked by a
+COFF object-linking error and a self-hosted compiler overflow. This cleanup makes no
+new Windows runtime or mobile-device qualification claim.
 
 The Dart Server surface is deliberately thin. `NativeServerTree.fetch` performs one
 validated native `server-client` query and returns a typed read-only tree. Flutter

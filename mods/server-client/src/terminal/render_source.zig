@@ -380,7 +380,7 @@ fn ClientSource(comptime Storage: type) type {
     };
 }
 
-/// Adapts one independently owned immutable howl-client view.
+/// Adapts one independently owned immutable Server terminal-client view.
 pub const Owned = ClientSource(OwnedStorage);
-/// Adapts one already-validated borrowed howl-client rich view.
+/// Adapts one already-validated borrowed Server terminal-client rich view.
 pub const RichView = ClientSource(RichStorage);

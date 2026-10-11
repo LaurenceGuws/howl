@@ -8,7 +8,7 @@ observations, selection, search, image retrieval and consequence handling.
 It can inspect status/tree state, create or close Sessions, create or close Instances,
 and attach one exact `(server_id, session_id, instance_id)`. Successful attach consumes the Server
 control connection and returns the same connected byte stream after `attach_ready`;
-the caller may then hand that stream to the ordinary HWLS Instance client. There is no
+the caller may then hand that stream to `server_client.terminal` for HWLS interaction. There is no
 proxy and this package owns no listener, Server/Session/Instance lifetime, discovery,
 authentication, or supervision policy.
 

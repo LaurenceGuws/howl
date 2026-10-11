@@ -23,7 +23,7 @@ composition:
   - clients may interact with one Instance headlessly or graphically; client presentation does not become runtime ownership
   - every Instance owns exactly one canonical terminal geometry; Server and Session own no rows, columns, cell-pixel lattice, pane, split, or surface layout
   - a client may compose multiple Instances on one surface and derive each Instance geometry from that presentation layout; the composition remains client-owned
-  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through its private desktop owner, while Android/iOS remain client-only
+  - the maintained Flutter canary may own lightweight app navigation and explicit persisted Server endpoints; on Linux/Windows its Local route may also own one in-process Instance through its private direct Instance worker, with semantic commands and copied observations; Android/iOS remain client-only
   - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:
@@ -44,7 +44,8 @@ experimental:
 ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer
   - one howl-instance owns exactly one authoritative platform process-terminal transport and VT when an embedder chooses the batteries-included local composition
-  - Instance exposes no Session or Server identity and publishes no listener or executable
+  - Instance exposes no wire protocol, Session or Server identity and publishes no listener or executable
+  - server-protocol owns control and terminal wire; server owns adopted-stream services; server-client owns remote clients and private transport
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
   - attaching a client never changes canonical terminal geometry

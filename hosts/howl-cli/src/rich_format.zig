@@ -1,6 +1,6 @@
 //! Lossless CLI NDJSON presentation of the reusable native Howl rich snapshot.
 //!
-//! `howl-client` owns text_v1 parsing and validation. This module only formats
+//! `server_client.terminal.rich` owns text_v1 parsing and validation. This module only formats
 //! that already-decoded native model for explicit `howl snapshot --rich` output.
 
 const std = @import("std");

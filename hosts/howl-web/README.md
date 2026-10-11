@@ -9,14 +9,10 @@ browser-host boundaries from Wasm/JavaScript.
 The browser owns presentation and browser input policy only. Canonical terminal truth
 remains in one Howl **Instance**:
 
-```text
-Instance
-  PTY + VT + canonical geometry + HWLS
-        ↓
-explicit client stream
-        ↓
-Web wire/Wasm → shared text/terminal renderer → browser
-```
+Instance owns PTY, VT and canonical geometry. The Server-owned terminal service
+borrows that Instance and exposes HWLS on explicitly attached streams. Web wire/Wasm
+consumes those streams and projects through shared text/render machinery into browser
+resources.
 
 JavaScript never parses terminal cells, shapes terminal text, or constructs terminal
 escape sequences. It hosts Wasm, owns browser resources and UI state, and submits the
@@ -41,7 +37,7 @@ zig build gateway-check
 split delivery, bounded snapshots and semantic control messages.
 
 `zig build render-check` pressure-tests the shared
-`howl-client.view -> howl-text -> howl-render.terminal.Renderer -> terminal Frame`
+`server_client.terminal.view -> howl-text -> howl-render.terminal.Renderer -> terminal Frame`
 path in Wasm.
 
 `zig build text-check` compares target-built native/Wasm text metrics, shaping, source

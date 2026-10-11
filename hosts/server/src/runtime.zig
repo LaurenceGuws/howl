@@ -189,7 +189,7 @@ pub const Runtime = struct {
     }
 
     /// One bounded cooperative turn. Socket/PTy readiness shares one aggregate poll;
-    /// only Instance-internal timer/client/write work receives direct rotating turns.
+    /// Server terminal-client work and Instance timer/write work receive direct rotating turns.
     pub fn turn(self: *Runtime) !void {
         self.serviceAggregateReadiness(0) catch |err| switch (err) {
             error.SignalInterrupt => return,

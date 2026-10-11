@@ -11,7 +11,7 @@ scheduling and shutdown policy. Remote clients import
 `server_runtime` owns one listener, one Server model, one control service, and the
 bounded scheduling loop for every Instance interaction service in that process.
 The listener accepts only Server control connections. Exact Instance attach transfers
-the accepted stream directly into that Instance's HWLS service; no per-Instance
+the accepted stream directly into the Server-owned terminal service beside that Instance; no per-Instance
 listener or byte proxy exists.
 
 The scheduler separates readiness from service work. Running Instances with no clients,
@@ -23,8 +23,8 @@ The Server listener, those control sockets and dormant PTYs therefore share one 
 readiness wait. PTY output/EOF, control input/output and new Server connections wake the
 runtime immediately. Leader exit is also reconciled over the bounded live set at the
 one-second housekeeping deadline: a quiet descendant can retain the PTY after its
-leader exits, so leader exit is not itself a PTY-readiness guarantee. Instances with internal client/timer/
-write work use the bounded rotating direct-service lane. Retained
+leader exits, so leader exit is not itself a PTY-readiness guarantee. Server terminal-client
+work and Instance timer/write work use the bounded rotating direct-service lane. Retained
 exited Instances remain attachable but disappear from all scheduler work once their PTY,
 clients, terminal timers, consequences and publication work are quiescent; a later exact
 attach makes that Instance serviceable again. The aggregate dormant wait has only a

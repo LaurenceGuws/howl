@@ -33,7 +33,7 @@ Client modules import that package directly, without this Server model or a host
 `Server`. It owns bounded control-client buffers and long-poll state, decodes
 `server_protocol`, performs exact CRUD through the Server model, serializes the
 read-only tree, and transfers an exact `(session_id, instance_id)` stream into
-that Instance's HWLS service. It does not turn Instances itself: a higher runtime
+the Server-owned terminal service beside that Instance. It does not turn Instances itself: a higher runtime
 must schedule control and Server terminal service turns independently.
 
 The service borrows both Server and inherited environment lifetime. It creates no

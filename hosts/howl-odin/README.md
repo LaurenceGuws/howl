@@ -13,11 +13,11 @@ not duplicate VT, PTY, Instance, text shaping, or terminal raster semantics.
 The current Linux proof plus Windows Remote and Local canaries use Odin + SDL3
 for the application/backend shell and the existing Howl native render owners for
 terminal presentation. `native/` is
-a C-shaped Zig seam over transported `howl-client`/`server-client` routes and the
+a C-shaped Zig seam over transported `server_client.terminal`/`server-client` routes and the
 canonical Instance/Render owners used directly by Local. It exports neither
 wire/client backing structs nor a copied terminal renderer: Odin receives canonical
 Canvas resource/command facts. Attached routes send semantic input through
-`howl-client`; Local sends the same semantic operations directly to its sole
+`server_client.terminal`; Local sends the same semantic operations directly to its sole
 terminal-thread Instance owner. SDL3_ttf remains only for app
 chrome and IME composition; real terminal presentation is Canvas-only.
 
@@ -159,14 +159,14 @@ Current canary:
 - Home tab observes the existing canonical Howl Instance at
   `tcp://127.0.0.1:39601` without taking geometry leadership;
 - committed text plus named/control keys use the same canonical VT semantics: Attach/
-  Server routes round-trip through `howl-client`, while Local feeds the owned Instance
+  Server routes round-trip through `server_client.terminal`, while Local feeds the owned Instance
   directly on its terminal thread;
 - desktop pointer routing now consults Howl's coherent interaction state instead of
   assuming every mouse belongs to the client. Ordinary shell tracking-off behavior
   remains local selection/history; a child enabling canonical mouse tracking gets
   semantic press/release/move/wheel facts through the bridge's canonical semantic
   actions, and VT alone chooses the child escape encoding. Attached routes use
-  `howl-client.actions.mouse`; Local applies the same facts directly to Instance.
+  `server_client.terminal.actions.mouse`; Local applies the same facts directly to Instance.
   Shift+drag and Shift+wheel are explicit
   local overrides even while tracking is enabled. A controlled SGR button-event
   canary produced exact child mouse reports for click, drag, and wheel, while the
@@ -176,7 +176,7 @@ Current canary:
   the managed-KWin canary received canonical focus-out `ESC[O` and focus-in `ESC[I`.
   Focus loss also terminates any terminal-owned mouse capture with semantic releases;
 - Ctrl+left-click is the deliberate desktop hyperlink override. The app resolves the
-  exact displayed stable cell through canonical OSC 8 metadata, using `howl-client.view`
+  exact displayed stable cell through canonical OSC 8 metadata, using `server_client.terminal.view`
   for attachments and direct VT observation for Local, accepts only
   valid UTF-8 `http://` / `https://` targets, and delegates opening to SDL. Ordinary
   unlinked Ctrl-clicks fall through to the existing mouse/selection router; unsupported
@@ -206,7 +206,7 @@ Current canary:
 - observation and control use independent client connections: a named worker
   blocks on revision-relative observation while the SDL event/render thread
   owns only control delivery; teardown wakes the blocked observer through
-  `howl-client`'s duplicate-socket cancellation primitive;
+  `server_client.terminal`'s duplicate-socket cancellation primitive;
 - Instance publication wakes the SDL main thread through one registered user
   event. The desktop loop blocks in `SDL_WaitEvent` between invalidations and
   paints once per drained event burst instead of repainting the complete app at
@@ -249,7 +249,7 @@ Current canary:
   endpoints rather than viewport-relative rows. Left-drag paints only the
   visible intersection of that stable range; wheel/PageUp/scrollbar navigation
   and live output may move the viewport without destroying the selection, and
-  an offscreen range can still be copied exactly through `howl-client.selection`
+  an offscreen range can still be copied exactly through `server_client.terminal.selection`
   plus Instance `text_extract`. Holding a selection drag in the top/bottom two-row
   edge band autoscrolls one retained row every 100 ms and updates the same stable
   focus endpoint; the SDL loop gains that timeout only while the edge gesture is
@@ -257,7 +257,7 @@ Current canary:
   uses semantic paste so bracketed-paste behavior remains VT-owned. Input
   deliberately clears selection while returning to LIVE; row eviction,
   screen-bank change, or column reflow invalidates the range instead of
-  retargeting it. Double-click expands through `howl-client.selection.word` to
+  retargeting it. Double-click expands through `server_client.terminal.selection.word` to
   the contiguous non-space canonical word and may cross a soft-wrap boundary;
   triple-click deliberately selects only the current projected visual row's
   text-shaped extent, trimming untouched trailing blank cells rather than
@@ -270,7 +270,7 @@ Current canary:
 - Renderer residency survives unchanged revisions, so the first frame uploads only
   missing presentation resources. Terminal images now use Canvas external-resource
   residency too: exact Instance image generations are demand-fetched through
-  `howl-client.images`, exposed to SDL through the same RGBA upload API, and then
+  `server_client.terminal.images`, exposed to SDL through the same RGBA upload API, and then
   reused without further transfer. Kitty replacement preserves logical Canvas
   resource identity while advancing generation; crop/z-order and exact removal are
   renderer-owned, and a Sixel canary proved the path is protocol-independent;
@@ -467,7 +467,7 @@ service update, route policy, profile conversion, or default shortcut is needed.
 
 ## Reusing an observed live view
 
-For transported Direct/Server attachments, an image-free live observation transfers its existing immutable `howl-client`
+For transported Direct/Server attachments, an image-free live observation transfers its existing immutable `server_client.terminal`
 view to rendering instead of fetching and projecting the screen a second time.
 The pane owns at most one newest offer; a render request may own one transferred
 view. Replacement, failure and teardown destroy their own allocations. There is

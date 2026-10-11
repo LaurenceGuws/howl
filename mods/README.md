@@ -8,9 +8,9 @@ several modules. Being here does not make a package terminal core.
 | --- | --- |
 | howl-vt, howl-pty, howl-instance, howl-text | accepted terminal foundations |
 | howl-render | shared terminal-to-frame presentation machinery |
-| client-transport, howl-client, server-client | optional transport and client engines |
-| server-protocol | pure shared Server control wire |
-| server | optional Server/Session model and adopted-stream service above Instance |
+| server-client | Server control and terminal clients with private transport |
+| server-protocol | pure shared Server control and terminal wire |
+| server | optional Server/Session model and adopted control/terminal streams above Instance |
 | howl-vk, howl-wayland | experimental graphics/platform libraries |
 
 The Server model/service is reusable optional orchestration. Its wire is a
