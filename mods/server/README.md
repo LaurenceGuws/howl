@@ -33,7 +33,7 @@ Instance. A single ready response carries Server, Session, Instance, tree revisi
 and client identity for both native and browser consumers. Disconnect releases the
 attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 
-| Module | Selected ownership |
+| Export | Selected ownership |
 | --- | --- |
 | `server_runtime` | listeners, scheduling and shutdown over the Server owner |
 | `server` | listener-free Server/Session/Instance lifetime model |
@@ -42,8 +42,10 @@ attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 | `server_protocol` | pure Server wire plus optional VT observation codec |
 | `server_client` | control/attachment/terminal APIs and private transport |
 | `server_client_render` | optional client observation adapter to Howl Render |
+| `howl_server_client` artifact | versioned C client ABI and artifact-owned public header |
 
-`zig build check test` proves the complete family. `zig build wire` validates its
+`zig build check test` proves the complete family, including a foreign C caller
+against a private live Server. `zig build wire` validates its
 wire corpus. The [runtime](docs/runtime.md), [client](docs/client.md) and
 [protocol](docs/protocol.md) contracts retain the current connection behavior.
 

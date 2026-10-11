@@ -9,7 +9,7 @@ const protocol = @import("server_protocol").terminal;
 const codec = @import("howl_vt_codec");
 const decodeGraphics = codec.decoded.decodeGraphics;
 const deinitRows = codec.decoded.deinitRows;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 
 /// Reports transport, framing, allocation, and rich-snapshot validation failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
@@ -135,6 +135,7 @@ pub const RawCache = struct {
     /// history window armed through `sendDeltaRequest`; complete raw fallback
     /// remains independently decodable.
     pub fn receive(self: *RawCache, connection: *client.Connection) Error!View {
+        errdefer client.retire(connection);
         return self.receiveFrom(connection);
     }
 
@@ -382,6 +383,7 @@ pub fn requestPacked(
 /// Receives one complete rich snapshot after `observe` or `observe_raw`.
 /// Revision-relative delta responses are owned by `RawCache`.
 pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
+    errdefer client.retire(connection);
     return receiveFrom(connection, allocator);
 }
 

@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("consumer.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     // Import every public child module through the parent without rebuilding it.
     for (howl.builder.modules.keys()) |name| root.addImport(name, howl.module(name));
@@ -17,6 +18,9 @@ pub fn build(b: *std.Build) void {
         const install = step.cast(std.Build.Step.InstallArtifact) orelse continue;
         std.debug.assert(howl.artifact(install.artifact.name) == install.artifact);
     }
+    // Link the exact child artifact and its owned public header through the root.
+    root.linkLibrary(howl.artifact("howl_server_client"));
+    root.addCSourceFile(.{ .file = b.path("client_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const tests = b.addTest(.{
         .name = "howl-external-consumer",
         .root_module = root,

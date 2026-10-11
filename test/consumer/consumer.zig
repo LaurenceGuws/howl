@@ -155,3 +155,9 @@ test "Server selects presentation-free Instance with the canonical VT identity" 
     const create = @typeInfo(@TypeOf(server.Server.createInstance)).@"fn";
     try std.testing.expect(create.param_types[4] == headless.Launch);
 }
+
+extern fn howl_external_client_abi() c_int;
+
+test "root exposes the exact native client artifact and its C header" {
+    try std.testing.expectEqual(@as(c_int, 0), howl_external_client_abi());
+}

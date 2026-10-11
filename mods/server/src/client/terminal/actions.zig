@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 
 /// Reports local validation, transport, framing, and server action failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
@@ -116,7 +116,7 @@ pub fn resizeGeometry(connection: *client.Connection, geometry: protocol.Resize)
         (geometry.cell_pixel_width == 0) != (geometry.cell_pixel_height == 0))
         return error.InvalidResize;
     var leader_payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
-    protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.client_id });
+    protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.identity().client_id });
     try connection.send(.assign_leader, &leader_payload);
     try expectOk(connection, .assign_leader);
     try resizeGeometryOwned(connection, geometry);
@@ -153,18 +153,22 @@ fn sendBytesInput(
     bytes: []const u8,
 ) Error!void {
     if (bytes.len + 1 > protocol.maximum_request_payload_bytes) return error.RequestTooLarge;
-    const payload = try connection.allocator.alloc(u8, bytes.len + 1);
-    defer connection.allocator.free(payload);
+    const payload = try client.ownerAllocator(connection).alloc(u8, bytes.len + 1);
+    defer client.ownerAllocator(connection).free(payload);
     payload[0] = @backingInt(kind);
     @memcpy(payload[1..], bytes);
     try connection.send(.input, payload);
 }
 
 fn expectOk(connection: *client.Connection, expected: protocol.Kind) Error!void {
+    var completed = false;
+    defer if (!completed) client.retire(connection);
     var frame = try connection.receive();
     defer frame.deinit();
     if (frame.kind != .result) return error.UnexpectedFrame;
     const result = try protocol.decodeResult(frame.payload);
+    if (result.request_kind != expected) return error.UnexpectedFrame;
+    completed = true;
     try checkResult(expected, result);
 }
 

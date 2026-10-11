@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 
 /// Reports transport, framing, allocation, and exact-resource validation failures.
 pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
@@ -44,7 +44,10 @@ pub fn request(
     var payload: [protocol.payload_bytes.image_request]u8 = undefined;
     protocol.encodeImageRequest(&payload, .{ .image_id = image_id, .generation = generation });
     try connection.send(.image_request, &payload);
-    return receiveFrom(connection, allocator, image_id, generation);
+    return receiveFrom(connection, allocator, image_id, generation) catch |err| {
+        if (err != error.ServerRejected) client.retire(connection);
+        return err;
+    };
 }
 
 fn receiveFrom(
@@ -259,10 +262,16 @@ test "truncated real image body frees final pixels and owned begin frame" {
     var pair: [2]posix.fd_t = undefined;
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
     var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var receiver = client.Connection{ .allocator = count.allocator(), .stream = .{ .fd = pair[0] }, .client_id = 1 };
-    defer receiver.deinit();
-    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .stream = .{ .fd = pair[1] }, .client_id = 2 };
-    defer sender.deinit();
+    const receiver = try client.create(count.allocator(), .{ .fd = pair[0] }, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1, .client_id = 1 });
+    var receiver_live = true;
+    const construction_allocations = count.allocations;
+    defer if (receiver_live) receiver.deinit();
+    const sender = try client.create(std.testing.allocator, .{ .fd = pair[1] }, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1, .client_id = 2 });
+    client.stateOf(sender).allocator = std.testing.failing_allocator;
+    defer {
+        client.stateOf(sender).allocator = std.testing.allocator;
+        sender.deinit();
+    }
     var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
     protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
     try sender.send(.image_begin, &begin);
@@ -272,8 +281,11 @@ test "truncated real image body frees final pixels and owned begin frame" {
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(sent));
     try std.testing.expectEqual(partial.len, sent);
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(system.shutdown(pair[1], posix.SHUT.WR)));
-    try std.testing.expectError(error.ConnectionClosed, receiveFrom(&receiver, count.allocator(), 7, 9));
-    try std.testing.expectEqual(@as(usize, 2), count.allocations);
+    try std.testing.expectError(error.ConnectionClosed, receiveFrom(receiver, count.allocator(), 7, 9));
+    try std.testing.expectEqual(construction_allocations + 2, count.allocations);
+    receiver.deinit();
+    receiver_live = false;
+    try std.testing.expect(count.allocations > construction_allocations);
     try std.testing.expectEqual(count.allocations, count.deallocations);
     try std.testing.expectEqual(count.allocated_bytes, count.freed_bytes);
 }
@@ -297,17 +309,23 @@ test "canceling real image receive releases owned frames and pixels" {
     var pair: [2]posix.fd_t = undefined;
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(posix.system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair)));
     var count = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var receiver = client.Connection{ .allocator = count.allocator(), .stream = .{ .fd = pair[0] }, .client_id = 1 };
-    defer receiver.deinit();
-    var sender = client.Connection{ .allocator = std.testing.failing_allocator, .stream = .{ .fd = pair[1] }, .client_id = 2 };
-    defer sender.deinit();
+    const receiver = try client.create(count.allocator(), .{ .fd = pair[0] }, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1, .client_id = 1 });
+    var receiver_live = true;
+    const construction_allocations = count.allocations;
+    defer if (receiver_live) receiver.deinit();
+    const sender = try client.create(std.testing.allocator, .{ .fd = pair[1] }, .{ .server_id = 1, .session_id = 1, .instance_id = 1, .tree_revision = 1, .client_id = 2 });
+    client.stateOf(sender).allocator = std.testing.failing_allocator;
+    defer {
+        client.stateOf(sender).allocator = std.testing.allocator;
+        sender.deinit();
+    }
     var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
     protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 2, .height = 2, .byte_count = 16 });
     try sender.send(.image_begin, &begin);
     try sender.send(.image_data, &.{ 1, 2, 3, 4 });
     var cancellation = try receiver.cancellation();
     defer cancellation.deinit();
-    var probe = CanceledImageProbe{ .connection = &receiver, .allocator = count.allocator() };
+    var probe = CanceledImageProbe{ .connection = receiver, .allocator = count.allocator() };
     const worker = try std.Thread.spawn(.{}, testCanceledImageReceive, .{&probe});
     {
         defer {
@@ -320,6 +338,9 @@ test "canceling real image receive releases owned frames and pixels" {
         try cancellation.cancel();
     }
     try std.testing.expectEqual(error.ConnectionClosed, probe.failure.?);
+    receiver.deinit();
+    receiver_live = false;
+    try std.testing.expect(count.allocations > construction_allocations);
     try std.testing.expectEqual(count.allocations, count.deallocations);
     try std.testing.expectEqual(count.allocated_bytes, count.freed_bytes);
 }

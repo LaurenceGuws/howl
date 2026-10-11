@@ -34,7 +34,17 @@ experimental:
     images and consequences. Each attachment has its own connection, completing at one shared ready response;
     catalog/CRUD connections remain separate. Attach checks exact Server incarnation,
     Session and Instance identities and preserves the same stream. Neither client imports
-    Instance, PTY, Server model or process ownership.
+    Instance, PTY, Server model or process ownership. Public control/attachment
+    handles are opaque; raw constructors and socket/allocator storage stay in
+    private child-owned build modules.
+  server-client-abi: >-
+    mods/server optional howl_server_client static artifact and owned
+    include/howl_server_client.h header. Versioned C opaque handles expose catalog
+    CRUD, exact dedicated attachment, caller-owned cancellation, semantic input and
+    complete rich observation/image facts through the same client/VT codec graph.
+    C records are copied explicitly and immutable byte/scalar borrows expire with
+    their independent catalog/snapshot/image owner; no Zig layout, runtime,
+    renderer or live terminal owner crosses the boundary.
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,
     owns only bounded adopted control streams and long-poll state, decodes

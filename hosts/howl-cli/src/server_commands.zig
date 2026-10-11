@@ -174,7 +174,7 @@ fn connect(
     init: std.process.Init,
     endpoint: []const u8,
     context: *failure.Context,
-) !server_client.Connection {
+) !*server_client.Connection {
     var diagnostic: server_client.ConnectDiagnostic = .{};
     return server_client.Connection.connectDiagnosed(init.gpa, endpoint, &diagnostic) catch |problem| {
         context.captureConnect(&diagnostic);
@@ -245,7 +245,7 @@ fn createSession(
     var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     const id = try connection.createSession(name);
-    try emitSessionReceipt(init, "create", id, connection.tree_revision);
+    try emitSessionReceipt(init, "create", id, connection.treeRevision());
 }
 
 fn closeSession(
@@ -257,7 +257,7 @@ fn closeSession(
     var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     try connection.closeSession(id);
-    try emitSessionReceipt(init, "close", id, connection.tree_revision);
+    try emitSessionReceipt(init, "close", id, connection.treeRevision());
 }
 
 fn createInstance(
@@ -314,7 +314,7 @@ fn createInstance(
         .columns = columns,
         .history_rows = history_rows,
     });
-    try emitInstanceReceipt(init, "create", identity, connection.tree_revision);
+    try emitInstanceReceipt(init, "create", identity, connection.treeRevision());
 }
 
 fn closeInstance(
@@ -326,7 +326,7 @@ fn closeInstance(
     var connection = try connect(init, endpoint, context);
     defer connection.deinit();
     try connection.closeInstance(identity);
-    try emitInstanceReceipt(init, "close", identity, connection.tree_revision);
+    try emitInstanceReceipt(init, "close", identity, connection.treeRevision());
 }
 
 fn emitSessionReceipt(init: std.process.Init, operation: []const u8, id: u64, revision: u64) !void {

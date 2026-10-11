@@ -281,7 +281,7 @@ fn handleWebSocket(
     // reason: The fixed 127.0.0.1 literal is valid IPv4 and the port is already a u16; parsing cannot reject either.
     const upstream_address = Io.net.IpAddress.parse("127.0.0.1", config.server_port) catch unreachable;
     var upstream = Io.net.Stream{ .socket = .{
-        .handle = attached.connection.readinessFd(),
+        .handle = try attached.readinessFd(),
         .address = upstream_address,
     } };
 
@@ -293,7 +293,7 @@ fn handleWebSocket(
     const protocol = server_client.protocol;
     var ready_frame: [protocol.header_bytes + protocol.payload_bytes.attach_ready]u8 = undefined;
     try protocol.encodeHeader(ready_frame[0..protocol.header_bytes], .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
-    try protocol.encodeAttachReady(ready_frame[protocol.header_bytes..], attached.ready);
+    try protocol.encodeAttachReady(ready_frame[protocol.header_bytes..], attached.identity());
     try ws.writeMessage(&ready_frame, .binary);
     try ws.flush();
     var upstream_write_buffer: [upstream_chunk_bytes]u8 = undefined;

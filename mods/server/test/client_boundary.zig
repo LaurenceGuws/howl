@@ -13,3 +13,13 @@ test "client-only public graph owns no canonical process or runtime" {
         try std.testing.expect(!@hasDecl(client.terminal, name));
     }
 }
+
+test "public connection authority is opaque and has no raw constructor or storage" {
+    try std.testing.expect(@typeInfo(client.Connection) == .@"opaque");
+    try std.testing.expect(@typeInfo(client.terminal.Connection) == .@"opaque");
+    inline for (.{ "State", "Stream", "Frame", "Attached", "connectTransport", "create", "stateOf" }) |name|
+        try std.testing.expect(!@hasDecl(client, name));
+    try std.testing.expect(!@hasDecl(client.Connection, "attachInstance"));
+    inline for (.{ "create", "stateOf", "retire", "ownerAllocator", "stream", "allocator" }) |name|
+        try std.testing.expect(!@hasDecl(client.terminal, name));
+}

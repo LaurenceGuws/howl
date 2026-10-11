@@ -116,7 +116,7 @@ const LocalInstance = struct {
 
 const Control = struct {
     allocator: std.mem.Allocator,
-    connection: ?client.Connection = null,
+    connection: ?*client.Connection = null,
     interrupt: ?*NativeInterrupt = null,
     local_instance: ?*LocalInstance = null,
 };
@@ -130,7 +130,7 @@ const PendingImage = struct {
 
 const Host = struct {
     allocator: std.mem.Allocator,
-    connection: ?client.Connection = null,
+    connection: ?*client.Connection = null,
     interrupt: ?*NativeInterrupt = null,
     local_instance: ?*LocalInstance = null,
     raw_cache: client.rich.RawCache,
@@ -422,7 +422,7 @@ pub export fn howl_native_host_fetch_image_refill(
     }
 
     var fetched = client.images.request(
-        &host.connection.?,
+        host.connection.?,
         host.allocator,
         pending.binding.image_id,
         pending.binding.generation,
@@ -589,7 +589,7 @@ fn connectManagedInstance(
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
-) ?client.Connection {
+) ?*client.Connection {
     var server_diagnostic: server_client.ConnectDiagnostic = .{};
     const attached = server_client.attach(allocator, .{
         .endpoint = server_endpoint,
@@ -608,11 +608,11 @@ fn connectManagedInstance(
         return null;
     };
 
-    return attached.connection;
+    return attached;
 }
 
 fn createHost(
-    connection_value: ?client.Connection,
+    connection_value: ?*client.Connection,
     primary_ptr: [*]const u8,
     primary_len: usize,
     fallback_ptr: [*]const u8,
@@ -628,20 +628,20 @@ fn createHost(
 ) ?*HostHandle {
     const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse {
         writeCreateDiagnostic(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "invalid_raster_scale");
-        var connection = connection_value;
-        if (connection) |*value| value.deinit();
+        const connection = connection_value;
+        if (connection) |value| value.deinit();
         return null;
     };
     const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch |failure| {
         writeCreateStageFailure(diagnostic_ptr, diagnostic_capacity, diagnostic_len, "atlas_extent", failure);
-        var connection = connection_value;
-        if (connection) |*value| value.deinit();
+        const connection = connection_value;
+        if (connection) |value| value.deinit();
         return null;
     };
     const allocator = std.heap.c_allocator;
-    var connection = connection_value;
+    const connection = connection_value;
     var connection_live = true;
-    defer if (connection_live) if (connection) |*value| value.deinit();
+    defer if (connection_live) if (connection) |value| value.deinit();
 
     var raw_cache = client.rich.RawCache.init(allocator);
     var raw_cache_live = true;
@@ -824,13 +824,13 @@ pub export fn howl_native_host_create_local(
 }
 
 fn createControlFromConnection(
-    connection_value: client.Connection,
+    connection_value: *client.Connection,
     diagnostic_ptr: [*]u8,
     diagnostic_capacity: usize,
     diagnostic_len: *usize,
 ) ?*ControlHandle {
     const allocator = std.heap.c_allocator;
-    var connection = connection_value;
+    const connection = connection_value;
     var connection_live = true;
     defer if (connection_live) connection.deinit();
     const control = allocator.create(Control) catch |failure| {
@@ -1002,7 +1002,7 @@ pub export fn howl_native_control_destroy(raw: ?*ControlHandle) void {
     const control: *Control = @ptrCast(@alignCast(raw_control));
     const allocator = control.allocator;
     const local_instance = control.local_instance;
-    if (control.connection) |*value| value.deinit();
+    if (control.connection) |value| value.deinit();
     control.* = undefined;
     allocator.destroy(control);
     if (local_instance) |value| releaseLocalInstance(value);
@@ -1019,7 +1019,7 @@ pub export fn howl_native_control_committed_text(
         local.input(value.owner, localCancellation(control.interrupt), .{ .bytes = bytes_ptr[0..bytes_len] }) catch |failure| return controlFailureCode(failure);
         return 0;
     }
-    client.actions.committedText(&control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
+    client.actions.committedText(control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1034,7 +1034,7 @@ pub export fn howl_native_control_paste(
         local.input(value.owner, localCancellation(control.interrupt), .{ .paste = bytes_ptr[0..bytes_len] }) catch |failure| return controlFailureCode(failure);
         return 0;
     }
-    client.actions.paste(&control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
+    client.actions.paste(control.connection.?, bytes_ptr[0..bytes_len]) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1057,7 +1057,7 @@ pub export fn howl_native_control_named_key(
         return 0;
     }
     client.actions.namedKey(
-        &control.connection.?,
+        control.connection.?,
         @fromBackingInt(@intCast(key_value)),
         @fromBackingInt(@intCast(action_value)),
         modifiers,
@@ -1085,7 +1085,7 @@ pub export fn howl_native_control_unicode_key(
         return 0;
     }
     client.actions.unicodeKey(
-        &control.connection.?,
+        control.connection.?,
         scalar,
         @fromBackingInt(@intCast(action_value)),
         modifiers,
@@ -1101,7 +1101,7 @@ pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i
         local.input(value.owner, localCancellation(control.interrupt), .{ .focus = if (focus_value == 1) .in else .out }) catch |failure| return controlFailureCode(failure);
         return 0;
     }
-    client.actions.focus(&control.connection.?, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
+    client.actions.focus(control.connection.?, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1116,7 +1116,7 @@ pub export fn howl_native_control_resize(
         local.resize(value.owner, localCancellation(control.interrupt), rows, columns) catch |failure| return controlFailureCode(failure);
         return 0;
     }
-    client.actions.resize(&control.connection.?, rows, columns) catch |failure| return controlFailureCode(failure);
+    client.actions.resize(control.connection.?, rows, columns) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1143,7 +1143,7 @@ pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8)
         15 => .terminate,
         else => return 3,
     };
-    client.actions.signal(&control.connection.?, signal) catch |failure| return controlFailureCode(failure);
+    client.actions.signal(control.connection.?, signal) catch |failure| return controlFailureCode(failure);
     return 0;
 }
 
@@ -1161,7 +1161,7 @@ pub export fn howl_native_control_interaction_state(
         std.debug.assert(count == interaction_packet_bytes);
         return 0;
     }
-    const state = client.state.get(&control.connection.?) catch |failure| return controlFailureCode(failure);
+    const state = client.state.get(control.connection.?) catch |failure| return controlFailureCode(failure);
     var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
     protocol.encodeInteractionStateSnapshot(&encoded, state);
     @memcpy(output_ptr[0..encoded.len], &encoded);
@@ -1213,7 +1213,7 @@ pub export fn howl_native_control_mouse(
         } }) catch |failure| return controlFailureCode(failure);
         return 0;
     }
-    client.actions.mouse(&control.connection.?, .{
+    client.actions.mouse(control.connection.?, .{
         .kind = @fromBackingInt(@intCast(kind_value)),
         .button = @fromBackingInt(@intCast(button_value)),
         .modifiers = modifiers,
@@ -1254,7 +1254,7 @@ pub export fn howl_native_control_text_extract(
         return 0;
     }
     const selected = client.selection.extract(
-        &control.connection.?,
+        control.connection.?,
         control.allocator,
         .{
             .anchor = .{ .row = start_row, .column = start_column },
@@ -1293,7 +1293,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     terminal.deinit(host.renderer);
     host.fonts.deinit();
     host.raw_cache.deinit();
-    if (host.connection) |*value| value.deinit();
+    if (host.connection) |value| value.deinit();
     host.* = undefined;
     allocator.free(observation_scratch);
     allocator.destroy(host);
@@ -1628,7 +1628,7 @@ fn receiveRich(
 ) !client.rich.Snapshot {
     if (host.armed_live_after_revision != null) return error.InvalidHost;
     return client.rich.requestPacked(
-        &host.connection.?,
+        host.connection.?,
         allocator,
         after_revision,
         history_offset,
@@ -1652,10 +1652,10 @@ fn receiveLiveRich(
         // delta-lane fallback instead of guessing that stale caller revision.
         if (after_revision != 0 and !host.live_resync_required)
             return error.InvalidHost;
-        try host.raw_cache.sendDeltaRequest(&host.connection.?, 0, 0);
+        try host.raw_cache.sendDeltaRequest(host.connection.?, 0, 0);
         host.live_resync_required = false;
     }
-    const snapshot = try host.raw_cache.receive(&host.connection.?);
+    const snapshot = try host.raw_cache.receive(host.connection.?);
     host.armed_live_after_revision = null;
     return snapshot;
 }
@@ -1744,7 +1744,7 @@ fn observe(
     const semantic_bytes: *[4]u8 = output[60..64];
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     if (host.live_observe_pipeline and history_offset == 0) {
-        try host.raw_cache.sendDeltaRequest(&host.connection.?, begin.revision, 0);
+        try host.raw_cache.sendDeltaRequest(host.connection.?, begin.revision, 0);
         host.armed_live_after_revision = begin.revision;
         host.live_resync_required = false;
     }

@@ -1,7 +1,7 @@
 //! Coherent terminal interaction state for mode-aware native clients.
 
 const protocol = @import("server_protocol").terminal;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 
 /// Reports connection, payload, or interaction-state framing failures.
 pub const Error = client.Error || protocol.PayloadError || error{

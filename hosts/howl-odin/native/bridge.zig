@@ -2493,10 +2493,10 @@ fn connectForHost(
     interrupt: ?*client.Interrupt,
     target: ConnectTarget,
     diagnostic: *client.ConnectDiagnostic,
-) (client.Error || server_client.Error)!client.Connection {
+) (client.Error || server_client.Error)!*client.Connection {
     if (runtime == null and interrupt != null) return error.InvalidEndpoint;
     const attached = try server_client.attach(std.heap.c_allocator, target, diagnostic, interrupt);
-    return attached.connection;
+    return attached;
 }
 
 // zig-audit: acknowledge opaque_type
@@ -2825,7 +2825,7 @@ const Render = struct {
     front: RenderFront = .{},
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
-    connection: client.Connection,
+    connection: *client.Connection,
     raw_observation: bool,
     lane: *RenderLane,
     terminal_renderer: *terminal_render.Renderer,
@@ -3333,7 +3333,7 @@ fn prepareExternalUploads(
         const binding = findRenderImageBindingByResource(bindings, external.resource) orelse
             return error.InvalidImageBinding;
         var fetched = try client.images.request(
-            &renderer.connection,
+            renderer.connection,
             renderer.allocator,
             binding.image_id,
             binding.generation,
@@ -3418,7 +3418,7 @@ pub export fn howl_odin_bridge_render_prepare(raw: ?*RenderHandle, history_offse
     renderer.clearError();
     clearExternalUploads(renderer);
     var rich = requestObservation(
-        &renderer.connection,
+        renderer.connection,
         renderer.allocator,
         0,
         history_offset,
@@ -4217,7 +4217,7 @@ comptime {
 const ConsequenceBridge = struct {
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
-    connection: client.Connection,
+    connection: *client.Connection,
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
 
@@ -4256,7 +4256,7 @@ fn posixProcessEnviron() std.process.Environ {
 const Bridge = struct {
     allocator: std.mem.Allocator,
     runtime: ?*Runtime = null,
-    connection: client.Connection,
+    connection: *client.Connection,
     raw_observation: bool,
     live_raw_cache: client.rich.RawCache,
     live_view: ?client.rich.View = null,
@@ -4475,7 +4475,7 @@ pub export fn howl_odin_bridge_snapshot(
     const use_live_delta = history_offset == 0;
     if (use_live_delta) {
         bridge.live_raw_cache.sendDeltaRequest(
-            &bridge.connection,
+            bridge.connection,
             after_revision,
             0,
         ) catch |failure| switch (failure) {
@@ -4485,7 +4485,7 @@ pub export fn howl_odin_bridge_snapshot(
             // response; RawCache receives that same response and adopts it as
             // the next live delta baseline.
             error.DeltaBaselineMismatch => client.rich.sendRawRequest(
-                &bridge.connection,
+                bridge.connection,
                 after_revision,
                 0,
             ) catch |resync_failure| {
@@ -4499,13 +4499,13 @@ pub export fn howl_odin_bridge_snapshot(
         };
     }
     const rich_view: client.rich.View = if (use_live_delta)
-        bridge.live_raw_cache.receive(&bridge.connection) catch |failure| {
+        bridge.live_raw_cache.receive(bridge.connection) catch |failure| {
             bridge.setError("observe", @errorName(failure));
             return 2;
         }
     else blk: {
         owned_rich = requestObservation(
-            &bridge.connection,
+            bridge.connection,
             bridge.allocator,
             after_revision,
             history_offset,
@@ -4683,7 +4683,7 @@ pub export fn howl_odin_bridge_search_find(
     const reverse = reverse_value != 0;
 
     var initial_rich = client.rich.request(
-        &bridge.connection,
+        bridge.connection,
         bridge.allocator,
         0,
         0,
@@ -4805,7 +4805,7 @@ pub export fn howl_odin_bridge_search_find(
             else
                 @intCast(@min(@as(i64, metadata.history_count), retry_live_top - desired_top));
             var page_rich = client.rich.request(
-                &bridge.connection,
+                bridge.connection,
                 bridge.allocator,
                 0,
                 requested_offset,
@@ -4963,7 +4963,7 @@ pub export fn howl_odin_bridge_send_text(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.actions.committedText(&bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
+    client.actions.committedText(bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
         bridge.setError("text", @errorName(failure));
         return 2;
     };
@@ -4983,7 +4983,7 @@ pub export fn howl_odin_bridge_send_paste(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.actions.paste(&bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
+    client.actions.paste(bridge.connection, bytes_ptr[0..bytes_len]) catch |failure| {
         bridge.setError("paste", @errorName(failure));
         return 2;
     };
@@ -5055,7 +5055,7 @@ pub export fn howl_odin_bridge_hyperlink_copy(
         return 2;
     }
     var rich = client.rich.request(
-        &bridge.connection,
+        bridge.connection,
         bridge.allocator,
         0,
         history_offset,
@@ -5122,7 +5122,7 @@ pub export fn howl_odin_bridge_selection_expand(
     }
 
     var rich = client.rich.request(
-        &bridge.connection,
+        bridge.connection,
         bridge.allocator,
         0,
         history_offset,
@@ -5215,7 +5215,7 @@ pub export fn howl_odin_bridge_selection_extract(
         .alternate_screen = expected_alternate_screen != 0,
     };
     const text = client.selection.extract(
-        &bridge.connection,
+        bridge.connection,
         bridge.allocator,
         range,
     ) catch |failure| {
@@ -5249,7 +5249,7 @@ pub export fn howl_odin_bridge_send_named_key(
     if (modifiers & ~protocol.typed_input.modifiers.known != 0) return 3;
     const key = std.enums.fromInt(protocol.InputKeyName, key_value) orelse return 3;
     const action = std.enums.fromInt(protocol.InputKeyAction, action_value) orelse return 3;
-    client.actions.namedKey(&bridge.connection, key, action, modifiers) catch |failure| {
+    client.actions.namedKey(bridge.connection, key, action, modifiers) catch |failure| {
         bridge.setError("key", @errorName(failure));
         return 2;
     };
@@ -5272,7 +5272,7 @@ pub export fn howl_odin_bridge_send_unicode_key(
     bridge.clearError();
     if (modifiers & ~protocol.typed_input.modifiers.known != 0) return 3;
     const action = std.enums.fromInt(protocol.InputKeyAction, action_value) orelse return 3;
-    client.actions.unicodeKey(&bridge.connection, scalar, action, modifiers) catch |failure| {
+    client.actions.unicodeKey(bridge.connection, scalar, action, modifiers) catch |failure| {
         bridge.setError("unicode_key", @errorName(failure));
         return 2;
     };
@@ -5292,7 +5292,7 @@ pub export fn howl_odin_bridge_interaction_state(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    const state = client.state.get(&bridge.connection) catch |failure| {
+    const state = client.state.get(bridge.connection) catch |failure| {
         bridge.setError("interaction_state", @errorName(failure));
         return 2;
     };
@@ -5334,7 +5334,7 @@ pub export fn howl_odin_bridge_send_mouse(
         return 3;
     const kind = std.enums.fromInt(protocol.InputMouseKind, kind_value) orelse return 3;
     const button = std.enums.fromInt(protocol.InputMouseButton, button_value) orelse return 3;
-    client.actions.mouse(&bridge.connection, .{
+    client.actions.mouse(bridge.connection, .{
         .kind = kind,
         .button = button,
         .modifiers = modifiers,
@@ -5363,7 +5363,7 @@ pub export fn howl_odin_bridge_send_focus(
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
     const focus = std.enums.fromInt(protocol.InputFocus, focus_value) orelse return 3;
-    client.actions.focus(&bridge.connection, focus) catch |failure| {
+    client.actions.focus(bridge.connection, focus) catch |failure| {
         bridge.setError("focus", @errorName(failure));
         return 2;
     };
@@ -5394,9 +5394,9 @@ pub export fn howl_odin_bridge_send_resize(
         .cell_pixel_height = cell_height,
     };
     const outcome = if (claim == 1)
-        client.actions.resizeGeometry(&bridge.connection, geometry)
+        client.actions.resizeGeometry(bridge.connection, geometry)
     else
-        client.actions.resizeGeometryOwned(&bridge.connection, geometry);
+        client.actions.resizeGeometryOwned(bridge.connection, geometry);
     outcome catch |failure| {
         bridge.setError("resize", @errorName(failure));
         return switch (failure) {
@@ -5726,7 +5726,7 @@ pub export fn howl_odin_bridge_consequence_client_id(raw: ?*ConsequenceHandle) u
     // zig-audit: acknowledge align_cast
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
-    return bridge.connection.client_id;
+    return bridge.connection.identity().client_id;
 }
 
 /// Acquires consequence observation authority for this connection.
@@ -5738,7 +5738,7 @@ pub export fn howl_odin_bridge_consequence_acquire(raw: ?*ConsequenceHandle) i32
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.consequences.acquire(&bridge.connection) catch |failure| {
+    client.consequences.acquire(bridge.connection) catch |failure| {
         bridge.setError("acquire", @errorName(failure));
         return 2;
     };
@@ -5794,7 +5794,7 @@ pub export fn howl_odin_bridge_consequence_observe(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    var snapshot = client.consequences.observe(&bridge.connection, bridge.allocator) catch |failure| {
+    var snapshot = client.consequences.observe(bridge.connection, bridge.allocator) catch |failure| {
         bridge.setError("observe", @errorName(failure));
         return 2;
     };
@@ -5826,7 +5826,7 @@ pub export fn howl_odin_bridge_consequence_consume(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    client.consequences.consume(&bridge.connection, generation) catch |failure| {
+    client.consequences.consume(bridge.connection, generation) catch |failure| {
         bridge.setError("consume", @errorName(failure));
         return 2;
     };
@@ -5862,7 +5862,7 @@ pub export fn howl_odin_bridge_consequence_reply(
             return 2;
         },
     };
-    client.consequences.reply(&bridge.connection, generation, kind, body_ptr[0..body_len]) catch |failure| {
+    client.consequences.reply(bridge.connection, generation, kind, body_ptr[0..body_len]) catch |failure| {
         bridge.setError("reply", @errorName(failure));
         return 2;
     };

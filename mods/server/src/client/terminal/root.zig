@@ -5,7 +5,7 @@
 //! VT, Instance lifecycle, discovery, renderer, CLI presentation, or platform UI.
 //! Native hosts use explicit Unix or numeric-IPv4 TCP streams. Byte-entry consumers need no subprocess.
 
-const impl = @import("client.zig");
+const impl = @import("terminal_owner");
 
 /// Server-owned terminal interaction protocol shared with the endpoint.
 pub const protocol = @import("server_protocol").terminal;

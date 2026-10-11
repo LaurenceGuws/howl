@@ -18,20 +18,23 @@ const Pump = struct {
     }
 };
 
-fn connectServer(endpoint: []const u8) !server_client.Connection {
+fn connectServer(endpoint: []const u8) !*server_client.Connection {
     return server_client.Connection.connect(std.testing.allocator, endpoint);
 }
 
 fn attachInstance(
     endpoint: []const u8,
     identity: server_client.protocol.InstanceIdentity,
-) !howl_client.Connection {
-    var control = try connectServer(endpoint);
-    var control_live = true;
-    defer if (control_live) control.deinit();
-    const attached = try control.attachInstance(control.server_id, identity);
-    control_live = false;
-    return attached.connection;
+) !*howl_client.Connection {
+    const control = try connectServer(endpoint);
+    defer control.deinit();
+    var diagnostic: server_client.ConnectDiagnostic = .{};
+    return server_client.attach(std.testing.allocator, .{
+        .endpoint = endpoint,
+        .server_id = control.serverId(),
+        .session_id = identity.session_id,
+        .instance_id = identity.instance_id,
+    }, &diagnostic, null);
 }
 
 test "one Server hosts independently-sized Instances without owning a shared grid" {
@@ -78,14 +81,14 @@ test "one Server hosts independently-sized Instances without owning a shared gri
 
     var work_client = try attachInstance(endpoint, work_instance);
     defer work_client.deinit();
-    var work_snapshot = try howl_client.snapshot.request(&work_client, std.testing.allocator, 0, 0);
+    var work_snapshot = try howl_client.snapshot.request(work_client, std.testing.allocator, 0, 0);
     defer work_snapshot.deinit();
     try std.testing.expectEqual(@as(u16, 40), work_snapshot.begin.terminal.rows);
     try std.testing.expectEqual(@as(u16, 100), work_snapshot.begin.terminal.columns);
 
     var logs_client = try attachInstance(endpoint, logs_instance);
     defer logs_client.deinit();
-    var logs_snapshot = try howl_client.snapshot.request(&logs_client, std.testing.allocator, 0, 0);
+    var logs_snapshot = try howl_client.snapshot.request(logs_client, std.testing.allocator, 0, 0);
     defer logs_snapshot.deinit();
     try std.testing.expectEqual(@as(u16, 18), logs_snapshot.begin.terminal.rows);
     try std.testing.expectEqual(@as(u16, 72), logs_snapshot.begin.terminal.columns);
@@ -168,7 +171,7 @@ test "quiescent exited Instance reactivates on later exact attach" {
     var retained_client = try attachInstance(endpoint, identity);
     defer retained_client.deinit();
     var snapshot = try howl_client.snapshot.request(
-        &retained_client,
+        retained_client,
         std.testing.allocator,
         0,
         0,
@@ -232,7 +235,7 @@ test "one Server fairly services several independent live Instances" {
     var control = try connectServer(endpoint);
     defer control.deinit();
     var identities: [count]server_client.protocol.InstanceIdentity = undefined;
-    var connections: [count]howl_client.Connection = undefined;
+    var connections: [count]*howl_client.Connection = undefined;
     var connected: usize = 0;
     defer {
         var index = connected;
@@ -262,7 +265,7 @@ test "one Server fairly services several independent live Instances" {
     var senders: [count]std.Thread = undefined;
     for (0..count) |index| {
         senders[index] = try std.Thread.spawn(.{}, FairInput.run, .{FairInput{
-            .connection = &connections[index],
+            .connection = connections[index],
             .marker = markers[index],
             .failed = &failed,
         }});
@@ -276,7 +279,7 @@ test "one Server fairly services several independent live Instances" {
 
     for (0..count) |index| {
         var snapshot = try howl_client.snapshot.request(
-            &connections[index],
+            connections[index],
             std.testing.allocator,
             0,
             0,
@@ -372,21 +375,21 @@ test "destructive close follows Server Session Instance lifetime boundaries" {
     defer doomed_client.deinit();
     var sibling_client = try attachInstance(endpoint, sibling);
     defer sibling_client.deinit();
-    const doomed_pid = try snapshotPid(&doomed_client, "DOOMED_PID:");
-    const sibling_pid = try snapshotPid(&sibling_client, "SIBLING_PID:");
+    const doomed_pid = try snapshotPid(doomed_client, "DOOMED_PID:");
+    const sibling_pid = try snapshotPid(sibling_client, "SIBLING_PID:");
     try std.testing.expect(doomed_pid != sibling_pid);
 
     try control.closeSession(doomed_session);
     try std.testing.expectError(
         error.ConnectionClosed,
-        howl_client.snapshot.request(&doomed_client, std.testing.allocator, 0, 0),
+        howl_client.snapshot.request(doomed_client, std.testing.allocator, 0, 0),
     );
     try expectProcessGroupGone(doomed_pid);
 
     // Destruction of one Session must not disturb another Session's live Instance.
-    try howl_client.actions.committedText(&sibling_client, "SIBLING_OK\\n");
+    try howl_client.actions.committedText(sibling_client, "SIBLING_OK\\n");
     var sibling_snapshot = try howl_client.snapshot.request(
-        &sibling_client,
+        sibling_client,
         std.testing.allocator,
         0,
         0,
@@ -411,7 +414,7 @@ test "destructive close follows Server Session Instance lifetime boundaries" {
     try control.closeInstance(sibling);
     try std.testing.expectError(
         error.ConnectionClosed,
-        howl_client.snapshot.request(&sibling_client, std.testing.allocator, 0, 0),
+        howl_client.snapshot.request(sibling_client, std.testing.allocator, 0, 0),
     );
     try expectProcessGroupGone(sibling_pid);
 
@@ -500,7 +503,7 @@ test "parked control observer cannot starve dormant PTY readiness or sibling con
     var failed: std.atomic.Value(bool) = .init(false);
     var saw_exited: std.atomic.Value(bool) = .init(false);
     const observer_worker = try std.Thread.spawn(.{}, ParkedTreeObserver.run, .{ParkedTreeObserver{
-        .connection = &observer,
+        .connection = observer,
         .after_revision = parked_after,
         .session_id = session_id,
         .instance_id = identity.instance_id,
@@ -532,7 +535,7 @@ test "parked control observer cannot starve dormant PTY readiness or sibling con
     var retained_client = try attachInstance(endpoint, identity);
     defer retained_client.deinit();
     var snapshot = try howl_client.snapshot.request(
-        &retained_client,
+        retained_client,
         std.testing.allocator,
         0,
         0,

@@ -3,6 +3,8 @@ const client = @import("server_client");
 const model = @import("server_model");
 const server_service = @import("server_service");
 const transport = @import("client_transport");
+const terminal_owner = @import("terminal_owner");
+const control_owner = @import("control_owner");
 
 const Pump = struct {
     service: *server_service.Service,
@@ -82,13 +84,13 @@ test "dedicated attachments preserve separate control and Instance lifetime" {
 
     var diagnostic: client.ConnectDiagnostic = .{};
     streams_live[0] = false;
-    var connection = try client.connectTransport(
+    var connection = try control_owner.connectTransport(
         std.testing.allocator,
         streams[0],
         &diagnostic,
     );
     defer connection.deinit();
-    try std.testing.expectEqual(@as(u64, 0x91), connection.server_id);
+    try std.testing.expectEqual(@as(u64, 0x91), connection.serverId());
     try std.testing.expectEqual(client.ConnectStage.ready, diagnostic.stage);
 
     const work = try connection.createSession("work");
@@ -115,19 +117,19 @@ test "dedicated attachments preserve separate control and Instance lifetime" {
     try std.testing.expectEqual(identity.instance_id, tree.sessions[0].instances[0].instance_id);
 
     streams_live[1] = false;
-    var attachment_control = try client.connectTransport(std.testing.allocator, streams[1], &diagnostic);
+    var attachment_control = try control_owner.connectTransport(std.testing.allocator, streams[1], &diagnostic);
     defer attachment_control.deinit();
-    var attached = try attachment_control.attachInstance(connection.server_id, identity);
+    var attached = try control_owner.attachInstance(attachment_control, connection.serverId(), identity);
     var attached_live = true;
     defer if (attached_live) attached.deinit();
-    try std.testing.expectEqual(connection.server_id, attached.ready.server_id);
-    try std.testing.expectEqual(work, attached.ready.session_id);
-    try std.testing.expectEqual(identity.instance_id, attached.ready.instance_id);
-    try std.testing.expectEqual(attached.ready.client_id, attached.connection.client_id);
-    try std.testing.expect(attached.ready.tree_revision >= tree.status.tree_revision);
+    try std.testing.expectEqual(connection.serverId(), attached.identity().server_id);
+    try std.testing.expectEqual(work, attached.identity().session_id);
+    try std.testing.expectEqual(identity.instance_id, attached.identity().instance_id);
+    try std.testing.expect(attached.identity().client_id != 0);
+    try std.testing.expect(attached.identity().tree_revision >= tree.status.tree_revision);
     try std.testing.expectError(error.ConnectionRetired, attachment_control.status());
-    const first_client_id = attached.ready.client_id;
-    const initial_state = try client.terminal.state.get(&attached.connection);
+    const first_client_id = attached.identity().client_id;
+    const initial_state = try client.terminal.state.get(attached);
     try std.testing.expect(initial_state.terminal_revision != 0);
 
     try std.testing.expectEqual(@as(u16, 1), (try connection.status()).instance_count);
@@ -136,18 +138,18 @@ test "dedicated attachments preserve separate control and Instance lifetime" {
     try std.testing.expectEqual(@as(u16, 1), (try connection.status()).instance_count);
 
     streams_live[2] = false;
-    var reattachment_control = try client.connectTransport(std.testing.allocator, streams[2], &diagnostic);
+    var reattachment_control = try control_owner.connectTransport(std.testing.allocator, streams[2], &diagnostic);
     defer reattachment_control.deinit();
-    var reattached = try reattachment_control.attachInstance(connection.server_id, identity);
+    var reattached = try control_owner.attachInstance(reattachment_control, connection.serverId(), identity);
     defer reattached.deinit();
-    try std.testing.expectEqual(identity.instance_id, reattached.ready.instance_id);
-    try std.testing.expect(reattached.ready.client_id != first_client_id);
-    const resumed_state = try client.terminal.state.get(&reattached.connection);
+    try std.testing.expectEqual(identity.instance_id, reattached.identity().instance_id);
+    try std.testing.expect(reattached.identity().client_id != first_client_id);
+    const resumed_state = try client.terminal.state.get(reattached);
     try std.testing.expect(resumed_state.terminal_revision >= initial_state.terminal_revision);
 
     try connection.closeInstance(identity);
     try std.testing.expectEqual(@as(u16, 0), (try connection.status()).instance_count);
-    try std.testing.expectError(error.ConnectionClosed, reattached.connection.receive());
+    try std.testing.expectError(error.ConnectionClosed, reattached.receive());
 }
 
 test "typed Server client errors leave control connection usable" {
@@ -169,7 +171,7 @@ test "typed Server client errors leave control connection usable" {
     }
 
     var diagnostic: client.ConnectDiagnostic = .{};
-    var connection = try client.connectTransport(
+    var connection = try control_owner.connectTransport(
         std.testing.allocator,
         try adoptedPair(&service),
         &diagnostic,
@@ -210,9 +212,9 @@ fn frame(peer: *transport.Stream, kind: protocol.Kind, payload: []const u8) !voi
     try peer.write(payload);
 }
 
-fn makeControl(fd: posix.fd_t, allocator: std.mem.Allocator) !client.Connection {
+fn makeControl(fd: posix.fd_t, allocator: std.mem.Allocator) !*client.Connection {
     var diagnostic: client.ConnectDiagnostic = .{};
-    return .{ .stream = try transport.Stream.adopt(fd, &diagnostic, null), .allocator = allocator, .server_id = 91, .tree_revision = 1 };
+    return control_owner.create(allocator, try transport.Stream.adopt(fd, &diagnostic, null), 91, 1);
 }
 
 fn resultFrame(peer: *transport.Stream, kind: protocol.Kind, code: protocol.ResultCode, session_id: u64) !void {
@@ -255,6 +257,7 @@ test "public tree decoder rejects duplicate and backwards Session and Instance i
             std.mem.writeInt(u64, bytes[offset..][0..8], second_id, .big);
             try frame(&peer, .tree_snapshot, encoded);
             try std.testing.expectError(error.InvalidPayload, c.observeTree(0));
+            try std.testing.expectError(error.ConnectionRetired, c.status());
         }
     }
 }
@@ -263,11 +266,15 @@ test "attach OOM after header retires rather than reinterpreting unread body" {
     const fds = try hostilePair();
     var peer: transport.Stream = .{ .fd = fds[1] };
     defer peer.deinit();
-    var c = try makeControl(fds[0], std.testing.failing_allocator);
-    defer c.deinit();
+    const c = try makeControl(fds[0], std.testing.allocator);
+    defer {
+        control_owner.stateOf(c).allocator = std.testing.allocator;
+        c.deinit();
+    }
+    control_owner.stateOf(c).allocator = std.testing.failing_allocator;
     try resultFrame(&peer, .attach_instance, .instance_not_found, 7);
-    try std.testing.expectError(error.OutOfMemory, c.attachInstance(91, .{ .session_id = 7, .instance_id = 4 }));
-    c.allocator = std.testing.allocator;
+    try std.testing.expectError(error.OutOfMemory, control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 4 }));
+    control_owner.stateOf(c).allocator = std.testing.allocator;
     try std.testing.expectError(error.ConnectionRetired, c.status());
     try std.testing.expectEqual(posix.E.BADF, posix.errno(posix.system.fcntl(fds[0], posix.F.GETFD, @as(usize, 0))));
 }
@@ -278,11 +285,11 @@ test "only pre-send validation and complete typed attach rejection are reusable"
     defer peer.deinit();
     var c = try makeControl(fds[0], std.testing.allocator);
     defer c.deinit();
-    try std.testing.expectError(error.InvalidPayload, c.attachInstance(91, .{ .session_id = 0, .instance_id = 4 }));
-    try std.testing.expect(c.live);
+    try std.testing.expectError(error.InvalidPayload, control_owner.attachInstance(c, 91, .{ .session_id = 0, .instance_id = 4 }));
+    try std.testing.expect(control_owner.stateOf(c).live);
     try resultFrame(&peer, .attach_instance, .instance_not_found, 7);
-    try std.testing.expectError(error.InstanceNotFound, c.attachInstance(91, .{ .session_id = 7, .instance_id = 4 }));
-    try std.testing.expect(c.live);
+    try std.testing.expectError(error.InstanceNotFound, control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 4 }));
+    try std.testing.expect(control_owner.stateOf(c).live);
     try resultFrame(&peer, .create_instance, .ok, 7);
     const created = try c.createInstance(.{ .session_id = 7, .shell = "/bin/sh", .rows = 2, .columns = 8, .history_rows = 16 });
     try std.testing.expectEqual(@as(u64, 4), created.instance_id);
@@ -302,7 +309,7 @@ test "wrong attach identity and malformed frame retire before handoff" {
         var c = try makeControl(fds[0], std.testing.allocator);
         defer c.deinit();
         if (malformed) try peer.write("BAD!00000000") else try readyFrame(&peer, 8);
-        const result = c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
+        const result = control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 3 });
         if (malformed) try std.testing.expectError(error.InvalidMagic, result) else try std.testing.expectError(error.UnexpectedFrame, result);
         try std.testing.expectError(error.ConnectionRetired, c.status());
     }
@@ -321,9 +328,9 @@ test "new Server incarnation rejects both observer and control before attach sen
         defer peer.deinit();
         var diagnostic: client.ConnectDiagnostic = .{};
         try welcomeFrame(&peer, 92);
-        var c = try client.connectTransport(std.testing.allocator, try transport.Stream.adopt(fds[0], &diagnostic, null), &diagnostic);
+        var c = try control_owner.connectTransport(std.testing.allocator, try transport.Stream.adopt(fds[0], &diagnostic, null), &diagnostic);
         defer c.deinit();
-        try std.testing.expectError(error.StaleServerIncarnation, c.attachInstance(91, .{ .session_id = 1, .instance_id = 1 }));
+        try std.testing.expectError(error.StaleServerIncarnation, control_owner.attachInstance(c, 91, .{ .session_id = 1, .instance_id = 1 }));
         var hello: [protocol.header_bytes]u8 = undefined;
         try peer.read(&hello);
         try std.testing.expectEqual(protocol.Kind.hello, (try protocol.decodeHeader(&hello)).kind);
@@ -344,28 +351,28 @@ test "one setup deadline ends at Server attachment-ready" {
         const deadline = stream.handshake_deadline_ms;
         if (phase == 0) {
             try peer.write("S");
-            try std.testing.expectError(error.SocketConnectTimedOut, client.connectTransport(std.testing.allocator, stream, &diagnostic));
+            try std.testing.expectError(error.SocketConnectTimedOut, control_owner.connectTransport(std.testing.allocator, stream, &diagnostic));
             continue;
         }
         try welcomeFrame(&peer, 91);
-        var c = try client.connectTransport(std.testing.allocator, stream, &diagnostic);
+        var c = try control_owner.connectTransport(std.testing.allocator, stream, &diagnostic);
         defer c.deinit();
-        try std.testing.expectEqual(deadline, c.stream.handshake_deadline_ms);
+        try std.testing.expectEqual(deadline, control_owner.stateOf(c).stream.handshake_deadline_ms);
         if (phase == 1) {
             // Complete header, partial body: deadline must apply to receive too.
             var header: [protocol.header_bytes]u8 = undefined;
             try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
             try peer.write(&header);
             try peer.write(&.{0});
-            try std.testing.expectError(error.SocketConnectTimedOut, c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 }));
+            try std.testing.expectError(error.SocketConnectTimedOut, control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 3 }));
             try std.testing.expectError(error.ConnectionRetired, c.status());
         } else {
             try readyFrame(&peer, 7);
-            var attached = try c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
+            var attached = try control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 3 });
             defer attached.deinit();
-            try std.testing.expectEqual(fds[0], attached.connection.stream.fd);
-            try std.testing.expect(attached.connection.stream.handshake_deadline_ms == null);
-            try std.testing.expectEqual(@as(u64, 71), attached.connection.client_id);
+            try std.testing.expectEqual(fds[0], terminal_owner.stateOf(attached).stream.fd);
+            try std.testing.expect(terminal_owner.stateOf(attached).stream.handshake_deadline_ms == null);
+            try std.testing.expectEqual(@as(u64, 71), attached.identity().client_id);
             try std.testing.expectError(error.ConnectionRetired, c.status());
         }
     }
@@ -375,7 +382,7 @@ const AttachProbe = struct {
     connection: *client.Connection,
     result: ?client.Error = null,
     fn run(self: *AttachProbe) void {
-        var attached = self.connection.attachInstance(91, .{ .session_id = 7, .instance_id = 3 }) catch |err| {
+        var attached = control_owner.attachInstance(self.connection, 91, .{ .session_id = 7, .instance_id = 3 }) catch |err| {
             self.result = err;
             return;
         };
@@ -390,13 +397,13 @@ test "Interrupt cancels partial attach body and retires connection" {
     const interrupt = try transport.Interrupt.init(std.testing.allocator);
     defer interrupt.deinit();
     var diagnostic: client.ConnectDiagnostic = .{};
-    var c = client.Connection{ .stream = try transport.Stream.adopt(fds[0], &diagnostic, interrupt), .allocator = std.testing.allocator, .server_id = 91, .tree_revision = 1 };
+    const c = try control_owner.create(std.testing.allocator, try transport.Stream.adopt(fds[0], &diagnostic, interrupt), 91, 1);
     defer c.deinit();
     var header: [protocol.header_bytes]u8 = undefined;
     try protocol.encodeHeader(&header, .{ .kind = .attach_ready, .payload_len = protocol.payload_bytes.attach_ready });
     try peer.write(&header);
     try peer.write(&.{0});
-    var probe: AttachProbe = .{ .connection = &c };
+    var probe: AttachProbe = .{ .connection = c };
     const worker = try std.Thread.spawn(.{}, AttachProbe.run, .{&probe});
     try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
     try interrupt.cancel();
@@ -407,12 +414,11 @@ test "Interrupt cancels partial attach body and retires connection" {
 
 const SetupProbe = struct {
     stream: transport.Stream,
-    terminal_id: ?u64,
+    terminal_connection: ?*terminal.Connection,
     result: ?(client.Error || terminal.Error) = null,
 
     fn run(self: *SetupProbe) void {
-        if (self.terminal_id) |id| {
-            var connection = terminal.Connection{ .allocator = std.testing.allocator, .stream = self.stream, .client_id = id };
+        if (self.terminal_connection) |connection| {
             defer connection.deinit();
             var response = connection.receive() catch |err| {
                 self.result = err;
@@ -421,7 +427,7 @@ const SetupProbe = struct {
             response.deinit();
         } else {
             var diagnostic: client.ConnectDiagnostic = .{};
-            var connection = client.connectTransport(std.testing.allocator, self.stream, &diagnostic) catch |err| {
+            var connection = control_owner.connectTransport(std.testing.allocator, self.stream, &diagnostic) catch |err| {
                 self.result = err;
                 return;
             };
@@ -439,19 +445,19 @@ test "Interrupt covers partial Server welcome and survives into attached termina
         defer interrupt.deinit();
         var diagnostic: client.ConnectDiagnostic = .{};
         var stream = try transport.Stream.adopt(fds[0], &diagnostic, interrupt);
-        var terminal_id: ?u64 = null;
+        var terminal_connection: ?*terminal.Connection = null;
         if (terminal_phase) {
             try welcomeFrame(&peer, 91);
-            var control = try client.connectTransport(std.testing.allocator, stream, &diagnostic);
+            var control = try control_owner.connectTransport(std.testing.allocator, stream, &diagnostic);
             defer control.deinit();
             try readyFrame(&peer, 7);
-            const attached = try control.attachInstance(91, .{ .session_id = 7, .instance_id = 3 });
-            stream = attached.connection.stream;
-            terminal_id = attached.connection.client_id;
+            const attached = try control_owner.attachInstance(control, 91, .{ .session_id = 7, .instance_id = 3 });
+            stream = terminal_owner.stateOf(attached).stream;
+            terminal_connection = attached;
             try std.testing.expectEqual(interrupt, stream.interrupt.?);
         }
         try peer.write("S");
-        var probe: SetupProbe = .{ .stream = stream, .terminal_id = terminal_id };
+        var probe: SetupProbe = .{ .stream = stream, .terminal_connection = terminal_connection };
         const worker = try std.Thread.spawn(.{}, SetupProbe.run, .{&probe});
         try std.Io.sleep(std.testing.io, .fromMilliseconds(20), .awake);
         try interrupt.cancel();
@@ -469,7 +475,7 @@ test "partial attach header EOF retires even when peer closes after request" {
     defer c.deinit();
     try peer.write("SR");
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(posix.system.shutdown(peer.fd, posix.SHUT.WR)));
-    try std.testing.expectError(error.ConnectionClosed, c.attachInstance(91, .{ .session_id = 7, .instance_id = 3 }));
+    try std.testing.expectError(error.ConnectionClosed, control_owner.attachInstance(c, 91, .{ .session_id = 7, .instance_id = 3 }));
     try std.testing.expectError(error.ConnectionRetired, c.status());
     try std.testing.expectError(error.ConnectionRetired, c.readinessFd());
     try std.testing.expectError(error.ConnectionRetired, c.cancellation());
@@ -493,4 +499,87 @@ fn treeAllocationProbe(allocator: std.mem.Allocator) !void {
 
 test "all tree construction allocation failures free completed resources" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, treeAllocationProbe, .{});
+}
+
+test "semantic terminal response failures retire opaque connections" {
+    const cases = enum { action, rich, cached, image };
+    inline for (.{ cases.action, cases.rich, cases.cached, cases.image }) |case| {
+        const fds = try hostilePair();
+        var peer: transport.Stream = .{ .fd = fds[1] };
+        defer peer.deinit();
+        const connection = try terminal_owner.create(std.testing.allocator, .{ .fd = fds[0] }, .{
+            .server_id = 91,
+            .session_id = 7,
+            .instance_id = 4,
+            .tree_revision = 1,
+            .client_id = 2,
+        });
+        defer connection.deinit();
+        var header: [terminal.protocol.header_bytes]u8 = undefined;
+        var payload: [terminal.protocol.payload_bytes.result]u8 = undefined;
+        terminal.protocol.encodeResult(&payload, .{ .request_kind = .resize, .code = .ok });
+        try terminal.protocol.encodeHeader(&header, .{ .kind = .result, .payload_len = payload.len });
+        try peer.write(&header);
+        try peer.write(&payload);
+        switch (case) {
+            .action => try std.testing.expectError(error.UnexpectedFrame, terminal.actions.focus(connection, .in)),
+            .rich => try std.testing.expectError(error.UnexpectedFrame, terminal.rich.requestPacked(connection, std.testing.allocator, 0, 0)),
+            .cached => {
+                var cache = terminal.rich.RawCache.init(std.testing.allocator);
+                defer cache.deinit();
+                try std.testing.expectError(error.UnexpectedFrame, cache.receive(connection));
+            },
+            .image => try std.testing.expectError(error.UnexpectedFrame, terminal.images.request(connection, std.testing.allocator, 7, 1)),
+        }
+        try std.testing.expectError(error.ConnectionRetired, connection.readinessFd());
+        try std.testing.expectError(error.ConnectionRetired, terminal.actions.focus(connection, .out));
+        try std.testing.expectEqual(@as(u64, 4), connection.identity().instance_id);
+    }
+}
+
+test "control framing OOM and wrong-owner responses retire but complete rejections recover" {
+    const cases = enum { status_payload, response_oom, wrong_session, rejection };
+    inline for (.{ cases.status_payload, cases.response_oom, cases.wrong_session, cases.rejection }) |case| {
+        const fds = try hostilePair();
+        var peer: transport.Stream = .{ .fd = fds[1] };
+        defer peer.deinit();
+        const connection = try makeControl(fds[0], std.testing.allocator);
+        defer {
+            control_owner.stateOf(connection).allocator = std.testing.allocator;
+            connection.deinit();
+        }
+        switch (case) {
+            .status_payload => {
+                try frame(&peer, .status_snapshot, &.{0});
+                try std.testing.expectError(error.InvalidPayload, connection.status());
+            },
+            .response_oom => {
+                var payload: [protocol.payload_bytes.status_snapshot]u8 = undefined;
+                try protocol.encodeStatus(&payload, .{ .server_id = 91, .tree_revision = 2, .session_count = 0, .instance_count = 0 });
+                try frame(&peer, .status_snapshot, &payload);
+                control_owner.stateOf(connection).allocator = std.testing.failing_allocator;
+                try std.testing.expectError(error.OutOfMemory, connection.status());
+            },
+            .wrong_session => {
+                var payload: [protocol.payload_bytes.result]u8 = undefined;
+                try protocol.encodeResult(&payload, .{ .request_kind = .close_session, .code = .ok, .session_id = 8, .instance_id = 0, .tree_revision = 2 });
+                try frame(&peer, .result, &payload);
+                try std.testing.expectError(error.UnexpectedFrame, connection.closeSession(7));
+            },
+            .rejection => {
+                var payload: [protocol.payload_bytes.result]u8 = undefined;
+                try protocol.encodeResult(&payload, .{ .request_kind = .create_session, .code = .name_exists, .tree_revision = 2 });
+                try frame(&peer, .result, &payload);
+                try std.testing.expectError(error.NameExists, connection.createSession("work"));
+                var status: [protocol.payload_bytes.status_snapshot]u8 = undefined;
+                try protocol.encodeStatus(&status, .{ .server_id = 91, .tree_revision = 2, .session_count = 0, .instance_count = 0 });
+                try frame(&peer, .status_snapshot, &status);
+                try std.testing.expectEqual(@as(u64, 91), (try connection.status()).server_id);
+            },
+        }
+        if (case != .rejection) {
+            try std.testing.expectError(error.ConnectionRetired, connection.readinessFd());
+            try std.testing.expectError(error.ConnectionRetired, connection.status());
+        }
+    }
 }

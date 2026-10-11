@@ -8,8 +8,8 @@ observations, selection, search, image retrieval and consequence handling.
 It can inspect status/tree state, create or close Sessions and Instances, and attach
 one exact nonzero (server_id, session_id, instance_id). A client keeps a catalog/CRUD
 control connection and opens one independent connection for each attachment.
-Successful attachment returns the same connected stream in an established terminal
-Connection plus the full ready identity. It owns no listener, canonical lifetime,
+Successful attachment returns one opaque terminal Connection retaining the full
+ready identity; identity() copies those accepted facts. It owns no listener, canonical lifetime,
 discovery, authentication or supervision policy.
 
 Target retains endpoint and all three nonzero identities. attach(allocator, target,
@@ -21,15 +21,24 @@ Transport connect, Server welcome and attachment-ready share one 15-second setup
 deadline and caller-owned Interrupt. Ready ends native construction; established
 observations have no construction deadline. An ordinary control constructor instead
 finishes at welcome, so idle control does not retain an expired setup deadline.
-Attaching later starts its own bounded admission scope. The Web gateway forwards the
+Each independent attachment starts its own bounded admission scope. The Web gateway forwards the
 same ready response as the first binary WebSocket message; Wasm uses it directly.
 There is no second terminal hello/welcome.
 
-Connection.attachInstance consumes that setup connection on success. Local pre-send
-validation and a fully validated typed rejection permit reuse. Framing, transport,
-allocation or inconsistent attachment responses retire it; deinit remains safe.
-Detaching releases only that attachment. Closing an Instance through Server control
-is the explicit lifetime operation.
+The public catalog Connection is opaque and exposes only control operations. Public
+attach opens an independent setup connection and returns an opaque terminal Connection.
+Neither public root exposes a stream constructor, allocator, socket storage or mutable
+incarnation/revision fields. Private control_owner and terminal_owner module objects
+supply construction and hostile fixtures without exporting those capabilities.
+
+Construction failures release their owned socket/storage. Once terminal frame I/O
+begins, transport, malformed framing, insufficient receive storage and partial-body
+allocation failure retire the stream; later I/O reports ConnectionRetired. The handle
+still needs one deinit after all outstanding calls return. Terminal actions, rich
+observations and image retrieval also retire on malformed or incomplete semantic
+responses. Recognized complete rejections, including geometry-authority loss, keep
+the ordered stream usable. Snapshot/view owners have
+their own independent release and may outlive the attachment.
 
 ## Module boundary
 
@@ -79,3 +88,46 @@ outside that transport-neutral client.
 
 The optional `server_client_render` adapter consumes these transported views through
 canonical howl-render. Desktop Local ownership belongs to the consuming host.
+
+
+## Optional native C ABI
+
+The package publishes the exact `howl_server_client` static artifact and its owned
+`include/howl_server_client.h` header. Downstream Zig builds may link
+`dependency.artifact("howl_server_client")`; the root forwards that same artifact
+and header. The ABI imports only the curated client graph. Maintained native
+Flutter/Odin/CLI consumers use that same opaque Zig API; their UI-specific bridges
+remain host-owned.
+
+Version 1 uses opaque control, attachment, interrupt, catalog, snapshot and image
+handles. Constructor slots start null and publish an owner only after success.
+Matching release functions clear the caller slot. Caller code releases an owner
+once, after all in-flight calls return; copying a handle never creates a new owner.
+Catalog/snapshot/image allocations are independent of connections. Names,
+Unicode scalar banks, URIs, property bytes and RGBA8 pixels are immutable borrows
+whose lifetime ends with the matching view/resource release. Strings are explicit
+byte lengths, with no NUL-termination promise; property presence bits distinguish
+absent and explicitly empty values.
+
+The ABI is synchronous and caller-driven, with one I/O owner per connection.
+It starts no worker thread and performs no implicit reconnect. A caller-owned
+single-use Interrupt may cancel construction or blocked I/O from another thread;
+keep it alive until every borrowing connection is released and every cancel call
+has returned. Cancellation retires affected I/O, and attachment release detaches
+without closing the Instance. Explicit catalog Instance close controls PTY/VT
+lifetime.
+
+The header fixes version, status codes, native C records, semantic key/mouse/signal
+vocabulary, input ceilings and view bounds. Functions copy rows/cells/presentation/
+graphics records field by field; they never expose Zig slices, enums, unions,
+packed style bits, mutable owner storage or wire packet layout. Cell copying is
+bounded by the caller's capacity and returns a written count. Observation keeps
+exact text/style/link/property/presentation/graphics facts; image retrieval names
+one exact manifest generation and owns its decoded pixels independently.
+
+The C boundary covers catalog CRUD, dedicated attachment, semantic terminal
+input, geometry, signals, complete packed observations and exact images. The
+richer Zig API also exposes reusable raw/delta caching, interaction state,
+selection/search and consequence handling; those are not version-1 C entry points.
+The public native ABI is independent of the renderer. Linux live qualification
+is in `test/native_client.c`; other platform deployment remains separately qualified.

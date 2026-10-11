@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 
 /// Canonical consequence kind carried by one retained occurrence.
 pub const Kind = protocol.ConsequenceKind;
@@ -46,7 +46,7 @@ pub fn assign(connection: *client.Connection, client_id: protocol.ClientId) Erro
 
 /// Claims consequence authority for this exact connection.
 pub fn acquire(connection: *client.Connection) Error!void {
-    return assign(connection, connection.client_id);
+    return assign(connection, connection.identity().client_id);
 }
 
 /// Explicitly clears consequence authority through the frozen no-client id.
@@ -111,8 +111,8 @@ pub fn reply(
     kind: ReplyKind,
     body: []const u8,
 ) Error!void {
-    const payload = try connection.allocator.alloc(u8, protocol.payload_bytes.consequence_reply_header + body.len);
-    defer connection.allocator.free(payload);
+    const payload = try client.ownerAllocator(connection).alloc(u8, protocol.payload_bytes.consequence_reply_header + body.len);
+    defer client.ownerAllocator(connection).free(payload);
     const encoded = try protocol.encodeConsequenceReply(payload, generation, kind, body);
     try connection.send(.consequence_reply, encoded);
     try expectOk(connection, .consequence_reply);

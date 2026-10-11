@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
-const client = @import("client.zig");
+const client = @import("terminal_owner");
 const rich = @import("rich.zig");
 
 /// Reports lossless rich-snapshot or projection allocation failures.

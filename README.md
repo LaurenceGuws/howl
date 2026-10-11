@@ -81,8 +81,10 @@ supervision remain outside Howl.
 `server-client` owns native Server control and terminal-interaction clients.
 `server_client.terminal` supplies bounded observations, actions, selection, search,
 images and consequences; private transport retains bounded deadlines and cancellation.
-Control operations inspect the tree, perform Session/Instance CRUD and attach an exact
-Instance stream. Local terminal ownership belongs to each host.
+Opaque control handles inspect the tree and perform Session/Instance CRUD.
+Independent opaque attachments retain their exact ready identity. The optional
+`howl_server_client` static artifact and public C header expose versioned native
+connection/control/input/observation ownership. Local terminal ownership belongs to each host.
 
 `howl-cli` builds the machine-friendly `howl` executable with two deliberately distinct
 command families:
@@ -222,7 +224,8 @@ root.addImport("howl_text", howl.module("howl_text"));
 
 Public modules include Server control/terminal services and protocols, server_client,
 Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
-bridge libraries/objects and Web Wasm artifacts are available through
+bridge libraries/objects, the optional `howl_server_client` C client library/header,
+and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
 The shared renderer consumes direct VT observation. Transported-client source
 adapters are exported separately as server_client_render by mods/server;
@@ -231,7 +234,8 @@ Consumers should pin an immutable repository tag or commit.
 
 `zig build consumer` runs the separate package in `test/consumer`, which imports
 the distribution root, resolves its artifacts and proves compatible VT/Instance
-and text/renderer type identities. Root checks and tests include this proof.
+and text/renderer type identities. It also links the exact native client library
+and consumes its artifact-owned C header. Root checks and tests include this proof.
 
 For the detailed current ownership rules, read `project_design.yml`,
 `project_rules.yml`, and `project_source_map.yml`.

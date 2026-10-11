@@ -91,12 +91,13 @@ pub fn emitText(writer: *std.Io.Writer, value: *const Snapshot) !void {
 
 /// Formats an owned, validated Server terminal-client rich observation.
 pub fn requestRich(
+    allocator: std.mem.Allocator,
     connection: *client.Connection,
     writer: *std.Io.Writer,
     after_revision: u64,
     history_offset: u32,
 ) !void {
-    var value = try client.rich.request(connection, connection.allocator, after_revision, history_offset);
+    var value = try client.rich.request(connection, allocator, after_revision, history_offset);
     defer value.deinit();
-    try rich_format.emitNative(connection.allocator, writer, &value);
+    try rich_format.emitNative(allocator, writer, &value);
 }

@@ -124,13 +124,13 @@ fn connect(
     init: std.process.Init,
     target: InstanceTarget,
     context: *failure.Context,
-) !client.Connection {
+) !*client.Connection {
     var diagnostic: server_client.ConnectDiagnostic = .{};
     const attached = server_client.attach(init.gpa, target, &diagnostic, null) catch |problem| {
         captureServerConnect(context, &diagnostic);
         return problem;
     };
-    return attached.connection;
+    return attached;
 }
 
 fn captureServerConnect(
@@ -177,9 +177,9 @@ fn snapshotCommand(init: std.process.Init, target: InstanceTarget, args: []const
     var output_buffer: [16 * 1024]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
     if (format == .rich) {
-        try cli.snapshot.requestRich(&connection, &stdout.interface, after_revision, history_offset);
+        try cli.snapshot.requestRich(init.gpa, connection, &stdout.interface, after_revision, history_offset);
     } else {
-        var value = try cli.snapshot.request(&connection, init.gpa, after_revision, history_offset);
+        var value = try cli.snapshot.request(connection, init.gpa, after_revision, history_offset);
         defer value.deinit();
         if (format == .text)
             try cli.snapshot.emitText(&stdout.interface, &value)
@@ -195,7 +195,7 @@ fn stateCommand(init: std.process.Init, target: InstanceTarget, args: []const [*
     defer connection.deinit();
     var output_buffer: [4096]u8 = undefined;
     var stdout = stdoutWriter(init, &output_buffer);
-    try cli.state.emit(&connection, &stdout.interface);
+    try cli.state.emit(connection, &stdout.interface);
     try stdout.interface.flush();
 }
 
@@ -218,9 +218,9 @@ fn bytesCommand(init: std.process.Init, target: InstanceTarget, args: []const [*
     var connection = try connect(init, target, context);
     defer connection.deinit();
     if (is_paste)
-        try cli.actions.paste(&connection, bytes)
+        try cli.actions.paste(connection, bytes)
     else
-        try cli.actions.committedText(&connection, bytes);
+        try cli.actions.committedText(connection, bytes);
     try emitActionReceipt(init, if (is_paste) "paste" else "type");
 }
 
@@ -245,8 +245,8 @@ fn keyCommand(init: std.process.Init, target: InstanceTarget, args: []const [*:0
     var connection = try connect(init, target, context);
     defer connection.deinit();
     switch (key) {
-        .named => |value| try cli.actions.namedKey(&connection, value, action, modifiers),
-        .unicode => |value| try cli.actions.unicodeKey(&connection, value, action, modifiers),
+        .named => |value| try cli.actions.namedKey(connection, value, action, modifiers),
+        .unicode => |value| try cli.actions.unicodeKey(connection, value, action, modifiers),
     }
     try emitActionReceipt(init, "key");
 }
@@ -255,7 +255,7 @@ fn focusCommand(init: std.process.Init, target: InstanceTarget, args: []const [*
     if (args.len != 1) return usage();
     var connection = try connect(init, target, context);
     defer connection.deinit();
-    try cli.actions.focus(&connection, try cli.actions.parseFocus(std.mem.span(args[0])));
+    try cli.actions.focus(connection, try cli.actions.parseFocus(std.mem.span(args[0])));
     try emitActionReceipt(init, "focus");
 }
 
@@ -265,7 +265,7 @@ fn resizeCommand(init: std.process.Init, target: InstanceTarget, args: []const [
     const columns = std.fmt.parseInt(u16, std.mem.span(args[1]), 10) catch return usage();
     var connection = try connect(init, target, context);
     defer connection.deinit();
-    try cli.actions.resize(&connection, rows, columns);
+    try cli.actions.resize(connection, rows, columns);
     try emitActionReceipt(init, "resize");
 }
 
@@ -273,7 +273,7 @@ fn signalCommand(init: std.process.Init, target: InstanceTarget, args: []const [
     if (args.len != 1) return usage();
     var connection = try connect(init, target, context);
     defer connection.deinit();
-    try cli.actions.signal(&connection, try cli.actions.parseSignal(std.mem.span(args[0])));
+    try cli.actions.signal(connection, try cli.actions.parseSignal(std.mem.span(args[0])));
     try emitActionReceipt(init, "signal");
 }
 

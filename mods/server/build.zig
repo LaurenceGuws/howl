@@ -57,6 +57,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     if (windows) transport.linkSystemLibrary("ws2_32", .{});
+    const terminal_owner = b.createModule(.{
+        .root_source_file = b.path("src/client/terminal/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_owner.addImport("server_protocol", protocol);
+    terminal_owner.addImport("client_transport", transport);
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/client/terminal/root.zig"),
         .target = target,
@@ -64,16 +71,41 @@ pub fn build(b: *std.Build) void {
     });
     terminal.addImport("server_protocol", protocol);
     terminal.addImport("howl_vt_codec", codec);
-    terminal.addImport("client_transport", transport);
+    terminal.addImport("terminal_owner", terminal_owner);
+    const control_owner = b.createModule(.{
+        .root_source_file = b.path("src/client/control.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    control_owner.addImport("server_protocol", protocol);
+    control_owner.addImport("client_transport", transport);
+    control_owner.addImport("terminal_client", terminal);
+    control_owner.addImport("terminal_owner", terminal_owner);
     const client = b.addModule("server_client", .{
         .root_source_file = b.path("src/client/server_client.zig"),
         .target = target,
         .optimize = optimize,
     });
     client.addImport("server_protocol", protocol);
-    client.addImport("client_transport", transport);
+    client.addImport("control_owner", control_owner);
     client.addImport("terminal_client", terminal);
 
+    const abi_types = b.addTranslateC(.{
+        .root_source_file = b.path("include/howl_server_client.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const abi_root = b.createModule(.{
+        .root_source_file = b.path("src/client/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    abi_root.addImport("server_client", client);
+    abi_root.addImport("native_abi_types", abi_types.createModule());
+    const abi = b.addLibrary(.{ .name = "howl_server_client", .linkage = .static, .root_module = abi_root });
+    abi.installHeader(b.path("include/howl_server_client.h"), "howl_server_client.h");
+    b.installArtifact(abi);
     const render = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = bundled });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = bundled });
     const adapter = b.addModule("server_client_render", .{
@@ -93,6 +125,8 @@ pub fn build(b: *std.Build) void {
     control_tests.addImport("server_model", model);
     control_tests.addImport("server_service", service);
     control_tests.addImport("client_transport", transport);
+    control_tests.addImport("terminal_owner", terminal_owner);
+    control_tests.addImport("control_owner", control_owner);
     const render_tests = b.createModule(.{
         .root_source_file = b.path("src/client/terminal/render_test.zig"),
         .target = target,
@@ -130,6 +164,7 @@ pub fn build(b: *std.Build) void {
     zig_audit.setCwd(b.path("."));
     audit.dependOn(&zig_audit.step);
     check.dependOn(audit);
+    check.dependOn(&abi.step);
     const tests = b.step("test", "Run Server runtime, wire, client and render proofs");
     inline for (.{
         .{ "server", model },
@@ -165,6 +200,20 @@ pub fn build(b: *std.Build) void {
         const sigpipe = b.addExecutable(.{ .name = "server-transport-sigpipe", .root_module = sigpipe_root });
         check.dependOn(&sigpipe.step);
         tests.dependOn(&b.addRunArtifact(sigpipe).step);
+    }
+    if (target.result.os.tag == .linux) {
+        const foreign_root = b.createModule(.{
+            .root_source_file = b.path("test/native_abi.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        foreign_root.addImport("server_runtime", runtime);
+        foreign_root.linkLibrary(abi);
+        foreign_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
+        const foreign = b.addTest(.{ .name = "server-client-native-abi", .root_module = foreign_root });
+        check.dependOn(&foreign.step);
+        tests.dependOn(&b.addRunArtifact(foreign).step);
     }
     const vectors = b.addSystemCommand(&.{ "python3", "tools/validate_vectors.py", "protocol/vectors.json" });
     vectors.setCwd(b.path("."));
