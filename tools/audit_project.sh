@@ -19,13 +19,13 @@ root_publics=(
     '    pub const inline_scalars = scalar_storage.inline_scalars;'
     '    pub const maximum_scalars = scalar_storage.maximum_scalars;'
 )
-if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
-    printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
+if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|inline fn|var|threadlocal)[[:space:]]' mods/howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
+    printf 'mods/howl-vt/src/howl_vt.zig: curated embedding root changed\n'
     status=1
 fi
 for root_public in "${root_publics[@]}"; do
-    if ! grep -Fxq "$root_public" howl-vt/src/howl_vt.zig; then
-        printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
+    if ! grep -Fxq "$root_public" mods/howl-vt/src/howl_vt.zig; then
+        printf 'mods/howl-vt/src/howl_vt.zig: curated embedding root changed\n'
         status=1
         break
     fi
@@ -69,7 +69,7 @@ while IFS= read -r file; do
         { previous = $0 }
         END { exit failed }
     ' "$file" || status=1
-done < <(find howl-vt/src howl-instance/src howl-pty/src -type f -name '*.zig' -print | sort)
+done < <(find mods/howl-vt/src mods/howl-instance/src mods/howl-pty/src -type f -name '*.zig' -print | sort)
 
 # Empty lifecycle names preserve no behavior or ownership and therefore add no contract.
 empty_lifecycle_pattern='^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+(deinit|reset|clear)'
@@ -77,13 +77,13 @@ empty_lifecycle_pattern+='[[:space:]]*\([^)]*\)[^{]*\{[[:space:]]*\}[[:space:]]*
 while IFS=: read -r file line _; do
     printf '%s:%s: empty lifecycle hook\n' "$file" "$line"
     status=1
-done < <(grep -RnE "$empty_lifecycle_pattern" howl-vt/src --include='*.zig' || true)
+done < <(grep -RnE "$empty_lifecycle_pattern" mods/howl-vt/src --include='*.zig' || true)
 
 # The Dart/native FFI surface has one common mobile-safe contract plus a
 # desktop-only Local ownership extension. Every declaration must exist as a
 # Zig export; only the common contract is retained through final iOS linking.
-ffi_contract=howl-flutter/native/ffi-symbols.txt
-ffi_desktop_contract=howl-flutter/native/ffi-symbols-desktop.txt
+ffi_contract=hosts/howl-flutter/native/ffi-symbols.txt
+ffi_desktop_contract=hosts/howl-flutter/native/ffi-symbols-desktop.txt
 for contract in "$ffi_contract" "$ffi_desktop_contract"; do
     if grep -Evq '^[a-z][a-z0-9_]*$' "$contract"; then
         printf '%s: invalid FFI symbol name\n' "$contract"
@@ -95,7 +95,7 @@ for contract in "$ffi_contract" "$ffi_desktop_contract"; do
     fi
     while IFS= read -r symbol; do
         [[ -n "$symbol" ]] || continue
-        if ! grep -Fq "pub export fn $symbol(" howl-flutter/native/host.zig; then
+        if ! grep -Fq "pub export fn $symbol(" hosts/howl-flutter/native/host.zig; then
             printf '%s: declared FFI symbol has no Zig export: %s\n' "$contract" "$symbol"
             status=1
         fi
@@ -107,7 +107,7 @@ if [[ -n "$(comm -12 <(sort "$ffi_contract") <(sort "$ffi_desktop_contract"))" ]
 fi
 while IFS= read -r symbol; do
     [[ -n "$symbol" ]] || continue
-    for config in howl-flutter/ios/Flutter/Debug.xcconfig howl-flutter/ios/Flutter/Release.xcconfig; do
+    for config in hosts/howl-flutter/ios/Flutter/Debug.xcconfig hosts/howl-flutter/ios/Flutter/Release.xcconfig; do
         if ! grep -Fq "_$symbol" "$config"; then
             printf '%s: iOS linker does not retain FFI symbol %s\n' "$config" "$symbol"
             status=1
@@ -118,19 +118,19 @@ done < "$ffi_contract"
 while IFS= read -r literal; do
     symbol=${literal:1:${#literal}-2}
     if ! grep -Fxq "$symbol" "$ffi_contract" && ! grep -Fxq "$symbol" "$ffi_desktop_contract"; then
-        printf 'howl-flutter/lib: Dart FFI lookup is outside contract: %s\n' "$symbol"
+        printf 'hosts/howl-flutter/lib: Dart FFI lookup is outside contract: %s\n' "$symbol"
         status=1
     fi
-done < <(grep -RhoE "['\"]howl_native_[a-z0-9_]+['\"]" howl-flutter/lib --include='*.dart' | sort -u)
+done < <(grep -RhoE "['\"]howl_native_[a-z0-9_]+['\"]" hosts/howl-flutter/lib --include='*.dart' | sort -u)
 
 # iOS native-host fonts intentionally mirror canonical howl-text fixture bytes.
 # Keep the duplication explicit until an Xcode build proves a single-copy packaging
 # path; drift between the two copies is never acceptable.
-if ! cmp -s howl-text/testdata/symbols.ttf howl-flutter/ios/Runner/NativeFonts/IosevkaTermNerdFont-Regular.ttf; then
+if ! cmp -s mods/howl-text/testdata/symbols.ttf hosts/howl-flutter/ios/Runner/NativeFonts/IosevkaTermNerdFont-Regular.ttf; then
     printf 'iOS Iosevka font mirror drifted from howl-text canonical bytes\n'
     status=1
 fi
-if ! cmp -s howl-text/testdata/primary.ttf howl-flutter/ios/Runner/NativeFonts/NotoSans-Regular.ttf; then
+if ! cmp -s mods/howl-text/testdata/primary.ttf hosts/howl-flutter/ios/Runner/NativeFonts/NotoSans-Regular.ttf; then
     printf 'iOS Noto Sans font mirror drifted from howl-text canonical bytes\n'
     status=1
 fi
@@ -139,11 +139,11 @@ fi
 # frontend. Keep transport/orchestration machinery mechanically outside its
 # build and source graph.
 if grep -REn 'howl_client|server_client|remote_target' \
-    howl-host/build.zig howl-host/build.zig.zon howl-host/src >/dev/null; then
+    hosts/howl-host/build.zig hosts/howl-host/build.zig.zon hosts/howl-host/src >/dev/null; then
     printf 'howl-host: direct canary depends on transported client/server machinery\n'
     status=1
 fi
-if grep -REn 'howl_render|howl_vt' howl-host/build.zig howl-host/build.zig.zon >/dev/null; then
+if grep -REn 'howl_render|howl_vt' hosts/howl-host/build.zig hosts/howl-host/build.zig.zon >/dev/null; then
     printf 'howl-host: direct canary must consume VT/Render through howl-instance composition\n'
     status=1
 fi
@@ -179,49 +179,60 @@ for package in sorted(missing):
 raise SystemExit(bool(missing))
 PYGRAPH
 
-# VERSION is the single current-workspace release marker. Every current package
-# and user-facing native client version must move with it; versioned embedding
-# examples remain deliberately frozen at their named historical contract.
-workspace_version=$(cat VERSION)
-if [[ -z "$workspace_version" || "$workspace_version" == *$'\n'* ]]; then
-    printf 'VERSION: expected one nonempty line\n'
-    status=1
-fi
+# Each package owns its version; the snapshot records the tested combination.
+python3 - <<'PYSNAPSHOT' || status=1
+from pathlib import Path
+import json
+import re
+import subprocess
 
-while IFS= read -r manifest; do
-    case "$manifest" in
-        howl-vt/examples/*) continue ;;
-    esac
-    if ! grep -Fqx "    .version = \"$workspace_version\"," "$manifest"; then
-        printf '%s: version does not match VERSION (%s)\n' "$manifest" "$workspace_version"
-        status=1
-    fi
-done < <(git ls-files '*build.zig.zon' | sort)
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
 
-if ! grep -Fqx "version: $workspace_version" project_version_scope.yml; then
-    printf 'project_version_scope.yml: version does not match VERSION (%s)\n' "$workspace_version"
-    status=1
-fi
-if ! grep -Fqx "pub const version = \"$workspace_version\";" howl-cli/src/howl_cli.zig; then
-    printf 'howl-cli/src/howl_cli.zig: version does not match VERSION (%s)\n' "$workspace_version"
-    status=1
-fi
-if ! grep -Fqx "const version = \"$workspace_version\";" howl-app/src/main.zig; then
-    printf 'howl-app/src/main.zig: version does not match VERSION (%s)\n' "$workspace_version"
-    status=1
-fi
-if ! grep -Fqx "APP_VERSION :: \"$workspace_version\"" howl-odin/main.odin; then
-    printf 'howl-odin/main.odin: version does not match VERSION (%s)\n' "$workspace_version"
-    status=1
-fi
+root = Path.cwd()
+snapshot = json.loads(Path("snapshot.json").read_text())
+require(set(snapshot) == {"schema", "version", "zig", "packages"}, "snapshot.json: unexpected fields")
+require(snapshot["schema"] == 1, "snapshot.json: unsupported schema")
+require(snapshot["version"] == Path("VERSION").read_text().strip(), "snapshot.json: VERSION mismatch")
+require(snapshot["zig"] == Path(".zigversion").read_text().strip(), "snapshot.json: compiler mismatch")
 
-flutter_version=$(awk '/^version:[[:space:]]/ { print $2; exit }' howl-flutter/pubspec.yaml)
-flutter_base=${flutter_version%%+*}
-flutter_build=${flutter_version#*+}
-if [[ "$flutter_base" != "$workspace_version" || "$flutter_build" == "$flutter_version" ||
-      ! "$flutter_build" =~ ^[0-9]+$ ]]; then
-    printf 'howl-flutter/pubspec.yaml: version must be VERSION+numeric-build (%s)\n' "$workspace_version"
-    status=1
-fi
+def package_version(directory):
+    manifest = Path(directory) / "build.zig.zon"
+    match = re.search(r'\.version\s*=\s*"([^"]+)"', manifest.read_text())
+    require(match is not None, f"{manifest}: missing version")
+    return match.group(1)
+
+require(package_version(".") == snapshot["version"], "build.zig.zon: workspace snapshot version mismatch")
+tracked = subprocess.check_output(["git", "ls-files", "*build.zig.zon"], text=True).splitlines()
+packages = {str(Path(path).parent): package_version(Path(path).parent)
+            for path in tracked if Path(path).parent != Path(".")}
+require(snapshot["packages"] == packages, "snapshot.json: package inventory/version mismatch")
+
+for path in tracked:
+    package = Path(path).parent
+    if not str(package).startswith("mods/"):
+        continue
+    for relative in re.findall(r'\.path\s*=\s*"([^"]+)"', Path(path).read_text()):
+        dependency = (root / package / relative).resolve()
+        require(not dependency.is_relative_to(root / "hosts"),
+                f"{path}: reusable module depends on host {relative}")
+
+for path, pattern, directory in (
+    ("hosts/howl-cli/src/howl_cli.zig", r'pub const version = "([^"]+)";', "hosts/howl-cli"),
+    ("hosts/howl-app/src/main.zig", r'const version = "([^"]+)";', "hosts/howl-app"),
+    ("hosts/howl-odin/main.odin", r'APP_VERSION :: "([^"]+)"', "hosts/howl-odin/native"),
+):
+    match = re.search(pattern, Path(path).read_text())
+    require(match is not None and match.group(1) == package_version(directory),
+            f"{path}: advertised version differs from owning package")
+flutter = re.search(r'^version:\s*(\S+)', Path("hosts/howl-flutter/pubspec.yaml").read_text(), re.M)
+require(flutter is not None, "Flutter: missing version")
+base, separator, number = flutter.group(1).partition("+")
+require(base == package_version("hosts/howl-flutter/native") and separator and number.isdigit(),
+        "Flutter: expected owning package version plus numeric build")
+require(f'version: {snapshot["version"]}' in Path("project_version_scope.yml").read_text().splitlines(),
+        "project_version_scope.yml: workspace snapshot version mismatch")
+PYSNAPSHOT
 
 exit "$status"

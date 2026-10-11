@@ -1,7 +1,7 @@
 project:
   name: howl
   mission: small, correct native terminal machinery that can be embedded directly or composed into higher-level orchestration
-  shape: one repository of small native modules with explicit local dependencies and semantic ownership
+  shape: one repository; mods contains reusable packages, hosts contains application/runtime composition, and snapshot.json records their tested versions
 
 core:
   howl-vt:
@@ -27,6 +27,8 @@ composition:
   - Session is orchestration identity/labeling for an Instance lineage and lifecycle, not terminal state or presentation composition
 
 experimental:
+  - server-protocol
+  - server-runtime
   - server-client
   - client-transport
   - server
@@ -59,6 +61,9 @@ ownership:
   - Server/Session orchestration, when present, depends downward on Instances and must never become a prerequisite for local terminal composition
 
 workspace:
+  modules: mods/; reusable does not imply terminal core
+  hosts: hosts/; process/application and listener/scheduling policy
+  versions: package-owned; VERSION labels the exact snapshot.json combination
   local_root_gate: all maintained Zig package check/test graphs, including nested Web roots and the external consumer proof
   distribution_root: forwards child-owned modules and artifacts without reconstructing their type identities
   toolchain: exact tracked Zig pin with self-hosted code generation and linking

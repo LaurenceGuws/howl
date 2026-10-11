@@ -524,7 +524,7 @@ all four styles and CJK without an error; all owned processes/environment retire
 
 The app now shares one native font family and Render Store per matching recipe
 and physical pixel size. Instance requires an explicit private/shared choice;
-[its embedding contract](../../howl-instance/README.md#presented-text-ownership)
+[its embedding contract](../../mods/howl-instance/README.md#presented-text-ownership)
 defines reference lifetime, serialization and busy retries. Atlases and immutable
 frames remain terminal-local. Shape and atlas pressure reset their own storage;
 bounds are unchanged.

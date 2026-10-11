@@ -1,13 +1,14 @@
 accepted:
   .zigversion: exact Zig compiler pin
-  VERSION: current workspace release marker; Howl project audit requires every current package/client version to match it while versioned embedding examples remain frozen
+  VERSION: label for the tested workspace snapshot, not a shared child version
+  snapshot.json: exact package version inventory plus compiler pin; child manifests own independent versions
   build.zig: composes every maintained Zig package check/test graph and forwards exact public child modules and artifacts
   build.zig.zon: complete workspace dependency and distribution source boundary
   .zig-audit.json: required zig-audit schema-2/ruleset-3 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
-  howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
-  howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
-  howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
-  howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
+  mods/howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
+  mods/howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; publishes no listener, daemon, Session, or Server identity
+  mods/howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
+  mods/howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
   tools/audit_project.sh: Howl-specific structural, FFI, asset-mirror, and workspace-version audit; generic Zig sharp-edge detection belongs only to zig-audit
@@ -15,7 +16,7 @@ accepted:
 
 experimental:
   server-runtime: >-
-    foreground `server_runtime` module owning exactly one Server control listener,
+    hosts/server foreground `server_runtime` module owning exactly one Server control listener,
     one Server model/control service and bounded cooperative scheduling. The Server
     listener, exact control-socket readiness masks and dormant live PTYs share one
     aggregate poll; only Instance-internal client/timer/write work receives direct
@@ -45,7 +46,7 @@ experimental:
     selected Instance HWLS service. It owns no listener/address/process, does not
     turn Instances, and owns no routing/authentication/supervision policy
   server-protocol: >-
-    experimental pure module `server_protocol` under server. It encodes bounded
+    experimental pure module `server_protocol` in mods/server-protocol. It encodes bounded
     orchestration vocabulary that preserves Server -> Sessions -> Instances:
     Session create carries only logical name, Instance create carries launch policy
     under an exact Session id, and attach identifies exact Session+Instance ids.
@@ -57,13 +58,13 @@ experimental:
     listener, executable, address, Instance lifetime, Session/Server identity,
     routing, authentication or supervision policy
   server: >-
-    optional orchestration module above the Howl terminal family. The exact owner
+    mods/server optional listener-free orchestration model/service above the Howl terminal family. The exact owner
     tree is Server -> Sessions -> Instances. Session creation never launches a
     terminal; shell/command/cwd/geometry belong only to explicit Instance creation.
     Instance identity is scoped by its owning Session and Session identity by Server.
     Exact Session+Instance routing may hand an already-connected stream into the
     Instance-owned HWLS service. The Server model owns no listener or geometry;
-    optional server-runtime owns the single control listener/scheduler only
+    hosts/server owns the single control listener/scheduler only
   howl-client: >-
     reusable UI-agnostic client engine for one explicit Howl Instance interaction
     stream. The ordinary howl_client module owns Unix/numeric-IPv4 TCP carriage,
@@ -87,12 +88,9 @@ experimental:
     adapters accept canonical VT Observation, validated borrowed howl-client.rich,
     or owned howl-client.view storage while the source-neutral renderer itself
     knows no VT owner, client transport, window system, or graphics backend. The
-    default package facade includes both VT and transported-client adapters;
-    client_sources=false selects the direct VT facade without constructing
-    howl-client, while preserving the same renderer/text type identities. The
-    repository distribution root forwards this direct-VT configuration; consumers
-    that explicitly need transported-client adapters opt into the child package's
-    default facade instead. The
+    direct facade consumes VT observation. Transported-client adapters live in
+    the separate howl_client_render module owned by mods/howl-client and depend
+    outward on the same renderer without pulling Client into Render. The
     package separately exposes dependency-free `howl_render_limits` for wire-only
     consumers; its full root re-exports the exact howl-text module instance so
     caller-owned FontSet values preserve Zig type identity. It owns

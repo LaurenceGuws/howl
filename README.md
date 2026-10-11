@@ -5,6 +5,25 @@ is not inherently a Server. The smallest useful embedding is `howl-vt` by itself
 a local shell may compose PTY + VT through `howl-instance` without importing or
 knowing about Session or Server machinery.
 
+## Repository layout and release snapshot
+
+Reusable packages live in [mods/](mods/README.md); application and runtime
+composition lives in [hosts/](hosts/README.md). Core is an ownership/capability
+designation, not a synonym for every package in mods.
+
+Server control wire is [mods/server-protocol](mods/server-protocol/README.md).
+The optional model/service is [mods/server](mods/server/README.md), and listener
+plus scheduling policy is [hosts/server](hosts/server/README.md), composed by
+the existing CLI. A remote client depends on the wire, never the host runtime.
+
+Each package owns its build.zig.zon version. [snapshot.json](snapshot.json) records
+the exact tested package versions and Zig pin; VERSION names that combination.
+The Git revision fixes all source bytes in this one-repository snapshot. Packages
+may advance independently; update the changed package and its snapshot entry.
+The audit also checks host-advertised versions against their owning packages.
+This layout freeze preserves the qualified terminal runtime; it does not promote
+experimental hosts or orchestration to stable core.
+
 ## Ownership model
 
 The terminal layers are deliberately narrow:
@@ -101,7 +120,7 @@ lanes; after attach its existing render/input workers remain ordinary HWLS clien
 howl-app is the direct Local-only Zig/SDL shell beside Odin. Its graphical thread
 borrows immutable Render leases; matching panes share native fonts and bounded
 shaping while keeping atlases and frames local. Presented embedders must choose
-private or shared text ownership; see [the lifetime contract](howl-instance/README.md#presented-text-ownership).
+private or shared text ownership; see [the lifetime contract](mods/howl-instance/README.md#presented-text-ownership).
 
 The Vulkan Host is deliberately different: it is the native direct-embed performance
 canary only. It owns one in-process Instance and projects canonical VT observation
@@ -167,10 +186,10 @@ zig build audit
 Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed
 compiler; the repository owns only the version pin.
 
-`VERSION` is the current workspace release marker. The Howl project audit requires all
-current `build.zig.zon` manifests, `project_version_scope.yml`, the native CLI,
-Odin app metadata, and Flutter's base version to agree with it; versioned embedding
-examples remain deliberately frozen at their named historical contract.
+VERSION names the current tested workspace snapshot. Individual package/client
+versions are checked against their own manifests and snapshot.json, rather than
+being forced to match VERSION. Historical embedding examples remain frozen at
+their named contracts.
 
 `.zig-audit.json` uses schema 2 and ruleset 3 over the accepted core source, its build
 glue, and the VT unit-proof root. Intentional sharp constructs are acknowledged beside
@@ -208,10 +227,9 @@ The public child names are retained, including `howl_local`, the Instance wire/s
 modules, Server modules, client transport, Vulkan and Wayland. Native binaries,
 bridge libraries/objects and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
-The distribution root forwards `howl_render` in its direct-VT configuration, without
-transported `howl-client` source adapters. Consumers that explicitly need Render's
-transported-client facade depend on the `howl-render` child package with
-`client_sources=true` instead.
+The shared renderer consumes direct VT observation. Transported-client source
+adapters are exported separately as howl_client_render by mods/howl-client;
+they depend outward on the same renderer and preserve its text type identity.
 Consumers should pin an immutable repository tag or commit.
 
 `zig build consumer` runs the separate package in `test/consumer`, which imports

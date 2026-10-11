@@ -4,17 +4,17 @@
   "minimum_ruleset": 3,
   "include": [
     "build.zig",
-    "howl-vt/build.zig",
-    "howl-vt/src",
-    "howl-vt/test",
-    "howl-vt/test_unit.zig",
-    "howl-instance/build.zig",
-    "howl-instance/src",
-    "howl-pty/build.zig",
-    "howl-pty/src",
-    "howl-text/build.zig",
-    "howl-text/bundled.zig",
-    "howl-text/src",
+    "mods/howl-vt/build.zig",
+    "mods/howl-vt/src",
+    "mods/howl-vt/test",
+    "mods/howl-vt/test_unit.zig",
+    "mods/howl-instance/build.zig",
+    "mods/howl-instance/src",
+    "mods/howl-pty/build.zig",
+    "mods/howl-pty/src",
+    "mods/howl-text/build.zig",
+    "mods/howl-text/bundled.zig",
+    "mods/howl-text/src",
     "tools/json_logger.zig"
   ]
 }

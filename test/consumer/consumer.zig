@@ -51,3 +51,12 @@ test "readonly VT accessors retain ordinary function pointers" {
     try std.testing.expectEqualSlices(u21, &.{ 'A', 0x0301 }, scalars(&view, 0, 0, &output));
     try std.testing.expectEqual(.single_width, geometry(&view, 0));
 }
+
+test "Server clients share the wire without importing host ownership" {
+    const client = @import("server_client");
+    const protocol = @import("server_protocol");
+    try std.testing.expect(client.protocol == protocol);
+    try std.testing.expect(!@hasDecl(client, "Runtime"));
+    try std.testing.expect(!@hasDecl(protocol, "Server"));
+    try std.testing.expect(!@hasDecl(protocol, "Runtime"));
+}
