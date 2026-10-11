@@ -5,7 +5,8 @@
 
 The package separately exports `howl_vt_codec` for optional portable terminal
 observation payload encoding/validation. Its text, graphics and property grammar
-has no Server, socket, live terminal parser or renderer dependency. The normal
+and decoded cells, scalar banks, palettes, links and manifests have no Server,
+socket, live terminal parser or renderer dependency. The normal
 `howl_vt` root never imports or re-exports this codec; local observation remains a
 direct borrow. The codec does not schedule, publish or deliver observations.
 
@@ -122,7 +123,9 @@ protocol; it is not an embedder failure.
 
 - `src/howl_vt.zig` is the curated live-terminal embedding root.
 - `src/codec.zig` is the separately selected portable observation payload codec;
-  `src/codec/properties.zig` owns its bounded property packet and borrowed decode.
+  `src/codec/wire.zig` owns portable payload grammar/packing,
+  `src/codec/decoded.zig` owns decoded values, validation and allocation cleanup,
+  and `src/codec/properties.zig` owns bounded properties and borrowed decode.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
 - `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,

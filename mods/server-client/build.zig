@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const bundled = b.option(bool, "bundled_render_text", "Build the render adapter with bundled howl-text") orelse false;
     const windows = target.result.os.tag == .windows;
+    const codec = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt_codec");
     const protocol = b.dependency("server_protocol", .{ .target = target, .optimize = optimize }).module("server_protocol");
 
     const transport = b.createModule(.{
@@ -20,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     terminal.addImport("server_protocol", protocol);
+    terminal.addImport("howl_vt_codec", codec);
     terminal.addImport("client_transport", transport);
     const module = b.addModule("server_client", .{
         .root_source_file = b.path("src/server_client.zig"),
@@ -39,7 +41,7 @@ pub fn build(b: *std.Build) void {
     adapter.addImport("terminal_client", terminal);
     adapter.addImport("howl_render", render.module("howl_render"));
 
-    // Canonical owners are integration fixtures, never imported by either client.
+    // Server and live terminal owners supply integration fixtures.
     const server = b.dependency("server", .{ .target = target, .optimize = optimize });
     const control_tests = b.createModule(.{
         .root_source_file = b.path("src/test.zig"),

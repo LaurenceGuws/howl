@@ -5,6 +5,12 @@
 
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
+const codec = @import("howl_vt_codec");
+const decodeGraphics = codec.decoded.decodeGraphics;
+const decodePresentation = codec.decoded.decodePresentation;
+const decodeRow = codec.decoded.decodeRow;
+const decodeHyperlink = codec.decoded.decodeHyperlink;
+const deinitRows = codec.decoded.deinitRows;
 const client = @import("client.zig");
 
 /// Reports transport, framing, allocation, and rich-snapshot validation failures.
@@ -16,78 +22,18 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     DeltaBaselineMismatch,
 };
 
-/// One exact 8-bit RGBA color value from terminal presentation state.
-pub const Rgba = struct { r: u8, g: u8, b: u8, a: u8 };
-
-/// Complete decoded terminal presentation colors, palette, cursor age, and flags.
-pub const Presentation = struct {
-    cursor_age_ns: ?u64,
-    presence_bits: u8,
-    flags: u8,
-    reverse_screen: bool,
-    palette: [256]Rgba,
-    foreground: Rgba,
-    background: Rgba,
-    cursor: ?Rgba,
-    cursor_text: ?Rgba,
-    selection_background: ?Rgba,
-    selection_foreground: ?Rgba,
-};
-
-/// One lossless decoded terminal cell and its scalar/rendition metadata.
-pub const Cell = struct {
-    scalars: []const u32,
-    width: u8,
-    height: u8,
-    x: u8,
-    y: u8,
-    subscale_n: u8,
-    subscale_d: u8,
-    vertical_align: u8,
-    horizontal_align: u8,
-    semantic_width: bool,
-    font: u8,
-    baseline: u8,
-    underline_style: u8,
-    protection: u8,
-    style_bits: u16,
-    foreground: protocol.TextColor,
-    background: protocol.TextColor,
-    underline_color: protocol.TextColor,
-    link_id: u32,
-};
-
-/// One decoded terminal row plus its retained scalar storage.
-pub const Row = struct {
-    wrapped: bool,
-    line_geometry: u8,
-    cells: []Cell,
-    /// One decoded-row scalar bank. Hand-built rows may leave this empty and
-    /// retain independently owned cell scalar slices.
-    scalar_storage: []u32 = &.{},
-};
-
-/// One retained OSC 8 hyperlink identity and owned URI bytes.
-pub const Hyperlink = struct {
-    link_id: u32,
-    uri_bytes: []u8,
-};
-
-/// One decoded terminal graphics manifest and canonical cell-pixel lattice.
-pub const Graphics = struct {
-    generation: u64 = 0,
-    content_generation: u64 = 0,
-    cell_pixel_width: u32 = 0,
-    cell_pixel_height: u32 = 0,
-    images: []protocol.SnapshotImage = &.{},
-    placements: []protocol.SnapshotImagePlacement = &.{},
-
-    fn deinit(self: *Graphics, allocator: std.mem.Allocator) void {
-        if (self.images.len != 0) allocator.free(self.images);
-        if (self.placements.len != 0) allocator.free(self.placements);
-        self.* = undefined;
-    }
-};
+/// VT-owned lossless observation value.
+pub const Rgba = codec.Rgba;
+/// VT-owned lossless observation value.
+pub const Presentation = codec.Presentation;
+/// VT-owned lossless observation value.
+pub const Cell = codec.Cell;
+/// VT-owned lossless observation value.
+pub const Row = codec.Row;
+/// VT-owned lossless observation value.
+pub const Hyperlink = codec.Hyperlink;
+/// VT-owned lossless observation value.
+pub const Graphics = codec.Graphics;
 
 /// Owns one complete lossless rich terminal snapshot.
 pub const Snapshot = struct {
@@ -117,14 +63,7 @@ pub const Snapshot = struct {
 
     /// Releases every row, scalar, hyperlink, graphics, and property allocation.
     pub fn deinit(self: *Snapshot) void {
-        for (self.rows) |row| {
-            if (row.scalar_storage.len != 0) {
-                self.allocator.free(row.scalar_storage);
-            } else {
-                for (row.cells) |cell| if (cell.scalars.len != 0) self.allocator.free(cell.scalars);
-            }
-            self.allocator.free(row.cells);
-        }
+        deinitRows(self.allocator, self.rows);
         self.allocator.free(self.rows);
         for (self.hyperlinks) |link| self.allocator.free(link.uri_bytes);
         self.allocator.free(self.hyperlinks);
@@ -254,7 +193,7 @@ pub const RawCache = struct {
                 .snapshot_data => return error.UnexpectedFrame,
                 .snapshot_graphics => {
                     if (next_graphics != null) return error.InvalidSnapshot;
-                    next_graphics = try decodeGraphics(self.allocator, begin, frame.payload);
+                    next_graphics = try decodeGraphics(self.allocator, .{ .rows = begin.rows, .columns = begin.columns }, frame.payload);
                 },
                 .snapshot_properties => {
                     if (next_graphics == null or next_properties != null) return error.InvalidSnapshot;
@@ -447,7 +386,7 @@ pub const RawCache = struct {
         record: []const u8,
         referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
     ) Error!RowReplacement {
-        const row = try decodeRow(self.allocator, begin, payload, referenced);
+        const row = try decodeRow(self.allocator, begin.columns, payload, referenced);
         errdefer deinitRows(self.allocator, @as(*const [1]Row, &row));
         var link_count: usize = 0;
         for (row.cells) |cell| {
@@ -771,7 +710,7 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
             },
             .snapshot_graphics => {
                 if (graphics != null) return error.InvalidSnapshot;
-                graphics = try decodeGraphics(allocator, begin, frame.payload);
+                graphics = try decodeGraphics(allocator, .{ .rows = begin.rows, .columns = begin.columns }, frame.payload);
             },
             .snapshot_properties => {
                 if (graphics == null or property_bytes != null) return error.InvalidSnapshot;
@@ -851,166 +790,6 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
     }
 }
 
-fn decodeGraphics(
-    allocator: std.mem.Allocator,
-    begin: protocol.SnapshotBegin,
-    payload: []const u8,
-) Error!Graphics {
-    if (payload.len < protocol.graphics_v2.manifest_header_bytes) return error.InvalidSnapshot;
-    const header = protocol.decodeSnapshotGraphicsHeader(
-        payload[0..protocol.graphics_v2.manifest_header_bytes],
-    ) catch return error.InvalidSnapshot;
-    const image_bytes = std.math.mul(
-        usize,
-        header.image_count,
-        protocol.graphics_v2.image_bytes,
-    ) catch return error.InvalidSnapshot;
-    const placement_bytes = std.math.mul(
-        usize,
-        header.placement_count,
-        protocol.graphics_v2.placement_bytes,
-    ) catch return error.InvalidSnapshot;
-    const expected = std.math.add(
-        usize,
-        protocol.graphics_v2.manifest_header_bytes + image_bytes,
-        placement_bytes,
-    ) catch return error.InvalidSnapshot;
-    if (payload.len != expected) return error.InvalidSnapshot;
-
-    const images = try allocator.alloc(protocol.SnapshotImage, header.image_count);
-    errdefer allocator.free(images);
-    const placements = try allocator.alloc(protocol.SnapshotImagePlacement, header.placement_count);
-    errdefer allocator.free(placements);
-
-    var offset: usize = protocol.graphics_v2.manifest_header_bytes;
-    for (images, 0..) |*image, index| {
-        image.* = protocol.decodeSnapshotImage(
-            payload[offset..][0..protocol.graphics_v2.image_bytes],
-        ) catch return error.InvalidSnapshot;
-        for (images[0..index]) |prior| if (prior.image_id == image.image_id)
-            return error.InvalidSnapshot;
-        offset += protocol.graphics_v2.image_bytes;
-    }
-
-    var referenced = try allocator.alloc(bool, images.len);
-    defer allocator.free(referenced);
-    @memset(referenced, false);
-    for (placements) |*placement| {
-        placement.* = protocol.decodeSnapshotImagePlacement(
-            payload[offset..][0..protocol.graphics_v2.placement_bytes],
-        ) catch return error.InvalidSnapshot;
-        if (placement.row >= begin.rows or placement.column >= begin.columns)
-            return error.InvalidSnapshot;
-        const image_index = graphicsImageIndex(images, placement.image_id) orelse
-            return error.InvalidSnapshot;
-        const image = images[image_index];
-        if (placement.source_x > image.width or placement.source_y > image.height or
-            placement.source_width > image.width - placement.source_x or
-            placement.source_height > image.height - placement.source_y)
-            return error.InvalidSnapshot;
-        referenced[image_index] = true;
-        offset += protocol.graphics_v2.placement_bytes;
-    }
-    for (referenced) |used| if (!used) return error.InvalidSnapshot;
-    if (offset != payload.len) return error.InvalidSnapshot;
-    return .{
-        .generation = header.generation,
-        .content_generation = header.content_generation,
-        .cell_pixel_width = header.cell_pixel_width,
-        .cell_pixel_height = header.cell_pixel_height,
-        .images = images,
-        .placements = placements,
-    };
-}
-
-fn graphicsImageIndex(images: []const protocol.SnapshotImage, image_id: u32) ?usize {
-    for (images, 0..) |image, index| if (image.image_id == image_id) return index;
-    return null;
-}
-
-test "rich graphics owns visible image identities and placements" {
-    const begin = protocol.SnapshotBegin{
-        .revision = 5,
-        .terminal_revision = 6,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 2,
-        .columns = 3,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
-        .stream_closed = false,
-        .child_exited = false,
-        .leader_present = false,
-        .you_are_leader = false,
-    };
-    var payload: [
-        protocol.graphics_v2.manifest_header_bytes +
-            protocol.graphics_v2.image_bytes + protocol.graphics_v2.placement_bytes
-    ]u8 = undefined;
-    var header: [protocol.graphics_v2.manifest_header_bytes]u8 = undefined;
-    protocol.encodeSnapshotGraphicsHeader(&header, .{
-        .generation = 11,
-        .content_generation = 10,
-        .cell_pixel_width = 10,
-        .cell_pixel_height = 20,
-        .image_count = 1,
-        .placement_count = 1,
-    });
-    @memcpy(payload[0..header.len], &header);
-    var offset: usize = header.len;
-    var image: [protocol.graphics_v2.image_bytes]u8 = undefined;
-    protocol.encodeSnapshotImage(&image, .{
-        .image_id = 7,
-        .generation = 9,
-        .width = 4,
-        .height = 3,
-    });
-    @memcpy(payload[offset..][0..image.len], &image);
-    offset += image.len;
-    var placement: [protocol.graphics_v2.placement_bytes]u8 = undefined;
-    protocol.encodeSnapshotImagePlacement(&placement, .{
-        .image_id = 7,
-        .generation = 12,
-        .row = 1,
-        .column = 2,
-        .source_x = 1,
-        .source_y = 1,
-        .source_width = 3,
-        .source_height = 2,
-        .cell_x = 2,
-        .cell_y = 3,
-        .pixel_width = 30,
-        .pixel_height = 20,
-        .z = -4,
-    });
-    @memcpy(payload[offset..][0..placement.len], &placement);
-
-    var graphics = try decodeGraphics(std.testing.allocator, begin, &payload);
-    defer graphics.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(u64, 11), graphics.generation);
-    try std.testing.expectEqual(@as(u64, 10), graphics.content_generation);
-    try std.testing.expectEqual(@as(usize, 1), graphics.images.len);
-    try std.testing.expectEqual(@as(u32, 7), graphics.images[0].image_id);
-    try std.testing.expectEqual(@as(u64, 9), graphics.images[0].generation);
-    try std.testing.expectEqual(@as(usize, 1), graphics.placements.len);
-    try std.testing.expectEqual(@as(u16, 1), graphics.placements[0].row);
-    try std.testing.expectEqual(@as(u16, 2), graphics.placements[0].column);
-    try std.testing.expectEqual(@as(i32, -4), graphics.placements[0].z);
-
-    var bad = payload;
-    // A source crop extending beyond the advertised image must fail closed.
-    bad[protocol.graphics_v2.manifest_header_bytes + protocol.graphics_v2.image_bytes + 27] = 4;
-    try std.testing.expectError(
-        error.InvalidSnapshot,
-        decodeGraphics(std.testing.allocator, begin, &bad),
-    );
-}
-
 const DecodePhase = enum { presentation, rows, hyperlinks };
 
 fn decodeTextRecord(
@@ -1044,7 +823,7 @@ fn decodeTextRecord(
         .row => {
             if (phase.* != .rows or !presentation_seen.* or row_count.* >= begin.rows)
                 return error.InvalidSnapshot;
-            rows[row_count.*] = try decodeRow(allocator, begin, payload, referenced);
+            rows[row_count.*] = try decodeRow(allocator, begin.columns, payload, referenced);
             initialized_rows.* += 1;
             row_count.* += 1;
             if (row_count.* == begin.rows) phase.* = .hyperlinks;
@@ -1236,261 +1015,10 @@ fn decodeTextRecords(
     }
 }
 
-fn decodePresentation(payload: []const u8) Error!Presentation {
-    if (payload.len != protocol.text_v1.presentation_bytes) return error.InvalidSnapshot;
-    const presence = payload[8];
-    const flags = payload[9];
-    if (presence & ~protocol.text_v1.presentation_presence.known != 0 or
-        flags & ~protocol.text_v1.presentation_flags.known != 0 or
-        payload[10] != 0 or payload[11] != 0)
-        return error.InvalidSnapshot;
-
-    var palette: [256]Rgba = undefined;
-    var offset: usize = 12;
-    for (&palette) |*slot| {
-        slot.* = rgba(payload[offset..][0..4]);
-        offset += 4;
-    }
-    const foreground = rgba(payload[offset..][0..4]);
-    offset += 4;
-    const background = rgba(payload[offset..][0..4]);
-    offset += 4;
-    const cursor_raw = rgba(payload[offset..][0..4]);
-    offset += 4;
-    const cursor_text_raw = rgba(payload[offset..][0..4]);
-    offset += 4;
-    const selection_background_raw = rgba(payload[offset..][0..4]);
-    offset += 4;
-    const selection_foreground_raw = rgba(payload[offset..][0..4]);
-    offset += 4;
-    if (offset != payload.len) return error.InvalidSnapshot;
-
-    const age = readU64(payload[0..8]);
-    return .{
-        .cursor_age_ns = if (age == protocol.text_v1.no_cursor_movement_age_ns) null else age,
-        .presence_bits = presence,
-        .flags = flags,
-        .reverse_screen = flags & protocol.text_v1.presentation_flags.reverse_screen != 0,
-        .palette = palette,
-        .foreground = foreground,
-        .background = background,
-        .cursor = if (presence & protocol.text_v1.presentation_presence.cursor != 0) cursor_raw else null,
-        .cursor_text = if (presence & protocol.text_v1.presentation_presence.cursor_text != 0) cursor_text_raw else null,
-        .selection_background = if (presence & protocol.text_v1.presentation_presence.selection_background != 0) selection_background_raw else null,
-        .selection_foreground = if (presence & protocol.text_v1.presentation_presence.selection_foreground != 0) selection_foreground_raw else null,
-    };
-}
-
-const text_cell_attribute_bytes = protocol.text_v1.cell_header_bytes - 1;
-
-comptime {
-    if (text_cell_attribute_bytes != 34)
-        @compileError("rich cell attribute compare must track frozen text_v1 header width");
-}
-
-fn sameCellAttributes(
-    left: *const [text_cell_attribute_bytes]u8,
-    right: *const [text_cell_attribute_bytes]u8,
-) bool {
-    // Byte identity is endian-neutral; align(1) keeps these native word loads
-    // valid for arbitrary record offsets without paying a generic slice loop.
-    return unalignedValue(u64, left[0..8]) == unalignedValue(u64, right[0..8]) and
-        unalignedValue(u64, left[8..16]) == unalignedValue(u64, right[8..16]) and
-        unalignedValue(u64, left[16..24]) == unalignedValue(u64, right[16..24]) and
-        unalignedValue(u64, left[24..32]) == unalignedValue(u64, right[24..32]) and
-        unalignedValue(u16, left[32..34]) == unalignedValue(u16, right[32..34]);
-}
-
-fn unalignedValue(comptime T: type, bytes: []const u8) T {
-    std.debug.assert(bytes.len == @sizeOf(T));
-    // zig-audit: acknowledge ptr_cast
-    // reason: The explicit align(1) load preserves arbitrary record offsets while bytes.len proves exactly one T is available.
-    const value: *align(1) const T = @ptrCast(bytes.ptr);
-    return value.*;
-}
-
-fn decodeRow(
-    allocator: std.mem.Allocator,
-    begin: protocol.SnapshotBegin,
-    payload: []const u8,
-    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-) Error!Row {
-    if (payload.len < protocol.text_v1.row_header_bytes or payload[0] > 1 or
-        payload[1] > 3 or readU16(payload[2..4]) != begin.columns)
-        return error.InvalidSnapshot;
-    const cells = try allocator.alloc(Cell, begin.columns);
-    errdefer allocator.free(cells);
-    const fixed_cells_bytes = std.math.mul(
-        usize,
-        begin.columns,
-        protocol.text_v1.cell_header_bytes,
-    ) catch return error.InvalidSnapshot;
-    const fixed_payload_bytes = std.math.add(
-        usize,
-        protocol.text_v1.row_header_bytes,
-        fixed_cells_bytes,
-    ) catch return error.InvalidSnapshot;
-    if (payload.len < fixed_payload_bytes) return error.InvalidSnapshot;
-    const scalar_bytes_total = payload.len - fixed_payload_bytes;
-    if (scalar_bytes_total % @sizeOf(u32) != 0) return error.InvalidSnapshot;
-    const scalar_count_total = scalar_bytes_total / @sizeOf(u32);
-    const scalar_storage = try allocator.alloc(u32, scalar_count_total);
-    errdefer allocator.free(scalar_storage);
-    var scalar_used: usize = 0;
-
-    var offset: usize = protocol.text_v1.row_header_bytes;
-    var previous_attributes: ?*const [text_cell_attribute_bytes]u8 = null;
-    var column: u16 = 0;
-    while (column < begin.columns) : (column += 1) {
-        if (payload.len - offset < protocol.text_v1.cell_header_bytes) return error.InvalidSnapshot;
-        const encoded = payload[offset..][0..protocol.text_v1.cell_header_bytes];
-        const scalar_count = encoded[0];
-        if (scalar_count > protocol.text_v1.maximum_cell_scalars) return error.InvalidSnapshot;
-        const attributes: *const [text_cell_attribute_bytes]u8 = encoded[1..];
-        var decoded: Cell = undefined;
-        if (previous_attributes) |previous| {
-            if (sameCellAttributes(attributes, previous)) {
-                decoded = cells[column - 1];
-            } else {
-                decoded = try decodeCellAttributes(encoded, referenced);
-            }
-        } else {
-            decoded = try decodeCellAttributes(encoded, referenced);
-        }
-        previous_attributes = attributes;
-
-        offset += protocol.text_v1.cell_header_bytes;
-        const scalar_bytes = @as(usize, scalar_count) * 4;
-        if (payload.len - offset < scalar_bytes) return error.InvalidSnapshot;
-        if ((decoded.x != 0 or decoded.y != 0) and scalar_count != 0) return error.InvalidSnapshot;
-        if (scalar_count > scalar_storage.len - scalar_used) return error.InvalidSnapshot;
-        const scalars = scalar_storage[scalar_used .. scalar_used + scalar_count];
-        for (scalars, 0..) |*value, index| {
-            value.* = readU32(payload[offset + index * 4 ..][0..4]);
-            if (value.* > 0x10ffff or value.* >= 0xd800 and value.* <= 0xdfff)
-                return error.InvalidSnapshot;
-        }
-        scalar_used += scalar_count;
-        decoded.scalars = scalars;
-        cells[column] = decoded;
-        offset += scalar_bytes;
-    }
-    if (offset != payload.len or scalar_used != scalar_storage.len) return error.InvalidSnapshot;
-    return .{
-        .wrapped = payload[0] == 1,
-        .line_geometry = payload[1],
-        .cells = cells,
-        .scalar_storage = scalar_storage,
-    };
-}
-
-fn decodeCellAttributes(
-    encoded: *const [protocol.text_v1.cell_header_bytes]u8,
-    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-) Error!Cell {
-    if (encoded[1] == 0 or encoded[2] == 0 or encoded[3] >= encoded[1] or encoded[4] >= encoded[2] or
-        encoded[5] > 15 or encoded[6] > 15 or encoded[7] > 3 or encoded[8] > 3 or
-        encoded[9] > 1 or encoded[10] > 15 or encoded[11] > 2 or encoded[12] > 4 or encoded[13] > 2)
-        return error.InvalidSnapshot;
-    const style_bits = readU16(encoded[14..16]);
-    if (style_bits & ~protocol.text_v1.style.known != 0) return error.InvalidSnapshot;
-    const foreground = try decodeColor(encoded[16..21]);
-    const background = try decodeColor(encoded[21..26]);
-    const underline_color = try decodeColor(encoded[26..31]);
-    const link_id = readU32(encoded[31..35]);
-    if (link_id > protocol.text_v1.maximum_hyperlinks) return error.InvalidSnapshot;
-    if (link_id != 0) referenced[link_id] = true;
-    return .{
-        .scalars = &.{},
-        .width = encoded[1],
-        .height = encoded[2],
-        .x = encoded[3],
-        .y = encoded[4],
-        .subscale_n = encoded[5],
-        .subscale_d = encoded[6],
-        .vertical_align = encoded[7],
-        .horizontal_align = encoded[8],
-        .semantic_width = encoded[9] == 1,
-        .font = encoded[10],
-        .baseline = encoded[11],
-        .underline_style = encoded[12],
-        .protection = encoded[13],
-        .style_bits = style_bits,
-        .foreground = foreground,
-        .background = background,
-        .underline_color = underline_color,
-        .link_id = link_id,
-    };
-}
-
-fn decodeHyperlink(
-    allocator: std.mem.Allocator,
-    payload: []const u8,
-    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
-) Error!Hyperlink {
-    if (payload.len < protocol.text_v1.hyperlink_header_bytes) return error.InvalidSnapshot;
-    const link_id = readU32(payload[0..4]);
-    const uri_len = readU16(payload[4..6]);
-    if (link_id == 0 or link_id > protocol.text_v1.maximum_hyperlinks or
-        uri_len == 0 or uri_len > protocol.text_v1.maximum_hyperlink_uri_bytes or
-        payload.len != protocol.text_v1.hyperlink_header_bytes + uri_len or
-        !referenced[link_id] or resolved[link_id])
-        return error.InvalidSnapshot;
-    resolved[link_id] = true;
-    return .{
-        .link_id = link_id,
-        .uri_bytes = try allocator.dupe(u8, payload[protocol.text_v1.hyperlink_header_bytes..]),
-    };
-}
-
-fn decodeColor(bytes: []const u8) Error!protocol.TextColor {
-    if (bytes.len != protocol.text_v1.color_bytes) return error.InvalidSnapshot;
-    var encoded: [protocol.text_v1.color_bytes]u8 = undefined;
-    @memcpy(&encoded, bytes);
-    return protocol.decodeTextColor(&encoded);
-}
-
 fn accountFrame(total: *usize, payload_len: usize) error{SnapshotTooLarge}!void {
     total.* = std.math.add(usize, total.*, protocol.header_bytes + payload_len) catch
         return error.SnapshotTooLarge;
     if (total.* > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
-}
-
-fn rgba(bytes: []const u8) Rgba {
-    std.debug.assert(bytes.len == 4);
-    return .{ .r = bytes[0], .g = bytes[1], .b = bytes[2], .a = bytes[3] };
-}
-
-fn readU16(bytes: []const u8) u16 {
-    std.debug.assert(bytes.len >= 2);
-    return (@as(u16, bytes[0]) << 8) | bytes[1];
-}
-
-fn readU32(bytes: []const u8) u32 {
-    std.debug.assert(bytes.len >= 4);
-    return (@as(u32, bytes[0]) << 24) |
-        (@as(u32, bytes[1]) << 16) |
-        (@as(u32, bytes[2]) << 8) |
-        bytes[3];
-}
-
-fn readU64(bytes: []const u8) u64 {
-    std.debug.assert(bytes.len >= 8);
-    var value: u64 = 0;
-    for (bytes[0..8]) |byte| value = (value << 8) | byte;
-    return value;
-}
-
-fn deinitRows(allocator: std.mem.Allocator, rows: []const Row) void {
-    for (rows) |row| {
-        if (row.scalar_storage.len != 0) {
-            allocator.free(row.scalar_storage);
-        } else {
-            for (row.cells) |cell| if (cell.scalars.len != 0) allocator.free(cell.scalars);
-        }
-        allocator.free(row.cells);
-    }
 }
 
 fn encodeU16(bytes: []u8, value: u16) void {
@@ -1525,129 +1053,6 @@ fn testRowBegin(columns: u16) protocol.SnapshotBegin {
         .leader_present = false,
         .you_are_leader = false,
     };
-}
-
-test "rich row preserves typed style color and grapheme state" {
-    var begin = testRowBegin(1);
-    begin.revision = 3;
-    begin.terminal_revision = 9;
-    begin.cursor_visible = true;
-    begin.cursor_blink = true;
-    var payload: [protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + 8]u8 = @splat(0);
-    payload[0] = 1;
-    payload[1] = 2;
-    encodeU16(payload[2..4], 1);
-    const cell = payload[4 .. 4 + protocol.text_v1.cell_header_bytes];
-    cell[0] = 2;
-    cell[1] = 1;
-    cell[2] = 1;
-    cell[5] = 1;
-    cell[6] = 2;
-    cell[7] = 1;
-    cell[8] = 2;
-    cell[9] = 1;
-    cell[10] = 3;
-    cell[11] = 1;
-    cell[12] = 2;
-    cell[13] = 1;
-    encodeU16(cell[14..16], protocol.text_v1.style.bold | protocol.text_v1.style.italic | protocol.text_v1.style.underline);
-    var color: [protocol.text_v1.color_bytes]u8 = undefined;
-    try protocol.encodeTextColor(&color, .{ .kind = .rgb, .value = 0x112233 });
-    @memcpy(cell[16..21], &color);
-    try protocol.encodeTextColor(&color, .{ .kind = .indexed, .value = 4 });
-    @memcpy(cell[21..26], &color);
-    try protocol.encodeTextColor(&color, .{ .kind = .rgb, .value = 0x445566 });
-    @memcpy(cell[26..31], &color);
-    encodeU32(cell[31..35], 7);
-    encodeU32(payload[payload.len - 8 .. payload.len - 4], 'e');
-    encodeU32(payload[payload.len - 4 ..], 0x0301);
-
-    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-    const row = try decodeRow(std.testing.allocator, begin, &payload, &referenced);
-    defer deinitRows(std.testing.allocator, &.{row});
-    const decoded = row.cells[0];
-    try std.testing.expect(row.wrapped);
-    try std.testing.expectEqual(@as(u8, 2), row.line_geometry);
-    try std.testing.expectEqualSlices(u32, &.{ 'e', 0x0301 }, decoded.scalars);
-    try std.testing.expect(decoded.style_bits & protocol.text_v1.style.bold != 0);
-    try std.testing.expectEqual(protocol.TextColorKind.rgb, decoded.foreground.kind);
-    try std.testing.expectEqual(@as(u32, 0x112233), decoded.foreground.value);
-    try std.testing.expectEqual(protocol.TextColorKind.indexed, decoded.background.kind);
-    try std.testing.expectEqual(@as(u32, 4), decoded.background.value);
-    try std.testing.expectEqual(@as(u32, 7), decoded.link_id);
-    try std.testing.expect(referenced[7]);
-}
-
-test "rich row reuses identical validated attributes without aliasing scalars" {
-    const begin = testRowBegin(2);
-    var payload: [protocol.text_v1.row_header_bytes + 2 * protocol.text_v1.cell_header_bytes + 8]u8 = @splat(0);
-    encodeU16(payload[2..4], 2);
-    var at: usize = protocol.text_v1.row_header_bytes;
-    const first = payload[at..][0..protocol.text_v1.cell_header_bytes];
-    first[0] = 1;
-    first[1] = 1;
-    first[2] = 1;
-    encodeU32(first[31..35], 7);
-    at += protocol.text_v1.cell_header_bytes;
-    encodeU32(payload[at..][0..4], 'A');
-    at += 4;
-    const second = payload[at..][0..protocol.text_v1.cell_header_bytes];
-    second[0] = 1;
-    @memcpy(second[1..], first[1..]);
-    at += protocol.text_v1.cell_header_bytes;
-    encodeU32(payload[at..][0..4], 'B');
-    at += 4;
-    try std.testing.expectEqual(payload.len, at);
-
-    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-    const row = try decodeRow(std.testing.allocator, begin, &payload, &referenced);
-    defer deinitRows(std.testing.allocator, &.{row});
-    try std.testing.expectEqualSlices(u32, &.{'A'}, row.cells[0].scalars);
-    try std.testing.expectEqualSlices(u32, &.{'B'}, row.cells[1].scalars);
-    try std.testing.expectEqual(row.cells[0].foreground, row.cells[1].foreground);
-    try std.testing.expectEqual(row.cells[0].link_id, row.cells[1].link_id);
-    try std.testing.expect(referenced[7]);
-}
-
-test "rich row repeated attributes cannot hide continuation scalars" {
-    const begin = testRowBegin(2);
-    var payload: [protocol.text_v1.row_header_bytes + 2 * protocol.text_v1.cell_header_bytes + 4]u8 = @splat(0);
-    encodeU16(payload[2..4], 2);
-    var at: usize = protocol.text_v1.row_header_bytes;
-    const first = payload[at..][0..protocol.text_v1.cell_header_bytes];
-    first[0] = 0;
-    first[1] = 2;
-    first[2] = 1;
-    first[3] = 1;
-    at += protocol.text_v1.cell_header_bytes;
-    const second = payload[at..][0..protocol.text_v1.cell_header_bytes];
-    second[0] = 1;
-    @memcpy(second[1..], first[1..]);
-    at += protocol.text_v1.cell_header_bytes;
-    encodeU32(payload[at..][0..4], 'X');
-
-    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-    try std.testing.expectError(
-        error.InvalidSnapshot,
-        decodeRow(std.testing.allocator, begin, &payload, &referenced),
-    );
-}
-
-test "rich hyperlink preserves arbitrary URI bytes exactly" {
-    var payload: [protocol.text_v1.hyperlink_header_bytes + 4]u8 = undefined;
-    encodeU32(payload[0..4], 2);
-    encodeU16(payload[4..6], 4);
-    payload[6] = 'A';
-    payload[7] = 0;
-    payload[8] = 0xff;
-    payload[9] = 'Z';
-    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-    var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-    referenced[2] = true;
-    const link = try decodeHyperlink(std.testing.allocator, &payload, &referenced, &resolved);
-    defer std.testing.allocator.free(link.uri_bytes);
-    try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, link.uri_bytes);
-    try std.testing.expect(resolved[2]);
 }
 
 fn testDeflateBody(allocator: std.mem.Allocator, body: []const u8) ![]u8 {
@@ -2364,4 +1769,24 @@ test "raw cached observations own properties and clear them independently of reu
     try std.testing.expectEqualSlices(bool, &.{ false, false }, next.changed_rows.?);
     try std.testing.expect(next.properties.title == null);
     try std.testing.expectEqual(protocol.properties.ProgressKind.none, next.properties.progress.kind);
+}
+
+fn readU16(bytes: []const u8) u16 {
+    std.debug.assert(bytes.len >= 2);
+    return (@as(u16, bytes[0]) << 8) | bytes[1];
+}
+
+fn readU32(bytes: []const u8) u32 {
+    std.debug.assert(bytes.len >= 4);
+    return (@as(u32, bytes[0]) << 24) |
+        (@as(u32, bytes[1]) << 16) |
+        (@as(u32, bytes[2]) << 8) |
+        bytes[3];
+}
+
+fn readU64(bytes: []const u8) u64 {
+    std.debug.assert(bytes.len >= 8);
+    var value: u64 = 0;
+    for (bytes[0..8]) |byte| value = (value << 8) | byte;
+    return value;
 }
