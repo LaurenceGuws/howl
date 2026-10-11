@@ -8,6 +8,9 @@ const wire = @import("codec/wire.zig");
 /// Transport-free terminal value decoding and allocation lifetime.
 pub const decoded = @import("codec/decoded.zig");
 
+/// Complete owned text observations with bounded raw/zlib/packed decoding.
+pub const text = @import("codec/text.zig");
+
 /// Complete bounded terminal properties; decoded slices borrow their packet.
 pub const properties = wire.properties;
 
@@ -142,4 +145,5 @@ pub const DecodeError = decoded.Error;
 test {
     std.testing.refAllDecls(wire);
     std.testing.refAllDecls(decoded);
+    std.testing.refAllDecls(text);
 }
