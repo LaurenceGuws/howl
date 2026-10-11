@@ -5,7 +5,7 @@ project:
 
 core:
   howl-vt:
-    role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences
+    role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences; separately exported optional observation payload codec
   howl-instance:
     role: optional batteries-included composition of one platform process-terminal owner (Linux PTY or Windows ConPTY), one canonical howl-vt terminal, ordered I/O lifetime, geometry, signals, and headless environment policy
     invariant: Instance is one concrete terminal occurrence, not a Session, Server, listener, daemon, or product identity; observers never own, pace, or block canonical progress
@@ -45,7 +45,7 @@ ownership:
   - terminal semantics belong to howl-vt and remain usable without any orchestration layer
   - one howl-instance owns exactly one authoritative platform process-terminal transport and VT when an embedder chooses the batteries-included local composition
   - Instance exposes no wire protocol, Session or Server identity and publishes no listener or executable
-  - server-protocol owns control and terminal wire; server owns adopted-stream services; server-client owns remote clients and private transport
+  - howl-vt owns optional terminal observation payload grammar; server-protocol owns control and terminal framing; server owns adopted-stream services; server-client owns remote clients and private transport
   - attached clients observe semantic state and submit serialized input or explicit control mutations; an in-process owner uses the same VT semantics without serializing its own state
   - a direct VT embedder owns process or byte-transport lifetime, scheduling, and monotonic service time outside howl-vt
   - attaching a client never changes canonical terminal geometry

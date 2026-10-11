@@ -313,7 +313,7 @@ test "receiveInto rejects headers before touching caller storage" {
         .{ .kind = .image_end, .size = 4 },
         .{ .kind = .image_data, .size = 0 },
         .{ .kind = .image_data, .size = 9 },
-        .{ .kind = .image_data, .size = protocol.graphics_v2.data_chunk_bytes + 1 },
+        .{ .kind = .image_data, .size = protocol.image_data_chunk_bytes + 1 },
     };
     for (cases) |case| {
         const pair = testSocketPair();

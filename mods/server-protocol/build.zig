@@ -4,11 +4,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const codec = b.dependency("howl_vt", .{ .target = target, .optimize = optimize }).module("howl_vt_codec");
     const protocol = b.addModule("server_protocol", .{
         .root_source_file = b.path("src/protocol.zig"),
         .target = target,
         .optimize = optimize,
     });
+    protocol.addImport("howl_vt_codec", codec);
     const proofs = b.addTest(.{
         .name = "server-protocol",
         .root_module = protocol,
@@ -20,6 +22,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    terminal.addImport("howl_vt_codec", codec);
     const terminal_proofs = b.addTest(.{
         .name = "server-terminal-wire",
         .root_module = terminal,

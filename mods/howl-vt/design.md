@@ -3,6 +3,12 @@
 `howl-vt` is a native Zig terminal emulator. Its public package root exports
 `howl_vt.Terminal`; implementation files are not embedding interfaces.
 
+The package separately exports `howl_vt_codec` for optional portable terminal
+observation payload encoding/validation. Its text, graphics and property grammar
+has no Server, socket, live terminal parser or renderer dependency. The normal
+`howl_vt` root never imports or re-exports this codec; local observation remains a
+direct borrow. The codec does not schedule, publish or deliver observations.
+
 ## Ownership
 
 VT owns:
@@ -17,7 +23,7 @@ VT owns:
 - resize, reflow, hard reset, and soft-reset protocol behavior;
 - borrowed semantic access to cells, history, metadata, and graphics.
 
-VT never owns:
+The live Terminal never owns:
 
 - process lifetime or byte-stream descriptors;
 - caller scheduling, wakeups, event loops, or execution;
@@ -114,7 +120,9 @@ protocol; it is not an embedder failure.
 
 ## Source ownership
 
-- `src/howl_vt.zig` is the curated public package root.
+- `src/howl_vt.zig` is the curated live-terminal embedding root.
+- `src/codec.zig` is the separately selected portable observation payload codec;
+  `src/codec/properties.zig` owns its bounded property packet and borrowed decode.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
 - `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,

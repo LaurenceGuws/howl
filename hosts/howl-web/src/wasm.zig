@@ -668,7 +668,7 @@ fn acceptFrame() u32 {
                 return 1;
             }
             if (header.kind == .image_data) {
-                if (payload.len == 0 or payload.len > p.graphics_v2.data_chunk_bytes or
+                if (payload.len == 0 or payload.len > p.image_data_chunk_bytes or
                     payload.len > image_expected_bytes -| image_len)
                     return fail("InvalidImageData");
                 @memcpy(arena[image_len..][0..payload.len], payload);

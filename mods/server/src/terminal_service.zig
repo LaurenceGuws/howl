@@ -1217,7 +1217,7 @@ pub const Service = struct {
         const data_frames = std.math.divCeil(
             usize,
             image.pixels.len,
-            protocol.graphics_v2.data_chunk_bytes,
+            protocol.image_data_chunk_bytes,
         ) catch return self.queueResult(client, .image_request, .rejected);
         const total_bound = protocol.header_bytes + protocol.payload_bytes.image_begin +
             data_frames * protocol.header_bytes + image.pixels.len +
@@ -1237,7 +1237,7 @@ pub const Service = struct {
         try self.appendFrame(&client.output, .image_begin, &begin);
         var offset: usize = 0;
         while (offset < image.pixels.len) {
-            const count = @min(protocol.graphics_v2.data_chunk_bytes, image.pixels.len - offset);
+            const count = @min(protocol.image_data_chunk_bytes, image.pixels.len - offset);
             try self.appendFrame(&client.output, .image_data, image.pixels[offset..][0..count]);
             offset += count;
         }

@@ -16,6 +16,21 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     const test_step = b.step("test", "Run every owned VT proof");
 
+    // Optional observation encoding is never imported by the live VT root.
+    const codec = b.addModule("howl_vt_codec", .{
+        .root_source_file = b.path("src/codec.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const codec_proofs = b.addTest(.{
+        .name = "howl-vt-codec",
+        .root_module = codec,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&codec_proofs.step);
+    test_step.dependOn(&b.addRunArtifact(codec_proofs).step);
+
     const unicode_digest_module = b.createModule(.{
         .root_source_file = b.path("src/unicode_17_digest.zig"),
         .target = target,

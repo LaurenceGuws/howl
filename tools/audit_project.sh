@@ -167,6 +167,25 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
         if forbidden:
             print(f"{path}: canonical package depends on Server/client communications")
             raise SystemExit(1)
+        # Codec source is separately selected; it never enters normal core roots.
+        if path.suffix == ".zig" and "src" in path.parts:
+            codec_root = Path("mods/howl-vt/src/codec.zig").resolve()
+            codec_dir = codec_root.parent / "codec"
+            codec_source = path.resolve() == codec_root or path.resolve().is_relative_to(codec_dir)
+            for imported in re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', source):
+                target = (path.parent / imported).resolve() if imported.endswith(".zig") else None
+                imports_codec = imported.startswith("howl_vt_codec") or (
+                    target is not None and (target == codec_root or target.is_relative_to(codec_dir))
+                )
+                if not codec_source and imports_codec:
+                    print(f"{path}: direct local core imports optional observation codec")
+                    raise SystemExit(1)
+                if codec_source and imported not in ("std", "builtin") and (
+                    target is None or not target.is_relative_to(codec_dir)
+                ):
+                    print(f"{path}: optional observation codec imports a live/presentation owner")
+                    raise SystemExit(1)
+
 PYCORE
 
 # Server clients consume communications; process/Instance owners are test fixtures.

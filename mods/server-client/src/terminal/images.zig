@@ -73,7 +73,7 @@ fn receiveFrom(
     errdefer allocator.free(pixels);
     var offset: usize = 0;
     while (offset < pixels.len) {
-        const capacity = @min(pixels.len - offset, protocol.graphics_v2.data_chunk_bytes);
+        const capacity = @min(pixels.len - offset, protocol.image_data_chunk_bytes);
         const count = connection.receiveInto(.image_data, pixels[offset..][0..capacity]) catch |failure| {
             // Preserve the image receiver's existing semantic error vocabulary.
             // Framing and transport failures propagate unchanged.
@@ -204,7 +204,7 @@ test "image data semantic failures retain InvalidResource and release pixels" {
         try std.testing.expectError(error.InvalidResource, receiveFrom(&reader, std.testing.allocator, 7, 9));
     }
     protocol.encodeImageBegin(&begin, .{ .image_id = 7, .generation = 9, .width = 512, .height = 256, .byte_count = 524288 });
-    const oversized: [protocol.graphics_v2.data_chunk_bytes + 1]u8 = @splat(0);
+    const oversized: [protocol.image_data_chunk_bytes + 1]u8 = @splat(0);
     const frames = [_]TestFrame{
         .{ .kind = .image_begin, .payload = &begin },
         .{ .kind = .image_data, .payload = &oversized },

@@ -99,3 +99,21 @@ test "Instance API has no remote protocol or client identity" {
     try std.testing.expect(!@hasDecl(instance, "ClientId"));
     try std.testing.expect(!@hasDecl(instance, "ResizeAuthority"));
 }
+
+test "optional VT codec has its own root and canonical wire value identity" {
+    const codec = @import("howl_vt_codec");
+    const wire = @import("server_protocol").terminal;
+    try std.testing.expect(codec.TextColor == wire.TextColor);
+    try std.testing.expect(codec.SnapshotImage == wire.SnapshotImage);
+    try std.testing.expect(codec.properties == wire.properties);
+    try std.testing.expect(!@hasDecl(vt, "codec"));
+    try std.testing.expect(!@hasDecl(instance, "codec"));
+    try std.testing.expect(!@hasDecl(render, "codec"));
+    try std.testing.expect(!@hasDecl(codec, "Terminal"));
+    try std.testing.expect(!@hasDecl(codec, "ClientId"));
+    try std.testing.expect(!@hasDecl(codec, "ResizeAuthority"));
+    const color = codec.TextColor{ .kind = .rgb, .value = 0x123456 };
+    var bytes: [codec.text_v1.color_bytes]u8 = undefined;
+    try codec.encodeTextColor(&bytes, color);
+    try std.testing.expectEqualDeep(color, try codec.decodeTextColor(&bytes));
+}

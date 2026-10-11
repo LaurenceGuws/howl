@@ -74,6 +74,10 @@ pub fn build(b: *std.Build) void {
     tests.dependOn(protocol);
 
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
+    // Forward the optional codec directly; the live VT identity comes from Instance.
+    // zig-audit: acknowledge panic
+    // reason: Build configuration cannot recover from allocation failure.
+    b.modules.put(b.allocator, "howl_vt_codec", vt.module("howl_vt_codec")) catch @panic("OOM");
     b.step("simulate", "Run VT simulations").dependOn(childStep(vt, "simulate"));
     b.step("fuzz:terminal", "Run VT fuzz proofs").dependOn(childStep(vt, "fuzz"));
     b.step("benchmark:vt", "Run the VT benchmark").dependOn(childStep(vt, "benchmark"));
