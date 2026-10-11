@@ -193,7 +193,7 @@ pub const RawCache = struct {
                 .snapshot_data => return error.UnexpectedFrame,
                 .snapshot_graphics => {
                     if (next_graphics != null) return error.InvalidSnapshot;
-                    next_graphics = try decodeGraphics(self.allocator, .{ .rows = begin.rows, .columns = begin.columns }, frame.payload);
+                    next_graphics = try decodeGraphics(self.allocator, begin.terminal.geometry(), frame.payload);
                 },
                 .snapshot_properties => {
                     if (next_graphics == null or next_properties != null) return error.InvalidSnapshot;
@@ -213,8 +213,8 @@ pub const RawCache = struct {
                         const baseline = self.baseline orelse return error.InvalidSnapshot;
                         if (expected.revision == 0 or baseline.revision != expected.revision or
                             baseline.history_offset != expected.history_offset or
-                            begin.history_offset != expected.history_offset or
-                            self.rows.len != begin.rows or self.columns != begin.columns)
+                            begin.terminal.history_offset != expected.history_offset or
+                            self.rows.len != begin.terminal.rows or self.columns != begin.terminal.columns)
                             return error.InvalidSnapshot;
                     }
                     var result = try self.decodeRaw(
@@ -232,7 +232,7 @@ pub const RawCache = struct {
                     result.properties = protocol.properties.decode(self.properties_storage) catch unreachable;
                     self.baseline = .{
                         .revision = begin.revision,
-                        .history_offset = begin.history_offset,
+                        .history_offset = begin.terminal.history_offset,
                     };
                     self.pending_delta = null;
                     return result;
@@ -252,14 +252,14 @@ pub const RawCache = struct {
         if (encoded.len == 0 or encoded.len > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
         const changed_rows_base_revision: ?u64 = if (self.baseline) |baseline|
-            if (baseline.history_offset == begin.history_offset and
-                self.rows.len == begin.rows and self.columns == begin.columns)
+            if (baseline.history_offset == begin.terminal.history_offset and
+                self.rows.len == begin.terminal.rows and self.columns == begin.terminal.columns)
                 baseline.revision
             else
                 null
         else
             null;
-        try self.ensureGeometry(begin.rows, begin.columns);
+        try self.ensureGeometry(begin.terminal.rows, begin.terminal.columns);
         @memset(self.changed_rows, false);
         var cache_mutated = false;
         errdefer if (cache_mutated) self.invalidateRows();
@@ -305,7 +305,7 @@ pub const RawCache = struct {
                         row_shift_seen or row_count != 0)
                         return error.InvalidSnapshot;
                     rows_up = try protocol.decodeTextRowShift(payload);
-                    if (rows_up >= begin.rows and rows_up != 0) return error.InvalidSnapshot;
+                    if (rows_up >= begin.terminal.rows and rows_up != 0) return error.InvalidSnapshot;
                     if (rows_up != 0) {
                         for (self.row_records) |cached_record|
                             if (cached_record.encoded.len == 0) return error.InvalidSnapshot;
@@ -315,7 +315,7 @@ pub const RawCache = struct {
                     row_shift_seen = true;
                 },
                 .row => {
-                    if (phase != .rows or !presentation_seen or row_count >= begin.rows)
+                    if (phase != .rows or !presentation_seen or row_count >= begin.terminal.rows)
                         return error.InvalidSnapshot;
                     if (allow_row_reuse and !row_shift_seen) return error.InvalidSnapshot;
                     const row_index: usize = row_count;
@@ -333,7 +333,7 @@ pub const RawCache = struct {
                         cache_mutated = true;
                     }
                     row_count += 1;
-                    if (row_count == begin.rows) phase = .hyperlinks;
+                    if (row_count == begin.terminal.rows) phase = .hyperlinks;
                 },
                 .hyperlink => {
                     if (phase != .hyperlinks) return error.InvalidSnapshot;
@@ -344,7 +344,7 @@ pub const RawCache = struct {
             }
             offset += record_len;
         }
-        if (!presentation_seen or row_count != begin.rows or allow_row_reuse != row_shift_seen)
+        if (!presentation_seen or row_count != begin.terminal.rows or allow_row_reuse != row_shift_seen)
             return error.InvalidSnapshot;
         for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
             return error.InvalidSnapshot;
@@ -385,7 +385,7 @@ pub const RawCache = struct {
         record: []const u8,
         referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
     ) Error!RowReplacement {
-        const row = try decodeRow(self.allocator, begin.columns, payload, referenced);
+        const row = try decodeRow(self.allocator, begin.terminal.columns, payload, referenced);
         errdefer deinitRows(self.allocator, @as(*const [1]Row, &row));
         var link_count: usize = 0;
         for (row.cells) |cell| {
@@ -693,7 +693,7 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
             },
             .snapshot_graphics => {
                 if (graphics != null) return error.InvalidSnapshot;
-                graphics = try decodeGraphics(allocator, .{ .rows = begin.rows, .columns = begin.columns }, frame.payload);
+                graphics = try decodeGraphics(allocator, begin.terminal.geometry(), frame.payload);
             },
             .snapshot_properties => {
                 if (graphics == null or property_bytes != null) return error.InvalidSnapshot;
@@ -709,7 +709,7 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                 if (end.revision != begin.revision) return error.InvalidSnapshot;
                 const text = try codec.text.decode(
                     allocator,
-                    .{ .rows = begin.rows, .columns = begin.columns },
+                    begin.terminal.geometry(),
                     body_encoding orelse return error.InvalidSnapshot,
                     text_body.items,
                 );
@@ -754,18 +754,20 @@ fn encodeU32(bytes: []u8, value: u32) void {
 fn testRowBegin(columns: u16) protocol.SnapshotBegin {
     return .{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 1,
-        .columns = columns,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = false,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 1,
+            .columns = columns,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = false,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -826,18 +828,20 @@ const TestBodyEncoding = enum { compressed, raw, packed_text };
 fn testFramedSnapshot(allocator: std.mem.Allocator, encoding: TestBodyEncoding) ![]u8 {
     const begin: protocol.SnapshotBegin = .{
         .revision = 3,
-        .terminal_revision = 9,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 0,
-        .columns = 0,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 9,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 0,
+            .columns = 0,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -914,7 +918,7 @@ fn testDecodeOwned(allocator: std.mem.Allocator, bytes: []const u8) !void {
     var snapshot = try decodeFrames(allocator, bytes);
     defer snapshot.deinit();
     try std.testing.expectEqual(@as(u64, 3), snapshot.begin.revision);
-    try std.testing.expectEqual(@as(u64, 9), snapshot.begin.terminal_revision);
+    try std.testing.expectEqual(@as(u64, 9), snapshot.begin.terminal.revision);
     try std.testing.expectEqual(@as(usize, 0), snapshot.rows.len);
     try std.testing.expectEqual(@as(usize, 0), snapshot.graphics.images.len);
     try std.testing.expectEqual(@as(usize, 0), snapshot.graphics.placements.len);
@@ -970,18 +974,20 @@ test "raw cache reuses byte-identical decoded rows" {
 
     const begin = protocol.SnapshotBegin{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 2,
-        .columns = 1,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 2,
+            .columns = 1,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -997,7 +1003,7 @@ test "raw cache reuses byte-identical decoded rows" {
 
     var second_begin = begin;
     second_begin.revision = 2;
-    second_begin.terminal_revision = 2;
+    second_begin.terminal.revision = 2;
     const second = try cache.decodeRaw(second_begin, first_body, .{}, false);
     try std.testing.expectEqualSlices(bool, &.{ false, false }, second.changed_rows.?);
     try std.testing.expectEqual(first_row_cells, second.rows[0].cells.ptr);
@@ -1007,7 +1013,7 @@ test "raw cache reuses byte-identical decoded rows" {
     defer allocator.free(changed_body);
     var third_begin = begin;
     third_begin.revision = 3;
-    third_begin.terminal_revision = 3;
+    third_begin.terminal.revision = 3;
     const third = try cache.decodeRaw(third_begin, changed_body, .{}, false);
     try std.testing.expectEqualSlices(bool, &.{ true, false }, third.changed_rows.?);
     try std.testing.expectEqual(@as(u32, 'B'), third.rows[0].cells[0].scalars[0]);
@@ -1021,18 +1027,20 @@ test "raw cache changed-row mask names its exact predecessor revision" {
 
     const begin = protocol.SnapshotBegin{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 2,
-        .columns = 1,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 2,
+            .columns = 1,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -1043,10 +1051,10 @@ test "raw cache changed-row mask names its exact predecessor revision" {
     const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
     try std.testing.expect(baseline.changed_rows_base_revision == null);
 
-    cache.baseline = .{ .revision = begin.revision, .history_offset = begin.history_offset };
+    cache.baseline = .{ .revision = begin.revision, .history_offset = begin.terminal.history_offset };
     var next_begin = begin;
     next_begin.revision = 2;
-    next_begin.terminal_revision = 2;
+    next_begin.terminal.revision = 2;
     const changed_body = try testRawCacheBody(allocator, 'B', 'Z');
     defer allocator.free(changed_body);
     const changed = try cache.decodeRaw(next_begin, changed_body, .{}, false);
@@ -1056,7 +1064,7 @@ test "raw cache changed-row mask names its exact predecessor revision" {
     cache.baseline = .{ .revision = next_begin.revision, .history_offset = 3 };
     var history_begin = next_begin;
     history_begin.revision = 3;
-    history_begin.history_offset = 0;
+    history_begin.terminal.history_offset = 0;
     const history_mismatch = try cache.decodeRaw(history_begin, changed_body, .{}, false);
     try std.testing.expect(history_mismatch.changed_rows_base_revision == null);
 }
@@ -1068,18 +1076,20 @@ test "raw cache accepts row reuse only in explicit delta bodies" {
 
     const begin = protocol.SnapshotBegin{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 2,
-        .columns = 1,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 2,
+            .columns = 1,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -1094,7 +1104,7 @@ test "raw cache accepts row reuse only in explicit delta bodies" {
     defer allocator.free(delta_body);
     var next_begin = begin;
     next_begin.revision = 2;
-    next_begin.terminal_revision = 2;
+    next_begin.terminal.revision = 2;
     const delta = try cache.decodeRaw(next_begin, delta_body, .{}, true);
     try std.testing.expectEqualSlices(bool, &.{ true, false }, delta.changed_rows.?);
     try std.testing.expect(delta.row_shift == null);
@@ -1118,18 +1128,20 @@ test "raw cache applies explicit upward shift before row reuse" {
 
     const begin = protocol.SnapshotBegin{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = 2,
-        .columns = 1,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = 2,
+            .columns = 1,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -1144,8 +1156,8 @@ test "raw cache applies explicit upward shift before row reuse" {
     defer allocator.free(shifted_body);
     var next_begin = begin;
     next_begin.revision = 2;
-    next_begin.terminal_revision = 2;
-    next_begin.history_count = 1;
+    next_begin.terminal.revision = 2;
+    next_begin.terminal.history_count = 1;
     const shifted = try cache.decodeRaw(next_begin, shifted_body, .{}, true);
     try std.testing.expectEqual(@as(?u16, 1), shifted.row_shift);
     try std.testing.expectEqualSlices(bool, &.{ false, true }, shifted.changed_rows.?);
@@ -1296,9 +1308,9 @@ test "raw cached observations own properties and clear them independently of reu
                     .snapshot_begin => {
                         var begin = try protocol.decodeSnapshotBegin(payload);
                         begin.revision = revision;
-                        begin.terminal_revision = revision;
-                        begin.rows = 2;
-                        begin.columns = 1;
+                        begin.terminal.revision = revision;
+                        begin.terminal.rows = 2;
+                        begin.terminal.columns = 1;
                         protocol.encodeSnapshotBegin(scratch[0..protocol.payload_bytes.snapshot_begin], begin);
                         payload = scratch[0..protocol.payload_bytes.snapshot_begin];
                     },
@@ -1347,7 +1359,7 @@ fn testRawCacheHyperlinkAllocation(allocator: std.mem.Allocator, body: []const u
     var cache = RawCache.init(allocator);
     defer cache.deinit();
     var begin = testRowBegin(1);
-    begin.rows = 2;
+    begin.terminal.rows = 2;
     const view = try cache.decodeRaw(begin, body, .{}, false);
     try std.testing.expectEqual(@as(usize, 1), view.hyperlinks.len);
     try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, view.hyperlinks[0].uri_bytes);

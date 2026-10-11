@@ -38,13 +38,13 @@ pub fn row(
     reverse: bool,
 ) Error!?Match {
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows or begin.columns == 0) return null;
+    if (viewport_row >= begin.terminal.rows or begin.terminal.columns == 0) return null;
     return rowFrom(
         snapshot,
         allocator,
         query,
         viewport_row,
-        if (reverse) begin.columns - 1 else 0,
+        if (reverse) begin.terminal.columns - 1 else 0,
         reverse,
     );
 }
@@ -61,7 +61,7 @@ pub fn rowFrom(
 ) Error!?Match {
     if (query.len == 0 or !std.unicode.utf8ValidateSlice(query)) return error.InvalidQuery;
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows) return null;
+    if (viewport_row >= begin.terminal.rows) return null;
 
     const rows = view.rows(snapshot);
     const cells = view.cells(snapshot);
@@ -155,7 +155,7 @@ pub fn first(
     reverse: bool,
 ) Error!?Match {
     const begin = view.begin(snapshot);
-    if (begin.rows == 0 or start_row >= begin.rows) return null;
+    if (begin.terminal.rows == 0 or start_row >= begin.terminal.rows) return null;
     if (reverse) {
         var row_index: usize = start_row;
         while (true) {
@@ -166,7 +166,7 @@ pub fn first(
         return null;
     }
     var row_index: usize = start_row;
-    while (row_index < begin.rows) : (row_index += 1) {
+    while (row_index < begin.terminal.rows) : (row_index += 1) {
         if (try row(snapshot, allocator, query, @intCast(row_index), false)) |found| return found;
     }
     return null;
@@ -217,18 +217,20 @@ fn testSnapshot(source_rows: []rich.Row, rows_count: u16, columns: u16) rich.Sna
         .allocator = std.testing.allocator,
         .begin = .{
             .revision = 5,
-            .terminal_revision = 4,
-            .history_offset = 2,
-            .history_count = 6,
-            .history_row_base = 100,
-            .rows = rows_count,
-            .columns = columns,
-            .cursor_row = 0,
-            .cursor_column = 0,
-            .cursor_shape = 0,
-            .cursor_visible = true,
-            .cursor_blink = false,
-            .alternate_screen = false,
+            .terminal = .{
+                .revision = 4,
+                .history_offset = 2,
+                .history_count = 6,
+                .history_row_base = 100,
+                .rows = rows_count,
+                .columns = columns,
+                .cursor_row = 0,
+                .cursor_column = 0,
+                .cursor_shape = 0,
+                .cursor_visible = true,
+                .cursor_blink = false,
+                .alternate_screen = false,
+            },
             .stream_closed = false,
             .child_exited = false,
             .leader_present = false,

@@ -3460,7 +3460,7 @@ pub export fn howl_odin_bridge_render_accept(raw: ?*RenderHandle) void {
     renderer.front.surface = renderer.surface;
     renderer.front.background_rgba = renderer.background_rgba;
     if (renderer.begin) |begin|
-        @memcpy(renderer.front.selection_rows[0..begin.rows], renderer.selection_rows[0..begin.rows]);
+        @memcpy(renderer.front.selection_rows[0..begin.terminal.rows], renderer.selection_rows[0..begin.terminal.rows]);
     if (renderer.scratch.prepared_owner == renderer)
         renderer.scratch.prepared_owner = null;
 }
@@ -3530,7 +3530,7 @@ pub export fn howl_odin_bridge_render_prepare_rich_loan(raw: ?*RenderHandle, loa
     if (!bridge.rich_loan_active or !bridge.rich_loan_taken) return 9;
     const snapshot = &(bridge.live_view orelse return 9);
     const pending_revision = if (renderer.begin) |begin| begin.revision else 0;
-    if (snapshot.begin.history_offset != 0 or snapshot.graphics.images.len != 0 or snapshot.begin.revision < pending_revision)
+    if (snapshot.begin.terminal.history_offset != 0 or snapshot.graphics.images.len != 0 or snapshot.begin.revision < pending_revision)
         return 9;
     renderer.clearError();
     clearExternalUploads(renderer);
@@ -3539,11 +3539,11 @@ pub export fn howl_odin_bridge_render_prepare_rich_loan(raw: ?*RenderHandle, loa
 
 fn prepareRichView(renderer: *Render, view: *const client.rich.View) i32 {
     const begin = view.begin;
-    if (begin.rows > renderer.selection_rows.len) {
+    if (begin.terminal.rows > renderer.selection_rows.len) {
         renderer.setError("selection_rows", "row_limit");
         return 3;
     }
-    const surface = renderSurface(begin.rows, begin.columns, renderer.cell_size) catch |failure| {
+    const surface = renderSurface(begin.terminal.rows, begin.terminal.columns, renderer.cell_size) catch |failure| {
         renderer.setError("surface", @errorName(failure));
         return 3;
     };
@@ -3607,7 +3607,7 @@ fn prepareRichView(renderer: *Render, view: *const client.rich.View) i32 {
     renderer.pixel_count = frame.pixels.len;
     renderer.frame_revision = frame.revision;
     renderer.background_rgba = paddingBackground(&view.presentation);
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         renderer.selection_rows[row] = client.selection.rowShapeRich(view, @intCast(row)).?;
     }
     renderer.begin = begin;
@@ -3627,11 +3627,11 @@ fn prepareRichView(renderer: *Render, view: *const client.rich.View) i32 {
 
 fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i32 {
     const begin = client.view.begin(view).*;
-    if (begin.rows > renderer.selection_rows.len) {
+    if (begin.terminal.rows > renderer.selection_rows.len) {
         renderer.setError("selection_rows", "row_limit");
         return 3;
     }
-    const surface = renderSurface(begin.rows, begin.columns, renderer.cell_size) catch |failure| {
+    const surface = renderSurface(begin.terminal.rows, begin.terminal.columns, renderer.cell_size) catch |failure| {
         renderer.setError("surface", @errorName(failure));
         return 3;
     };
@@ -3696,7 +3696,7 @@ fn prepareProjectedView(renderer: *Render, view: *const client.view.Snapshot) i3
     renderer.pixel_count = frame.pixels.len;
     renderer.frame_revision = frame.revision;
     renderer.background_rgba = paddingBackground(client.view.presentation(view));
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         renderer.selection_rows[row] = client.selection.rowShape(view, @intCast(row)).?;
     }
     renderer.begin = begin;
@@ -3858,7 +3858,7 @@ pub export fn howl_odin_bridge_render_history_offset(raw: ?*RenderHandle) u32 {
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
-    return begin.history_offset;
+    return begin.terminal.history_offset;
 }
 
 /// Returns copied history count facts from the transported renderer.
@@ -3870,7 +3870,7 @@ pub export fn howl_odin_bridge_render_history_count(raw: ?*RenderHandle) u32 {
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
-    return begin.history_count;
+    return begin.terminal.history_count;
 }
 
 /// Returns copied history row base facts from the transported renderer.
@@ -3882,7 +3882,7 @@ pub export fn howl_odin_bridge_render_history_row_base(raw: ?*RenderHandle) u32 
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
-    return begin.history_row_base;
+    return begin.terminal.history_row_base;
 }
 
 /// Returns copied alternate screen facts from the transported renderer.
@@ -3894,7 +3894,7 @@ pub export fn howl_odin_bridge_render_alternate_screen(raw: ?*RenderHandle) u8 {
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
-    return @intFromBool(begin.alternate_screen);
+    return @intFromBool(begin.terminal.alternate_screen);
 }
 
 /// Projects selection against this renderer's accepted frame only. No Instance
@@ -3920,7 +3920,7 @@ pub export fn howl_odin_bridge_render_selection_span(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const renderer: *Render = @ptrCast(@alignCast(value));
     const begin = renderer.front.begin orelse return 0;
-    if (alternate_screen > 1 or viewport_row >= begin.rows or viewport_row >= renderer.front.selection_rows.len)
+    if (alternate_screen > 1 or viewport_row >= begin.terminal.rows or viewport_row >= renderer.front.selection_rows.len)
         return 0;
     const range = client.selection.Range{
         .anchor = .{ .row = anchor_row, .column = anchor_column },
@@ -4575,7 +4575,7 @@ pub export fn howl_odin_bridge_snapshot(
         break :blk owned_rich.?.view();
     };
 
-    if (use_live_delta and rich_view.begin.history_offset == 0 and rich_view.graphics.images.len == 0) {
+    if (use_live_delta and rich_view.begin.terminal.history_offset == 0 and rich_view.graphics.images.len == 0) {
         bridge.live_view = rich_view;
         bridge.rich_loan_active = true;
         bridge.last_begin = rich_view.begin;
@@ -4603,7 +4603,7 @@ pub export fn howl_odin_bridge_snapshot(
 // No image bytes are fetched or eagerly cached to make a cut transferable.
 // Image-bearing and historical projections retain the original render channel.
 fn standaloneLiveView(view: *const client.view.Snapshot) bool {
-    return client.view.begin(view).history_offset == 0 and client.view.graphics(view).images.len == 0;
+    return client.view.begin(view).terminal.history_offset == 0 and client.view.graphics(view).images.len == 0;
 }
 
 /// Moves the existing allocation out. It owns no connection or runtime borrow,
@@ -4757,24 +4757,24 @@ pub export fn howl_odin_bridge_search_find(
     defer client.view.deinit(initial);
     const initial_begin = client.view.begin(initial).*;
     output.cut_revision = initial_begin.revision;
-    output.columns = initial_begin.columns;
-    output.alternate_screen = @intFromBool(initial_begin.alternate_screen);
+    output.columns = initial_begin.terminal.columns;
+    output.alternate_screen = @intFromBool(initial_begin.terminal.alternate_screen);
     output.complete = 1;
     output.scanned_snapshots = 1;
-    if (initial_begin.rows == 0 or initial_begin.columns == 0) return 0;
-    if (origin_present != 0 and origin_column >= initial_begin.columns) {
+    if (initial_begin.terminal.rows == 0 or initial_begin.terminal.columns == 0) return 0;
+    if (origin_present != 0 and origin_column >= initial_begin.terminal.columns) {
         bridge.setError("search", "origin_context_changed");
         return 4;
     }
 
-    const cut_first: i64 = if (initial_begin.alternate_screen)
+    const cut_first: i64 = if (initial_begin.terminal.alternate_screen)
         0
     else
-        initial_begin.history_row_base;
-    const cut_last_u64: u64 = if (initial_begin.alternate_screen)
-        initial_begin.rows - 1
+        initial_begin.terminal.history_row_base;
+    const cut_last_u64: u64 = if (initial_begin.terminal.alternate_screen)
+        initial_begin.terminal.rows - 1
     else
-        @as(u64, initial_begin.history_row_base) + initial_begin.history_count + initial_begin.rows - 1;
+        @as(u64, initial_begin.terminal.history_row_base) + initial_begin.terminal.history_count + initial_begin.terminal.rows - 1;
     if (cut_last_u64 > std.math.maxInt(i32)) {
         bridge.setError("search", "row_identity_overflow");
         return 4;
@@ -4782,16 +4782,16 @@ pub export fn howl_odin_bridge_search_find(
     const cut_last: i64 = @intCast(cut_last_u64);
 
     var start_row: i64 = if (origin_present != 0) origin_row else if (reverse) cut_last else cut_first;
-    var start_column: u16 = if (origin_present != 0) origin_column else if (reverse) initial_begin.columns - 1 else 0;
+    var start_column: u16 = if (origin_present != 0) origin_column else if (reverse) initial_begin.terminal.columns - 1 else 0;
     if (origin_present != 0) {
         if (reverse) {
             if (start_column == 0) {
                 start_row -= 1;
-                start_column = initial_begin.columns - 1;
+                start_column = initial_begin.terminal.columns - 1;
             } else {
                 start_column -= 1;
             }
-        } else if (start_column + 1 >= initial_begin.columns) {
+        } else if (start_column + 1 >= initial_begin.terminal.columns) {
             start_row += 1;
             start_column = 0;
         } else {
@@ -4806,10 +4806,10 @@ pub export fn howl_odin_bridge_search_find(
     if (start_row > cut_last) {
         if (!reverse) return 0;
         start_row = cut_last;
-        start_column = initial_begin.columns - 1;
+        start_column = initial_begin.terminal.columns - 1;
     }
 
-    if (initial_begin.alternate_screen) {
+    if (initial_begin.terminal.alternate_screen) {
         return searchProjectedCut(
             bridge,
             initial,
@@ -4825,11 +4825,11 @@ pub export fn howl_odin_bridge_search_find(
 
     var current_row = start_row;
     var current_column = start_column;
-    var metadata = initial_begin;
+    var metadata = initial_begin.terminal;
     var pages: usize = 0;
-    const maximum_pages = @as(usize, initial_begin.history_count) / initial_begin.rows + 4;
+    const maximum_pages = @as(usize, initial_begin.terminal.history_count) / initial_begin.terminal.rows + 4;
     while (pages < maximum_pages and current_row >= cut_first and current_row <= cut_last) : (pages += 1) {
-        if (metadata.columns != initial_begin.columns or metadata.alternate_screen) {
+        if (metadata.columns != initial_begin.terminal.columns or metadata.alternate_screen) {
             bridge.setError("search", "context_changed");
             return 4;
         }
@@ -4879,19 +4879,19 @@ pub export fn howl_odin_bridge_search_find(
             defer client.view.deinit(page);
             output.scanned_snapshots += 1;
             const begin = client.view.begin(page).*;
-            metadata = begin;
-            if (begin.columns != initial_begin.columns or begin.alternate_screen) {
+            metadata = begin.terminal;
+            if (begin.terminal.columns != initial_begin.terminal.columns or begin.terminal.alternate_screen) {
                 bridge.setError("search", "context_changed");
                 return 4;
             }
-            const actual_top: i64 = @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
-            const actual_last = actual_top + begin.rows - 1;
-            if (current_row < begin.history_row_base) {
+            const actual_top: i64 = @as(i64, begin.terminal.history_row_base) + begin.terminal.history_count - begin.terminal.history_offset;
+            const actual_last = actual_top + begin.terminal.rows - 1;
+            if (current_row < begin.terminal.history_row_base) {
                 if (reverse) return 0;
                 output.complete = 0;
-                current_row = @min(cut_last, @as(i64, begin.history_row_base) + searchGuardRows(begin.rows));
+                current_row = @min(cut_last, @as(i64, begin.terminal.history_row_base) + searchGuardRows(begin.terminal.rows));
                 current_column = 0;
-                metadata = begin;
+                metadata = begin.terminal;
                 continue;
             }
             if (current_row < actual_top or current_row > actual_last) {
@@ -4918,7 +4918,7 @@ pub export fn howl_odin_bridge_search_find(
 
             if (reverse) {
                 current_row = @max(cut_first, actual_top) - 1;
-                current_column = initial_begin.columns - 1;
+                current_column = initial_begin.terminal.columns - 1;
             } else {
                 current_row = @min(cut_last, actual_last) + 1;
                 current_column = 0;
@@ -4946,17 +4946,17 @@ fn searchProjectedCut(
     output: *SearchMatchInfo,
 ) i32 {
     const begin = client.view.begin(snapshot);
-    const top: i64 = if (begin.alternate_screen)
+    const top: i64 = if (begin.terminal.alternate_screen)
         0
     else
-        @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
+        @as(i64, begin.terminal.history_row_base) + begin.terminal.history_count - begin.terminal.history_offset;
     if (first_row > last_row or start_row < first_row or start_row > last_row) return 0;
 
     if (reverse) {
         var canonical_row = start_row;
         while (canonical_row >= first_row) : (canonical_row -= 1) {
             const viewport_row: u16 = @intCast(canonical_row - top);
-            const bound = if (canonical_row == start_row) start_column else begin.columns - 1;
+            const bound = if (canonical_row == start_row) start_column else begin.terminal.columns - 1;
             const found = client.search.rowFrom(
                 snapshot,
                 bridge.allocator,
@@ -5049,15 +5049,15 @@ pub export fn howl_odin_bridge_send_paste(
 }
 
 fn selectionViewportRow(begin: *const protocol.SnapshotBegin, stable_row: i32) ?u16 {
-    if (begin.rows == 0) return null;
-    if (begin.alternate_screen) {
-        if (stable_row < 0 or stable_row >= begin.rows) return null;
+    if (begin.terminal.rows == 0) return null;
+    if (begin.terminal.alternate_screen) {
+        if (stable_row < 0 or stable_row >= begin.terminal.rows) return null;
         return @intCast(stable_row);
     }
-    if (begin.history_offset > begin.history_count) return null;
-    const top: i64 = @as(i64, begin.history_row_base) + begin.history_count - begin.history_offset;
+    if (begin.terminal.history_offset > begin.terminal.history_count) return null;
+    const top: i64 = @as(i64, begin.terminal.history_row_base) + begin.terminal.history_count - begin.terminal.history_offset;
     const relative = @as(i64, stable_row) - top;
-    if (relative < 0 or relative >= begin.rows) return null;
+    if (relative < 0 or relative >= begin.terminal.rows) return null;
     return @intCast(relative);
 }
 
@@ -5130,7 +5130,7 @@ pub export fn howl_odin_bridge_hyperlink_copy(
 
     const begin = client.view.begin(snapshot);
     const expected_alternate = expected_alternate_screen != 0;
-    if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
+    if (begin.terminal.columns != expected_columns or begin.terminal.alternate_screen != expected_alternate) {
         bridge.setError("hyperlink", "context_changed");
         return query_declined;
     }
@@ -5138,7 +5138,7 @@ pub export fn howl_odin_bridge_hyperlink_copy(
         bridge.setError("hyperlink", "target_moved");
         return query_declined;
     };
-    if (target_column >= begin.columns) {
+    if (target_column >= begin.terminal.columns) {
         bridge.setError("hyperlink", "target_column");
         return query_declined;
     }
@@ -5197,7 +5197,7 @@ pub export fn howl_odin_bridge_selection_expand(
 
     const begin = client.view.begin(snapshot);
     const expected_alternate = expected_alternate_screen != 0;
-    if (begin.columns != expected_columns or begin.alternate_screen != expected_alternate) {
+    if (begin.terminal.columns != expected_columns or begin.terminal.alternate_screen != expected_alternate) {
         bridge.setError("selection_expand", "context_changed");
         return query_declined;
     }
@@ -5205,7 +5205,7 @@ pub export fn howl_odin_bridge_selection_expand(
         bridge.setError("selection_expand", "target_moved");
         return query_declined;
     };
-    if (target_column >= begin.columns) {
+    if (target_column >= begin.terminal.columns) {
         bridge.setError("selection_expand", "target_column");
         return query_declined;
     }
@@ -5492,42 +5492,42 @@ pub export fn howl_odin_bridge_revision(raw: ?*Handle) u64 {
 
 /// Returns copied terminal revision facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_terminal_revision(raw: ?*Handle) u64 {
-    return if (lastBegin(raw)) |begin| begin.terminal_revision else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.revision else 0;
 }
 
 /// Returns copied rows facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_rows(raw: ?*Handle) u16 {
-    return if (lastBegin(raw)) |begin| begin.rows else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.rows else 0;
 }
 
 /// Returns copied columns facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_columns(raw: ?*Handle) u16 {
-    return if (lastBegin(raw)) |begin| begin.columns else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.columns else 0;
 }
 
 /// Returns copied cursor row facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_row(raw: ?*Handle) u16 {
-    return if (lastBegin(raw)) |begin| begin.cursor_row else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.cursor_row else 0;
 }
 
 /// Returns copied cursor column facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_column(raw: ?*Handle) u16 {
-    return if (lastBegin(raw)) |begin| begin.cursor_column else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.cursor_column else 0;
 }
 
 /// Returns copied cursor visible facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_visible(raw: ?*Handle) u8 {
-    return if (lastBegin(raw)) |begin| @intFromBool(begin.cursor_visible) else 0;
+    return if (lastBegin(raw)) |begin| @intFromBool(begin.terminal.cursor_visible) else 0;
 }
 
 /// Returns copied cursor shape facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_cursor_shape(raw: ?*Handle) u8 {
-    return if (lastBegin(raw)) |begin| begin.cursor_shape else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.cursor_shape else 0;
 }
 
 /// Returns copied alternate screen facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_alternate_screen(raw: ?*Handle) u8 {
-    return if (lastBegin(raw)) |begin| @intFromBool(begin.alternate_screen) else 0;
+    return if (lastBegin(raw)) |begin| @intFromBool(begin.terminal.alternate_screen) else 0;
 }
 
 /// Returns copied stream closed facts from the transported terminal bridge.
@@ -5542,17 +5542,17 @@ pub export fn howl_odin_bridge_child_exited(raw: ?*Handle) u8 {
 
 /// Returns copied history count facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_count(raw: ?*Handle) u32 {
-    return if (lastBegin(raw)) |begin| begin.history_count else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.history_count else 0;
 }
 
 /// Returns copied history offset facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_offset(raw: ?*Handle) u32 {
-    return if (lastBegin(raw)) |begin| begin.history_offset else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.history_offset else 0;
 }
 
 /// Returns copied history row base facts from the transported terminal bridge.
 pub export fn howl_odin_bridge_history_row_base(raw: ?*Handle) u32 {
-    return if (lastBegin(raw)) |begin| begin.history_row_base else 0;
+    return if (lastBegin(raw)) |begin| begin.terminal.history_row_base else 0;
 }
 
 fn lastBegin(raw: ?*Handle) ?protocol.SnapshotBegin {
@@ -6001,17 +6001,17 @@ test "render headers publish metadata and selection only on acceptance" {
     const handle: *RenderHandle = @ptrCast(&renderer);
     var first_begin = std.mem.zeroes(protocol.SnapshotBegin);
     first_begin.revision = 6;
-    first_begin.history_offset = 4;
-    first_begin.history_count = 100;
-    first_begin.history_row_base = 2;
-    first_begin.rows = 1;
-    first_begin.columns = 8;
+    first_begin.terminal.history_offset = 4;
+    first_begin.terminal.history_count = 100;
+    first_begin.terminal.history_row_base = 2;
+    first_begin.terminal.rows = 1;
+    first_begin.terminal.columns = 8;
     var next_begin = first_begin;
     next_begin.revision = 8;
-    next_begin.history_offset = 0;
-    next_begin.history_count = 0;
-    next_begin.history_row_base = 0;
-    next_begin.alternate_screen = true;
+    next_begin.terminal.history_offset = 0;
+    next_begin.terminal.history_count = 0;
+    next_begin.terminal.history_row_base = 0;
+    next_begin.terminal.alternate_screen = true;
     const live = try testReusableProjection(0, false);
     defer client.view.deinit(live);
     const historical = try testReusableProjection(1, false);
@@ -6058,10 +6058,10 @@ test "render headers publish metadata and selection only on acceptance" {
         const raw = if (stage == 0) null else handle;
         const expected = if (stage < 3) std.mem.zeroes(protocol.SnapshotBegin) else if (stage == 5) next_begin else first_begin;
         try std.testing.expectEqual(expected.revision, howl_odin_bridge_render_instance_revision(raw));
-        try std.testing.expectEqual(expected.history_offset, howl_odin_bridge_render_history_offset(raw));
-        try std.testing.expectEqual(expected.history_count, howl_odin_bridge_render_history_count(raw));
-        try std.testing.expectEqual(expected.history_row_base, howl_odin_bridge_render_history_row_base(raw));
-        try std.testing.expectEqual(@as(u8, @intFromBool(expected.alternate_screen)), howl_odin_bridge_render_alternate_screen(raw));
+        try std.testing.expectEqual(expected.terminal.history_offset, howl_odin_bridge_render_history_offset(raw));
+        try std.testing.expectEqual(expected.terminal.history_count, howl_odin_bridge_render_history_count(raw));
+        try std.testing.expectEqual(expected.terminal.history_row_base, howl_odin_bridge_render_history_row_base(raw));
+        try std.testing.expectEqual(@as(u8, @intFromBool(expected.terminal.alternate_screen)), howl_odin_bridge_render_alternate_screen(raw));
         var first: u16 = 99;
         var last: u16 = 99;
         const selected = howl_odin_bridge_render_selection_span(raw, 98, 0, 98, 7, 8, 0, 0, &first, &last);
@@ -6095,11 +6095,11 @@ fn testReusableProjection(history: u32, with_image: bool) !*client.view.Snapshot
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var rich = std.mem.zeroes(client.rich.View);
     rich.begin.revision = 7;
-    rich.begin.terminal_revision = 5;
-    rich.begin.rows = 1;
-    rich.begin.columns = 1;
-    rich.begin.history_count = history;
-    rich.begin.history_offset = history;
+    rich.begin.terminal.revision = 5;
+    rich.begin.terminal.rows = 1;
+    rich.begin.terminal.columns = 1;
+    rich.begin.terminal.history_count = history;
+    rich.begin.terminal.history_offset = history;
     rich.rows = &rows;
     rich.properties.title = "shared title";
     var image = [_]protocol.SnapshotImage{.{ .image_id = 1, .generation = 1, .width = 1, .height = 1 }};
@@ -6130,8 +6130,8 @@ test "rich loan is single-take and release bounded without a connection" {
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var rich = std.mem.zeroes(client.rich.View);
     rich.begin.revision = 11;
-    rich.begin.rows = 1;
-    rich.begin.columns = 1;
+    rich.begin.terminal.rows = 1;
+    rich.begin.terminal.columns = 1;
     rich.rows = &rows;
 
     var bridge: Bridge = undefined;

@@ -43,4 +43,4 @@ deferred:
 gates:
   - root checks/tests forward all maintained Zig roots, nested Web proofs and the external consumer contract, and pass
   - VT simulation, fuzz, and protocol validation pass
-  - zig-audit ruleset-2 core audit, Howl project audit, formatting, and git diff checks pass
+  - zig-audit ruleset-3 source audit, Howl project audit, formatting, and git diff checks pass

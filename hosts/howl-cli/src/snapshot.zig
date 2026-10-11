@@ -49,21 +49,21 @@ pub fn emitCompact(writer: *std.Io.Writer, value: *const Snapshot) !void {
     const begin = value.begin;
     try std.json.Stringify.value(Compact{
         .revision = begin.revision,
-        .terminal_revision = begin.terminal_revision,
-        .geometry = .{ .rows = begin.rows, .columns = begin.columns },
+        .terminal_revision = begin.terminal.revision,
+        .geometry = .{ .rows = begin.terminal.rows, .columns = begin.terminal.columns },
         .viewport = .{
-            .screen = if (begin.alternate_screen) "alternate" else "primary",
-            .history_offset = begin.history_offset,
-            .history_count = begin.history_count,
-            .history_row_base = begin.history_row_base,
+            .screen = if (begin.terminal.alternate_screen) "alternate" else "primary",
+            .history_offset = begin.terminal.history_offset,
+            .history_count = begin.terminal.history_count,
+            .history_row_base = begin.terminal.history_row_base,
         },
         .cursor = .{
-            .row = begin.cursor_row,
-            .column = begin.cursor_column,
-            .shape = client.snapshot.cursorShapeName(begin.cursor_shape),
-            .shape_id = begin.cursor_shape,
-            .visible = begin.cursor_visible,
-            .blink = begin.cursor_blink,
+            .row = begin.terminal.cursor_row,
+            .column = begin.terminal.cursor_column,
+            .shape = client.snapshot.cursorShapeName(begin.terminal.cursor_shape),
+            .shape_id = begin.terminal.cursor_shape,
+            .visible = begin.terminal.cursor_visible,
+            .blink = begin.terminal.cursor_blink,
         },
         .lifecycle = .{
             .stream_closed = begin.stream_closed,

@@ -628,19 +628,8 @@ pub const ImageEnd = struct {
 pub const SnapshotBegin = struct {
     /// Endpoint observation revision covering VT, lifecycle, and authority state.
     revision: u64,
-    /// Canonical VT semantic revision captured inside this observation.
-    terminal_revision: u64,
-    history_offset: u32,
-    history_count: u32,
-    history_row_base: u32,
-    rows: u16,
-    columns: u16,
-    cursor_row: u16,
-    cursor_column: u16,
-    cursor_shape: u8,
-    cursor_visible: bool,
-    cursor_blink: bool,
-    alternate_screen: bool,
+    /// Terminal-only facts owned and encoded by the optional VT codec.
+    terminal: codec.Metadata,
     stream_closed: bool,
     child_exited: bool,
     leader_present: bool,
@@ -690,7 +679,7 @@ pub const payload_bytes = struct {
     /// `Observe` payload bytes.
     pub const observe: usize = 12;
     /// `SnapshotBegin` payload bytes.
-    pub const snapshot_begin: usize = 38;
+    pub const snapshot_begin: usize = 8 + codec.metadata.bytes;
     /// `SnapshotEnd` payload bytes.
     pub const snapshot_end: usize = 8;
     /// `AssignLeader` payload bytes.
@@ -855,19 +844,8 @@ pub fn decodeObserve(input: []const u8) PayloadError!Observe {
 pub fn encodeSnapshotBegin(output: *[payload_bytes.snapshot_begin]u8, value: SnapshotBegin) void {
     output.* = @splat(0);
     writeU64(output[0..8], value.revision);
-    writeU64(output[8..16], value.terminal_revision);
-    writeU32(output[16..20], value.history_offset);
-    writeU32(output[20..24], value.history_count);
-    writeU32(output[24..28], value.history_row_base);
-    writeU16(output[28..30], value.rows);
-    writeU16(output[30..32], value.columns);
-    writeU16(output[32..34], value.cursor_row);
-    writeU16(output[34..36], value.cursor_column);
-    output[36] = value.cursor_shape;
-    output[37] = (@as(u8, @intFromBool(value.cursor_visible)) << 0) |
-        (@as(u8, @intFromBool(value.cursor_blink)) << 1) |
-        (@as(u8, @intFromBool(value.alternate_screen)) << 2) |
-        (@as(u8, @intFromBool(value.stream_closed)) << 3) |
+    codec.metadata.encode(output[8..38], value.terminal);
+    output[37] |= (@as(u8, @intFromBool(value.stream_closed)) << 3) |
         (@as(u8, @intFromBool(value.child_exited)) << 4) |
         (@as(u8, @intFromBool(value.leader_present)) << 5) |
         (@as(u8, @intFromBool(value.you_are_leader)) << 6);
@@ -877,20 +855,14 @@ pub fn encodeSnapshotBegin(output: *[payload_bytes.snapshot_begin]u8, value: Sna
 pub fn decodeSnapshotBegin(input: []const u8) PayloadError!SnapshotBegin {
     if (input.len != payload_bytes.snapshot_begin) return error.InvalidPayload;
     if (input[37] & 0x80 != 0) return error.InvalidPayload;
+    // The legacy envelope shares its last byte with terminal flags. Strip only
+    // Server-owned bits before delegating the exact terminal metadata grammar.
+    var terminal_bytes: [codec.metadata.bytes]u8 = undefined;
+    @memcpy(&terminal_bytes, input[8..38]);
+    terminal_bytes[29] &= codec.metadata.flags_mask;
     return .{
         .revision = readU64(input[0..8]),
-        .terminal_revision = readU64(input[8..16]),
-        .history_offset = readU32(input[16..20]),
-        .history_count = readU32(input[20..24]),
-        .history_row_base = readU32(input[24..28]),
-        .rows = readU16(input[28..30]),
-        .columns = readU16(input[30..32]),
-        .cursor_row = readU16(input[32..34]),
-        .cursor_column = readU16(input[34..36]),
-        .cursor_shape = input[36],
-        .cursor_visible = input[37] & (1 << 0) != 0,
-        .cursor_blink = input[37] & (1 << 1) != 0,
-        .alternate_screen = input[37] & (1 << 2) != 0,
+        .terminal = try codec.metadata.decode(&terminal_bytes),
         .stream_closed = input[37] & (1 << 3) != 0,
         .child_exited = input[37] & (1 << 4) != 0,
         .leader_present = input[37] & (1 << 5) != 0,
@@ -1808,18 +1780,20 @@ test "snapshot begin bytes stay frozen" {
     var encoded: [payload_bytes.snapshot_begin]u8 = undefined;
     encodeSnapshotBegin(&encoded, .{
         .revision = 0x0102_0304_0506_0708,
-        .terminal_revision = 0x1112_1314_1516_1718,
-        .history_offset = 0x2122_2324,
-        .history_count = 0x3132_3334,
-        .history_row_base = 0x4142_4344,
-        .rows = 0x5152,
-        .columns = 0x6162,
-        .cursor_row = 0x7172,
-        .cursor_column = 0x8182,
-        .cursor_shape = 0x91,
-        .cursor_visible = true,
-        .cursor_blink = true,
-        .alternate_screen = true,
+        .terminal = .{
+            .revision = 0x1112_1314_1516_1718,
+            .history_offset = 0x2122_2324,
+            .history_count = 0x3132_3334,
+            .history_row_base = 0x4142_4344,
+            .rows = 0x5152,
+            .columns = 0x6162,
+            .cursor_row = 0x7172,
+            .cursor_column = 0x8182,
+            .cursor_shape = 0x91,
+            .cursor_visible = true,
+            .cursor_blink = true,
+            .alternate_screen = true,
+        },
         .stream_closed = true,
         .child_exited = true,
         .leader_present = true,
@@ -1832,6 +1806,34 @@ test "snapshot begin bytes stay frozen" {
         0x41, 0x42, 0x43, 0x44, 0x51, 0x52, 0x61, 0x62,
         0x71, 0x72, 0x81, 0x82, 0x91, 0x7f,
     }, &encoded);
+}
+
+test "Server snapshot flags remain outside VT metadata" {
+    for (0..128) |flags| {
+        var encoded: [payload_bytes.snapshot_begin]u8 = @splat(0);
+        writeU64(encoded[0..8], 42);
+        writeU64(encoded[8..16], 17);
+        encoded[37] = @intCast(flags);
+        const value = try decodeSnapshotBegin(&encoded);
+        try std.testing.expectEqual(@as(u64, 42), value.revision);
+        try std.testing.expectEqual(@as(u64, 17), value.terminal.revision);
+        try std.testing.expectEqual(flags & 1 != 0, value.terminal.cursor_visible);
+        try std.testing.expectEqual(flags & 2 != 0, value.terminal.cursor_blink);
+        try std.testing.expectEqual(flags & 4 != 0, value.terminal.alternate_screen);
+        try std.testing.expectEqual(flags & 8 != 0, value.stream_closed);
+        try std.testing.expectEqual(flags & 16 != 0, value.child_exited);
+        try std.testing.expectEqual(flags & 32 != 0, value.leader_present);
+        try std.testing.expectEqual(flags & 64 != 0, value.you_are_leader);
+        var round_trip: [payload_bytes.snapshot_begin]u8 = undefined;
+        encodeSnapshotBegin(&round_trip, value);
+        try std.testing.expectEqualSlices(u8, &encoded, &round_trip);
+        var pure: [codec.metadata.bytes]u8 = undefined;
+        codec.metadata.encode(&pure, value.terminal);
+        try std.testing.expectEqual(@as(u8, @intCast(flags & 7)), pure[29]);
+        encoded[37] |= 0x80;
+        try std.testing.expectError(error.InvalidPayload, decodeSnapshotBegin(&encoded));
+        try std.testing.expectError(error.InvalidPayload, decodeSnapshotBegin(encoded[0 .. encoded.len - 1]));
+    }
 }
 
 // -- Typed input grammar ------------------------------------------------------

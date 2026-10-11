@@ -7,6 +7,7 @@
 const std = @import("std");
 const protocol = @import("server_protocol").terminal;
 const rich = @import("rich.zig");
+const codec = @import("howl_vt_codec");
 
 /// Reports projection allocation or rich-snapshot validation failures.
 pub const Error = std.mem.Allocator.Error || error{
@@ -16,6 +17,8 @@ pub const Error = std.mem.Allocator.Error || error{
 
 /// Snapshot framing metadata retained by the immutable projected view.
 pub const Begin = protocol.SnapshotBegin;
+/// Canonical terminal-only metadata shared with the optional VT codec.
+pub const Metadata = codec.Metadata;
 /// Complete terminal presentation colors and cursor state.
 pub const Presentation = rich.Presentation;
 /// Canonical terminal text-color representation.
@@ -367,6 +370,11 @@ pub fn begin(snapshot: *const Snapshot) *const Begin {
     return &constImpl(snapshot).begin;
 }
 
+/// Borrows only VT metadata, without Server delivery or authority state.
+pub fn metadata(snapshot: *const Snapshot) *const Metadata {
+    return &constImpl(snapshot).begin.terminal;
+}
+
 /// Borrows coherent terminal properties from the accepted immutable snapshot.
 pub fn properties(snapshot: *const Snapshot) protocol.properties.View {
     const impl = constImpl(snapshot);
@@ -433,7 +441,7 @@ pub fn cursorShapeFromValue(value: u8) CursorShape {
 
 /// Resolves the validated snapshot cursor shape without exposing wire values.
 pub fn cursorShape(snapshot: *const Snapshot) CursorShape {
-    return cursorShapeFromValue(begin(snapshot).cursor_shape);
+    return cursorShapeFromValue(begin(snapshot).terminal.cursor_shape);
 }
 
 /// Resolves one already-validated rich/view DEC row-geometry value.
@@ -615,10 +623,10 @@ fn writeText(
     var writer = TextWriter{ .bytes = output };
     const snapshot_rows = Source.snapshotRows(snapshot);
     const facts = Source.beginFacts(snapshot);
-    var cursor_row: usize = facts.cursor_row;
-    var cursor_column: usize = facts.cursor_column;
-    var has_cursor = include_cursor and facts.history_offset == 0 and
-        facts.cursor_visible and cursor_row < snapshot_rows.len and
+    var cursor_row: usize = facts.terminal.cursor_row;
+    var cursor_column: usize = facts.terminal.cursor_column;
+    var has_cursor = include_cursor and facts.terminal.history_offset == 0 and
+        facts.terminal.cursor_visible and cursor_row < snapshot_rows.len and
         cursor_column < Source.rowCells(snapshot, snapshot_rows[cursor_row]).len;
     if (has_cursor) {
         const cell = Source.rowCells(snapshot, snapshot_rows[cursor_row])[cursor_column];
@@ -733,7 +741,7 @@ const Counts = struct {
 };
 
 fn validateAndCount(source: *const rich.View) Error!Counts {
-    if (source.rows.len != source.begin.rows or source.begin.cursor_shape > 3) {
+    if (source.rows.len != source.begin.terminal.rows or source.begin.terminal.cursor_shape > 3) {
         return error.InvalidRichSnapshot;
     }
     if (source.changed_rows) |changed| {
@@ -742,7 +750,7 @@ fn validateAndCount(source: *const rich.View) Error!Counts {
         return error.InvalidRichSnapshot;
     }
     if (source.row_shift) |shift| {
-        if (shift == 0 or shift >= source.begin.rows) return error.InvalidRichSnapshot;
+        if (shift == 0 or shift >= source.begin.terminal.rows) return error.InvalidRichSnapshot;
     }
     if (!validPresentation(source.presentation) or
         source.hyperlinks.len > protocol.text_v1.maximum_hyperlinks)
@@ -755,7 +763,7 @@ fn validateAndCount(source: *const rich.View) Error!Counts {
     var cell_count: usize = 0;
     var scalar_count: usize = 0;
     for (source.rows) |row| {
-        if (row.cells.len != source.begin.columns or row.line_geometry > 3) {
+        if (row.cells.len != source.begin.terminal.columns or row.line_geometry > 3) {
             return error.InvalidRichSnapshot;
         }
         cell_count = std.math.add(usize, cell_count, row.cells.len) catch return error.ViewTooLarge;
@@ -814,7 +822,7 @@ fn validGraphics(source: *const rich.View) bool {
     var referenced: [protocol.graphics_v2.maximum_images]bool = @splat(false);
     for (source.graphics.placements) |placement| {
         if (placement.image_id == 0 or placement.generation == 0 or
-            placement.row >= source.begin.rows or placement.column >= source.begin.columns or
+            placement.row >= source.begin.terminal.rows or placement.column >= source.begin.terminal.columns or
             placement.source_width == 0 or placement.source_height == 0 or
             placement.pixel_width == 0 or placement.pixel_height == 0)
             return false;
@@ -928,18 +936,20 @@ fn ownerBytes(impl: *const Impl) []const u8 {
 fn testBegin(rows_count: u16, columns_count: u16) Begin {
     return .{
         .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .rows = rows_count,
-        .columns = columns_count,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = false,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 1,
+            .history_offset = 0,
+            .history_count = 0,
+            .history_row_base = 0,
+            .rows = rows_count,
+            .columns = columns_count,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = false,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -1117,18 +1127,20 @@ test "coarse view preserves rich semantics in one allocation" {
         .allocator = std.testing.allocator,
         .begin = .{
             .revision = 11,
-            .terminal_revision = 9,
-            .history_offset = 3,
-            .history_count = 8,
-            .history_row_base = 2,
-            .rows = 1,
-            .columns = 2,
-            .cursor_row = 0,
-            .cursor_column = 1,
-            .cursor_shape = 2,
-            .cursor_visible = true,
-            .cursor_blink = false,
-            .alternate_screen = false,
+            .terminal = .{
+                .revision = 9,
+                .history_offset = 3,
+                .history_count = 8,
+                .history_row_base = 2,
+                .rows = 1,
+                .columns = 2,
+                .cursor_row = 0,
+                .cursor_column = 1,
+                .cursor_shape = 2,
+                .cursor_visible = true,
+                .cursor_blink = false,
+                .alternate_screen = false,
+            },
             .stream_closed = false,
             .child_exited = false,
             .leader_present = true,
@@ -1329,7 +1341,7 @@ test "coarse view rejects malformed rich geometry before allocation" {
 test "coarse view rejects unknown cursor wire shape before allocation" {
     const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
     var begin_value = testBegin(0, 0);
-    begin_value.cursor_shape = 4;
+    begin_value.terminal.cursor_shape = 4;
     const source = rich.Snapshot{
         .allocator = std.testing.allocator,
         .begin = begin_value,
@@ -1361,8 +1373,8 @@ test "accessible text keeps canonical Unicode caret and conceals hidden text" {
         .rows = &rows_source,
         .hyperlinks = &.{},
     };
-    source.begin.cursor_visible = true;
-    source.begin.cursor_column = 5;
+    source.begin.terminal.cursor_visible = true;
+    source.begin.terminal.cursor_column = 5;
     const snapshot = try project(std.testing.allocator, &source);
     defer deinit(snapshot);
     var output: [64]u8 = undefined;
@@ -1378,14 +1390,14 @@ test "accessible text keeps canonical Unicode caret and conceals hidden text" {
     try std.testing.expect(short.truncated);
     try std.testing.expectEqual(@as(?usize, null), short.caret_offset);
 
-    source.begin.cursor_column = 2;
+    source.begin.terminal.cursor_column = 2;
     const wide = try project(std.testing.allocator, &source);
     defer deinit(wide);
     const wide_result = writeAccessibleText(wide, &output);
     try std.testing.expectEqual(@as(?usize, 2), wide_result.caret_offset);
 
-    source.begin.history_count = 1;
-    source.begin.history_offset = 1;
+    source.begin.terminal.history_count = 1;
+    source.begin.terminal.history_offset = 1;
     const history = try project(std.testing.allocator, &source);
     defer deinit(history);
     const history_result = writeAccessibleText(history, &output);
@@ -1407,9 +1419,9 @@ test "accessible text retains empty rows through cursor without allocating" {
         .rows = &rows_source,
         .hyperlinks = &.{},
     };
-    source.begin.cursor_visible = true;
-    source.begin.cursor_row = 1;
-    source.begin.cursor_column = 2;
+    source.begin.terminal.cursor_visible = true;
+    source.begin.terminal.cursor_row = 1;
+    source.begin.terminal.cursor_column = 2;
     const snapshot = try project(std.testing.allocator, &source);
     defer deinit(snapshot);
     var output: [16]u8 = undefined;

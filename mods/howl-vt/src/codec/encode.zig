@@ -2,6 +2,7 @@
 const std = @import("std");
 const protocol = @import("wire.zig");
 const values = @import("decoded.zig");
+const facts = @import("metadata.zig");
 
 /// Allocation failure or a text body exceeding the codec bound.
 pub const AppendError = std.mem.Allocator.Error || error{SnapshotTooLarge};
@@ -58,6 +59,24 @@ pub fn Encoder(comptime Observation: type) type {
         const LineGeometry = @TypeOf(@as(SemanticView, undefined).lineGeometry(0));
         const Presentation = @TypeOf(@as(*const Observation, undefined).presentation());
         const Images = @TypeOf(@as(*const Observation, undefined).images(0));
+
+        /// Captures terminal facts from the same synchronous semantic viewport cut.
+        pub fn metadata(view: SemanticView, revision: u64) facts.Metadata {
+            return .{
+                .revision = revision,
+                .history_offset = view.history_offset,
+                .history_count = view.history_count,
+                .history_row_base = view.history_row_base,
+                .rows = view.rows,
+                .columns = view.cols,
+                .cursor_row = view.cursor_row,
+                .cursor_column = view.cursor_col,
+                .cursor_shape = @intCast(@backingInt(view.cursor_shape)),
+                .cursor_visible = view.cursor_visible,
+                .cursor_blink = view.cursor_blink,
+                .alternate_screen = view.is_alternate_screen,
+            };
+        }
 
         /// Appends one complete text cut; failures restore the caller's prefix.
         pub fn appendText(

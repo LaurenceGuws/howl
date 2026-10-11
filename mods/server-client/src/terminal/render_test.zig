@@ -52,18 +52,20 @@ fn sourceSnapshot(rows: []client.rich.Row, columns: u16) client.rich.Snapshot {
         .allocator = std.testing.allocator,
         .begin = .{
             .revision = 17,
-            .terminal_revision = 11,
-            .history_offset = 0,
-            .history_count = 0,
-            .history_row_base = 0,
-            .rows = @intCast(rows.len),
-            .columns = columns,
-            .cursor_row = 0,
-            .cursor_column = 0,
-            .cursor_shape = 0,
-            .cursor_visible = false,
-            .cursor_blink = false,
-            .alternate_screen = false,
+            .terminal = .{
+                .revision = 11,
+                .history_offset = 0,
+                .history_count = 0,
+                .history_row_base = 0,
+                .rows = @intCast(rows.len),
+                .columns = columns,
+                .cursor_row = 0,
+                .cursor_column = 0,
+                .cursor_shape = 0,
+                .cursor_visible = false,
+                .cursor_blink = false,
+                .alternate_screen = false,
+            },
             .stream_closed = false,
             .child_exited = false,
             .leader_present = false,
@@ -1067,7 +1069,7 @@ test "terminal renderer block cursor is final presentation not compositor topolo
     var cells = [_]client.rich.Cell{cell(&scalar, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var source = sourceSnapshot(&rows, 1);
-    source.begin.cursor_visible = true;
+    source.begin.terminal.cursor_visible = true;
     source.presentation.presence_bits = 1;
     source.presentation.cursor = .{ .r = 9, .g = 8, .b = 7, .a = 255 };
     source.presentation.cursor_text = null;
@@ -1177,7 +1179,7 @@ test "terminal renderer borrowed rich and owned view produce identical final fra
     }};
     var source = sourceSnapshot(&rows, 4);
     source.begin.revision = 41;
-    source.begin.terminal_revision = 39;
+    source.begin.terminal.revision = 39;
     source.graphics = .{
         .generation = 11,
         .content_generation = 10,
@@ -1221,7 +1223,7 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     }
     var baseline_source = sourceSnapshot(&baseline_rows, 1);
     baseline_source.begin.revision = 20;
-    baseline_source.begin.terminal_revision = 20;
+    baseline_source.begin.terminal.revision = 20;
     var baseline_rich = baseline_source.view();
     var baseline_changed: [6]bool = @splat(true);
     baseline_rich.changed_rows = &baseline_changed;
@@ -1265,7 +1267,7 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     }
     var changed_source = sourceSnapshot(&changed_rows, 1);
     changed_source.begin.revision = 21;
-    changed_source.begin.terminal_revision = 21;
+    changed_source.begin.terminal.revision = 21;
     var changed_rich = changed_source.view();
     var changed_mask = [_]bool{ false, false, true, false, false, false };
     changed_rich.changed_rows = &changed_mask;
@@ -1290,7 +1292,7 @@ test "terminal renderer same-index changed rows equal complete final commands" {
     // force a complete projection and re-prime the cache.
     var coalesced_source = sourceSnapshot(&changed_rows, 1);
     coalesced_source.begin.revision = 22;
-    coalesced_source.begin.terminal_revision = 22;
+    coalesced_source.begin.terminal.revision = 22;
     var coalesced_rich = coalesced_source.view();
     var coalesced_mask: [6]bool = @splat(false);
     coalesced_rich.changed_rows = &coalesced_mask;
@@ -1322,7 +1324,7 @@ test "incremental cached row reuse grows complete command storage instead of rej
     }
     var baseline_source = sourceSnapshot(&baseline_rows, column_count);
     baseline_source.begin.revision = 30;
-    baseline_source.begin.terminal_revision = 30;
+    baseline_source.begin.terminal.revision = 30;
     var baseline_rich = baseline_source.view();
     var baseline_changed: [row_count]bool = @splat(true);
     baseline_rich.changed_rows = &baseline_changed;
@@ -1352,7 +1354,7 @@ test "incremental cached row reuse grows complete command storage instead of rej
         row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
     var changed_source = sourceSnapshot(&changed_rows, column_count);
     changed_source.begin.revision = 31;
-    changed_source.begin.terminal_revision = 31;
+    changed_source.begin.terminal.revision = 31;
     var changed_rich = changed_source.view();
     var changed_mask = [_]bool{ true, false, false, false, false, false };
     changed_rich.changed_rows = &changed_mask;
@@ -1377,7 +1379,7 @@ test "terminal renderer incremental rows equal complete final commands" {
     }
     var baseline_source = sourceSnapshot(&baseline_rows, 1);
     baseline_source.begin.revision = 30;
-    baseline_source.begin.terminal_revision = 30;
+    baseline_source.begin.terminal.revision = 30;
     var baseline_rich = baseline_source.view();
     var baseline_changed: [6]bool = @splat(true);
     baseline_rich.changed_rows = &baseline_changed;
@@ -1405,7 +1407,7 @@ test "terminal renderer incremental rows equal complete final commands" {
     }
     var shifted_source = sourceSnapshot(&shifted_rows, 1);
     shifted_source.begin.revision = 31;
-    shifted_source.begin.terminal_revision = 31;
+    shifted_source.begin.terminal.revision = 31;
     var shifted_rich = shifted_source.view();
     var changed = [_]bool{ false, false, false, true, false, true };
     shifted_rich.changed_rows = &changed;
@@ -1493,15 +1495,15 @@ fn richFixture(allocator: std.mem.Allocator, observation: *const VT.Observation,
         }
     }
     var source = sourceSnapshot(rows, view.cols);
-    source.begin.history_offset = view.history_offset;
-    source.begin.history_count = view.history_count;
-    source.begin.history_row_base = view.history_row_base;
-    source.begin.cursor_row = view.cursor_row;
-    source.begin.cursor_column = view.cursor_col;
-    source.begin.cursor_visible = view.cursor_visible;
-    source.begin.cursor_blink = view.cursor_blink;
-    source.begin.cursor_shape = @backingInt(view.cursor_shape);
-    source.begin.alternate_screen = view.is_alternate_screen;
+    source.begin.terminal.history_offset = view.history_offset;
+    source.begin.terminal.history_count = view.history_count;
+    source.begin.terminal.history_row_base = view.history_row_base;
+    source.begin.terminal.cursor_row = view.cursor_row;
+    source.begin.terminal.cursor_column = view.cursor_col;
+    source.begin.terminal.cursor_visible = view.cursor_visible;
+    source.begin.terminal.cursor_blink = view.cursor_blink;
+    source.begin.terminal.cursor_shape = @backingInt(view.cursor_shape);
+    source.begin.terminal.alternate_screen = view.is_alternate_screen;
     const colors = observation.presentation();
     for (&source.presentation.palette, colors.palette) |*out, color| out.* = fixtureRgba(color);
     source.presentation.foreground = fixtureRgba(colors.foreground);
@@ -1813,7 +1815,7 @@ test "terminal renderer space owns no glyph ink while presentation layers remain
     cells[0].style_bits = 0;
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var source = sourceSnapshot(&rows, 1);
-    source.begin.cursor_visible = true;
+    source.begin.terminal.cursor_visible = true;
     source.presentation.presence_bits = 1;
     source.presentation.cursor = .{ .r = 9, .g = 8, .b = 7, .a = 255 };
     const view = try client.view.project(std.testing.allocator, &source);

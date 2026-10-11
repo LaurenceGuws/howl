@@ -88,15 +88,15 @@ test "one Server hosts independently-sized Instances without owning a shared gri
     defer work_client.deinit();
     var work_snapshot = try howl_client.snapshot.request(&work_client, std.testing.allocator, 0, 0);
     defer work_snapshot.deinit();
-    try std.testing.expectEqual(@as(u16, 40), work_snapshot.begin.rows);
-    try std.testing.expectEqual(@as(u16, 100), work_snapshot.begin.columns);
+    try std.testing.expectEqual(@as(u16, 40), work_snapshot.begin.terminal.rows);
+    try std.testing.expectEqual(@as(u16, 100), work_snapshot.begin.terminal.columns);
 
     var logs_client = try attachInstance(endpoint, logs_instance);
     defer logs_client.deinit();
     var logs_snapshot = try howl_client.snapshot.request(&logs_client, std.testing.allocator, 0, 0);
     defer logs_snapshot.deinit();
-    try std.testing.expectEqual(@as(u16, 18), logs_snapshot.begin.rows);
-    try std.testing.expectEqual(@as(u16, 72), logs_snapshot.begin.columns);
+    try std.testing.expectEqual(@as(u16, 18), logs_snapshot.begin.terminal.rows);
+    try std.testing.expectEqual(@as(u16, 72), logs_snapshot.begin.terminal.columns);
 
     var tree = try control.observeTree(0);
     defer tree.deinit();

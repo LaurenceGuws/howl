@@ -359,8 +359,8 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     const next_render = std.math.add(u64, rendered, 1) catch return error.RenderRevisionOverflow;
     try updateRenderer(view);
     surface = .{
-        .width = std.math.mul(u16, begin.columns, cell_size.width) catch return error.SurfaceOverflow,
-        .height = std.math.mul(u16, begin.rows, cell_size.height) catch return error.SurfaceOverflow,
+        .width = std.math.mul(u16, begin.terminal.columns, cell_size.width) catch return error.SurfaceOverflow,
+        .height = std.math.mul(u16, begin.terminal.rows, cell_size.height) catch return error.SurfaceOverflow,
     };
     const frame = terminal.frame(terminal_renderer.?, accepted_residency[0..accepted_residency_count], .{
         .uploads = &frame_uploads,
@@ -380,7 +380,7 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     const text_projection = client.view.writeVisibleText(view, &projections[pending_projection]);
     projection_lengths[pending_projection] = text_projection.bytes_written;
     projection_truncated[pending_projection] = text_projection.truncated;
-    try writeFrame(frame, view, begin.revision, begin.terminal_revision, next_render);
+    try writeFrame(frame, view, begin.revision, begin.terminal.revision, next_render);
     rendered = next_render;
     pending_ack = true;
     return .frame;
@@ -538,7 +538,7 @@ fn writeFrameV2(
         .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
     );
     const begin = client.view.begin(snapshot);
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         if (row != 0) try writer.writeByte(',');
         const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
             return error.InvalidSnapshot;
@@ -628,7 +628,7 @@ fn writeFrameV3(
         .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
     );
     const begin = client.view.begin(snapshot);
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         if (row != 0) try writer.writeByte(',');
         const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
             return error.InvalidSnapshot;
@@ -713,7 +713,7 @@ fn writeFrameV4(
         .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
     );
     const begin = client.view.begin(snapshot);
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         if (row != 0) try writer.writeByte(',');
         const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
             return error.InvalidSnapshot;

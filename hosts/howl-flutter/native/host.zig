@@ -1797,7 +1797,7 @@ fn observe(
     var rich_view = if (cached_rich) |value| value else owned_rich.?.view();
     const begin = rich_view.begin;
 
-    const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
+    const surface = try surfaceSize(begin.terminal.rows, begin.terminal.columns, host.cell_size);
     try updateHostRendererRich(host, &rich_view);
     const frame = terminal.frame(host.renderer, residency, .{
         .uploads = &host.frame_uploads,
@@ -1822,7 +1822,7 @@ fn observe(
     const hcr_end = writer.offset;
     const hcr_len = hcr_end - hcr_start;
     if (hcr_end > render_packet_budget) return error.BufferTooSmall;
-    for (0..begin.rows) |row| {
+    for (0..begin.terminal.rows) |row| {
         const shape = client.selection.rowShapeRich(&rich_view, @intCast(row)) orelse
             return error.InvalidFrame;
         const encoded_shape = shape.content_end_exclusive |
@@ -2168,20 +2168,20 @@ const HostFacts = struct {
 fn transportedFacts(begin: client.view.Begin) HostFacts {
     return .{
         .revision = begin.revision,
-        .terminal_revision = begin.terminal_revision,
+        .terminal_revision = begin.terminal.revision,
         .stream_closed = begin.stream_closed,
         .child_exited = begin.child_exited,
         .leader_present = begin.leader_present,
         .you_are_leader = begin.you_are_leader,
-        .alternate_screen = begin.alternate_screen,
-        .rows = begin.rows,
-        .columns = begin.columns,
-        .cursor_row = begin.cursor_row,
-        .cursor_column = begin.cursor_column,
-        .cursor_visible = begin.cursor_visible,
-        .history_offset = begin.history_offset,
-        .history_count = begin.history_count,
-        .history_row_base = begin.history_row_base,
+        .alternate_screen = begin.terminal.alternate_screen,
+        .rows = begin.terminal.rows,
+        .columns = begin.terminal.columns,
+        .cursor_row = begin.terminal.cursor_row,
+        .cursor_column = begin.terminal.cursor_column,
+        .cursor_visible = begin.terminal.cursor_visible,
+        .history_offset = begin.terminal.history_offset,
+        .history_count = begin.terminal.history_count,
+        .history_row_base = begin.terminal.history_row_base,
     };
 }
 

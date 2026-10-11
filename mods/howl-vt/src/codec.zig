@@ -5,6 +5,11 @@
 const std = @import("std");
 const wire = @import("codec/wire.zig");
 
+/// Terminal-only metadata grammar with no Server observation or authority state.
+pub const metadata = @import("codec/metadata.zig");
+/// VT semantic revision, history, viewport and cursor facts for one observation.
+pub const Metadata = metadata.Metadata;
+
 /// Transport-free terminal value decoding and allocation lifetime.
 pub const decoded = @import("codec/decoded.zig");
 
@@ -147,6 +152,7 @@ pub const DecodeError = decoded.Error;
 
 test {
     std.testing.refAllDecls(wire);
+    std.testing.refAllDecls(metadata);
     std.testing.refAllDecls(decoded);
     std.testing.refAllDecls(text);
     std.testing.refAllDecls(encoder);

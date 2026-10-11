@@ -106,6 +106,10 @@ test "optional VT codec has its own root and canonical wire value identity" {
     try std.testing.expect(codec.TextColor == wire.TextColor);
     try std.testing.expect(codec.SnapshotImage == wire.SnapshotImage);
     try std.testing.expect(codec.properties == wire.properties);
+    try std.testing.expect(codec.Metadata == @TypeOf(@as(wire.SnapshotBegin, undefined).terminal));
+    try std.testing.expect(!@hasField(codec.Metadata, "stream_closed"));
+    try std.testing.expect(!@hasField(codec.Metadata, "leader_present"));
+    try std.testing.expect(!@hasField(codec.Metadata, "you_are_leader"));
     try std.testing.expect(!@hasDecl(vt, "codec"));
     try std.testing.expect(!@hasDecl(instance, "codec"));
     try std.testing.expect(!@hasDecl(render, "codec"));

@@ -15,6 +15,18 @@ test "optional encoder preserves VT facts and never advances canonical state" {
     var terminal = try fixture(std.testing.allocator);
     defer terminal.deinit();
     const sequence = terminal.semanticSequence();
+    const semantic = terminal.observation().semanticView(0);
+    const metadata = Encoder.metadata(semantic, sequence);
+    try std.testing.expectEqual(sequence, metadata.revision);
+    try std.testing.expectEqual(semantic.rows, metadata.rows);
+    try std.testing.expectEqual(semantic.cols, metadata.columns);
+    try std.testing.expectEqual(semantic.cursor_row, metadata.cursor_row);
+    try std.testing.expectEqual(semantic.cursor_col, metadata.cursor_column);
+    try std.testing.expectEqual(semantic.history_count, metadata.history_count);
+    try std.testing.expectEqual(semantic.history_row_base, metadata.history_row_base);
+    try std.testing.expectEqual(semantic.cursor_visible, metadata.cursor_visible);
+    try std.testing.expectEqual(semantic.cursor_blink, metadata.cursor_blink);
+    try std.testing.expectEqual(semantic.is_alternate_screen, metadata.alternate_screen);
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
     const geometry = try Encoder.appendText(std.testing.allocator, &body, terminal.observation(), 0, 42);

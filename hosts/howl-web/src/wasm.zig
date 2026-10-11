@@ -494,13 +494,13 @@ fn decodeSnapshot() (rich.Error || client.view.Error)!void {
     projection_len = text_projection.bytes_written;
     projection_truncated = text_projection.truncated;
     revision = snapshot.begin.revision;
-    terminal_revision = snapshot.begin.terminal_revision;
-    rows = snapshot.begin.rows;
-    columns = snapshot.begin.columns;
-    history_offset = snapshot.begin.history_offset;
-    history_count = snapshot.begin.history_count;
-    history_row_base = snapshot.begin.history_row_base;
-    alternate_screen = snapshot.begin.alternate_screen;
+    terminal_revision = snapshot.begin.terminal.revision;
+    rows = snapshot.begin.terminal.rows;
+    columns = snapshot.begin.terminal.columns;
+    history_offset = snapshot.begin.terminal.history_offset;
+    history_count = snapshot.begin.terminal.history_count;
+    history_row_base = snapshot.begin.terminal.history_row_base;
+    alternate_screen = snapshot.begin.terminal.alternate_screen;
     leader_present = snapshot.begin.leader_present;
 }
 
@@ -563,17 +563,17 @@ fn acceptFrame() u32 {
                     const begin = live_begin orelse return fail("MissingSnapshotBegin");
                     const end = p.decodeSnapshotEnd(payload) catch |err| return fail(@errorName(err));
                     if (end.revision != begin.revision) return fail("SnapshotRevisionMismatch");
-                    if (begin.history_offset != 0) return fail("LiveHistoryOffsetMismatch");
+                    if (begin.terminal.history_offset != 0) return fail("LiveHistoryOffsetMismatch");
                     projection_len = 0;
                     projection_truncated = false;
                     revision = begin.revision;
-                    terminal_revision = begin.terminal_revision;
-                    rows = begin.rows;
-                    columns = begin.columns;
-                    history_offset = begin.history_offset;
-                    history_count = begin.history_count;
-                    history_row_base = begin.history_row_base;
-                    alternate_screen = begin.alternate_screen;
+                    terminal_revision = begin.terminal.revision;
+                    rows = begin.terminal.rows;
+                    columns = begin.terminal.columns;
+                    history_offset = begin.terminal.history_offset;
+                    history_count = begin.terminal.history_count;
+                    history_row_base = begin.terminal.history_row_base;
+                    alternate_screen = begin.terminal.alternate_screen;
                     leader_present = begin.leader_present;
                     live_begin = null;
                 } else {

@@ -87,6 +87,10 @@ const OwnedStorage = struct {
         return View.begin(snapshot);
     }
 
+    fn metadata(snapshot: *const Snapshot) *const View.Metadata {
+        return View.metadata(snapshot);
+    }
+
     fn presentation(snapshot: *const Snapshot) *const View.Presentation {
         return View.presentation(snapshot);
     }
@@ -140,6 +144,10 @@ const RichStorage = struct {
 
     fn begin(snapshot: *const Snapshot) *const View.Begin {
         return &snapshot.begin;
+    }
+
+    fn metadata(snapshot: *const Snapshot) *const View.Metadata {
+        return &snapshot.begin.terminal;
     }
 
     fn presentation(snapshot: *const Snapshot) *const View.Presentation {
@@ -210,37 +218,37 @@ fn ClientSource(comptime Storage: type) type {
 
         /// Returns the declared visible terminal row count.
         pub fn rows(snapshot: *const Snapshot) u16 {
-            return Storage.begin(snapshot).rows;
+            return Storage.metadata(snapshot).rows;
         }
 
         /// Returns the declared physical terminal column count.
         pub fn columns(snapshot: *const Snapshot) u16 {
-            return Storage.begin(snapshot).columns;
+            return Storage.metadata(snapshot).columns;
         }
 
         /// Returns the canonical cursor row in the current client view.
         pub fn cursorRow(snapshot: *const Snapshot) u16 {
-            return Storage.begin(snapshot).cursor_row;
+            return Storage.metadata(snapshot).cursor_row;
         }
 
         /// Returns the canonical cursor column in the current client view.
         pub fn cursorColumn(snapshot: *const Snapshot) u16 {
-            return Storage.begin(snapshot).cursor_column;
+            return Storage.metadata(snapshot).cursor_column;
         }
 
         /// Reports canonical cursor visibility before renderer surface clipping.
         pub fn cursorVisible(snapshot: *const Snapshot) bool {
-            return Storage.begin(snapshot).cursor_visible;
+            return Storage.metadata(snapshot).cursor_visible;
         }
 
         /// Returns the client-selected retained-history offset for incremental identity.
         pub fn historyOffset(snapshot: *const Snapshot) u32 {
-            return Storage.begin(snapshot).history_offset;
+            return Storage.metadata(snapshot).history_offset;
         }
 
         /// Reports which canonical screen bank this observation represents.
         pub fn alternateScreen(snapshot: *const Snapshot) bool {
-            return Storage.begin(snapshot).alternate_screen;
+            return Storage.metadata(snapshot).alternate_screen;
         }
 
         /// Borrows the decoded presentation state from the selected client storage.
@@ -350,7 +358,7 @@ fn ClientSource(comptime Storage: type) type {
 
         /// Normalizes canonical cursor geometry without carrying client enum identity.
         pub fn cursorShape(snapshot: *const Snapshot) semantic.CursorShape {
-            return cursorShapeValue(View.cursorShapeFromValue(Storage.begin(snapshot).cursor_shape));
+            return cursorShapeValue(View.cursorShapeFromValue(Storage.metadata(snapshot).cursor_shape));
         }
 
         /// Returns every image record in the transported visible manifest.

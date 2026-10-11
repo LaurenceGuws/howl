@@ -55,8 +55,8 @@ pub const Range = struct {
         return .{
             .anchor = value,
             .focus = value,
-            .columns = begin.columns,
-            .alternate_screen = begin.alternate_screen,
+            .columns = begin.terminal.columns,
+            .alternate_screen = begin.terminal.alternate_screen,
         };
     }
 
@@ -68,7 +68,7 @@ pub const Range = struct {
 
     /// Classifies whether this stable range can still name the current canonical text domain.
     pub fn validity(self: Range, begin: *const protocol.SnapshotBegin) Validity {
-        if (begin.columns != self.columns or begin.alternate_screen != self.alternate_screen)
+        if (begin.terminal.columns != self.columns or begin.terminal.alternate_screen != self.alternate_screen)
             return .context_changed;
         const bounds = retainedRows(begin) orelse return .evicted;
         if (!pointRetained(self.anchor, self.columns, bounds) or
@@ -79,7 +79,7 @@ pub const Range = struct {
 
     /// Returns the inclusive selected column span intersecting one displayed viewport row.
     pub fn viewportSpan(self: Range, begin: *const protocol.SnapshotBegin, viewport_row: u16) ?Span {
-        if (self.validity(begin) != .valid or viewport_row >= begin.rows) return null;
+        if (self.validity(begin) != .valid or viewport_row >= begin.terminal.rows) return null;
         const row = viewportRow(begin, viewport_row) catch return null;
         const bounds = self.ordered();
         if (row < bounds.start.row or row > bounds.end.row) return null;
@@ -131,7 +131,7 @@ pub const Range = struct {
 /// Resolves one displayed cell to its stable canonical lead-cell identity.
 pub fn point(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Error!Point {
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows or column >= begin.columns) return error.InvalidPoint;
+    if (viewport_row >= begin.terminal.rows or column >= begin.terminal.columns) return error.InvalidPoint;
     const row = view.rows(snapshot)[viewport_row];
     if (column >= row.cell_count) return error.InvalidPoint;
     const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
@@ -142,7 +142,7 @@ pub fn point(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Err
 /// crossing only canonical soft-wrap boundaries. Returns null for blank/concealed cells.
 pub fn word(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Error!?Range {
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows or column >= begin.columns) return error.InvalidPoint;
+    if (viewport_row >= begin.terminal.rows or column >= begin.terminal.columns) return error.InvalidPoint;
     const start_pos = leadViewportPosition(snapshot, viewport_row, column) orelse return error.InvalidPoint;
     if (!selectableLead(snapshot, start_pos.row, start_pos.column)) return null;
 
@@ -160,8 +160,8 @@ pub fn word(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Erro
     return .{
         .anchor = try point(snapshot, first.row, first.column),
         .focus = try point(snapshot, last.row, last.column),
-        .columns = begin.columns,
-        .alternate_screen = begin.alternate_screen,
+        .columns = begin.terminal.columns,
+        .alternate_screen = begin.terminal.alternate_screen,
     };
 }
 
@@ -172,7 +172,7 @@ pub fn word(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Erro
 /// expose only one part of it. Returns null for a visually blank row.
 pub fn visualRow(snapshot: *const view.Snapshot, viewport_row: u16) Error!?Range {
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows or begin.columns == 0) return error.InvalidPoint;
+    if (viewport_row >= begin.terminal.rows or begin.terminal.columns == 0) return error.InvalidPoint;
     const shape = rowShape(snapshot, viewport_row) orelse return error.InvalidPoint;
     if (shape.content_end_exclusive == 0) return null;
 
@@ -190,8 +190,8 @@ pub fn visualRow(snapshot: *const view.Snapshot, viewport_row: u16) Error!?Range
     const range = Range{
         .anchor = try point(snapshot, viewport_row, first),
         .focus = try point(snapshot, viewport_row, last),
-        .columns = begin.columns,
-        .alternate_screen = begin.alternate_screen,
+        .columns = begin.terminal.columns,
+        .alternate_screen = begin.terminal.alternate_screen,
     };
     return range;
 }
@@ -219,7 +219,7 @@ pub fn visualSpan(snapshot: *const view.Snapshot, range: Range, viewport_row: u1
 /// Wide lead cells retain their complete horizontal cell width.
 pub fn rowShape(snapshot: *const view.Snapshot, viewport_row: u16) ?RowShape {
     const begin = view.begin(snapshot);
-    if (viewport_row >= begin.rows) return null;
+    if (viewport_row >= begin.terminal.rows) return null;
     const row = view.rows(snapshot)[viewport_row];
     const row_cells = view.cells(snapshot)[row.cell_offset .. row.cell_offset + row.cell_count];
     const row_scalars = view.scalars(snapshot);
@@ -231,7 +231,7 @@ pub fn rowShape(snapshot: *const view.Snapshot, viewport_row: u16) ?RowShape {
         const first = row_scalars[cell.scalar_offset];
         if (first == ' ') continue;
         const width = @max(cell.width, 1);
-        const end = @min(@as(usize, begin.columns), scan + width);
+        const end = @min(@as(usize, begin.terminal.columns), scan + width);
         return .{ .content_end_exclusive = @intCast(end), .wrapped = row.wrapped };
     }
     return .{ .content_end_exclusive = 0, .wrapped = row.wrapped };
@@ -240,7 +240,7 @@ pub fn rowShape(snapshot: *const view.Snapshot, viewport_row: u16) ?RowShape {
 /// Borrowed-rich equivalent of rowShape. Rich observations have already passed
 /// the wire decoder's semantic validation; this scan retains no source slices.
 pub fn rowShapeRich(snapshot: *const rich.View, viewport_row: u16) ?RowShape {
-    if (viewport_row >= snapshot.begin.rows or viewport_row >= snapshot.rows.len) return null;
+    if (viewport_row >= snapshot.begin.terminal.rows or viewport_row >= snapshot.rows.len) return null;
     const row = snapshot.rows[viewport_row];
     var scan = row.cells.len;
     while (scan > 0) {
@@ -249,7 +249,7 @@ pub fn rowShapeRich(snapshot: *const rich.View, viewport_row: u16) ?RowShape {
         if (cell.x != 0 or cell.y != 0 or cell.scalars.len == 0) continue;
         if (cell.scalars[0] == ' ') continue;
         const width = @max(cell.width, 1);
-        const end = @min(@as(usize, snapshot.begin.columns), scan + width);
+        const end = @min(@as(usize, snapshot.begin.terminal.columns), scan + width);
         return .{ .content_end_exclusive = @intCast(end), .wrapped = row.wrapped };
     }
     return .{ .content_end_exclusive = 0, .wrapped = row.wrapped };
@@ -279,10 +279,10 @@ pub fn extract(connection: *client.Connection, allocator: std.mem.Allocator, ran
 const RowBounds = struct { first: i32, last: i32 };
 
 fn retainedRows(begin: *const protocol.SnapshotBegin) ?RowBounds {
-    if (begin.rows == 0) return null;
-    if (begin.alternate_screen) return .{ .first = 0, .last = @intCast(begin.rows - 1) };
-    const first: u64 = begin.history_row_base;
-    const last = first + @as(u64, begin.history_count) + @as(u64, begin.rows) - 1;
+    if (begin.terminal.rows == 0) return null;
+    if (begin.terminal.alternate_screen) return .{ .first = 0, .last = @intCast(begin.terminal.rows - 1) };
+    const first: u64 = begin.terminal.history_row_base;
+    const last = first + @as(u64, begin.terminal.history_count) + @as(u64, begin.terminal.rows) - 1;
     if (last > std.math.maxInt(i32)) return null;
     return .{ .first = @intCast(first), .last = @intCast(last) };
 }
@@ -292,10 +292,10 @@ fn pointRetained(value: Point, columns: u16, bounds: RowBounds) bool {
 }
 
 fn viewportRow(begin: *const protocol.SnapshotBegin, viewport_row: u16) error{InvalidPoint}!i32 {
-    if (viewport_row >= begin.rows) return error.InvalidPoint;
-    if (begin.alternate_screen) return @intCast(viewport_row);
-    if (begin.history_offset > begin.history_count) return error.InvalidPoint;
-    const row = @as(u64, begin.history_row_base) + begin.history_count - begin.history_offset + viewport_row;
+    if (viewport_row >= begin.terminal.rows) return error.InvalidPoint;
+    if (begin.terminal.alternate_screen) return @intCast(viewport_row);
+    if (begin.terminal.history_offset > begin.terminal.history_count) return error.InvalidPoint;
+    const row = @as(u64, begin.terminal.history_row_base) + begin.terminal.history_count - begin.terminal.history_offset + viewport_row;
     if (row > std.math.maxInt(i32)) return error.InvalidPoint;
     return @intCast(row);
 }
@@ -307,7 +307,7 @@ fn viewportPoint(
     continuation_x: u8,
     continuation_y: u8,
 ) error{InvalidPoint}!Point {
-    if (column >= begin.columns or continuation_x > column) return error.InvalidPoint;
+    if (column >= begin.terminal.columns or continuation_x > column) return error.InvalidPoint;
     const row = try viewportRow(begin, viewport_row);
     if (@as(i64, row) < continuation_y) return error.InvalidPoint;
     return .{
@@ -363,7 +363,7 @@ fn nextLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?Viewpo
 test "viewport points retain stable row identity while history offset changes" {
     var begin = testBegin();
     try std.testing.expectEqual(Point{ .row = 104, .column = 7 }, try viewportPoint(&begin, 1, 7, 0, 0));
-    begin.history_offset = 3;
+    begin.terminal.history_offset = 3;
     try std.testing.expectEqual(Point{ .row = 101, .column = 7 }, try viewportPoint(&begin, 1, 7, 0, 0));
     try std.testing.expectEqual(Point{ .row = 100, .column = 5 }, try viewportPoint(&begin, 1, 7, 2, 1));
 }
@@ -373,12 +373,12 @@ test "selection survives scroll movement and exposes deterministic viewport span
     const range = Range{
         .anchor = .{ .row = 101, .column = 3 },
         .focus = .{ .row = 105, .column = 5 },
-        .columns = begin.columns,
+        .columns = begin.terminal.columns,
         .alternate_screen = false,
     };
     try std.testing.expectEqual(Validity.valid, range.validity(&begin));
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 5 }), range.viewportSpan(&begin, 2));
-    begin.history_offset = 3;
+    begin.terminal.history_offset = 3;
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 3, .end_column = 7 }), range.viewportSpan(&begin, 1));
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 7 }), range.viewportSpan(&begin, 2));
 }
@@ -388,17 +388,17 @@ test "selection invalidates on eviction bank change or geometry change" {
     var range = Range{
         .anchor = .{ .row = 100, .column = 0 },
         .focus = .{ .row = 102, .column = 2 },
-        .columns = begin.columns,
+        .columns = begin.terminal.columns,
         .alternate_screen = false,
     };
     try std.testing.expectEqual(Validity.valid, range.validity(&begin));
-    begin.history_row_base = 101;
+    begin.terminal.history_row_base = 101;
     try std.testing.expectEqual(Validity.evicted, range.validity(&begin));
     begin = testBegin();
-    begin.columns += 1;
+    begin.terminal.columns += 1;
     try std.testing.expectEqual(Validity.context_changed, range.validity(&begin));
     begin = testBegin();
-    begin.alternate_screen = true;
+    begin.terminal.alternate_screen = true;
     try std.testing.expectEqual(Validity.context_changed, range.validity(&begin));
 
     range = .{
@@ -408,9 +408,9 @@ test "selection invalidates on eviction bank change or geometry change" {
         .alternate_screen = true,
     };
     begin = testBegin();
-    begin.alternate_screen = true;
-    begin.history_count = 0;
-    begin.history_offset = 0;
+    begin.terminal.alternate_screen = true;
+    begin.terminal.history_count = 0;
+    begin.terminal.history_offset = 0;
     try std.testing.expectEqual(Validity.valid, range.validity(&begin));
     const ordered = range.ordered();
     try std.testing.expectEqual(Point{ .row = 0, .column = 1 }, ordered.start);
@@ -533,10 +533,10 @@ fn testCell(scalars: []const u32, width: u8) rich.Cell {
 
 fn testBeginForRows(rows: u16, columns: u16) protocol.SnapshotBegin {
     var value = testBegin();
-    value.history_count = 0;
-    value.history_row_base = 0;
-    value.rows = rows;
-    value.columns = columns;
+    value.terminal.history_count = 0;
+    value.terminal.history_row_base = 0;
+    value.terminal.rows = rows;
+    value.terminal.columns = columns;
     return value;
 }
 
@@ -559,18 +559,20 @@ fn testPresentation(palette: [256]rich.Rgba) rich.Presentation {
 fn testBegin() protocol.SnapshotBegin {
     return .{
         .revision = 10,
-        .terminal_revision = 9,
-        .history_offset = 0,
-        .history_count = 3,
-        .history_row_base = 100,
-        .rows = 4,
-        .columns = 8,
-        .cursor_row = 0,
-        .cursor_column = 0,
-        .cursor_shape = 0,
-        .cursor_visible = true,
-        .cursor_blink = false,
-        .alternate_screen = false,
+        .terminal = .{
+            .revision = 9,
+            .history_offset = 0,
+            .history_count = 3,
+            .history_row_base = 100,
+            .rows = 4,
+            .columns = 8,
+            .cursor_row = 0,
+            .cursor_column = 0,
+            .cursor_shape = 0,
+            .cursor_visible = true,
+            .cursor_blink = false,
+            .alternate_screen = false,
+        },
         .stream_closed = false,
         .child_exited = false,
         .leader_present = false,
@@ -626,17 +628,17 @@ test "text-shaped selection stays bounded across history and context changes" {
         .alternate_screen = false,
     };
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 3 }), range.textSpan(&begin, 2, shape));
-    begin.history_offset = 3;
+    begin.terminal.history_offset = 3;
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 3, .end_column = 4 }), range.textSpan(&begin, 1, shape));
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 3, .end_column = 7 }), range.textSpan(&begin, 1, .{ .content_end_exclusive = 65535, .wrapped = false }));
-    try std.testing.expect(range.textSpan(&begin, begin.rows, shape) == null);
-    begin.columns += 1;
+    try std.testing.expect(range.textSpan(&begin, begin.terminal.rows, shape) == null);
+    begin.terminal.columns += 1;
     try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
-    begin.columns -= 1;
-    begin.alternate_screen = true;
+    begin.terminal.columns -= 1;
+    begin.terminal.alternate_screen = true;
     try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
-    begin.alternate_screen = false;
-    begin.history_row_base = 102;
+    begin.terminal.alternate_screen = false;
+    begin.terminal.history_row_base = 102;
     try std.testing.expect(range.textSpan(&begin, 1, shape) == null);
 }
 

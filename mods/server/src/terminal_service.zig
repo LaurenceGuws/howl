@@ -1998,18 +1998,7 @@ pub const Service = struct {
         var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
         protocol.encodeSnapshotBegin(&begin_payload, .{
             .revision = self.observation_revision,
-            .terminal_revision = terminal_revision,
-            .history_offset = terminal_view.history_offset,
-            .history_count = terminal_view.history_count,
-            .history_row_base = terminal_view.history_row_base,
-            .rows = terminal_view.rows,
-            .columns = terminal_view.cols,
-            .cursor_row = terminal_view.cursor_row,
-            .cursor_column = terminal_view.cursor_col,
-            .cursor_shape = @intCast(@backingInt(terminal_view.cursor_shape)),
-            .cursor_visible = terminal_view.cursor_visible,
-            .cursor_blink = terminal_view.cursor_blink,
-            .alternate_screen = terminal_view.is_alternate_screen,
+            .terminal = vt_encoder.metadata(terminal_view, terminal_revision),
             .stream_closed = self.stream_closed,
             .child_exited = self.child_exited,
             .leader_present = self.authority.leader() != null,
@@ -2764,8 +2753,8 @@ test "packed observation reconstructs one coherent complete text_v1 cut" {
     try std.testing.expect(saw_packed);
     try std.testing.expect(saw_graphics);
     try std.testing.expect(saw_properties);
-    try std.testing.expectEqual(@as(u16, 4), begin.?.rows);
-    try std.testing.expectEqual(@as(u16, 24), begin.?.columns);
+    try std.testing.expectEqual(@as(u16, 4), begin.?.terminal.rows);
+    try std.testing.expectEqual(@as(u16, 24), begin.?.terminal.columns);
     try std.testing.expect(packed_envelope.items.len > protocol.text_pack_v1.compressed_header_bytes);
 
     const text_len = readU32(packed_envelope.items[0..4]);
