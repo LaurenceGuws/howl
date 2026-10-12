@@ -26,9 +26,64 @@ static int text_has(hi_instance *instance, const char *needle) {
     text[at] = 0;
     return strstr(text, needle) != NULL;
 }
+/* Foreign retained request proof. Policy, clock, poll and child recipe are caller-owned. */
+static int retained_requests(void) {
+    hi_instance *owner=NULL;
+    const char shell[]="/bin/sh", env_text[]="PATH=/usr/bin:/bin";
+    const char command[]="stty -echo -icanon min 1 time 0; printf '\033]52;c;?\007'; dd bs=1 count=9 status=none | od -An -tx1; exit 0";
+    hi_bytes environment={(const uint8_t *)env_text,sizeof(env_text)-1};
+    hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},{(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,4,80,16,0,10,20};
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner) == HI_OK);
+    hi_service state;
+    REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
+    hvt_request first={0};
+    const uint64_t deadline=now_ns()+UINT64_C(5000000000);
+    while (now_ns() < deadline) {
+        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+        if (state.write_pending) fd.events |= POLLOUT;
+        REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10) >= 0);
+        REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,(fd.revents & (POLLIN|POLLHUP)) != 0,(fd.revents & POLLOUT) != 0,now_ns(),&state) == HI_OK);
+        REQUIRE(hi_request_head(owner,&first) == HI_OK);
+        if (first.kind != HVT_REQUEST_NONE) break;
+    }
+    REQUIRE(first.kind == HVT_REQUEST_CLIPBOARD && first.occurrence_id && first.reply_required);
+    REQUIRE(first.data.clipboard.operation == HVT_CLIPBOARD_QUERY && first.data.clipboard.protocol == HVT_CLIPBOARD_OSC52 && first.data.clipboard.selection_len == 1);
+    hvt_request again;
+    hi_service bad;
+    REQUIRE(hi_service_turn_policy(owner,0,0,0,now_ns(),&bad) == HI_INVALID_ARGUMENT && bad.terminal_revision == 0);
+    REQUIRE(hi_request_head(owner,&again) == HI_OK && memcmp(&first,&again,sizeof(first)) == 0);
+    uint8_t copied[32]; copied[0]=77; size_t required=99;
+    REQUIRE(hi_copy_request_payload(owner,first.occurrence_id+1,copied,sizeof(copied),&required) == HI_STALE_REQUEST && required == 0 && copied[0] == 77);
+    REQUIRE(hi_copy_request_payload(owner,first.occurrence_id,copied,1,&required) == HI_BUFFER_TOO_SMALL && required == 3 && copied[0] == 77);
+    REQUIRE(hi_copy_request_payload(owner,first.occurrence_id,copied,sizeof(copied),&required) == HI_OK && required == 3 && memcmp(copied,"c;?",3) == 0);
+    REQUIRE(hi_consume_request(owner,first.occurrence_id) == HI_REPLY_REQUIRED);
+    REQUIRE(hi_reply_clipboard(owner,first.occurrence_id+1,NULL,0) == HI_STALE_REQUEST);
+    REQUIRE(hi_reply_pointer_shape(owner,first.occurrence_id,(const uint8_t *)"default",7) == HI_STALE_REQUEST);
+    REQUIRE(hi_reply_color_preference(owner,first.occurrence_id,0) == HI_INVALID_ARGUMENT);
+    REQUIRE(hi_reply_container_state(owner,first.occurrence_id,99) == HI_INVALID_ARGUMENT);
+    REQUIRE(hi_reply_container_position(owner,first.occurrence_id,1,2) == HI_STALE_REQUEST);
+    REQUIRE(hi_request_head(owner,&again) == HI_OK && memcmp(&first,&again,sizeof(first)) == 0);
+    REQUIRE(hi_reply_clipboard(owner,first.occurrence_id,NULL,0) == HI_OK);
+    REQUIRE(hi_request_head(owner,&again) == HI_OK && again.kind == HVT_REQUEST_NONE);
+    REQUIRE(memcmp(copied,"c;?",3) == 0);
+    REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,0,0,now_ns(),&state) == HI_OK);
+    REQUIRE(state.write_pending);
+    while (now_ns() < deadline && !state.stream_closed) {
+        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+        if (state.write_pending) fd.events |= POLLOUT;
+        REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10) >= 0);
+        REQUIRE(hi_service_turn_policy(owner,HI_SERVICE_RETAIN,(fd.revents & (POLLIN|POLLHUP)) != 0,(fd.revents & POLLOUT) != 0,now_ns(),&state) == HI_OK);
+    }
+    REQUIRE(state.stream_closed);
+    REQUIRE(text_has(owner,"1b 5d 35 32 3b 63 3b 1b 5c"));
+    REQUIRE(hi_destroy(&owner) == HI_OK && !owner);
+    REQUIRE(memcmp(copied,"c;?",3) == 0 && first.kind == HVT_REQUEST_CLIPBOARD);
+    return 0;
+}
 extern int howl_instance_cpp_header(void);
 int main(void) {
     REQUIRE(howl_instance_cpp_header() == 0);
+    REQUIRE(retained_requests() == 0);
     hi_instance *instance = NULL;
     char shell[] = "/bin/sh";
     const char command[] = "stty -echo; printf READY; IFS= read -r line; printf '\r\nREPLY:%s:%s:%s:%s' \"$line\" \"$ABI_TEST\" \"$TERM\" \"$COLORTERM\"; exit 7";

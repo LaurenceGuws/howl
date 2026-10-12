@@ -1149,393 +1149,105 @@ pub export fn howl_odin_bridge_native_terminal_search_find(
     return 0;
 }
 
-const NativeConsequenceView = struct {
-    kind: protocol.ConsequenceKind = .none,
-    reply_required: bool = false,
-    metadata: [protocol.consequence_metadata_bytes]u8 = @splat(0),
-    payload: []const u8 = &.{},
-};
-
-fn nativeWriteU16(output: []u8, value: u16) void {
-    std.debug.assert(output.len == 2);
-    output[0] = @truncate(value >> 8);
-    output[1] = @truncate(value);
-}
-
-fn nativeWriteU32(output: []u8, value: u32) void {
-    std.debug.assert(output.len == 4);
-    output[0] = @truncate(value >> 24);
-    output[1] = @truncate(value >> 16);
-    output[2] = @truncate(value >> 8);
-    output[3] = @truncate(value);
-}
-
-fn nativeWriteU64(output: []u8, value: u64) void {
-    std.debug.assert(output.len == 8);
-    for (0..8) |index|
-        output[index] = @truncate(value >> @intCast((7 - index) * 8));
-}
-
-fn nativeReadU32(input: []const u8) u32 {
-    std.debug.assert(input.len == 4);
-    return (@as(u32, input[0]) << 24) |
-        (@as(u32, input[1]) << 16) |
-        (@as(u32, input[2]) << 8) |
-        input[3];
-}
-
-fn nativeConsequenceRequiresReply(value: native_instance.Consequence) bool {
-    return switch (value) {
-        .clipboard => |request| request.kind == .query,
-        .pointer_shape => |request| request.payload.len != 0 and
-            request.payload[0] == '?',
-        .container => |occurrence| switch (occurrence.request) {
-            .report_state,
-            .report_position,
-            .report_screen_cells,
-            .report_icon_title,
-            => true,
-            else => false,
-        },
-        .color_preference_query => true,
-        else => false,
-    };
-}
-
-fn nativeConsequenceView(
-    value: ?native_instance.Consequence,
-) error{InvalidConsequence}!NativeConsequenceView {
-    const consequence = value orelse return .{};
-    var result = NativeConsequenceView{
-        .reply_required = nativeConsequenceRequiresReply(consequence),
-    };
-    switch (consequence) {
-        .clipboard => |request| {
-            if (request.selection.len >
-                protocol.consequence_clipboard_selection_bytes)
-                return error.InvalidConsequence;
-            result.kind = .clipboard;
-            result.metadata[0] = @backingInt(switch (request.protocol) {
-                .osc52 => protocol.ConsequenceClipboardProtocol.osc52,
-                .kitty_5522 => .kitty_5522,
-            });
-            result.metadata[1] = @backingInt(switch (request.kind) {
-                .set => protocol.ConsequenceClipboardKind.set,
-                .query => .query,
-                .packet => .packet,
-            });
-            result.metadata[2] = @intCast(request.selection.len);
-            @memcpy(
-                result.metadata[4..][0..request.selection.len],
-                request.selection,
-            );
-            result.payload = request.payload;
-        },
-        .notification => |notification| {
-            result.kind = .notification;
-            result.metadata[0] = @backingInt(switch (notification.kind) {
-                .message => protocol.ConsequenceNotificationKind.message,
-                .steal_focus => .steal_focus,
-                .request_attention => .request_attention,
-            });
-            nativeWriteU16(result.metadata[2..4], notification.command);
-            result.payload = notification.payload;
-        },
-        .pointer_shape => |request| {
-            result.kind = .pointer_shape;
-            nativeWriteU64(result.metadata[0..8], request.reset_generation);
-            result.metadata[8] = @intFromBool(request.alternate_screen);
-            result.payload = request.payload;
-        },
-        .file_transfer => |packet| {
-            result.kind = .file_transfer;
-            result.metadata[0] = @backingInt(switch (packet.protocol) {
-                .iterm2_1337 => protocol.ConsequenceFileTransferProtocol.iterm2_1337,
-                .kitty_5113 => .kitty_5113,
-            });
-            result.payload = packet.payload;
-        },
-        .drag_drop => |command| {
-            result.kind = .drag_drop;
-            result.metadata[0] = @backingInt(switch (command.kind) {
-                .enable => protocol.ConsequenceDragDropKind.enable,
-                .disable => .disable,
-                .accept => .accept,
-                .request => .request,
-                .complete => .complete,
-                .query => .query,
-                .continuation => .continuation,
-                .unsupported => .unsupported,
-            });
-            result.metadata[1] = command.command;
-            var flags: u8 = 0;
-            if (command.more) flags |= 0x01;
-            if (command.remote) flags |= 0x02;
-            if (command.client_id) |id| {
-                flags |= 0x04;
-                nativeWriteU32(result.metadata[4..8], id);
-            }
-            if (command.operation) |operation| {
-                flags |= 0x08;
-                nativeWriteU32(result.metadata[8..12], operation);
-            }
-            if (command.index) |index| {
-                flags |= 0x10;
-                nativeWriteU32(result.metadata[12..16], index);
-            }
-            result.metadata[2] = flags;
-            result.payload = command.payload;
-        },
-        .container => |occurrence| {
-            result.kind = .container;
-            result.metadata[0] = @backingInt(switch (occurrence.request) {
-                .deiconify => protocol.ConsequenceContainerKind.deiconify,
-                .iconify => .iconify,
-                .move => .move,
-                .resize_pixels => .resize_pixels,
-                .raise => .raise,
-                .lower => .lower,
-                .resize_rows => .resize_rows,
-                .resize_columns => .resize_columns,
-                .resize_cells => .resize_cells,
-                .report_state => .report_state,
-                .report_position => .report_position,
-                .report_screen_cells => .report_screen_cells,
-                .report_icon_title => .report_icon_title,
-            });
-            switch (occurrence.request) {
-                .move => |request| {
-                    nativeWriteU32(result.metadata[4..8], request.x);
-                    nativeWriteU32(result.metadata[8..12], request.y);
-                },
-                .resize_pixels => |request| {
-                    nativeWriteU32(result.metadata[4..8], request.height);
-                    nativeWriteU32(result.metadata[8..12], request.width);
-                },
-                .resize_rows => |rows| nativeWriteU32(result.metadata[4..8], rows),
-                .resize_columns => |columns| nativeWriteU32(
-                    result.metadata[4..8],
-                    @backingInt(columns),
-                ),
-                .resize_cells => |request| {
-                    nativeWriteU32(result.metadata[4..8], request.rows);
-                    nativeWriteU32(result.metadata[8..12], request.cols);
-                },
-                else => {},
-            }
-        },
-        .color_preference_query => {
-            result.kind = .color_preference;
-        },
-        .media_copy => |occurrence| {
-            result.kind = .media_copy;
-            result.metadata[0] = @intFromBool(occurrence.request.private);
-            nativeWriteU16(
-                result.metadata[2..4],
-                occurrence.request.parameter,
-            );
-        },
-        .bell => result.kind = .bell,
-        .legacy_control => |occurrence| {
-            result.kind = .legacy_control;
-            result.metadata[0] = @backingInt(switch (occurrence.kind) {
-                .tek_point_plot => protocol.ConsequenceLegacyControlKind.tek_point_plot,
-                .tek_graph => .tek_graph,
-                .tek_incremental_plot => .tek_incremental_plot,
-                .tek_alpha => .tek_alpha,
-                .tek_copy => .tek_copy,
-                .tek_special_point_plot => .tek_special_point_plot,
-                .tek_write_thru_short_dashed => .tek_write_thru_short_dashed,
-                .hp_memory_lock => .hp_memory_lock,
-            });
-        },
-        .dcs => |occurrence| {
-            result.kind = .dcs;
-            result.metadata[0] = @backingInt(switch (occurrence.kind) {
-                .xtsettcap => protocol.ConsequenceDcsKind.xtsettcap,
-                .decudk => .decudk,
-                .decaupss => .decaupss,
-                .iterm_tmux_hook => .iterm_tmux_hook,
-                .iterm_ssh_hook => .iterm_ssh_hook,
-                .iterm_tmux_wrap => .iterm_tmux_wrap,
-                .kitty_remote_command => .kitty_remote_command,
-                .kitty_overlay_ready => .kitty_overlay_ready,
-                .kitty_result => .kitty_result,
-                .kitty_print => .kitty_print,
-                .kitty_echo => .kitty_echo,
-                .kitty_ssh => .kitty_ssh,
-                .kitty_askpass => .kitty_askpass,
-                .kitty_clone => .kitty_clone,
-                .kitty_edit => .kitty_edit,
-            });
-            result.payload = occurrence.payload;
-        },
-        .string_control => |occurrence| {
-            result.kind = .string_control;
-            result.metadata[0] = @backingInt(switch (occurrence.kind) {
-                .apc => protocol.ConsequenceStringKind.apc,
-                .pm => .pm,
-                .sos => .sos,
-            });
-            result.payload = occurrence.payload;
-        },
-    }
-    if (result.payload.len > protocol.maximum_consequence_payload_bytes)
-        return error.InvalidConsequence;
-    return result;
-}
-
-/// Copies one pending consequence record from the claimed Local terminal into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_native_terminal_consequence_observe(
-    raw: ?*NativeTerminalHandle,
-    info: *ConsequenceInfo,
-    payload_ptr: [*]u8,
-    payload_capacity: usize,
-    copied_len: *usize,
-) i32 {
-    info.* = .{};
-    copied_len.* = 0;
+/// Copies native request facts from the worker-claimed owner without a packed Server record.
+pub export fn howl_odin_bridge_native_terminal_request_head(raw: ?*NativeTerminalHandle, out: *native_vt.requests.Info) i32 {
+    out.* = std.mem.zeroes(native_vt.requests.Info);
     const owner = nativeTerminalValue(raw) orelse return 1;
-    const observation = native_instance.terminal(owner.value);
-    const current = observation.consequenceHead();
-    const projected = nativeConsequenceView(current) catch |failure| {
-        owner.setError("consequence_observe", @errorName(failure));
+    native_vt.requests.head(native_instance.terminal(owner.value), out) catch |failure| {
+        owner.setError("request_head", @errorName(failure));
         return 2;
     };
-    info.* = .{
-        .terminal_revision = observation.semanticSequence(),
-        .authority_client_id = 0,
-        .generation = if (current) |value| value.id() else 0,
-        .payload_len = @intCast(projected.payload.len),
-        .kind = @backingInt(projected.kind),
-        .reply_required = @intFromBool(projected.reply_required),
-        .metadata = projected.metadata,
-    };
-    const count = @min(payload_capacity, projected.payload.len);
-    @memcpy(payload_ptr[0..count], projected.payload[0..count]);
-    copied_len.* = count;
     return 0;
 }
-
-/// Acknowledges one pending consequence from the claimed Local terminal into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_native_terminal_consequence_consume(
-    raw: ?*NativeTerminalHandle,
-    generation: u64,
-) i32 {
+/// Acknowledges the matching native request under the existing worker claim.
+pub export fn howl_odin_bridge_native_terminal_request_consume(raw: ?*NativeTerminalHandle, id: u64) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    native_instance.consumeConsequence(
-        owner.value,
-        generation,
-    ) catch |failure| {
-        owner.setError("consequence_consume", @errorName(failure));
+    native_abi.consumeRequest(owner.value, id) catch |failure| {
+        owner.setError("request_consume", @errorName(failure));
         return 2;
     };
     return 0;
 }
 
-/// Replies to one pending consequence from the claimed Local terminal into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_native_terminal_consequence_reply(
-    raw: ?*NativeTerminalHandle,
-    generation: u64,
-    kind_raw: u8,
-    body_ptr: [*]const u8,
-    body_len: usize,
-) i32 {
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_clipboard(raw: ?*NativeTerminalHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    const body = body_ptr[0..body_len];
-    const kind = std.enums.fromInt(
-        protocol.ConsequenceReplyKind,
-        kind_raw,
-    ) orelse return 2;
-    switch (kind) {
-        .clipboard => {
-            const replied = native_instance.replyClipboard(
-                owner.value,
-                generation,
-                body,
-            ) catch |failure| {
-                owner.setError("consequence_reply", @errorName(failure));
-                return 2;
-            };
-            if (!replied) return 2;
-        },
-        .pointer_shape => native_instance.replyPointerShape(
-            owner.value,
-            generation,
-            body,
-        ) catch |failure| {
-            owner.setError("consequence_reply", @errorName(failure));
-            return 2;
-        },
-        .color_preference => {
-            if (body.len != 1) return 2;
-            native_instance.replyColorPreference(
-                owner.value,
-                generation,
-                if (body[0] == 1) .dark else .light,
-            ) catch |failure| {
-                owner.setError("consequence_reply", @errorName(failure));
-                return 2;
-            };
-        },
-        .container_state => {
-            if (body.len != 1) return 2;
-            native_instance.replyContainer(
-                owner.value,
-                generation,
-                .{ .state = if (body[0] == 1) .normal else .iconified },
-            ) catch |failure| {
-                owner.setError("consequence_reply", @errorName(failure));
-                return 2;
-            };
-        },
-        .container_position => {
-            if (body.len != 8) return 2;
-            native_instance.replyContainer(
-                owner.value,
-                generation,
-                .{ .position = .{
-                    .x = nativeReadU32(body[0..4]),
-                    .y = nativeReadU32(body[4..8]),
-                } },
-            ) catch |failure| {
-                owner.setError("consequence_reply", @errorName(failure));
-                return 2;
-            };
-        },
-        .container_screen_cells => {
-            if (body.len != 8) return 2;
-            native_instance.replyContainer(
-                owner.value,
-                generation,
-                .{ .screen_cells = .{
-                    .rows = nativeReadU32(body[0..4]),
-                    .cols = nativeReadU32(body[4..8]),
-                } },
-            ) catch |failure| {
-                owner.setError("consequence_reply", @errorName(failure));
-                return 2;
-            };
-        },
-        .container_icon_title => native_instance.replyContainer(
-            owner.value,
-            generation,
-            .{ .icon_title = body },
-        ) catch |failure| {
-            owner.setError("consequence_reply", @errorName(failure));
-            return 2;
-        },
-        .container_decline => native_instance.declineContainerQuery(
-            owner.value,
-            generation,
-        ) catch |failure| {
-            owner.setError("consequence_reply", @errorName(failure));
-            return 2;
-        },
-    }
+    native_abi.replyClipboard(owner.value, id, ptr[0..len]) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
     return 0;
 }
 
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_pointer_shape(raw: ?*NativeTerminalHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyPointerShape(owner.value, id, ptr[0..len]) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_color_preference(raw: ?*NativeTerminalHandle, id: u64, preference: u8) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyColorPreference(owner.value, id, preference) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_container_state(raw: ?*NativeTerminalHandle, id: u64, state: u8) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyContainerState(owner.value, id, state) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_container_position(raw: ?*NativeTerminalHandle, id: u64, x: u32, y: u32) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyContainerPosition(owner.value, id, x, y) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_container_screen_cells(raw: ?*NativeTerminalHandle, id: u64, rows: u32, columns: u32) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyContainerScreenCells(owner.value, id, rows, columns) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_reply_container_icon_title(raw: ?*NativeTerminalHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.replyContainerIconTitle(owner.value, id, ptr[0..len]) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Adapts one typed module-owned reply while retaining host claim and diagnostics.
+pub export fn howl_odin_bridge_native_terminal_decline_container(raw: ?*NativeTerminalHandle, id: u64) i32 {
+    const owner = nativeTerminalValue(raw) orelse return 1;
+    native_abi.declineContainer(owner.value, id) catch |failure| {
+        owner.setError("request_reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
 /// Copies the last diagnostic bytes from the claimed Local terminal into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_terminal_copy_error(
     raw: ?*NativeTerminalHandle,
@@ -3624,11 +3336,11 @@ fn fillNativeTerminalInfo(
 
 /// Returns the Odin bridge ABI version.
 pub export fn howl_odin_bridge_version() u32 {
-    return 16;
+    return 17;
 }
 
 test "Odin bridge version tracks native local ownership ABI" {
-    try std.testing.expectEqual(@as(u32, 16), howl_odin_bridge_version());
+    try std.testing.expectEqual(@as(u32, 17), howl_odin_bridge_version());
 }
 
 /// Opens an owned direct transported terminal bridge.

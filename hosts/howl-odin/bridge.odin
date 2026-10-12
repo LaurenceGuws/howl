@@ -49,9 +49,17 @@ foreign howl_bridge {
     native_terminal_selection_extract :: proc(handle: rawptr, start_row: i32, start_column: u16, end_row: i32, end_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     native_terminal_hyperlink_copy :: proc(handle: rawptr, history_offset: u32, target_row: i32, target_column: u16, expected_columns: u16, expected_alternate_screen: u8, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     native_terminal_search_find :: proc(handle: rawptr, query: [^]u8, query_len: c.size_t, reverse, origin_present: u8, origin_row: i32, origin_column: u16, output: ^Search_Match_Info) -> i32 ---
-    native_terminal_consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info, payload: [^]u8, payload_capacity: c.size_t, copied_len: ^c.size_t) -> i32 ---
-    native_terminal_consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
-    native_terminal_consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
+
+    native_terminal_request_head :: proc(handle: rawptr, info: ^vt_native.Request_Info) -> i32 ---
+    native_terminal_request_consume :: proc(handle: rawptr, occurrence_id: u64) -> i32 ---
+    native_terminal_reply_clipboard :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    native_terminal_reply_pointer_shape :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    native_terminal_reply_color_preference :: proc(handle: rawptr, occurrence_id: u64, preference: u8) -> i32 ---
+    native_terminal_reply_container_state :: proc(handle: rawptr, occurrence_id: u64, state: u8) -> i32 ---
+    native_terminal_reply_container_position :: proc(handle: rawptr, occurrence_id: u64, x, y: u32) -> i32 ---
+    native_terminal_reply_container_screen_cells :: proc(handle: rawptr, occurrence_id: u64, rows, columns: u32) -> i32 ---
+    native_terminal_reply_container_icon_title :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    native_terminal_decline_container :: proc(handle: rawptr, occurrence_id: u64) -> i32 ---
     native_terminal_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     native_terminal_frame_open :: proc(handle: rawptr) -> rawptr ---
     native_terminal_publish_history :: proc(handle: rawptr, history_offset: u32) -> i32 ---

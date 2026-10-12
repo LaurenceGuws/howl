@@ -184,6 +184,10 @@ pub export fn hi_signal_group(raw: ?*c.hi_instance, tag: u8, out: ?*u8) u32 {
 }
 /// Services one bounded headless turn; monotonic_ns uses caller-owned monotonic nanoseconds.
 pub export fn hi_service_turn(raw: ?*c.hi_instance, readable: u8, writable: u8, timestamp: u64, out: ?*c.hi_service) u32 {
+    return hi_service_turn_policy(raw, c.HI_SERVICE_HEADLESS, readable, writable, timestamp, out);
+}
+/// Services one explicit caller-selected policy with canonical pressure/fallback behavior.
+pub export fn hi_service_turn_policy(raw: ?*c.hi_instance, policy: u8, readable: u8, writable: u8, timestamp: u64, out: ?*c.hi_service) u32 {
     const result = out orelse return c.HI_INVALID_ARGUMENT;
     result.* = std.mem.zeroes(c.hi_service);
     const raw_value = raw orelse return c.HI_INVALID_ARGUMENT;
@@ -191,7 +195,12 @@ pub export fn hi_service_turn(raw: ?*c.hi_instance, readable: u8, writable: u8, 
     if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
     const value = convert(*Instance, raw_value);
     const descriptor = instance.descriptor(value) catch |err| return status(err);
-    const turn = instance.service(value, readable == 1, writable == 1, timestamp) catch |err| return status(err);
+    const selected: instance.ConsequencePolicy = switch (policy) {
+        c.HI_SERVICE_HEADLESS => .headless,
+        c.HI_SERVICE_RETAIN => .retain,
+        else => return c.HI_INVALID_ARGUMENT,
+    };
+    const turn = instance.serviceWithConsequencePolicy(value, readable == 1, writable == 1, timestamp, selected) catch |err| return status(err);
     result.* = .{
         .terminal_revision = instance.terminal(value).semanticSequence(),
         .descriptor = descriptor,
@@ -427,5 +436,110 @@ pub export fn hi_interaction(raw: ?*const c.hi_instance, out: ?*vt.c.hvt_interac
     result.* = .{};
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     result.* = queries.interaction(instance.terminal(convert(*const Instance, owner)));
+    return c.HI_OK;
+}
+
+const RequestMutationError = native.ReplyError || instance.ConsumeConsequenceError;
+fn requestFailure(failure: RequestMutationError) u32 {
+    return switch (failure) {
+        error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+        error.InvalidArgument => c.HI_INVALID_ARGUMENT,
+        error.ReplyLimit, error.ConsequenceLimit => c.HI_RESOURCE_LIMIT,
+        error.ReplyRequired => c.HI_REPLY_REQUIRED,
+        error.RequestMismatch, error.PointerShapeReplyMismatch, error.ContainerReplyMismatch => c.HI_REQUEST_MISMATCH,
+        error.StaleConsequence, error.StaleClipboardRequest, error.StalePointerShape, error.StaleColorPreferenceQuery, error.StaleContainerRequest => c.HI_STALE_REQUEST,
+    };
+}
+fn requestCopyFailure(failure: vt.requests.Error) u32 {
+    return switch (failure) {
+        error.StaleRequest => c.HI_STALE_REQUEST,
+        error.RequestLimit => c.HI_RESOURCE_LIMIT,
+        error.BufferTooSmall => c.HI_BUFFER_TOO_SMALL,
+    };
+}
+/// Copies one complete VT-owned descriptor; no mutable terminal or payload borrow escapes.
+pub export fn hi_request_head(raw: ?*const c.hi_instance, out: ?*vt.requests.Info) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(vt.requests.Info);
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    vt.requests.head(instance.terminal(convert(*const Instance, owner)), result) catch |failure| return requestCopyFailure(failure);
+    return c.HI_OK;
+}
+/// Copies the exact current-head payload or reports its required byte extent.
+pub export fn hi_copy_request_payload(raw: ?*const c.hi_instance, id: u64, out: [*c]u8, capacity: usize, length: ?*usize) u32 {
+    const required = length orelse return c.HI_INVALID_ARGUMENT;
+    required.* = 0;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (capacity > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
+    const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
+    vt.requests.copyPayload(instance.terminal(convert(*const Instance, owner)), id, output, required) catch |failure| return requestCopyFailure(failure);
+    return c.HI_OK;
+}
+/// Acknowledges only the matching consumable head; required replies are explicit.
+pub export fn hi_consume_request(raw: ?*c.hi_instance, id: u64) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.consumeRequest(convert(*Instance, owner), id) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_clipboard(raw: ?*c.hi_instance, id: u64, ptr: [*c]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
+    native.replyClipboard(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_pointer_shape(raw: ?*c.hi_instance, id: u64, ptr: [*c]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
+    native.replyPointerShape(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_color_preference(raw: ?*c.hi_instance, id: u64, preference: u8) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.replyColorPreference(convert(*Instance, owner), id, preference) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_container_state(raw: ?*c.hi_instance, id: u64, state: u8) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.replyContainerState(convert(*Instance, owner), id, state) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_container_position(raw: ?*c.hi_instance, id: u64, x: u32, y: u32) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.replyContainerPosition(convert(*Instance, owner), id, x, y) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_container_screen_cells(raw: ?*c.hi_instance, id: u64, rows: u32, columns: u32) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.replyContainerScreenCells(convert(*Instance, owner), id, rows, columns) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_reply_container_icon_title(raw: ?*c.hi_instance, id: u64, ptr: [*c]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
+    native.replyContainerIconTitle(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    return c.HI_OK;
+}
+
+/// Admits one named canonical exact-head operation without polling or flushing.
+pub export fn hi_decline_container(raw: ?*c.hi_instance, id: u64) u32 {
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    native.declineContainer(convert(*Instance, owner), id) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }

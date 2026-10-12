@@ -5357,6 +5357,17 @@ pub const Terminal = struct {
         dcs: consequences.DcsPayloadOccurrence,
         string_control: consequences.StringPayloadOccurrence,
 
+        /// True when exact-head consumption requires a matching typed reply or decline.
+        /// Pointer-shape queries request a reply but may instead be consumed by policy.
+        pub fn requiresReply(self: Consequence) bool {
+            return switch (self) {
+                .clipboard => |value| value.kind == .query,
+                .container => |value| isContainerQuery(value.request),
+                .color_preference_query => true,
+                .notification, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => false,
+            };
+        }
+
         /// Returns the process-lifetime occurrence identity.
         pub fn id(self: Consequence) u64 {
             return switch (self) {
@@ -7299,17 +7310,7 @@ pub const Terminal = struct {
         self.requireNoPreparedResize();
         const head = self.consequenceHead() orelse return error.StaleConsequence;
         if (head.id() != id) return error.StaleConsequence;
-        switch (head) {
-            .clipboard => |value| {
-                if (value.kind == .query) return error.ReplyRequired;
-            },
-            .notification, .pointer_shape, .file_transfer, .drag_drop => {},
-            .container => |value| {
-                if (isContainerQuery(value.request)) return error.ReplyRequired;
-            },
-            .color_preference_query => return error.ReplyRequired,
-            .bell, .legacy_control, .media_copy, .dcs, .string_control => {},
-        }
+        if (head.requiresReply()) return error.ReplyRequired;
         self.consequences.consumeHead(id) catch return error.StaleConsequence;
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;

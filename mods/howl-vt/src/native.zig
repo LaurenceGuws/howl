@@ -8,10 +8,15 @@ pub const c = @import("vt_native_types");
 pub const Terminal = vt.Terminal;
 /// Bounded copied query operations over canonical const observation.
 pub const queries = @import("native_queries.zig");
+/// Copied exact-head request facts, independent of transport framing.
+pub const requests = @import("native_requests.zig");
 test {
     // zig-audit: acknowledge discard
     // reason: Include this optional root's sibling query proofs in the exact native-contract test artifact.
     _ = queries;
+    // zig-audit: acknowledge discard
+    // reason: Include the optional request projection proofs in this exact native-contract test root.
+    _ = requests;
 }
 comptime {
     if (vt.scalar.maximum_scalars != c.HVT_MAXIMUM_CELL_SCALARS)

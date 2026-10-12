@@ -108,4 +108,65 @@ typedef struct hvt_interaction {
     uint32_t flags;
     uint8_t mouse_tracking, mouse_protocol, pointer_mode, _reserved;
 } hvt_interaction;
+
+/* Copied pending terminal requests. kind selects the native data union arm.
+ * These are C-defined layouts, never Zig unions or Server wire metadata.
+ * occurrence_id is scoped to the matching Instance/Terminal lifetime.
+ * reply_required describes canonical consume refusal; pointer query_requested
+ * separately permits caller policy to reply or consume. Payload copies are
+ * complete-or-untouched and checked against the exact current occurrence. */
+#define HVT_MAX_REQUEST_PAYLOAD_BYTES 1048576u
+enum hvt_request_kind { HVT_REQUEST_NONE=0, HVT_REQUEST_CLIPBOARD=1, HVT_REQUEST_NOTIFICATION=2, HVT_REQUEST_POINTER_SHAPE=3, HVT_REQUEST_FILE_TRANSFER=4, HVT_REQUEST_DRAG_DROP=5, HVT_REQUEST_CONTAINER=6, HVT_REQUEST_COLOR_PREFERENCE=7, HVT_REQUEST_MEDIA_COPY=8, HVT_REQUEST_BELL=9, HVT_REQUEST_LEGACY_CONTROL=10, HVT_REQUEST_DCS=11, HVT_REQUEST_STRING_CONTROL=12 };
+enum hvt_clipboard_operation { HVT_CLIPBOARD_SET=1, HVT_CLIPBOARD_QUERY=2, HVT_CLIPBOARD_PACKET=3 };
+enum hvt_clipboard_protocol { HVT_CLIPBOARD_OSC52=1, HVT_CLIPBOARD_KITTY_5522=2 };
+enum hvt_notification_kind { HVT_NOTIFICATION_MESSAGE=1, HVT_NOTIFICATION_STEAL_FOCUS=2, HVT_NOTIFICATION_REQUEST_ATTENTION=3 };
+enum hvt_file_protocol { HVT_FILE_ITERM2_1337=1, HVT_FILE_KITTY_5113=2 };
+enum hvt_drag_kind { HVT_DRAG_ENABLE=1, HVT_DRAG_DISABLE=2, HVT_DRAG_ACCEPT=3, HVT_DRAG_REQUEST=4, HVT_DRAG_COMPLETE=5, HVT_DRAG_QUERY=6, HVT_DRAG_CONTINUATION=7, HVT_DRAG_UNSUPPORTED=8 };
+enum hvt_container_operation { HVT_CONTAINER_DEICONIFY=1, HVT_CONTAINER_ICONIFY=2, HVT_CONTAINER_MOVE=3, HVT_CONTAINER_RESIZE_PIXELS=4, HVT_CONTAINER_RAISE=5, HVT_CONTAINER_LOWER=6, HVT_CONTAINER_RESIZE_ROWS=7, HVT_CONTAINER_RESIZE_COLUMNS=8, HVT_CONTAINER_RESIZE_CELLS=9, HVT_CONTAINER_REPORT_STATE=10, HVT_CONTAINER_REPORT_POSITION=11, HVT_CONTAINER_REPORT_SCREEN_CELLS=12, HVT_CONTAINER_REPORT_ICON_TITLE=13 };
+enum hvt_legacy_operation { HVT_LEGACY_TEK_POINT_PLOT=1, HVT_LEGACY_TEK_GRAPH=2, HVT_LEGACY_TEK_INCREMENTAL_PLOT=3, HVT_LEGACY_TEK_ALPHA=4, HVT_LEGACY_TEK_COPY=5, HVT_LEGACY_TEK_SPECIAL_POINT_PLOT=6, HVT_LEGACY_TEK_WRITE_THRU_SHORT_DASHED=7, HVT_LEGACY_HP_MEMORY_LOCK=8 };
+enum hvt_dcs_operation { HVT_DCS_XTSETTCAP=1, HVT_DCS_DECUDK=2, HVT_DCS_DECAUPSS=3, HVT_DCS_ITERM_TMUX_HOOK=4, HVT_DCS_ITERM_SSH_HOOK=5, HVT_DCS_ITERM_TMUX_WRAP=6, HVT_DCS_KITTY_REMOTE_COMMAND=7, HVT_DCS_KITTY_OVERLAY_READY=8, HVT_DCS_KITTY_RESULT=9, HVT_DCS_KITTY_PRINT=10, HVT_DCS_KITTY_ECHO=11, HVT_DCS_KITTY_SSH=12, HVT_DCS_KITTY_ASKPASS=13, HVT_DCS_KITTY_CLONE=14, HVT_DCS_KITTY_EDIT=15 };
+enum hvt_string_operation { HVT_STRING_APC=1, HVT_STRING_PM=2, HVT_STRING_SOS=3 };
+enum hvt_color_preference { HVT_COLOR_DARK=1, HVT_COLOR_LIGHT=2 };
+enum hvt_container_state { HVT_CONTAINER_STATE_NORMAL=1, HVT_CONTAINER_STATE_ICONIFIED=2 };
+typedef struct hvt_request_clipboard {
+    uint8_t operation, protocol; uint16_t _reserved; uint32_t selection_len;
+} hvt_request_clipboard;
+typedef struct hvt_request_notification {
+    uint16_t command; uint8_t kind, _reserved;
+} hvt_request_notification;
+typedef struct hvt_request_pointer {
+    uint64_t reset_generation;
+    uint8_t alternate_screen, query_requested, _reserved[6];
+} hvt_request_pointer;
+typedef struct hvt_request_file { uint8_t protocol, _reserved[7]; } hvt_request_file;
+typedef struct hvt_request_drag {
+    uint32_t client_id, operation, index;
+    uint8_t kind, command, more, remote, has_client_id, has_operation, has_index, _reserved;
+} hvt_request_drag;
+typedef struct hvt_request_container {
+    uint8_t operation, _reserved[3];
+    uint32_t x, y, width, height, rows, columns;
+} hvt_request_container;
+typedef struct hvt_request_media { uint16_t parameter; uint8_t is_private, _reserved; } hvt_request_media;
+typedef struct hvt_request_legacy { uint8_t operation, _reserved[7]; } hvt_request_legacy;
+typedef struct hvt_request_dcs { uint8_t operation, _reserved[7]; } hvt_request_dcs;
+typedef struct hvt_request_string { uint8_t operation, _reserved[7]; } hvt_request_string;
+typedef union hvt_request_data {
+    hvt_request_clipboard clipboard;
+    hvt_request_notification notification;
+    hvt_request_pointer pointer_shape;
+    hvt_request_file file_transfer;
+    hvt_request_drag drag_drop;
+    hvt_request_container container;
+    hvt_request_media media_copy;
+    hvt_request_legacy legacy_control;
+    hvt_request_dcs dcs;
+    hvt_request_string string_control;
+} hvt_request_data;
+typedef struct hvt_request {
+    uint64_t occurrence_id, terminal_revision;
+    uint32_t payload_len;
+    uint8_t kind, reply_required; uint16_t _reserved;
+    hvt_request_data data;
+} hvt_request;
 #endif

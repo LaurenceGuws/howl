@@ -11,9 +11,9 @@ without emitting the artifact's C exports into those hosts.
 Version 1 is an initial, unpresented Linux/x86_64-qualified lifecycle:
 create, ordered semantic input, explicit geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
-The service policy is explicitly deterministic headless. Retained host requests and
-standalone presented construction are
-subsequent cuts; a consumer must not infer them from this surface.
+Default service uses deterministic headless policy. Explicit per-turn retained
+service, copied pending-request facts and named replies are now supported.
+Standalone presented construction remains a subsequent cut.
 The separate presentation endpoint now supports an existing presented Instance.
 Odin uses the shared native input vocabulary and operation implementations while
 preserving its existing retained-request policy and host runtime.
@@ -163,3 +163,49 @@ through both VT-native queries and a real C Instance; a space boundary also pins
 backward traversal so a repeated fragment cannot jump over another word. The C
 regression has a proof-owned deadline; the module owns no timer. Alternate-bank
 rejection, evicted history and forward/reverse wide-cell origins have owner proofs.
+
+## Pending terminal requests and named replies
+
+VT owns the `hvt_request` descriptor and C/Odin layouts. Its public C tagged union
+contains native fields for each canonical request family; no Zig union layout or
+Server metadata is exported. `hi_request_head` copies those fields without
+acknowledging or copying a potentially large body. No head is `HVT_REQUEST_NONE`.
+`hi_copy_request_payload` checks the exact current occurrence, reports required
+bytes on insufficient capacity, and copies the complete body or no bytes.
+Successful caller copies remain valid across terminal mutation and destruction.
+Occurrence IDs are valid only with their matching live owner.
+
+`reply_required` means canonical consume refuses the head until a matching reply
+or explicit container decline. Pointer-shape queries separately report
+`query_requested`: canonical VT permits their consumption, while Odin's existing
+policy still replies `default`. The descriptor clarifies that distinction rather
+than choosing platform policy. Every union arm maps canonical tags explicitly;
+optional drag/drop values have independent presence flags.
+
+Instance owns exact-head consume and named native reply operations: clipboard,
+pointer, color preference, container state, position, screen cells, icon title and
+decline. Native enum tags are validated before mutation. Position and dimensions
+are native integers, not packed byte bodies. Canonical VT owns reply serialization,
+resource bounds and atomic head consumption. A stale or mismatched operation leaves
+the request live. Accepted byte inputs are copied/serialized during the call.
+Replies do not flush or wait; the caller re-queries service facts and drives I/O.
+
+`hi_service_turn` retains its deterministic headless behavior.
+`hi_service_turn_policy` explicitly selects `HI_SERVICE_HEADLESS` or
+`HI_SERVICE_RETAIN` for that turn. The existing bounded pressure fallback is
+preserved and reported through `retained_fallback`. Switching back to headless
+drains pending requests on that same turn; no library authority, worker, clock or
+platform handler is introduced.
+
+Odin Local reads native facts under its terminal-worker claim and uses the shared
+named module helpers. It keeps attention, clipboard, pointer, color and window
+policy, queues, wakeups and diagnostics. Its old local Server-shaped request record
+and big-endian reply handling are retired. The private Odin runtime bundle ABI is
+17; module ABI 1 additions preserve existing native layouts and operations.
+
+VT-native proofs cover every canonical request family, option/presence fields,
+payload bounds, FIFO identity and required-versus-requested replies. The foreign
+C consumer services a real retained clipboard query, proves invalid/stale/short
+copy/mandatory-consume calls preserve it, replies and observes exact child bytes.
+C++ and Odin prove descriptor/union layouts. A private Odin canary also observes
+clipboard, pointer and exact screen-size replies through the real worker.

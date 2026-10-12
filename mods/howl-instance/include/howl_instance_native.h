@@ -15,7 +15,8 @@ extern "C" {
 #error "Instance ABI v1 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
 #endif
 typedef struct hi_instance hi_instance;
-enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_PRESENTATION_UNAVAILABLE=9, HI_CONTEXT_CHANGED=10, HI_BUFFER_TOO_SMALL=11 };
+enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_PRESENTATION_UNAVAILABLE=9, HI_CONTEXT_CHANGED=10, HI_BUFFER_TOO_SMALL=11, HI_STALE_REQUEST=12, HI_REPLY_REQUIRED=13, HI_REQUEST_MISMATCH=14 };
+enum hi_service_policy { HI_SERVICE_HEADLESS=1, HI_SERVICE_RETAIN=2 };
 enum hi_signal { HI_HANGUP=1, HI_INTERRUPT=2, HI_RESIZE_NOTIFY=3, HI_KILL=9, HI_TERMINATE=15 };
 enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SIGNAL_PERMISSION_DENIED=3, HI_SIGNAL_NATIVE_FAILURE=4 };
 /* Endpoint open is producer-thread-only; frame acquire/read/release/close are
@@ -69,7 +70,7 @@ typedef struct hi_service {
  * Initial standalone native lifecycle is Linux-qualified; other targets return
  * HI_UNSUPPORTED. The artifact selects the exact local Instance composition.
  * First service contract applies deterministic headless consequence policy.
- * Retained host requests and standalone presented construction require later matching contracts. */
+ * Standalone presented construction requires its later matching contract. */
 uint32_t hi_abi_version(void);
 uint32_t hi_create(uint32_t version, const hi_launch *launch, hi_instance **out);
 uint32_t hi_destroy(hi_instance **owner);
@@ -82,6 +83,29 @@ uint32_t hi_send_focus(hi_instance *, uint8_t focus);
 uint32_t hi_resize(hi_instance *, uint16_t rows, uint16_t columns, uint32_t cell_width, uint32_t cell_height);
 uint32_t hi_signal_group(hi_instance *, uint8_t signal, uint8_t *result);
 uint32_t hi_service_turn(hi_instance *, uint8_t readable, uint8_t writable, uint64_t monotonic_ns, hi_service *out);
+/* Explicit per-turn consequence policy. Retain preserves canonical bounded queue
+ * pressure fallback and reports retained_fallback. Switching to headless drains
+ * pending requests with the existing deterministic policy on that same turn. */
+uint32_t hi_service_turn_policy(hi_instance *, uint8_t policy, uint8_t readable, uint8_t writable, uint64_t monotonic_ns, hi_service *out);
+/* Copied pending request facts and exact-head operations, serialized by the owner.
+ * head does not consume and may return kind NONE. Payload capacity <=1MiB;
+ * required reports complete length on HI_BUFFER_TOO_SMALL, with no byte writes.
+ * Caller copies survive owner mutation/destruction; occurrence IDs remain scoped
+ * to their matching live owner. Stale/wrong/malformed replies leave the head live.
+ * Named reply calls borrow bytes during the call, serialize/copy them canonically,
+ * and consume only after successful admission. They do not flush/poll/wait.
+ * Re-query service facts after replies before deciding I/O readiness. */
+uint32_t hi_request_head(const hi_instance *, hvt_request *out);
+uint32_t hi_copy_request_payload(const hi_instance *, uint64_t occurrence_id, uint8_t *output, size_t capacity, size_t *required);
+uint32_t hi_consume_request(hi_instance *, uint64_t occurrence_id);
+uint32_t hi_reply_clipboard(hi_instance *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hi_reply_pointer_shape(hi_instance *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hi_reply_color_preference(hi_instance *, uint64_t occurrence_id, uint8_t preference);
+uint32_t hi_reply_container_state(hi_instance *, uint64_t occurrence_id, uint8_t state);
+uint32_t hi_reply_container_position(hi_instance *, uint64_t occurrence_id, uint32_t x, uint32_t y);
+uint32_t hi_reply_container_screen_cells(hi_instance *, uint64_t occurrence_id, uint32_t rows, uint32_t columns);
+uint32_t hi_reply_container_icon_title(hi_instance *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hi_decline_container(hi_instance *, uint64_t occurrence_id);
 uint32_t hi_copy_cell(const hi_instance *, uint32_t history_offset, uint16_t row, uint16_t column, hvt_cell *out);
 /* Synchronous copied VT queries on the serialized owner thread. No borrowed
  * terminal pointer escapes. Selection/link context is exact columns+screen bank.

@@ -3,6 +3,7 @@ package main
 import instance_native "../../mods/howl-instance/bindings/odin"
 
 import "core:c"
+import vt_native "../../mods/howl-vt/bindings/odin"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -568,53 +569,23 @@ process_native_presentation :: proc(view: ^Instance_View, handle: rawptr) -> boo
     return true
 }
 
-native_consequence_reply_empty :: proc(handle: rawptr, generation: u64, kind: Bridge_Consequence_Reply) -> bool {
-    dummy: [1]u8
-    return native_terminal_consequence_reply(
-        handle,
-        generation,
-        u8(kind),
-        raw_data(dummy[:]),
-        0,
-    ) == 0
-}
-
-native_consequence_reply_bytes :: proc(handle: rawptr, generation: u64, kind: Bridge_Consequence_Reply, body: []u8) -> bool {
-    if len(body) == 0 do return native_consequence_reply_empty(handle, generation, kind)
-    return native_terminal_consequence_reply(
-        handle,
-        generation,
-        u8(kind),
-        raw_data(body),
-        c.size_t(len(body)),
-    ) == 0
-}
-
 process_native_consequences :: proc(view: ^Instance_View, handle: rawptr) -> bool {
     if view == nil || handle == nil do return false
-    payload: [CONSEQUENCE_PAYLOAD_SCRATCH]u8
     changed := false
     for {
-        info: Consequence_Info
-        copied: c.size_t
-        if native_terminal_consequence_observe(
-            handle,
-            &info,
-            raw_data(payload[:]),
-            c.size_t(len(payload)),
-            &copied,
-        ) != 0 {
+        info: vt_native.Request_Info
+        if native_terminal_request_head(handle, &info) != 0 {
             publish_control_notice(view, "Host consequence policy observation failed")
             return changed
         }
-        if Bridge_Consequence_Kind(info.kind) == .None do return changed
-        action := consequence_action_for(info)
+        if vt_native.Request_Kind(info.kind) == .None do return changed
+        action := native_request_action_for(info)
         ok := true
         switch action {
         case .Consume:
-            ok = native_terminal_consequence_consume(handle, info.generation) == 0
+            ok = native_terminal_request_consume(handle, info.occurrence_id) == 0
         case .Attention:
-            ok = native_terminal_consequence_consume(handle, info.generation) == 0
+            ok = native_terminal_request_consume(handle, info.occurrence_id) == 0
             if ok {
                 sync.mutex_lock(&view.mutex)
                 view.native_attention_pending = true
@@ -623,23 +594,20 @@ process_native_consequences :: proc(view: ^Instance_View, handle: rawptr) -> boo
                 notify_instance_update()
             }
         case .Reply_Clipboard_Empty:
-            ok = native_consequence_reply_empty(handle, info.generation, .Clipboard)
+            dummy: [1]u8
+            ok = native_terminal_reply_clipboard(handle, info.occurrence_id, raw_data(dummy[:]), 0) == 0
         case .Reply_Pointer_Default:
             body := []u8{'d','e','f','a','u','l','t'}
-            ok = native_consequence_reply_bytes(handle, info.generation, .Pointer_Shape, body)
+            ok = native_terminal_reply_pointer_shape(handle, info.occurrence_id, raw_data(body), c.size_t(len(body))) == 0
         case .Reply_Color_Dark:
-            body := []u8{1}
-            ok = native_consequence_reply_bytes(handle, info.generation, .Color_Preference, body)
+            ok = native_terminal_reply_color_preference(handle, info.occurrence_id, u8(vt_native.Color_Preference.Dark)) == 0
         case .Reply_Container_Screen:
             sync.mutex_lock(&view.mutex)
             rows, columns := view.rows, view.columns
             sync.mutex_unlock(&view.mutex)
-            body: [8]u8
-            _ = write_u32_be(body[0:4], u32(rows))
-            _ = write_u32_be(body[4:8], u32(columns))
-            ok = native_consequence_reply_bytes(handle, info.generation, .Container_Screen_Cells, body[:])
+            ok = native_terminal_reply_container_screen_cells(handle, info.occurrence_id, u32(rows), u32(columns)) == 0
         case .Reply_Container_Decline:
-            ok = native_consequence_reply_empty(handle, info.generation, .Container_Decline)
+            ok = native_terminal_decline_container(handle, info.occurrence_id) == 0
         }
         if !ok {
             publish_control_notice(view, "Host consequence policy failed")

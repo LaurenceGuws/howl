@@ -45,3 +45,12 @@ static_assert(sizeof(hvt_search_match) == 32 && offsetof(hvt_search_match, scann
 static_assert(sizeof(hvt_selection_range) == 20 && offsetof(hvt_selection_range, _reserved) == 16);
 static_assert(sizeof(hvt_interaction) == 16 && offsetof(hvt_interaction, mouse_tracking) == 12);
 static_assert(sizeof(hvt_row_shape) == 4);
+
+static_assert(sizeof(hvt_request) == 56 && offsetof(hvt_request, data) == 24);
+static_assert(sizeof(hvt_request_data) == 32);
+static_assert(offsetof(hvt_request, payload_len) == 16 && offsetof(hvt_request, kind) == 20);
+static_assert(sizeof(hvt_request_container) == 28 && sizeof(hvt_request_pointer) == 16);
+
+static_assert(offsetof(hvt_request_clipboard, operation) == 0 && offsetof(hvt_request_clipboard, selection_len) == 4);
+static_assert(offsetof(hvt_request_drag, operation) == 4 && offsetof(hvt_request_drag, kind) == 12);
+static_assert(offsetof(hvt_request_drag, has_client_id) == 16 && offsetof(hvt_request_drag, has_index) == 18);

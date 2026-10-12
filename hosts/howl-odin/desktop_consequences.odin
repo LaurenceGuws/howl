@@ -1,6 +1,7 @@
 package main
 
 import "core:c"
+import vt_native "../../mods/howl-vt/bindings/odin"
 import "core:sync"
 import "core:thread"
 import SDL "vendor:sdl3"
@@ -72,6 +73,32 @@ consequence_action_for :: proc(info: Consequence_Info) -> Desktop_Consequence_Ac
 	case .None, .File_Transfer, .Drag_Drop, .Media_Copy, .Legacy_Control, .Dcs, .String_Control:
 	}
 	return .Consume
+}
+
+// Local consumes VT-owned native facts; platform policy stays in Odin.
+native_request_action_for :: proc(info: vt_native.Request_Info) -> Desktop_Consequence_Action {
+    switch vt_native.Request_Kind(info.kind) {
+    case .Bell:
+        return .Attention
+    case .Notification:
+        if info.data.notification.kind == u8(vt_native.Notification_Kind.Steal_Focus) ||
+           info.data.notification.kind == u8(vt_native.Notification_Kind.Request_Attention) {
+            return .Attention
+        }
+    case .Clipboard:
+        if info.reply_required != 0 do return .Reply_Clipboard_Empty
+    case .Pointer_Shape:
+        if info.data.pointer_shape.query_requested != 0 do return .Reply_Pointer_Default
+    case .Color_Preference:
+        return .Reply_Color_Dark
+    case .Container:
+        if info.reply_required != 0 {
+            if info.data.container.operation == u8(vt_native.Container_Operation.Report_Screen_Cells) do return .Reply_Container_Screen
+            return .Reply_Container_Decline
+        }
+    case .None, .File_Transfer, .Drag_Drop, .Media_Copy, .Legacy_Control, .Dcs, .String_Control:
+    }
+    return .Consume
 }
 
 write_u32_be :: proc(output: []u8, value: u32) -> bool {
