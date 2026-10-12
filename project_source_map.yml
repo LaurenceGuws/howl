@@ -15,6 +15,19 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
+  howl-vt-native: >-
+    Optional howl_vt_native root owns versioned foreign input vocabulary, C and Odin
+    definitions, exact tag validation and caller-owned scalar/occupancy projection.
+    It imports canonical VT but no Instance, Server, codec or Render. The live VT
+    root never imports the native root.
+  howl-instance-native: >-
+    Optional howl_instance_native shared artifact and owned aggregate C header
+    expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,
+    geometry/signals, bounded caller-driven headless service and VT-owned copied
+    cells. Exact local Instance specialization; no host runtime, wait/poll loop,
+    wake source, clock or Server/codec. Public native Zig helpers share input
+    conversion/operations with Odin without emitting artifact C exports. Presented
+    leases and retained host requests remain subsequent cuts.
   howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
     mods/server foreground `server_runtime` module owning exactly one Server control listener,

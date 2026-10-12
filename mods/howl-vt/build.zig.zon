@@ -9,6 +9,8 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "include",
+        "bindings",
         "test",
         "test_unit.zig",
         "simulation",

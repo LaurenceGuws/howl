@@ -57,10 +57,25 @@ pub fn build(b: *std.Build) void {
     // instantiate sibling copies with independent type identity.
     exposeModule(b, "howl_pty", pty.module("howl_pty"));
     exposeModule(b, "howl_vt", vt.module("howl_vt"));
+    exposeModule(b, "howl_vt_native", vt.module("howl_vt_native"));
     exposeModule(b, "howl_render", render.module("howl_render"));
     exposeModule(b, "howl_render_limits", render.module("howl_render_limits"));
     exposeModule(b, "howl_text", text.module("howl_text"));
     exposeModule(b, "howl_text_test_fonts", text.module("howl_text_test_fonts"));
+
+    const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_instance_native.h"), .target = target, .optimize = optimize });
+    native_types.addIncludePath(vt.namedLazyPath("howl_vt_native_header").dirname());
+    const native = b.addModule("howl_instance_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    native.addImport("howl_instance", module);
+    native.addImport("howl_vt_native", vt.module("howl_vt_native"));
+    native.addImport("instance_native_types", native_types.createModule());
+    const abi_root = b.createModule(.{ .root_source_file = b.path("src/abi.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    abi_root.addImport("instance_native", native);
+    abi_root.addImport("howl_instance", module);
+    const native_library = b.addLibrary(.{ .name = "howl_instance_native", .linkage = .dynamic, .root_module = abi_root, .use_llvm = false, .use_lld = false });
+    native_library.installHeader(b.path("include/howl_instance_native.h"), "howl_instance_native.h");
+    native_library.installHeader(vt.namedLazyPath("howl_vt_native_header"), "howl_vt_native.h");
+    b.installArtifact(native_library);
 
     const tests = compositionProofs(b, target, optimize, pty.module("howl_pty"), vt.module("howl_vt"), render.module("howl_render"), publication, text.module("howl_text_test_fonts"));
     const headless_proofs = compositionProofs(b, target, optimize, pty.module("howl_pty"), vt.module("howl_vt"), null, null, null);
@@ -95,6 +110,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&headless_proofs.step);
     check.dependOn(&boundary.step);
     check.dependOn(&publication_proofs.step);
+    check.dependOn(&native_library.step);
 
     const run_tests = b.addRunArtifact(tests);
     run_tests.addPassthruArgs();
@@ -103,6 +119,17 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(headless_proofs).step);
     test_step.dependOn(&b.addRunArtifact(boundary).step);
     test_step.dependOn(&b.addRunArtifact(publication_proofs).step);
+    if (target.result.os.tag == .linux) {
+        const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+        foreign_root.linkLibrary(native_library);
+        foreign_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
+        foreign_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+        const foreign = b.addExecutable(.{ .name = "howl-instance-native-consumer", .root_module = foreign_root, .use_llvm = false, .use_lld = false });
+        check.dependOn(&foreign.step);
+        const run_foreign = b.addRunArtifact(foreign);
+        test_step.dependOn(&run_foreign.step);
+        b.step("test:native", "Qualify the standalone Instance C lifecycle").dependOn(&run_foreign.step);
+    }
     b.default_step = check;
 }
 

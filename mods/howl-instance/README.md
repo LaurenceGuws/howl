@@ -48,3 +48,10 @@ bounded independently, and one atlas does not flush the shared shape store.
 Instance exposes semantic operations and canonical observation. Server communications,
 remote client identities, resize/consequence authority and wire codecs belong to the
 optional Server implementation above this package.
+
+## Native foreign interface
+
+The optional module-owned [native contract](docs/native.md) exposes the first
+plain Linux lifecycle and VT-owned input/cell records. Presented leases and
+retained requests are separate implementation cuts. Zig hosts can reuse the
+exact native contract helpers without emitting or calling through C exports.

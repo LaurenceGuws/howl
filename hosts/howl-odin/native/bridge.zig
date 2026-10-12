@@ -15,6 +15,8 @@ const protocol = client.protocol;
 const terminal_render = @import("server_client_render");
 const render = terminal_render;
 const native_instance = @import("howl_instance");
+const native_vt = @import("howl_vt_native");
+const native_abi = @import("howl_instance_native");
 
 // zig-audit: acknowledge opaque_type
 // reason: RuntimeHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
@@ -944,29 +946,11 @@ pub export fn howl_odin_bridge_native_terminal_send_text(
     return 0;
 }
 
-fn nativeModifiers(value: u8) native_instance.InputModifier {
-    return @bitCast(value);
-}
-
-fn nativeNamedKey(value: u8) ?native_instance.KeyName {
-    const wire = std.enums.fromInt(protocol.InputKeyName, value) orelse
-        return null;
-    return std.meta.stringToEnum(native_instance.KeyName, @tagName(wire));
-}
-
-fn nativeKeyAction(value: u8) ?native_instance.KeyAction {
-    return std.enums.fromInt(native_instance.KeyAction, value);
-}
-
-fn nativeMouseKind(value: u8) ?native_instance.MouseEventKind {
-    const wire = std.enums.fromInt(protocol.InputMouseKind, value) orelse
-        return null;
-    return std.meta.stringToEnum(native_instance.MouseEventKind, @tagName(wire));
-}
-
-fn nativeMouseButton(value: u8) ?native_instance.MouseButton {
-    return std.enums.fromInt(native_instance.MouseButton, value);
-}
+const nativeModifiers = native_vt.modifiers;
+const nativeNamedKey = native_vt.namedKey;
+const nativeKeyAction = native_vt.keyAction;
+const nativeMouseKind = native_vt.mouseKind;
+const nativeMouseButton = native_vt.mouseButton;
 
 const NativeViewportPosition = struct {
     row: u16,
@@ -1422,13 +1406,8 @@ pub export fn howl_odin_bridge_native_terminal_send_named_key(
     modifiers: u8,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    const key = nativeNamedKey(key_value) orelse return 3;
-    const action = nativeKeyAction(action_value) orelse return 3;
-    native_instance.input(owner.value, .{ .key = .{
-        .key = .{ .named = key },
-        .mods = nativeModifiers(modifiers),
-        .action = action,
-    } }) catch |failure| {
+    native_abi.sendNamedKey(owner.value, key_value, action_value, modifiers) catch |failure| {
+        if (failure == error.InvalidArgument) return 3;
         owner.setError("key", @errorName(failure));
         return 2;
     };
@@ -1443,15 +1422,8 @@ pub export fn howl_odin_bridge_native_terminal_send_unicode_key(
     modifiers: u8,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    if (scalar > std.math.maxInt(u21)) return 3;
-    const key = native_instance.Key.initUnicode(@intCast(scalar)) catch
-        return 3;
-    const action = nativeKeyAction(action_value) orelse return 3;
-    native_instance.input(owner.value, .{ .key = .{
-        .key = key,
-        .mods = nativeModifiers(modifiers),
-        .action = action,
-    } }) catch |failure| {
+    native_abi.sendUnicodeKey(owner.value, scalar, action_value, modifiers) catch |failure| {
+        if (failure == error.InvalidArgument) return 3;
         owner.setError("unicode_key", @errorName(failure));
         return 2;
     };
@@ -1472,19 +1444,8 @@ pub export fn howl_odin_bridge_native_terminal_send_mouse(
     pixel_y: u32,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    if (pixels_present > 1) return 3;
-    const kind = nativeMouseKind(kind_value) orelse return 3;
-    const button = nativeMouseButton(button_value) orelse return 3;
-    native_instance.input(owner.value, .{ .mouse = .{
-        .kind = kind,
-        .button = button,
-        .row = row,
-        .col = column,
-        .pixel_x = if (pixels_present != 0) pixel_x else null,
-        .pixel_y = if (pixels_present != 0) pixel_y else null,
-        .mod = nativeModifiers(modifiers),
-        .buttons_down = buttons_down,
-    } }) catch |failure| {
+    native_abi.sendMouse(owner.value, kind_value, button_value, modifiers, buttons_down, row, column, pixels_present, pixel_x, pixel_y) catch |failure| {
+        if (failure == error.InvalidArgument) return 3;
         owner.setError("mouse", @errorName(failure));
         return 2;
     };
@@ -1497,12 +1458,8 @@ pub export fn howl_odin_bridge_native_terminal_send_focus(
     focus_value: u8,
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
-    const wire = std.enums.fromInt(protocol.InputFocus, focus_value) orelse
-        return 3;
-    const focus: native_instance.Terminal.InputEvent = .{
-        .focus = if (wire == .in) .in else .out,
-    };
-    native_instance.input(owner.value, focus) catch |failure| {
+    native_abi.sendFocus(owner.value, focus_value) catch |failure| {
+        if (failure == error.InvalidArgument) return 3;
         owner.setError("focus", @errorName(failure));
         return 2;
     };

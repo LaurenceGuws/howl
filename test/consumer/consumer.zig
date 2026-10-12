@@ -161,3 +161,14 @@ extern fn howl_external_client_abi() c_int;
 test "root exposes the exact native client artifact and its C header" {
     try std.testing.expectEqual(@as(c_int, 0), howl_external_client_abi());
 }
+
+extern fn howl_external_instance_abi() c_int;
+
+test "root exposes exact Instance native artifact and VT-owned header" {
+    const native = @import("howl_instance_native");
+    const native_vt = @import("howl_vt_native");
+    try std.testing.expect(native.Instance == instance.Instance);
+    try std.testing.expect(native.vt.Terminal == vt.Terminal);
+    try std.testing.expect(native_vt.Terminal == vt.Terminal);
+    try std.testing.expectEqual(@as(c_int, 0), howl_external_instance_abi());
+}

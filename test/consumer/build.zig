@@ -20,6 +20,8 @@ pub fn build(b: *std.Build) void {
     }
     // Link the exact child artifact and its owned public header through the root.
     root.linkLibrary(howl.artifact("howl_server_client"));
+    root.linkLibrary(howl.artifact("howl_instance_native"));
+    root.addCSourceFile(.{ .file = b.path("instance_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     root.addCSourceFile(.{ .file = b.path("client_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const tests = b.addTest(.{
         .name = "howl-external-consumer",

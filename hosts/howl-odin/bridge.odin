@@ -1,6 +1,7 @@
 package main
 
 import "core:c"
+import vt_native "../../mods/howl-vt/bindings/odin"
 
 when ODIN_OS == .Windows {
     foreign import howl_bridge "bridge:howl_odin_bridge.lib"
@@ -334,100 +335,22 @@ Interaction_State_Info :: struct {
 INTERACTION_ALT_SCROLL :: u32(1 << 0)
 INTERACTION_FOCUS_REPORTING :: u32(1 << 1)
 
-Bridge_Mouse_Kind :: enum u8 {
-    Press = 1,
-    Release = 2,
-    Move = 3,
-    Wheel = 4,
-}
+Bridge_Mouse_Kind :: vt_native.Mouse_Kind
 
-Bridge_Mouse_Button :: enum u8 {
-    None = 0,
-    Left = 1,
-    Middle = 2,
-    Right = 3,
-    Wheel_Up = 4,
-    Wheel_Down = 5,
-}
+Bridge_Mouse_Button :: vt_native.Mouse_Button
 
-Bridge_Focus :: enum u8 {
-    In = 1,
-    Out = 2,
-}
+Bridge_Focus :: vt_native.Focus
 
-Bridge_Key :: enum u8 {
-    Enter             = 1,
-    Tab               = 2,
-    Backspace         = 3,
-    Escape            = 4,
-    Up                = 5,
-    Down              = 6,
-    Left              = 7,
-    Right             = 8,
-    Insert            = 9,
-    Delete            = 10,
-    Home              = 11,
-    End               = 12,
-    Page_Up           = 13,
-    Page_Down         = 14,
-    Left_Shift        = 15,
-    Right_Shift       = 16,
-    Left_Control      = 17,
-    Right_Control     = 18,
-    Left_Alt          = 19,
-    Right_Alt         = 20,
-    Left_Super        = 21,
-    Right_Super       = 22,
-    Left_Hyper        = 23,
-    Right_Hyper       = 24,
-    Left_Meta         = 25,
-    Right_Meta        = 26,
-    Caps_Lock         = 27,
-    Num_Lock          = 28,
-    F1                = 29,
-    F2                = 30,
-    F3                = 31,
-    F4                = 32,
-    F5                = 33,
-    F6                = 34,
-    F7                = 35,
-    F8                = 36,
-    F9                = 37,
-    F10               = 38,
-    F11               = 39,
-    F12               = 40,
-    Keypad_0          = 41,
-    Keypad_1          = 42,
-    Keypad_2          = 43,
-    Keypad_3          = 44,
-    Keypad_4          = 45,
-    Keypad_5          = 46,
-    Keypad_6          = 47,
-    Keypad_7          = 48,
-    Keypad_8          = 49,
-    Keypad_9          = 50,
-    Keypad_Decimal    = 51,
-    Keypad_Add        = 52,
-    Keypad_Subtract   = 53,
-    Keypad_Multiply   = 54,
-    Keypad_Divide     = 55,
-    Keypad_Separator  = 56,
-    Keypad_Equal      = 57,
-    Keypad_Enter      = 58,
-}
+Bridge_Key :: vt_native.Key
 
-Bridge_Key_Action :: enum u8 {
-    Press   = 1,
-    Repeat  = 2,
-    Release = 3,
-}
+Bridge_Key_Action :: vt_native.Key_Action
 
-BRIDGE_MOD_SHIFT :: u8(1 << 0)
-BRIDGE_MOD_ALT   :: u8(1 << 1)
-BRIDGE_MOD_CTRL  :: u8(1 << 2)
-BRIDGE_MOD_SUPER :: u8(1 << 3)
-BRIDGE_MOD_CAPS  :: u8(1 << 6)
-BRIDGE_MOD_NUM   :: u8(1 << 7)
+BRIDGE_MOD_SHIFT :: vt_native.MOD_SHIFT
+BRIDGE_MOD_ALT :: vt_native.MOD_ALT
+BRIDGE_MOD_CTRL :: vt_native.MOD_CONTROL
+BRIDGE_MOD_SUPER :: vt_native.MOD_SUPER
+BRIDGE_MOD_CAPS :: vt_native.MOD_CAPS_LOCK
+BRIDGE_MOD_NUM :: vt_native.MOD_NUM_LOCK
 
 Canvas_Resource_Info :: struct {
     resource: u64,

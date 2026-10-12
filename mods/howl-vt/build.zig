@@ -8,6 +8,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_vt_native.h"), .target = target, .optimize = optimize });
+    const native = b.addModule("howl_vt_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize });
+    native.addImport("howl_vt", module);
+    native.addImport("vt_native_types", native_types.createModule());
+    b.addNamedLazyPath("howl_vt_native_header", b.path("include/howl_vt_native.h"));
     const check = b.step("check", "Compile the VT module and every owned proof");
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
@@ -15,6 +20,12 @@ pub fn build(b: *std.Build) void {
     audit.dependOn(&zig_audit.step);
     check.dependOn(audit);
     const test_step = b.step("test", "Run every owned VT proof");
+
+    const native_proofs = b.addTest(.{ .name = "howl-vt-native-contract", .root_module = native, .use_llvm = false, .use_lld = false });
+    check.dependOn(&native_proofs.step);
+    const native_run = b.addRunArtifact(native_proofs);
+    test_step.dependOn(&native_run.step);
+    b.step("test:native", "Run the VT-owned native contract proofs").dependOn(&native_run.step);
 
     // Optional observation encoding is never imported by the live VT root.
     const codec = b.addModule("howl_vt_codec", .{
