@@ -131,6 +131,8 @@ pub const init = runtime.init;
 pub const initPresented = runtime.initPresented;
 /// Stops the child, releases VT state, and destroys the opaque owner.
 pub const deinit = runtime.deinit;
+/// Checked teardown rejects outstanding native backend endpoints or frame leases.
+pub const tryDeinit = runtime.tryDeinit;
 /// Returns the PTY descriptor for caller-owned poll integration.
 pub const descriptor = runtime.descriptor;
 /// True while a prior service turn retains child output in its bounded read buffer.
@@ -157,6 +159,10 @@ pub const missingRenderResources = runtime.missingRenderResources;
 /// but must not retain the Instance itself. All leases must be released before
 /// the terminal thread destroys the Instance.
 pub const renderExchange = runtime.renderExchange;
+/// Registers a sole native backend and resets presentation residency on the owner thread.
+pub const borrowRenderExchange = runtime.borrowRenderExchange;
+/// Drops the registered backend only after its last frame lease.
+pub const releaseRenderExchange = runtime.releaseRenderExchange;
 /// Publishes the newest canonical VT cut as one immutable backend transaction.
 ///
 /// This is a terminal-thread operation. It never waits for the backend: an

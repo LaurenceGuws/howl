@@ -1,5 +1,7 @@
 package main
 
+import instance_native "../../mods/howl-instance/bindings/odin"
+
 import "core:c"
 import "core:sync"
 import "core:thread"
@@ -777,16 +779,8 @@ native_terminal_instance :: proc(data: rawptr) {
         notify_instance_update()
         return
     }
-    exchange := native_terminal_render_exchange(handle)
-    if exchange == nil {
-        native_terminal_release(handle)
-        publish_initial_error(view, "Native terminal Render exchange unavailable")
-        return
-    }
-
     sync.mutex_lock(&view.mutex)
     view.native_terminal = handle
-    view.native_render_exchange = exchange
     view.control = handle
     view.control_connect_done = true
     view.control_connect_applied = true
@@ -798,9 +792,11 @@ native_terminal_instance :: proc(data: rawptr) {
     defer {
         sync.mutex_lock(&view.mutex)
         view.control = nil
-        view.native_render_exchange = nil
+        orphaned := view.native_frame_pending
+        view.native_frame_pending = nil
         view.native_terminal = nil
         sync.mutex_unlock(&view.mutex)
+        if orphaned != nil do instance_native.frame_close(&orphaned)
         native_terminal_release(handle)
     }
 
@@ -828,6 +824,19 @@ native_terminal_instance :: proc(data: rawptr) {
             worked = true
         }
 
+        sync.mutex_lock(&view.mutex)
+        open_frame := view.native_frame_requested
+        sync.mutex_unlock(&view.mutex)
+        if open_frame {
+            endpoint := native_terminal_frame_open(handle)
+            sync.mutex_lock(&view.mutex)
+            view.native_frame_requested = false
+            view.native_frame_pending = endpoint
+            view.native_frame_failed = endpoint == nil
+            sync.mutex_unlock(&view.mutex)
+            notify_instance_update()
+            worked = true
+        }
         if process_native_presentation(view, handle) do worked = true
 
         control_worked, fatal := process_native_control(view, handle)

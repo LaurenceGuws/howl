@@ -26,8 +26,16 @@ experimental:
     geometry/signals, bounded caller-driven headless service and VT-owned copied
     cells. Exact local Instance specialization; no host runtime, wait/poll loop,
     wake source, clock or Server/codec. Public native Zig helpers share input
-    conversion/operations with Odin without emitting artifact C exports. Presented
-    leases and retained host requests remain subsequent cuts.
+    conversion/operations with Odin. Optional howl_instance_frames_native owns one
+    backend endpoint, immutable frame leases, bulk payload projection and checked
+    parent destruction; Odin embeds the exact artifact export root and owns worker
+    handoff/pacing. Standalone presented construction and retained host requests
+    remain subsequent cuts.
+  howl-render-native: >-
+    Optional howl_render_native root owns versioned C/Odin command, upload, removal
+    and residency schemas and bounded field-wise projection. Commands are bulk
+    caller-owned copies; upload pixels borrow one immutable Instance frame. It owns
+    no GUI backend, host scheduler or Server codec.
   howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
     mods/server foreground `server_runtime` module owning exactly one Server control listener,

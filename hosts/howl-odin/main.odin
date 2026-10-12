@@ -1,5 +1,7 @@
 package main
 
+import instance_native "../../mods/howl-instance/bindings/odin"
+
 import runtime "base:runtime"
 import "core:c"
 import json "core:encoding/json"
@@ -207,7 +209,9 @@ Instance_View :: struct {
     terminal_font_overridden: bool,
     control: rawptr,
     native_terminal: rawptr,
-    native_render_exchange: rawptr,
+    native_frame_requested: bool,
+    native_frame_pending: rawptr,
+    native_frame_failed: bool,
     native_attention_pending: bool,
     native_presentation: Native_Presentation_Request,
     control_pending_handle: rawptr,
@@ -1270,19 +1274,19 @@ copy_canvas_bridge_error :: proc(view: ^Instance_View) {
 
 canvas_upload_count :: proc(view: ^Instance_View) -> u32 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_upload_count(view.canvas)
+
     return render_upload_count(view.canvas)
 }
 
 canvas_removal_count :: proc(view: ^Instance_View) -> u32 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_removal_count(view.canvas)
+
     return render_removal_count(view.canvas)
 }
 
 canvas_command_count :: proc(view: ^Instance_View) -> u32 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_command_count(view.canvas)
+
     return render_command_count(view.canvas)
 }
 
@@ -1300,7 +1304,6 @@ canvas_upload_copy :: proc(
     output_len: ^c.size_t,
 ) -> i32 {
     if view == nil || view.canvas == nil do return 1
-    if view.route_kind == .Local do return native_canvas_upload_copy(view.canvas, index, output, capacity, output_len)
     return render_upload_copy(view.canvas, index, output, capacity, output_len)
 }
 
@@ -1312,25 +1315,24 @@ canvas_removal_info :: proc(view: ^Instance_View, index: u32, output: ^Canvas_Re
 
 canvas_command_info :: proc(view: ^Instance_View, index: u32, output: ^Canvas_Command_Info) -> i32 {
     if view == nil || view.canvas == nil do return 1
-    if view.route_kind == .Local do return native_canvas_command_info(view.canvas, index, output)
     return render_command_info(view.canvas, index, output)
 }
 
 canvas_background_rgba :: proc(view: ^Instance_View) -> u32 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_background_rgba(view.canvas)
+
     return render_background_rgba(view.canvas)
 }
 
 canvas_surface_width :: proc(view: ^Instance_View) -> u16 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_surface_width(view.canvas)
+
     return render_surface_width(view.canvas)
 }
 
 canvas_surface_height :: proc(view: ^Instance_View) -> u16 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_surface_height(view.canvas)
+
     return render_surface_height(view.canvas)
 }
 
@@ -1348,7 +1350,7 @@ canvas_cell_height :: proc(view: ^Instance_View) -> u16 {
 
 canvas_frame_revision :: proc(view: ^Instance_View) -> u64 {
     if view == nil || view.canvas == nil do return 0
-    if view.route_kind == .Local do return native_canvas_frame_revision(view.canvas)
+
     return render_frame_revision(view.canvas)
 }
 
@@ -1569,16 +1571,21 @@ create_canvas_texture :: proc(app: ^App, view: ^Instance_View, index: u32) -> bo
         set_canvas_error(view, "invalid Canvas upload bytes")
         return false
     }
-    source_bytes := make([]u8, int(info.pixel_count))
-    defer delete(source_bytes)
+    source_bytes: []u8
+    source_owned := false
+    defer if source_owned do delete(source_bytes)
     copied: c.size_t
-    if canvas_upload_copy(
-        view,
-        index,
-        raw_data(source_bytes),
-        c.size_t(len(source_bytes)),
-        &copied,
-    ) != 0 || int(copied) != len(source_bytes) {
+    upload_ok := false
+    if view.route_kind == .Local {
+        borrowed: [^]u8
+        upload_ok = native_canvas_upload_borrow(view.canvas, index, &borrowed, &copied) == 0 && u64(copied) == info.pixel_count && borrowed != nil
+        if upload_ok do source_bytes = borrowed[:int(copied)]
+    } else {
+        source_bytes = make([]u8, int(info.pixel_count))
+        source_owned = true
+        upload_ok = canvas_upload_copy(view, index, raw_data(source_bytes), c.size_t(len(source_bytes)), &copied) == 0 && int(copied) == len(source_bytes)
+    }
+    if !upload_ok {
         set_canvas_error(view, "Canvas upload copy failed")
         return false
     }
@@ -1662,13 +1669,27 @@ ensure_canvas :: proc(app: ^App, view: ^Instance_View) -> bool {
     if !scaled { set_canvas_error(view, "invalid display scale"); return false }
     if view.route_kind == .Local {
         sync.mutex_lock(&view.mutex)
-        exchange := view.native_render_exchange
-        terminal_ready := view.native_terminal != nil
+        terminal := view.native_terminal
+        pending := view.native_frame_pending
+        failed := view.native_frame_failed
+        if view.canvas == nil && pending != nil do view.native_frame_pending = nil
+        request := view.canvas == nil && pending == nil && terminal != nil && !failed && !view.native_frame_requested
+        if request {
+            view.native_frame_requested = true
+            // The worker clears/frees its terminal handle under this same lock.
+            native_terminal_wake(terminal)
+        }
         sync.mutex_unlock(&view.mutex)
-        if !terminal_ready || exchange == nil do return false
+        if terminal == nil do return false
         if view.canvas == nil {
-            view.canvas = native_canvas_create(exchange)
+            if failed {
+                set_canvas_error(view, "native frame endpoint creation failed")
+                return false
+            }
+            if pending == nil do return false
+            view.canvas = native_canvas_create(pending)
             if view.canvas == nil {
+                instance_native.frame_close(&pending)
                 set_canvas_error(view, "native Canvas creation failed")
                 return false
             }
@@ -1742,7 +1763,13 @@ update_native_canvas :: proc(
         return false
     }
 
-    generation := native_canvas_presentation_generation(view.canvas)
+    facts: instance_native.Frame_Info
+    if native_canvas_frame_info(view.canvas, &facts) != 0 {
+        set_canvas_error(view, "Native Canvas frame envelope unavailable")
+        reset_canvas(view, false)
+        return false
+    }
+    generation := facts.presentation_generation
     presentation_changed := view.canvas_presentation_generation != generation
     applied_pixels := view.canvas_font_pixels
     applied_scale := view.canvas_render_scale
@@ -1763,7 +1790,7 @@ update_native_canvas :: proc(
         clear_canvas_resources(view)
     }
 
-    for index in 0..<int(canvas_removal_count(view)) {
+    for index in 0..<int(facts.removal_count) {
         info: Canvas_Removal_Info
         if canvas_removal_info(view, u32(index), &info) != 0 {
             set_canvas_error(view, "Native Canvas removal decode failed")
@@ -1772,22 +1799,20 @@ update_native_canvas :: proc(
         }
         remove_canvas_resource_key(view, info.resource, info.generation, true)
     }
-    for index in 0..<int(canvas_upload_count(view)) {
+    for index in 0..<int(facts.upload_count) {
         if !create_canvas_texture(app, view, u32(index)) {
             reset_canvas(view, false)
             return false
         }
     }
 
-    count := int(canvas_command_count(view))
+    count := int(facts.command_count)
     commands := make([]Canvas_Command_Info, count)
-    for index in 0..<count {
-        if canvas_command_info(view, u32(index), &commands[index]) != 0 {
-            delete(commands)
-            set_canvas_error(view, "Native Canvas command decode failed")
-            reset_canvas(view, false)
-            return false
-        }
+    if native_canvas_commands(view.canvas, raw_data(commands), c.size_t(count)) != 0 {
+        delete(commands)
+        set_canvas_error(view, "Native Canvas command projection failed")
+        reset_canvas(view, false)
+        return false
     }
     if native_canvas_accept(view.canvas) != 0 {
         delete(commands)
@@ -1810,12 +1835,12 @@ update_native_canvas :: proc(
     if view.canvas_commands != nil do delete(view.canvas_commands)
     view.canvas_commands = commands
     view.canvas_presentation_generation = generation
-    view.canvas_frame_background_rgba = canvas_background_rgba(view)
-    view.canvas_surface_width = canvas_surface_width(view)
-    view.canvas_surface_height = canvas_surface_height(view)
-    view.canvas_frame_revision = canvas_frame_revision(view)
-    view.canvas_instance_revision = canvas_instance_revision(view)
-    view.canvas_history_offset = canvas_history_offset(view)
+    view.canvas_frame_background_rgba = facts.background_rgba
+    view.canvas_surface_width = facts.surface_width
+    view.canvas_surface_height = facts.surface_height
+    view.canvas_frame_revision = facts.revision
+    view.canvas_instance_revision = facts.terminal_revision
+    view.canvas_history_offset = facts.history_offset
     view.canvas_scale = view.canvas_render_scale
     view.canvas_frame_font_pixels = view.canvas_font_pixels
     view.canvas_worker_has_frame = true
@@ -1833,7 +1858,6 @@ update_native_canvas :: proc(
     latest_revision := view.revision
     latest_history := view.history_target_offset
     terminal := view.native_terminal
-    sync.mutex_unlock(&view.mutex)
     if terminal != nil &&
        (view.canvas_instance_revision < latest_revision ||
         view.canvas_history_offset != latest_history ||
@@ -1841,6 +1865,7 @@ update_native_canvas :: proc(
         view.canvas_history_offset != requested_history_offset) {
         native_terminal_wake(terminal)
     }
+    sync.mutex_unlock(&view.mutex)
     return true
 }
 

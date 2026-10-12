@@ -2,6 +2,8 @@ package main
 
 import "core:c"
 import vt_native "../../mods/howl-vt/bindings/odin"
+import render_native "../../mods/howl-render/bindings/odin"
+import instance_native "../../mods/howl-instance/bindings/odin"
 
 when ODIN_OS == .Windows {
     foreign import howl_bridge "bridge:howl_odin_bridge.lib"
@@ -51,7 +53,7 @@ foreign howl_bridge {
     native_terminal_consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
     native_terminal_consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
     native_terminal_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
-    native_terminal_render_exchange :: proc(handle: rawptr) -> rawptr ---
+    native_terminal_frame_open :: proc(handle: rawptr) -> rawptr ---
     native_terminal_publish_history :: proc(handle: rawptr, history_offset: u32) -> i32 ---
     native_terminal_reconfigure_presentation :: proc(
         handle: rawptr,
@@ -63,30 +65,26 @@ foreign howl_bridge {
         secondary_fallback: [^]u8, secondary_fallback_len: c.size_t,
         font_pixels: u16,
     ) -> i32 ---
-    native_canvas_create :: proc(exchange: rawptr) -> rawptr ---
+    native_canvas_create :: proc(stream: rawptr) -> rawptr ---
     native_canvas_destroy :: proc(handle: rawptr) ---
     native_canvas_prepare :: proc(handle: rawptr) -> i32 ---
     native_canvas_accept :: proc(handle: rawptr) -> i32 ---
     native_canvas_discard :: proc(handle: rawptr) -> i32 ---
-    native_canvas_presentation_generation :: proc(handle: rawptr) -> u64 ---
-    native_canvas_background_rgba :: proc(handle: rawptr) -> u32 ---
-    native_canvas_surface_width :: proc(handle: rawptr) -> u16 ---
-    native_canvas_surface_height :: proc(handle: rawptr) -> u16 ---
+
     native_canvas_cell_width :: proc(handle: rawptr) -> u16 ---
     native_canvas_cell_height :: proc(handle: rawptr) -> u16 ---
-    native_canvas_frame_revision :: proc(handle: rawptr) -> u64 ---
+
     native_canvas_terminal_revision :: proc(handle: rawptr) -> u64 ---
     native_canvas_history_offset :: proc(handle: rawptr) -> u32 ---
     native_canvas_history_count :: proc(handle: rawptr) -> u32 ---
     native_canvas_history_row_base :: proc(handle: rawptr) -> u32 ---
     native_canvas_alternate_screen :: proc(handle: rawptr) -> u8 ---
-    native_canvas_upload_count :: proc(handle: rawptr) -> u32 ---
-    native_canvas_removal_count :: proc(handle: rawptr) -> u32 ---
-    native_canvas_command_count :: proc(handle: rawptr) -> u32 ---
+
     native_canvas_upload_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Resource_Info) -> i32 ---
-    native_canvas_upload_copy :: proc(handle: rawptr, index: u32, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) -> i32 ---
     native_canvas_removal_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Removal_Info) -> i32 ---
-    native_canvas_command_info :: proc(handle: rawptr, index: u32, output: ^Canvas_Command_Info) -> i32 ---
+    native_canvas_frame_info :: proc(handle: rawptr, output: ^instance_native.Frame_Info) -> i32 ---
+    native_canvas_commands :: proc(handle: rawptr, output: [^]Canvas_Command_Info, capacity: c.size_t) -> i32 ---
+    native_canvas_upload_borrow :: proc(handle: rawptr, index: u32, output: ^[^]u8, count: ^c.size_t) -> i32 ---
     native_canvas_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     native_terminal_info_size :: proc() -> u32 ---
     native_terminal_snapshot :: proc(
@@ -352,42 +350,8 @@ BRIDGE_MOD_SUPER :: vt_native.MOD_SUPER
 BRIDGE_MOD_CAPS :: vt_native.MOD_CAPS_LOCK
 BRIDGE_MOD_NUM :: vt_native.MOD_NUM_LOCK
 
-Canvas_Resource_Info :: struct {
-    resource: u64,
-    generation: u64,
-    pixel_count: u64,
-    stride: u64,
-    width: u16,
-    height: u16,
-    format: u8,
-    _reserved: [3]u8,
-}
+Canvas_Resource_Info :: render_native.Resource_Info
 
-Canvas_Removal_Info :: struct {
-    resource: u64,
-    generation: u64,
-}
+Canvas_Removal_Info :: render_native.Removal_Info
 
-Canvas_Command_Info :: struct {
-    resource: u64,
-    generation: u64,
-    color_rgba: u32,
-    destination_x: i32,
-    destination_y: i32,
-    clip_x: i32,
-    clip_y: i32,
-    destination_width: u16,
-    destination_height: u16,
-    clip_width: u16,
-    clip_height: u16,
-    source_x: u16,
-    source_y: u16,
-    source_width: u16,
-    source_height: u16,
-    resource_width: u16,
-    resource_height: u16,
-    tag: u8,
-    format: u8,
-    cursor_component: u8,
-    _reserved: u8,
-}
+Canvas_Command_Info :: render_native.Command_Info

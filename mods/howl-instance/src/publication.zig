@@ -141,6 +141,7 @@ const Impl = struct {
     allocator: std.mem.Allocator,
     frames: [frame_slot_count]FrameSlot,
     reader_active: std.atomic.Value(bool) = .init(false),
+    external_borrow: std.atomic.Value(bool) = .init(false),
     producer_sequence: u64 = 0,
     residency: [residency_slot_count]ResidencySlot = .{ .{}, .{} },
     residency_sequence: u64 = 0,
@@ -166,6 +167,7 @@ pub fn init(
 
     impl.allocator = allocator;
     impl.reader_active = .init(false);
+    impl.external_borrow = .init(false);
     impl.producer_sequence = 0;
     impl.residency = .{ .{}, .{} };
     impl.residency_sequence = 0;
@@ -178,6 +180,7 @@ pub fn init(
 /// Releases all publication storage after the backend has released every outstanding lease.
 pub fn deinit(exchange: *Exchange) void {
     const impl = exchangeImpl(exchange);
+    std.debug.assert(!impl.external_borrow.load(.acquire));
     std.debug.assert(!impl.reader_active.load(.acquire));
     for (&impl.frames) |*slot| {
         std.debug.assert(slot.state.load(.acquire) != stateValue(.reading));
@@ -186,6 +189,46 @@ pub fn deinit(exchange: *Exchange) void {
     const allocator = impl.allocator;
     impl.* = undefined;
     allocator.destroy(impl);
+}
+
+/// Registers one native backend endpoint on the sole producer thread.
+/// Parent construction/destruction and new endpoint registration are serialized.
+pub fn retainBackend(exchange: *Exchange) bool {
+    const impl = exchangeImpl(exchange);
+    if (impl.reader_active.load(.acquire)) return false;
+    return impl.external_borrow.cmpxchgStrong(false, true, .acq_rel, .acquire) == null;
+}
+
+/// Drops the endpoint only after its backend released every lease.
+/// This is its final access to the exchange; checked parent teardown may follow.
+pub fn releaseBackend(exchange: *Exchange) void {
+    const impl = exchangeImpl(exchange);
+    std.debug.assert(!impl.reader_active.load(.acquire));
+    std.debug.assert(impl.external_borrow.load(.acquire));
+    impl.external_borrow.store(false, .release);
+}
+
+/// Checks native endpoints, leases and producer work without mutating the exchange.
+/// Raw Zig exchange users must still quiesce before parent teardown.
+pub fn canDeinit(exchange: *Exchange) bool {
+    const impl = exchangeImpl(exchange);
+    if (impl.external_borrow.load(.acquire) or impl.reader_active.load(.acquire)) return false;
+    for (&impl.frames) |*slot| {
+        const state = slot.state.load(.acquire);
+        if (state == stateValue(.reading) or state == stateValue(.writing)) return false;
+    }
+    return true;
+}
+
+/// Discards unread work when the producer installs a new empty backend.
+/// The producer calls this only after registering the sole endpoint and quiescing any old raw consumer.
+pub fn discardReady(exchange: *Exchange) void {
+    const impl = exchangeImpl(exchange);
+    for (&impl.frames) |*slot| {
+        // zig-audit: acknowledge discard
+        // reason: Only successful ready-to-free transitions discard unread frames; leased/writing storage is never changed.
+        _ = slot.state.cmpxchgStrong(stateValue(.ready), stateValue(.free), .acq_rel, .acquire);
+    }
 }
 
 /// Owns one terminal-thread-only frame slot while a publication is being assembled.
@@ -754,4 +797,15 @@ test "only completed same-generation prefixes survive slot reuse; growth and abo
     writer = beginWrite(exchange).?;
     try std.testing.expect(writer.retainedContent(7) == null);
     writer.abort();
+}
+
+test "registered backend prevents teardown even between leases" {
+    const exchange = try init(std.testing.allocator, 4);
+    defer deinit(exchange);
+    try std.testing.expect(canDeinit(exchange));
+    try std.testing.expect(retainBackend(exchange));
+    try std.testing.expect(!canDeinit(exchange));
+    try std.testing.expect(!retainBackend(exchange));
+    releaseBackend(exchange);
+    try std.testing.expect(canDeinit(exchange));
 }

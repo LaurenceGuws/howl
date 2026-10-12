@@ -2,7 +2,7 @@
 
 The package owns `howl_instance_native`, an optional shared library, and
 `howl_instance_native.h`. Its header composes the VT-owned
-`howl_vt_native.h`. The artifact selects the exact local `howl_instance`
+`howl_vt_native.h` and Render-owned `howl_render_native.h`. The artifact selects the exact local `howl_instance`
 specialization; its handles cannot be interchanged with headless or Server handles.
 Ordinary Zig callers retain the direct Instance API. The separate
 `howl_instance_native` Zig module shares native input validation with host adapters,
@@ -12,8 +12,9 @@ Version 1 is an initial, unpresented Linux/x86_64-qualified lifecycle:
 create, ordered semantic input, explicit geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
 The service policy is explicitly deterministic headless. Retained host requests,
-presented construction, publication leases, and complete observation contracts are
-subsequent cuts; a consumer must not infer them from this first surface.
+standalone presented construction and complete observation contracts are
+subsequent cuts; a consumer must not infer them from this surface.
+The separate presentation endpoint now supports an existing presented Instance.
 Odin uses the shared native input vocabulary and operation implementations while
 preserving its existing retained-request policy and host runtime.
 
@@ -49,7 +50,7 @@ Output records are zeroed before later validation/work. Operational service fail
 may follow partial canonical progress; zero output is not a rollback promise.
 The caller handles that failure explicitly rather than inferring a successful cut.
 
-The Instance ABI version incorporates VT native version 1. Changing an incorporated
+The Instance ABI version incorporates VT and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards
 reject silent version or scalar-capacity drift.
 
@@ -75,3 +76,50 @@ The complete default repository graph is separately required. An unchanged
 VT-codec ReleaseSafe allocation-failure proof has reproduced
 `NondeterministicMemoryUsage`; its failure is retained in workstream evidence and
 must not be described as a green full-VT ReleaseSafe result.
+
+## Presentation endpoint
+
+The producer opens one native backend endpoint on its existing presented Instance,
+publishes a fresh frame, then hands the endpoint to the backend thread. Opening
+starts with empty backend residency and discards unread frames from the previous
+backend. It never transfers the live mutable Instance to that thread.
+`howl_instance_frames_native` is the exact module-owned Zig adapter used by Odin;
+the optional artifact exports the matching `hi_frame_*` C operations.
+
+An open endpoint pins publication storage, including between frame leases.
+Checked Instance destruction refuses it before changing any owner state. The
+backend closes the endpoint before the producer destroys its Instance. Calls on
+one endpoint are serialized by its single backend owner. This is an explicit
+thread handoff and lifetime contract, not a stale-pointer registry.
+
+Acquire returns copied metadata for the newest complete immutable frame. Commands
+and removals are copied in bulk into caller-owned arrays; insufficient capacity
+leaves those arrays untouched. Only the actual leased command extent is written,
+including when the caller supplies a larger capacity. The native contract does not
+impose a maintained host command ceiling on an explicitly larger presented
+Instance. Acquisition rejects any count above `UINT32_MAX` before advertising a
+frame and leaves no active lease. Upload records are copied, while their pixel spans
+borrow the frame until release, abandon or close. A later producer turn cannot
+change those borrowed pixels. The caller may retain copied commands for redraw,
+but must upload pixels before ending the lease.
+
+Release reports the backend's actual resource residency. Invalid or busy feedback
+leaves the lease active so the caller can correct or retry it. Abandon is valid
+only when the candidate established no new backend resource state. Closing ends
+the lease and endpoint; the next endpoint starts with empty residency.
+
+Odin retains its worker, wake sources, frame credit, SDL textures and redraw policy.
+Its worker opens/publishes the endpoint and hands it to the UI under the view
+mutex. The UI copies one complete command array and borrows upload pixels. It
+returns frame credit after presentation. Instance and Render own no GUI scheduler.
+
+`zig build test:native-frames` uses a normal public presented Zig Instance and a C
+peer that includes only the public headers. The peer retains pixels while the
+producer advances, checks capacity/failure atomicity, exercises residency and
+backend replacement, and proves teardown refusal both during and between leases.
+C/C++ layout checks cover the copied envelope and Render-owned records. This proof
+does not claim a C-only presented constructor. A second real 225×512 terminal
+proof publishes beyond the maintained host command envelope and copies its exact
+advertised extent through C; exact/insufficient/oversized capacities are checked
+with trailing storage sentinels. An owner-module unit proof checks every native
+count at `UINT32_MAX` and boundary plus one without allocating impossible buffers.

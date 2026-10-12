@@ -138,6 +138,17 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&direct_tests.step);
     test_step.dependOn(&b.addRunArtifact(direct_tests).step);
 
+    const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_render_native.h"), .target = target, .optimize = optimize });
+    const native = b.addModule("howl_render_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize });
+    native.addImport("renderer", renderer);
+    native.addImport("render_native_types", native_types.createModule());
+    b.addNamedLazyPath("howl_render_native_header", b.path("include/howl_render_native.h"));
+    const native_tests = b.addTest(.{ .name = "howl-render-native", .root_module = native, .use_llvm = false, .use_lld = false });
+    check.dependOn(&native_tests.step);
+    const native_run = b.addRunArtifact(native_tests);
+    test_step.dependOn(&native_run.step);
+    b.step("test:native", "Run the Render-owned native payload proofs").dependOn(&native_run.step);
+
     b.default_step = check;
 }
 

@@ -12,12 +12,13 @@ const sendUnicodeKey = native.sendUnicodeKey;
 const sendMouse = native.sendMouse;
 const sendFocus = native.sendFocus;
 const heap = std.heap.c_allocator;
+const frames = @import("instance_native_frames");
 
 // zig-audit: acknowledge anytype
 // reason: This private conversion accepts only matching C/native opaque handle pointers at exact exported sites.
 fn convert(comptime T: type, value: anytype) T {
     // zig-audit: acknowledge ptr_cast
-    // reason: Both handles name the exact local Instance allocation; no records or headless specializations are reinterpreted.
+    // reason: Only matching local Instance or frame endpoint handles are adapted; no records or headless specializations are reinterpreted.
     // zig-audit: acknowledge align_cast
     // reason: The live constructor-owned opaque pointer retains the native owner alignment.
     return @ptrCast(@alignCast(value));
@@ -111,10 +112,8 @@ pub export fn hi_destroy(out: ?*?*c.hi_instance) u32 {
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
     const raw = slot.* orelse return c.HI_OK;
     const value = convert(*Instance, raw);
-    // Presented owners are not admitted by the version-1 lifecycle yet.
-    if (instance.presented(value)) return c.HI_UNSUPPORTED;
+    instance.tryDeinit(value) catch return c.HI_BUSY;
     slot.* = null;
-    instance.deinit(value);
     return c.HI_OK;
 }
 /// Admits copied child input in canonical order.
@@ -227,5 +226,128 @@ pub export fn hi_copy_cell(raw: ?*const c.hi_instance, history: u32, row: u16, c
     var copied: vt.c.hvt_cell = undefined;
     vt.copyCell(instance.terminal(convert(*const Instance, value)), history, row, col, &copied) catch return c.HI_INVALID_ARGUMENT;
     result.* = .{ .scalars = copied.scalars, .scalar_count = copied.scalar_count, .width = copied.width, .height = copied.height, .x = copied.x, .y = copied.y, .reserved = @splat(0) };
+    return c.HI_OK;
+}
+
+/// Opens one lifetime-pinning backend endpoint on the producer thread.
+pub export fn hi_frame_open(version: u32, raw: ?*c.hi_instance, out: ?*?*c.hi_frame_stream) u32 {
+    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HI_INVALID_ARGUMENT;
+    const stream = frames.open(heap, convert(*Instance, owner)) catch |failure| return switch (failure) {
+        error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+        error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
+        error.PublicationBorrowed => c.HI_BUSY,
+    };
+    slot.* = convert(*c.hi_frame_stream, stream);
+    return c.HI_OK;
+}
+/// Closes only after the backend stops using borrowed frame pixels.
+pub export fn hi_frame_close(out: ?*?*c.hi_frame_stream) void {
+    const slot = out orelse return;
+    const value = slot.* orelse return;
+    slot.* = null;
+    frames.close(convert(*frames.Stream, value));
+}
+/// Claims one newest immutable frame and copies its Instance-owned envelope.
+pub export fn hi_frame_acquire(raw: ?*c.hi_frame_stream, out: ?*c.hi_frame_info) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hi_frame_info);
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    const stream = convert(*frames.Stream, value);
+    frames.acquire(stream) catch |failure| return switch (failure) {
+        error.PendingFrame => c.HI_BUSY,
+        error.NoFrame => c.HI_NO_FRAME,
+        error.FrameTooLarge => c.HI_RESOURCE_LIMIT,
+    };
+    result.* = frames.info(stream) catch return c.HI_NO_FRAME;
+    return c.HI_OK;
+}
+fn frameCopyFailure(failure: (frames.render.Error || error{NoPendingFrame})) u32 {
+    return switch (failure) {
+        error.BufferTooSmall => c.HI_RESOURCE_LIMIT,
+        error.InvalidPixelSpan => c.HI_OPERATION_FAILED,
+        error.NoPendingFrame => c.HI_NO_FRAME,
+    };
+}
+/// Copies the complete drawing array in one call into caller-owned storage.
+pub export fn hi_frame_commands(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.CommandInfo, capacity: usize) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    const stream = convert(*frames.Stream, value);
+    const frame = frames.pending(stream) orelse return c.HI_NO_FRAME;
+    const count = frame.commands.len;
+    if (capacity < count) return c.HI_RESOURCE_LIMIT;
+    // Capacity is caller-owned; form only the exact leased extent we will write.
+    const storage: []frames.render.CommandInfo = if (out) |ptr| ptr[0..count] else if (count == 0) &.{} else return c.HI_INVALID_ARGUMENT;
+    // zig-audit: acknowledge discard
+    // reason: The caller knows the immutable count from hi_frame_info; only projection status is returned here.
+    _ = frames.copyCommands(convert(*frames.Stream, value), storage) catch |failure| return frameCopyFailure(failure);
+    return c.HI_OK;
+}
+/// Copies upload metadata and borrows the exact immutable pixels until release.
+pub export fn hi_frame_uploads(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.Upload, capacity: usize) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (capacity > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    const storage: []frames.render.Upload = if (out) |ptr| ptr[0..capacity] else if (capacity == 0) &.{} else return c.HI_INVALID_ARGUMENT;
+    // zig-audit: acknowledge discard
+    // reason: The immutable count is in hi_frame_info; borrowed pixel metadata is supplied through the output array.
+    _ = frames.copyUploads(convert(*frames.Stream, value), storage) catch |failure| return frameCopyFailure(failure);
+    return c.HI_OK;
+}
+/// Copies all exact resource retirements in one call.
+pub export fn hi_frame_removals(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.RemovalInfo, capacity: usize) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (capacity > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    const storage: []frames.render.RemovalInfo = if (out) |ptr| ptr[0..capacity] else if (capacity == 0) &.{} else return c.HI_INVALID_ARGUMENT;
+    // zig-audit: acknowledge discard
+    // reason: The caller obtains the immutable retirement count from hi_frame_info.
+    _ = frames.copyRemovals(convert(*frames.Stream, value), storage) catch |failure| return frameCopyFailure(failure);
+    return c.HI_OK;
+}
+/// Publishes exact backend residency feedback, leaving the lease held on rejection.
+pub export fn hi_frame_release(raw: ?*c.hi_frame_stream, values: [*c]const c.hrc_residency, count: usize) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (count > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    if (count != 0 and values == null) return c.HI_INVALID_ARGUMENT;
+    var storage: [instance.render.terminal.maximum_external_images + 1]instance.render.terminal.Residency = undefined;
+    for (0..count) |index| {
+        const item = values[index];
+        if (item._reserved[0] != 0 or item._reserved[1] != 0 or item._reserved[2] != 0) return c.HI_INVALID_ARGUMENT;
+        const format: instance.render.terminal.ResourceFormat = switch (item.format) {
+            0 => .alpha8,
+            1 => .rgba8,
+            else => return c.HI_INVALID_ARGUMENT,
+        };
+        storage[index] = .{ .resource = .{
+            .resource = @fromBackingInt(item.resource),
+            .generation = @fromBackingInt(item.generation),
+        }, .format = format, .size = .{ .width = item.width, .height = item.height } };
+    }
+    frames.release(convert(*frames.Stream, value), storage[0..count]) catch |failure| return switch (failure) {
+        error.NoPendingFrame => c.HI_NO_FRAME,
+        error.InvalidResidency => c.HI_INVALID_ARGUMENT,
+        error.FeedbackBusy => c.HI_BUSY,
+    };
+    return c.HI_OK;
+}
+/// Abandons a candidate that changed no accepted backend resources.
+pub export fn hi_frame_abandon(raw: ?*c.hi_frame_stream) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    frames.abandon(convert(*frames.Stream, value));
+    return c.HI_OK;
+}
+
+/// Explicit producer presentation work; scheduling and frame demand remain caller-owned.
+pub export fn hi_publish_frame(raw: ?*c.hi_instance, history: u32) u32 {
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    instance.publishRenderAt(convert(*Instance, value), history) catch |failure| {
+        return switch (failure) {
+            error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
+            error.PresentationBusy, error.PublicationBusy => c.HI_BUSY,
+            error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+            else => c.HI_OPERATION_FAILED,
+        };
+    };
     return c.HI_OK;
 }

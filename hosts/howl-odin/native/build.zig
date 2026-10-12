@@ -26,6 +26,9 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_instance", instance_dependency.module("howl_instance"));
     root.addImport("howl_vt_native", instance_dependency.module("howl_vt_native"));
     root.addImport("howl_instance_native", instance_dependency.module("howl_instance_native"));
+    root.addImport("howl_render_native", instance_dependency.module("howl_render_native"));
+    root.addImport("howl_instance_frames_native", instance_dependency.module("howl_instance_frames_native"));
+    root.addImport("instance_native_exports", instance_dependency.artifact("howl_instance_native").root_module);
 
     const library = b.addLibrary(.{
         .name = "howl_odin_bridge",

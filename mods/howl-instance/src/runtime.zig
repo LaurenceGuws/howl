@@ -292,6 +292,16 @@ pub fn Runtime(comptime Presentation: ?type) type {
             allocator.destroy(state);
         }
 
+        /// Checks native backend/lease lifetimes before any child or owner mutation.
+        /// Caller must serialize new endpoint creation and quiesce raw Zig borrowers.
+        pub fn tryDeinit(instance: *Instance) error{PublicationBorrowed}!void {
+            if (comptime Presentation != null) {
+                if (stateConst(instance).presentation) |presented_state|
+                    if (!publication.canDeinit(presented_state.exchange)) return error.PublicationBorrowed;
+            }
+            deinit(instance);
+        }
+
         /// Returns the PTY descriptor for caller-owned poll integration.
         pub fn descriptor(instance: *const Instance) error{NotStarted}!pty.Descriptor {
             return stateConst(instance).transport.masterFd();
@@ -359,6 +369,25 @@ pub fn Runtime(comptime Presentation: ?type) type {
         pub fn renderExchange(instance: *const Instance) error{PresentationUnavailable}!*RenderExchange {
             const presentation = stateConst(instance).presentation orelse return error.PresentationUnavailable;
             return presentation.exchange;
+        }
+
+        /// Registers one native backend on the terminal-owner thread.
+        /// New backend residency starts empty; old unread publications/feedback are discarded.
+        /// This affects presentation only. The caller explicitly publishes a new cut.
+        pub fn borrowRenderExchange(instance: *Instance) error{ PresentationUnavailable, PublicationBorrowed }!*RenderExchange {
+            const presentation = stateMut(instance).presentation orelse return error.PresentationUnavailable;
+            if (!publication.retainBackend(presentation.exchange)) return error.PublicationBorrowed;
+            // zig-audit: acknowledge discard
+            // reason: A replacement backend has no accepted resources; consume old feedback without adopting it.
+            _ = publication.takeLatestResidency(presentation.exchange, presentation.presentation_generation, &presentation.backend_residency);
+            presentation.backend_residency_count = 0;
+            publication.discardReady(presentation.exchange);
+            return presentation.exchange;
+        }
+
+        /// Releases a registered backend after its last lease, as its final exchange access.
+        pub fn releaseRenderExchange(exchange: *RenderExchange) void {
+            publication.releaseBackend(exchange);
         }
 
         /// Publishes the newest canonical VT cut as one immutable backend transaction.

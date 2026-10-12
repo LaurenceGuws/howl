@@ -17,6 +17,12 @@ const render = terminal_render;
 const native_instance = @import("howl_instance");
 const native_vt = @import("howl_vt_native");
 const native_abi = @import("howl_instance_native");
+const native_render = @import("howl_render_native");
+const native_frames = @import("howl_instance_frames_native");
+const native_exports = @import("instance_native_exports");
+comptime {
+    if (native_exports.hi_abi_version() != 1) @compileError("review the native Instance contract before changing this consumer");
+}
 
 // zig-audit: acknowledge opaque_type
 // reason: RuntimeHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
@@ -123,7 +129,6 @@ const NativeLocalState = struct {
 
     fn destroy(self: *NativeLocalState, io: std.Io, id: u64) bool {
         if (id == 0) return false;
-        var value: ?*native_instance.Instance = null;
         self.mutex.lockUncancelable(io);
         for (&self.instances) |*slot| {
             if (slot.*) |active| {
@@ -132,14 +137,17 @@ const NativeLocalState = struct {
                     self.mutex.unlock(io);
                     return false;
                 }
-                value = active.value;
+                native_instance.tryDeinit(active.value) catch {
+                    self.mutex.unlock(io);
+                    return false;
+                };
                 slot.* = null;
-                break;
+                self.mutex.unlock(io);
+                return true;
             }
         }
         self.mutex.unlock(io);
-        if (value) |owned| native_instance.deinit(owned);
-        return value != null;
+        return false;
     }
 
     fn empty(self: *const NativeLocalState) bool {
@@ -475,20 +483,7 @@ fn nativeTerminalValue(raw: ?*NativeTerminalHandle) ?*NativeTerminal {
     return if (raw) |value| @ptrCast(@alignCast(value)) else null;
 }
 
-const NativeCanvasFront = struct {
-    presentation_generation: u64 = 0,
-    frame_revision: u64 = 0,
-    terminal_revision: u64 = 0,
-    history_offset: u32 = 0,
-    history_count: u32 = 0,
-    history_row_base: u32 = 0,
-    alternate_screen: bool = false,
-    background_rgba: u32 = 0xff211918,
-    // No backend-visible geometry exists until one publication is accepted.
-    // Zero keeps UI sizing from manufacturing a fake pre-frame cell lattice.
-    surface: terminal_render.Size = .{ .width = 0, .height = 0 },
-    cell_size: terminal_render.Size = .{ .width = 0, .height = 0 },
-};
+const NativeCanvasFront = native_frames.Info;
 
 /// Backend-thread owner around one immutable Instance Render publication lease.
 ///
@@ -496,14 +491,13 @@ const NativeCanvasFront = struct {
 /// the only feedback returned to the terminal producer.
 const NativeCanvas = struct {
     allocator: std.mem.Allocator,
-    exchange: *native_instance.RenderExchange,
-    lease: ?native_instance.RenderLease = null,
+    stream: *native_frames.Stream,
     accepted: [render_resource_limit]terminal_render.Residency = undefined,
     accepted_count: usize = 0,
     accepted_generation: u64 = 0,
     candidate: [render_resource_limit]terminal_render.Residency = undefined,
     candidate_count: usize = 0,
-    front: NativeCanvasFront = .{},
+    front: NativeCanvasFront = .{ .background_rgba = 0xff211918 },
     last_error: [160]u8 = undefined,
     last_error_len: usize = 0,
 
@@ -528,7 +522,7 @@ const NativeCanvas = struct {
     }
 
     fn deinit(self: *NativeCanvas) void {
-        if (self.lease) |*lease| lease.abandon();
+        native_frames.close(self.stream);
         const allocator = self.allocator;
         self.* = undefined;
         allocator.destroy(self);
@@ -557,13 +551,10 @@ const NativeCanvas = struct {
     }
 
     fn stage(self: *NativeCanvas) !void {
-        if (self.lease != null) return error.PendingFrame;
-        var lease = native_instance.acquirePublishedFrame(self.exchange) orelse
-            return error.NoFrame;
+        try native_frames.acquire(self.stream);
         var owned = true;
-        errdefer if (owned) lease.abandon();
-
-        const frame = lease.value;
+        errdefer if (owned) native_frames.abandon(self.stream);
+        const frame = native_frames.pending(self.stream).?.*;
         if (self.accepted_generation != frame.presentation_generation) {
             self.accepted_generation = frame.presentation_generation;
             self.accepted_count = 0;
@@ -584,44 +575,25 @@ const NativeCanvas = struct {
                     .size = upload.size,
                 },
             );
-        self.lease = lease;
         owned = false;
     }
 
     fn accept(self: *NativeCanvas) !void {
-        var lease = self.lease orelse return error.NoPendingFrame;
-        self.lease = null;
-        const frame = lease.value;
-        @memcpy(
-            self.accepted[0..self.candidate_count],
-            self.candidate[0..self.candidate_count],
-        );
+        const envelope = try native_frames.info(self.stream);
+        try native_frames.release(self.stream, self.candidate[0..self.candidate_count]);
+        @memcpy(self.accepted[0..self.candidate_count], self.candidate[0..self.candidate_count]);
         self.accepted_count = self.candidate_count;
-        self.front = .{
-            .presentation_generation = frame.presentation_generation,
-            .frame_revision = frame.revision,
-            .terminal_revision = frame.terminal_revision,
-            .history_offset = frame.history_offset,
-            .history_count = frame.history_count,
-            .history_row_base = frame.history_row_base,
-            .alternate_screen = frame.alternate_screen,
-            .background_rgba = publicationBackground(frame),
-            .surface = frame.surface,
-            .cell_size = frame.cell_size,
-        };
-        try lease.release(self.accepted[0..self.accepted_count]);
+        self.front = envelope;
     }
 
     fn discard(self: *NativeCanvas) !void {
-        var lease = self.lease orelse return;
-        self.lease = null;
+        if (native_frames.pending(self.stream) == null) return;
         self.candidate_count = 0;
-        try lease.release(self.accepted[0..self.accepted_count]);
+        try native_frames.release(self.stream, self.accepted[0..self.accepted_count]);
     }
 
     fn pending(self: *NativeCanvas) ?*const native_instance.PublishedFrame {
-        if (self.lease) |*lease| return &lease.value;
-        return null;
+        return native_frames.pending(self.stream);
     }
 };
 
@@ -631,19 +603,6 @@ fn nativeCanvasValue(raw: ?*NativeCanvasHandle) ?*NativeCanvas {
     // zig-audit: acknowledge align_cast
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     return if (raw) |value| @ptrCast(@alignCast(value)) else null;
-}
-
-fn publicationBackground(frame: native_instance.PublishedFrame) u32 {
-    for (frame.commands) |command| switch (command) {
-        .solid => |solid| {
-            if (solid.rect.x == 0 and solid.rect.y == 0 and
-                solid.rect.width == frame.surface.width and
-                solid.rect.height == frame.surface.height)
-                return colorBits(solid.color);
-        },
-        else => {},
-    };
-    return 0xff211918;
 }
 
 // One explicit desktop lifetime, constructed/destroyed by the application.
@@ -2017,12 +1976,19 @@ pub export fn howl_odin_bridge_native_terminal_copy_error(
     output_len.* = count;
 }
 
-/// Borrows only the backend publication exchange; it grants no Instance access.
-pub export fn howl_odin_bridge_native_terminal_render_exchange(
-    raw: ?*NativeTerminalHandle,
-) ?*native_instance.RenderExchange {
+/// Opens a module-owned backend endpoint on the terminal worker and publishes its first cut.
+pub export fn howl_odin_bridge_native_terminal_frame_open(raw: ?*NativeTerminalHandle) ?*native_frames.Stream {
     const owner = nativeTerminalValue(raw) orelse return null;
-    return native_instance.renderExchange(owner.value) catch null;
+    const stream = native_frames.open(std.heap.c_allocator, owner.value) catch |failure| {
+        owner.setError("frame_open", @errorName(failure));
+        return null;
+    };
+    owner.publishCurrent() catch |failure| {
+        native_frames.close(stream);
+        owner.setError("frame_publish", @errorName(failure));
+        return null;
+    };
+    return stream;
 }
 
 /// Publishes one canonical live/history presentation cut from the terminal owner.
@@ -2092,13 +2058,13 @@ pub export fn howl_odin_bridge_native_terminal_reconfigure_presentation(
 
 /// Allocates a canvas borrowing one claimed Local terminal.
 pub export fn howl_odin_bridge_native_canvas_create(
-    exchange: ?*native_instance.RenderExchange,
+    stream: ?*native_frames.Stream,
 ) ?*NativeCanvasHandle {
-    const value = exchange orelse return null;
+    const value = stream orelse return null;
     const canvas = std.heap.c_allocator.create(NativeCanvas) catch return null;
     canvas.* = .{
         .allocator = std.heap.c_allocator,
-        .exchange = value,
+        .stream = value,
     };
     // zig-audit: acknowledge ptr_cast
     // reason: This constructor has initialized and retained the concrete owner; its opaque Odin handle preserves the same allocation address.
@@ -2151,48 +2117,13 @@ pub export fn howl_odin_bridge_native_canvas_discard(
     return 0;
 }
 
-/// Returns copied presentation generation facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_presentation_generation(
-    raw: ?*NativeCanvasHandle,
-) u64 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    if (canvas.pending()) |frame| return frame.presentation_generation;
-    return canvas.front.presentation_generation;
-}
-
-/// Returns copied background rgba facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_background_rgba(
-    raw: ?*NativeCanvasHandle,
-) u32 {
-    const canvas = nativeCanvasValue(raw) orelse return 0xff211918;
-    return canvas.front.background_rgba;
-}
-
-/// Returns copied surface width facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_surface_width(
-    raw: ?*NativeCanvasHandle,
-) u16 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    if (canvas.pending()) |frame| return frame.surface.width;
-    return canvas.front.surface.width;
-}
-
-/// Returns copied surface height facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_surface_height(
-    raw: ?*NativeCanvasHandle,
-) u16 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    if (canvas.pending()) |frame| return frame.surface.height;
-    return canvas.front.surface.height;
-}
-
 /// Returns copied cell width facts from the prepared Local canvas.
 pub export fn howl_odin_bridge_native_canvas_cell_width(
     raw: ?*NativeCanvasHandle,
 ) u16 {
     const canvas = nativeCanvasValue(raw) orelse return 0;
     if (canvas.pending()) |frame| return frame.cell_size.width;
-    return canvas.front.cell_size.width;
+    return canvas.front.cell_width;
 }
 
 /// Returns copied cell height facts from the prepared Local canvas.
@@ -2201,16 +2132,7 @@ pub export fn howl_odin_bridge_native_canvas_cell_height(
 ) u16 {
     const canvas = nativeCanvasValue(raw) orelse return 0;
     if (canvas.pending()) |frame| return frame.cell_size.height;
-    return canvas.front.cell_size.height;
-}
-
-/// Returns copied frame revision facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_frame_revision(
-    raw: ?*NativeCanvasHandle,
-) u64 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    if (canvas.pending()) |frame| return frame.revision;
-    return canvas.front.frame_revision;
+    return canvas.front.cell_height;
 }
 
 /// Returns copied terminal revision facts from the prepared Local canvas.
@@ -2255,34 +2177,7 @@ pub export fn howl_odin_bridge_native_canvas_alternate_screen(
 ) u8 {
     const canvas = nativeCanvasValue(raw) orelse return 0;
     if (canvas.pending()) |frame| return @intFromBool(frame.alternate_screen);
-    return @intFromBool(canvas.front.alternate_screen);
-}
-
-/// Returns copied upload count facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_upload_count(
-    raw: ?*NativeCanvasHandle,
-) u32 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    const frame = canvas.pending() orelse return 0;
-    return @intCast(frame.uploads.len);
-}
-
-/// Returns copied removal count facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_removal_count(
-    raw: ?*NativeCanvasHandle,
-) u32 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    const frame = canvas.pending() orelse return 0;
-    return @intCast(frame.removals.len);
-}
-
-/// Returns copied command count facts from the prepared Local canvas.
-pub export fn howl_odin_bridge_native_canvas_command_count(
-    raw: ?*NativeCanvasHandle,
-) u32 {
-    const canvas = nativeCanvasValue(raw) orelse return 0;
-    const frame = canvas.pending() orelse return 0;
-    return @intCast(frame.commands.len);
+    return canvas.front.alternate_screen;
 }
 
 /// Copies one upload resource record from the prepared Local canvas into caller-owned output or protocol state.
@@ -2305,34 +2200,6 @@ pub export fn howl_odin_bridge_native_canvas_upload_info(
     return 0;
 }
 
-/// Copies one upload pixel payload from the prepared Local canvas into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_native_canvas_upload_copy(
-    raw: ?*NativeCanvasHandle,
-    index: u32,
-    output_ptr: [*]u8,
-    output_capacity: usize,
-    output_len: *usize,
-) i32 {
-    output_len.* = 0;
-    const canvas = nativeCanvasValue(raw) orelse return 1;
-    const frame = canvas.pending() orelse return 3;
-    if (index >= frame.uploads.len) return 2;
-    const upload = frame.uploads[index];
-    const end = std.math.add(
-        usize,
-        upload.pixel_offset,
-        upload.pixel_count,
-    ) catch return 3;
-    if (end > frame.pixels.len) return 3;
-    if (output_capacity < upload.pixel_count) return 4;
-    @memcpy(
-        output_ptr[0..upload.pixel_count],
-        frame.pixels[upload.pixel_offset..end],
-    );
-    output_len.* = upload.pixel_count;
-    return 0;
-}
-
 /// Copies one removal record from the prepared Local canvas into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_native_canvas_removal_info(
     raw: ?*NativeCanvasHandle,
@@ -2347,17 +2214,35 @@ pub export fn howl_odin_bridge_native_canvas_removal_info(
     return 0;
 }
 
-/// Copies one draw command record from the prepared Local canvas into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_native_canvas_command_info(
-    raw: ?*NativeCanvasHandle,
-    index: u32,
-    output: *RenderCommandInfo,
-) i32 {
+/// Returns one complete copied Instance envelope rather than one FFI call per field.
+pub export fn howl_odin_bridge_native_canvas_frame_info(raw: ?*NativeCanvasHandle, output: *native_frames.Info) i32 {
     output.* = .{};
     const canvas = nativeCanvasValue(raw) orelse return 1;
+    output.* = native_frames.info(canvas.stream) catch return 2;
+    return 0;
+}
+
+/// Copies a complete native draw array into caller-owned retained Canvas storage.
+pub export fn howl_odin_bridge_native_canvas_commands(raw: ?*NativeCanvasHandle, output: ?[*]RenderCommandInfo, capacity: usize) i32 {
+    const canvas = nativeCanvasValue(raw) orelse return 1;
+    const storage: []RenderCommandInfo = if (output) |ptr| ptr[0..capacity] else if (capacity == 0) &.{} else return 2;
+    // zig-audit: acknowledge discard
+    // reason: The immutable command count is separately known by the caller; this host adapter returns only projection status.
+    _ = native_frames.copyCommands(canvas.stream, storage) catch return 2;
+    return 0;
+}
+
+/// Borrows upload bytes only while this Canvas retains its module frame lease.
+pub export fn howl_odin_bridge_native_canvas_upload_borrow(raw: ?*NativeCanvasHandle, index: u32, output: *?[*]const u8, count: *usize) i32 {
+    output.* = null;
+    count.* = 0;
+    const canvas = nativeCanvasValue(raw) orelse return 1;
     const frame = canvas.pending() orelse return 3;
-    if (index >= frame.commands.len) return 2;
-    fillRenderCommandInfo(frame.commands[index], output);
+    if (index >= frame.uploads.len) return 2;
+    const upload = frame.uploads[index];
+    if (upload.pixel_offset > frame.pixels.len or upload.pixel_count > frame.pixels.len - upload.pixel_offset) return 2;
+    output.* = frame.pixels[upload.pixel_offset..].ptr;
+    count.* = upload.pixel_count;
     return 0;
 }
 
@@ -2557,47 +2442,13 @@ const ExternalUpload = struct {
 };
 
 /// Copied C ABI metadata for one renderer upload resource.
-pub const RenderResourceInfo = extern struct {
-    resource: u64 = 0,
-    generation: u64 = 0,
-    pixel_count: u64 = 0,
-    stride: u64 = 0,
-    width: u16 = 0,
-    height: u16 = 0,
-    format: u8 = 0,
-    _reserved: [3]u8 = @splat(0),
-};
+pub const RenderResourceInfo = native_render.ResourceInfo;
 
 /// Copied C ABI metadata for one renderer resource removal.
-pub const RenderRemovalInfo = extern struct {
-    resource: u64 = 0,
-    generation: u64 = 0,
-};
+pub const RenderRemovalInfo = native_render.RemovalInfo;
 
 /// Copied C ABI draw command metadata.
-pub const RenderCommandInfo = extern struct {
-    resource: u64 = 0,
-    generation: u64 = 0,
-    color_rgba: u32 = 0,
-    destination_x: i32 = 0,
-    destination_y: i32 = 0,
-    clip_x: i32 = 0,
-    clip_y: i32 = 0,
-    destination_width: u16 = 0,
-    destination_height: u16 = 0,
-    clip_width: u16 = 0,
-    clip_height: u16 = 0,
-    source_x: u16 = 0,
-    source_y: u16 = 0,
-    source_width: u16 = 0,
-    source_height: u16 = 0,
-    resource_width: u16 = 0,
-    resource_height: u16 = 0,
-    tag: u8 = 0,
-    format: u8 = 0,
-    cursor_component: u8 = 0,
-    _reserved: u8 = 0,
-};
+pub const RenderCommandInfo = native_render.CommandInfo;
 
 /// Copied C ABI match coordinates and search revision facts.
 pub const SearchMatchInfo = extern struct {
@@ -3866,15 +3717,8 @@ pub export fn howl_odin_bridge_render_command_count(raw: ?*RenderHandle) u32 {
     return @intCast(renderer.command_count);
 }
 
-fn fillRenderResourceRef(resource: terminal_render.ResourceRef, output: *RenderResourceInfo) void {
-    output.resource = @backingInt(resource.resource);
-    output.generation = @backingInt(resource.generation);
-}
-
-fn fillRenderRemovalRef(resource: terminal_render.ResourceRef, output: *RenderRemovalInfo) void {
-    output.resource = @backingInt(resource.resource);
-    output.generation = @backingInt(resource.generation);
-}
+const fillRenderResourceRef = native_render.resourceRef;
+const fillRenderRemovalRef = native_render.removalRef;
 
 /// Copies one upload resource record from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_upload_info(
@@ -3969,71 +3813,8 @@ pub export fn howl_odin_bridge_render_removal_info(
     return 0;
 }
 
-fn colorBits(color: terminal_render.Color) u32 {
-    return @as(u32, color.r) |
-        (@as(u32, color.g) << 8) |
-        (@as(u32, color.b) << 16) |
-        (@as(u32, color.a) << 24);
-}
-
-fn fillCommandResource(output: *RenderCommandInfo, resource: terminal_render.ResourceView) void {
-    output.resource = @backingInt(resource.resource.resource);
-    output.generation = @backingInt(resource.resource.generation);
-    output.format = @backingInt(resource.format);
-    output.resource_width = resource.size.width;
-    output.resource_height = resource.size.height;
-    const source = resource.source orelse terminal_render.SourceRect{
-        .x = 0,
-        .y = 0,
-        .width = resource.size.width,
-        .height = resource.size.height,
-    };
-    output.source_x = source.x;
-    output.source_y = source.y;
-    output.source_width = source.width;
-    output.source_height = source.height;
-}
-
-fn fillRectFields(
-    destination: terminal_render.Rect,
-    clip: terminal_render.Rect,
-    output: *RenderCommandInfo,
-) void {
-    output.destination_x = destination.x;
-    output.destination_y = destination.y;
-    output.destination_width = destination.width;
-    output.destination_height = destination.height;
-    output.clip_x = clip.x;
-    output.clip_y = clip.y;
-    output.clip_width = clip.width;
-    output.clip_height = clip.height;
-}
-
-fn fillRenderCommandInfo(
-    command: terminal_render.Command,
-    output: *RenderCommandInfo,
-) void {
-    output.* = .{};
-    switch (command) {
-        .solid => |solid| {
-            output.tag = 0;
-            output.color_rgba = colorBits(solid.color);
-            fillRectFields(solid.rect, solid.rect, output);
-        },
-        .alpha_mask => |mask| {
-            output.tag = 1;
-            output.color_rgba = colorBits(mask.color);
-            output.cursor_component = @intFromBool(mask.cursor_component);
-            fillRectFields(mask.destination, mask.clip, output);
-            fillCommandResource(output, mask.resource);
-        },
-        .rgba => |rgba| {
-            output.tag = 2;
-            fillRectFields(rgba.destination, rgba.clip, output);
-            fillCommandResource(output, rgba.resource);
-        },
-    }
-}
+const colorBits = native_render.colorBits;
+const fillRenderCommandInfo = native_render.commandInfo;
 
 /// Copies one draw command record from the transported renderer into caller-owned output or protocol state.
 pub export fn howl_odin_bridge_render_command_info(
@@ -6270,7 +6051,7 @@ test "native terminal claim services PTY directly and publishes Render" {
 
     // This fixture is headless, so the backend exchange is intentionally absent.
     try std.testing.expect(
-        howl_odin_bridge_native_terminal_render_exchange(raw) == null,
+        howl_odin_bridge_native_terminal_frame_open(raw) == null,
     );
 
     // Release before catalogue destruction.
@@ -6485,10 +6266,10 @@ test "native quiet synchronized hold wakes on its publication deadline" {
 
 test "native Canvas exposes no geometry before an accepted publication" {
     const front = NativeCanvasFront{};
-    try std.testing.expectEqual(@as(u16, 0), front.surface.width);
-    try std.testing.expectEqual(@as(u16, 0), front.surface.height);
-    try std.testing.expectEqual(@as(u16, 0), front.cell_size.width);
-    try std.testing.expectEqual(@as(u16, 0), front.cell_size.height);
+    try std.testing.expectEqual(@as(u16, 0), front.surface_width);
+    try std.testing.expectEqual(@as(u16, 0), front.surface_height);
+    try std.testing.expectEqual(@as(u16, 0), front.cell_width);
+    try std.testing.expectEqual(@as(u16, 0), front.cell_height);
 }
 
 test "native presentation config retains two caller-owned fallback paths" {
@@ -6627,4 +6408,24 @@ test "native forced viewport and font changes do not require presentation credit
     try std.testing.expect(reconfigured.value.presentation_generation > old_generation);
     try std.testing.expectEqual(native_instance.terminal(owner.value).semanticSequence(), reconfigured.value.terminal_revision);
     try std.testing.expect(!owner.render_requested.load(.acquire));
+}
+
+test "native Canvas delegates lease lifetime and keeps copied front only after acceptance" {
+    var runtime = Runtime{ .threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ }) };
+    defer runtime.threaded.deinit();
+    var owner = try initNativeTestTerminal(&runtime, "stty -echo; printf READY; read line");
+    defer deinitNativeTestTerminal(&owner);
+    const stream = try native_frames.open(std.testing.allocator, owner.value);
+    try owner.publishCurrent();
+    const canvas = try std.testing.allocator.create(NativeCanvas);
+    canvas.* = .{ .allocator = std.testing.allocator, .stream = stream };
+    defer canvas.deinit();
+    try canvas.stage();
+    try std.testing.expectError(error.PublicationBorrowed, native_instance.tryDeinit(owner.value));
+    try std.testing.expectEqual(@as(u64, 0), canvas.front.revision);
+    const envelope = try native_frames.info(stream);
+    try canvas.accept();
+    try std.testing.expectEqual(envelope.revision, canvas.front.revision);
+    try std.testing.expect(canvas.pending() == null);
+    try std.testing.expectError(error.PublicationBorrowed, native_instance.tryDeinit(owner.value));
 }
