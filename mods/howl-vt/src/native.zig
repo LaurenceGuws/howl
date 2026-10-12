@@ -6,6 +6,13 @@ const vt = @import("howl_vt");
 pub const c = @import("vt_native_types");
 /// Canonical terminal semantic authority.
 pub const Terminal = vt.Terminal;
+/// Bounded copied query operations over canonical const observation.
+pub const queries = @import("native_queries.zig");
+test {
+    // zig-audit: acknowledge discard
+    // reason: Include this optional root's sibling query proofs in the exact native-contract test artifact.
+    _ = queries;
+}
 comptime {
     if (vt.scalar.maximum_scalars != c.HVT_MAXIMUM_CELL_SCALARS)
         @compileError("VT scalar capacity changed: review the native record and ABI version");

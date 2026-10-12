@@ -16,6 +16,7 @@ const terminal_render = @import("server_client_render");
 const render = terminal_render;
 const native_instance = @import("howl_instance");
 const native_vt = @import("howl_vt_native");
+const native_queries = native_vt.queries;
 const native_abi = @import("howl_instance_native");
 const native_render = @import("howl_render_native");
 const native_frames = @import("howl_instance_frames_native");
@@ -911,435 +912,6 @@ const nativeKeyAction = native_vt.keyAction;
 const nativeMouseKind = native_vt.mouseKind;
 const nativeMouseButton = native_vt.mouseButton;
 
-const NativeViewportPosition = struct {
-    row: u16,
-    column: u16,
-};
-
-fn nativeStableRow(
-    view: *const native_instance.Terminal.SemanticView,
-    viewport_row: u16,
-) ?i32 {
-    if (viewport_row >= view.rows) return null;
-    if (view.is_alternate_screen) return @intCast(viewport_row);
-    if (view.history_offset > view.history_count) return null;
-    const row = @as(u64, view.history_row_base) +
-        view.history_count - view.history_offset + viewport_row;
-    if (row > std.math.maxInt(i32)) return null;
-    return @intCast(row);
-}
-
-fn nativeViewportRow(
-    view: *const native_instance.Terminal.SemanticView,
-    stable_row: i32,
-) ?u16 {
-    if (view.rows == 0) return null;
-    if (view.is_alternate_screen) {
-        if (stable_row < 0 or stable_row >= view.rows) return null;
-        return @intCast(stable_row);
-    }
-    const top = @as(i64, view.history_row_base) +
-        view.history_count - view.history_offset;
-    const relative = @as(i64, stable_row) - top;
-    if (relative < 0 or relative >= view.rows) return null;
-    return @intCast(relative);
-}
-
-fn nativeLeadPosition(
-    view: *const native_instance.Terminal.SemanticView,
-    row: u16,
-    column: u16,
-) ?NativeViewportPosition {
-    if (row >= view.rows or column >= view.cols) return null;
-    const cell = view.cellInfoAt(row, column);
-    if (cell.x > column or cell.y > row) return null;
-    return .{
-        .row = row - cell.y,
-        .column = column - cell.x,
-    };
-}
-
-fn nativeSelectableLead(
-    view: *const native_instance.Terminal.SemanticView,
-    position: NativeViewportPosition,
-) bool {
-    const cell = view.cellInfoAt(position.row, position.column);
-    if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) return false;
-    var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-    const values = view.cellScalarsAt(
-        position.row,
-        position.column,
-        &scalars,
-    );
-    return values.len != 0 and values[0] != ' ';
-}
-
-fn nativePreviousLead(
-    view: *const native_instance.Terminal.SemanticView,
-    position: NativeViewportPosition,
-) ?NativeViewportPosition {
-    if (position.column > 0)
-        return nativeLeadPosition(view, position.row, position.column - 1);
-    if (position.row == 0 or !view.rowWrapped(position.row - 1)) return null;
-    return nativeLeadPosition(view, position.row - 1, view.cols - 1);
-}
-
-fn nativeNextLead(
-    view: *const native_instance.Terminal.SemanticView,
-    position: NativeViewportPosition,
-) ?NativeViewportPosition {
-    const cell = view.cellInfoAt(position.row, position.column);
-    const next_column = @as(u32, position.column) + @max(@as(u32, cell.width), 1);
-    if (next_column < view.cols)
-        return nativeLeadPosition(view, position.row, @intCast(next_column));
-    if (!view.rowWrapped(position.row) or position.row + 1 >= view.rows)
-        return null;
-    return nativeLeadPosition(view, position.row + 1, 0);
-}
-
-fn nativeLastContentColumn(
-    view: *const native_instance.Terminal.SemanticView,
-    row: u16,
-) ?u16 {
-    if (row >= view.rows) return null;
-    var column: usize = view.cols;
-    while (column != 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row, @intCast(column));
-        if (cell.x != 0 or cell.y != 0) continue;
-        // A lead cell's first scalar is its copied codepoint.
-        if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
-        const end = @min(
-            @as(u32, view.cols - 1),
-            @as(u32, @intCast(column)) + @max(@as(u32, cell.width), 1) - 1,
-        );
-        return @intCast(end);
-    }
-    return null;
-}
-
-fn nativeLastSearchColumn(
-    view: *const native_instance.Terminal.SemanticView,
-    row: u16,
-) ?u16 {
-    if (row >= view.rows) return null;
-    var column: usize = view.cols;
-    while (column != 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row, @intCast(column));
-        if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) continue;
-        if (cell.codepoint != 0)
-            return @intCast(column);
-    }
-    return null;
-}
-
-fn nativeExpandSelection(
-    owner: *NativeTerminal,
-    kind: u8,
-    history_offset: u32,
-    target_row: i32,
-    target_column: u16,
-    expected_columns: u16,
-    expected_alternate: bool,
-    output: *SelectionRangeInfo,
-) i32 {
-    output.* = .{};
-    const observation = native_instance.terminal(owner.value);
-    const view = observation.semanticView(history_offset);
-    if (view.cols != expected_columns or
-        view.is_alternate_screen != expected_alternate)
-    {
-        owner.setError("selection_expand", "context_changed");
-        return query_declined;
-    }
-    const viewport_row = nativeViewportRow(&view, target_row) orelse {
-        owner.setError("selection_expand", "target_moved");
-        return query_declined;
-    };
-    if (target_column >= view.cols) {
-        owner.setError("selection_expand", "target_column");
-        return query_declined;
-    }
-
-    if (kind == 2) {
-        const last = nativeLastContentColumn(&view, viewport_row) orelse return 0;
-        var first: ?u16 = null;
-        var column: u16 = 0;
-        while (column < view.cols) : (column += 1) {
-            const cell = view.cellInfoAt(viewport_row, column);
-            if (cell.x == 0 and cell.y == 0) {
-                first = column;
-                break;
-            }
-        }
-        const start_column = first orelse return 0;
-        const stable = nativeStableRow(&view, viewport_row) orelse
-            return query_declined;
-        output.* = .{
-            .start_row = stable,
-            .end_row = stable,
-            .start_column = start_column,
-            .end_column = last,
-            .columns = view.cols,
-            .found = 1,
-            .alternate_screen = @intFromBool(view.is_alternate_screen),
-        };
-        return 0;
-    }
-    if (kind != 1) return 2;
-
-    const start = nativeLeadPosition(
-        &view,
-        viewport_row,
-        target_column,
-    ) orelse return query_declined;
-    if (!nativeSelectableLead(&view, start)) return 0;
-
-    var first = start;
-    while (nativePreviousLead(&view, first)) |candidate| {
-        if (!nativeSelectableLead(&view, candidate)) break;
-        first = candidate;
-    }
-    var last = start;
-    while (nativeNextLead(&view, last)) |candidate| {
-        if (!nativeSelectableLead(&view, candidate)) break;
-        last = candidate;
-    }
-    const first_row = nativeStableRow(&view, first.row) orelse
-        return query_declined;
-    const last_row = nativeStableRow(&view, last.row) orelse
-        return query_declined;
-    const last_cell = view.cellInfoAt(last.row, last.column);
-    const end_column = @min(
-        @as(u32, view.cols - 1),
-        @as(u32, last.column) + @max(@as(u32, last_cell.width), 1) - 1,
-    );
-    output.* = .{
-        .start_row = first_row,
-        .end_row = last_row,
-        .start_column = first.column,
-        .end_column = @intCast(end_column),
-        .columns = view.cols,
-        .found = 1,
-        .alternate_screen = @intFromBool(view.is_alternate_screen),
-    };
-    return 0;
-}
-
-fn nativeViewForStableRow(
-    observation: *const native_instance.Terminal.Observation,
-    stable_row: i32,
-) ?struct {
-    view: native_instance.Terminal.SemanticView,
-    viewport_row: u16,
-} {
-    const live = observation.semanticView(0);
-    if (live.is_alternate_screen) {
-        if (stable_row < 0 or stable_row >= live.rows) return null;
-        return .{ .view = live, .viewport_row = @intCast(stable_row) };
-    }
-    const live_top = @as(i64, live.history_row_base) + live.history_count;
-    const last = live_top + live.rows - 1;
-    if (stable_row < live.history_row_base or stable_row > last) return null;
-    if (stable_row >= live_top)
-        return .{
-            .view = live,
-            .viewport_row = @intCast(@as(i64, stable_row) - live_top),
-        };
-    const offset: u32 = @intCast(live_top - stable_row);
-    return .{
-        .view = observation.semanticView(offset),
-        .viewport_row = 0,
-    };
-}
-
-fn nativeSearchRow(
-    owner: *NativeTerminal,
-    query: []const u8,
-    stable_row: i32,
-    column_bound: u16,
-    reverse: bool,
-) !?struct { start: u16, end: u16 } {
-    const observation = native_instance.terminal(owner.value);
-    const located = nativeViewForStableRow(observation, stable_row) orelse
-        return null;
-    const view = located.view;
-    const row = located.viewport_row;
-    const last = nativeLastSearchColumn(&view, row) orelse return null;
-    const maximum_bytes = try std.math.mul(
-        usize,
-        @as(usize, last) + 1,
-        native_instance.maximum_cell_scalars * 4,
-    );
-    const text = try std.heap.c_allocator.alloc(u8, maximum_bytes);
-    defer std.heap.c_allocator.free(text);
-    const columns = try std.heap.c_allocator.alloc(u16, maximum_bytes);
-    defer std.heap.c_allocator.free(columns);
-
-    var used: usize = 0;
-    var column: u16 = 0;
-    while (column <= last) : (column += 1) {
-        const cell = view.cellInfoAt(row, column);
-        if (cell.x != 0 or cell.y != 0) continue;
-        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-        const values = view.cellScalarsAt(row, column, &scalars);
-        if (cell.attrs.invisible or values.len == 0) {
-            text[used] = ' ';
-            columns[used] = column;
-            used += 1;
-            continue;
-        }
-        for (values) |scalar| {
-            var encoded: [4]u8 = undefined;
-            const count = try std.unicode.utf8Encode(scalar, &encoded);
-            @memcpy(text[used .. used + count], encoded[0..count]);
-            @memset(columns[used .. used + count], column);
-            used += count;
-        }
-    }
-    if (query.len > used) return null;
-    const haystack = text[0..used];
-    if (reverse) {
-        var end_at = haystack.len;
-        while (end_at >= query.len) {
-            const found = std.mem.lastIndexOf(
-                u8,
-                haystack[0..end_at],
-                query,
-            ) orelse return null;
-            const start_column = columns[found];
-            const end_lead = columns[found + query.len - 1];
-            if (end_lead <= column_bound) {
-                const cell = view.cellInfoAt(row, end_lead);
-                const end_column = @min(
-                    @as(u32, view.cols - 1),
-                    @as(u32, end_lead) + @max(@as(u32, cell.width), 1) - 1,
-                );
-                return .{
-                    .start = start_column,
-                    .end = @intCast(end_column),
-                };
-            }
-            if (found == 0) return null;
-            end_at = found;
-        }
-        return null;
-    }
-
-    var start_at: usize = 0;
-    while (start_at + query.len <= haystack.len) {
-        const relative = std.mem.indexOf(
-            u8,
-            haystack[start_at..],
-            query,
-        ) orelse return null;
-        const found = start_at + relative;
-        const start_column = columns[found];
-        if (start_column >= column_bound) {
-            const end_lead = columns[found + query.len - 1];
-            const cell = view.cellInfoAt(row, end_lead);
-            const end_column = @min(
-                @as(u32, view.cols - 1),
-                @as(u32, end_lead) + @max(@as(u32, cell.width), 1) - 1,
-            );
-            return .{
-                .start = start_column,
-                .end = @intCast(end_column),
-            };
-        }
-        start_at = found + 1;
-    }
-    return null;
-}
-
-fn nativeSearch(
-    owner: *NativeTerminal,
-    query: []const u8,
-    reverse: bool,
-    origin_present: bool,
-    origin_row: i32,
-    origin_column: u16,
-    output: *SearchMatchInfo,
-) i32 {
-    output.* = .{};
-    if (query.len == 0 or query.len > maximum_search_query_bytes or
-        !std.unicode.utf8ValidateSlice(query))
-        return 2;
-
-    const observation = native_instance.terminal(owner.value);
-    const live = observation.semanticView(0);
-    output.cut_revision = observation.semanticSequence();
-    output.columns = live.cols;
-    output.alternate_screen = @intFromBool(live.is_alternate_screen);
-    output.complete = 1;
-    if (live.rows == 0 or live.cols == 0) return 0;
-    if (origin_present and origin_column >= live.cols) return 4;
-
-    const first: i64 = if (live.is_alternate_screen)
-        0
-    else
-        live.history_row_base;
-    const last: i64 = if (live.is_alternate_screen)
-        live.rows - 1
-    else
-        @as(i64, live.history_row_base) + live.history_count + live.rows - 1;
-
-    var row: i64 = if (origin_present)
-        origin_row
-    else if (reverse)
-        last
-    else
-        first;
-    var column: u16 = if (origin_present)
-        origin_column
-    else if (reverse)
-        live.cols - 1
-    else
-        0;
-
-    if (origin_present) {
-        if (reverse) {
-            if (column == 0) {
-                row -= 1;
-                column = live.cols - 1;
-            } else column -= 1;
-        } else if (column + 1 >= live.cols) {
-            row += 1;
-            column = 0;
-        } else column += 1;
-    }
-
-    while (row >= first and row <= last) {
-        output.scanned_snapshots += 1;
-        const found = nativeSearchRow(
-            owner,
-            query,
-            @intCast(row),
-            column,
-            reverse,
-        ) catch |failure| {
-            owner.setError("search", @errorName(failure));
-            return 4;
-        };
-        if (found) |match| {
-            output.found = 1;
-            output.row = @intCast(row);
-            output.start_column = match.start;
-            output.end_column = match.end;
-            return 0;
-        }
-        if (reverse) {
-            row -= 1;
-            column = live.cols - 1;
-        } else {
-            row += 1;
-            column = 0;
-        }
-    }
-    return 0;
-}
-
 /// Sends bounded paste bytes through the claimed Local terminal.
 pub export fn howl_odin_bridge_native_terminal_send_paste(
     raw: ?*NativeTerminalHandle,
@@ -1468,8 +1040,8 @@ pub export fn howl_odin_bridge_native_terminal_selection_expand(
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
     if (expected_alternate_screen > 1) return 2;
-    return nativeExpandSelection(
-        owner,
+    native_queries.expandSelection(
+        native_instance.terminal(owner.value),
         kind,
         history_offset,
         target_row,
@@ -1477,7 +1049,11 @@ pub export fn howl_odin_bridge_native_terminal_selection_expand(
         expected_columns,
         expected_alternate_screen != 0,
         output,
-    );
+    ) catch |failure| {
+        owner.setError("selection_expand", @errorName(failure));
+        return if (failure == error.InvalidArgument) 2 else query_declined;
+    };
+    return 0;
 }
 
 /// Copies selected text bytes from the claimed Local terminal into caller-owned output or protocol state.
@@ -1496,26 +1072,20 @@ pub export fn howl_odin_bridge_native_terminal_selection_extract(
     output_len.* = 0;
     const owner = nativeTerminalValue(raw) orelse return 1;
     if (expected_columns == 0 or expected_alternate_screen > 1) return 2;
-    const observation = native_instance.terminal(owner.value);
-    const current = observation.semanticView(0);
-    if (current.cols != expected_columns or
-        current.is_alternate_screen != (expected_alternate_screen != 0))
-        return query_declined;
-    const text = observation.copyText(
+    output_len.* = native_queries.copySelection(
+        native_instance.terminal(owner.value),
         std.heap.c_allocator,
-        .{
-            .start = .{ .row = start_row, .col = start_column },
-            .end = .{ .row = end_row, .col = end_column },
-        },
-        output_capacity,
+        start_row,
+        start_column,
+        end_row,
+        end_column,
+        expected_columns,
+        expected_alternate_screen != 0,
+        output_ptr[0..output_capacity],
     ) catch |failure| {
         owner.setError("selection_extract", @errorName(failure));
         return query_declined;
     };
-    defer std.heap.c_allocator.free(text);
-    if (text.len > output_capacity) return query_declined;
-    @memcpy(output_ptr[0..text.len], text);
-    output_len.* = text.len;
     return 0;
 }
 
@@ -1534,20 +1104,19 @@ pub export fn howl_odin_bridge_native_terminal_hyperlink_copy(
     output_len.* = 0;
     const owner = nativeTerminalValue(raw) orelse return 1;
     if (expected_columns == 0 or expected_alternate_screen > 1) return 2;
-    const observation = native_instance.terminal(owner.value);
-    const view = observation.semanticView(history_offset);
-    if (view.cols != expected_columns or
-        view.is_alternate_screen != (expected_alternate_screen != 0))
+    native_queries.copyHyperlink(
+        native_instance.terminal(owner.value),
+        history_offset,
+        target_row,
+        target_column,
+        expected_columns,
+        expected_alternate_screen != 0,
+        output_ptr[0..output_capacity],
+        output_len,
+    ) catch |failure| {
+        owner.setError("hyperlink", @errorName(failure));
         return query_declined;
-    const viewport_row = nativeViewportRow(&view, target_row) orelse
-        return query_declined;
-    if (target_column >= view.cols) return query_declined;
-    const cell = view.cellInfoAt(viewport_row, target_column);
-    if (cell.attrs.link_id == 0) return 0;
-    const uri = observation.hyperlinkUri(cell.attrs.link_id) orelse return 0;
-    if (uri.len > output_capacity) return query_declined;
-    @memcpy(output_ptr[0..uri.len], uri);
-    output_len.* = uri.len;
+    };
     return 0;
 }
 
@@ -1564,15 +1133,20 @@ pub export fn howl_odin_bridge_native_terminal_search_find(
 ) i32 {
     const owner = nativeTerminalValue(raw) orelse return 1;
     if (reverse_value > 1 or origin_present > 1) return 2;
-    return nativeSearch(
-        owner,
+    native_queries.search(
+        native_instance.terminal(owner.value),
+        std.heap.c_allocator,
         query_ptr[0..query_len],
         reverse_value != 0,
         origin_present != 0,
         origin_row,
         origin_column,
         output,
-    );
+    ) catch |failure| {
+        owner.setError("search", @errorName(failure));
+        return if (failure == error.InvalidArgument) 2 else query_declined;
+    };
+    return 0;
 }
 
 const NativeConsequenceView = struct {
@@ -2287,21 +1861,7 @@ pub export fn howl_odin_bridge_native_terminal_snapshot(
     fillNativeTerminalInfo(owner, history_offset, info);
     const title = observation.title() orelse "";
     title_len.* = writeDisplayTitle(title, title_ptr[0..title_capacity]);
-    for (0..view.rows) |row_index| {
-        const row: u16 = @intCast(row_index);
-        const last = nativeLastContentColumn(&view, row);
-        row_shapes_ptr[row_index] = .{
-            .content_end_exclusive = if (last) |column|
-                @intCast(@min(
-                    @as(u32, view.cols),
-                    @as(u32, column) + 1,
-                ))
-            else
-                0,
-            .wrapped = @intFromBool(view.rowWrapped(row)),
-        };
-    }
-    row_shape_count.* = view.rows;
+    row_shape_count.* = native_queries.copyRowShapes(observation, history_offset, row_shapes_ptr[0..row_shape_capacity]) catch return 2;
     return 0;
 }
 
@@ -2451,40 +2011,13 @@ pub const RenderRemovalInfo = native_render.RemovalInfo;
 pub const RenderCommandInfo = native_render.CommandInfo;
 
 /// Copied C ABI match coordinates and search revision facts.
-pub const SearchMatchInfo = extern struct {
-    cut_revision: u64 = 0,
-    row: i32 = 0,
-    start_column: u16 = 0,
-    end_column: u16 = 0,
-    columns: u16 = 0,
-    found: u8 = 0,
-    complete: u8 = 1,
-    alternate_screen: u8 = 0,
-    _reserved: u8 = 0,
-    scanned_snapshots: u32 = 0,
-};
+pub const SearchMatchInfo = native_vt.c.hvt_search_match;
 
 /// Copied C ABI selection endpoints and shape.
-pub const SelectionRangeInfo = extern struct {
-    start_row: i32 = 0,
-    end_row: i32 = 0,
-    start_column: u16 = 0,
-    end_column: u16 = 0,
-    columns: u16 = 0,
-    found: u8 = 0,
-    alternate_screen: u8 = 0,
-    _reserved: [2]u8 = @splat(0),
-};
+pub const SelectionRangeInfo = native_vt.c.hvt_selection_range;
 
 /// Copied C ABI keyboard, mouse and terminal interaction facts.
-pub const InteractionStateInfo = extern struct {
-    terminal_revision: u64 = 0,
-    flags: u32 = 0,
-    mouse_tracking: u8 = 0,
-    mouse_protocol: u8 = 0,
-    pointer_mode: u8 = 0,
-    _reserved: u8 = 0,
-};
+pub const InteractionStateInfo = native_vt.c.hvt_interaction;
 
 /// Copied C ABI Local terminal observation and lifecycle facts.
 pub const NativeTerminalInfo = extern struct {
@@ -2510,11 +2043,7 @@ pub const NativeTerminalInfo = extern struct {
 };
 
 /// Copied C ABI row geometry and scalar-content bounds.
-pub const NativeRowShape = extern struct {
-    content_end_exclusive: u16 = 0,
-    wrapped: u8 = 0,
-    _reserved: u8 = 0,
-};
+pub const NativeRowShape = native_vt.c.hvt_row_shape;
 
 const interaction_info_flags = struct {
     const alternate_scroll: u32 = 1 << 0;
@@ -2528,7 +2057,7 @@ comptime {
         @compileError("Odin native row-shape ABI drifted");
 }
 
-const maximum_search_query_bytes: usize = 4096;
+const maximum_search_query_bytes: usize = native_vt.c.HVT_MAX_SEARCH_QUERY_BYTES;
 const maximum_search_retries: usize = 8;
 
 const RenderFront = struct {
@@ -4069,21 +3598,14 @@ fn fillNativeTerminalInfo(
 ) void {
     const observation = native_instance.terminal(owner.value);
     const view = observation.semanticView(history_offset);
-    const interaction = observation.interactionState();
+    const interaction = native_queries.interaction(observation);
     const progress = observation.taskProgress();
     output.* = .{
         .revision = observation.semanticSequence(),
         .terminal_revision = observation.semanticSequence(),
         .history_count = view.history_count,
         .history_row_base = view.history_row_base,
-        .interaction_flags = (if (interaction.alternate_scroll)
-            interaction_info_flags.alternate_scroll
-        else
-            0) |
-            (if (interaction.focus_reporting)
-                interaction_info_flags.focus_reporting
-            else
-                0),
+        .interaction_flags = interaction.flags,
         .rows = view.rows,
         .columns = view.cols,
         .cursor_row = view.cursor_row,
@@ -4094,8 +3616,8 @@ fn fillNativeTerminalInfo(
         .alternate_screen = @intFromBool(view.is_alternate_screen),
         .stream_closed = @intFromBool(owner.stream_closed),
         .child_exited = @intFromBool(owner.child_exit != null),
-        .mouse_tracking = @backingInt(interaction.mouse_tracking),
-        .mouse_protocol = @backingInt(interaction.mouse_protocol),
+        .mouse_tracking = interaction.mouse_tracking,
+        .mouse_protocol = interaction.mouse_protocol,
         .pointer_mode = @intCast(interaction.pointer_mode),
     };
 }
@@ -6291,53 +5813,6 @@ test "native presentation config retains two caller-owned fallback paths" {
     try std.testing.expectEqual(@as(usize, 2), regular.fallbacks.len);
     try std.testing.expectEqualStrings("arabic.ttf", regular.fallbacks[0]);
     try std.testing.expectEqualStrings("cjk.ttc", regular.fallbacks[1]);
-}
-
-test "native row bounds preserve scalar semantics for clusters and history" {
-    var terminal = try native_instance.Terminal.initWithHistory(std.testing.allocator, 4, 12, 6);
-    defer terminal.deinit();
-    // zig-audit: acknowledge discard
-    // reason: This proof checks canonical scalar/history content; feed summary counters are independently covered by VT.
-    _ = try terminal.feed("\x1b[1;2HA\xcc\x81\x1b[2;6H\xe4\xb8\xad\x1b[3;9H \xcc\x81\x1b[4;3H\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb");
-    for (0..2) |_| {
-        const view = terminal.semanticView(0);
-        for (0..view.rows) |row_index| {
-            const row: u16 = @intCast(row_index);
-            var expected_content: ?u16 = null;
-            var expected_search: ?u16 = null;
-            for (0..view.cols) |column_index| {
-                const column: u16 = @intCast(column_index);
-                const cell = view.cellInfoAt(row, column);
-                if (cell.x != 0 or cell.y != 0) continue;
-                var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
-                const scalars = view.cellScalarsAt(row, column, &storage);
-                if (scalars.len != 0 and scalars[0] != ' ')
-                    expected_content = @intCast(@min(@as(u32, view.cols - 1), @as(u32, column) + @max(@as(u32, cell.width), 1) - 1));
-                if (scalars.len != 0 and !cell.attrs.invisible) expected_search = column;
-            }
-            try std.testing.expectEqual(expected_content, nativeLastContentColumn(&view, row));
-            try std.testing.expectEqual(expected_search, nativeLastSearchColumn(&view, row));
-        }
-        // zig-audit: acknowledge discard
-        // reason: This proof checks canonical scalar/history content; feed summary counters are independently covered by VT.
-        _ = try terminal.feed("\r\n\x1b[8mhidden\x1b[0m\r\n");
-    }
-    const history = terminal.semanticView(1);
-    try std.testing.expect(history.history_count != 0);
-    for (0..history.rows) |row_index| {
-        const row: u16 = @intCast(row_index);
-        var expected: ?u16 = null;
-        for (0..history.cols) |column_index| {
-            const column: u16 = @intCast(column_index);
-            const cell = history.cellInfoAt(row, column);
-            if (cell.x != 0 or cell.y != 0) continue;
-            var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
-            const scalars = history.cellScalarsAt(row, column, &storage);
-            if (scalars.len != 0 and scalars[0] != ' ')
-                expected = @intCast(@min(@as(u32, history.cols - 1), @as(u32, column) + @max(@as(u32, cell.width), 1) - 1));
-        }
-        try std.testing.expectEqual(expected, nativeLastContentColumn(&history, row));
-    }
 }
 
 test "native forced viewport and font changes do not require presentation credit" {

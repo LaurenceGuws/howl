@@ -205,11 +205,7 @@ Native_Terminal_Info :: struct {
     _reserved: [4]u8,
 }
 
-Native_Row_Shape :: struct {
-    content_end_exclusive: u16,
-    wrapped: u8,
-    _reserved: u8,
-}
+Native_Row_Shape :: vt_native.Row_Shape
 
 Bridge_Route_Kind :: enum u8 {
     Server = 1,
@@ -297,38 +293,11 @@ bridge_consequence_reply_signature :: proc() -> u64 {
     return bridge_consequence_signature(values[:])
 }
 
-Search_Match_Info :: struct {
-    cut_revision: u64,
-    row: i32,
-    start_column: u16,
-    end_column: u16,
-    columns: u16,
-    found: u8,
-    complete: u8,
-    alternate_screen: u8,
-    _reserved: u8,
-    scanned_snapshots: u32,
-}
+Search_Match_Info :: vt_native.Search_Match_Info
 
-Selection_Range_Info :: struct {
-    start_row: i32,
-    end_row: i32,
-    start_column: u16,
-    end_column: u16,
-    columns: u16,
-    found: u8,
-    alternate_screen: u8,
-    _reserved: [2]u8,
-}
+Selection_Range_Info :: vt_native.Selection_Range_Info
 
-Interaction_State_Info :: struct {
-    terminal_revision: u64,
-    flags: u32,
-    mouse_tracking: u8,
-    mouse_protocol: u8,
-    pointer_mode: u8,
-    _reserved: u8,
-}
+Interaction_State_Info :: vt_native.Interaction_State_Info
 
 INTERACTION_ALT_SCROLL :: u32(1 << 0)
 INTERACTION_FOCUS_REPORTING :: u32(1 << 1)

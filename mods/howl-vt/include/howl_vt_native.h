@@ -5,6 +5,7 @@
  * Version 1. Fixed-width values; unknown tags are rejected before terminal mutation. */
 #define HVT_NATIVE_VERSION 1u
 #define HVT_MAXIMUM_CELL_SCALARS 24u
+#define HVT_MAX_SEARCH_QUERY_BYTES 4096u
 enum hvt_named_key {
     HVT_KEY_ENTER = 1,
     HVT_KEY_TAB = 2,
@@ -80,4 +81,31 @@ typedef struct hvt_cell {
     uint8_t scalar_count, width, height, x, y;
     uint8_t reserved[3];
 } hvt_cell;
+/* Copied query records use stable history/screen row coordinates. A matching
+ * columns/alternate-screen context is required for selection and link lookup.
+ * Search is exact, case-sensitive UTF-8 within one row; concealed text is excluded.
+ * cut_revision is the observation source cut; scanned_snapshots counts row cuts
+ * for a live VT search. These records own no pointer or lifetime. */
+enum hvt_selection_kind { HVT_SELECTION_WORD=1, HVT_SELECTION_VISUAL_ROW=2 };
+typedef struct hvt_search_match {
+    uint64_t cut_revision;
+    int32_t row;
+    uint16_t start_column, end_column, columns;
+    uint8_t found, complete, alternate_screen, _reserved;
+    uint32_t scanned_snapshots;
+} hvt_search_match;
+typedef struct hvt_selection_range {
+    int32_t start_row, end_row;
+    uint16_t start_column, end_column, columns;
+    uint8_t found, alternate_screen, _reserved[2];
+} hvt_selection_range;
+typedef struct hvt_row_shape { uint16_t content_end_exclusive; uint8_t wrapped, _reserved; } hvt_row_shape;
+enum hvt_interaction_flags { HVT_INTERACTION_ALTERNATE_SCROLL=1, HVT_INTERACTION_FOCUS_REPORTING=2 };
+enum hvt_mouse_tracking { HVT_TRACK_OFF=0, HVT_TRACK_X10=1, HVT_TRACK_NORMAL=2, HVT_TRACK_BUTTON_EVENT=3, HVT_TRACK_ANY_EVENT=4 };
+enum hvt_mouse_protocol { HVT_MOUSE_NONE_PROTOCOL=0, HVT_MOUSE_UTF8=1, HVT_MOUSE_SGR=2, HVT_MOUSE_SGR_PIXEL=3, HVT_MOUSE_URXVT=4 };
+typedef struct hvt_interaction {
+    uint64_t terminal_revision;
+    uint32_t flags;
+    uint8_t mouse_tracking, mouse_protocol, pointer_mode, _reserved;
+} hvt_interaction;
 #endif

@@ -15,7 +15,7 @@ extern "C" {
 #error "Instance ABI v1 incorporates VT native v1; changing its layout requires Instance ABI review/versioning"
 #endif
 typedef struct hi_instance hi_instance;
-enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_PRESENTATION_UNAVAILABLE=9 };
+enum hi_status { HI_OK=0, HI_INVALID_ARGUMENT=1, HI_OUT_OF_MEMORY=2, HI_RESOURCE_LIMIT=3, HI_OPERATION_FAILED=4, HI_UNSUPPORTED=5, HI_VERSION_MISMATCH=6, HI_BUSY=7, HI_NO_FRAME=8, HI_PRESENTATION_UNAVAILABLE=9, HI_CONTEXT_CHANGED=10, HI_BUFFER_TOO_SMALL=11 };
 enum hi_signal { HI_HANGUP=1, HI_INTERRUPT=2, HI_RESIZE_NOTIFY=3, HI_KILL=9, HI_TERMINATE=15 };
 enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SIGNAL_PERMISSION_DENIED=3, HI_SIGNAL_NATIVE_FAILURE=4 };
 /* Endpoint open is producer-thread-only; frame acquire/read/release/close are
@@ -83,6 +83,19 @@ uint32_t hi_resize(hi_instance *, uint16_t rows, uint16_t columns, uint32_t cell
 uint32_t hi_signal_group(hi_instance *, uint8_t signal, uint8_t *result);
 uint32_t hi_service_turn(hi_instance *, uint8_t readable, uint8_t writable, uint64_t monotonic_ns, hi_service *out);
 uint32_t hi_copy_cell(const hi_instance *, uint32_t history_offset, uint16_t row, uint16_t column, hvt_cell *out);
+/* Synchronous copied VT queries on the serialized owner thread. No borrowed
+ * terminal pointer escapes. Selection/link context is exact columns+screen bank.
+ * Search query is <=HVT_MAX_SEARCH_QUERY_BYTES; text/link output capacity <=1MiB.
+ * Text copy is complete or fails; byte output is untouched on capacity failure.
+ * Hyperlink length reports the full required length even on HI_BUFFER_TOO_SMALL;
+ * selection length is zero on failure. Row count likewise reports required rows
+ * on capacity failure. Match/range/interaction records are initialized on entry. */
+uint32_t hi_search(const hi_instance *, const uint8_t *query, size_t query_len, uint8_t reverse, uint8_t origin_present, int32_t origin_row, uint16_t origin_column, hvt_search_match *out);
+uint32_t hi_expand_selection(const hi_instance *, uint8_t kind, uint32_t history_offset, int32_t target_row, uint16_t target_column, uint16_t expected_columns, uint8_t expected_alternate, hvt_selection_range *out);
+uint32_t hi_copy_selection(const hi_instance *, int32_t start_row, uint16_t start_column, int32_t end_row, uint16_t end_column, uint16_t expected_columns, uint8_t expected_alternate, uint8_t *output, size_t capacity, size_t *length);
+uint32_t hi_copy_hyperlink(const hi_instance *, uint32_t history_offset, int32_t target_row, uint16_t target_column, uint16_t expected_columns, uint8_t expected_alternate, uint8_t *output, size_t capacity, size_t *required);
+uint32_t hi_copy_row_shapes(const hi_instance *, uint32_t history_offset, hvt_row_shape *output, size_t capacity, size_t *count);
+uint32_t hi_interaction(const hi_instance *, hvt_interaction *out);
 /* Arrays are caller-owned copies. Upload pixel pointers borrow the immutable
  * frame only until release/abandon/close. Bulk capacity failure modifies no arrays. Command capacity may exceed the leased
  * count; only the advertised count is written. Counts exceeding uint32_t are

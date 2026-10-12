@@ -5,6 +5,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define REQUIRE(x) do { if (!(x)) { fprintf(stderr, "native Instance proof failed line %d: %s\n", __LINE__, #x); return __LINE__; } } while (0)
 static uint64_t now_ns(void) {
@@ -107,13 +108,36 @@ int main(void) {
     REQUIRE(state.exit_kind == 1 && state.exit_value == 7);
     REQUIRE(text_has(instance,"REPLY:hello:OWNED:xterm-256color:truecolor"));
     REQUIRE(hi_signal_group(instance,HI_INTERRUPT,&signal_result) == HI_OK && signal_result == HI_SIGNAL_TARGET_MISSING);
+    hvt_search_match match;
+    REQUIRE(hi_search(instance,(const uint8_t *)"READY",5,0,0,0,0,&match) == HI_OK);
+    REQUIRE(match.found && match.complete && match.row == 0 && match.start_column == 0 && match.end_column == 4);
+    hvt_selection_range range;
+    REQUIRE(hi_expand_selection(instance,HVT_SELECTION_WORD,0,0,2,80,0,&range) == HI_OK);
+    REQUIRE(range.found && range.start_column == 0 && range.end_column == 4);
+    uint8_t selected[32]; size_t selected_len=99;
+    selected[0]=77;
+    REQUIRE(hi_copy_selection(instance,0,0,0,4,80,0,selected,4,&selected_len) == HI_BUFFER_TOO_SMALL);
+    REQUIRE(selected_len == 0 && selected[0] == 77);
+    REQUIRE(hi_copy_selection(instance,0,0,0,4,80,0,selected,sizeof(selected),&selected_len) == HI_OK);
+    REQUIRE(selected_len == 5 && memcmp(selected,"READY",5) == 0);
+    REQUIRE(hi_expand_selection(instance,HVT_SELECTION_WORD,0,0,2,79,0,&range) == HI_CONTEXT_CHANGED && !range.found);
+    memset(&match,0xa5,sizeof(match));
+    REQUIRE(hi_search(instance,(const uint8_t *)"READY",5,2,0,0,0,&match) == HI_INVALID_ARGUMENT);
+    REQUIRE(match.cut_revision == 0 && match.complete == 0);
+    REQUIRE(hi_search(instance,NULL,1,0,0,0,0,&match) == HI_INVALID_ARGUMENT);
+    hvt_row_shape shapes[5]; shapes[0].content_end_exclusive=77; shapes[4].content_end_exclusive=78;
+    size_t row_count=0;
+    REQUIRE(hi_copy_row_shapes(instance,0,shapes,3,&row_count) == HI_BUFFER_TOO_SMALL && row_count == 4);
+    REQUIRE(shapes[0].content_end_exclusive == 77);
+    REQUIRE(hi_copy_row_shapes(instance,0,shapes,SIZE_MAX,&row_count) == HI_OK && row_count == 4);
+    REQUIRE(shapes[4].content_end_exclusive == 78);
     hvt_cell copied;
     REQUIRE(hi_copy_cell(instance,0,0,0,&copied) == HI_OK);
     REQUIRE(hi_destroy(&instance) == HI_OK && instance == NULL);
     REQUIRE(copied.scalar_count > 0 && copied.scalars[0] == 'R');
     REQUIRE(hi_destroy(&instance) == HI_OK);
     shell[1] = 'b';
-    const char occupancy[] = "printf '\347\225\214\033[2;1H\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\007'; exit 0";
+    const char occupancy[] = "printf '\033]8;;https://example.invalid/x\007\347\225\214\033]8;;\007\033[2;1H\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\007\033[?1003h\033[?1016h\033[?1004h\033[?1007h'; exit 0";
     launch.command.data = (const uint8_t *)occupancy;
     launch.command.len = sizeof(occupancy)-1;
     REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance) == HI_OK);
@@ -132,8 +156,39 @@ int main(void) {
     REQUIRE(wide_lead.scalars[0] == 0x754c && wide_tail.scalars[0] == 0x754c);
     REQUIRE(hi_copy_cell(instance,0,2,3,&sized_tail) == HI_OK);
     REQUIRE(sized_tail.width == 4 && sized_tail.height == 2 && sized_tail.x == 3 && sized_tail.y == 1);
+    hvt_interaction interaction;
+    REQUIRE(hi_interaction(instance,&interaction) == HI_OK);
+    REQUIRE(interaction.mouse_tracking == HVT_TRACK_ANY_EVENT && interaction.mouse_protocol == HVT_MOUSE_SGR_PIXEL);
+    REQUIRE(interaction.flags == (HVT_INTERACTION_ALTERNATE_SCROLL | HVT_INTERACTION_FOCUS_REPORTING));
+    uint8_t uri[64]; uri[0]=77; size_t required=0;
+    REQUIRE(hi_copy_hyperlink(instance,0,0,1,80,0,uri,1,&required) == HI_BUFFER_TOO_SMALL);
+    REQUIRE(uri[0] == 77 && required == strlen("https://example.invalid/x"));
+    REQUIRE(hi_copy_hyperlink(instance,0,0,1,80,0,uri,sizeof(uri),&required) == HI_OK);
+    REQUIRE(memcmp(uri,"https://example.invalid/x",required) == 0);
     REQUIRE(hi_destroy(&instance) == HI_OK);
+    REQUIRE(memcmp(uri,"https://example.invalid/x",required) == 0);
     REQUIRE(sized_tail.scalar_count == 2 && sized_tail.scalars[0] == 'H' && sized_tail.scalars[1] == 'i');
     REQUIRE(wide_tail.x == 1 && wide_tail.scalars[0] == 0x754c);
+    const char tall_wrap[] = "printf '\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\007abcde'; exit 0";
+    launch.command.data=(const uint8_t *)tall_wrap; launch.command.len=sizeof(tall_wrap)-1;
+    launch.rows=2; launch.columns=8; launch.history_rows=0;
+    REQUIRE(hi_create(HI_ABI_VERSION,&launch,&instance) == HI_OK);
+    uint64_t wrap_deadline=now_ns()+UINT64_C(5000000000);
+    do {
+        REQUIRE(hi_service_turn(instance,1,1,now_ns(),&state) == HI_OK);
+        if (state.stream_closed) break;
+        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+        REQUIRE(poll(&fd,1,10) >= 0);
+    } while (now_ns() < wrap_deadline);
+    REQUIRE(state.stream_closed);
+    /* A regression to non-progressing traversal must fail this foreign process,
+     * rather than hang its caller indefinitely. This deadline is proof-owned. */
+    alarm(5);
+    REQUIRE(hi_expand_selection(instance,HVT_SELECTION_WORD,0,0,4,8,0,&range) == HI_OK);
+    alarm(0);
+    REQUIRE(range.found && range.start_row == 0 && range.start_column == 0 && range.end_row == 1 && range.end_column == 4);
+    REQUIRE(hi_copy_selection(instance,range.start_row,range.start_column,range.end_row,range.end_column,8,0,selected,sizeof(selected),&selected_len) == HI_OK);
+    REQUIRE(selected_len == 7 && memcmp(selected,"Hiabcde",7) == 0);
+    REQUIRE(hi_destroy(&instance) == HI_OK);
     return 0;
 }

@@ -40,3 +40,8 @@ static_assert(offsetof(hi_frame_info, cell_width) == 76);
 static_assert(offsetof(hi_frame_info, cell_height) == 78);
 static_assert(offsetof(hi_frame_info, alternate_screen) == 80);
 static_assert(offsetof(hi_frame_info, reserved) == 81);
+
+static_assert(sizeof(hvt_search_match) == 32 && offsetof(hvt_search_match, scanned_snapshots) == 24);
+static_assert(sizeof(hvt_selection_range) == 20 && offsetof(hvt_selection_range, _reserved) == 16);
+static_assert(sizeof(hvt_interaction) == 16 && offsetof(hvt_interaction, mouse_tracking) == 12);
+static_assert(sizeof(hvt_row_shape) == 4);

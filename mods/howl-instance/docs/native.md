@@ -11,8 +11,8 @@ without emitting the artifact's C exports into those hosts.
 Version 1 is an initial, unpresented Linux/x86_64-qualified lifecycle:
 create, ordered semantic input, explicit geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
-The service policy is explicitly deterministic headless. Retained host requests,
-standalone presented construction and complete observation contracts are
+The service policy is explicitly deterministic headless. Retained host requests and
+standalone presented construction are
 subsequent cuts; a consumer must not infer them from this surface.
 The separate presentation endpoint now supports an existing presented Instance.
 Odin uses the shared native input vocabulary and operation implementations while
@@ -123,3 +123,43 @@ proof publishes beyond the maintained host command envelope and copies its exact
 advertised extent through C; exact/insufficient/oversized capacities are checked
 with trailing storage sentinels. An owner-module unit proof checks every native
 count at `UINT32_MAX` and boundary plus one without allocating impossible buffers.
+
+## Copied VT queries
+
+VT's optional native root owns the search, selection, visual-row and interaction
+records and their canonical projection. Instance's C artifact forwards its own
+const observation to those helpers; Odin calls the same helpers under its sole
+terminal-worker claim. Neither consumer defines another terminal observation
+model or receives a mutable terminal pointer. Ordinary Zig VT/Instance roots do
+not import the native query root.
+
+Search is exact, case-sensitive UTF-8 within a projected row, across the currently
+retained history. It excludes concealed text and returns stable row/column facts.
+Search scratch is caller-allocated, bounded by row geometry and scalar capacity,
+and released on success or failure. Stable coordinates must fit the signed native
+row domain; the query reports a resource limit instead of narrowing a larger row.
+No regex, cross-wrap search, UI paging or search worker is introduced.
+
+Selection and link lookup require matching columns and alternate-screen context.
+A changed context is explicit. Complete selected text is copied into caller storage
+or fails without a partial byte write. A hyperlink capacity failure reports its
+full required length without writing bytes. Row shapes report the required row
+count on capacity failure and write only that actual extent on success. C text/link
+capacities are bounded to 1 MiB; native search queries to 4096 bytes. Input/output
+memory only needs to survive the synchronous call; successful copies survive
+terminal mutation and destruction.
+
+The foreign C lifecycle proof searches a real Instance, expands/copies a word,
+checks stale context and capacity rejection, copies an OSC8 URI from a wide-cell
+continuation, and reads stable interaction tags. VT-native proofs cover combining
+characters, wide cells, concealed text, allocation failure cleanup and historical
+row bounds. Odin consumes the same owned C/Odin layouts and retains query queues,
+diagnostics, clipboard/browser policy and Find UI.
+
+Word expansion crosses canonical soft wraps while skipping lower-row occupancy
+of tall cells. Those fragments refer to an earlier cluster and are never new
+characters in traversal. The exact OSC66 tall-cell plus soft-wrap case is proved
+through both VT-native queries and a real C Instance; a space boundary also pins
+backward traversal so a repeated fragment cannot jump over another word. The C
+regression has a proof-owned deadline; the module owns no timer. Alternate-bank
+rejection, evicted history and forward/reverse wide-cell origins have owner proofs.

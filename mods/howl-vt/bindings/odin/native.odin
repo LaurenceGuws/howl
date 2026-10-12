@@ -99,3 +99,27 @@ MOD_CAPS_LOCK :: u8(1 << 6)
 MOD_NUM_LOCK :: u8(1 << 7)
 MOD_HYPER :: u8(1 << 4)
 MOD_META :: u8(1 << 5)
+
+// Copied VT-owned observation records; no live terminal pointers cross this surface.
+Search_Match_Info :: struct {
+    cut_revision: u64,
+    row: i32,
+    start_column, end_column, columns: u16,
+    found, complete, alternate_screen, _reserved: u8,
+    scanned_snapshots: u32,
+}
+Selection_Range_Info :: struct {
+    start_row, end_row: i32,
+    start_column, end_column, columns: u16,
+    found, alternate_screen: u8,
+    _reserved: [2]u8,
+}
+Row_Shape :: struct {
+    content_end_exclusive: u16,
+    wrapped, _reserved: u8,
+}
+Interaction_State_Info :: struct {
+    terminal_revision: u64,
+    flags: u32,
+    mouse_tracking, mouse_protocol, pointer_mode, _reserved: u8,
+}

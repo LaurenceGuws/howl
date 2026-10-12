@@ -351,3 +351,81 @@ pub export fn hi_publish_frame(raw: ?*c.hi_instance, history: u32) u32 {
     };
     return c.HI_OK;
 }
+
+const queries = vt.queries;
+fn queryFailure(failure: queries.Error) u32 {
+    return switch (failure) {
+        error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+        error.InvalidArgument, error.InvalidRange, error.CodepointTooLarge, error.Utf8CannotEncodeSurrogateHalf => c.HI_INVALID_ARGUMENT,
+        error.ContextChanged => c.HI_CONTEXT_CHANGED,
+        error.TextLimit, error.BufferTooSmall => c.HI_BUFFER_TOO_SMALL,
+        error.CoordinateLimit, error.Overflow => c.HI_RESOURCE_LIMIT,
+    };
+}
+fn queryOutput(ptr: [*c]u8, capacity: usize) ?[]u8 {
+    if (capacity > 1024 * 1024) return null;
+    if (ptr != null) return ptr[0..capacity];
+    return if (capacity == 0) &.{} else null;
+}
+/// Copies an exact VT-owned match; query scratch and all mutation remain on the owner thread.
+pub export fn hi_search(raw: ?*const c.hi_instance, ptr: [*c]const u8, len: usize, reverse: u8, origin_present: u8, row: i32, column: u16, out: ?*vt.c.hvt_search_match) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = .{};
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (reverse > 1 or origin_present > 1) return c.HI_INVALID_ARGUMENT;
+    const query = bytes(ptr, len, c.HVT_MAX_SEARCH_QUERY_BYTES) orelse return c.HI_INVALID_ARGUMENT;
+    queries.search(instance.terminal(convert(*const Instance, owner)), heap, query, reverse != 0, origin_present != 0, row, column, result) catch |failure| return queryFailure(failure);
+    return c.HI_OK;
+}
+/// Expands copied canonical selection endpoints against an exact geometry context.
+pub export fn hi_expand_selection(raw: ?*const c.hi_instance, kind: u8, history: u32, row: i32, column: u16, columns: u16, alternate: u8, out: ?*vt.c.hvt_selection_range) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = .{};
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (alternate > 1) return c.HI_INVALID_ARGUMENT;
+    queries.expandSelection(instance.terminal(convert(*const Instance, owner)), kind, history, row, column, columns, alternate != 0, result) catch |failure| return queryFailure(failure);
+    return c.HI_OK;
+}
+/// Copies complete selected text; a failure leaves byte output untouched and length zero.
+pub export fn hi_copy_selection(raw: ?*const c.hi_instance, start_row: i32, start_column: u16, end_row: i32, end_column: u16, columns: u16, alternate: u8, out: [*c]u8, capacity: usize, length: ?*usize) u32 {
+    const copied = length orelse return c.HI_INVALID_ARGUMENT;
+    copied.* = 0;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (alternate > 1) return c.HI_INVALID_ARGUMENT;
+    if (capacity > 1024 * 1024) return c.HI_RESOURCE_LIMIT;
+    const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
+    copied.* = queries.copySelection(instance.terminal(convert(*const Instance, owner)), heap, start_row, start_column, end_row, end_column, columns, alternate != 0, output) catch |failure| return queryFailure(failure);
+    return c.HI_OK;
+}
+/// Copies one exact hyperlink and reports required bytes on a capacity failure.
+pub export fn hi_copy_hyperlink(raw: ?*const c.hi_instance, history: u32, row: i32, column: u16, columns: u16, alternate: u8, out: [*c]u8, capacity: usize, length: ?*usize) u32 {
+    const required = length orelse return c.HI_INVALID_ARGUMENT;
+    required.* = 0;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (alternate > 1) return c.HI_INVALID_ARGUMENT;
+    if (capacity > 1024 * 1024) return c.HI_RESOURCE_LIMIT;
+    const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
+    queries.copyHyperlink(instance.terminal(convert(*const Instance, owner)), history, row, column, columns, alternate != 0, output, required) catch |failure| return queryFailure(failure);
+    return c.HI_OK;
+}
+/// Copies exactly the current row-shape extent; insufficient capacity writes no rows.
+pub export fn hi_copy_row_shapes(raw: ?*const c.hi_instance, history: u32, out: ?[*]vt.c.hvt_row_shape, capacity: usize, count: ?*usize) u32 {
+    const required = count orelse return c.HI_INVALID_ARGUMENT;
+    required.* = 0;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    const observation = instance.terminal(convert(*const Instance, owner));
+    const rows = observation.semanticView(history).rows;
+    required.* = rows;
+    if (capacity < rows) return c.HI_BUFFER_TOO_SMALL;
+    const output: []vt.c.hvt_row_shape = if (out) |ptr| ptr[0..rows] else if (rows == 0) &.{} else return c.HI_INVALID_ARGUMENT;
+    required.* = queries.copyRowShapes(observation, history, output) catch |failure| return queryFailure(failure);
+    return c.HI_OK;
+}
+/// Copies a versioned VT interaction record without exporting enum representation.
+pub export fn hi_interaction(raw: ?*const c.hi_instance, out: ?*vt.c.hvt_interaction) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = .{};
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    result.* = queries.interaction(instance.terminal(convert(*const Instance, owner)));
+    return c.HI_OK;
+}
