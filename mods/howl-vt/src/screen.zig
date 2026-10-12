@@ -3136,16 +3136,12 @@ pub const Screen = struct {
         }
         const next_col = col + 1;
         const next_index = self.rowStart(row) + next_col;
-        const next = cells[@intCast(next_index)];
-        if (next.codepoint != 0 or next.width != 1 or next.height != 1 or
-            next.x != 0 or next.y != 0)
-        {
-            std.debug.assert(self.clearClusterAt(
-                row,
-                next_col,
-                next_col != self.clusterAnchorCol(row, next_col),
-            ));
-        }
+        // Widening replaces the neighboring cell regardless of its shape.
+        // Clearing only multicell clusters leaves ordinary-cell scalar
+        // ownership behind (and falsely asserts for occupied ASCII cells).
+        // zig-audit: acknowledge discard
+        // reason: Cleanup must execute even for an already blank destination; its changed flag is not an ownership invariant.
+        _ = self.clearReplacementOwnershipAt(row, next_col);
         const lead_index = self.rowStart(row) + col;
         cells[@intCast(lead_index)].width = 2;
         cells[@intCast(lead_index)].semantic_width = true;
@@ -5241,6 +5237,52 @@ test "Unicode 17 variation selectors transactionally change emoji occupancy" {
     screen.writeCell(0xfe0f);
     screen.writeCell(0xfe0e);
     try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+}
+
+test "VS16 interior widening releases displaced single-cell scalar ownership" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 6);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.cursor.setPositionByClient(0, 1);
+    screen.writeCell('x');
+    for ([_]u21{ 0x0300, 0x0301, 0x0302, 0x0303 }) |cp| screen.writeCell(cp);
+    try std.testing.expect(screen.scalars.?.ranges[1] != .none);
+    screen.cursor.setPositionByClient(0, 3);
+    screen.writeCell('R');
+
+    screen.cursor.setPositionByClient(0, 0);
+    screen.writeCell(0x26a0);
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u32, 0x26a0), screen.cells.?[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[1].width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[1].x);
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[1]);
+    try std.testing.expectEqual(@as(u32, 'R'), screen.cells.?[3].codepoint);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+    var accepted: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, &.{ 0x26a0, 0xfe0f }, screen.cellScalarsAt(0, 0, &accepted));
+}
+
+test "VS16 interior widening clears a protected multicell neighbor" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 6);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.cursor.setPositionByClient(0, 1);
+    screen.writeCell(0x754c);
+    screen.cells.?[1].attrs.protected = .iso;
+    screen.cells.?[2].attrs.protected = .iso;
+
+    screen.cursor.setPositionByClient(0, 0);
+    screen.writeCell(0x26a0);
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u32, 0x26a0), screen.cells.?[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[1].x);
+    try std.testing.expectEqualDeep(blank_cell, screen.cells.?[2]);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
 }
 
 test "Unicode 17 presentation widening relocates the last-column cluster" {

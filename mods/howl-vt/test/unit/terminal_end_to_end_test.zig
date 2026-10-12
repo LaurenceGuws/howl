@@ -2107,6 +2107,27 @@ test "terminal: failed bulk APC allocation resets capture and accepts ordinary t
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
 
+test "terminal: VS16 rewrites a previously occupied neighbor" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    // Ordinary progress output may rewrite an existing row. The warning
+    // symbol grows from one cell to two when its selector arrives later.
+    try feed(&terminal, "  \r\u{26a0}");
+    try feed(&terminal, "\u{fe0f}X");
+
+    const view = terminal.semanticView(0);
+    const lead = view.cellInfoAt(0, 0);
+    const continuation = view.cellInfoAt(0, 1);
+    try std.testing.expectEqual(@as(u32, 0x26a0), lead.codepoint);
+    try std.testing.expectEqual(@as(u8, 2), lead.width);
+    try std.testing.expect(lead.semantic_width);
+    try std.testing.expectEqual(@as(u8, 2), continuation.width);
+    try std.testing.expectEqual(@as(u8, 1), continuation.x);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+}
+
 test "terminal: wide printing boundaries preserve margins and physical rows through reflow" {
     const cases = [_]struct {
         primer: []const u8,
