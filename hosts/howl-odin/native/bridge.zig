@@ -10,6 +10,7 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const client = @import("server_client").terminal;
 const server_client = @import("server_client");
+const server_native = @import("server_client_native");
 const protocol = client.protocol;
 
 const terminal_render = @import("server_client_render");
@@ -1757,11 +1758,6 @@ pub const NativeTerminalInfo = extern struct {
 /// Copied C ABI row geometry and scalar-content bounds.
 pub const NativeRowShape = native_vt.c.hvt_row_shape;
 
-const interaction_info_flags = struct {
-    const alternate_scroll: u32 = 1 << 0;
-    const focus_reporting: u32 = 1 << 1;
-};
-
 comptime {
     if (@sizeOf(NativeTerminalInfo) != 56)
         @compileError("Odin native terminal info ABI drifted");
@@ -3132,65 +3128,15 @@ const Handle = opaque {};
 // reason: ConsequenceHandle hides its backing owner from Odin; callers must retain and return the matching live constructor handle.
 const ConsequenceHandle = opaque {};
 
-/// Copied C ABI metadata for one ordered terminal consequence.
-pub const ConsequenceInfo = extern struct {
-    terminal_revision: u64 = 0,
-    authority_client_id: u64 = 0,
-    generation: u64 = 0,
-    payload_len: u32 = 0,
-    kind: u8 = 0,
-    reply_required: u8 = 0,
-    _reserved: [2]u8 = @splat(0),
-    metadata: [protocol.consequence_metadata_bytes]u8 = @splat(0),
-};
-comptime {
-    if (@sizeOf(ConsequenceInfo) != protocol.payload_bytes.consequence_begin)
-        @compileError("Odin consequence info must stay one fixed begin-sized record");
-}
+/// Server-client owns copied authority and VT-native request fields.
+pub const ConsequenceInfo = server_native.RequestInfo;
 
-fn packedNibbleSignature(comptime values: []const u8) u64 {
-    if (values.len > 14) @compileError("packed ABI signature exceeds u64");
-    var result = @as(u64, values.len) << 56;
-    inline for (values, 0..) |value, index| {
-        if (value > 0x0f) @compileError("packed ABI signature value exceeds nibble");
-        result |= @as(u64, value) << @intCast(index * 4);
-    }
-    return result;
-}
-
-const consequence_kind_values = [_]u8{
-    @backingInt(protocol.ConsequenceKind.none),
-    @backingInt(protocol.ConsequenceKind.clipboard),
-    @backingInt(protocol.ConsequenceKind.notification),
-    @backingInt(protocol.ConsequenceKind.pointer_shape),
-    @backingInt(protocol.ConsequenceKind.file_transfer),
-    @backingInt(protocol.ConsequenceKind.drag_drop),
-    @backingInt(protocol.ConsequenceKind.container),
-    @backingInt(protocol.ConsequenceKind.color_preference),
-    @backingInt(protocol.ConsequenceKind.media_copy),
-    @backingInt(protocol.ConsequenceKind.bell),
-    @backingInt(protocol.ConsequenceKind.legacy_control),
-    @backingInt(protocol.ConsequenceKind.dcs),
-    @backingInt(protocol.ConsequenceKind.string_control),
-};
-const consequence_reply_values = [_]u8{
-    @backingInt(protocol.ConsequenceReplyKind.clipboard),
-    @backingInt(protocol.ConsequenceReplyKind.pointer_shape),
-    @backingInt(protocol.ConsequenceReplyKind.color_preference),
-    @backingInt(protocol.ConsequenceReplyKind.container_state),
-    @backingInt(protocol.ConsequenceReplyKind.container_position),
-    @backingInt(protocol.ConsequenceReplyKind.container_screen_cells),
-    @backingInt(protocol.ConsequenceReplyKind.container_icon_title),
-    @backingInt(protocol.ConsequenceReplyKind.container_decline),
-};
-const consequence_kind_abi_signature = packedNibbleSignature(&consequence_kind_values);
-const consequence_reply_abi_signature = packedNibbleSignature(&consequence_reply_values);
-
-comptime {
-    if (@typeInfo(protocol.ConsequenceKind).@"enum".field_names.len != consequence_kind_values.len)
-        @compileError("update Odin consequence kind ABI signature");
-    if (@typeInfo(protocol.ConsequenceReplyKind).@"enum".field_names.len != consequence_reply_values.len)
-        @compileError("update Odin consequence reply ABI signature");
+fn consequenceBridgeValue(raw: ?*ConsequenceHandle) ?*ConsequenceBridge {
+    // zig-audit: acknowledge ptr_cast
+    // reason: Only matching live constructor-owned ConsequenceBridge handles reach this adapter.
+    // zig-audit: acknowledge align_cast
+    // reason: The original constructor preserves the concrete owner allocation alignment.
+    return if (raw) |value| @ptrCast(@alignCast(value)) else null;
 }
 
 const ConsequenceBridge = struct {
@@ -3336,11 +3282,11 @@ fn fillNativeTerminalInfo(
 
 /// Returns the Odin bridge ABI version.
 pub export fn howl_odin_bridge_version() u32 {
-    return 17;
+    return 18;
 }
 
 test "Odin bridge version tracks native local ownership ABI" {
-    try std.testing.expectEqual(@as(u32, 17), howl_odin_bridge_version());
+    try std.testing.expectEqual(@as(u32, 18), howl_odin_bridge_version());
 }
 
 /// Opens an owned direct transported terminal bridge.
@@ -4264,18 +4210,15 @@ pub export fn howl_odin_bridge_interaction_state(
     // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
     const bridge: *Bridge = @ptrCast(@alignCast(value));
     bridge.clearError();
-    const state = client.state.get(bridge.connection) catch |failure| {
+    const state = server_native.interaction(bridge.connection) catch |failure| {
         bridge.setError("interaction_state", @errorName(failure));
         return 2;
     };
-    var flags: u32 = 0;
-    if (state.alternate_scroll) flags |= interaction_info_flags.alternate_scroll;
-    if (state.focus_reporting) flags |= interaction_info_flags.focus_reporting;
     output.* = .{
         .terminal_revision = state.terminal_revision,
-        .flags = flags,
-        .mouse_tracking = @backingInt(state.mouse_tracking),
-        .mouse_protocol = @backingInt(state.mouse_protocol),
+        .flags = state.flags,
+        .mouse_tracking = state.mouse_tracking,
+        .mouse_protocol = state.mouse_protocol,
         .pointer_mode = state.pointer_mode,
     };
     return 0;
@@ -4738,51 +4681,17 @@ pub export fn howl_odin_bridge_consequence_info_size() u32 {
     return @sizeOf(ConsequenceInfo);
 }
 
-/// Returns the packed canonical consequence-kind ABI values for the Odin startup check.
-pub export fn howl_odin_bridge_consequence_kind_signature() u64 {
-    return consequence_kind_abi_signature;
-}
-
-/// Returns the packed canonical consequence-reply ABI values for the Odin startup check.
-pub export fn howl_odin_bridge_consequence_reply_signature() u64 {
-    return consequence_reply_abi_signature;
-}
-
-/// Observes one current consequence. Payload bytes are copied only up to the
-/// caller's bounded scratch; `info.payload_len` always reports the complete size.
-pub export fn howl_odin_bridge_consequence_observe(
-    raw: ?*ConsequenceHandle,
-    info: *ConsequenceInfo,
-    payload_ptr: [*]u8,
-    payload_capacity: usize,
-    copied_len: *usize,
-) i32 {
-    info.* = .{};
-    copied_len.* = 0;
-    const value = raw orelse return 1;
-    // zig-audit: acknowledge ptr_cast
-    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
-    // zig-audit: acknowledge align_cast
-    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
-    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+/// Copies native request fields; payload remains in the owned client snapshot and is not copied when unused.
+pub export fn howl_odin_bridge_consequence_observe(raw: ?*ConsequenceHandle, info: *ConsequenceInfo) i32 {
+    info.* = std.mem.zeroes(ConsequenceInfo);
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
     bridge.clearError();
-    var snapshot = client.consequences.observe(bridge.connection, bridge.allocator) catch |failure| {
+    var snapshot = server_native.observeRequests(bridge.connection, bridge.allocator) catch |failure| {
         bridge.setError("observe", @errorName(failure));
         return 2;
     };
     defer snapshot.deinit();
-    info.* = .{
-        .terminal_revision = snapshot.begin.terminal_revision,
-        .authority_client_id = snapshot.begin.authority_client_id,
-        .generation = snapshot.begin.generation,
-        .payload_len = snapshot.begin.payload_len,
-        .kind = @backingInt(snapshot.begin.kind),
-        .reply_required = @intFromBool(snapshot.begin.reply_required),
-        .metadata = snapshot.begin.metadata,
-    };
-    const count = @min(payload_capacity, snapshot.payload.len);
-    @memcpy(payload_ptr[0..count], snapshot.payload[0..count]);
-    copied_len.* = count;
+    info.* = snapshot.info;
     return 0;
 }
 
@@ -4805,36 +4714,88 @@ pub export fn howl_odin_bridge_consequence_consume(
     return 0;
 }
 
-/// Replies to one pending consequence from the consequence connection into caller-owned output or protocol state.
-pub export fn howl_odin_bridge_consequence_reply(
-    raw: ?*ConsequenceHandle,
-    generation: u64,
-    kind_raw: u8,
-    body_ptr: [*]const u8,
-    body_len: usize,
-) i32 {
-    const value = raw orelse return 1;
-    // zig-audit: acknowledge ptr_cast
-    // reason: The Odin ABI requires the original live ConsequenceBridge constructor handle; this cast recovers the same allocation without extending its lifetime.
-    // zig-audit: acknowledge align_cast
-    // reason: The matching constructor's concrete allocation supplies the alignment asserted here; the foreign caller must preserve that original live handle.
-    const bridge: *ConsequenceBridge = @ptrCast(@alignCast(value));
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_clipboard(raw: ?*ConsequenceHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
     bridge.clearError();
-    const kind: client.consequences.ReplyKind = switch (kind_raw) {
-        @backingInt(client.consequences.ReplyKind.clipboard) => .clipboard,
-        @backingInt(client.consequences.ReplyKind.pointer_shape) => .pointer_shape,
-        @backingInt(client.consequences.ReplyKind.color_preference) => .color_preference,
-        @backingInt(client.consequences.ReplyKind.container_state) => .container_state,
-        @backingInt(client.consequences.ReplyKind.container_position) => .container_position,
-        @backingInt(client.consequences.ReplyKind.container_screen_cells) => .container_screen_cells,
-        @backingInt(client.consequences.ReplyKind.container_icon_title) => .container_icon_title,
-        @backingInt(client.consequences.ReplyKind.container_decline) => .container_decline,
-        else => {
-            bridge.setError("reply", "invalid_kind");
-            return 2;
-        },
+    server_native.replyClipboard(bridge.connection, id, ptr[0..len]) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
     };
-    client.consequences.reply(bridge.connection, generation, kind, body_ptr[0..body_len]) catch |failure| {
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_pointer_shape(raw: ?*ConsequenceHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyPointerShape(bridge.connection, id, ptr[0..len]) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_color_preference(raw: ?*ConsequenceHandle, id: u64, preference: u8) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyColorPreference(bridge.connection, id, preference) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_container_state(raw: ?*ConsequenceHandle, id: u64, state: u8) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyContainerState(bridge.connection, id, state) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_container_position(raw: ?*ConsequenceHandle, id: u64, x: u32, y: u32) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyContainerPosition(bridge.connection, id, x, y) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_container_screen_cells(raw: ?*ConsequenceHandle, id: u64, rows: u32, columns: u32) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyContainerScreenCells(bridge.connection, id, rows, columns) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_reply_container_icon_title(raw: ?*ConsequenceHandle, id: u64, ptr: [*]const u8, len: usize) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.replyContainerIconTitle(bridge.connection, id, ptr[0..len]) catch |failure| {
+        bridge.setError("reply", @errorName(failure));
+        return 2;
+    };
+    return 0;
+}
+
+/// Delegates a named native reply to Server-client; application ownership stays in this adapter.
+pub export fn howl_odin_bridge_consequence_decline_container(raw: ?*ConsequenceHandle, id: u64) i32 {
+    const bridge = consequenceBridgeValue(raw) orelse return 1;
+    bridge.clearError();
+    server_native.declineContainer(bridge.connection, id) catch |failure| {
         bridge.setError("reply", @errorName(failure));
         return 2;
     };

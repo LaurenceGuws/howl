@@ -32,13 +32,13 @@ native_request_layout :: proc(t: ^testing.T) {
 native_request_policy_keeps_pointer_reply_and_container_truth :: proc(t: ^testing.T) {
     info := vt_native.Request_Info{kind = u8(vt_native.Request_Kind.Pointer_Shape)}
     info.data.pointer_shape.query_requested = 1
-    testing.expect(t, native_request_action_for(info) == .Reply_Pointer_Default)
+    testing.expect(t, request_action_for(info) == .Reply_Pointer_Default)
     info = vt_native.Request_Info{kind = u8(vt_native.Request_Kind.Container), reply_required = 1}
     info.data.container.operation = u8(vt_native.Container_Operation.Report_Screen_Cells)
-    testing.expect(t, native_request_action_for(info) == .Reply_Container_Screen)
+    testing.expect(t, request_action_for(info) == .Reply_Container_Screen)
     info.data.container.operation = u8(vt_native.Container_Operation.Report_Position)
-    testing.expect(t, native_request_action_for(info) == .Reply_Container_Decline)
+    testing.expect(t, request_action_for(info) == .Reply_Container_Decline)
     info = vt_native.Request_Info{kind = u8(vt_native.Request_Kind.Notification)}
     info.data.notification.kind = u8(vt_native.Notification_Kind.Steal_Focus)
-    testing.expect(t, native_request_action_for(info) == .Attention)
+    testing.expect(t, request_action_for(info) == .Attention)
 }

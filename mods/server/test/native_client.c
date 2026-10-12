@@ -6,6 +6,10 @@
 #include <time.h>
 
 _Static_assert(sizeof(hsc_ready) == 40, "ready C layout");
+_Static_assert(sizeof(hsc_request_info) == 64, "native request C layout");
+_Static_assert(offsetof(hsc_request_info, authority_client_id) == 56, "authority separate from terminal facts");
+_Static_assert(sizeof(hvt_request) == 56, "VT request C layout");
+_Static_assert(sizeof(hvt_interaction) == 16, "VT interaction C layout");
 _Static_assert(sizeof(hsc_color) == 8, "color C layout");
 _Static_assert(offsetof(hsc_ready, client_id) == 32, "ready offsets");
 
@@ -40,6 +44,7 @@ int hsc_external_probe(const uint8_t *endpoint, size_t endpoint_len, uint64_t se
     hsc_tree *tree=NULL;
     hsc_snapshot *snapshot=NULL, *graphics_snapshot=NULL;
     hsc_image *image=NULL;
+    hsc_request_view *request_view=NULL, *observer_request=NULL;
     hsc_identity identity={0,0};
     hsc_ready ready={0};
     hsc_server_status status={0};
@@ -58,7 +63,7 @@ int hsc_external_probe(const uint8_t *endpoint, size_t endpoint_len, uint64_t se
     CHECK(hsc_session_create(control,(const uint8_t *)"abi",3,&session)==HSC_OK);
     uint64_t duplicate=0;
     CHECK(hsc_session_create(control,(const uint8_t *)"abi",3,&duplicate)==HSC_NAME_EXISTS && duplicate==0);
-    const char command[]="printf '\\033]2;ABI title\\007\\033]1;\\007\\033]9;4;1;37\\007\\033[1;31mA\\314\\201\\033[0m\\033]8;;https://example.invalid/x\\033\\\\B\\033]8;;\\033\\\\'; IFS= read -r line; printf '\\033_Ga=T,f=32,s=1,v=1,i=7,q=2;AQIDBA==\\033\\\\'; exec cat";
+    const char command[]="printf '\\033]2;ABI title\\007\\033]1;\\007\\033]9;4;1;37\\007\\033[1;31mA\\314\\201\\033[0m\\033]8;;https://example.invalid/x\\033\\\\B\\033]8;;\\033\\\\'; IFS= read -r line; printf '\\033_Ga=T,f=32,s=1,v=1,i=7,q=2;AQIDBA==\\033\\\\'; IFS= read -r line; stty -echo -icanon; printf '\\033]52;c;?\\033\\\\'; dd bs=1 count=9 2>/dev/null | od -An -tx1; exec cat";
     hsc_launch launch={0};
     launch.session_id=session; launch.rows=2; launch.columns=12; launch.history_rows=4;
     launch.shell=(const uint8_t *)"/bin/sh"; launch.shell_len=7;
@@ -155,6 +160,47 @@ int hsc_external_probe(const uint8_t *endpoint, size_t endpoint_len, uint64_t se
           pixel_length==4 && pixels[0]==1 && pixels[1]==2 && pixels[2]==3 && pixels[3]==4);
     hsc_snapshot_release(&graphics_snapshot);
     CHECK(pixels[3]==4);
+    hvt_interaction interaction={0};
+    CHECK(hsc_interaction(attachment,&interaction)==HSC_OK);
+    hsc_request_info request_info={0}, observer_info={0};
+    CHECK(hsc_request_observe(observer,&observer_request)==HSC_OK);
+    CHECK(hsc_request_view_info(observer_request,&observer_info)==HSC_OK && observer_info.authority_client_id==0);
+    hsc_request_view_release(&observer_request);
+    CHECK(hsc_request_acquire(attachment)==HSC_OK);
+    CHECK(hsc_named_key(attachment,HSC_KEY_ENTER,HSC_KEY_PRESS,0)==HSC_OK);
+    for (unsigned attempt=0; attempt<200; ++attempt) {
+        hsc_request_view_release(&request_view);
+        CHECK(hsc_request_observe(attachment,&request_view)==HSC_OK);
+        CHECK(hsc_request_view_info(request_view,&request_info)==HSC_OK);
+        if (request_info.request.kind==HVT_REQUEST_CLIPBOARD) break;
+        struct timespec pause={.tv_sec=0,.tv_nsec=1000000}; nanosleep(&pause,NULL);
+    }
+    CHECK(request_info.request.kind==HVT_REQUEST_CLIPBOARD && request_info.request.reply_required==1);
+    CHECK(request_info.request.data.clipboard.protocol==HVT_CLIPBOARD_OSC52 &&
+          request_info.request.data.clipboard.operation==HVT_CLIPBOARD_QUERY &&
+          request_info.request.data.clipboard.selection_len==1);
+    CHECK(request_info.authority_client_id==ready.client_id);
+    /* Invalid lengths must be checked before dereferencing even this null body. */
+    CHECK(hsc_reply_clipboard(attachment,request_info.request.occurrence_id,NULL,HSC_MAX_CLIPBOARD_REPLY_BYTES+1)==HSC_RESOURCE_LIMIT);
+    CHECK(hsc_reply_pointer_shape(attachment,request_info.request.occurrence_id,NULL,HSC_MAX_POINTER_REPLY_BYTES+1)==HSC_RESOURCE_LIMIT);
+    CHECK(hsc_reply_container_icon_title(attachment,request_info.request.occurrence_id,NULL,HSC_MAX_ICON_TITLE_REPLY_BYTES+1)==HSC_RESOURCE_LIMIT);
+    CHECK(hsc_request_consume(observer,request_info.request.occurrence_id)==HSC_NOT_AUTHORITY);
+    CHECK(hsc_request_observe(observer,&observer_request)==HSC_OK);
+    CHECK(hsc_request_view_info(observer_request,&observer_info)==HSC_OK && observer_info.authority_client_id==ready.client_id);
+    const uint8_t *request_payload=NULL; size_t request_length=0;
+    CHECK(hsc_request_view_payload(observer_request,&request_payload,&request_length)==HSC_OK);
+    CHECK(request_length==3 && memcmp(request_payload,"c;?",3)==0);
+    CHECK(hsc_reply_color_preference(attachment,request_info.request.occurrence_id,255)==HSC_INVALID_ARGUMENT);
+    CHECK(hsc_reply_clipboard(observer,request_info.request.occurrence_id,NULL,0)==HSC_NOT_AUTHORITY);
+    CHECK(hsc_reply_clipboard(attachment,request_info.request.occurrence_id+1,NULL,0)==HSC_REJECTED);
+    CHECK(hsc_reply_clipboard(attachment,request_info.request.occurrence_id,NULL,0)==HSC_OK);
+    hsc_attachment_release(&observer);
+    CHECK(hsc_request_view_info(observer_request,&observer_info)==HSC_OK && observer_info.request.occurrence_id==request_info.request.occurrence_id);
+    CHECK(request_length==3 && request_payload[0]=='c' && request_payload[1]==';' && request_payload[2]=='?');
+    CHECK(hsc_request_observe(attachment,&request_view)==HSC_INVALID_ARGUMENT);
+    hsc_request_view_release(&request_view);
+    CHECK(hsc_request_observe(attachment,&request_view)==HSC_OK);
+    CHECK(hsc_request_view_info(request_view,&request_info)==HSC_OK && request_info.request.kind==HVT_REQUEST_NONE);
     CHECK(hsc_control_tree(control,0,&tree)==HSC_OK);
     hsc_session session_view={0}; hsc_instance instance_view={0};
     CHECK(hsc_tree_session(tree,0,&session_view)==HSC_OK);
@@ -187,6 +233,8 @@ int hsc_external_probe(const uint8_t *endpoint, size_t endpoint_len, uint64_t se
     CHECK(hsc_tree_session(tree,0,&session_view)==HSC_OK && session_view.name[0]=='a');
 cleanup:
     if (!joined) { hsc_interrupt_cancel(interrupt); pthread_join(thread,NULL); }
+    hsc_request_view_release(&observer_request);
+    hsc_request_view_release(&request_view);
     hsc_image_release(&image);
     hsc_snapshot_release(&graphics_snapshot);
     hsc_snapshot_release(&snapshot);

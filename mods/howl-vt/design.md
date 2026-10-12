@@ -160,7 +160,8 @@ protocol; it is not an embedder failure.
   and the implemented character-set mappings. Parser dispatch and savepoint
   composition remain in `src/terminal.zig`.
 - `src/input.zig` owns mode-directed key, mouse, focus, and paste encoding.
-- `src/clipboard.zig` owns OSC 52 selection grammar, bounded Base64 codec,
+- `src/clipboard_grammar.zig` owns shared pure OSC 52 selection, operation and
+  replacement Base64 grammar. `src/clipboard.zig` owns bounded Base64 decoding
   and child-directed query serialization. `src/consequences.zig` separately
   owns retained occurrence lifetime and ordering.
 - `src/locator.zig` owns DEC locator reporting mode, filter and pointer state,
@@ -201,3 +202,16 @@ that unrelated terminal domains will remain in one file.
 `howl-vt` package. Its executable and tests are the versioned embedding proof.
 They must remain small and must not become a PTY, caller-policy, or external
 integration simulation.
+
+## Shared clipboard grammar identity
+
+The live clipboard owner and optional codec share one pure child-owned
+`vt_clipboard_grammar` build module. It owns OSC 52 selector, separator, query/set
+classification and replacement Base64 validation. The live owner keeps consequence
+retention, reply queues and decoding; the codec exposes `parseClipboardRequest`
+for validating transported metadata against complete payloads. No live Terminal,
+consequences, reply queue, Server or renderer is imported by that grammar leaf.
+The child build injects the exact same module into both roots and owned direct
+proof roots, preventing duplicate source/type ownership when live VT and codec
+are composed together. Normal local execution calls this grammar directly and
+still never selects the codec or Server.

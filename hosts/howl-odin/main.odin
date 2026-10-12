@@ -7433,12 +7433,8 @@ main :: proc() {
         managed_startup = target
     case .Run:
     }
-    if version() != 17 { fmt.eprintln("Howl bridge version mismatch"); return }
-    if consequence_kind_signature() != bridge_consequence_kind_signature() ||
-       consequence_reply_signature() != bridge_consequence_reply_signature() {
-        fmt.eprintln("Howl consequence ABI mismatch")
-        return
-    }
+    if version() != 18 { fmt.eprintln("Howl bridge version mismatch"); return }
+
     desktop_io_runtime = runtime_create()
     if desktop_io_runtime == nil { fmt.eprintln("Howl host I/O initialization failed"); return }
     defer { runtime_destroy(desktop_io_runtime); desktop_io_runtime = nil }

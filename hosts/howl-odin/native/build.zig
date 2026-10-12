@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) void {
     });
     root.addImport("test_fonts", instance_dependency.module("howl_text_test_fonts"));
     root.addImport("server_client", client_dependency.module("server_client"));
+    root.addImport("server_client_native", client_dependency.module("server_client_native"));
     root.addImport("howl_instance", instance_dependency.module("howl_instance"));
     root.addImport("howl_vt_native", instance_dependency.module("howl_vt_native"));
     root.addImport("howl_instance_native", instance_dependency.module("howl_instance_native"));

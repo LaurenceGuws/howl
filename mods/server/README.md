@@ -41,6 +41,7 @@ attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 | `server_terminal_service` | bounded adopted terminal streams and observation delivery |
 | `server_protocol` | pure Server wire plus optional VT observation codec |
 | `server_client` | control/attachment/terminal APIs and private transport |
+| `server_client_native` | optional native VT request/interaction facts and named replies; Server wire stays private |
 | `server_client_render` | optional client observation adapter to Howl Render |
 | `howl_server_client` artifact | versioned C client ABI and artifact-owned public header |
 

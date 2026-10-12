@@ -3,11 +3,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const clipboard_grammar = b.createModule(.{ .root_source_file = b.path("src/clipboard_grammar.zig"), .target = target, .optimize = optimize });
     const module = b.addModule("howl_vt", .{
         .root_source_file = b.path("src/howl_vt.zig"),
         .target = target,
         .optimize = optimize,
     });
+    module.addImport("vt_clipboard_grammar", clipboard_grammar);
     const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_vt_native.h"), .target = target, .optimize = optimize });
     const native = b.addModule("howl_vt_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize });
     native.addImport("howl_vt", module);
@@ -33,6 +35,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    codec.addImport("vt_clipboard_grammar", clipboard_grammar);
+    const grammar_proofs = b.addTest(.{ .name = "howl-vt-clipboard-grammar", .root_module = clipboard_grammar, .use_llvm = false, .use_lld = false });
+    check.dependOn(&grammar_proofs.step);
+    test_step.dependOn(&b.addRunArtifact(grammar_proofs).step);
     const codec_proofs = b.addTest(.{
         .name = "howl-vt-codec",
         .root_module = codec,
@@ -79,6 +85,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    unit_module.addImport("vt_clipboard_grammar", clipboard_grammar);
     const unit = b.addTest(.{
         .name = "howl-vt-unit",
         .root_module = unit_module,
@@ -132,6 +139,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    simulation_module.addImport("vt_clipboard_grammar", clipboard_grammar);
     const simulation = b.addExecutable(.{
         .name = "howl-vt-simulate",
         .root_module = simulation_module,

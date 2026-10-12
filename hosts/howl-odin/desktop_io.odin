@@ -579,7 +579,7 @@ process_native_consequences :: proc(view: ^Instance_View, handle: rawptr) -> boo
             return changed
         }
         if vt_native.Request_Kind(info.kind) == .None do return changed
-        action := native_request_action_for(info)
+        action := request_action_for(info)
         ok := true
         switch action {
         case .Consume:

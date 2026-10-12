@@ -4,9 +4,11 @@ const client = @import("server_client");
 const terminal = client.terminal;
 const view = terminal.view;
 const c = @import("native_abi_types");
+const native = @import("client_native");
 const heap = std.heap.c_allocator;
 const OwnedTree = struct { value: client.Tree };
 const OwnedImage = struct { value: terminal.images.Resource };
+const OwnedRequest = struct { value: native.RequestSnapshot };
 
 // zig-audit: acknowledge anytype
 // reason: This one private conversion accepts only matching C/client opaque pointer families at fixed exported call sites.
@@ -19,7 +21,7 @@ fn convert(comptime T: type, value: anytype) T {
 }
 
 const Error = client.Error || terminal.actions.Error || terminal.rich.Error ||
-    terminal.images.Error || view.Error;
+    terminal.images.Error || view.Error || native.Error;
 
 fn failure(err: Error) u32 {
     return switch (err) {
@@ -29,7 +31,7 @@ fn failure(err: Error) u32 {
         error.ConnectionClosed => c.HSC_CLOSED,
         error.ConnectionRetired => c.HSC_RETIRED,
         error.StaleServerIncarnation => c.HSC_STALE_SERVER,
-        error.InvalidEndpoint, error.SocketPathTooLong, error.InvalidText, error.InvalidResize => c.HSC_INVALID_ARGUMENT,
+        error.InvalidEndpoint, error.SocketPathTooLong, error.InvalidText, error.InvalidResize, error.InvalidArgument => c.HSC_INVALID_ARGUMENT,
         error.PayloadTooLarge, error.SnapshotTooLarge, error.ViewTooLarge, error.RequestTooLarge => c.HSC_RESOURCE_LIMIT,
         error.SessionNotFound => c.HSC_SESSION_NOT_FOUND,
         error.InstanceNotFound => c.HSC_INSTANCE_NOT_FOUND,
@@ -41,6 +43,7 @@ fn failure(err: Error) u32 {
         error.Unavailable => c.HSC_UNAVAILABLE,
         error.Unsupported => c.HSC_UNSUPPORTED,
         error.NotGeometryLeader => c.HSC_NOT_LEADER,
+        error.NotAuthority => c.HSC_NOT_AUTHORITY,
         error.ServerRejected => c.HSC_REJECTED,
         error.Malformed => c.HSC_INVALID_ARGUMENT,
         error.InvalidMagic, error.UnsupportedFramingVersion, error.InvalidReservedBits, error.UnknownKind, error.InvalidPayload, error.UnexpectedFrame, error.UnexpectedHandshakeFrame, error.InvalidSnapshot, error.InvalidRichSnapshot, error.InvalidResource, error.DeltaBaselineMismatch => c.HSC_PROTOCOL_ERROR,
@@ -550,5 +553,130 @@ pub export fn hsc_image_data(raw: ?*const c.hsc_image, out: ?*c.hsc_image_identi
     result.* = .{ .generation = value.generation, .image_id = value.image_id, .width = value.width, .height = value.height, .reserved = 0 };
     buffer.* = value.pixels.ptr;
     count.* = value.pixels.len;
+    return c.HSC_OK;
+}
+
+/// Copies coherent native interaction facts through the exact owned client graph.
+pub export fn hsc_interaction(raw: ?*c.hsc_attachment, out: ?*c.hvt_interaction) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_interaction);
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = native.interaction(convert(*terminal.Connection, owner)) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+/// Explicitly claims request authority for this exact attachment.
+pub export fn hsc_request_acquire(raw: ?*c.hsc_attachment) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.acquireRequests(convert(*terminal.Connection, owner)) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+/// Owns one independent immutable request view; publication happens only after success.
+pub export fn hsc_request_observe(raw: ?*c.hsc_attachment, out: ?*?*c.hsc_request_view) u32 {
+    const slot = out orelse return c.HSC_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HSC_INVALID_ARGUMENT;
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const value = heap.create(OwnedRequest) catch return c.HSC_OUT_OF_MEMORY;
+    value.value = native.observeRequests(convert(*terminal.Connection, owner), heap) catch |err| {
+        heap.destroy(value);
+        return failure(err);
+    };
+    slot.* = convert(*c.hsc_request_view, value);
+    return c.HSC_OK;
+}
+/// Ends every payload borrow and clears the caller-owned view slot.
+pub export fn hsc_request_view_release(out: ?*?*c.hsc_request_view) void {
+    const slot = out orelse return;
+    const raw = slot.* orelse return;
+    slot.* = null;
+    const value = convert(*OwnedRequest, raw);
+    value.value.deinit();
+    heap.destroy(value);
+}
+/// Copies Server authority and VT-native terminal facts from an immutable view.
+pub export fn hsc_request_view_info(raw: ?*const c.hsc_request_view, out: ?*c.hsc_request_info) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hsc_request_info);
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = convert(*const OwnedRequest, owner).value.info;
+    return c.HSC_OK;
+}
+/// Borrows exact immutable request bytes until the matching independent view release.
+pub export fn hsc_request_view_payload(raw: ?*const c.hsc_request_view, out: ?*?[*]const u8, length: ?*usize) u32 {
+    if (out) |ptr| ptr.* = null;
+    if (length) |ptr| ptr.* = 0;
+    const ptr = out orelse return c.HSC_INVALID_ARGUMENT;
+    const count = length orelse return c.HSC_INVALID_ARGUMENT;
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const payload = convert(*const OwnedRequest, owner).value.value.payload;
+    ptr.* = payload.ptr;
+    count.* = payload.len;
+    return c.HSC_OK;
+}
+/// Acknowledges one exact consumable Server-owned occurrence under explicit authority.
+pub export fn hsc_request_consume(raw: ?*c.hsc_attachment, id: u64) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.consumeRequest(convert(*terminal.Connection, owner), id) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_clipboard(raw: ?*c.hsc_attachment, id: u64, ptr: ?[*]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (len > c.HSC_MAX_CLIPBOARD_REPLY_BYTES) return c.HSC_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, c.HSC_MAX_CLIPBOARD_REPLY_BYTES) orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyClipboard(convert(*terminal.Connection, owner), id, text) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_pointer_shape(raw: ?*c.hsc_attachment, id: u64, ptr: ?[*]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (len > c.HSC_MAX_POINTER_REPLY_BYTES) return c.HSC_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, c.HSC_MAX_POINTER_REPLY_BYTES) orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyPointerShape(convert(*terminal.Connection, owner), id, text) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_color_preference(raw: ?*c.hsc_attachment, id: u64, preference: u32) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyColorPreference(convert(*terminal.Connection, owner), id, preference) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_container_state(raw: ?*c.hsc_attachment, id: u64, state: u32) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyContainerState(convert(*terminal.Connection, owner), id, state) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_container_position(raw: ?*c.hsc_attachment, id: u64, x: u32, y: u32) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyContainerPosition(convert(*terminal.Connection, owner), id, x, y) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_container_screen_cells(raw: ?*c.hsc_attachment, id: u64, rows: u32, columns: u32) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyContainerScreenCells(convert(*terminal.Connection, owner), id, rows, columns) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_reply_container_icon_title(raw: ?*c.hsc_attachment, id: u64, ptr: ?[*]const u8, len: usize) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (len > c.HSC_MAX_ICON_TITLE_REPLY_BYTES) return c.HSC_RESOURCE_LIMIT;
+    const text = bytes(ptr, len, c.HSC_MAX_ICON_TITLE_REPLY_BYTES) orelse return c.HSC_INVALID_ARGUMENT;
+    native.replyContainerIconTitle(convert(*terminal.Connection, owner), id, text) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Performs one named native operation; Server framing remains client-owned.
+pub export fn hsc_decline_container(raw: ?*c.hsc_attachment, id: u64) u32 {
+    const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
+    native.declineContainer(convert(*terminal.Connection, owner), id) catch |err| return failure(err);
     return c.HSC_OK;
 }

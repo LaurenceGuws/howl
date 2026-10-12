@@ -9,5 +9,5 @@
         .howl_render = .{ .path = "../howl-render" },
         .howl_text = .{ .path = "../howl-text" },
     },
-    .paths = .{ ".zig-audit.json", "README.md", "build.zig", "build.zig.zon", "src", "include", "test", "docs", "protocol", "tools" },
+    .paths = .{ ".zig-audit.json", "README.md", "build.zig", "build.zig.zon", "src", "include", "bindings", "test", "docs", "protocol", "tools" },
 }

@@ -8,7 +8,6 @@ import SDL "vendor:sdl3"
 
 MAX_CONSEQUENCE_OWNERS :: MAX_TABS * MAX_PANES_PER_TAB
 CONSEQUENCE_ENDPOINT_BYTES :: PROFILE_ENDPOINT_BYTES
-CONSEQUENCE_PAYLOAD_SCRATCH :: 4096
 
 Desktop_Consequence_Action :: enum u8 {
 	Consume,
@@ -49,34 +48,8 @@ consequence_endpoint :: proc(owner: ^Consequence_Owner) -> string {
 	return string(owner.endpoint[:owner.endpoint_len])
 }
 
-consequence_action_for :: proc(info: Consequence_Info) -> Desktop_Consequence_Action {
-	kind := Bridge_Consequence_Kind(info.kind)
-	switch kind {
-	case .Bell:
-		return .Attention
-	case .Notification:
-		// Message is caller-neutral and currently consumed silently. Focus-steal
-		// and request-attention become modest desktop attention, never focus theft.
-		if info.metadata[0] == 2 || info.metadata[0] == 3 do return .Attention
-		return .Consume
-	case .Clipboard:
-		if info.reply_required != 0 do return .Reply_Clipboard_Empty
-	case .Pointer_Shape:
-		if info.reply_required != 0 do return .Reply_Pointer_Default
-	case .Color_Preference:
-		if info.reply_required != 0 do return .Reply_Color_Dark
-	case .Container:
-		if info.reply_required != 0 {
-			if info.metadata[0] == 12 do return .Reply_Container_Screen
-			return .Reply_Container_Decline
-		}
-	case .None, .File_Transfer, .Drag_Drop, .Media_Copy, .Legacy_Control, .Dcs, .String_Control:
-	}
-	return .Consume
-}
-
 // Local consumes VT-owned native facts; platform policy stays in Odin.
-native_request_action_for :: proc(info: vt_native.Request_Info) -> Desktop_Consequence_Action {
+request_action_for :: proc(info: vt_native.Request_Info) -> Desktop_Consequence_Action {
     switch vt_native.Request_Kind(info.kind) {
     case .Bell:
         return .Attention
@@ -101,15 +74,6 @@ native_request_action_for :: proc(info: vt_native.Request_Info) -> Desktop_Conse
     return .Consume
 }
 
-write_u32_be :: proc(output: []u8, value: u32) -> bool {
-	if len(output) < 4 do return false
-	output[0] = u8(value >> 24)
-	output[1] = u8(value >> 16)
-	output[2] = u8(value >> 8)
-	output[3] = u8(value)
-	return true
-}
-
 copy_consequence_error :: proc(owner: ^Consequence_Owner) {
 	if owner == nil || owner.handle == nil do return
 	message: [160]u8
@@ -122,27 +86,17 @@ copy_consequence_error :: proc(owner: ^Consequence_Owner) {
 	sync.mutex_unlock(&owner.mutex)
 }
 
-consequence_reply_empty :: proc(owner: ^Consequence_Owner, generation: u64, kind: Bridge_Consequence_Reply) -> bool {
-	dummy: [1]u8
-	return consequence_reply(owner.handle, generation, u8(kind), raw_data(dummy[:]), 0) == 0
-}
-
-consequence_reply_bytes :: proc(owner: ^Consequence_Owner, generation: u64, kind: Bridge_Consequence_Reply, body: []u8) -> bool {
-	if len(body) == 0 do return consequence_reply_empty(owner, generation, kind)
-	return consequence_reply(owner.handle, generation, u8(kind), raw_data(body), c.size_t(len(body))) == 0
-}
-
 apply_consequence_action :: proc(owner: ^Consequence_Owner, info: Consequence_Info) -> bool {
-	if owner == nil || owner.handle == nil || info.generation == 0 do return false
-	action := consequence_action_for(info)
+	if owner == nil || owner.handle == nil || info.request.occurrence_id == 0 do return false
+	action := request_action_for(info.request)
 	switch action {
 	case .Consume:
-		if consequence_consume(owner.handle, info.generation) != 0 {
+		if consequence_consume(owner.handle, info.request.occurrence_id) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
 	case .Attention:
-		if consequence_consume(owner.handle, info.generation) != 0 {
+		if consequence_consume(owner.handle, info.request.occurrence_id) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
@@ -151,19 +105,19 @@ apply_consequence_action :: proc(owner: ^Consequence_Owner, info: Consequence_In
 		sync.mutex_unlock(&owner.mutex)
 		notify_instance_update()
 	case .Reply_Clipboard_Empty:
-		if !consequence_reply_empty(owner, info.generation, .Clipboard) {
+		dummy: [1]u8
+		if consequence_reply_clipboard(owner.handle, info.request.occurrence_id, raw_data(dummy[:]), 0) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
 	case .Reply_Pointer_Default:
 		body := []u8{'d','e','f','a','u','l','t'}
-		if !consequence_reply_bytes(owner, info.generation, .Pointer_Shape, body) {
+		if consequence_reply_pointer_shape(owner.handle, info.request.occurrence_id, raw_data(body), c.size_t(len(body))) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
 	case .Reply_Color_Dark:
-		body := []u8{1}
-		if !consequence_reply_bytes(owner, info.generation, .Color_Preference, body) {
+		if consequence_reply_color_preference(owner.handle, info.request.occurrence_id, u8(vt_native.Color_Preference.Dark)) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
@@ -171,15 +125,12 @@ apply_consequence_action :: proc(owner: ^Consequence_Owner, info: Consequence_In
 		sync.mutex_lock(&owner.mutex)
 		rows, columns := owner.rows, owner.columns
 		sync.mutex_unlock(&owner.mutex)
-		body: [8]u8
-		_ = write_u32_be(body[0:4], u32(rows))
-		_ = write_u32_be(body[4:8], u32(columns))
-		if !consequence_reply_bytes(owner, info.generation, .Container_Screen_Cells, body[:]) {
+		if consequence_reply_container_screen_cells(owner.handle, info.request.occurrence_id, u32(rows), u32(columns)) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
 	case .Reply_Container_Decline:
-		if !consequence_reply_empty(owner, info.generation, .Container_Decline) {
+		if consequence_decline_container(owner.handle, info.request.occurrence_id) != 0 {
 			copy_consequence_error(owner)
 			return false
 		}
@@ -189,17 +140,9 @@ apply_consequence_action :: proc(owner: ^Consequence_Owner, info: Consequence_In
 
 process_consequence_owner :: proc(owner: ^Consequence_Owner) {
 	if owner == nil || owner.handle == nil do return
-	payload: [CONSEQUENCE_PAYLOAD_SCRATCH]u8
 	for {
 		info: Consequence_Info
-		copied: c.size_t
-		if consequence_observe(
-			owner.handle,
-			&info,
-			raw_data(payload[:]),
-			c.size_t(len(payload)),
-			&copied,
-		) != 0 {
+		if consequence_observe(owner.handle, &info) != 0 {
 			copy_consequence_error(owner)
 			return
 		}
@@ -220,7 +163,7 @@ process_consequence_owner :: proc(owner: ^Consequence_Owner) {
 		owner.authority_lost = false
 		owner.error_len = 0
 		sync.mutex_unlock(&owner.mutex)
-		if Bridge_Consequence_Kind(info.kind) == .None {
+		if vt_native.Request_Kind(info.request.kind) == .None {
 			return
 		}
 		if !apply_consequence_action(owner, info) {

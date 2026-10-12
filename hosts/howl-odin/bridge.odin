@@ -2,6 +2,7 @@ package main
 
 import "core:c"
 import vt_native "../../mods/howl-vt/bindings/odin"
+import server_native "../../mods/server/bindings/odin"
 import render_native "../../mods/howl-render/bindings/odin"
 import instance_native "../../mods/howl-instance/bindings/odin"
 
@@ -112,11 +113,18 @@ foreign howl_bridge {
     consequence_client_id :: proc(handle: rawptr) -> u64 ---
     consequence_acquire :: proc(handle: rawptr) -> i32 ---
     consequence_info_size :: proc() -> u32 ---
-    consequence_kind_signature :: proc() -> u64 ---
-    consequence_reply_signature :: proc() -> u64 ---
-    consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info, payload: [^]u8, payload_capacity: c.size_t, copied_len: ^c.size_t) -> i32 ---
+
+    consequence_observe :: proc(handle: rawptr, info: ^Consequence_Info) -> i32 ---
     consequence_consume :: proc(handle: rawptr, generation: u64) -> i32 ---
-    consequence_reply :: proc(handle: rawptr, generation: u64, kind: u8, body: [^]u8, body_len: c.size_t) -> i32 ---
+
+    consequence_reply_clipboard :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    consequence_reply_pointer_shape :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    consequence_reply_color_preference :: proc(handle: rawptr, occurrence_id: u64, preference: u8) -> i32 ---
+    consequence_reply_container_state :: proc(handle: rawptr, occurrence_id: u64, state: u8) -> i32 ---
+    consequence_reply_container_position :: proc(handle: rawptr, occurrence_id: u64, x, y: u32) -> i32 ---
+    consequence_reply_container_screen_cells :: proc(handle: rawptr, occurrence_id: u64, rows, columns: u32) -> i32 ---
+    consequence_reply_container_icon_title :: proc(handle: rawptr, occurrence_id: u64, bytes: [^]u8, length: c.size_t) -> i32 ---
+    consequence_decline_container :: proc(handle: rawptr, occurrence_id: u64) -> i32 ---
     consequence_copy_error :: proc(handle: rawptr, output: [^]u8, output_capacity: c.size_t, output_len: ^c.size_t) ---
     snapshot           :: proc(handle: rawptr, after_revision: u64, history_offset: u32) -> i32 ---
     snapshot_take_rich_loan :: proc(handle: rawptr) -> rawptr ---
@@ -220,86 +228,7 @@ Bridge_Route_Kind :: enum u8 {
     Local = 2,
 }
 
-Consequence_Info :: struct {
-    terminal_revision: u64,
-    authority_client_id: u64,
-    generation: u64,
-    payload_len: u32,
-    kind: u8,
-    reply_required: u8,
-    _reserved: [2]u8,
-    metadata: [32]u8,
-}
-
-Bridge_Consequence_Kind :: enum u8 {
-    None = 0,
-    Clipboard = 1,
-    Notification = 2,
-    Pointer_Shape = 3,
-    File_Transfer = 4,
-    Drag_Drop = 5,
-    Container = 6,
-    Color_Preference = 7,
-    Media_Copy = 8,
-    Bell = 9,
-    Legacy_Control = 10,
-    Dcs = 11,
-    String_Control = 12,
-}
-
-Bridge_Consequence_Reply :: enum u8 {
-    Clipboard = 1,
-    Pointer_Shape = 2,
-    Color_Preference = 3,
-    Container_State = 4,
-    Container_Position = 5,
-    Container_Screen_Cells = 6,
-    Container_Icon_Title = 7,
-    Container_Decline = 8,
-}
-
-bridge_consequence_signature :: proc(values: []u8) -> u64 {
-    assert(len(values) <= 14)
-    result := u64(len(values)) << 56
-    for value, index in values {
-        assert(value <= 0x0f)
-        result |= u64(value) << u64(index * 4)
-    }
-    return result
-}
-
-bridge_consequence_kind_signature :: proc() -> u64 {
-    values := [13]u8{
-        u8(Bridge_Consequence_Kind.None),
-        u8(Bridge_Consequence_Kind.Clipboard),
-        u8(Bridge_Consequence_Kind.Notification),
-        u8(Bridge_Consequence_Kind.Pointer_Shape),
-        u8(Bridge_Consequence_Kind.File_Transfer),
-        u8(Bridge_Consequence_Kind.Drag_Drop),
-        u8(Bridge_Consequence_Kind.Container),
-        u8(Bridge_Consequence_Kind.Color_Preference),
-        u8(Bridge_Consequence_Kind.Media_Copy),
-        u8(Bridge_Consequence_Kind.Bell),
-        u8(Bridge_Consequence_Kind.Legacy_Control),
-        u8(Bridge_Consequence_Kind.Dcs),
-        u8(Bridge_Consequence_Kind.String_Control),
-    }
-    return bridge_consequence_signature(values[:])
-}
-
-bridge_consequence_reply_signature :: proc() -> u64 {
-    values := [8]u8{
-        u8(Bridge_Consequence_Reply.Clipboard),
-        u8(Bridge_Consequence_Reply.Pointer_Shape),
-        u8(Bridge_Consequence_Reply.Color_Preference),
-        u8(Bridge_Consequence_Reply.Container_State),
-        u8(Bridge_Consequence_Reply.Container_Position),
-        u8(Bridge_Consequence_Reply.Container_Screen_Cells),
-        u8(Bridge_Consequence_Reply.Container_Icon_Title),
-        u8(Bridge_Consequence_Reply.Container_Decline),
-    }
-    return bridge_consequence_signature(values[:])
-}
+Consequence_Info :: server_native.Request_Info
 
 Search_Match_Info :: vt_native.Search_Match_Info
 

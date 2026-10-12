@@ -6,9 +6,10 @@
 const std = @import("std");
 const consequences = @import("consequences.zig");
 const replies = @import("replies.zig");
+const grammar = @import("vt_clipboard_grammar");
 
 /// OSC 52 names four standard selections and eight numbered cut buffers.
-const selection_bytes_max: u8 = 12;
+const selection_bytes_max = grammar.maximum_selection_bytes;
 /// One query reply fits regardless of selection length and seven-bit framing.
 const query_reply_bytes_max: u32 =
     ((replies.max_bytes - selection_bytes_max - 8) / 4) * 3;
@@ -53,9 +54,8 @@ comptime {
 
 /// Classifies one complete OSC 52 payload and validates replacement Base64.
 pub fn parse(raw: []const u8) ?ParsedRequest {
-    const request = parseEnvelope(raw) orelse return null;
-    if (request.kind == .set and !validBase64(request.data)) return null;
-    return request;
+    const request = grammar.parse(raw) orelse return null;
+    return projected(request);
 }
 
 /// Allocates and decodes one validated OSC 52 replacement into caller ownership.
@@ -135,49 +135,14 @@ fn decodedBase64Size(data: []const u8) error{InvalidPadding}!usize {
 }
 
 fn parseEnvelope(raw: []const u8) ?ParsedRequest {
-    const separator = std.mem.indexOfScalar(u8, raw, ';') orelse return null;
-    const selection = raw[0..separator];
-    if (selection.len > selection_bytes_max) return null;
-    for (selection) |byte| switch (byte) {
-        'c', 'p', 'q', 's', '0'...'7' => {},
-        else => return null,
-    };
-    const data = raw[separator + 1 ..];
-    return .{
-        .selection = selection,
-        .data = data,
-        .kind = if (std.mem.eql(u8, data, "?")) .query else .set,
-    };
+    const request = grammar.parseEnvelope(raw) orelse return null;
+    return projected(request);
 }
-
-fn validBase64(data: []const u8) bool {
-    if (data.len % 4 != 0) return false;
-    var padding: u2 = 0;
-    for (data, 0..) |byte, index| switch (byte) {
-        'A'...'Z', 'a'...'z', '0'...'9', '+', '/' => if (padding != 0) return false,
-        '=' => {
-            if (index < data.len -| 2 or padding == 2) return false;
-            padding += 1;
-        },
-        else => return false,
-    };
-    return true;
-}
-
-test "OSC 52 grammar preserves selection and operation identity" {
-    const replacement = parse("cp07;SG93bA==").?;
-    try std.testing.expectEqualStrings("cp07", replacement.selection);
-    try std.testing.expectEqualStrings("SG93bA==", replacement.data);
-    try std.testing.expect(replacement.kind == .set);
-
-    const query = parse(";?").?;
-    try std.testing.expectEqualStrings("", query.selection);
-    try std.testing.expect(query.kind == .query);
-
-    try std.testing.expect(parse("x;SG93bA==") == null);
-    try std.testing.expect(parse("c;!!!!") == null);
-    try std.testing.expect(parse("c;?trailing") == null);
-    try std.testing.expect(parse("ccccccccccccc;") == null);
+fn projected(request: grammar.ParsedRequest) ParsedRequest {
+    return .{ .selection = request.selection, .data = request.data, .kind = switch (request.kind) {
+        .set => .set,
+        .query => .query,
+    } };
 }
 
 test "OSC 52 replacement payload decodes into exact caller ownership" {

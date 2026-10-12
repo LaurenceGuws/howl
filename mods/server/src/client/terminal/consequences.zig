@@ -57,7 +57,14 @@ pub fn release(connection: *client.Connection) Error!void {
 /// Requests and owns one coherent current consequence snapshot.
 pub fn observe(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
     try connection.send(.consequence_observe, &.{});
-    return receiveFrom(connection, allocator);
+    var completed = false;
+    defer if (!completed) client.retire(connection);
+    const snapshot = receiveFrom(connection, allocator) catch |failure| {
+        if (failure == error.NotAuthority or failure == error.ServerRejected) completed = true;
+        return failure;
+    };
+    completed = true;
+    return snapshot;
 }
 
 // zig-audit: acknowledge anytype
@@ -70,8 +77,7 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
         if (result.request_kind != .consequence_observe or result.code == .ok)
             return error.UnexpectedFrame;
         if (result.code == .not_leader) return error.NotAuthority;
-        if (result.code == .rejected) return error.ServerRejected;
-        return error.UnexpectedFrame;
+        return error.ServerRejected;
     }
     if (begin_frame.kind != .consequence_begin) return error.UnexpectedFrame;
     const begin = try protocol.decodeConsequenceBegin(begin_frame.payload);
@@ -119,16 +125,18 @@ pub fn reply(
 }
 
 fn expectOk(connection: *client.Connection, expected: protocol.Kind) Error!void {
+    var completed = false;
+    defer if (!completed) client.retire(connection);
     var frame = try connection.receive();
     defer frame.deinit();
     if (frame.kind != .result) return error.UnexpectedFrame;
     const result = try protocol.decodeResult(frame.payload);
     if (result.request_kind != expected) return error.UnexpectedFrame;
+    completed = true;
     return switch (result.code) {
         .ok => {},
         .not_leader => error.NotAuthority,
-        .rejected => error.ServerRejected,
-        else => error.UnexpectedFrame,
+        else => error.ServerRejected,
     };
 }
 

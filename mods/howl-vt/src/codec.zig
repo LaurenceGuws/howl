@@ -5,6 +5,10 @@
 const std = @import("std");
 const wire = @import("codec/wire.zig");
 
+/// Validates complete OSC 52 payloads with the canonical VT clipboard grammar.
+/// Returned selector/data slices borrow the supplied payload; no terminal is created.
+pub const parseClipboardRequest = @import("vt_clipboard_grammar").parse;
+
 /// Terminal-only metadata grammar with no Server observation or authority state.
 pub const metadata = @import("codec/metadata.zig");
 /// VT semantic revision, history, viewport and cursor facts for one observation.

@@ -154,6 +154,20 @@ python3 - <<'PYCORE' || status=1
 from pathlib import Path
 import re
 
+# One exact pure grammar leaf may be shared by live VT and optional codec.
+# Keep this exemption narrow and prove it cannot import runtime ownership.
+grammar = Path("mods/howl-vt/src/clipboard_grammar.zig")
+grammar_imports = re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', grammar.read_text())
+if any(name not in ("std", "builtin") for name in grammar_imports):
+    raise SystemExit(f"{grammar}: shared clipboard grammar imports non-pure ownership")
+vt_build = Path("mods/howl-vt/build.zig").read_text()
+for exact in (
+    'module.addImport("vt_clipboard_grammar", clipboard_grammar);',
+    'codec.addImport("vt_clipboard_grammar", clipboard_grammar);',
+):
+    if len(re.findall(r"^\s*" + re.escape(exact) + r"$", vt_build, re.MULTILINE)) != 1:
+        raise SystemExit("VT and codec must share the exact child-owned clipboard grammar module")
+
 for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-render"):
     root = Path("mods") / package
     files = list((root / "src").rglob("*.zig")) + [root / "build.zig", root / "build.zig.zon"]
@@ -180,7 +194,7 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
                 if not codec_source and imports_codec:
                     print(f"{path}: direct local core imports optional observation codec")
                     raise SystemExit(1)
-                if codec_source and imported not in ("std", "builtin") and (
+                if codec_source and imported not in ("std", "builtin", "vt_clipboard_grammar") and (
                     target is None or not target.is_relative_to(codec_dir)
                 ):
                     print(f"{path}: optional observation codec imports a live/presentation owner")
@@ -194,7 +208,7 @@ from pathlib import Path
 import re
 
 root = Path("mods/server/src/client")
-files = [root / "server_client.zig"] + list((root / "terminal").glob("*.zig")) + list((root / "transport").glob("*.zig"))
+files = [root / "server_client.zig", root / "native.zig", root / "abi.zig"] + list((root / "terminal").glob("*.zig")) + list((root / "transport").glob("*.zig"))
 for path in files:
     if path.name == "render_test.zig":
         continue

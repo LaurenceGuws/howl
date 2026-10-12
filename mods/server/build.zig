@@ -95,6 +95,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    abi_types.addIncludePath(vt.namedLazyPath("howl_vt_native_header").dirname());
+    const native_types = abi_types.createModule();
+    const native = b.addModule("server_client_native", .{ .root_source_file = b.path("src/client/native.zig"), .target = target, .optimize = optimize });
+    native.addImport("server_client", client);
+    native.addImport("howl_vt_codec", codec);
+    native.addImport("native_abi_types", native_types);
+    native.addImport("terminal_owner", terminal_owner);
     const abi_root = b.createModule(.{
         .root_source_file = b.path("src/client/abi.zig"),
         .target = target,
@@ -102,9 +109,11 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     abi_root.addImport("server_client", client);
-    abi_root.addImport("native_abi_types", abi_types.createModule());
+    abi_root.addImport("native_abi_types", native_types);
+    abi_root.addImport("client_native", native);
     const abi = b.addLibrary(.{ .name = "howl_server_client", .linkage = .static, .root_module = abi_root });
     abi.installHeader(b.path("include/howl_server_client.h"), "howl_server_client.h");
+    abi.installHeader(vt.namedLazyPath("howl_vt_native_header"), "howl_vt_native.h");
     b.installArtifact(abi);
     const render = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = bundled });
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = bundled });
@@ -215,6 +224,11 @@ pub fn build(b: *std.Build) void {
         check.dependOn(&foreign.step);
         tests.dependOn(&b.addRunArtifact(foreign).step);
     }
+    const native_proof = b.addTest(.{ .name = "server-client-native-semantics", .root_module = native, .use_llvm = false, .use_lld = false });
+    check.dependOn(&native_proof.step);
+    const native_run = b.addRunArtifact(native_proof);
+    tests.dependOn(&native_run.step);
+    b.step("test:native", "Qualify native client semantics and lifecycle boundaries").dependOn(&native_run.step);
     const vectors = b.addSystemCommand(&.{ "python3", "tools/validate_vectors.py", "protocol/vectors.json" });
     vectors.setCwd(b.path("."));
     const wire = b.step("wire", "Validate the Server terminal wire corpus");

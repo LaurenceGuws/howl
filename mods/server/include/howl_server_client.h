@@ -2,6 +2,7 @@
 #define HOWL_SERVER_CLIENT_H
 #include <stddef.h>
 #include <stdint.h>
+#include "howl_vt_native.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,6 +23,9 @@ extern "C" {
  * Transport or malformed/incomplete response failures retire it; release the
  * handle after outstanding calls return. No operation reconnects implicitly. */
 #define HSC_ABI_VERSION 1u
+#if HVT_NATIVE_VERSION != 1u
+#error "Server client ABI v1 incorporates VT native v1; incompatible changes require coordinated review"
+#endif
 #define HSC_MAX_ENDPOINT_BYTES 1024u
 #define HSC_MAX_NAME_BYTES 64u
 #define HSC_MAX_SHELL_BYTES 1024u
@@ -36,6 +40,13 @@ typedef struct hsc_interrupt hsc_interrupt;
 typedef struct hsc_tree hsc_tree;
 typedef struct hsc_snapshot hsc_snapshot;
 typedef struct hsc_image hsc_image;
+typedef struct hsc_request_view hsc_request_view;
+/* Server authority is separate from VT-owned native terminal facts. */
+/* Outbound body ceilings, distinct from the incoming retained-request limit.
+ * Oversize replies return HSC_RESOURCE_LIMIT before allocation or socket I/O. */
+enum { HSC_MAX_CLIPBOARD_REPLY_BYTES=65524, HSC_MAX_POINTER_REPLY_BYTES=1024,
+    HSC_MAX_ICON_TITLE_REPLY_BYTES=1024 };
+typedef struct hsc_request_info { hvt_request request; uint64_t authority_client_id; } hsc_request_info;
 
 enum hsc_status {
     HSC_OK=0, HSC_INVALID_ARGUMENT=1, HSC_VERSION_MISMATCH=2,
@@ -45,7 +56,7 @@ enum hsc_status {
     HSC_RESOURCE_LIMIT=13, HSC_SESSION_NOT_FOUND=20, HSC_INSTANCE_NOT_FOUND=21,
     HSC_NAME_EXISTS=22, HSC_SESSION_CAPACITY=23, HSC_INSTANCE_CAPACITY=24,
     HSC_CREATE_FAILED=25, HSC_INTERNAL=26, HSC_UNSUPPORTED=27, HSC_NOT_LEADER=28,
-    HSC_REJECTED=29
+    HSC_REJECTED=29, HSC_NOT_AUTHORITY=30
 };
 typedef struct { uint64_t server_id, tree_revision; uint16_t session_count,
     instance_count, session_capacity, instances_per_session; } hsc_server_status;
@@ -213,6 +224,27 @@ uint32_t hsc_text(hsc_attachment *, const uint8_t *bytes, size_t length, uint32_
 uint32_t hsc_named_key(hsc_attachment *, uint32_t key, uint32_t action, uint32_t modifiers);
 uint32_t hsc_unicode_key(hsc_attachment *, uint32_t scalar, uint32_t action, uint32_t modifiers);
 uint32_t hsc_focus(hsc_attachment *, uint32_t focus);
+uint32_t hsc_interaction(hsc_attachment *, hvt_interaction *out);
+/* Request views own immutable body storage independent of the connection.
+ * Opening/observing never claims authority. Acquire is explicit for this exact
+ * attachment; closing it clears authority only if it still owns it.
+ * Named replies encode Server framing privately; caller supplies native facts.
+ * Complete server rejections preserve the stream; malformed/incomplete replies
+ * retire it. No reconnect, worker, clock or platform handler is introduced. */
+uint32_t hsc_request_acquire(hsc_attachment *);
+uint32_t hsc_request_observe(hsc_attachment *, hsc_request_view **out);
+void hsc_request_view_release(hsc_request_view **owner);
+uint32_t hsc_request_view_info(const hsc_request_view *, hsc_request_info *out);
+uint32_t hsc_request_view_payload(const hsc_request_view *, const uint8_t **out, size_t *length);
+uint32_t hsc_request_consume(hsc_attachment *, uint64_t occurrence_id);
+uint32_t hsc_reply_clipboard(hsc_attachment *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hsc_reply_pointer_shape(hsc_attachment *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hsc_reply_color_preference(hsc_attachment *, uint64_t occurrence_id, uint32_t preference);
+uint32_t hsc_reply_container_state(hsc_attachment *, uint64_t occurrence_id, uint32_t state);
+uint32_t hsc_reply_container_position(hsc_attachment *, uint64_t occurrence_id, uint32_t x, uint32_t y);
+uint32_t hsc_reply_container_screen_cells(hsc_attachment *, uint64_t occurrence_id, uint32_t rows, uint32_t columns);
+uint32_t hsc_reply_container_icon_title(hsc_attachment *, uint64_t occurrence_id, const uint8_t *bytes, size_t length);
+uint32_t hsc_decline_container(hsc_attachment *, uint64_t occurrence_id);
 uint32_t hsc_resize(hsc_attachment *, uint16_t rows, uint16_t columns, uint32_t acquire_leadership);
 uint32_t hsc_signal(hsc_attachment *, uint32_t signal);
 uint32_t hsc_mouse_input(hsc_attachment *, const hsc_mouse *);

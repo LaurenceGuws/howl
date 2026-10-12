@@ -5,7 +5,7 @@ accepted:
   build.zig: composes every maintained Zig package check/test graph and forwards exact public child modules and artifacts
   build.zig.zon: complete workspace dependency and distribution source boundary
   .zig-audit.json: required zig-audit schema-2/ruleset-3 scope for the accepted core source and root-check proofs; intentional sharp constructs are acknowledged beside source
-  mods/howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
+  mods/howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs; zero-external-dependency public root supports advanced embedders that own their own byte/runtime lifecycle
   mods/howl-instance: batteries-included platform process-terminal/VT lifetime owner for one concrete terminal occurrence; Linux uses PTY and Windows uses ConPTY; mutation stays Instance-owned while embedders borrow VT-owned Terminal.Observation; local howl_instance and presentation-free howl_instance_headless select one private service implementation at compilation; Server selects the latter without Render/Text imports; publishes no listener, daemon, Session, or Server identity
   mods/howl-pty: platform process-terminal and child-process lifecycle; target-selects Linux PTY or Windows ConPTY
   mods/howl-text: tracked module owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, bounded natural alpha rasterization, and canonical redistributed font fixture bytes/provenance
@@ -38,7 +38,7 @@ experimental:
     and residency schemas and bounded field-wise projection. Commands are bulk
     caller-owned copies; upload pixels borrow one immutable Instance frame. It owns
     no GUI backend, host scheduler or Server codec.
-  howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
+  howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, shared canonical OSC52 request validation through an exact pure VT-owned clipboard grammar leaf module, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
     mods/server foreground `server_runtime` module owning exactly one Server control listener,
     one Server model/control service and bounded cooperative scheduling. The Server
@@ -65,8 +65,11 @@ experimental:
     include/howl_server_client.h header. Versioned C opaque handles expose catalog
     CRUD, exact dedicated attachment, caller-owned cancellation, semantic input and
     complete rich observation/image facts through the same client/VT codec graph.
+    Optional server_client_native composes VT native request/interaction schemas with
+    explicit Server authority and owns all transported request metadata decoding and
+    named reply serialization; it imports no live VT, Instance or renderer.
     C records are copied explicitly and immutable byte/scalar borrows expire with
-    their independent catalog/snapshot/image owner; no Zig layout, runtime,
+    their independent catalog/snapshot/image/request owner; no Zig layout, runtime,
     renderer or live terminal owner crosses the boundary.
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,

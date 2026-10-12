@@ -128,6 +128,47 @@ one exact manifest generation and owns its decoded pixels independently.
 The C boundary covers catalog CRUD, dedicated attachment, semantic terminal
 input, geometry, signals, complete packed observations and exact images. The
 richer Zig API also exposes reusable raw/delta caching, interaction state,
-selection/search and consequence handling; those are not version-1 C entry points.
+selection/search; those are not version-1 C entry points. Interaction state and retained terminal requests now also have native C entry points.
 The public native ABI is independent of the renderer. Linux live qualification
 is in `test/native_client.c`; other platform deployment remains separately qualified.
+
+## Native terminal requests
+
+`server_client_native` is an optional module selected alongside the client. It
+composes the VT-owned `howl_vt_native.h` schemas with Server authority; no live
+VT, PTY, Instance, Server model or renderer enters its dependency graph. Both the
+C artifact and Odin's private bridge use the exact child-owned module. Wire
+metadata decoding and named reply body encoding stay here, out of the embedder.
+
+`hsc_request_observe` returns an independent immutable view. Its descriptor embeds
+`hvt_request` and adds `authority_client_id`; payload bytes borrow that view and
+survive connection teardown. Observation never acquires authority. The embedder
+explicitly acquires authority on its dedicated attachment before expecting retained
+requests; without an authority Server preserves its existing headless behavior.
+Acquisition does not replay a request already handled headlessly. Server's existing
+bounded expiry and pressure fallback remain in force.
+
+Named clipboard, pointer, color and container replies supply native values. The
+client privately serializes Server bodies. Complete stale/wrong-kind/authority
+rejections leave the connection usable; malformed, truncated, mismatched or
+allocation-interrupted responses retire it. A pointer query is optional in VT's
+consume contract: `query_requested` carries that fact while `reply_required` stays
+false. Platform choices (empty clipboard, default pointer, dark preference or
+container decline) remain in the embedding app. Neither this module nor the C
+artifact starts workers, schedules turns or reconnects.
+
+Linux qualification includes a real Server/PTY clipboard query through C, explicit
+independent attachment authority, stale reply recovery, a named empty reply and a
+request view whose borrowed bytes survive attachment teardown. Hostile fixtures
+cover malformed interaction/request endings, incomplete allocation failure,
+complete Server rejection and exact named-reply body encoding.
+
+Clipboard projection validates the complete OSC 52 payload with VT's canonical
+clipboard grammar, including selector alphabet/separator, query versus set and
+Base64 replacement validity. Kitty packets have no OSC selector and never imply
+an OSC query/set. Contradictory metadata/body pairs retire the attachment.
+Outgoing clipboard reply bodies are limited to 65,524 bytes (64 KiB request minus
+12-byte reply header); pointer and icon-title replies are limited to 1,024 bytes.
+These are Server transport limits, separate from incoming retained-request bounds.
+Native/C rejection of an oversized body happens before allocation or I/O and
+reports a caller resource limit; the same attachment remains usable.
