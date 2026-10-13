@@ -18,7 +18,7 @@ Flutter resource lease + batched Canvas backend
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
-Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts, then forwards them through `server-client.actions`. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
+Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
 ## Android
 
@@ -111,7 +111,7 @@ proved Material handles, floating toolbar, canonical selected-text Copy, and
 two-row edge autoscroll across offscreen history.
 
 The long-lived native observer/control pair also owns bounded transport
-recovery. The private **v5** host ABI reports a machine failure class separately
+recovery. The private **v6** host ABI reports a machine failure class separately
 from its human diagnostic. Only actual transport availability failures retry at
 250 ms, 500 ms, 1 s, 2 s and then at most every 5 s. Cancellation stops the
 retired lifetime, stale Server/Session/Instance identity returns managed
@@ -133,7 +133,7 @@ cannot cancel the live terminal. Control close is out-of-band from its serialize
 command queue and therefore wakes an unanswered blocking request instead of
 waiting behind it. The v5 ABI replaces the former host-derived cancellation
 handle exports with `howl_native_interrupt_create/cancel/destroy`; Dart checks
-`howl_native_host_version == 5` before using the binding.
+`howl_native_host_version == 6` before using the binding.
 
 TCP live presentation permits one pending native observation while Flutter waits for
 `endOfFrame`. That pending result owns only copied bytes, including any refill

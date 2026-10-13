@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const client = @import("server_client").terminal;
 const local = @import("local_owner");
 const native_instance = @import("howl_instance");
+const vt_native = @import("howl_vt_native");
 const server_client = @import("server_client");
 const protocol = client.protocol;
 const terminal = native_instance.render.terminal;
@@ -48,6 +49,8 @@ const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_c
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
+    if (vt_native.Terminal.InputEvent != native_instance.Input)
+        @compileError("Flutter native input must use the exact Instance VT module identity");
     if (maximum_non_command_packet_bytes > render_packet_budget)
         @compileError("native host fixed frame state exceeds its minimum output packet");
     if (command_capacity == 0)
@@ -1048,12 +1051,8 @@ pub export fn howl_native_control_named_key(
     const control = controlFromRaw(raw) orelse return 1;
     if (key_value < 1 or key_value > 58 or action_value < 1 or action_value > 3) return 3;
     if (control.local_instance) |value| {
-        const key = nativeNamedKey(key_value) orelse return 3;
-        local.input(value.owner, localCancellation(control.interrupt), .{ .key = .{
-            .key = .{ .named = key },
-            .action = nativeKeyAction(action_value).?,
-            .mods = nativeModifiers(modifiers),
-        } }) catch |failure| return controlFailureCode(failure);
+        const event = vt_native.namedInput(key_value, action_value, modifiers) catch return 3;
+        local.input(value.owner, localCancellation(control.interrupt), event) catch |failure| return controlFailureCode(failure);
         return 0;
     }
     client.actions.namedKey(
@@ -1075,13 +1074,8 @@ pub export fn howl_native_control_unicode_key(
     const control = controlFromRaw(raw) orelse return 1;
     if (action_value < 1 or action_value > 3) return 3;
     if (control.local_instance) |value| {
-        if (scalar > 0x10ffff or (scalar >= 0xd800 and scalar <= 0xdfff)) return 3;
-        const key = native_instance.Key.initUnicode(@intCast(scalar)) catch return 3;
-        local.input(value.owner, localCancellation(control.interrupt), .{ .key = .{
-            .key = key,
-            .action = nativeKeyAction(action_value).?,
-            .mods = nativeModifiers(modifiers),
-        } }) catch |failure| return controlFailureCode(failure);
+        const event = vt_native.unicodeInput(scalar, action_value, modifiers) catch return 3;
+        local.input(value.owner, localCancellation(control.interrupt), event) catch |failure| return controlFailureCode(failure);
         return 0;
     }
     client.actions.unicodeKey(
@@ -1098,7 +1092,8 @@ pub export fn howl_native_control_focus(raw: ?*ControlHandle, focus_value: u8) i
     const control = controlFromRaw(raw) orelse return 1;
     if (focus_value < 1 or focus_value > 2) return 3;
     if (control.local_instance) |value| {
-        local.input(value.owner, localCancellation(control.interrupt), .{ .focus = if (focus_value == 1) .in else .out }) catch |failure| return controlFailureCode(failure);
+        const event = vt_native.focusInput(focus_value) catch return 3;
+        local.input(value.owner, localCancellation(control.interrupt), event) catch |failure| return controlFailureCode(failure);
         return 0;
     }
     client.actions.focus(control.connection.?, @fromBackingInt(@intCast(focus_value))) catch |failure| return controlFailureCode(failure);
@@ -1185,32 +1180,8 @@ pub export fn howl_native_control_mouse(
     if (kind_value < 1 or kind_value > 4 or button_value > 5 or pixels_present > 1)
         return 3;
     if (control.local_instance) |value| {
-        const kind: native_instance.MouseEventKind = switch (kind_value) {
-            1 => .press,
-            2 => .release,
-            3 => .move,
-            4 => .wheel,
-            else => return 3,
-        };
-        const button: native_instance.MouseButton = switch (button_value) {
-            0 => .none,
-            1 => .left,
-            2 => .middle,
-            3 => .right,
-            4 => .wheel_up,
-            5 => .wheel_down,
-            else => return 3,
-        };
-        local.input(value.owner, localCancellation(control.interrupt), .{ .mouse = .{
-            .kind = kind,
-            .button = button,
-            .mod = nativeModifiers(modifiers),
-            .buttons_down = buttons_down,
-            .row = row,
-            .col = column,
-            .pixel_x = if (pixels_present == 1) pixel_x else null,
-            .pixel_y = if (pixels_present == 1) pixel_y else null,
-        } }) catch |failure| return controlFailureCode(failure);
+        const event = vt_native.mouseInput(kind_value, button_value, modifiers, buttons_down, row, column, pixels_present, pixel_x, pixel_y) catch return 3;
+        local.input(value.owner, localCancellation(control.interrupt), event) catch |failure| return controlFailureCode(failure);
         return 0;
     }
     client.actions.mouse(control.connection.?, .{
@@ -1364,41 +1335,6 @@ pub export fn howl_native_host_observe(
 }
 
 const interaction_packet_bytes: usize = 20;
-
-// Private FFI ids remain version-locked with Dart, independent of Server enums.
-fn nativeNamedKey(value: u8) ?native_instance.KeyName {
-    const names = [_]native_instance.KeyName{
-        .enter,        .tab,          .backspace,    .escape,        .up,       .down,      .left,       .right,       .insert,         .delete,      .home,            .end,             .page_up,       .page_down,
-        .left_shift,   .right_shift,  .left_control, .right_control, .left_alt, .right_alt, .left_super, .right_super, .left_hyper,     .right_hyper, .left_meta,       .right_meta,      .caps_lock,     .num_lock,
-        .f1,           .f2,           .f3,           .f4,            .f5,       .f6,        .f7,         .f8,          .f9,             .f10,         .f11,             .f12,             .keypad_0,      .keypad_1,
-        .keypad_2,     .keypad_3,     .keypad_4,     .keypad_5,      .keypad_6, .keypad_7,  .keypad_8,   .keypad_9,    .keypad_decimal, .keypad_add,  .keypad_subtract, .keypad_multiply, .keypad_divide, .keypad_separator,
-        .keypad_equal, .keypad_enter,
-    };
-    if (value == 0 or value > names.len) return null;
-    return names[value - 1];
-}
-
-fn nativeKeyAction(value: u8) ?native_instance.KeyAction {
-    return switch (value) {
-        1 => .press,
-        2 => .repeat,
-        3 => .release,
-        else => null,
-    };
-}
-
-fn nativeModifiers(value: u8) native_instance.InputModifier {
-    return .{
-        .shift = value & 1 != 0,
-        .alt = value & 2 != 0,
-        .control = value & 4 != 0,
-        .super = value & 8 != 0,
-        .hyper = value & 16 != 0,
-        .meta = value & 32 != 0,
-        .caps_lock = value & 64 != 0,
-        .num_lock = value & 128 != 0,
-    };
-}
 
 const InteractionProjection = struct { output: []u8 };
 // zig-audit: acknowledge anyopaque
@@ -2501,6 +2437,22 @@ test "Flutter Local FFI presents copied canonical frames, Unicode, geometry and 
     try std.testing.expectEqual(@as(u16, 3), std.mem.readInt(u16, output[52..54], .little));
     try std.testing.expectEqual(@as(u16, 12), std.mem.readInt(u16, output[54..56], .little));
     try std.testing.expect(howl_native_control_text_extract(fixture.control, 0, 0, 0, 1, 16, 0, &selected, selected.len, &selected_len) != 0);
+    // Rejected foreign input must not reach the worker; valid Unicode still
+    // traverses the same canonical Instance without a transport connection.
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_named_key(fixture.control, 59, 1, 255));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_named_key(fixture.control, 1, 0, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_unicode_key(fixture.control, 0x110000, 1, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_unicode_key(fixture.control, 'X', 4, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_focus(fixture.control, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_mouse(fixture.control, 1, 6, 0, 0, 0, 0, 0, 0, 0));
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_mouse(fixture.control, 3, 0, 0, 0, 0, 0, 2, 0, 0));
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_unicode_key(fixture.control, 'λ', 1, 0));
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_named_key(fixture.control, 1, 1, 0));
+    // The child loops over complete input lines, so this proves canonical key
+    // serialization and queue reuse after argument rejection.
+    // zig-audit: acknowledge discard
+    // reason: observeUntil checks copied PTY output for the exact Unicode marker; the temporary packet borrows the reusable output buffer only during this call.
+    _ = try observeUntil(raw_host, output, "λ");
     const typed = "Zebra";
     try std.testing.expectEqual(@as(i32, 0), howl_native_control_committed_text(fixture.control, typed.ptr, typed.len));
     try std.testing.expectEqual(@as(i32, 0), howl_native_control_named_key(fixture.control, 1, 1, 0));
