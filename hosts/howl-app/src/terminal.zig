@@ -133,6 +133,10 @@ pub const Terminal = opaque {
     pub fn takeAttention(self: *Terminal) bool {
         return self.state().attention.swap(false, .acq_rel);
     }
+    /// Copies and retires the latest terminal-originated clipboard set, if any.
+    pub fn takeClipboardSet(self: *Terminal, allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
+        return self.state().takeClipboardSet(allocator);
+    }
     /// Changes projection visibility without changing canonical service policy.
     pub fn setVisible(self: *Terminal, visible: bool) void {
         self.state().setVisible(visible);
@@ -189,6 +193,7 @@ const State = struct {
     paint: selection.Paint = .{},
     search: find.Find = .{},
     attention: std.atomic.Value(bool) = .init(false),
+    clipboard: ?[]u8 = null,
     consequence_worked: bool = false,
 
     fn create(
@@ -230,6 +235,7 @@ const State = struct {
         if (self.thread) |thread| thread.join();
         self.cancelPending();
         closeWake(self.wake_fd);
+        if (self.clipboard) |bytes| self.allocator.free(bytes);
         instance.deinit(self.value);
         const allocator = self.allocator;
         allocator.destroy(self);
@@ -237,6 +243,16 @@ const State = struct {
 
     fn takeFrame(self: *State) bool {
         return self.new_frame.swap(false, .acq_rel);
+    }
+
+    fn takeClipboardSet(self: *State, allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const source = self.clipboard orelse return null;
+        const copied = try allocator.dupe(u8, source);
+        self.allocator.free(source);
+        self.clipboard = null;
+        return copied;
     }
 
     fn replaceFrame(self: *State, previous: ?*instance.RenderLease, residency: []const instance.render.terminal.Residency, paint: ?*selection.Paint) FrameError!?instance.RenderLease {
@@ -555,9 +571,21 @@ const State = struct {
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !instance.Service {
         const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .retain);
-        const host = try desktop.drain(self.value);
+        var host = try desktop.drain(self.value, self.allocator);
+        defer host.deinit(self.allocator);
         self.consequence_worked = host.worked;
-        if (host.attention and !self.attention.swap(true, .acq_rel)) self.notify();
+        var host_notify = false;
+        if (host.clipboard) |bytes| {
+            self.mutex.lockUncancelable(self.io);
+            const previous = self.clipboard;
+            self.clipboard = bytes;
+            host.clipboard = null;
+            self.mutex.unlock(self.io);
+            if (previous) |old| self.allocator.free(old);
+            host_notify = true;
+        }
+        if (host.attention and !self.attention.swap(true, .acq_rel)) host_notify = true;
+        if (host_notify) self.notify();
         const observation = instance.terminal(self.value);
         const live = observation.semanticView(0);
         self.history.follow(live.history_count, live.history_row_base, live.is_alternate_screen);
@@ -772,6 +800,35 @@ fn waitTitle(owner: *Terminal, title: []const u8) !void {
         try std.Io.sleep(owner.state().io, .fromMilliseconds(1), .awake);
     }
     return error.Timeout;
+}
+
+test "OSC 52 sets become coalesced copied desktop facts without pacing canonical service" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "printf '\\033]52;c;T25l\\007\\033]52;c;VHdv\\007\\033]0;READY\\007'; sleep 30",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+
+    var copied: ?[]u8 = null;
+    var attempts: u16 = 0;
+    while (copied == null and attempts < 5000) : (attempts += 1) {
+        copied = try owner.takeClipboardSet(std.testing.allocator);
+        if (copied == null) try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    const text = copied orelse return error.Timeout;
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("Two", text);
+    try std.testing.expect((try owner.takeClipboardSet(std.testing.allocator)) == null);
+    try std.testing.expectEqual(@as(u16, 0), instance.consequenceCount(owner.state().value));
+    try std.testing.expectEqual(@as(?Failure, null), owner.snapshot().failure);
 }
 
 test "hidden presentation still drains one MiB and semantic input to the sole canonical owner" {

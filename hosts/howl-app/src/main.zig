@@ -437,9 +437,7 @@ const App = struct {
             .copy_selection => {
                 const bytes = try (try self.pane().requireOwner()).copySelection(allocator, 1024 * 1024);
                 defer allocator.free(bytes);
-                const text = try allocator.dupeSentinel(u8, bytes, 0);
-                defer allocator.free(text);
-                if (!c.SDL_SetClipboardText(text)) return error.SDLClipboard;
+                try setClipboard(bytes);
             },
         }
     }
@@ -1292,9 +1290,13 @@ const App = struct {
         self.cancelComposition();
         try p.submit(.{ .input = .{ .paste = bytes } });
     }
-    fn desktopAttention(self: *App) !void {
+    fn desktopHost(self: *App) !void {
         var attention = false;
         for (self.tabs[0..self.tab_count]) |t| for (t.?.panes) |p| if (p) |value| if (value.owner) |owner| {
+            if (try owner.takeClipboardSet(allocator)) |bytes| {
+                defer allocator.free(bytes);
+                try setClipboard(bytes);
+            }
             if (owner.takeAttention()) attention = true;
         };
         if (attention and c.SDL_GetWindowFlags(self.window) & c.SDL_WINDOW_INPUT_FOCUS == 0)
@@ -1941,7 +1943,7 @@ const App = struct {
         }
     }
     fn draw(self: *App) !void {
-        try self.desktopAttention();
+        try self.desktopHost();
         var width: c_int = 0;
         var height: c_int = 0;
         if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
@@ -2124,6 +2126,12 @@ pub fn main(initial: std.process.Init) !void {
         }
     }
 }
+fn setClipboard(bytes: []const u8) !void {
+    const text = try allocator.dupeSentinel(u8, bytes, 0);
+    defer allocator.free(text);
+    if (!c.SDL_SetClipboardText(text)) return error.SDLClipboard;
+}
+
 const FontChange = struct {
     pane: *Pane,
     size: u16,

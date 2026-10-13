@@ -480,6 +480,16 @@ pub fn Runtime(comptime Presentation: ?type) type {
             return stateMut(instance).terminal.consumeConsequence(id);
         }
 
+        /// Copies one decoded FIFO-head OSC 52 set without consuming it.
+        pub fn copyClipboard(
+            instance: *Instance,
+            id: u64,
+            allocator: std.mem.Allocator,
+            max_bytes: usize,
+        ) error{ OutOfMemory, StaleClipboardRequest, ClipboardLimit }!?[]u8 {
+            return stateMut(instance).terminal.copyClipboard(id, allocator, max_bytes);
+        }
+
         /// Replies to one exact pending OSC 52 clipboard query.
         pub fn replyClipboard(instance: *Instance, id: u64, bytes: []const u8) ClipboardReplyError!bool {
             return stateMut(instance).terminal.replyClipboard(id, bytes);

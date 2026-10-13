@@ -201,6 +201,8 @@ pub const consequenceHead = runtime.consequenceHead;
 pub const consequenceCount = runtime.consequenceCount;
 /// Consumes one non-reply consequence by exact global FIFO identity.
 pub const consumeConsequence = runtime.consumeConsequence;
+/// Copies one decoded FIFO-head OSC 52 set without consuming it.
+pub const copyClipboard = runtime.copyClipboard;
 /// Replies to one exact pending OSC 52 clipboard query.
 pub const replyClipboard = runtime.replyClipboard;
 /// Replies to one exact pending OSC 22 pointer-shape query.

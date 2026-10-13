@@ -7,6 +7,8 @@ pub const uri_limit = 2048;
 pub const file_limit = 4096;
 /// Existing exact text-drop bound.
 pub const text_limit = 64 * 1024;
+/// One terminal-originated clipboard write is bounded to the app's existing selection-copy ceiling.
+pub const clipboard_limit = 1024 * 1024;
 /// Worst-case single-quote spelling, including closing quote and trailing separator.
 pub const quoted_limit = file_limit * 4 + 3;
 /// Exact file/text rejection; a drop never executes or interprets its content.
@@ -14,9 +16,19 @@ pub const DropError = error{ InvalidDrop, DropLimit };
 /// Canonical consequence identity and typed reply failures.
 pub const Error = instance.ConsumeConsequenceError || instance.ClipboardReplyError ||
     instance.PointerShapeReplyError || instance.ColorPreferenceReplyError ||
-    instance.ContainerReplyError || error{ StaleContainerRequest, ContainerReplyMismatch };
+    instance.ContainerReplyError || error{ OutOfMemory, StaleClipboardRequest, StaleContainerRequest, ContainerReplyMismatch };
 /// Copied host work facts; no retained consequence payload reaches the GUI.
-pub const Applied = struct { worked: bool = false, attention: bool = false };
+pub const Applied = struct {
+    worked: bool = false,
+    attention: bool = false,
+    clipboard: ?[]u8 = null,
+
+    /// Releases any copied host payload still owned by this result.
+    pub fn deinit(self: *Applied, allocator: std.mem.Allocator) void {
+        if (self.clipboard) |bytes| allocator.free(bytes);
+        self.* = undefined;
+    }
+};
 
 /// Allows only explicit canonical HTTP(S), preserving Odin's bounded UTF-8 policy.
 pub fn uriAllowed(uri: []const u8) bool {
@@ -61,16 +73,36 @@ pub fn eventText(data: [*:0]const u8, file: bool) DropError![]const u8 {
     return error.DropLimit;
 }
 /// Applies the existing deterministic desktop policy in exact canonical FIFO order.
-pub fn drain(value: *instance.Instance) Error!Applied {
+pub fn drain(value: *instance.Instance, allocator: std.mem.Allocator) Error!Applied {
     var result: Applied = .{};
+    errdefer result.deinit(allocator);
     while (instance.consequenceHead(value)) |head| {
         const id = head.id();
         result.worked = true;
         switch (head) {
-            .clipboard => |request| if (request.kind == .query) {
-                const replied = try instance.replyClipboard(value, id, "");
-                std.debug.assert(replied);
-                continue;
+            .clipboard => |request| switch (request.kind) {
+                .query => {
+                    const replied = try instance.replyClipboard(value, id, "");
+                    std.debug.assert(replied);
+                    continue;
+                },
+                .set => if (request.protocol == .osc52) {
+                    const copied = instance.copyClipboard(value, id, allocator, clipboard_limit) catch |failure| switch (failure) {
+                        // Oversize host clipboard writes are bounded host policy, not terminal failure.
+                        error.ClipboardLimit => {
+                            try instance.consumeConsequence(value, id);
+                            continue;
+                        },
+                        else => |err| return err,
+                    };
+                    if (copied) |bytes| {
+                        try instance.consumeConsequence(value, id);
+                        if (result.clipboard) |previous| allocator.free(previous);
+                        result.clipboard = bytes;
+                        continue;
+                    }
+                },
+                .packet => {},
             },
             .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
                 try instance.replyPointerShape(value, id, "default");
