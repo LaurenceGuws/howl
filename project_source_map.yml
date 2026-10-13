@@ -138,7 +138,9 @@ experimental:
     and Windows the Local route owns one in-process Instance through its private
     direct desktop worker. Semantic mutations and synchronous const observation
     projections use Instance directly; only copied frame/text/image packets reach
-    Dart. Local creates no Server terminal service, handshake or stream. Android and iOS remain client-only. Flutter owns
+    Dart. Private command packing consumes exact Instance-forwarded Render native
+    projection while retaining its 40-byte record and frame-local resource table.
+    Local creates no Server terminal service, handshake or stream. Android and iOS remain client-only. Flutter owns
     no VT semantics, Session, Server, grid, discovery or supervision; outside the core gate
   howl-host: >-
     native Linux direct-embed performance canary. It owns one in-process howl-instance,

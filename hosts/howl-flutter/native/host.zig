@@ -4,6 +4,7 @@ const client = @import("server_client").terminal;
 const local = @import("local_owner");
 const native_instance = @import("howl_instance");
 const vt_native = @import("howl_vt_native");
+const render_native = @import("howl_render_native");
 const server_client = @import("server_client");
 const server_native = @import("server_client_native");
 const protocol = client.protocol;
@@ -50,6 +51,9 @@ const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_c
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
+    if (render_native.c.HRC_NATIVE_VERSION != 1 or @sizeOf(render_native.CommandInfo) != 64 or
+        render_native.c.HRC_SOLID != 0 or render_native.c.HRC_ALPHA_MASK != 1 or render_native.c.HRC_RGBA != 2)
+        @compileError("Flutter command packing requires the reviewed Render native vocabulary");
     if (vt_native.Terminal.InputEvent != native_instance.Input)
         @compileError("Flutter native input must use the exact Instance VT module identity");
     if (maximum_non_command_packet_bytes > render_packet_budget)
@@ -2211,77 +2215,50 @@ fn writeResource(
     try writer.writeU32(0);
 }
 
+// Render owns command semantics; Flutter only packs its private 40-byte record
+// and replaces exact resource identities with this frame's resource-table index.
+// One stack record per command; no second command array or pixel borrow.
 fn writeCommand(
     writer: *Writer,
     command: terminal.Command,
     resources: []const terminal.ResourceView,
 ) !void {
-    switch (command) {
-        .solid => |value| {
-            try writer.writeU8(0);
-            try writer.writeU8(0xff);
-            try writer.writeU8(0);
-            try writer.writeU8(0);
-            try writer.writeU32(colorBits(value.color));
-            try writeRect(writer, value.rect);
-            try writeRect(writer, value.rect);
-            try writer.zeroes(8);
-        },
-        .alpha_mask => |value| {
-            try writer.writeU8(1);
-            try writer.writeU8(try frameResourceIndex(resources, value.resource.resource));
-            try writer.writeU8(if (value.cursor_component) 1 else 0);
-            try writer.writeU8(0);
-            try writer.writeU32(colorBits(value.color));
-            try writeRect(writer, value.destination);
-            try writeRect(writer, value.clip);
-            try writeSourceRect(writer, value.resource);
-        },
-        .rgba => |value| {
-            try writer.writeU8(2);
-            try writer.writeU8(try frameResourceIndex(resources, value.resource.resource));
-            try writer.writeU8(0);
-            try writer.writeU8(0);
-            try writer.writeU32(0);
-            try writeRect(writer, value.destination);
-            try writeRect(writer, value.clip);
-            try writeSourceRect(writer, value.resource);
-        },
+    var info: render_native.CommandInfo = undefined;
+    render_native.commandInfo(command, &info);
+    try writer.writeU8(info.tag);
+    try writer.writeU8(if (info.tag == render_native.c.HRC_SOLID) 0xff else try frameResourceIndex(resources, info.resource, info.generation));
+    try writer.writeU8(info.cursor_component);
+    try writer.writeU8(0);
+    try writer.writeU32(info.color_rgba);
+    try writer.writeI32(info.destination_x);
+    try writer.writeI32(info.destination_y);
+    try writer.writeU16(info.destination_width);
+    try writer.writeU16(info.destination_height);
+    try writer.writeI32(info.clip_x);
+    try writer.writeI32(info.clip_y);
+    try writer.writeU16(info.clip_width);
+    try writer.writeU16(info.clip_height);
+    if (info.tag == render_native.c.HRC_SOLID) {
+        // Preserve the private writer's single eight-byte unused source field.
+        try writer.zeroes(8);
+    } else {
+        try writer.writeU16(info.source_x);
+        try writer.writeU16(info.source_y);
+        try writer.writeU16(info.source_width);
+        try writer.writeU16(info.source_height);
     }
 }
 
 fn frameResourceIndex(
     resources: []const terminal.ResourceView,
-    resource: terminal.ResourceRef,
+    resource: u64,
+    generation: u64,
 ) !u8 {
     for (resources, 0..) |candidate, index| {
-        if (std.meta.eql(candidate.resource, resource)) return @intCast(index);
+        if (@backingInt(candidate.resource.resource) == resource and
+            @backingInt(candidate.resource.generation) == generation) return @intCast(index);
     }
     return error.MissingResource;
-}
-
-fn writeRect(writer: *Writer, rect: terminal.Rect) !void {
-    try writer.writeI32(rect.x);
-    try writer.writeI32(rect.y);
-    try writer.writeU16(rect.width);
-    try writer.writeU16(rect.height);
-}
-
-fn writeSourceRect(writer: *Writer, resource: terminal.ResourceView) !void {
-    const source = resource.source orelse terminal.SourceRect{
-        .x = 0,
-        .y = 0,
-        .width = resource.size.width,
-        .height = resource.size.height,
-    };
-    try writer.writeU16(source.x);
-    try writer.writeU16(source.y);
-    try writer.writeU16(source.width);
-    try writer.writeU16(source.height);
-}
-
-fn colorBits(value: terminal.Color) u32 {
-    return @bitCast(value);
 }
 
 fn checkedMul(left: usize, right: usize) HostPacketError!usize {
@@ -2535,4 +2512,72 @@ test "Flutter Local refills an exact canonical image generation into copied priv
     try std.testing.expectEqual(@as(i32, 5), howl_native_host_fetch_image_refill(raw_host, &refill, refill.len, &length));
     try std.testing.expectEqual(@as(usize, 0), length);
     try std.testing.expect(host.pending_image == null);
+}
+
+test "Flutter private command packets preserve legacy bytes and bounded write prefixes" {
+    const alpha = terminal.ResourceView{
+        .resource = .{ .resource = @fromBackingInt(0x1122334455667788), .generation = @fromBackingInt(0xfffffffffffffff1) },
+        .format = .alpha8,
+        .size = .{ .width = 31, .height = 37 },
+    };
+    const rgba = terminal.ResourceView{
+        .resource = .{ .resource = @fromBackingInt(0x8877665544332211), .generation = @fromBackingInt(0xfffffffffffffffe) },
+        .format = .rgba8,
+        .size = .{ .width = 29, .height = 31 },
+        .source = .{ .x = 2, .y = 3, .width = 5, .height = 7 },
+    };
+    var cropped_alpha = alpha;
+    cropped_alpha.source = .{ .x = 1, .y = 2, .width = 3, .height = 4 };
+    const commands = [_]terminal.Command{
+        .{ .solid = .{ .rect = .{ .x = -3, .y = 4, .width = 20, .height = 9 }, .color = .{ .r = 1, .g = 2, .b = 3, .a = 4 } } },
+        .{ .alpha_mask = .{ .destination = .{ .x = -17, .y = 19, .width = 11, .height = 13 }, .clip = .{ .x = -5, .y = 20, .width = 4, .height = 6 }, .resource = alpha, .color = .{ .r = 1, .g = 2, .b = 127, .a = 128 }, .cursor_component = true } },
+        .{ .rgba = .{ .destination = .{ .x = 7, .y = -9, .width = 17, .height = 19 }, .clip = .{ .x = 8, .y = -8, .width = 11, .height = 12 }, .resource = rgba } },
+        .{ .alpha_mask = .{ .destination = .{ .x = -17, .y = 19, .width = 11, .height = 13 }, .clip = .{ .x = -5, .y = 20, .width = 4, .height = 6 }, .resource = cropped_alpha, .color = .{ .r = 1, .g = 2, .b = 127, .a = 128 } } },
+    };
+    // Legacy private packet golden: deliberately reordered resources, signed
+    // origins, full/cropped sources, both cursor values, every command kind.
+    const expected = [_]u8{ 0x00, 0xff, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0xfd, 0xff, 0xff, 0xff, 0x04, 0x00, 0x00, 0x00, 0x14, 0x00, 0x09, 0x00, 0xfd, 0xff, 0xff, 0xff, 0x04, 0x00, 0x00, 0x00, 0x14, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x01, 0x02, 0x7f, 0x80, 0xef, 0xff, 0xff, 0xff, 0x13, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x0d, 0x00, 0xfb, 0xff, 0xff, 0xff, 0x14, 0x00, 0x00, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x25, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0xf7, 0xff, 0xff, 0xff, 0x11, 0x00, 0x13, 0x00, 0x08, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x0b, 0x00, 0x0c, 0x00, 0x02, 0x00, 0x03, 0x00, 0x05, 0x00, 0x07, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x02, 0x7f, 0x80, 0xef, 0xff, 0xff, 0xff, 0x13, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x0d, 0x00, 0xfb, 0xff, 0xff, 0xff, 0x14, 0x00, 0x00, 0x00, 0x04, 0x00, 0x06, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00 };
+    const resources = [_]terminal.ResourceView{ rgba, alpha };
+    var output: [expected.len + 8]u8 = @splat(0xa5);
+    var writer = Writer{ .bytes = &output };
+    for (commands) |command| try writeCommand(&writer, command, &resources);
+    try std.testing.expectEqual(expected.len, writer.offset);
+    try std.testing.expectEqualSlices(u8, &expected, output[0..writer.offset]);
+    for (output[writer.offset..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (0..expected.len) |capacity| {
+        @memset(&output, 0xa5);
+        writer = .{ .bytes = output[0..capacity] };
+        var rejected = false;
+        for (commands) |command| {
+            writeCommand(&writer, command, &resources) catch |failure| {
+                try std.testing.expectEqual(error.BufferTooSmall, failure);
+                rejected = true;
+                break;
+            };
+        }
+        try std.testing.expect(rejected);
+        // Legacy field boundaries: solid's final padding is one eight-byte write;
+        // sampled commands finish with four two-byte source coordinates.
+        const solid_ends = [_]usize{ 1, 2, 3, 4, 8, 12, 16, 18, 20, 24, 28, 30, 32, 40 };
+        const sampled_ends = [_]usize{ 1, 2, 3, 4, 8, 12, 16, 18, 20, 24, 28, 30, 32, 34, 36, 38, 40 };
+        var legacy_offset: usize = 0;
+        for (0..commands.len) |command_index| {
+            const ends: []const usize = if (command_index == 0) &solid_ends else &sampled_ends;
+            for (ends) |end| {
+                const offset = command_index * command_record_bytes + end;
+                if (offset <= capacity) legacy_offset = offset;
+            }
+        }
+        try std.testing.expectEqual(legacy_offset, writer.offset);
+        try std.testing.expectEqualSlices(u8, expected[0..writer.offset], output[0..writer.offset]);
+        for (output[writer.offset..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    }
+    var stale = alpha;
+    stale.resource.generation = @fromBackingInt(2);
+    @memset(&output, 0xa5);
+    writer = .{ .bytes = &output };
+    try std.testing.expectError(error.MissingResource, writeCommand(&writer, commands[1], &.{stale}));
+    try std.testing.expectEqual(@as(usize, 1), writer.offset);
+    try std.testing.expectEqual(@as(u8, 1), output[0]);
+    for (output[1..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
 }

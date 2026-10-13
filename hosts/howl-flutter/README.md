@@ -20,7 +20,7 @@ Flutter resource lease + batched Canvas backend
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
-Interaction observations use VT's copied 16-byte native record for both Local and Remote. The SDK-only `howl_vt_native` Dart package owns its layout and validation; Flutter keeps its application binding and worker. Local selected text uses VT's complete-or-untouched projection. Private frame and image packets retain their existing formats. ABI 7 must be rebuilt with Dart; the version gate rejects an ABI 6 library before constructing a handle.
+Interaction observations use VT's copied 16-byte native record for both Local and Remote. The SDK-only `howl_vt_native` Dart package owns its layout and validation; Flutter keeps its application binding and worker. Local selected text uses VT's complete-or-untouched projection. Private frame and image packets retain their existing formats. Drawing commands use the exact Instance-forwarded Render native projection; Flutter packs those facts into its existing 40-byte command records and selects frame-local resource indices. No additional command array or public C call is introduced. ABI 7 must be rebuilt with Dart; the version gate rejects an ABI 6 library before constructing a handle.
 
 ## Android
 
