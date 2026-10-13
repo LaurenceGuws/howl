@@ -43,6 +43,7 @@ attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 | `server_client` | control/attachment/terminal APIs and private transport |
 | `server_client_native` | optional native VT request/interaction facts and named replies; Server wire stays private |
 | `server_client_render` | optional client observation adapter to Howl Render |
+| `server_client_render_native` | exact forwarded Render-native module for the same adapter graph; Render owns its schemas and projection |
 | `howl_server_client` artifact | versioned C client ABI and artifact-owned public header |
 
 `zig build check test` proves the complete family, including a foreign C caller

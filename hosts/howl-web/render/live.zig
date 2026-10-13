@@ -3,6 +3,7 @@ const std = @import("std");
 const client = @import("server_client").terminal;
 const terminal = @import("server_client_render");
 const render = terminal;
+const render_native = @import("howl_render_native");
 const text = render.text;
 const p = client.protocol;
 
@@ -21,6 +22,9 @@ const maximum_terminal_images: usize = terminal.maximum_external_images;
 const residency_capacity = maximum_terminal_images + 1;
 
 comptime {
+    if (render_native.c.HRC_NATIVE_VERSION != 1 or @sizeOf(render_native.CommandInfo) != 64 or
+        render_native.c.HRC_SOLID != 0 or render_native.c.HRC_ALPHA_MASK != 1 or render_native.c.HRC_RGBA != 2)
+        @compileError("Web v4 packing requires the reviewed Render native vocabulary");
     if (maximum_terminal_images != 7)
         @compileError("Web terminal image bound drifted from the portable client contract");
     if (command_wire_bytes >= metadata_capacity)
@@ -746,67 +750,44 @@ fn writeFrameV4(
     metadata_used = writer.end;
 }
 
+// Render supplies semantic facts; this host retains the private Web v4 layout.
+// Its 64-byte record has different offsets from the 64-byte native C record.
 fn writeCommandWire(commands: []const terminal.Command) !void {
     if (commands.len > command_capacity) return error.InvalidSnapshot;
     for (commands, 0..) |command, index| {
+        var info: render_native.CommandInfo = undefined;
+        render_native.commandInfo(command, &info);
         const record = metadata[index * command_record_bytes ..][0..command_record_bytes];
         @memset(record, 0);
-        switch (command) {
-            .solid => |value| {
-                record[0] = 0;
-                writeWireRect(record, 4, value.rect);
-                writeWireColor(record, value.color);
+        record[0] = info.tag;
+        writeWireRect(record, 4, info.destination_x, info.destination_y, info.destination_width, info.destination_height);
+        std.mem.writeInt(u32, record[60..64], info.color_rgba, .little);
+        switch (info.tag) {
+            render_native.c.HRC_SOLID => {}, // Unused clip/resource/source bytes remain zero.
+            render_native.c.HRC_ALPHA_MASK, render_native.c.HRC_RGBA => {
+                record[1] = info.format;
+                record[2] = info.cursor_component;
+                writeWireRect(record, 16, info.clip_x, info.clip_y, info.clip_width, info.clip_height);
+                std.mem.writeInt(u64, record[32..40], info.resource, .little);
+                std.mem.writeInt(u64, record[40..48], info.generation, .little);
+                std.mem.writeInt(u16, record[48..50], info.resource_width, .little);
+                std.mem.writeInt(u16, record[50..52], info.resource_height, .little);
+                std.mem.writeInt(u16, record[52..54], info.source_x, .little);
+                std.mem.writeInt(u16, record[54..56], info.source_y, .little);
+                std.mem.writeInt(u16, record[56..58], info.source_width, .little);
+                std.mem.writeInt(u16, record[58..60], info.source_height, .little);
             },
-            .alpha_mask => |value| {
-                record[0] = 1;
-                record[1] = @backingInt(value.resource.format);
-                record[2] = @intFromBool(value.cursor_component);
-                writeWireRect(record, 4, value.destination);
-                writeWireRect(record, 16, value.clip);
-                writeWireResource(record, value.resource);
-                writeWireSource(record, value.resource.source, value.resource.size);
-                writeWireColor(record, value.color);
-            },
-            .rgba => |value| {
-                record[0] = 2;
-                record[1] = @backingInt(value.resource.format);
-                writeWireRect(record, 4, value.destination);
-                writeWireRect(record, 16, value.clip);
-                writeWireResource(record, value.resource);
-                writeWireSource(record, value.resource.source, value.resource.size);
-            },
+            else => return error.InvalidSnapshot,
         }
     }
     command_wire_count = commands.len;
 }
 
-fn writeWireRect(record: []u8, offset: usize, value: terminal.Rect) void {
-    std.mem.writeInt(i32, record[offset..][0..4], value.x, .little);
-    std.mem.writeInt(i32, record[offset + 4 ..][0..4], value.y, .little);
-    std.mem.writeInt(u16, record[offset + 8 ..][0..2], value.width, .little);
-    std.mem.writeInt(u16, record[offset + 10 ..][0..2], value.height, .little);
-}
-
-fn writeWireResource(record: []u8, value: terminal.ResourceView) void {
-    std.mem.writeInt(u64, record[32..40], @backingInt(value.resource.resource), .little);
-    std.mem.writeInt(u64, record[40..48], @backingInt(value.resource.generation), .little);
-    std.mem.writeInt(u16, record[48..50], value.size.width, .little);
-    std.mem.writeInt(u16, record[50..52], value.size.height, .little);
-}
-
-fn writeWireSource(record: []u8, source: ?terminal.SourceRect, size: terminal.Size) void {
-    const value = source orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
-    std.mem.writeInt(u16, record[52..54], value.x, .little);
-    std.mem.writeInt(u16, record[54..56], value.y, .little);
-    std.mem.writeInt(u16, record[56..58], value.width, .little);
-    std.mem.writeInt(u16, record[58..60], value.height, .little);
-}
-
-fn writeWireColor(record: []u8, value: terminal.Color) void {
-    record[60] = value.r;
-    record[61] = value.g;
-    record[62] = value.b;
-    record[63] = value.a;
+fn writeWireRect(record: []u8, offset: usize, x: i32, y: i32, width: u16, height: u16) void {
+    std.mem.writeInt(i32, record[offset..][0..4], x, .little);
+    std.mem.writeInt(i32, record[offset + 4 ..][0..4], y, .little);
+    std.mem.writeInt(u16, record[offset + 8 ..][0..2], width, .little);
+    std.mem.writeInt(u16, record[offset + 10 ..][0..2], height, .little);
 }
 
 fn writeQualified(writer: *std.Io.Writer, value: terminal.ResourceRef) !void {

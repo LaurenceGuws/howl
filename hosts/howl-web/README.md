@@ -107,3 +107,11 @@ gateway's optional assertion check is only an origin-misrouting guard.
 Chromium remains the fast browser acceptance lane. Safari/Home-Screen remains the
 narrower WebKit/PWA platform canary. Neither browser is allowed to redefine terminal or
 Server ownership.
+
+
+The live v4 binary command lane consumes Render-owned native command projection
+through the exact Server-forwarded `server_client_render_native` module. Web still
+packs its own 64-byte record field by field: its layout differs from Render's
+64-byte C record. Browser memory lanes, JSON envelope, format negotiation, resource
+acknowledgement and UI remain host responsibilities. Legacy v2/v3 JSON command
+adapters remain unchanged and are the next staged ownership cut.

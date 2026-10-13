@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) void {
     });
     live_root.addImport("server_client", client_module);
     live_root.addImport("server_client_render", client.module("server_client_render"));
+    live_root.addImport("howl_render_native", client.module("server_client_render_native"));
     live_root.export_symbol_names = &.{
         "rv_font_ptr",               "rv_font_capacity",            "rv_fallback_font_ptr",
         "rv_fallback_font_capacity", "rv_symbol_font_ptr",          "rv_symbol_font_capacity",

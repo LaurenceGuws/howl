@@ -87,6 +87,14 @@ const rgba = [];
 for (let i = 0; i < frame.commands.count; i += 1) if (frame.commands.kind(i) === 2) rgba.push(i);
 assert.equal(rgba.length, 1);
 const rgbaIndex = rgba[0];
+// Non-vacuous negative-space proof on a required real-producer RGBA command.
+const rgbaRecord = bytesAt(w.rv_commands_ptr() + rgbaIndex * 64, 64);
+assert.equal(rgbaRecord[0], 2);
+assert.equal(rgbaRecord[2], 0, 'RGBA has no cursor-component flag');
+assert.equal(rgbaRecord[3], 0, 'private reserved byte');
+assert.ok(rgbaRecord.subarray(28, 32).every(byte => byte === 0), 'private padding');
+assert.ok(rgbaRecord.subarray(60, 64).every(byte => byte === 0), 'RGBA has no color multiplier');
+
 assert.ok(rgbaIndex > 0); // default background remains below the ordinary negative image
 assert.deepEqual([frame.commands.resource(rgbaIndex), frame.commands.generation(rgbaIndex)].map(String), externalKey);
 assert.deepEqual([frame.commands.resourceWidth(rgbaIndex), frame.commands.resourceHeight(rgbaIndex)], [2, 2]);

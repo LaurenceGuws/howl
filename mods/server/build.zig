@@ -116,6 +116,10 @@ pub fn build(b: *std.Build) void {
     abi.installHeader(vt.namedLazyPath("howl_vt_native_header"), "howl_vt_native.h");
     b.installArtifact(abi);
     const render = b.dependency("howl_render", .{ .target = target, .optimize = optimize, .bundled_text = bundled });
+    // Forward the exact Render-owned native module beside the transported adapter.
+    // zig-audit: acknowledge panic
+    // reason: Build graph allocation failure is unrecoverable while forwarding this child-owned module.
+    b.modules.put(b.allocator, "server_client_render_native", render.module("howl_render_native")) catch @panic("OOM");
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = bundled });
     const adapter = b.addModule("server_client_render", .{
         .root_source_file = b.path("src/client/terminal/render.zig"),

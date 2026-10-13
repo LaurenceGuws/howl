@@ -95,6 +95,20 @@ for (let i = 0; i < v3.commands.length; i += 1) {
     assert.equal(v4.commands.cursor(i), command[22] !== 0);
   }
 }
+// V4 remains its private layout, including unused bytes; it is not the
+// same-size Render-native C struct reinterpreted in Wasm memory.
+const records = current.bytesAt(current.w.rv_commands_ptr(), current.w.rv_commands_count() * 64);
+for (let i = 0; i < current.w.rv_commands_count(); i += 1) {
+  const record = records.subarray(i * 64, (i + 1) * 64);
+  assert.equal(record[3], 0);
+  assert.ok(record.subarray(28, 32).every(byte => byte === 0));
+  if (record[0] === 0) {
+    assert.equal(record[1], 0);
+    assert.equal(record[2], 0);
+    assert.ok(record.subarray(16, 60).every(byte => byte === 0));
+  }
+  if (record[0] === 2) assert.ok(record.subarray(60, 64).every(byte => byte === 0));
+}
 assert.equal(current.w.rv_ack(), 1);
 assert.equal(current.w.rv_reset(), 1);
 assert.equal(current.w.rv_frame_format(), 4, 'presentation reset preserves the negotiated v4 vocabulary');
