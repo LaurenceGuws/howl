@@ -10,6 +10,19 @@ pub const InputError = instance.InputError || vt.Error;
 /// Exact local composition; never interchangeable with a headless handle.
 pub const Instance = instance.Instance;
 
+/// Converts fixed native process-group signal tags without host or queue policy.
+/// Unknown tags are rejected before the caller schedules any canonical mutation.
+pub fn signalFromTag(tag: u8) ?instance.Signal {
+    return switch (tag) {
+        c.HI_HANGUP => .hangup,
+        c.HI_INTERRUPT => .interrupt,
+        c.HI_RESIZE_NOTIFY => .resize_notify,
+        c.HI_KILL => .kill,
+        c.HI_TERMINATE => .terminate,
+        else => null,
+    };
+}
+
 /// Native named input conversion and canonical mutation share one implementation.
 pub fn sendNamedKey(value: *Instance, key: u8, action: u8, mods: u8) InputError!void {
     try instance.input(value, try vt.namedInput(key, action, mods));

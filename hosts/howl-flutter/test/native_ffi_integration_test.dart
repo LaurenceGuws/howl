@@ -56,6 +56,9 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 5));
         }
         expect(copied, isNotNull);
+        await control.signal(
+          3,
+        ); // Canonical resize-notify, dispatched by the Local worker.
         expect(
           await control.selectedText(
             startRow: 0,

@@ -82,3 +82,17 @@ test "foreign ABI copies a real frame above the maintained host command envelope
     const raw: *native.c.hi_instance = @ptrCast(owner);
     try std.testing.expectEqual(@as(c_int, 0), howl_native_large_frame_peer(raw, instance.render.limits.maximum_frame_commands));
 }
+
+test "Instance native signal tags admit exactly the five canonical meanings" {
+    for (0..256) |tag| {
+        const expected: ?instance.Signal = switch (tag) {
+            1 => .hangup,
+            2 => .interrupt,
+            3 => .resize_notify,
+            9 => .kill,
+            15 => .terminate,
+            else => null,
+        };
+        try std.testing.expectEqual(expected, native.signalFromTag(@intCast(tag)));
+    }
+}

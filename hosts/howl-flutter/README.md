@@ -18,7 +18,7 @@ Flutter resource lease + batched Canvas backend
 
 `howl-flutter/native/` owns the version-locked application binding. Its opaque observer and control handles are private to the same Howl/Flutter build and are **not a stable public C ABI**. A successful blocking observation copies one complete final terminal frame into caller-owned memory. The native host admits at most seven visible terminal image resources, leaving the eighth terminal resource slot available for the glyph atlas. If a frame needs Host-recoverable image data which Flutter has not retained yet, the observer exposes one exact `image_id + generation` refill through the private `HIR1` side packet; Flutter decodes that RGBA resource into its ordinary `ui.Image` lease, reports the exact residency, and retries the same observation until every required external resource is resident. `HIR1` therefore remains deliberately one-resource-at-a-time even when the final frame contains several images or placements. The normal `HCR1` terminal-frame packet remains image-byte-free. Flutter never retains mutable native presentation pointers. It reports only the resources for which it still owns a live `ui.Image`; Terminal renderer generations then decide whether recovery is needed.
 
-Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
+Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Local process-signal tags use the exact Instance-owned native conversion before worker submission. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
 Interaction observations use VT's copied 16-byte native record for both Local and Remote. The SDK-only `howl_vt_native` Dart package owns its layout and validation; Flutter keeps its application binding and worker. Local selected text uses VT's complete-or-untouched projection. Local visible-text extraction and selection-row shapes also use VT-owned queries; Flutter only packs their copied results. Visible text retains printed spaces and visual row breaks, hides concealed text, and truncates at a UTF-8 scalar boundary. Private frame and image packets retain their existing formats. Drawing commands use the exact Instance-forwarded Render native projection; Flutter packs those facts into its existing 40-byte command records and selects frame-local resource indices. No additional command array or public C call is introduced. ABI 7 must be rebuilt with Dart; the version gate rejects an ABI 6 library before constructing a handle.
 
@@ -325,3 +325,11 @@ Stale incarnation is a failed target, not automatic reselection or authenticatio
 This changes the two managed-create FFI signatures; Dart/native artifacts must be
 rebuilt together. Existing Flutter recovery classification and worker cancellation
 publication remain separate follow-up work.
+
+
+The module-owned adoption audit accounts for all 30 maintained private exports.
+Remaining handle, cancellation, worker, copied-packet, residency, target-selection
+and catalogue-JSON adapters belong to Flutter's application binding. They delegate
+canonical operations to Instance/VT/Render or Server-client and do not define a
+second terminal engine. This audit does not extend Linux runtime qualification to
+Windows/mobile or close the separately tracked standalone C interface gaps.

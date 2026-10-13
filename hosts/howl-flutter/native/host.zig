@@ -4,6 +4,7 @@ const client = @import("server_client").terminal;
 const local = @import("local_owner");
 const native_instance = @import("howl_instance");
 const vt_native = @import("howl_vt_native");
+const instance_native = @import("howl_instance_native");
 const render_native = @import("howl_render_native");
 const server_client = @import("server_client");
 const server_native = @import("server_client_native");
@@ -51,6 +52,8 @@ const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_c
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
+    if (instance_native.Instance != native_instance.Instance)
+        @compileError("Flutter native helpers must use the exact local Instance specialization");
     if (render_native.c.HRC_NATIVE_VERSION != 1 or @sizeOf(render_native.CommandInfo) != 64 or
         render_native.c.HRC_SOLID != 0 or render_native.c.HRC_ALPHA_MASK != 1 or render_native.c.HRC_RGBA != 2)
         @compileError("Flutter command packing requires the reviewed Render native vocabulary");
@@ -1124,14 +1127,7 @@ pub export fn howl_native_control_resize(
 pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8) i32 {
     const control = controlFromRaw(raw) orelse return 1;
     if (control.local_instance) |value| {
-        const signal: native_instance.Signal = switch (signal_value) {
-            1 => .hangup,
-            2 => .interrupt,
-            3 => .resize_notify,
-            9 => .kill,
-            15 => .terminate,
-            else => return 3,
-        };
+        const signal = instance_native.signalFromTag(signal_value) orelse return 3;
         local.signal(value.owner, localCancellation(control.interrupt), signal) catch |failure| return controlFailureCode(failure);
         return 0;
     }
@@ -2406,6 +2402,7 @@ test "Flutter Local failed presentation leaves no borrower; copied interaction f
     try std.testing.expectEqual(@as(i32, 0), howl_native_control_interaction_state(fixture.control, &bounded, bounded.len));
     for (bounded[interaction_packet_bytes..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
     try std.testing.expectEqual(@as(u8, 0), bounded[15]);
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_signal(fixture.control, 0));
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_named_key(fixture.control, 0, 1, 0));
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_unicode_key(fixture.control, 0xd800, 1, 0));
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_mouse(fixture.control, 0, 0, 0, 0, 0, 0, 0, 0, 0));

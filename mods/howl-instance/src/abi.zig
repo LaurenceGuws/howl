@@ -166,14 +166,7 @@ pub export fn hi_signal_group(raw: ?*c.hi_instance, tag: u8, out: ?*u8) u32 {
     const result = out orelse return c.HI_INVALID_ARGUMENT;
     result.* = 0;
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    const selected: instance.Signal = switch (tag) {
-        c.HI_HANGUP => .hangup,
-        c.HI_INTERRUPT => .interrupt,
-        c.HI_RESIZE_NOTIFY => .resize_notify,
-        c.HI_KILL => .kill,
-        c.HI_TERMINATE => .terminate,
-        else => return c.HI_INVALID_ARGUMENT,
-    };
+    const selected = native.signalFromTag(tag) orelse return c.HI_INVALID_ARGUMENT;
     result.* = switch (instance.signal(convert(*Instance, value), selected)) {
         .delivered => c.HI_SIGNAL_DELIVERED,
         .target_missing => c.HI_SIGNAL_TARGET_MISSING,
