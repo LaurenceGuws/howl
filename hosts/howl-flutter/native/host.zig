@@ -5,6 +5,7 @@ const local = @import("local_owner");
 const native_instance = @import("howl_instance");
 const vt_native = @import("howl_vt_native");
 const server_client = @import("server_client");
+const server_native = @import("server_client_native");
 const protocol = client.protocol;
 const terminal = native_instance.render.terminal;
 const transported_render = @import("server_client_render");
@@ -81,7 +82,7 @@ const HostPacketError = error{
 /// Complete private failure surface admitted by the Flutter FFI classifier.
 /// Every constituent set is owned by an existing maintained module; adding a
 /// new owner failure must update this union rather than widening to anyerror.
-const ClassifiedFailure = client.Error ||
+const ClassifiedFailure = client.Error || server_native.Error ||
     local.Error ||
     server_client.Error ||
     client.actions.Error ||
@@ -231,7 +232,7 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
 
 /// Returns the native host ABI version.
 pub export fn howl_native_host_version() u32 {
-    return 6;
+    return 7;
 }
 
 /// Reports the shared maintained-client row envelope.
@@ -1156,10 +1157,8 @@ pub export fn howl_native_control_interaction_state(
         std.debug.assert(count == interaction_packet_bytes);
         return 0;
     }
-    const state = client.state.get(control.connection.?) catch |failure| return controlFailureCode(failure);
-    var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
-    protocol.encodeInteractionStateSnapshot(&encoded, state);
-    @memcpy(output_ptr[0..encoded.len], &encoded);
+    const state = server_native.interaction(control.connection.?) catch |failure| return controlFailureCode(failure);
+    @memcpy(output_ptr[0..interaction_packet_bytes], std.mem.asBytes(&state));
     return 0;
 }
 
@@ -1218,7 +1217,10 @@ pub export fn howl_native_control_text_extract(
             .allocator = control.allocator,
             .columns = columns,
             .alternate_screen = alternate_screen == 1,
-            .range = .{ .start = .{ .row = start_row, .col = start_column }, .end = .{ .row = end_row, .col = end_column } },
+            .start_row = start_row,
+            .start_column = start_column,
+            .end_row = end_row,
+            .end_column = end_column,
             .output = output_ptr[0..output_capacity],
         };
         output_len.* = local.query(value.owner, localCancellation(control.interrupt), .{ .context = &context, .project = projectText }) catch |failure| return controlFailureCode(failure);
@@ -1334,7 +1336,12 @@ pub export fn howl_native_host_observe(
     return 0;
 }
 
-const interaction_packet_bytes: usize = 20;
+const interaction_packet_bytes: usize = @sizeOf(vt_native.c.hvt_interaction);
+comptime {
+    if (vt_native.c.HVT_NATIVE_VERSION != 1 or interaction_packet_bytes != 16 or
+        @sizeOf(server_native.c.hvt_interaction) != interaction_packet_bytes)
+        @compileError("Flutter must forward the reviewed VT native interaction record");
+}
 
 const InteractionProjection = struct { output: []u8 };
 // zig-audit: acknowledge anyopaque
@@ -1345,45 +1352,19 @@ fn projectInteraction(raw: *anyopaque, observation: *const native_instance.Termi
     // zig-audit: acknowledge align_cast
     // reason: The caller retains the original stack context until worker completion.
     const context: *InteractionProjection = @ptrCast(@alignCast(raw));
-    const output = context.output;
-    const state = observation.interactionState();
-    @memset(output, 0);
-    std.mem.writeInt(u64, output[0..8], observation.semanticSequence(), .big);
-    var flags: u32 = 0;
-    inline for (.{
-        "keyboard_action_mode", "auto_repeat",   "newline_mode",                "application_cursor_keys", "application_keypad",
-        "meta_sends_escape",    "report_key_up", "bracketed_paste",             "focus_reporting",         "termios_signals",
-        "alternate_scroll",     "paste_events",  "inband_resize_notifications",
-    }, 0..) |name, bit| {
-        if (@field(state, name)) flags |= @as(u32, 1) << bit;
-    }
-    std.mem.writeInt(u32, output[8..12], flags, .big);
-    output[12] = switch (state.mouse_tracking) {
-        .off => 0,
-        .x10 => 1,
-        .normal => 2,
-        .button_event => 3,
-        .any_event => 4,
-    };
-    output[13] = switch (state.mouse_protocol) {
-        .none => 0,
-        .utf8 => 1,
-        .sgr => 2,
-        .sgr_pixel => 3,
-        .urxvt => 4,
-    };
-    output[14] = @bitCast(state.modify_other_keys);
-    output[15] = state.kitty_keyboard_flags;
-    std.mem.writeInt(u16, output[16..18], state.key_format_resource_4, .big);
-    output[18] = state.pointer_mode;
-    return output.len;
+    const state = vt_native.queries.interaction(observation);
+    @memcpy(context.output, std.mem.asBytes(&state));
+    return context.output.len;
 }
 
 const TextProjection = struct {
     allocator: std.mem.Allocator,
     columns: u16,
     alternate_screen: bool,
-    range: native_instance.Terminal.TextRange,
+    start_row: i32,
+    start_column: u16,
+    end_row: i32,
+    end_column: u16,
     output: []u8,
 };
 // zig-audit: acknowledge anyopaque
@@ -1394,13 +1375,16 @@ fn projectText(raw: *anyopaque, observation: *const native_instance.Terminal.Obs
     // zig-audit: acknowledge align_cast
     // reason: The caller retains the original stack context until worker completion.
     const context: *TextProjection = @ptrCast(@alignCast(raw));
-    const view = observation.semanticView(0);
-    if (context.columns != view.cols or context.alternate_screen != view.is_alternate_screen) return error.LocalRejected;
-    const selected = try observation.copyText(context.allocator, context.range, context.output.len);
-    defer context.allocator.free(selected);
-    if (selected.len > context.output.len) return error.BufferTooSmall;
-    @memcpy(context.output[0..selected.len], selected);
-    return selected.len;
+    return vt_native.queries.copySelection(observation, context.allocator, context.start_row, context.start_column, context.end_row, context.end_column, context.columns, context.alternate_screen, context.output) catch |failure| switch (failure) {
+        error.InvalidArgument, error.ContextChanged, error.CoordinateLimit => error.LocalRejected,
+        error.Overflow => error.IntegerOverflow,
+        error.BufferTooSmall => error.BufferTooSmall,
+        error.CodepointTooLarge => error.CodepointTooLarge,
+        error.InvalidRange => error.InvalidRange,
+        error.OutOfMemory => error.OutOfMemory,
+        error.TextLimit => error.TextLimit,
+        error.Utf8CannotEncodeSurrogateHalf => error.Utf8CannotEncodeSurrogateHalf,
+    };
 }
 
 const ImageProjection = struct { pending: PendingImage, output: []u8 };
@@ -2431,6 +2415,12 @@ test "Flutter Local FFI presents copied canonical frames, Unicode, geometry and 
     var selected_len: usize = 0;
     try std.testing.expectEqual(@as(i32, 0), howl_native_control_text_extract(fixture.control, 0, 0, 0, 2, 16, 0, &selected, selected.len, &selected_len));
     try std.testing.expectEqualStrings("Á中", selected[0..selected_len]);
+    @memset(&selected, 0xa5);
+    selected_len = 99;
+    try std.testing.expectEqual(@as(i32, 2), howl_native_control_text_extract(fixture.control, 0, 0, 0, 2, 16, 0, &selected, 1, &selected_len));
+    try std.testing.expectEqual(@as(usize, 0), selected_len);
+    for (selected) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+
     try std.testing.expectEqual(@as(i32, 0), howl_native_control_resize(fixture.control, 3, 12));
     var length: usize = 0;
     try std.testing.expectEqual(@as(i32, 0), howl_native_host_observe(raw_host, 0, 0, null, 0, output.ptr, output.len, &length));
@@ -2472,7 +2462,7 @@ test "Flutter Local FFI presents copied canonical frames, Unicode, geometry and 
 
 test "Flutter Local failed presentation leaves no borrower; copied interaction facts preserve the private ABI" {
     if (comptime builtin.os.tag != .linux or builtin.abi == .android) return error.SkipZigTest;
-    var fixture = try TestLocal.init("printf '\\033[?2004h\\033[?1006h\\033[?1003h'; exec sleep 30");
+    var fixture = try TestLocal.init("printf '\\033[?2004h\\033[?1006h\\033[?1003h\\033[?1007h\\033[?1004h'; exec sleep 30");
     defer fixture.deinit();
     var diagnostic: [512]u8 = undefined;
     var length: usize = 0;
@@ -2486,10 +2476,17 @@ test "Flutter Local failed presentation leaves no borrower; copied interaction f
     const started = std.Io.Clock.awake.now(threaded.io());
     while (true) {
         try std.testing.expectEqual(@as(i32, 0), howl_native_control_interaction_state(fixture.control, &encoded, encoded.len));
-        const state = try protocol.decodeInteractionStateSnapshot(&encoded);
-        if (state.bracketed_paste and state.mouse_protocol == .sgr and state.mouse_tracking == .any_event) break;
+        const state = std.mem.bytesToValue(vt_native.c.hvt_interaction, &encoded);
+        if (state.mouse_protocol == vt_native.c.HVT_MOUSE_SGR and state.mouse_tracking == vt_native.c.HVT_TRACK_ANY_EVENT and
+            state.flags == (vt_native.c.HVT_INTERACTION_ALTERNATE_SCROLL | vt_native.c.HVT_INTERACTION_FOCUS_REPORTING)) break;
         if (started.durationTo(std.Io.Clock.awake.now(threaded.io())).toMilliseconds() > 2000) return error.Timeout;
     }
+    var bounded: [interaction_packet_bytes + 8]u8 = @splat(0xa5);
+    try std.testing.expectEqual(@as(i32, 3), howl_native_control_interaction_state(fixture.control, &bounded, interaction_packet_bytes - 1));
+    for (bounded) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    try std.testing.expectEqual(@as(i32, 0), howl_native_control_interaction_state(fixture.control, &bounded, bounded.len));
+    for (bounded[interaction_packet_bytes..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    try std.testing.expectEqual(@as(u8, 0), bounded[15]);
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_named_key(fixture.control, 0, 1, 0));
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_unicode_key(fixture.control, 0xd800, 1, 0));
     try std.testing.expectEqual(@as(i32, 3), howl_native_control_mouse(fixture.control, 0, 0, 0, 0, 0, 0, 0, 0, 0));

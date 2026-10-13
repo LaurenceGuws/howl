@@ -13,9 +13,10 @@ import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
 import 'terminal_selection.dart';
+import 'package:howl_vt_native/native.dart' as vt_native;
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
-const int nativeInteractionStateBytes = 20;
+const int nativeInteractionStateBytes = vt_native.interactionBytes;
 const int _nativeHostMaximumOutputBytes = 8 * 1024 * 1024;
 const int _nativeHostImageRefillHeaderBytes = 56;
 const int _nativeHostMaximumImageBytes = 16 * 1024 * 1024;
@@ -78,47 +79,17 @@ final class NativeHostMetadata {
   final List<TerminalSelectionRowShape> selectionRows;
 }
 
-final class NativeInteractionState {
-  const NativeInteractionState({
-    required this.terminalRevision,
-    required this.alternateScroll,
-    required this.mouseTracking,
-    required this.mouseProtocol,
-    required this.pointerMode,
-  });
-
-  final int terminalRevision;
-  final bool alternateScroll;
-  final int mouseTracking;
-  final int mouseProtocol;
-  final int pointerMode;
-
-  bool get mouseTrackingEnabled => mouseTracking != 0;
-}
+typedef NativeInteractionState = vt_native.Interaction;
 
 NativeInteractionState parseNativeInteractionState(Uint8List bytes) {
   if (bytes.length != nativeInteractionStateBytes) {
     throw const NativeHostException('interaction_state_size');
   }
-  final data = ByteData.sublistView(bytes);
-  final flags = data.getUint32(8, Endian.big);
-  final mouseTracking = data.getUint8(12);
-  final mouseProtocol = data.getUint8(13);
-  final pointerMode = data.getUint8(18);
-  if ((flags & ~0x1fff) != 0 ||
-      mouseTracking > 4 ||
-      mouseProtocol > 4 ||
-      pointerMode > 3 ||
-      data.getUint8(19) != 0) {
+  try {
+    return vt_native.decodeInteraction(bytes);
+  } on FormatException {
     throw const NativeHostException('interaction_state_layout');
   }
-  return NativeInteractionState(
-    terminalRevision: data.getUint64(0, Endian.big),
-    alternateScroll: (flags & (1 << 10)) != 0,
-    mouseTracking: mouseTracking,
-    mouseProtocol: mouseProtocol,
-    pointerMode: pointerMode,
-  );
 }
 
 final class NativeHostFrame {
@@ -837,7 +808,7 @@ ffi.DynamicLibrary _nativeHostLibrary() {
   final version = library.lookupFunction<_HostVersionNative, _HostVersionDart>(
     'howl_native_host_version',
   )();
-  if (version != 6) {
+  if (version != 7) {
     throw NativeHostException('native_host_version_$version');
   }
   return library;

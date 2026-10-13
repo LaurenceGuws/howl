@@ -15,7 +15,18 @@ pub fn build(b: *std.Build) void {
     native.addImport("howl_vt", module);
     native.addImport("vt_native_types", native_types.createModule());
     b.addNamedLazyPath("howl_vt_native_header", b.path("include/howl_vt_native.h"));
+    // Optional language-binding proof; ordinary Zig VT builds need no Dart SDK.
+    const dart_probe_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    dart_probe_root.addCSourceFile(.{ .file = b.path("test/native_dart_record.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    dart_probe_root.addIncludePath(b.path("include"));
+    const dart_probe = b.addExecutable(.{ .name = "howl-vt-dart-record", .root_module = dart_probe_root, .use_llvm = false, .use_lld = false });
+    const dart_proof = b.addSystemCommand(&.{ "dart", "run" });
+    dart_proof.addFileArg(b.path("test/native_dart.dart"));
+    dart_proof.addArtifactArg(dart_probe);
+    dart_proof.setCwd(b.path("."));
+    b.step("test:dart-native", "Qualify the owned Dart binding against an actual C record").dependOn(&dart_proof.step);
     const check = b.step("check", "Compile the VT module and every owned proof");
+    check.dependOn(&dart_probe.step);
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));

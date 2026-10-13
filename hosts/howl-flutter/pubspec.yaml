@@ -7,6 +7,8 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
+  howl_vt_native:
+    path: ../../mods/howl-vt/bindings/dart
   flutter:
     sdk: flutter
   ffi: ^2.1.4

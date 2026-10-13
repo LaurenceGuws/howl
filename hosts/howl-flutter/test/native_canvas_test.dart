@@ -393,28 +393,13 @@ void main() {
   }
 
   test('interaction state parser exposes canonical mouse routing modes', () {
-    final bytes = Uint8List.fromList(<int>[
-      0x01,
-      0x02,
-      0x03,
-      0x04,
-      0x05,
-      0x06,
-      0x07,
-      0x08,
-      0x00,
-      0x00,
-      0x1f,
-      0xfd,
-      0x04,
-      0x03,
-      0xff,
-      0x7f,
-      0x12,
-      0x34,
-      0x03,
-      0x00,
-    ]);
+    final bytes = Uint8List(nativeInteractionStateBytes);
+    final data = ByteData.sublistView(bytes);
+    data.setUint64(0, 0x0102030405060708, Endian.host);
+    data.setUint32(8, 3, Endian.host);
+    data.setUint8(12, 4);
+    data.setUint8(13, 3);
+    data.setUint8(14, 3);
     final state = parseNativeInteractionState(bytes);
     expect(state.terminalRevision, 0x0102030405060708);
     expect(state.alternateScroll, isTrue);
@@ -423,7 +408,7 @@ void main() {
     expect(state.mouseProtocol, 3);
     expect(state.pointerMode, 3);
 
-    final bad = Uint8List.fromList(bytes)..[19] = 1;
+    final bad = Uint8List.fromList(bytes)..[15] = 1;
     expect(
       () => parseNativeInteractionState(bad),
       throwsA(isA<NativeHostException>()),

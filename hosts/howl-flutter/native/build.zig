@@ -57,6 +57,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vt_native", instance.module("howl_vt_native"));
     root.addImport("test_fonts", instance.module("howl_text_test_fonts"));
     root.addImport("server_client", client);
+    root.addImport("server_client_native", client_dependency.module("server_client_native"));
     root.addImport("server_client_render", terminal);
 
     const object = b.addObject(.{

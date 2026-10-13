@@ -20,6 +20,8 @@ Flutter resource lease + batched Canvas backend
 
 Control is semantic. Flutter maps platform events to committed text, named/Unicode physical keys, focus, resize, signals, paste, and semantic mouse facts. Remote forwards them through `server-client.actions`; desktop Local uses the exact child-owned `howl_vt_native` input helpers before submitting canonical events to its private Instance worker. Flutter does not generate terminal escape sequences. The canonical VT alone decides whether a semantic key/mouse event is suppressed or encoded for the child.
 
+Interaction observations use VT's copied 16-byte native record for both Local and Remote. The SDK-only `howl_vt_native` Dart package owns its layout and validation; Flutter keeps its application binding and worker. Local selected text uses VT's complete-or-untouched projection. Private frame and image packets retain their existing formats. ABI 7 must be rebuilt with Dart; the version gate rejects an ABI 6 library before constructing a handle.
+
 ## Android
 
 The accepted Android client is currently **arm64 only**. Build the native host and Flutter APK through the checked-in wrapper. Flutter native-assets plugins may publish helper libraries for additional ABIs; app packaging explicitly excludes the non-arm64 DataStore helper slices and the wrapper independently rejects any APK whose final `lib/` ABI set is not exactly `arm64-v8a`:
@@ -133,7 +135,7 @@ cannot cancel the live terminal. Control close is out-of-band from its serialize
 command queue and therefore wakes an unanswered blocking request instead of
 waiting behind it. The v5 ABI replaces the former host-derived cancellation
 handle exports with `howl_native_interrupt_create/cancel/destroy`; Dart checks
-`howl_native_host_version == 6` before using the binding.
+`howl_native_host_version == 7` before using the binding.
 
 TCP live presentation permits one pending native observation while Flutter waits for
 `endOfFrame`. That pending result owns only copied bytes, including any refill

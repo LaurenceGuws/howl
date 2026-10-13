@@ -17,7 +17,8 @@ accepted:
 experimental:
   howl-vt-native: >-
     Optional howl_vt_native root owns versioned foreign input vocabulary, C and Odin
-    definitions, exact tag validation, caller-owned scalar/occupancy projection and
+    definitions, an SDK-only Dart interaction binding and actual C-to-Dart layout proof,
+    exact tag validation, caller-owned scalar/occupancy projection and
     bounded copied search/selection/link/row/interaction queries plus tagged exact-head
     request descriptors and complete-or-untouched payload copying.
     It imports canonical VT but no Instance, Server, codec or Render. The live VT

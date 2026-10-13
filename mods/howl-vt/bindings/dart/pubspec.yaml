@@ -1,0 +1,6 @@
+name: howl_vt_native
+description: VT-owned native ABI definitions and copied interaction facts.
+publish_to: none
+version: 0.1.0
+environment:
+  sdk: ^3.13.0
