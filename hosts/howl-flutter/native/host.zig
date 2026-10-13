@@ -1470,11 +1470,11 @@ fn projectObservation(raw: *anyopaque, observation: *const native_instance.Termi
     const hcr_len = writer.offset - hcr_start;
     if (writer.offset > render_packet_budget) return error.BufferTooSmall;
     for (0..view.rows) |row| {
-        const end = localRowContentEnd(&view, @intCast(row));
-        try writer.writeU16(end | (if (view.rowWrapped(@intCast(row))) @as(u16, 1) << 15 else 0));
+        const shape = vt_native.queries.rowShape(&view, @intCast(row)) catch return error.InvalidFrame;
+        try writer.writeU16(shape.content_end_exclusive | (if (shape.wrapped != 0) @as(u16, 1) << 15 else 0));
     }
     const semantic_start = writer.offset;
-    const semantic = try writeLocalVisibleText(&view, output[semantic_start .. semantic_start + semantic_capacity]);
+    const semantic = vt_native.queries.writeVisibleText(&view, output[semantic_start .. semantic_start + semantic_capacity]) catch return error.InvalidFrame;
     writer.offset += semantic.bytes_written;
     std.mem.writeInt(u32, output[8..12], @intCast(writer.offset), .little);
     std.mem.writeInt(u32, output[16..20], @intCast(hcr_len), .little);
@@ -1484,64 +1484,6 @@ fn projectObservation(raw: *anyopaque, observation: *const native_instance.Termi
         std.mem.writeInt(u32, output[20..24], flags | (1 << 6), .little);
     }
     return writer.offset;
-}
-
-fn localRowContentEnd(view: *const native_instance.Terminal.SemanticView, row: u16) u16 {
-    var column = view.cols;
-    while (column > 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row, column);
-        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-        const values = view.cellScalarsAt(row, column, &scalars);
-        if (cell.x != 0 or cell.y != 0 or values.len == 0 or values[0] == ' ') continue;
-        return @intCast(@min(@as(u32, view.cols), @as(u32, column) + @max(cell.width, 1)));
-    }
-    return 0;
-}
-
-fn localLastTextCell(view: *const native_instance.Terminal.SemanticView, row: u16) ?u16 {
-    var column = view.cols;
-    while (column > 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row, column);
-        var scalars: [native_instance.maximum_cell_scalars]u21 = undefined;
-        if (cell.x == 0 and cell.y == 0 and !cell.attrs.invisible and view.cellScalarsAt(row, column, &scalars).len != 0) return column;
-    }
-    return null;
-}
-
-fn writeLocalVisibleText(view: *const native_instance.Terminal.SemanticView, output: []u8) local.ProjectionError!struct { bytes_written: usize, truncated: bool } {
-    var last_row = view.rows;
-    while (last_row > 0 and localLastTextCell(view, last_row - 1) == null) last_row -= 1;
-    var used: usize = 0;
-    for (0..last_row) |row_index| {
-        const row: u16 = @intCast(row_index);
-        if (row > 0) {
-            if (used == output.len) return .{ .bytes_written = used, .truncated = true };
-            output[used] = '\n';
-            used += 1;
-        }
-        const last = localLastTextCell(view, row) orelse continue;
-        for (0..@as(usize, last) + 1) |column_index| {
-            const column: u16 = @intCast(column_index);
-            const cell = view.cellInfoAt(row, column);
-            if (cell.x != 0 or cell.y != 0) continue;
-            var storage: [native_instance.maximum_cell_scalars]u21 = undefined;
-            const scalars = view.cellScalarsAt(row, column, &storage);
-            if (cell.attrs.invisible or scalars.len == 0) {
-                if (used == output.len) return .{ .bytes_written = used, .truncated = true };
-                output[used] = ' ';
-                used += 1;
-            } else for (scalars) |scalar| {
-                var encoded: [4]u8 = undefined;
-                const count = std.unicode.utf8Encode(scalar, &encoded) catch return error.InvalidFrame;
-                if (count > output.len - used) return .{ .bytes_written = used, .truncated = true };
-                @memcpy(output[used..][0..count], encoded[0..count]);
-                used += count;
-            }
-        }
-    }
-    return .{ .bytes_written = used, .truncated = false };
 }
 
 fn receiveRich(
@@ -2580,4 +2522,25 @@ test "Flutter private command packets preserve legacy bytes and bounded write pr
     try std.testing.expectEqual(@as(usize, 1), writer.offset);
     try std.testing.expectEqual(@as(u8, 1), output[0]);
     for (output[1..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+}
+
+test "Flutter visible-text legacy golden preserves concealment, visual rows and scalar truncation" {
+    var value = try vt_native.Terminal.initWithHistory(std.testing.allocator, 5, 16, 6);
+    defer value.deinit();
+    try std.testing.expect((try value.feed("Á中\x1b[8mSECRET\x1b[0mB\r\n\r\nX")).stateChanged());
+    const view = value.semanticView(0);
+    const expected = "Á中      B\n\nX";
+    var output: [64]u8 = @splat(0xa5);
+    const full = try vt_native.queries.writeVisibleText(&view, &output);
+    try std.testing.expectEqualStrings(expected, output[0..full.bytes_written]);
+    try std.testing.expect(!full.truncated);
+    for (0..expected.len + 1) |capacity| {
+        @memset(&output, 0xa5);
+        const result = try vt_native.queries.writeVisibleText(&view, output[0..capacity]);
+        try std.testing.expectEqualSlices(u8, expected[0..result.bytes_written], output[0..result.bytes_written]);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(output[0..result.bytes_written]));
+        try std.testing.expectEqual(capacity < expected.len, result.truncated);
+        for (output[result.bytes_written..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    }
+    try std.testing.expectEqual(@as(u16, 10), (try vt_native.queries.rowShape(&view, 0)).content_end_exclusive);
 }

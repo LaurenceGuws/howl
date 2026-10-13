@@ -89,7 +89,7 @@ void main() {
     () async {
       final owner = NativeLocalInstance.create(
         shell: '/bin/sh',
-        command: "printf '\\033[31mRender!\\033[0m'; exec sleep 30",
+        command: "printf '\\033[31mRender!\\033[0m\\033[8msecret\\033[0m Z\\r\\n\\r\\nA\\314\\201中'; exec sleep 30",
         rows: 4,
         columns: 16,
         historyRows: 16,
@@ -116,6 +116,7 @@ void main() {
           interrupt: interrupt,
           localInstanceAddress: owner.address,
         );
+        const expectedVisible = 'Render!       Z\n\nÁ中';
         var revision = 0;
         final clock = Stopwatch()..start();
         while (clock.elapsed < const Duration(seconds: 3)) {
@@ -132,13 +133,18 @@ void main() {
             presentation,
           );
           revision = frame.metadata.revision;
-          if (frame.semanticText.contains('Render!')) {
+          if (frame.semanticText == expectedVisible) {
             copied = frame;
             break;
           }
         }
         expect(copied, isNotNull);
-        final canvas = copied!.canvas;
+        expect(copied!.semanticText, expectedVisible);
+        expect(copied.semanticTruncated, isFalse);
+        expect(copied.metadata.selectionRows[0].contentEndExclusive, 15);
+        expect(copied.metadata.selectionRows[1].contentEndExclusive, 0);
+        expect(copied.metadata.selectionRows[2].contentEndExclusive, 3);
+        final canvas = copied.canvas;
         expect(canvas.surfaceWidth, 160);
         expect(canvas.surfaceHeight, 80);
         expect(canvas.pixelCount, greaterThan(0));

@@ -484,16 +484,62 @@ pub fn copyHyperlink(observation: *const Terminal.Observation, history_offset: u
     @memcpy(output[0..uri.len], uri);
 }
 
+/// Copies one visual-row shape from a synchronous const viewport.
+/// Rejects an out-of-viewport row; no terminal or presentation storage is retained.
+pub fn rowShape(view: *const Terminal.SemanticView, row: u16) error{InvalidArgument}!c.hvt_row_shape {
+    if (row >= view.rows) return error.InvalidArgument;
+    const last = nativeLastContentColumn(view, row);
+    return .{ .content_end_exclusive = if (last) |column| @intCast(@min(@as(u32, view.cols), @as(u32, column) + 1)) else 0, .wrapped = @intFromBool(view.rowWrapped(row)) };
+}
+
 /// Copies canonical visual-row shapes; a capacity failure writes no records.
 pub fn copyRowShapes(observation: *const Terminal.Observation, history_offset: u32, output: []c.hvt_row_shape) Error!usize {
     const view = observation.semanticView(history_offset);
     if (view.rows > output.len) return error.BufferTooSmall;
-    for (0..view.rows) |index| {
-        const row: u16 = @intCast(index);
-        const last = nativeLastContentColumn(&view, row);
-        output[index] = .{ .content_end_exclusive = if (last) |column| @intCast(@min(@as(u32, view.cols), @as(u32, column) + 1)) else 0, .wrapped = @intFromBool(view.rowWrapped(row)) };
-    }
+    for (0..view.rows) |index| output[index] = try rowShape(&view, @intCast(index));
     return view.rows;
+}
+
+/// Caller-owned UTF-8 prefix and whether the complete viewport text fitted.
+pub const TextProjection = struct { bytes_written: usize, truncated: bool };
+
+/// Copies visible text without allocation or retaining observation storage.
+/// Untouched trailing blanks/rows are trimmed; printed spaces and visual row
+/// breaks (including soft wraps) remain. Concealed cells become interior blanks;
+/// multicell fragments do not repeat. Exhaustion stops at a UTF-8 scalar boundary,
+/// which may split a grapheme. Output beyond bytes_written is untouched.
+pub fn writeVisibleText(view: *const Terminal.SemanticView, output: []u8) error{InvalidScalar}!TextProjection {
+    var last_row = view.rows;
+    while (last_row > 0 and nativeLastSearchColumn(view, last_row - 1) == null) last_row -= 1;
+    var used: usize = 0;
+    for (0..last_row) |row_index| {
+        const row: u16 = @intCast(row_index);
+        if (row > 0) {
+            if (used == output.len) return .{ .bytes_written = used, .truncated = true };
+            output[used] = '\n';
+            used += 1;
+        }
+        const last = nativeLastSearchColumn(view, row) orelse continue;
+        for (0..@as(usize, last) + 1) |column_index| {
+            const column: u16 = @intCast(column_index);
+            const cell = view.cellInfoAt(row, column);
+            if (cell.x != 0 or cell.y != 0) continue;
+            var storage: [maximum_cell_scalars]u21 = undefined;
+            const scalars = view.cellScalarsAt(row, column, &storage);
+            if (cell.attrs.invisible or scalars.len == 0) {
+                if (used == output.len) return .{ .bytes_written = used, .truncated = true };
+                output[used] = ' ';
+                used += 1;
+            } else for (scalars) |scalar| {
+                var encoded: [4]u8 = undefined;
+                const count = std.unicode.utf8Encode(scalar, &encoded) catch return error.InvalidScalar;
+                if (count > output.len - used) return .{ .bytes_written = used, .truncated = true };
+                @memcpy(output[used..][0..count], encoded[0..count]);
+                used += count;
+            }
+        }
+    }
+    return .{ .bytes_written = used, .truncated = false };
 }
 
 /// Copies stable interaction tags field by field; no Zig enum layout is exported.
@@ -695,4 +741,63 @@ test "native forward and reverse origins preserve soft-wrapped wide-cell coordin
     try std.testing.expect(match.found == 1 and match.start_column == 3 and match.end_column == 3);
     try search(terminal.observation(), std.testing.allocator, "a", true, true, 0, 1, &match);
     try std.testing.expect(match.found == 1 and match.start_column == 0 and match.end_column == 0);
+}
+
+test "native visible text preserves printed spaces, concealment and scalar-bounded prefixes" {
+    const Fixture = struct { rows: u16, columns: u16, input: []const u8, expected: []const u8, changed: bool = true };
+    const cases = [_]Fixture{
+        .{ .rows = 5, .columns = 16, .input = "Á中\x1b[8mSECRET\x1b[0mB\r\n\r\nX", .expected = "Á中      B\n\nX" },
+        .{ .rows = 3, .columns = 4, .input = "ABCD E", .expected = "ABCD\n E" },
+        .{ .rows = 3, .columns = 8, .input = "A \r\n\x1b[8mhidden\x1b[0m", .expected = "A " },
+        .{ .rows = 2, .columns = 8, .input = "\x1b]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\x07abcde", .expected = "Hiabcd\ne" },
+        .{ .rows = 3, .columns = 8, .input = "\x1b[2J", .expected = "", .changed = false },
+    };
+    for (cases) |fixture| {
+        var value = try Terminal.init(std.testing.allocator, fixture.rows, fixture.columns);
+        defer value.deinit();
+        try std.testing.expectEqual(fixture.changed, (try value.feed(fixture.input)).stateChanged());
+        const view = value.semanticView(0);
+        const expected = fixture.expected;
+        var output: [64]u8 = @splat(0xa5);
+        for (0..expected.len + 1) |capacity| {
+            @memset(&output, 0xa5);
+            const result = try writeVisibleText(&view, output[0..capacity]);
+            var prefix: usize = 0;
+            while (prefix < expected.len) {
+                const count = try std.unicode.utf8ByteSequenceLength(expected[prefix]);
+                if (count > capacity - prefix) break;
+                prefix += count;
+            }
+            try std.testing.expectEqual(prefix, result.bytes_written);
+            try std.testing.expectEqual(prefix < expected.len, result.truncated);
+            try std.testing.expectEqualStrings(expected[0..prefix], output[0..result.bytes_written]);
+            try std.testing.expect(std.unicode.utf8ValidateSlice(output[0..result.bytes_written]));
+            for (output[result.bytes_written..]) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+        }
+        // The completed projection survives canonical mutation.
+        try std.testing.expect((try value.feed("\x1b[2JZ")).stateChanged());
+        try std.testing.expectEqualStrings(expected, output[0..expected.len]);
+    }
+}
+
+test "native viewport text and row shapes preserve history, alternate screen and row bounds" {
+    var value = try Terminal.initWithHistory(std.testing.allocator, 2, 8, 6);
+    defer value.deinit();
+    try std.testing.expect((try value.feed("one\r\ntwo\r\nthree")).stateChanged());
+    const history = value.semanticView(1);
+    const live = value.semanticView(0);
+    var output: [64]u8 = undefined;
+    var result = try writeVisibleText(&history, &output);
+    try std.testing.expectEqualStrings("one\ntwo", output[0..result.bytes_written]);
+    result = try writeVisibleText(&live, &output);
+    try std.testing.expectEqualStrings("two\nthree", output[0..result.bytes_written]);
+    const shape = try rowShape(&history, 0);
+    try std.testing.expectEqual(@as(u16, 3), shape.content_end_exclusive);
+    try std.testing.expectEqual(@as(u8, 0), shape.wrapped);
+    try std.testing.expectError(error.InvalidArgument, rowShape(&live, live.rows));
+    try std.testing.expect((try value.feed("\x1b[?1049hALT")).stateChanged());
+    const alternate = value.semanticView(6);
+    result = try writeVisibleText(&alternate, &output);
+    try std.testing.expectEqualStrings("ALT", output[0..result.bytes_written]);
+    try std.testing.expect(alternate.is_alternate_screen and alternate.history_offset == 0);
 }
