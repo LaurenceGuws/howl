@@ -180,3 +180,12 @@ test "root forwards the exact caller-driven byte client" {
     try std.testing.expect(byte.protocol == @import("server_protocol").terminal);
     try std.testing.expect(@typeInfo(byte.ByteClient) == .@"opaque");
 }
+
+extern fn howl_external_vt_abi() c_int;
+test "root forwards exact standalone VT artifact native owner and header" {
+    const native = @import("howl_vt_native");
+    try std.testing.expect(native.Terminal == vt.Terminal);
+    try std.testing.expect(@typeInfo(native.owner.Owner) == .@"opaque");
+    try std.testing.expect(@TypeOf(native.owner.observation) == fn (*const native.owner.Owner) *const vt.Terminal.Observation);
+    try std.testing.expectEqual(@as(c_int, 0), howl_external_vt_abi());
+}

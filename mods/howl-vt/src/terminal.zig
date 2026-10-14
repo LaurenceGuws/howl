@@ -3386,7 +3386,7 @@ fn applySemanticWithPressure(
 
 fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
     switch (event) {
-        .hard_reset => vt.hardReset(),
+        .hard_reset => vt.applyHardReset(),
         .soft_reset => return vt.softReset(),
         .save_cursor => return vt.saveCursor(),
         .restore_cursor => return vt.restoreCursor(),
@@ -6497,8 +6497,16 @@ pub const Terminal = struct {
     // Reset, savepoints, and terminal modes
     // -------------------------------------------------------------------------
 
-    /// Applies RIS while preserving dimensions and owned allocations.
+    /// Applies canonical RIS and advances semantic/content identity once.
+    /// History, pixels, queued replies and retained consequences remain owned.
     pub fn hardReset(self: *Terminal) void {
+        self.applyHardReset();
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+    }
+
+    // Parsed RIS uses the same state transition; feed completion owns its identity.
+    fn applyHardReset(self: *Terminal) void {
         self.requireNoPreparedResize();
         self.screen_state.reset();
         self.modes = .{};
@@ -7897,6 +7905,59 @@ comptime {
 // =============================================================================
 // Terminal owner proofs
 // =============================================================================
+
+test "direct and parsed RIS advance identity once while preserving retained work" {
+    const direct = try std.testing.allocator.create(Terminal);
+    defer std.testing.allocator.destroy(direct);
+    try Terminal.initWithHistoryInto(direct, std.testing.allocator, 2, 8, 4);
+    defer direct.deinit();
+    const parsed = try std.testing.allocator.create(Terminal);
+    defer std.testing.allocator.destroy(parsed);
+    try Terminal.initWithHistoryInto(parsed, std.testing.allocator, 2, 8, 4);
+    defer parsed.deinit();
+    for ([_]*Terminal{ direct, parsed }) |terminal| {
+        try terminal.setCellPixelSize(8, 16);
+        try std.testing.expect((try terminal.feed("one\r\ntwo\r\nthree")).stateChanged());
+    }
+    const retained = direct.semanticView(0);
+    try std.testing.expect(retained.history_count != 0);
+    const logical = direct.logicalOutputRange();
+    for ([_]*Terminal{ direct, parsed }) |terminal|
+        try std.testing.expect((try terminal.feed("\x1b[?2004h\x1b[?1049hALT\x1b[6n\x1b]52;c;?\x07")).stateChanged());
+    const semantic = direct.semanticSequence();
+    const content = direct.contentSequence();
+    try std.testing.expect(semantic == parsed.semanticSequence() and content == parsed.contentSequence());
+    const reply = try std.testing.allocator.dupe(u8, direct.replyBytes());
+    defer std.testing.allocator.free(reply);
+    try std.testing.expect(reply.len != 0 and direct.consequenceCount() == 1);
+    const request = direct.consequenceHead().?.id();
+    const pointer_reset = direct.pointerShapeResetSequence();
+    direct.hardReset();
+    try std.testing.expectEqual(semantic + 1, direct.semanticSequence());
+    try std.testing.expectEqual(content + 1, direct.contentSequence());
+    try std.testing.expect((try parsed.feed("\x1bc")).stateChanged());
+    try std.testing.expectEqual(semantic + 1, parsed.semanticSequence());
+    try std.testing.expectEqual(content + 1, parsed.contentSequence());
+    try std.testing.expectEqualDeep(direct.interactionState(), parsed.interactionState());
+    try std.testing.expectEqualDeep(direct.presentation(), parsed.presentation());
+    for ([_]*Terminal{ direct, parsed }) |terminal| {
+        const view = terminal.semanticView(0);
+        try std.testing.expect(!view.is_alternate_screen and view.rows == 2 and view.cols == 8);
+        try std.testing.expect(view.cursor_row == 0 and view.cursor_col == 0);
+        try std.testing.expect(view.history_count == retained.history_count and view.history_row_base == retained.history_row_base);
+        try std.testing.expectEqualDeep(logical, terminal.logicalOutputRange());
+        try std.testing.expectEqualDeep(Terminal.CellPixelSize{ .width = 8, .height = 16 }, terminal.cellPixelSize().?);
+        try std.testing.expectEqualSlices(u8, reply, terminal.replyBytes());
+        try std.testing.expect(terminal.consequenceHead().?.id() == request and terminal.consequenceCount() == 1);
+        try std.testing.expectEqual(pointer_reset + 1, terminal.pointerShapeResetSequence());
+        try terminal.consumeReplyBytes(1);
+        try std.testing.expectEqualSlices(u8, reply[1..], terminal.replyBytes());
+        try std.testing.expect(try terminal.replyClipboard(request, ""));
+        try std.testing.expect(terminal.consequenceCount() == 0);
+        try terminal.consumeReplyBytes(terminal.replyBytes().len);
+        try std.testing.expect(terminal.replyBytes().len == 0);
+    }
+}
 
 // Resize transaction proofs.
 

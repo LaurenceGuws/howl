@@ -78,6 +78,10 @@ pub fn build(b: *std.Build) void {
     // zig-audit: acknowledge panic
     // reason: Build configuration cannot recover from allocation failure.
     b.modules.put(b.allocator, "howl_vt_codec", vt.module("howl_vt_codec")) catch @panic("OOM");
+    // The optional standalone native contract is the exact VT-owned module.
+    // zig-audit: acknowledge panic
+    // reason: Build graph allocation failure is unrecoverable while forwarding the child-owned module.
+    b.modules.put(b.allocator, "howl_vt_native", vt.module("howl_vt_native")) catch @panic("OOM");
     b.step("simulate", "Run VT simulations").dependOn(childStep(vt, "simulate"));
     b.step("fuzz:terminal", "Run VT fuzz proofs").dependOn(childStep(vt, "fuzz"));
     b.step("benchmark:vt", "Run the VT benchmark").dependOn(childStep(vt, "benchmark"));

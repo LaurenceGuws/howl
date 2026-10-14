@@ -10,6 +10,8 @@ pub const Terminal = vt.Terminal;
 pub const queries = @import("native_queries.zig");
 /// Copied exact-head request facts, independent of transport framing.
 pub const requests = @import("native_requests.zig");
+/// Optional stable bare VT owner for caller-driven foreign embedding.
+pub const owner = @import("native_owner.zig");
 test {
     // zig-audit: acknowledge discard
     // reason: Include this optional root's sibling query proofs in the exact native-contract test artifact.
@@ -17,6 +19,9 @@ test {
     // zig-audit: acknowledge discard
     // reason: Include the optional request projection proofs in this exact native-contract test root.
     _ = requests;
+    // zig-audit: acknowledge discard
+    // reason: Include exact optional owner proofs without adding this owner to the live VT root.
+    _ = owner;
 }
 comptime {
     if (vt.scalar.maximum_scalars != c.HVT_MAXIMUM_CELL_SCALARS)
@@ -136,7 +141,7 @@ pub fn unicodeInput(scalar: u32, action: u8, mods: u8) Error!Terminal.InputEvent
 }
 /// Validates mouse metadata before any caller mutation.
 pub fn mouseInput(kind: u8, button: u8, mods: u8, buttons_down: u8, row: i32, column: u16, pixels_present: u8, pixel_x: u32, pixel_y: u32) Error!Terminal.InputEvent {
-    if (pixels_present > 1) return error.InvalidArgument;
+    if (pixels_present > 1 or buttons_down & 0xf8 != 0) return error.InvalidArgument;
     return .{ .mouse = .{ .kind = mouseKind(kind) orelse return error.InvalidArgument, .button = mouseButton(button) orelse return error.InvalidArgument, .row = row, .col = column, .pixel_x = if (pixels_present == 1) pixel_x else null, .pixel_y = if (pixels_present == 1) pixel_y else null, .mod = modifiers(mods), .buttons_down = buttons_down } };
 }
 /// Converts the native focus vocabulary.

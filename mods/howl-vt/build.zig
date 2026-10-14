@@ -15,6 +15,16 @@ pub fn build(b: *std.Build) void {
     native.addImport("howl_vt", module);
     native.addImport("vt_native_types", native_types.createModule());
     b.addNamedLazyPath("howl_vt_native_header", b.path("include/howl_vt_native.h"));
+    const abi_root = b.createModule(.{
+        .root_source_file = b.path("src/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    abi_root.addImport("howl_vt_native", native);
+    const abi = b.addLibrary(.{ .name = "howl_vt_native", .linkage = .static, .root_module = abi_root, .use_llvm = false, .use_lld = false });
+    abi.installHeader(b.path("include/howl_vt_native.h"), "howl_vt_native.h");
+    b.installArtifact(abi);
     // Optional language-binding proof; ordinary Zig VT builds need no Dart SDK.
     const dart_probe_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     dart_probe_root.addCSourceFile(.{ .file = b.path("test/native_dart_record.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
@@ -27,6 +37,7 @@ pub fn build(b: *std.Build) void {
     b.step("test:dart-native", "Qualify the owned Dart binding against an actual C record").dependOn(&dart_proof.step);
     const check = b.step("check", "Compile the VT module and every owned proof");
     check.dependOn(&dart_probe.step);
+    check.dependOn(&abi.step);
     const audit = b.step("audit", "Audit every owned Zig source file");
     const zig_audit = b.addSystemCommand(&.{ "zig-audit", "check" });
     zig_audit.setCwd(b.path("."));
@@ -34,11 +45,29 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     const test_step = b.step("test", "Run every owned VT proof");
 
+    const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    foreign_root.linkLibrary(abi);
+    foreign_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    foreign_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
+    const foreign = b.addExecutable(.{ .name = "howl-vt-foreign", .root_module = foreign_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&foreign.step);
+    const foreign_run = b.addRunArtifact(foreign);
+    test_step.dependOn(&foreign_run.step);
+    b.step("test:foreign", "Run the standalone C/C++ VT owner proof").dependOn(&foreign_run.step);
+
     const native_proofs = b.addTest(.{ .name = "howl-vt-native-contract", .root_module = native, .use_llvm = false, .use_lld = false });
     check.dependOn(&native_proofs.step);
     const native_run = b.addRunArtifact(native_proofs);
     test_step.dependOn(&native_run.step);
-    b.step("test:native", "Run the VT-owned native contract proofs").dependOn(&native_run.step);
+    const native_step = b.step("test:native", "Run the VT-owned native contract proofs");
+    native_step.dependOn(&native_run.step);
+    const owner_root = b.createModule(.{ .root_source_file = b.path("test/native_owner.zig"), .target = target, .optimize = optimize });
+    owner_root.addImport("howl_vt_native", native);
+    const owner_tests = b.addTest(.{ .name = "howl-vt-native-owner", .root_module = owner_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&owner_tests.step);
+    const owner_run = b.addRunArtifact(owner_tests);
+    test_step.dependOn(&owner_run.step);
+    native_step.dependOn(&owner_run.step);
 
     // Optional observation encoding is never imported by the live VT root.
     const codec = b.addModule("howl_vt_codec", .{
@@ -107,6 +136,7 @@ pub fn build(b: *std.Build) void {
     const run_unit = b.addRunArtifact(unit);
     run_unit.addPassthruArgs();
     test_step.dependOn(&run_unit.step);
+    b.step("test:terminal", "Run canonical VT unit proofs").dependOn(&run_unit.step);
 
     const embedding_module = b.createModule(.{
         .root_source_file = b.path("test/native_embedding.zig"),

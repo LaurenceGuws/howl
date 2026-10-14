@@ -1,0 +1,56 @@
+#include "howl_vt_native.h"
+#include <string.h>
+int howl_external_vt_abi(void) {
+    hvt_terminal *value=NULL;
+    hvt_config config={2,8,0,0,0,0};
+    hvt_state state={0};
+    hvt_feed_progress progress={0};
+    hvt_animation animation={0};
+    hvt_cell cell={0};
+    hvt_search_match match={0};
+    hvt_selection_range range={0};
+    hvt_interaction interaction={0};
+    hvt_request request={0};
+    size_t count=99;
+    if (hvt_abi_version()!=HVT_NATIVE_VERSION) return 1;
+    if (hvt_create(0,&config,&value)!=HVT_VERSION_MISMATCH || value) return 2;
+    if (hvt_observe(NULL,0,&state)!=HVT_INVALID_ARGUMENT || state.rows) return 3;
+    if (hvt_feed(NULL,NULL,0,0,&progress)!=HVT_INVALID_ARGUMENT || progress.consumed) return 4;
+    if (hvt_resize(NULL,1,1,0,0)!=HVT_INVALID_ARGUMENT || hvt_reset(NULL)!=HVT_INVALID_ARGUMENT) return 5;
+    if (hvt_service_animations(NULL,0,&animation)!=HVT_INVALID_ARGUMENT || animation.changed) return 6;
+    if (hvt_encode_named_key(NULL,0,0,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 7;
+    count=99;
+    if (hvt_encode_unicode_key(NULL,0,0,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 8;
+    count=99;
+    if (hvt_encode_mouse(NULL,0,0,0,0,0,0,0,0,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 9;
+    count=99;
+    if (hvt_encode_focus(NULL,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 10;
+    count=99;
+    if (hvt_encode_paste(NULL,NULL,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 11;
+    count=99;
+    if (hvt_copy_replies(NULL,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count || hvt_consume_replies(NULL,0)!=HVT_INVALID_ARGUMENT) return 12;
+    if (hvt_copy_cell(NULL,0,0,0,&cell)!=HVT_INVALID_ARGUMENT || cell.scalar_count) return 13;
+    if (hvt_search(NULL,NULL,0,0,0,0,0,&match)!=HVT_INVALID_ARGUMENT || match.found) return 14;
+    if (hvt_expand_selection(NULL,0,0,0,0,0,0,&range)!=HVT_INVALID_ARGUMENT || range.found) return 15;
+    count=99;
+    if (hvt_copy_selection(NULL,0,0,0,0,0,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 16;
+    count=99;
+    if (hvt_copy_hyperlink(NULL,0,0,0,0,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 17;
+    count=99;
+    if (hvt_copy_row_shapes(NULL,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count) return 18;
+    if (hvt_get_interaction(NULL,&interaction)!=HVT_INVALID_ARGUMENT || interaction.terminal_revision) return 19;
+    if (hvt_request_head(NULL,&request)!=HVT_INVALID_ARGUMENT || request.kind) return 20;
+    count=99;
+    if (hvt_copy_request_payload(NULL,0,NULL,0,&count)!=HVT_INVALID_ARGUMENT || count || hvt_consume_request(NULL,0)!=HVT_INVALID_ARGUMENT) return 21;
+    if (hvt_reply_clipboard(NULL,0,NULL,0)!=HVT_INVALID_ARGUMENT || hvt_reply_pointer_shape(NULL,0,NULL,0)!=HVT_INVALID_ARGUMENT) return 22;
+    if (hvt_reply_color_preference(NULL,0,0)!=HVT_INVALID_ARGUMENT || hvt_reply_container_state(NULL,0,0)!=HVT_INVALID_ARGUMENT) return 23;
+    if (hvt_reply_container_position(NULL,0,0,0)!=HVT_INVALID_ARGUMENT || hvt_reply_container_screen_cells(NULL,0,0,0)!=HVT_INVALID_ARGUMENT) return 24;
+    if (hvt_reply_container_icon_title(NULL,0,NULL,0)!=HVT_INVALID_ARGUMENT || hvt_decline_container(NULL,0)!=HVT_INVALID_ARGUMENT) return 25;
+    if (hvt_create(HVT_NATIVE_VERSION,&config,&value)!=HVT_OK || !value) return 26;
+    const uint32_t result=hvt_feed(value,(const uint8_t *)"E",1,1,&progress);
+    const uint32_t copied=hvt_copy_cell(value,0,0,0,&cell);
+    hvt_release(&value);
+    hvt_release(&value);
+    hvt_release(NULL);
+    return result==HVT_OK && copied==HVT_OK && progress.consumed==1 && cell.scalar_count==1 && cell.scalars[0]=='E' && !value ? 0 : 27;
+}

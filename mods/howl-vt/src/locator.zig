@@ -175,7 +175,7 @@ pub const State = struct {
         const text = std.fmt.bufPrint(
             encode_buf,
             "{d};{d};{d};{d};0&w",
-            .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
+            .{ event_code, button_mask, @as(u64, coords.row) + 1, @as(u64, coords.col) + 1 },
             // zig-audit: acknowledge catch_unreachable
             // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         ) catch unreachable;
@@ -236,6 +236,20 @@ test "locator emits exact cell and pixel reports" {
     state.setReporting(1, 1);
     try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 4, 5, 1, 9, 11));
     try std.testing.expectEqualStrings("\x1b[2;4;12;10;0&w", output.bytes());
+}
+
+test "locator one-based pixel reports preserve the full u32 coordinate domain" {
+    var state: State = .{};
+    state.setReporting(1, 1);
+    state.setEvents(&.{1});
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
+    var scratch: [report_max_bytes]u8 = undefined;
+    try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 2, 3, 1, std.math.maxInt(u32), std.math.maxInt(u32)));
+    try std.testing.expectEqualStrings("\x1b[2;4;4294967296;4294967296;0&w", output.bytes());
+    output.truncate(0);
+    try state.handleMouseEvent(&output, &scratch, mouse(.press, .left, 2, 3, 1, std.math.maxInt(u32) - 1, std.math.maxInt(u32) - 1));
+    try std.testing.expectEqualStrings("\x1b[2;4;4294967295;4294967295;0&w", output.bytes());
 }
 
 test "locator filter resolves omitted edges and preserves its valid latch" {

@@ -76,6 +76,12 @@ Disconnect leaves the Instance alive; explicit close ends it. No Server-side byt
 Transport reachability, authentication, discovery, public routing and service
 supervision remain outside Howl.
 
+The optional [standalone VT native contract](mods/howl-vt/native.md) publishes
+the exact `howl_vt_native` static artifact and header. Foreign callers construct
+a bare VT, feed their own bytes, encode semantic input, copy queries and explicitly
+service replies and retained requests. Transport, time, scheduling and platform
+policy belong to the embedder.
+
 ## Native clients
 
 `server-client` owns native Server control and terminal-interaction clients.
@@ -225,7 +231,8 @@ root.addImport("howl_text", howl.module("howl_text"));
 
 Public modules include Server control/terminal services and protocols, server_client,
 Vulkan and Wayland. Instance exports only its direct canonical APIs. Native binaries,
-bridge libraries/objects, the optional `howl_server_client` C client library/header,
+bridge libraries/objects, the optional `howl_vt_native` terminal and
+`howl_server_client` client C libraries/headers,
 and Web Wasm artifacts are available through
 `howl.artifact(name)`. Importing a module does not link unrelated public modules.
 The shared renderer consumes direct VT observation. Transported-client source

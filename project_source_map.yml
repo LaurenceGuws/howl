@@ -21,9 +21,15 @@ experimental:
     exact tag validation, caller-owned scalar/occupancy projection and
     bounded copied search/selection/link/row/interaction queries, allocation-free
     const-viewport visible-text projection and per-row shapes, plus tagged exact-head
-    request descriptors and complete-or-untouched payload copying.
-    It imports canonical VT but no Instance, Server, codec or Render. The live VT
-    root never imports the native root.
+    request descriptors and complete-or-untouched payload copying. The optional
+    howl_vt_native static artifact/owned header expose a stable opaque bare VT,
+    caller-driven boundary feed, copied observations, preflighted input encoding,
+    explicit reply transfer, typed retained-request service, atomic geometry,
+    canonical RIS and caller-clocked animation. The native owner uses an injected
+    allocator; only the C export root selects libc. It imports canonical VT but no
+    Instance, Server, codec, Render or process/runtime owner. The live VT root
+    never imports native ownership. Direct and parsed RIS share one raw transition
+    and each advances canonical identity exactly once.
   howl-instance-native: >-
     Optional howl_instance_native shared artifact and owned aggregate C header
     expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,

@@ -202,6 +202,57 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
 
 PYCORE
 
+# The live VT and optional native owner are separate dependency capabilities.
+python3 - <<'PYVTNATIVE' || status=1
+from pathlib import Path
+import re
+
+root = Path("mods/howl-vt/src").resolve()
+def imports(path):
+    return re.findall(r'@import\(\s*"([^"\n]+)"\s*\)', path.read_text())
+def relative(path, name):
+    target = (path.parent / name).resolve()
+    if not target.is_relative_to(root):
+        raise SystemExit(f"{path}: VT import escapes its source owner")
+    return target
+
+pending = [root / "howl_vt.zig"]
+seen = set()
+while pending:
+    path = pending.pop()
+    if path in seen:
+        continue
+    seen.add(path)
+    if path.name.startswith("native") or path.name == "abi.zig":
+        raise SystemExit(f"{path}: live VT imports optional native ownership")
+    for name in imports(path):
+        if name.endswith(".zig"):
+            pending.append(relative(path, name))
+        elif name not in ("std", "builtin", "vt_clipboard_grammar"):
+            raise SystemExit(f"{path}: live VT imports noncanonical module {name}")
+
+pending = [root / "native.zig", root / "abi.zig"]
+seen = set()
+while pending:
+    path = pending.pop()
+    if path in seen:
+        continue
+    seen.add(path)
+    source = path.read_text()
+    if re.search(r'\bstd\.(?:process|posix|Io)\b', source):
+        raise SystemExit(f"{path}: native VT imports process or I/O runtime ownership")
+    if path.name != "abi.zig" and "std.heap.c_allocator" in source:
+        raise SystemExit(f"{path}: native helper acquires ABI libc allocator")
+    for name in imports(path):
+        if name.endswith(".zig"):
+            target = relative(path, name)
+            if not target.name.startswith("native"):
+                raise SystemExit(f"{path}: native VT bypasses curated live/public or codec boundary")
+            pending.append(target)
+        elif name not in ("std", "builtin", "howl_vt", "vt_native_types", "howl_vt_native"):
+            raise SystemExit(f"{path}: native VT imports noncanonical module {name}")
+PYVTNATIVE
+
 # Server clients consume communications; process/Instance owners are test fixtures.
 python3 - <<'PYCLIENT' || status=1
 from pathlib import Path

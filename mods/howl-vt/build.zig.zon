@@ -17,6 +17,7 @@
         "simulation_main.zig",
         "benchmark",
         "design.md",
+        "native.md",
         "examples",
     },
 }

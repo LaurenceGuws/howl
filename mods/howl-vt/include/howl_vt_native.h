@@ -1,6 +1,7 @@
 #ifndef HOWL_VT_NATIVE_H
 #define HOWL_VT_NATIVE_H
 #include <stdint.h>
+#include <stddef.h>
 /* VT-owned native vocabulary, independent of Server framing and Zig enum layout.
  * Version 1. Fixed-width values; unknown tags are rejected before terminal mutation. */
 #define HVT_NATIVE_VERSION 1u
@@ -169,4 +170,162 @@ typedef struct hvt_request {
     uint8_t kind, reply_required; uint16_t _reserved;
     hvt_request_data data;
 } hvt_request;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Standalone VT native owner contract.
+ * Callers supply valid aligned storage for every advertised logical extent.
+ * Fixed results/counts and owner slots must be disjoint from other argument storage.
+ * Length/ceiling, address-addition and required-capacity admission precedes slices.
+ * Null byte pointers are allowed only for zero logical input/copy extents.
+ * All reserved input fields must be zero; every reserved output is zero.
+ * Buffers remain untouched on failure; only fixed records/counts are initialized. */
+#define HVT_MAX_SCREEN_CELLS 1048576u
+#define HVT_MAX_INPUT_BYTES 65536u
+#define HVT_INPUT_BUFFER_BYTES 512u
+#define HVT_PASTE_EXTRA_BYTES 12u
+#define HVT_MAX_COPY_BYTES 1048576u
+enum hvt_status {
+    HVT_OK=0, HVT_INVALID_ARGUMENT=1, HVT_VERSION_MISMATCH=2,
+    HVT_OUT_OF_MEMORY=3, HVT_RESOURCE_LIMIT=4, HVT_BUFFER_TOO_SMALL=5,
+    HVT_STALE_REQUEST=6, HVT_REPLY_REQUIRED=7, HVT_CONTEXT_CHANGED=8,
+    HVT_REQUEST_MISMATCH=9, HVT_INTERNAL=10 /* reserved; not a canonical error catch-all */
+};
+enum hvt_mutation {
+    HVT_MUTATION_CURSOR=1, HVT_MUTATION_TEXT=2, HVT_MUTATION_VIEWPORT=4,
+    HVT_MUTATION_IMAGES=8, HVT_MUTATION_MODE=16, HVT_MUTATION_TITLE=32,
+    HVT_MUTATION_ICON=64, HVT_MUTATION_HISTORY_LOSS=128
+};
+typedef struct hvt_terminal hvt_terminal;
+typedef struct hvt_config {
+    uint16_t rows, columns, history_rows, reserved;
+    uint32_t cell_width, cell_height;
+} hvt_config;
+typedef struct hvt_state {
+    uint64_t terminal_revision, content_revision;
+    uint32_t history_row_base, history_count, history_offset, cell_width, cell_height;
+    uint16_t rows, columns, cursor_row, cursor_column;
+    uint8_t alternate_screen, cursor_visible, synchronized_output, reserved;
+} hvt_state;
+typedef struct hvt_feed_progress {
+    uint64_t terminal_revision, content_revision;
+    size_t consumed;
+    uint32_t mutations;
+    uint8_t synchronized_ended, trailing_effect, held, reserved;
+} hvt_feed_progress;
+typedef struct hvt_animation {
+    uint32_t next_ms;
+    uint8_t changed, deadline_present, reserved[2];
+} hvt_animation;
+
+/* One serialized caller per owner; no thread, transport, process, scheduler or clock.
+ * All fixed outputs/counts are initialized before later validation.
+ * Buffers/records are caller-owned copies; no terminal observation borrow crosses C.
+ * Copying a handle creates no owner. Release once after all calls finish.
+ * Constructor requires a null slot and publishes only complete state.
+ * Rows/columns nonzero, rows*columns<=MAX_SCREEN_CELLS, config reserved=0.
+ * Create cell dimensions are both zero (initially unknown) or both nonzero.
+ * Release accepts both NULL slot pointer and NULL contained owner as no-ops. */
+uint32_t hvt_abi_version(void);
+uint32_t hvt_create(uint32_t version, const hvt_config *, hvt_terminal **out);
+void hvt_release(hvt_terminal **);
+uint32_t hvt_observe(const hvt_terminal *, uint32_t history_offset, hvt_state *);
+/* Feed exactly one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
+ * On OK, consumed is exact (positive for nonempty input); continue at that offset.
+ * Replies, retained requests and synchronized release may end the prefix.
+ * Time is caller-supplied monotonic nanoseconds.
+ * On failure progress is zero/invalid and a prefix MAY ALREADY HAVE MUTATED VT.
+ * Never blindly replay the failed input. Caller chooses observation, draining,
+ * explicit reset or destruction; this ABI does not guess consumed or auto-recover. */
+uint32_t hvt_feed(hvt_terminal *, const uint8_t *, size_t length,
+    uint64_t timestamp_ns, hvt_feed_progress *);
+/* Resize is atomic on failure; history capacity is fixed by construction.
+ * A zero cell pair preserves current known-or-unknown pixels. A nonzero pair
+ * replaces pixels atomically with topology/replies; mixed zero pair is invalid. */
+uint32_t hvt_resize(hvt_terminal *, uint16_t rows, uint16_t columns,
+    uint32_t cell_width, uint32_t cell_height);
+/* Apply canonical RIS and advance semantic/content identity exactly once.
+ * Preserve dimensions, retained history, cell pixels and allocations, previously
+ * queued reply bytes and retained requests. This is not constructor state or
+ * a fresh byte stream; caller still services retained work explicitly. */
+uint32_t hvt_reset(hvt_terminal *);
+uint32_t hvt_service_animations(hvt_terminal *, uint64_t timestamp_ns, hvt_animation *);
+
+/* Preflight capacity before encoding, including stateful locator/mouse effects.
+ * Key/mouse/focus require INPUT_BUFFER_BYTES; paste requires length+PASTE_EXTRA_BYTES,
+ * even when current mode needs fewer bytes. These are capacity bounds, not size queries.
+ * Success writes only actual bytes. Failure writes no bytes and written=0.
+ * Tags/booleans must be defined. buttons_down bits 0/1/2 mean left/middle/right;
+ * bits 3..7 are invalid. Every modifier bit is defined. When pixels_present=0,
+ * pixel_x/y are ignored. Paste input and required output prefix must be disjoint.
+ * Canonical locator allocation/reply failure may retain latest pointer facts;
+ * facade capacity/metadata rejection occurs before that operation.
+ * No pointer into input/output is retained. Plain committed bytes need no encoding. */
+uint32_t hvt_encode_named_key(hvt_terminal *, uint8_t key, uint8_t action, uint8_t mods,
+    uint8_t *out, size_t capacity, size_t *written);
+uint32_t hvt_encode_unicode_key(hvt_terminal *, uint32_t scalar, uint8_t action, uint8_t mods,
+    uint8_t *out, size_t capacity, size_t *written);
+uint32_t hvt_encode_mouse(hvt_terminal *, uint8_t kind, uint8_t button, uint8_t mods,
+    uint8_t buttons_down, int32_t row, uint16_t column, uint8_t pixels_present,
+    uint32_t pixel_x, uint32_t pixel_y, uint8_t *out, size_t capacity, size_t *written);
+uint32_t hvt_encode_focus(hvt_terminal *, uint8_t focus, uint8_t *out,
+    size_t capacity, size_t *written);
+uint32_t hvt_encode_paste(hvt_terminal *, const uint8_t *, size_t length,
+    uint8_t *out, size_t capacity, size_t *written);
+
+/* Complete-or-untouched reply copy reports exact required bytes.
+ * Explicit consume advances only the prefix successfully written externally.
+ * Invalid consume count preserves queue; count zero is a no-op. */
+uint32_t hvt_copy_replies(const hvt_terminal *, uint8_t *, size_t capacity, size_t *required);
+uint32_t hvt_consume_replies(hvt_terminal *, size_t count);
+
+/* Native copied VT queries; snapshots are synchronous copies, not a C view owner.
+ * Search follows native VT bounded retained-history semantics; exact row-local
+ * UTF-8 matching excludes concealed content, never joins soft wraps.
+ * Search result complete/cut_revision/scanned_snapshots retain existing VT semantics.
+ * Selection/link coordinates are stable with explicit columns/bank context.
+ * All one-byte boolean input parameters are strictly 0 or 1. Byte copy capacities<=MAX_COPY_BYTES.
+ * Selection shortage writes nothing, written=0; exact required length is not promised.
+ * Hyperlink reports exact required bytes; no link is required=0.
+ * Row-shape shortage writes nothing and reports exact required rows;
+ * oversized arrays write only the advertised rows, preserving trailing storage.
+ * Copied records/bytes survive all later terminal mutation and destruction. */
+uint32_t hvt_copy_cell(const hvt_terminal *, uint32_t history_offset,
+    uint16_t row, uint16_t column, hvt_cell *);
+uint32_t hvt_search(const hvt_terminal *, const uint8_t *, size_t length,
+    uint8_t reverse, uint8_t origin_present, int32_t row, uint16_t column, hvt_search_match *);
+uint32_t hvt_expand_selection(const hvt_terminal *, uint8_t kind, uint32_t history_offset,
+    int32_t row, uint16_t column, uint16_t expected_columns, uint8_t alternate, hvt_selection_range *);
+uint32_t hvt_copy_selection(const hvt_terminal *, int32_t start_row, uint16_t start_column,
+    int32_t end_row, uint16_t end_column, uint16_t expected_columns, uint8_t alternate,
+    uint8_t *, size_t capacity, size_t *written);
+uint32_t hvt_copy_hyperlink(const hvt_terminal *, uint32_t history_offset,
+    int32_t row, uint16_t column, uint16_t expected_columns, uint8_t alternate,
+    uint8_t *, size_t capacity, size_t *required);
+uint32_t hvt_copy_row_shapes(const hvt_terminal *, uint32_t history_offset,
+    hvt_row_shape *, size_t capacity, size_t *required);
+uint32_t hvt_get_interaction(const hvt_terminal *, hvt_interaction *);
+
+/* Exact FIFO-head request access and canonical named replies. No implicit host policy.
+ * Reply bodies<=MAX_INPUT_BYTES; canonical reply/pointer/title limits also apply.
+ * Payload copy is complete-or-untouched with exact required<=MAX_REQUEST_PAYLOAD_BYTES.
+ * IDs are scoped to one terminal lifetime; stale/type/required-reply rejection preserves head.
+ * Pointer query_requested remains distinct from canonical reply_required. */
+uint32_t hvt_request_head(const hvt_terminal *, hvt_request *);
+uint32_t hvt_copy_request_payload(const hvt_terminal *, uint64_t id,
+    uint8_t *, size_t capacity, size_t *required);
+uint32_t hvt_consume_request(hvt_terminal *, uint64_t id);
+uint32_t hvt_reply_clipboard(hvt_terminal *, uint64_t id, const uint8_t *, size_t length);
+uint32_t hvt_reply_pointer_shape(hvt_terminal *, uint64_t id, const uint8_t *, size_t length);
+uint32_t hvt_reply_color_preference(hvt_terminal *, uint64_t id, uint8_t preference);
+uint32_t hvt_reply_container_state(hvt_terminal *, uint64_t id, uint8_t state);
+uint32_t hvt_reply_container_position(hvt_terminal *, uint64_t id, uint32_t x, uint32_t y);
+uint32_t hvt_reply_container_screen_cells(hvt_terminal *, uint64_t id, uint32_t rows, uint32_t columns);
+uint32_t hvt_reply_container_icon_title(hvt_terminal *, uint64_t id, const uint8_t *, size_t length);
+uint32_t hvt_decline_container(hvt_terminal *, uint64_t id);
+
+#ifdef __cplusplus
+}
+#endif
 #endif
