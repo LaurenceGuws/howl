@@ -109,9 +109,13 @@ narrower WebKit/PWA platform canary. Neither browser is allowed to redefine term
 Server ownership.
 
 
-The live v4 binary command lane consumes Render-owned native command projection
-through the exact Server-forwarded `server_client_render_native` module. Web still
-packs its own 64-byte record field by field: its layout differs from Render's
-64-byte C record. Browser memory lanes, JSON envelope, format negotiation, resource
-acknowledgement and UI remain host responsibilities. Legacy v2/v3 JSON command
-adapters remain unchanged and are the next staged ownership cut.
+All live command formats consume Render-owned native command projection through
+the exact Server-forwarded `server_client_render_native` module. Web retains v2
+object JSON, v3 positional JSON and its v4 binary packing. The v4 record is packed
+field by field: its 64-byte layout differs from Render's 64-byte C record. One
+native record on the stack supplies each command; no additional command array,
+allocation or C call is introduced. Browser memory lanes, envelope formatting,
+format negotiation, resource acknowledgement and UI remain host responsibilities.
+Actual prior-Wasm v2/v3 JSON bytes, including text/cursor and external images, are
+preserved. This is Node/Wasm contract qualification; browser/device deployment is
+separate.

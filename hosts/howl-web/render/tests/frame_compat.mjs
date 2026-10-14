@@ -61,6 +61,25 @@ assert.equal(v3.schema, FRAME_SCHEMA_V3);
 const widths = new Map([[0, CommandV3Length.solid], [1, CommandV3Length.alpha], [2, CommandV3Length.rgba]]);
 assert.ok(v3.commands.length > 0);
 for (const command of v3.commands) assert.equal(command.length, widths.get(command[0]));
+// Both JSON vocabularies project the same complete owner commands.
+assert.equal(v2.commands.length, v3.commands.length);
+for (const field of ['render','observation','terminal','surface','cell','selection_rows','uploads','removals','pixels','residency']) {
+  assert.deepEqual(v2[field], v3[field], field);
+}
+assert.ok(v3.commands.some(command => command[0] === 0));
+assert.ok(v3.commands.some(command => command[0] === 1 && command[22] === 0));
+assert.ok(v3.commands.some(command => command[0] === 1 && command[22] === 1));
+for (const [index, command] of v3.commands.entries()) {
+  const kind = command[0];
+  let expected;
+  if (kind === 0) expected = {k:0,r:command.slice(1,5),color:command.slice(5,9)};
+  else {
+    expected = {k:kind,d:command.slice(1,5),c:command.slice(5,9),q:command.slice(9,11),
+      f:command[11],z:command.slice(12,14),s:command.slice(14,18)};
+    if (kind === 1) Object.assign(expected,{color:command.slice(18,22),cc:command[22] !== 0});
+  }
+  assert.deepEqual(v2.commands[index], expected, 'v2/v3 command '+index);
+}
 assert.equal(previous.w.rv_ack(), 1);
 assert.equal(previous.w.rv_reset(), 1);
 assert.equal(previous.w.rv_frame_format(), 3, 'presentation reset preserves the negotiated v3 vocabulary');
@@ -160,6 +179,6 @@ assert.equal(mismatchResets, 1, 'schema mismatch must clear a staged renderer fr
 
 console.log(JSON.stringify({
   status:'pass', legacyDefaultV2:true, previousHostV3:true, currentHostV4:true,
-  v3V4CommandsEquivalent:true, resetPreservesV3:true, resetPreservesV4:true,
+  v2V3CommandsEquivalent:true, v3V4CommandsEquivalent:true, resetPreservesV3:true, resetPreservesV4:true,
   losslessU64Lease:true, oldRendererRejectedBeforeRender:true, mismatchResets:true,
 }));

@@ -24,7 +24,7 @@ const residency_capacity = maximum_terminal_images + 1;
 comptime {
     if (render_native.c.HRC_NATIVE_VERSION != 1 or @sizeOf(render_native.CommandInfo) != 64 or
         render_native.c.HRC_SOLID != 0 or render_native.c.HRC_ALPHA_MASK != 1 or render_native.c.HRC_RGBA != 2)
-        @compileError("Web v4 packing requires the reviewed Render native vocabulary");
+        @compileError("Web frame packing requires the reviewed Render native vocabulary");
     if (maximum_terminal_images != 7)
         @compileError("Web terminal image bound drifted from the portable client contract");
     if (command_wire_bytes >= metadata_capacity)
@@ -571,42 +571,45 @@ fn writeFrameV2(
     try writer.writeAll("],\"commands\":[");
     for (frame.commands, 0..) |command, index| {
         if (index != 0) try writer.writeByte(',');
-        switch (command) {
-            .solid => |value| {
+        var info: render_native.CommandInfo = undefined;
+        render_native.commandInfo(command, &info);
+        switch (info.tag) {
+            render_native.c.HRC_SOLID => {
                 try writer.writeAll("{\"k\":0,\"r\":");
-                try writeRect(&writer, value.rect);
+                try writeRect(
+                    &writer,
+                    info.destination_x,
+                    info.destination_y,
+                    info.destination_width,
+                    info.destination_height,
+                );
                 try writer.writeAll(",\"color\":");
-                try writeColor(&writer, value.color);
+                try writeColor(&writer, info.color_rgba);
                 try writer.writeByte('}');
             },
-            .alpha_mask => |value| {
-                try writer.writeAll("{\"k\":1,\"d\":");
-                try writeRect(&writer, value.destination);
+            render_native.c.HRC_ALPHA_MASK, render_native.c.HRC_RGBA => {
+                try writer.print("{{\"k\":{d},\"d\":", .{info.tag});
+                try writeRect(
+                    &writer,
+                    info.destination_x,
+                    info.destination_y,
+                    info.destination_width,
+                    info.destination_height,
+                );
                 try writer.writeAll(",\"c\":");
-                try writeRect(&writer, value.clip);
-                try writer.writeAll(",\"q\":");
-                try writeQualified(&writer, value.resource.resource);
-                try writer.print(",\"f\":{d},\"z\":[{d},{d}],\"s\":", .{
-                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
+                try writeRect(&writer, info.clip_x, info.clip_y, info.clip_width, info.clip_height);
+                try writer.print(",\"q\":[{d},{d}],\"f\":{d},\"z\":[{d},{d}],\"s\":", .{
+                    info.resource, info.generation, info.format, info.resource_width, info.resource_height,
                 });
-                try writeSourceRect(&writer, value.resource.source, value.resource.size);
-                try writer.writeAll(",\"color\":");
-                try writeColor(&writer, value.color);
-                try writer.print(",\"cc\":{s}}}", .{if (value.cursor_component) "true" else "false"});
-            },
-            .rgba => |value| {
-                try writer.writeAll("{\"k\":2,\"d\":");
-                try writeRect(&writer, value.destination);
-                try writer.writeAll(",\"c\":");
-                try writeRect(&writer, value.clip);
-                try writer.writeAll(",\"q\":");
-                try writeQualified(&writer, value.resource.resource);
-                try writer.print(",\"f\":{d},\"z\":[{d},{d}],\"s\":", .{
-                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
-                });
-                try writeSourceRect(&writer, value.resource.source, value.resource.size);
+                try writeRect(&writer, info.source_x, info.source_y, info.source_width, info.source_height);
+                if (info.tag == render_native.c.HRC_ALPHA_MASK) {
+                    try writer.writeAll(",\"color\":");
+                    try writeColor(&writer, info.color_rgba);
+                    try writer.print(",\"cc\":{s}", .{if (info.cursor_component != 0) "true" else "false"});
+                }
                 try writer.writeByte('}');
             },
+            else => return error.InvalidSnapshot,
         }
     }
     try writer.print("] ,\"pixels\":{d},\"residency\":{d}}}", .{ frame.pixels.len, accepted_residency_count });
@@ -661,42 +664,45 @@ fn writeFrameV3(
     try writer.writeAll("],\"commands\":[");
     for (frame.commands, 0..) |command, index| {
         if (index != 0) try writer.writeByte(',');
-        switch (command) {
-            .solid => |value| {
+        var info: render_native.CommandInfo = undefined;
+        render_native.commandInfo(command, &info);
+        switch (info.tag) {
+            render_native.c.HRC_SOLID => {
                 try writer.writeAll("[0,");
-                try writeRectFields(&writer, value.rect);
+                try writeRectFields(
+                    &writer,
+                    info.destination_x,
+                    info.destination_y,
+                    info.destination_width,
+                    info.destination_height,
+                );
                 try writer.writeByte(',');
-                try writeColorFields(&writer, value.color);
+                try writeColorFields(&writer, info.color_rgba);
                 try writer.writeByte(']');
             },
-            .alpha_mask => |value| {
-                try writer.writeAll("[1,");
-                try writeRectFields(&writer, value.destination);
+            render_native.c.HRC_ALPHA_MASK, render_native.c.HRC_RGBA => {
+                try writer.print("[{d},", .{info.tag});
+                try writeRectFields(
+                    &writer,
+                    info.destination_x,
+                    info.destination_y,
+                    info.destination_width,
+                    info.destination_height,
+                );
                 try writer.writeByte(',');
-                try writeRectFields(&writer, value.clip);
-                try writer.writeByte(',');
-                try writeQualifiedFields(&writer, value.resource.resource);
-                try writer.print(",{d},{d},{d},", .{
-                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
+                try writeRectFields(&writer, info.clip_x, info.clip_y, info.clip_width, info.clip_height);
+                try writer.print(",{d},{d},{d},{d},{d},", .{
+                    info.resource, info.generation, info.format, info.resource_width, info.resource_height,
                 });
-                try writeSourceFields(&writer, value.resource.source, value.resource.size);
-                try writer.writeByte(',');
-                try writeColorFields(&writer, value.color);
-                try writer.print(",{d}]", .{@intFromBool(value.cursor_component)});
-            },
-            .rgba => |value| {
-                try writer.writeAll("[2,");
-                try writeRectFields(&writer, value.destination);
-                try writer.writeByte(',');
-                try writeRectFields(&writer, value.clip);
-                try writer.writeByte(',');
-                try writeQualifiedFields(&writer, value.resource.resource);
-                try writer.print(",{d},{d},{d},", .{
-                    @backingInt(value.resource.format), value.resource.size.width, value.resource.size.height,
-                });
-                try writeSourceFields(&writer, value.resource.source, value.resource.size);
+                try writeRectFields(&writer, info.source_x, info.source_y, info.source_width, info.source_height);
+                if (info.tag == render_native.c.HRC_ALPHA_MASK) {
+                    try writer.writeByte(',');
+                    try writeColorFields(&writer, info.color_rgba);
+                    try writer.print(",{d}", .{info.cursor_component});
+                }
                 try writer.writeByte(']');
             },
+            else => return error.InvalidSnapshot,
         }
     }
     try writer.print("] ,\"pixels\":{d},\"residency\":{d}}}", .{ frame.pixels.len, accepted_residency_count });
@@ -802,34 +808,27 @@ fn writeQualifiedStrings(writer: *std.Io.Writer, value: terminal.ResourceRef) !v
     });
 }
 
-fn writeQualifiedFields(writer: *std.Io.Writer, value: terminal.ResourceRef) !void {
-    try writer.print("{d},{d}", .{
-        @backingInt(value.resource), @backingInt(value.generation),
+// JSON formatting uses only the already-projected native fields. Resource,
+// source-rectangle and drawing semantics stay in Render's commandInfo.
+fn writeRect(writer: *std.Io.Writer, x: i32, y: i32, width: u16, height: u16) !void {
+    try writer.print("[{d},{d},{d},{d}]", .{ x, y, width, height });
+}
+
+fn writeColor(writer: *std.Io.Writer, rgba: u32) !void {
+    try writer.writeByte('[');
+    try writeColorFields(writer, rgba);
+    try writer.writeByte(']');
+}
+
+fn writeRectFields(writer: *std.Io.Writer, x: i32, y: i32, width: u16, height: u16) !void {
+    try writer.print("{d},{d},{d},{d}", .{ x, y, width, height });
+}
+
+fn writeColorFields(writer: *std.Io.Writer, rgba: u32) !void {
+    try writer.print("{d},{d},{d},{d}", .{
+        @as(u8, @truncate(rgba)),
+        @as(u8, @truncate(rgba >> 8)),
+        @as(u8, @truncate(rgba >> 16)),
+        @as(u8, @truncate(rgba >> 24)),
     });
-}
-
-fn writeRect(writer: *std.Io.Writer, value: terminal.Rect) !void {
-    try writer.print("[{d},{d},{d},{d}]", .{ value.x, value.y, value.width, value.height });
-}
-
-fn writeColor(writer: *std.Io.Writer, value: terminal.Color) !void {
-    try writer.print("[{d},{d},{d},{d}]", .{ value.r, value.g, value.b, value.a });
-}
-
-fn writeSourceRect(writer: *std.Io.Writer, value: ?terminal.SourceRect, size: terminal.Size) !void {
-    const source = value orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
-    try writer.print("[{d},{d},{d},{d}]", .{ source.x, source.y, source.width, source.height });
-}
-
-fn writeRectFields(writer: *std.Io.Writer, value: terminal.Rect) !void {
-    try writer.print("{d},{d},{d},{d}", .{ value.x, value.y, value.width, value.height });
-}
-
-fn writeColorFields(writer: *std.Io.Writer, value: terminal.Color) !void {
-    try writer.print("{d},{d},{d},{d}", .{ value.r, value.g, value.b, value.a });
-}
-
-fn writeSourceFields(writer: *std.Io.Writer, value: ?terminal.SourceRect, size: terminal.Size) !void {
-    const source = value orelse terminal.SourceRect{ .x = 0, .y = 0, .width = size.width, .height = size.height };
-    try writer.print("{d},{d},{d},{d}", .{ source.x, source.y, source.width, source.height });
 }
