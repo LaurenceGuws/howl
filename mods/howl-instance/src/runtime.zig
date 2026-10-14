@@ -156,6 +156,13 @@ pub fn Runtime(comptime Presentation: ?type) type {
             textStore(store).release();
         }
 
+        /// Copies the immutable regular-font lattice without claiming mutable faces.
+        /// The caller keeps its Store reference alive throughout this synchronous read.
+        pub fn presentationStoreCellSize(store: *PresentationStore) terminal_render.Size {
+            const metrics = terminal_render.storeMetrics(textStore(store).store);
+            return .{ .width = metrics.advance_width, .height = metrics.line_height };
+        }
+
         /// Includes the caller's reference and all presented borrowers. Caller ownership
         /// must remain live; a count of one permits an embedder to retire an idle owner.
         pub fn presentationStoreReferences(store: *PresentationStore) u32 {
@@ -196,6 +203,8 @@ pub fn Runtime(comptime Presentation: ?type) type {
         pub const InitError = pty.InitError || pty.StartError || vt.Terminal.InitError;
         /// Reports construction failure before a presented Instance becomes observable.
         pub const PresentedInitError = InitError || PresentationStoreInitError || terminal_render.InitError || terminal_render.Error;
+        /// Reports construction failure or a shared font claim that would wait.
+        pub const TryPresentedInitError = PresentedInitError || error{PresentationBusy};
         /// Reports terminal input encoding, signal, or bounded write admission failure.
         pub const InputError = vt.Terminal.InputError || pty.TermiosSignalError || error{WriteQueueFull};
         /// Reports atomic PTY and VT geometry transition failure.
@@ -260,8 +269,34 @@ pub fn Runtime(comptime Presentation: ?type) type {
             launch: Launch,
             presentation: PresentationConfig,
         ) PresentedInitError!*Instance {
+            return initPresentedMode(false, allocator, inherited_environment, launch, presentation);
+        }
+
+        /// Tries shared font access before State allocation or child launch.
+        /// PresentationBusy leaves no child or attempted Instance reference alive.
+        pub fn tryInitPresented(
+            allocator: std.mem.Allocator,
+            inherited_environment: std.process.Environ,
+            launch: Launch,
+            presentation: PresentationConfig,
+        ) TryPresentedInitError!*Instance {
+            return initPresentedMode(true, allocator, inherited_environment, launch, presentation);
+        }
+
+        fn initPresentedMode(
+            comptime try_claim: bool,
+            allocator: std.mem.Allocator,
+            inherited_environment: std.process.Environ,
+            launch: Launch,
+            presentation: PresentationConfig,
+        ) (if (try_claim) TryPresentedInitError else PresentedInitError)!*Instance {
             const store = try TextStore.acquire(allocator, presentation);
             errdefer store.release();
+            if (comptime try_claim) {
+                if (!store.mutex.tryLock()) return error.PresentationBusy;
+            }
+            // Registered after the release guard: every failure unlocks first.
+            defer if (try_claim) store.mutex.unlock(store.io);
             const metrics = terminal_render.storeMetrics(store.store);
             var canonical_launch = launch;
             canonical_launch.cell_pixel_width = metrics.advance_width;
@@ -272,7 +307,8 @@ pub fn Runtime(comptime Presentation: ?type) type {
             try state.initInto(allocator, inherited_environment, canonical_launch);
             errdefer state.deinit();
 
-            state.presentation = try PresentationState.initWithStore(
+            state.presentation = try PresentationState.initWithStoreMode(
+                try_claim,
                 allocator,
                 store,
                 presentation,
@@ -732,6 +768,16 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 config: PresentationConfig,
                 observation: *const Terminal.Observation,
             ) (terminal_render.InitError || terminal_render.Error)!*PresentationState {
+                return initWithStoreMode(false, allocator, store, config, observation);
+            }
+
+            fn initWithStoreMode(
+                comptime claimed: bool,
+                allocator: std.mem.Allocator,
+                store: *TextStore,
+                config: PresentationConfig,
+                observation: *const Terminal.Observation,
+            ) (terminal_render.InitError || terminal_render.Error)!*PresentationState {
                 const metrics = terminal_render.storeMetrics(store.store);
                 const renderer = try terminal_render.initWithStore(
                     allocator,
@@ -779,10 +825,10 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     .command_limit = command_limit,
                     .row_reuse_capacity = config.incremental_row_capacity,
                 };
-                // Construction is synchronous and may wait for one bounded projection.
-                // Runtime refresh below skips a busy Store so canonical service keeps moving.
-                store.mutex.lockUncancelable(store.io);
-                defer store.mutex.unlock(store.io);
+                // Ordinary construction keeps its existing late waiting claim.
+                // The try factory already holds this claim from before child launch.
+                if (!claimed) store.mutex.lockUncancelable(store.io);
+                defer if (!claimed) store.mutex.unlock(store.io);
                 try state.refreshClaimed(observation, 0);
                 return state;
             }
@@ -2973,6 +3019,143 @@ pub fn Runtime(comptime Presentation: ?type) type {
                         try std.testing.expectEqual(@as(usize, 4), scene.commands.len);
                     }
                 }
+            }
+
+            fn foreignConstructionConfig(store: *PresentationStore) PresentationConfig {
+                return .{
+                    .text = .{ .shared = store },
+                    .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+                    .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+                    .shaped_capacity = 1024,
+                    .raster_bytes = 64 * 1024,
+                    .atlas = .{ .width = 128, .height = 128, .entry_capacity = 256 },
+                    .command_capacity = 256,
+                    .command_limit = 256,
+                };
+            }
+
+            fn foreignConstructionStore(allocator: std.mem.Allocator, io: std.Io) !*PresentationStore {
+                return initPresentationStore(allocator, io, .{
+                    .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 18 } } },
+                }, .{
+                    .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+                    .shaped_capacity = 1024,
+                    .raster_bytes = 64 * 1024,
+                });
+            }
+
+            test "try presented admission precedes allocation and restores references and claims" {
+                const store = try foreignConstructionStore(std.testing.allocator, .failing);
+                defer releasePresentationStore(store);
+                const owner = textStore(store);
+                var config = foreignConstructionConfig(store);
+                const launch = Launch{ .shell = "/bin/sh", .command = "exec sleep 30", .rows = 2, .columns = 4, .history_rows = 0 };
+                var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+                try std.testing.expect(owner.mutex.tryLock());
+                var held = true;
+                defer if (held) owner.mutex.unlock(owner.io);
+                for (0..32) |_| {
+                    try std.testing.expectError(error.PresentationBusy, tryInitPresented(failing.allocator(), std.testing.environ, launch, config));
+                    try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+                    try std.testing.expect(!failing.has_induced_failure);
+                }
+                owner.mutex.unlock(owner.io);
+                held = false;
+                try std.testing.expectError(error.OutOfMemory, tryInitPresented(failing.allocator(), std.testing.environ, launch, config));
+                try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+                try std.testing.expect(owner.mutex.tryLock());
+                owner.mutex.unlock(owner.io);
+                // Atlas validation occurs after State/PTY startup; this forces a
+                // deterministic late failure even when the initial VT is blank.
+                config.atlas.width = 0;
+                try std.testing.expectError(error.InvalidAtlasConfig, tryInitPresented(std.testing.allocator, std.testing.environ, launch, config));
+                try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+                try std.testing.expect(owner.mutex.tryLock());
+                owner.mutex.unlock(owner.io);
+                config.atlas.width = 128;
+                const value = try tryInitPresented(std.testing.allocator, std.testing.environ, launch, config);
+                try std.testing.expectEqual(@as(u32, 2), presentationStoreReferences(store));
+                deinit(value);
+                try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+            }
+
+            fn tryPresentedAllocationProof(allocator: std.mem.Allocator, store: *PresentationStore) !void {
+                const value = tryInitPresented(allocator, std.testing.environ, .{
+                    .shell = "/bin/sh",
+                    .command = "exec sleep 30",
+                    .rows = 2,
+                    .columns = 4,
+                    .history_rows = 0,
+                }, foreignConstructionConfig(store)) catch |failure| {
+                    try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+                    const owner = textStore(store);
+                    try std.testing.expect(owner.mutex.tryLock());
+                    owner.mutex.unlock(owner.io);
+                    return failure;
+                };
+                deinit(value);
+                try std.testing.expectEqual(@as(u32, 1), presentationStoreReferences(store));
+            }
+
+            test "try presented construction unwinds every allocation prefix" {
+                const store = try foreignConstructionStore(std.testing.allocator, .failing);
+                defer releasePresentationStore(store);
+                try std.testing.checkAllAllocationFailures(std.testing.allocator, tryPresentedAllocationProof, .{store});
+            }
+
+            test "ordinary presented construction keeps its waiting shared font lane" {
+                var threaded = std.Io.Threaded.init(std.testing.allocator, .{ .environ = std.testing.environ });
+                defer threaded.deinit();
+                const io = threaded.io();
+                const store = try foreignConstructionStore(std.testing.allocator, io);
+                defer releasePresentationStore(store);
+                const owner = textStore(store);
+                const Context = struct {
+                    store: *PresentationStore,
+                    done: std.atomic.Value(bool) = .init(false),
+                    result: ?*Instance = null,
+                    failure: ?PresentedInitError = null,
+                    fn run(context: *@This()) void {
+                        context.result = initPresented(std.testing.allocator, std.testing.environ, .{
+                            .shell = "/bin/sh",
+                            .command = "exec sleep 30",
+                            .rows = 2,
+                            .columns = 4,
+                            .history_rows = 0,
+                        }, foreignConstructionConfig(context.store)) catch |failure| blk: {
+                            context.failure = failure;
+                            break :blk null;
+                        };
+                        context.done.store(true, .release);
+                    }
+                };
+                var context = Context{ .store = store };
+                try std.testing.expect(owner.mutex.tryLock());
+                var held = true;
+                const worker = std.Thread.spawn(.{}, Context.run, .{&context}) catch |failure| {
+                    owner.mutex.unlock(io);
+                    return failure;
+                };
+                var joined = false;
+                defer {
+                    if (held) owner.mutex.unlock(io);
+                    if (!joined) worker.join();
+                    if (context.result) |value| deinit(value);
+                }
+                for (0..5000) |_| {
+                    if (owner.mutex.state.load(.acquire) == .contended) break;
+                    if (context.done.load(.acquire)) return error.DidNotWait;
+                    try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+                } else return error.Timeout;
+                try std.testing.expect(!context.done.load(.acquire));
+                try std.testing.expectEqual(@as(u32, 2), presentationStoreReferences(store));
+                owner.mutex.unlock(io);
+                held = false;
+                worker.join();
+                joined = true;
+                try std.testing.expect(context.failure == null);
+                try std.testing.expect(context.result != null);
+                try std.testing.expectEqual(@as(u32, 2), presentationStoreReferences(store));
             }
         } else struct {};
     };

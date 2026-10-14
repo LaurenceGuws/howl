@@ -34,7 +34,10 @@ experimental:
     conversion/operations with Odin. Optional howl_instance_frames_native owns one
     backend endpoint, immutable frame leases, bulk payload projection and checked
     parent destruction; Odin embeds the exact artifact export root and owns worker
-    handoff/pacing. Standalone presented construction remains a subsequent cut.
+    handoff/pacing. Standalone presented C construction owns explicit copied
+    path/memory font inputs and a caller reference to the canonical shared Store;
+    Instances retain it independently. Try-claim admission precedes allocation/child
+    launch; the ordinary Zig constructor preserves its waiting lane.
   howl-render-native: >-
     Optional howl_render_native root owns versioned C/Odin command, upload, removal
     and residency schemas and bounded field-wise projection. Commands are bulk

@@ -13,12 +13,13 @@ const sendMouse = native.sendMouse;
 const sendFocus = native.sendFocus;
 const heap = std.heap.c_allocator;
 const frames = @import("instance_native_frames");
+const presentation = @import("abi_presentation.zig");
 
 // zig-audit: acknowledge anytype
 // reason: This private conversion accepts only matching C/native opaque handle pointers at exact exported sites.
 fn convert(comptime T: type, value: anytype) T {
     // zig-audit: acknowledge ptr_cast
-    // reason: Only matching local Instance or frame endpoint handles are adapted; no records or headless specializations are reinterpreted.
+    // reason: Only matching local Instance, frame endpoint or constructor-owned presentation wrapper handles are adapted; no records or headless specializations are reinterpreted.
     // zig-audit: acknowledge align_cast
     // reason: The live constructor-owned opaque pointer retains the native owner alignment.
     return @ptrCast(@alignCast(value));
@@ -32,6 +33,25 @@ fn status(err: Error) u32 {
         error.EnvironmentByteLimit, error.EnvironmentCountLimit, error.WriteQueueFull, error.LengthOverflow, error.KeyTextLimit, error.ReplyLimit, error.ScalarCapacity, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ParsedEventLimit => c.HI_RESOURCE_LIMIT,
         error.UnsupportedPlatform => c.HI_UNSUPPORTED,
         error.WriteFailed, error.WouldBlock, error.EndOfStream, error.ReadFailed, error.NotStarted, error.ForegroundGroupFailed, error.SignalFailed, error.TermiosQueryFailed, error.AlreadyStarted, error.ChildCwdFailed, error.ChildExecFailed, error.ChildSessionFailed, error.ChildStdioFailed, error.ForkFailed, error.LaunchStatusFailed, error.LaunchStatusPipeFailed, error.MasterConfigureFailed, error.OpenPtyFailed, error.ShellUnavailable, error.ResizeFailed, error.Interrupted, error.ChildClosed, error.ObserveFailed, error.StaleClipboardRequest, error.StaleColorPreferenceQuery, error.StaleContainerRequest, error.ContainerReplyMismatch, error.StalePointerShape, error.PointerShapeReplyMismatch => c.HI_OPERATION_FAILED,
+    };
+}
+const PresentedError = presentation.CreateError || instance.TryPresentedInitError;
+fn presentedStatus(err: PresentedError) u32 {
+    return switch (err) {
+        error.InvalidConfig, error.InvalidCapacity, error.InvalidAtlasConfig, error.InvalidShapeCacheConfig => c.HI_INVALID_ARGUMENT,
+        error.ResourceLimit, error.PresentationStoreLimit, error.CacheFull, error.AtlasFull, error.GlyphTooLarge, error.BufferTooSmall, error.InsufficientCommands, error.ImageLimit, error.CommandLimit, error.PixelLimit, error.RasterTooLarge, error.TextTooLong, error.GlyphLimit, error.InsufficientShapeBuffer, error.InsufficientGlyphs, error.ShapeSequenceLimit, error.ShapeEntryFull, error.ShapeScalarFull, error.ShapeGlyphFull, error.GenerationOverflow, error.RevisionOverflow, error.ResourceIdentityOverflow, error.ResourceGenerationOverflow, error.ArithmeticOverflow => c.HI_RESOURCE_LIMIT,
+        error.PresentationBusy => c.HI_BUSY,
+        error.UnsupportedPixelMode, error.UnsupportedGlyph => c.HI_UNSUPPORTED,
+        error.FreeTypeInit, error.FontOpen, error.UnicodeCharmap, error.FontSize, error.HarfBuzzFont, error.InvalidMetrics, error.InvalidFontFaces, error.HarfBuzzBuffer, error.InvalidRaster, error.GlyphLoad, error.GlyphRender, error.InvalidBitmap, error.InvalidPlacement, error.RasterExtentMismatch, error.InvalidShapeResult, error.InvalidGlyphIdentity, error.MissingGlyph, error.InvalidSize, error.InvalidStroke, error.InvalidSurface, error.InvalidRectangle, error.InvalidIdentity, error.InvalidGeneration, error.InvalidPixels, error.FormatMismatch, error.ExtentMismatch, error.AliasedStorage, error.InvalidResidency, error.InvalidView, error.InvalidColor, error.InvalidImageBinding, error.InvalidPresentationGeometry, error.FontSetMismatch, error.MissingExternalResource => c.HI_OPERATION_FAILED,
+        // The inferred remainder must fit the existing closed map. A newly
+        // introduced error outside either classification is a compile failure.
+        else => |failure| status(failure),
+    };
+}
+fn admissionStatus(err: presentation.AdmissionError) u32 {
+    return switch (err) {
+        error.InvalidArgument => c.HI_INVALID_ARGUMENT,
+        error.ResourceLimit => c.HI_RESOURCE_LIMIT,
     };
 }
 fn bytes(ptr: [*c]const u8, len: usize, maximum: usize) ?[]const u8 {
@@ -49,8 +69,64 @@ pub export fn hi_abi_version() u32 {
     return c.HI_ABI_VERSION;
 }
 
+/// Creates one caller reference to copied fonts and bounded shared text storage.
+pub export fn hi_presentation_create(version: u32, config: ?*const c.hi_presentation_config, out: ?*?*c.hi_presentation) u32 {
+    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
+    const request = config orelse return c.HI_INVALID_ARGUMENT;
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HI_INVALID_ARGUMENT;
+    if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
+    const owner = presentation.create(heap, request) catch |failure| return presentedStatus(failure);
+    slot.* = convert(*c.hi_presentation, owner);
+    return c.HI_OK;
+}
+
+/// Drops only the caller's reference; borrowing Instances retain canonical fonts.
+pub export fn hi_presentation_release(out: ?*?*c.hi_presentation) u32 {
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    const raw = slot.* orelse return c.HI_OK;
+    presentation.release(convert(*presentation.Owner, raw));
+    slot.* = null;
+    return c.HI_OK;
+}
+
+/// Copies immutable font-derived lattice dimensions without acquiring a claim.
+pub export fn hi_presentation_cell_size(raw: ?*const c.hi_presentation, out: ?*c.hi_cell_size) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hi_cell_size);
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    const owner = convert(*const presentation.Owner, value);
+    const size = instance.presentationStoreCellSize(owner.value);
+    result.width = size.width;
+    result.height = size.height;
+    return c.HI_OK;
+}
+
+/// Creates the exact local owner with nonblocking shared-font admission.
+pub export fn hi_create_presented(
+    version: u32,
+    request: ?*const c.hi_launch,
+    raw: ?*c.hi_presentation,
+    config: ?*const c.hi_presented_config,
+    out: ?*?*c.hi_instance,
+) u32 {
+    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
+    const launch = request orelse return c.HI_INVALID_ARGUMENT;
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    if (slot.* != null or launch.reserved != 0) return c.HI_INVALID_ARGUMENT;
+    if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
+    const owner = raw orelse return c.HI_INVALID_ARGUMENT;
+    const options = config orelse return c.HI_INVALID_ARGUMENT;
+    const selected = presentation.instanceConfig(convert(*const presentation.Owner, owner), options) catch |failure| return admissionStatus(failure);
+    return create(version, launch, slot, selected);
+}
+
 /// Copies bounded launch/environment before publishing one canonical owner.
 pub export fn hi_create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance) u32 {
+    return create(version, request, out, null);
+}
+
+fn create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance, presented: ?instance.PresentationConfig) u32 {
     if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
     const launch = request orelse return c.HI_INVALID_ARGUMENT;
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
@@ -59,8 +135,10 @@ pub export fn hi_create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.h
     const shell = launchBytes(launch.shell, 4096) orelse return c.HI_INVALID_ARGUMENT;
     const command = launchBytes(launch.command, 64 * 1024) orelse return c.HI_INVALID_ARGUMENT;
     const cwd = launchBytes(launch.cwd, 4096) orelse return c.HI_INVALID_ARGUMENT;
-    if (shell.len == 0 or launch.rows == 0 or launch.columns == 0 or
-        launch.cell_width == 0 or launch.cell_height == 0) return c.HI_INVALID_ARGUMENT;
+    if (shell.len == 0 or launch.rows == 0 or launch.columns == 0) return c.HI_INVALID_ARGUMENT;
+    if (presented != null) {
+        if (launch.cell_width != 0 or launch.cell_height != 0) return c.HI_INVALID_ARGUMENT;
+    } else if (launch.cell_width == 0 or launch.cell_height == 0) return c.HI_INVALID_ARGUMENT;
     if (launch.environment_count > 1024) return c.HI_RESOURCE_LIMIT;
     if (launch.environment_count != 0 and launch.environment == null) return c.HI_INVALID_ARGUMENT;
     var count: usize = 0;
@@ -94,7 +172,7 @@ pub export fn hi_create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.h
         entries[index] = copy.ptr;
         copied += 1;
     }
-    const value = instance.init(heap, .{ .block = .{ .slice = entries } }, .{
+    const selected_launch = instance.Launch{
         .shell = shell,
         .command = if (command.len == 0) null else command,
         .cwd = if (cwd.len == 0) null else cwd,
@@ -103,11 +181,16 @@ pub export fn hi_create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.h
         .history_rows = launch.history_rows,
         .cell_pixel_width = launch.cell_width,
         .cell_pixel_height = launch.cell_height,
-    }) catch |err| return status(err);
+    };
+    const environment = std.process.Environ{ .block = .{ .slice = entries } };
+    const value = if (presented) |options|
+        instance.tryInitPresented(heap, environment, selected_launch, options) catch |failure| return presentedStatus(failure)
+    else
+        instance.init(heap, environment, selected_launch) catch |failure| return status(failure);
     slot.* = convert(*c.hi_instance, value);
     return c.HI_OK;
 }
-/// Releases a plain native owner; null is a successful no-op.
+/// Releases a matching native owner; an already-null slot is a successful no-op.
 pub export fn hi_destroy(out: ?*?*c.hi_instance) u32 {
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
     const raw = slot.* orelse return c.HI_OK;

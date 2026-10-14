@@ -24,7 +24,7 @@ enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SI
  * handed to the backend. An open endpoint pins parent publication storage even
  * between frames. Checked parent destruction returns HI_BUSY without mutation.
  * Opening resets backend residency to empty. Caller publishes a fresh cut before
- * handoff. Standalone presented construction is a subsequent contract cut. */
+ * handoff. Presented construction uses the matching hi_create_presented contract. */
 typedef struct hi_frame_stream hi_frame_stream;
 typedef struct hi_frame_info {
     uint64_t sequence, presentation_generation, revision, content_revision, terminal_revision;
@@ -37,6 +37,67 @@ typedef struct hi_frame_info {
 } hi_frame_info;
 
 typedef struct hi_bytes { const uint8_t *data; size_t len; } hi_bytes;
+#define HI_MAX_FONT_FALLBACKS 24u
+#define HI_MAX_FONT_PATH_BYTES 4096u
+#define HI_MAX_FONT_BYTES (32u * 1024u * 1024u)
+#define HI_MAX_FONT_SET_BYTES (64u * 1024u * 1024u)
+#define HI_MAX_PRESENTATION_ITEMS 1048576u
+#define HI_MAX_PRESENTATION_SHAPED 65536u
+#define HI_MAX_PRESENTATION_ROWS 192u
+#define HI_MAX_PRESENTATION_RASTER_BYTES (16u * 1024u * 1024u)
+
+typedef struct hi_presentation hi_presentation;
+enum hi_font_kind { HI_FONT_NONE=0, HI_FONT_PATH=1, HI_FONT_MEMORY=2 };
+enum hi_font_variant { HI_FONT_REGULAR=0, HI_FONT_ITALIC=1, HI_FONT_BOLD=2, HI_FONT_BOLD_ITALIC=3 };
+typedef struct hi_font_source {
+    uint8_t kind, reserved[7];
+    hi_bytes primary;
+    const hi_bytes *fallbacks;
+    size_t fallback_count;
+} hi_font_source;
+/* Required capacities are positive. Shape item capacities <= ITEMS; sequence
+ * and shaped scratch <= SHAPED; sequence <= shape_scalars; raster <= RASTER_BYTES.
+ * One physical pixel_size applies to every variant and fallback. */
+typedef struct hi_presentation_config {
+    hi_font_source fonts[4];
+    uint16_t pixel_size, reserved;
+    uint32_t max_sequence_scalars;
+    size_t shape_entries, shape_scalars, shape_glyphs;
+    size_t shaped_capacity, raster_bytes;
+} hi_presentation_config;
+typedef struct hi_cell_size {
+    uint16_t width, height;
+    uint32_t reserved;
+} hi_cell_size;
+/* Positive normalized DPI and canonical finite strokes. Atlas pixels <=
+ * RASTER_BYTES. Entries/command capacities <= ITEMS; hard limit >= initial > 0.
+ * Retained rows <= ROWS; rows and incremental_commands are both zero or positive.
+ * Reserved fields in every input record must be zero. */
+typedef struct hi_presented_config {
+    float stroke_points[4];
+    uint32_t dpi_x_numerator, dpi_x_denominator;
+    uint32_t dpi_y_numerator, dpi_y_denominator;
+    uint16_t atlas_width, atlas_height, atlas_gap, incremental_rows;
+    size_t atlas_entries, command_capacity, command_limit, incremental_commands;
+    uint8_t reserved[8];
+} hi_presented_config;
+
+/* Creation requires *out==NULL and preserves it on failure. The regular font
+ * is required; other styles may be NONE only with every other source field zero.
+ * All source descriptors and data borrow only this call. Text owns copied paths
+ * or memory fonts on success; source files follow its path-backed contract.
+ * Memory sources are bounded to FONT_BYTES each and FONT_SET_BYTES per variant;
+ * paths to FONT_PATH_BYTES each. Fallback count <= FONT_FALLBACKS.
+ * Pixel sizing is explicit. Font discovery and point-size configuration are
+ * outside this initial composed C interface. Capacity limits are explicit.
+ * Existing Instances retain the canonical Store after caller release.
+ * Operations on this caller handle must serialize against release. */
+uint32_t hi_presentation_create(uint32_t version, const hi_presentation_config *, hi_presentation **out);
+uint32_t hi_presentation_release(hi_presentation **owner);
+/* Output is initialized whenever non-null. Returns copied canonical geometry. */
+uint32_t hi_presentation_cell_size(const hi_presentation *, hi_cell_size *out);
+
+
 typedef struct hi_launch {
     hi_bytes shell, command, cwd;
     const hi_bytes *environment;
@@ -48,7 +109,7 @@ typedef struct hi_launch {
  * exit_kind: 0=not observed, 1=normal code, 2=signal.
  * animation_wait_present distinguishes no deadline from a zero-ms deadline.
  * descriptor_kind: 1=borrowed POSIX fd; never close it.
- * No clocks, waits, wake sources, renderer or host queue are owned by this API. */
+ * No clocks, waits, wake sources, graphics backend or host queue are owned by this API. */
 typedef struct hi_service {
     uint64_t terminal_revision;
     int32_t descriptor;
@@ -70,9 +131,19 @@ typedef struct hi_service {
  * Initial standalone native lifecycle is Linux-qualified; other targets return
  * HI_UNSUPPORTED. The artifact selects the exact local Instance composition.
  * First service contract applies deterministic headless consequence policy.
- * Standalone presented construction requires its later matching contract. */
+ * hi_create_presented derives its lattice from an explicit presentation owner. */
 uint32_t hi_abi_version(void);
 uint32_t hi_create(uint32_t version, const hi_launch *launch, hi_instance **out);
+/* A matching presentation is required.
+ * Launch cell_width/cell_height must both be zero: regular-font metrics supply
+ * the sole canonical pixel lattice. Construction only tries shared font access.
+ * HI_BUSY publishes no owner and launches no child; the caller chooses retry.
+ * Other construction failures release staged resources; child-side effects of a
+ * late failure cannot be undone. No worker, clock, wait backend or UI is owned.
+ * hi_destroy and all existing operations use this same exact local handle type. */
+uint32_t hi_create_presented(uint32_t version, const hi_launch *,
+    hi_presentation *, const hi_presented_config *, hi_instance **out);
+
 uint32_t hi_destroy(hi_instance **owner);
 uint32_t hi_send_text(hi_instance *, const uint8_t *, size_t);
 uint32_t hi_send_paste(hi_instance *, const uint8_t *, size_t);

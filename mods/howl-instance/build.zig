@@ -129,6 +129,25 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(boundary).step);
     test_step.dependOn(&b.addRunArtifact(publication_proofs).step);
     if (target.result.os.tag == .linux) {
+        const admission_root = b.createModule(.{ .root_source_file = b.path("src/abi_presentation.zig"), .target = target, .optimize = optimize, .link_libc = true });
+        admission_root.addImport("howl_instance", module);
+        admission_root.addImport("instance_native", native);
+        admission_root.addImport("test_fonts", text.module("howl_text_test_fonts"));
+        const admission = b.addTest(.{ .name = "howl-instance-native-presentation-admission", .root_module = admission_root, .use_llvm = false, .use_lld = false });
+        check.dependOn(&admission.step);
+        const admission_run = b.addRunArtifact(admission);
+        test_step.dependOn(&admission_run.step);
+        const presented_step = b.step("test:native-presentation", "Qualify standalone C presented construction and ownership");
+        presented_step.dependOn(&admission_run.step);
+        const presented_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+        presented_root.linkLibrary(native_library);
+        presented_root.addCSourceFile(.{ .file = b.path("test/native_presented.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+        const presented = b.addExecutable(.{ .name = "howl-instance-native-presented", .root_module = presented_root, .use_llvm = false, .use_lld = false });
+        check.dependOn(&presented.step);
+        const presented_run = b.addRunArtifact(presented);
+        presented_run.addFileArg(text.namedLazyPath("howl_text_test_font"));
+        test_step.dependOn(&presented_run.step);
+        presented_step.dependOn(&presented_run.step);
         const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
         foreign_root.linkLibrary(native_library);
         foreign_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });

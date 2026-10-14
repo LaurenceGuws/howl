@@ -62,7 +62,8 @@ pub const BoxDrawingConfig = struct {
     /// Supplies vertical DPI.
     dpi_y: Dpi,
 
-    fn validate(self: BoxDrawingConfig) Error!void {
+    /// Validates the exact stroke and normalized DPI grammar before resource use.
+    pub fn validate(self: BoxDrawingConfig) Error!void {
         try self.dpi_x.validate();
         try self.dpi_y.validate();
         for (self.stroke_points) |points| {

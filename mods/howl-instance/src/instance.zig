@@ -94,6 +94,8 @@ pub const initPresentationStore = runtime.initPresentationStore;
 /// Releases the caller reference. Existing presented Instances retain the owner
 /// until their renderers retire; the caller must not reuse its released pointer.
 pub const releasePresentationStore = runtime.releasePresentationStore;
+/// Copies immutable font-derived cell geometry without claiming mutable faces.
+pub const presentationStoreCellSize = runtime.presentationStoreCellSize;
 /// Includes the caller's reference and all presented borrowers. Caller ownership
 /// must remain live; a count of one permits an embedder to retire an idle owner.
 pub const presentationStoreReferences = runtime.presentationStoreReferences;
@@ -107,6 +109,8 @@ pub const Launch = runtime.Launch;
 pub const InitError = runtime.InitError;
 /// Reports construction failure before a presented Instance becomes observable.
 pub const PresentedInitError = runtime.PresentedInitError;
+/// Reports construction failure or shared font access that would wait.
+pub const TryPresentedInitError = runtime.TryPresentedInitError;
 /// Reports terminal input encoding, signal, or bounded write admission failure.
 pub const InputError = runtime.InputError;
 /// Reports atomic PTY and VT geometry transition failure.
@@ -129,6 +133,8 @@ pub const init = runtime.init;
 /// owner or creates the requested private owner, alongside its VT and Renderer.
 /// Initial PTY/VT pixel geometry comes from the regular font metrics.
 pub const initPresented = runtime.initPresented;
+/// Tries font access before allocating State or launching a child; never waits for that claim.
+pub const tryInitPresented = runtime.tryInitPresented;
 /// Stops the child, releases VT state, and destroys the opaque owner.
 pub const deinit = runtime.deinit;
 /// Checked teardown rejects outstanding native backend endpoints or frame leases.

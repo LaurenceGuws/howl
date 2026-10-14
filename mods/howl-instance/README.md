@@ -33,8 +33,9 @@ reference, no Instance borrowers). There is no implicit global registry.
 Only full text projection takes the native-face claim. Runtime contention returns
 `PresentationBusy`; service PTY/VT normally and schedule a bounded retry.
 Cursor-only updates and immutable frame transfer do not take this claim, and no
-claim survives publication preparation. Synchronous construction/reconfiguration
-may wait for a bounded projection. A held frame or hidden observer cannot hold
+claim survives publication preparation. Ordinary synchronous construction/reconfiguration
+may wait for a bounded projection. `tryInitPresented` instead claims shared fonts
+before allocation or child launch and returns `PresentationBusy` for caller retry. A held frame or hidden observer cannot hold
 shared text. The owner admits at most 1023 Instance borrowers.
 
 Advanced Render embedders use `render.terminal.initStore` plus `initWithStore`
@@ -51,7 +52,9 @@ optional Server implementation above this package.
 
 ## Native foreign interface
 
-The optional module-owned [native contract](docs/native.md) exposes the first
-plain Linux lifecycle and VT-owned input/cell records. Presented leases and
-retained requests are separate implementation cuts. Zig hosts can reuse the
-exact native contract helpers without emitting or calling through C exports.
+The optional module-owned [native contract](docs/native.md) exposes Linux
+unpresented and presented construction, caller-driven service, VT-owned copied
+queries/requests, and immutable frame leases. Explicit presentation owners copy
+path or memory fonts and can be shared across Instances; caller release leaves
+Instance references alive. Zig hosts can reuse the exact native contract helpers
+without emitting or calling through C exports.

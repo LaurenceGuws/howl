@@ -8,13 +8,13 @@ Ordinary Zig callers retain the direct Instance API. The separate
 `howl_instance_native` Zig module shares native input validation with host adapters,
 without emitting the artifact's C exports into those hosts.
 
-Version 1 is an initial, unpresented Linux/x86_64-qualified lifecycle:
-create, ordered semantic input, explicit geometry, process-group signals,
+Version 1 supplies Linux/x86_64-qualified unpresented and presented lifecycles:
+create, ordered semantic input, canonical geometry, process-group signals,
 caller-driven bounded service, copied scalar/occupancy observation, and destroy.
 Default service uses deterministic headless policy. Explicit per-turn retained
 service, copied pending-request facts and named replies are now supported.
-Standalone presented construction remains a subsequent cut.
-The separate presentation endpoint now supports an existing presented Instance.
+The presented factory shares one explicit font/cache owner across compatible
+Instances. Each Instance owns its renderer and immutable publication endpoint.
 Odin uses the shared native input vocabulary and operation implementations while
 preserving its existing retained-request policy and host runtime.
 
@@ -54,13 +54,85 @@ The Instance ABI version incorporates VT and Render native version 1. Changing a
 record requires coordinated Instance ABI review/versioning; compile-time guards
 reject silent version or scalar-capacity drift.
 
+## Presented construction
+
+`hi_presentation_create` creates one caller reference to a canonical
+`PresentationStore`. Supply regular fonts and optional italic, bold and bold-italic
+variants, each with a primary and at most 24 fallbacks. A variant uses either paths
+or memory throughout. Absent optional variants must be entirely zero. All fonts
+use the explicit positive physical `pixel_size`; discovery, point-size conversion
+and reconfiguration are outside this C cut.
+
+Text copies each path or memory source during construction. Caller descriptors,
+fallback arrays and source bytes may be changed or freed after the call. A copied
+path still uses Text's existing file-backed font contract; this is no promise to
+snapshot file contents. Native bounds are 4096 bytes per path, 32 MiB per memory
+font and 64 MiB total memory fonts per variant.
+
+The presentation config chooses shared shape-cache entry/scalar/glyph capacities,
+maximum sequence length, shaped scratch and raster scratch. Per-Instance config
+chooses canonical box strokes/DPI, atlas extent/gap/entries, initial and hard command
+capacities and optional retained row commands. Required capacities are positive.
+Item capacities are at most 1,048,576; sequence/shaped scratch at most 65,536;
+raster bytes and checked atlas pixel extent at most 16 MiB; retained rows at most
+192. Maximum sequence length cannot exceed shared scalar capacity. The hard command
+limit must be positive and at least the initial capacity. Retained rows and their
+command capacity are both zero or both positive. DPI is a positive normalized
+rational; strokes use Text's canonical validation. All reserved fields are zero.
+The native hard-limit rule does not change ordinary Zig's existing zero default.
+
+`hi_presentation_cell_size` returns copied regular-font metrics. Pass zero for
+both launch cell dimensions to `hi_create_presented`: the font supplies the one
+canonical PTY/VT/Render lattice. Unpresented `hi_create` still requires explicit
+nonzero dimensions. A presented resize may retain its lattice with a zero pair
+or supply exactly the matching metrics.
+
+Every successful presented Instance retains the canonical Store directly.
+`hi_presentation_release` drops and clears only the caller handle. It may run
+before the Instances are destroyed; their font/cache references remain live.
+Release accepts an already-null slot. Operations using a caller presentation
+handle serialize against its release. Each Instance still serializes its own
+operations, and an open frame endpoint prevents its checked destruction.
+
+`hi_create_presented` uses Core's `tryInitPresented`: it retains and tries the
+shared font claim before State allocation or PTY launch, and holds that claim
+through the initial projection. A busy claim releases its attempted reference and
+returns `HI_BUSY` with no child. The caller chooses when to retry. Every failure
+unlocks before releasing the Store and unwinds staged native resources; child-side
+effects from a later failure cannot be undone. Existing direct Zig `initPresented`
+preserves its late waiting claim.
+
+C-created Stores use `Io.failing` under a closed operation set: construction and
+publication try the native-face mutex; geometry reads are immutable; final release
+does not wait. No C operation invokes blocking Store usage, reconfiguration or the
+ordinary waiting constructor. With the pinned standard-library mutex, a failed
+try-lock does not create a waiter and a successful try-lock's unlock performs no
+I/O. Adding a blocking operation requires an explicitly owned I/O lifetime and a
+contract review. No thread, poll loop, clock or graphics backend is added here.
+
+Malformed descriptors and canonical config violations return `HI_INVALID_ARGUMENT`;
+resource ceilings and exhaustion return `HI_RESOURCE_LIMIT`; allocator failure
+returns `HI_OUT_OF_MEMORY`. Native font opening/metrics failures are operational;
+unsupported target/native glyph operations return `HI_UNSUPPORTED`. Admission and
+operational errors are mapped by closed source error sets. Constructor failures
+preserve the null output slot; other copies must still obey the matching-handle
+and serialization rules above.
+
+`zig build test:native-presentation` runs admission tests and a standalone C
+executable. Through public C functions it loads path and memory fonts, destroys
+its source buffers, creates two real PTYs sharing one Store, releases the caller
+reference early, supplies input and reads actual glyph commands/pixels. It checks
+immutable pixels/commands during producer progress, refusal to destroy with an
+endpoint during and between leases, and continued rendering by the final borrower.
+Core proofs inject every presented-construction allocation failure, check busy
+admission before allocation/launch and verify the existing waiting Zig lane.
+
 ## Artifact and proof
 
 The shared artifact uses the pinned compiler's self-hosted code generation/linker.
 A minimal static-library graph with shared system-library dependencies reproduced
 a compiler null-value panic. Shared linkage preserves the exact local graph without
-a compiler substitution. The selected graph currently links FreeType/Harfbuzz,
-even though this first constructor is unpresented. Do not claim a presentation-free
+a compiler substitution. The selected local graph links FreeType/HarfBuzz. Do not claim a presentation-free
 distribution or an idle-memory benefit. Those costs remain a packaging consideration
 before broader foreign adoption.
 
@@ -118,7 +190,8 @@ peer that includes only the public headers. The peer retains pixels while the
 producer advances, checks capacity/failure atomicity, exercises residency and
 backend replacement, and proves teardown refusal both during and between leases.
 C/C++ layout checks cover the copied envelope and Render-owned records. This proof
-does not claim a C-only presented constructor. A second real 225×512 terminal
+uses Zig construction; the standalone C proof above qualifies foreign construction.
+A second real 225×512 terminal
 proof publishes beyond the maintained host command envelope and copies its exact
 advertised extent through C; exact/insufficient/oversized capacities are checked
 with trailing storage sentinels. An owner-module unit proof checks every native
