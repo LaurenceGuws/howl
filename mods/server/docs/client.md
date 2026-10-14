@@ -40,6 +40,16 @@ responses. Recognized complete rejections, including geometry-authority loss, ke
 the ordered stream usable. Snapshot/view owners have
 their own independent release and may outlive the attachment.
 
+## Caller-driven byte interface
+
+The separately selectable `server_client_byte` module is also exposed as the exact
+`server_client.terminal.byte` namespace. It drives one already-attached terminal
+stream through typed starts, staged outgoing bytes and feed/finish response events.
+Opaque state uses module-sized caller storage and explicit bounded buffers; it has
+no allocator or native transport. Complete rejection remains a caller policy
+decision. [Byte client](byte-client.md) defines setup, consumption, validation,
+lifetimes and bounds. Native synchronous clients keep their existing direct API.
+
 ## Module boundary
 
 Production server_client imports server_protocol and its own private transport
@@ -127,8 +137,9 @@ one exact manifest generation and owns its decoded pixels independently.
 
 The C boundary covers catalog CRUD, dedicated attachment, semantic terminal
 input, geometry, signals, complete packed observations and exact images. The
-richer Zig API also exposes reusable raw/delta caching, interaction state,
-selection/search; those are not version-1 C entry points. Interaction state and retained terminal requests now also have native C entry points.
+richer Zig API also exposes reusable raw/delta caching and selection/search;
+those are not version-1 C entry points. Version 1 also exposes interaction state
+and retained terminal request authority through native C entry points.
 The public native ABI is independent of the renderer. Linux live qualification
 is in `test/native_client.c`; other platform deployment remains separately qualified.
 

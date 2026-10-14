@@ -1,63 +1,47 @@
-//! Experimental browser byte pump. Instance protocol and rich decoding stay shared.
+//! Browser ABI and memory adapter around Server's caller-driven byte client.
+//! Web owns buffers, numeric phases, admission budgets and semantic projection.
 const std = @import("std");
 const client = @import("server_client").terminal;
-const p = client.protocol;
-const server_protocol = @import("server_client").protocol;
+const byte = @import("server_client_byte");
+const p = byte.protocol;
 const rich = client.rich;
 const limits = @import("limits");
 
-// A deliberately coarse canary budget, not the final terminal-renderer budget.
 var input: [32768]u8 = undefined;
 var packet: [p.header_bytes + p.maximum_payload_bytes]u8 = undefined;
-var used: usize = 0;
-var needed: usize = p.header_bytes;
 var transcript: [p.maximum_observation_bytes]u8 = undefined;
-var transcript_len: usize = 0;
 var arena: [20 * 1024 * 1024]u8 = undefined;
 var projection: [65536]u8 = undefined;
+var output: [p.header_bytes + 1 + 4096]u8 = undefined;
+var storage: byte.Storage = undefined;
+var connection: ?*byte.ByteClient = null;
+var observed: ?p.SnapshotBegin = null;
+var interaction: ?p.InteractionStateSnapshot = null;
 var projection_len: usize = 0;
 var projection_truncated: bool = false;
-var output: [p.header_bytes + 1 + 4096]u8 = undefined;
+var selection_len: usize = 0;
+// Legacy private getter survives reset; bytes are sent only after a staged
+// operation. The module's outgoing borrow itself is invalidated by reset.
 var output_len: usize = 0;
-var identity: u64 = 0;
-var revision: u64 = 0;
-var terminal_revision: u64 = 0;
-var rows: u32 = 0;
-var columns: u32 = 0;
-var history_offset: u32 = 0;
-var history_count: u32 = 0;
-var history_row_base: u32 = 0;
-var alternate_screen: bool = false;
-var leader_present: bool = false;
-var live_passthrough: bool = false;
-var live_begin: ?p.SnapshotBegin = null;
-const LiveEnvelopeStage = enum { begin, body, properties, end };
-var live_envelope_stage: LiveEnvelopeStage = .begin;
-var live_body_kind: ?p.Kind = null;
-var interaction_terminal_revision: u64 = 0;
-var interaction_alternate_scroll: bool = false;
-var interaction_mouse_tracking: u32 = 0;
-var interaction_mouse_protocol: u32 = 0;
-var interaction_pointer_mode: u32 = 0;
 var failure: []const u8 = "";
 var last_result_code: u32 = 0;
-const ControlOperation = enum { none, input, assign_resize, resize_claim, resize_owned };
-var control_operation: ControlOperation = .none;
-var pending_resize_rows: u16 = 0;
-var pending_resize_columns: u16 = 0;
-var image_id: u32 = 0;
-var image_generation: u64 = 0;
-var image_width: u32 = 0;
-var image_height: u32 = 0;
-var image_expected_bytes: usize = 0;
-var image_len: usize = 0;
-var image_started: bool = false;
-var selection_len: usize = 0;
-// 0 closed, 1 awaiting welcome, 2 attached, 3 observing, 4 snapshot ready,
-// 5 awaiting a control result, 6 control acknowledged, 7 receiving one exact
-// image resource, 8 image ready for Host copy, 9 awaiting interaction state,
-// 10 awaiting selected text, 99 terminal protocol error.
+// Private browser ABI phases; never Server-client product vocabulary.
+// 0 closed, 1 await ready, 2 attached, 3 observing, 4 observation ready,
+// 5 control pending, 6 result ready, 7 image pending, 8 image ready,
+// 9 interaction pending, 10 selection pending, 99 failed.
 var phase: u32 = 0;
+
+fn controlReady() bool {
+    return if (connection) |value| value.isIdle() else false;
+}
+
+fn image() byte.Image {
+    return if (connection) |value| value.image() else .{ .bytes = arena[0..0] };
+}
+
+fn observationBytes() []const u8 {
+    return if (connection) |value| value.observationBytes() else transcript[0..0];
+}
 
 export fn hw_input_ptr() usize {
     return @intFromPtr(&input);
@@ -84,25 +68,25 @@ export fn hw_snapshot_ptr() usize {
     return @intFromPtr(&transcript);
 }
 export fn hw_snapshot_len() usize {
-    return transcript_len;
+    return observationBytes().len;
 }
 export fn hw_image_ptr() usize {
     return @intFromPtr(&arena);
 }
 export fn hw_image_len() usize {
-    return image_len;
+    return image().bytes.len;
 }
 export fn hw_image_id() u32 {
-    return image_id;
+    return image().image_id;
 }
 export fn hw_image_generation() u64 {
-    return image_generation;
+    return image().generation;
 }
 export fn hw_image_width() u32 {
-    return image_width;
+    return image().width;
 }
 export fn hw_image_height() u32 {
-    return image_height;
+    return image().height;
 }
 export fn hw_selection_ptr() usize {
     return @intFromPtr(&arena);
@@ -120,19 +104,19 @@ export fn hw_phase() u32 {
     return phase;
 }
 export fn hw_identity() u64 {
-    return identity;
+    return if (connection) |value| if (value.identity()) |ready| ready.client_id else 0 else 0;
 }
 export fn hw_revision() u64 {
-    return revision;
+    return if (observed) |value| value.revision else 0;
 }
 export fn hw_terminal_revision() u64 {
-    return terminal_revision;
+    return if (observed) |value| value.terminal.revision else 0;
 }
 export fn hw_rows() u32 {
-    return rows;
+    return if (observed) |value| value.terminal.rows else 0;
 }
 export fn hw_columns() u32 {
-    return columns;
+    return if (observed) |value| value.terminal.columns else 0;
 }
 export fn hw_maximum_rows() u32 {
     return limits.maximum_rows;
@@ -141,34 +125,34 @@ export fn hw_maximum_columns() u32 {
     return limits.maximum_columns;
 }
 export fn hw_history_offset() u32 {
-    return history_offset;
+    return if (observed) |value| value.terminal.history_offset else 0;
 }
 export fn hw_history_count() u32 {
-    return history_count;
+    return if (observed) |value| value.terminal.history_count else 0;
 }
 export fn hw_history_row_base() u32 {
-    return history_row_base;
+    return if (observed) |value| value.terminal.history_row_base else 0;
 }
 export fn hw_alternate_screen() u32 {
-    return @intFromBool(alternate_screen);
+    return if (observed) |value| @intFromBool(value.terminal.alternate_screen) else 0;
 }
 export fn hw_leader_present() u32 {
-    return @intFromBool(leader_present);
+    return if (observed) |value| @intFromBool(value.leader_present) else 0;
 }
 export fn hw_interaction_terminal_revision() u64 {
-    return interaction_terminal_revision;
+    return if (interaction) |value| value.terminal_revision else 0;
 }
 export fn hw_interaction_alternate_scroll() u32 {
-    return @intFromBool(interaction_alternate_scroll);
+    return if (interaction) |value| @intFromBool(value.alternate_scroll) else 0;
 }
 export fn hw_interaction_mouse_tracking() u32 {
-    return interaction_mouse_tracking;
+    return if (interaction) |value| @backingInt(value.mouse_tracking) else 0;
 }
 export fn hw_interaction_mouse_protocol() u32 {
-    return interaction_mouse_protocol;
+    return if (interaction) |value| @backingInt(value.mouse_protocol) else 0;
 }
 export fn hw_interaction_pointer_mode() u32 {
-    return interaction_pointer_mode;
+    return if (interaction) |value| value.pointer_mode else 0;
 }
 export fn hw_last_result_code() u32 {
     return last_result_code;
@@ -181,211 +165,100 @@ fn fail(message: []const u8) u32 {
     failure = message;
     phase = 99;
     output_len = 0;
+    if (connection) |value| value.retire();
     return 0;
 }
 
-fn queue(kind: p.Kind, payload: []const u8) bool {
-    if (payload.len > output.len - p.header_bytes) return false;
-    p.encodeHeader(output[0..p.header_bytes], .{ .kind = kind, .payload_len = @intCast(payload.len) }) catch return false;
-    @memcpy(output[p.header_bytes..][0..payload.len], payload);
-    output_len = p.header_bytes + payload.len;
-    return true;
-}
-
-fn controlReady() bool {
-    return control_operation == .none and (phase == 2 or phase == 4 or phase == 6);
-}
-
-fn beginInput(payload: []const u8) u32 {
-    if (!controlReady()) return 0;
-    if (!queue(.input, payload)) return fail("InputEncodingFailed");
-    control_operation = .input;
-    phase = 5;
+fn started(next_phase: u32) u32 {
+    output_len = connection.?.outgoing().len;
+    phase = next_phase;
     return 1;
 }
 
-fn sendBytesInput(kind: p.InputKind, length: usize, validate_utf8: bool) u32 {
-    if (!controlReady() or length == 0 or length > 4096) return 0;
-    if (validate_utf8 and !std.unicode.utf8ValidateSlice(input[0..length])) return 0;
-    var payload: [4097]u8 = undefined;
-    payload[0] = @backingInt(kind);
-    @memcpy(payload[1..][0..length], input[0..length]);
-    return beginInput(payload[0 .. length + 1]);
-}
-
 export fn hw_reset() u32 {
-    used = 0;
-    needed = p.header_bytes;
-    transcript_len = 0;
+    connection = byte.ByteClient.init(&storage, .{
+        .packet = &packet,
+        .outgoing = &output,
+        .observation = &transcript,
+        .result = &arena,
+    }) catch |err| return fail(@errorName(err));
+    connection.?.resetAwaitReady();
+    observed = null;
+    interaction = null;
     projection_len = 0;
     projection_truncated = false;
-    identity = 0;
-    revision = 0;
-    terminal_revision = 0;
-    rows = 0;
-    columns = 0;
-    history_offset = 0;
-    history_count = 0;
-    history_row_base = 0;
-    alternate_screen = false;
-    leader_present = false;
-    live_passthrough = false;
-    live_begin = null;
-    live_envelope_stage = .begin;
-    live_body_kind = null;
-    interaction_terminal_revision = 0;
-    interaction_alternate_scroll = false;
-    interaction_mouse_tracking = 0;
-    interaction_mouse_protocol = 0;
-    interaction_pointer_mode = 0;
+    selection_len = 0;
     failure = "";
     last_result_code = 0;
-    control_operation = .none;
-    pending_resize_rows = 0;
-    pending_resize_columns = 0;
-    image_id = 0;
-    image_generation = 0;
-    image_width = 0;
-    image_height = 0;
-    image_expected_bytes = 0;
-    image_len = 0;
-    image_started = false;
-    selection_len = 0;
     phase = 1;
     return 1;
 }
 
-export fn hw_observe(immediate: u32, requested_history_offset: u32) u32 {
+fn observe(immediate: u32, history: u32, mode: byte.ObservationMode) u32 {
     if (!controlReady()) return 0;
-    var payload: [p.payload_bytes.observe]u8 = undefined;
-    p.encodeObserve(&payload, .{
-        .after_revision = if (immediate != 0) 0 else revision,
-        .history_offset = requested_history_offset,
-    });
-    if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
-    transcript_len = 0;
-    live_passthrough = false;
-    live_begin = null;
-    live_envelope_stage = .begin;
-    live_body_kind = null;
-    phase = 3;
-    return 1;
+    connection.?.observe(.{
+        .after_revision = if (immediate != 0) 0 else hw_revision(),
+        .history_offset = history,
+    }, mode) catch return fail("ObserveEncodingFailed");
+    return started(3);
 }
 
-/// Requests the ordinary complete live observation lane without performing a
-/// second semantic decode in this framing/control module. Render Wasm owns the
-/// semantic decode for presentation winners; history keeps the full wire path.
+export fn hw_observe(immediate: u32, history: u32) u32 {
+    return observe(immediate, history, .collect);
+}
 export fn hw_observe_live(immediate: u32) u32 {
-    if (!controlReady()) return 0;
-    var payload: [p.payload_bytes.observe]u8 = undefined;
-    p.encodeObserve(&payload, .{
-        .after_revision = if (immediate != 0) 0 else revision,
-        .history_offset = 0,
-    });
-    if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
-    transcript_len = 0;
-    live_passthrough = true;
-    live_begin = null;
-    live_envelope_stage = .begin;
-    live_body_kind = null;
-    phase = 3;
-    return 1;
+    return observe(immediate, 0, .live);
 }
 
-/// Requests one exact immutable RGBA8 terminal image generation.
-///
-/// The image body reuses this wire instance's decode arena after observation
-/// decoding; each browser connection owns an independent Wasm instance.
-export fn hw_request_image(requested_image_id: u32, requested_generation: u64) u32 {
-    if ((phase != 2 and phase != 4 and phase != 6 and phase != 8) or
-        requested_image_id == 0 or requested_generation == 0)
-        return 0;
-    var payload: [p.payload_bytes.image_request]u8 = undefined;
-    p.encodeImageRequest(&payload, .{
-        .image_id = requested_image_id,
-        .generation = requested_generation,
-    });
-    if (!queue(.image_request, &payload)) return fail("ImageRequestEncodingFailed");
-    image_id = requested_image_id;
-    image_generation = requested_generation;
-    image_width = 0;
-    image_height = 0;
-    image_expected_bytes = 0;
-    image_len = 0;
-    image_started = false;
-    phase = 7;
-    return 1;
+export fn hw_request_image(id: u32, generation: u64) u32 {
+    if ((phase != 2 and phase != 4 and phase != 6 and phase != 8) or id == 0 or generation == 0) return 0;
+    connection.?.requestImage(.{ .image_id = id, .generation = generation }) catch return fail("ImageRequestEncodingFailed");
+    return started(7);
 }
 
-/// Releases one copied image result and returns this connection to attached.
 export fn hw_release_image() u32 {
     if (phase != 8) return 0;
-    image_id = 0;
-    image_generation = 0;
-    image_width = 0;
-    image_height = 0;
-    image_expected_bytes = 0;
-    image_len = 0;
-    image_started = false;
+    connection.?.releaseImage() catch return 0;
     phase = 2;
     return 1;
 }
 
-// Host writes committed UTF-8 bytes into input, then requests one serialized send.
-// Terminal escape encoding remains exclusively on the Instance/VT side.
 export fn hw_send_text(length: usize) u32 {
-    return sendBytesInput(.bytes, length, true);
+    if (!controlReady() or length == 0 or length > 4096 or
+        !std.unicode.utf8ValidateSlice(input[0..length])) return 0;
+    connection.?.sendBytes(.bytes, input[0..length]) catch return fail("InputEncodingFailed");
+    return started(5);
 }
-
 export fn hw_send_paste(length: usize) u32 {
-    return sendBytesInput(.paste, length, false);
+    if (!controlReady() or length == 0 or length > 4096) return 0;
+    connection.?.sendBytes(.paste, input[0..length]) catch return fail("InputEncodingFailed");
+    return started(5);
 }
 
-export fn hw_send_named_key(key_value: u32, action_value: u32, modifiers: u32) u32 {
-    if (!controlReady() or key_value < 1 or key_value > 58 or
-        action_value < 1 or action_value > 3 or modifiers > std.math.maxInt(u8))
-        return 0;
-    var body: [p.typed_input.key_header_bytes]u8 = undefined;
-    const encoded = p.encodeKeyInput(&body, .{
-        .kind = .named,
-        .key_value = key_value,
-        .action = @fromBackingInt(@as(u8, @intCast(action_value))),
-        .modifiers = @intCast(modifiers),
-    }) catch return 0;
-    var payload: [1 + p.typed_input.key_header_bytes]u8 = undefined;
-    payload[0] = @backingInt(p.InputKind.key);
-    @memcpy(payload[1..][0..encoded.len], encoded);
-    return beginInput(payload[0 .. 1 + encoded.len]);
+export fn hw_send_named_key(key: u32, action: u32, modifiers: u32) u32 {
+    return sendKey(.named, key, action, modifiers);
+}
+export fn hw_send_unicode_key(scalar: u32, action: u32, modifiers: u32) u32 {
+    return sendKey(.unicode, scalar, action, modifiers);
+}
+fn sendKey(kind: p.InputKeyKind, key: u32, action: u32, modifiers: u32) u32 {
+    if (!controlReady() or action > std.math.maxInt(u8) or modifiers > std.math.maxInt(u8)) return 0;
+    const selected = std.enums.fromInt(p.InputKeyAction, @as(u8, @intCast(action))) orelse return 0;
+    connection.?.sendKey(.{ .kind = kind, .key_value = key, .action = selected, .modifiers = @intCast(modifiers) }) catch return 0;
+    return started(5);
 }
 
-export fn hw_send_unicode_key(scalar: u32, action_value: u32, modifiers: u32) u32 {
-    if (!controlReady() or action_value < 1 or action_value > 3 or modifiers > std.math.maxInt(u8)) return 0;
-    var body: [p.typed_input.key_header_bytes]u8 = undefined;
-    const encoded = p.encodeKeyInput(&body, .{
-        .kind = .unicode,
-        .key_value = scalar,
-        .action = @fromBackingInt(@as(u8, @intCast(action_value))),
-        .modifiers = @intCast(modifiers),
-    }) catch return 0;
-    var payload: [1 + p.typed_input.key_header_bytes]u8 = undefined;
-    payload[0] = @backingInt(p.InputKind.key);
-    @memcpy(payload[1..][0..encoded.len], encoded);
-    return beginInput(payload[0 .. 1 + encoded.len]);
-}
-
-export fn hw_send_focus(focus_value: u32) u32 {
-    if (!controlReady() or focus_value < 1 or focus_value > 2) return 0;
-    var body: [p.typed_input.focus_bytes]u8 = undefined;
-    p.encodeFocusInput(&body, @fromBackingInt(@as(u8, @intCast(focus_value))));
-    const payload = [1 + p.typed_input.focus_bytes]u8{ @backingInt(p.InputKind.focus), body[0] };
-    return beginInput(&payload);
+export fn hw_send_focus(focus: u32) u32 {
+    if (!controlReady() or focus > std.math.maxInt(u8)) return 0;
+    const selected = std.enums.fromInt(p.InputFocus, @as(u8, @intCast(focus))) orelse return 0;
+    connection.?.sendFocus(selected) catch return 0;
+    return started(5);
 }
 
 export fn hw_request_interaction_state() u32 {
     if (!controlReady()) return 0;
-    if (!queue(.interaction_state, &.{})) return fail("InteractionStateEncodingFailed");
-    phase = 9;
-    return 1;
+    connection.?.interactionState() catch return fail("InteractionStateEncodingFailed");
+    return started(9);
 }
 
 export fn hw_request_text_extract(
@@ -393,326 +266,150 @@ export fn hw_request_text_extract(
     start_column: u32,
     end_row: i32,
     end_column: u32,
-    selection_columns: u32,
-    alternate_screen_value: u32,
+    columns: u32,
+    alternate: u32,
 ) u32 {
-    if (!controlReady() or start_column > std.math.maxInt(u16) or
-        end_column > std.math.maxInt(u16) or selection_columns == 0 or
-        selection_columns > std.math.maxInt(u16) or alternate_screen_value > 1)
-        return 0;
-    var payload: [p.payload_bytes.text_extract]u8 = undefined;
-    p.encodeTextExtract(&payload, .{
+    if (!controlReady() or start_column > std.math.maxInt(u16) or end_column > std.math.maxInt(u16) or
+        columns == 0 or columns > std.math.maxInt(u16) or alternate > 1) return 0;
+    connection.?.textExtract(.{
         .start = .{ .row = start_row, .column = @intCast(start_column) },
         .end = .{ .row = end_row, .column = @intCast(end_column) },
-        .columns = @intCast(selection_columns),
-        .alternate_screen = alternate_screen_value == 1,
-    });
-    if (!queue(.text_extract, &payload)) return fail("TextExtractEncodingFailed");
+        .columns = @intCast(columns),
+        .alternate_screen = alternate == 1,
+    }) catch return fail("TextExtractEncodingFailed");
     selection_len = 0;
     last_result_code = std.math.maxInt(u32);
-    phase = 10;
-    return 1;
+    return started(10);
 }
 
 export fn hw_send_mouse(
-    kind_value: u32,
-    button_value: u32,
+    kind: u32,
+    button: u32,
     modifiers: u32,
-    buttons_down: u32,
-    row_value: i32,
-    column_value: u32,
+    buttons: u32,
+    row: i32,
+    column: u32,
     pixels_present: u32,
     pixel_x: u32,
     pixel_y: u32,
 ) u32 {
-    if (!controlReady() or kind_value < 1 or kind_value > 4 or
-        button_value > 5 or modifiers > std.math.maxInt(u8) or
-        buttons_down > std.math.maxInt(u8) or column_value > std.math.maxInt(u16) or
-        pixels_present > 1 or (pixels_present == 0 and (pixel_x != 0 or pixel_y != 0)))
-        return 0;
-    var body: [p.typed_input.mouse_bytes]u8 = undefined;
-    p.encodeMouseInput(&body, .{
-        .kind = @fromBackingInt(@intCast(@as(u8, @intCast(kind_value)))),
-        .button = @fromBackingInt(@intCast(@as(u8, @intCast(button_value)))),
+    if (!controlReady() or kind > std.math.maxInt(u8) or button > std.math.maxInt(u8) or
+        modifiers > std.math.maxInt(u8) or buttons > std.math.maxInt(u8) or
+        column > std.math.maxInt(u16) or pixels_present > 1 or
+        (pixels_present == 0 and (pixel_x != 0 or pixel_y != 0))) return 0;
+    const selected_kind = std.enums.fromInt(p.InputMouseKind, @as(u8, @intCast(kind))) orelse return 0;
+    const selected_button = std.enums.fromInt(p.InputMouseButton, @as(u8, @intCast(button))) orelse return 0;
+    connection.?.sendMouse(.{
+        .kind = selected_kind,
+        .button = selected_button,
         .modifiers = @intCast(modifiers),
-        .buttons_down = @intCast(buttons_down),
-        .row = row_value,
-        .column = @intCast(column_value),
+        .buttons_down = @intCast(buttons),
+        .row = row,
+        .column = @intCast(column),
         .pixel_x = if (pixels_present == 1) pixel_x else null,
         .pixel_y = if (pixels_present == 1) pixel_y else null,
     }) catch return 0;
-    var payload: [1 + p.typed_input.mouse_bytes]u8 = undefined;
-    payload[0] = @backingInt(p.InputKind.mouse);
-    @memcpy(payload[1..], &body);
-    return beginInput(&payload);
+    return started(5);
 }
 
-fn stageResize(resize_rows: u32, resize_columns: u32) bool {
-    if (!controlReady() or resize_rows == 0 or resize_rows > std.math.maxInt(u16) or
-        resize_columns == 0 or resize_columns > std.math.maxInt(u16))
-        return false;
-    pending_resize_rows = @intCast(resize_rows);
-    pending_resize_columns = @intCast(resize_columns);
+fn resize(rows: u32, columns: u32, claim: bool) u32 {
+    if (!controlReady() or rows == 0 or rows > std.math.maxInt(u16) or
+        columns == 0 or columns > std.math.maxInt(u16)) return 0;
+    connection.?.resize(.{ .rows = @intCast(rows), .columns = @intCast(columns) }, claim) catch
+        return fail(if (claim) "ResizeLeaderEncodingFailed" else "ResizeEncodingFailed");
     last_result_code = std.math.maxInt(u32);
-    return true;
+    return started(5);
 }
-
-// Claim geometry leadership and then resize. Browser policy uses this only when
-// the latest canonical observation reports that no leader exists.
-export fn hw_send_resize(resize_rows: u32, resize_columns: u32) u32 {
-    if (!stageResize(resize_rows, resize_columns)) return 0;
-    var payload: [p.payload_bytes.assign_leader]u8 = undefined;
-    p.encodeAssignLeader(&payload, .{ .client_id = identity });
-    if (!queue(.assign_leader, &payload)) return fail("ResizeLeaderEncodingFailed");
-    control_operation = .assign_resize;
-    phase = 5;
-    return 1;
+export fn hw_send_resize(rows: u32, columns: u32) u32 {
+    return resize(rows, columns, true);
 }
-
-// Resize without changing authority. `not_leader` is a normal race/transfer
-// outcome and is exposed to the host through hw_last_result_code().
-export fn hw_send_resize_owned(resize_rows: u32, resize_columns: u32) u32 {
-    if (!stageResize(resize_rows, resize_columns)) return 0;
-    var payload: [p.payload_bytes.resize]u8 = undefined;
-    p.encodeResize(&payload, .{
-        .rows = pending_resize_rows,
-        .columns = pending_resize_columns,
-    });
-    if (!queue(.resize, &payload)) return fail("ResizeEncodingFailed");
-    control_operation = .resize_owned;
-    phase = 5;
-    return 1;
+export fn hw_send_resize_owned(rows: u32, columns: u32) u32 {
+    return resize(rows, columns, false);
 }
 
 fn decodeSnapshot() (rich.Error || client.view.Error)!void {
     var memory = std.heap.FixedBufferAllocator.init(&arena);
-    var snapshot = try rich.decodeFrames(memory.allocator(), transcript[0..transcript_len]);
+    var snapshot = try rich.decodeFrames(memory.allocator(), observationBytes());
     defer snapshot.deinit();
     const view = try client.view.project(memory.allocator(), &snapshot);
     defer client.view.deinit(view);
-    const text_projection = client.view.writeVisibleText(view, &projection);
-    projection_len = text_projection.bytes_written;
-    projection_truncated = text_projection.truncated;
-    revision = snapshot.begin.revision;
-    terminal_revision = snapshot.begin.terminal.revision;
-    rows = snapshot.begin.terminal.rows;
-    columns = snapshot.begin.terminal.columns;
-    history_offset = snapshot.begin.terminal.history_offset;
-    history_count = snapshot.begin.terminal.history_count;
-    history_row_base = snapshot.begin.terminal.history_row_base;
-    alternate_screen = snapshot.begin.terminal.alternate_screen;
-    leader_present = snapshot.begin.leader_present;
+    const projected = client.view.writeVisibleText(view, &projection);
+    projection_len = projected.bytes_written;
+    projection_truncated = projected.truncated;
+    observed = snapshot.begin;
 }
 
-fn acceptLiveEnvelope(kind: p.Kind) !void {
-    switch (live_envelope_stage) {
-        .begin => {
-            if (kind != .snapshot_begin) return error.UnexpectedSnapshotFrame;
-            live_envelope_stage = .body;
-        },
-        .body => switch (kind) {
-            .snapshot_data, .snapshot_raw_data => {
-                if (live_body_kind) |accepted_kind| {
-                    if (accepted_kind != kind) return error.MixedSnapshotBodyEncoding;
-                } else {
-                    live_body_kind = kind;
-                }
-            },
-            .snapshot_graphics => {
-                if (live_body_kind == null) return error.MissingSnapshotBody;
-                live_envelope_stage = .properties;
-            },
-            else => return error.UnexpectedSnapshotFrame,
-        },
-        .properties => {
-            if (kind != .snapshot_properties) return error.UnexpectedSnapshotFrame;
-            live_envelope_stage = .end;
-        },
-        .end => if (kind != .snapshot_end) return error.UnexpectedSnapshotFrame,
-    }
-}
-
-fn acceptFrame() u32 {
-    const payload = packet[p.header_bytes..needed];
-    if (phase == 1) {
-        const header = server_protocol.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
-        if (header.kind != .attach_ready) return fail("ExpectedAttachReady");
-        const ready = server_protocol.decodeAttachReady(payload) catch |err| return fail(@errorName(err));
-        identity = ready.client_id;
-        phase = 2;
-        return 1;
-    }
-    const header = p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err));
+// The byte client owns transaction correlation. This switch only preserves
+// Web's existing rejection/close presentation policy and private phase numbers.
+fn acceptResult(result: p.Result) u32 {
     switch (phase) {
-        3 => {
-            if (live_passthrough) {
-                acceptLiveEnvelope(header.kind) catch |err| return fail(@errorName(err));
-                if (header.kind == .snapshot_begin)
-                    live_begin = p.decodeSnapshotBegin(payload) catch |err| return fail(@errorName(err));
-            } else if ((transcript_len == 0 and header.kind != .snapshot_begin) or
-                (transcript_len != 0 and header.kind != .snapshot_data and
-                    header.kind != .snapshot_raw_data and
-                    header.kind != .snapshot_graphics and header.kind != .snapshot_properties and header.kind != .snapshot_end))
-            {
-                return fail("UnexpectedSnapshotFrame");
-            }
-            if (needed > transcript.len - transcript_len) return fail("SnapshotTooLarge");
-            @memcpy(transcript[transcript_len..][0..needed], packet[0..needed]);
-            transcript_len += needed;
-            if (header.kind == .snapshot_end) {
-                if (live_passthrough) {
-                    const begin = live_begin orelse return fail("MissingSnapshotBegin");
-                    const end = p.decodeSnapshotEnd(payload) catch |err| return fail(@errorName(err));
-                    if (end.revision != begin.revision) return fail("SnapshotRevisionMismatch");
-                    if (begin.terminal.history_offset != 0) return fail("LiveHistoryOffsetMismatch");
-                    projection_len = 0;
-                    projection_truncated = false;
-                    revision = begin.revision;
-                    terminal_revision = begin.terminal.revision;
-                    rows = begin.terminal.rows;
-                    columns = begin.terminal.columns;
-                    history_offset = begin.terminal.history_offset;
-                    history_count = begin.terminal.history_count;
-                    history_row_base = begin.terminal.history_row_base;
-                    alternate_screen = begin.terminal.alternate_screen;
-                    leader_present = begin.leader_present;
-                    live_begin = null;
-                } else {
-                    decodeSnapshot() catch |err| {
-                        projection_len = 0;
-                        return fail(@errorName(err));
-                    };
-                }
-                phase = 4;
-            }
-        },
-        5 => {
-            if (header.kind != .result) return fail("ExpectedControlResult");
-            const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
-            switch (control_operation) {
-                .input => {
-                    if (result.request_kind != .input or result.code != .ok) return fail("InputRejected");
-                    control_operation = .none;
-                    phase = 6;
-                },
-                .assign_resize => {
-                    if (result.request_kind != .assign_leader or result.code != .ok) return fail("ResizeLeaderRejected");
-                    last_result_code = @backingInt(result.code);
-                    var resize_payload: [p.payload_bytes.resize]u8 = undefined;
-                    p.encodeResize(&resize_payload, .{
-                        .rows = pending_resize_rows,
-                        .columns = pending_resize_columns,
-                    });
-                    if (!queue(.resize, &resize_payload)) return fail("ResizeEncodingFailed");
-                    control_operation = .resize_claim;
-                    return 2;
-                },
-                .resize_claim, .resize_owned => {
-                    if (result.request_kind != .resize) return fail("ResizeResultMismatch");
-                    if (result.code != .ok and result.code != .not_leader) return fail("ResizeRejected");
-                    last_result_code = @backingInt(result.code);
-                    pending_resize_rows = 0;
-                    pending_resize_columns = 0;
-                    control_operation = .none;
-                    phase = 6;
-                },
-                .none => return fail("MissingControlOperation"),
-            }
-        },
-        9 => {
-            if (header.kind != .interaction_state_snapshot)
-                return fail("ExpectedInteractionStateSnapshot");
-            const state = p.decodeInteractionStateSnapshot(payload) catch |err| return fail(@errorName(err));
-            interaction_terminal_revision = state.terminal_revision;
-            interaction_alternate_scroll = state.alternate_scroll;
-            interaction_mouse_tracking = @backingInt(state.mouse_tracking);
-            interaction_mouse_protocol = @backingInt(state.mouse_protocol);
-            interaction_pointer_mode = state.pointer_mode;
-            phase = 6;
-        },
-        10 => {
-            if (header.kind == .result) {
-                const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
-                if (result.request_kind != .text_extract or result.code == .ok)
-                    return fail("TextExtractResultMismatch");
+        5 => switch (result.request_kind) {
+            .input => if (result.code != .ok) return fail("InputRejected"),
+            .assign_leader => return fail("ResizeLeaderRejected"),
+            .resize => {
+                if (result.code != .ok and result.code != .not_leader) return fail("ResizeRejected");
                 last_result_code = @backingInt(result.code);
-                selection_len = 0;
-                phase = 6;
-            } else {
-                if (header.kind != .text_extract_data or payload.len > arena.len or
-                    !std.unicode.utf8ValidateSlice(payload))
-                    return fail("InvalidTextExtractData");
-                @memcpy(arena[0..payload.len], payload);
-                selection_len = payload.len;
-                last_result_code = @backingInt(p.ResultCode.ok);
-                phase = 6;
-            }
+            },
+            else => return fail("MissingControlOperation"),
         },
-        7 => {
-            if (!image_started) {
-                if (header.kind == .result) {
-                    const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
-                    if (result.request_kind != .image_request or result.code == .ok)
-                        return fail("ImageResultMismatch");
-                    return fail("ImageRejected");
-                }
-                if (header.kind != .image_begin) return fail("ExpectedImageBegin");
-                const begin = p.decodeImageBegin(payload) catch |err| return fail(@errorName(err));
-                if (begin.image_id != image_id or begin.generation != image_generation or
-                    begin.byte_count > arena.len)
-                    return fail("ImageIdentityMismatch");
-                image_width = begin.width;
-                image_height = begin.height;
-                image_expected_bytes = begin.byte_count;
-                image_len = 0;
-                image_started = true;
-                return 1;
-            }
-            if (header.kind == .image_data) {
-                if (payload.len == 0 or payload.len > p.image_data_chunk_bytes or
-                    payload.len > image_expected_bytes -| image_len)
-                    return fail("InvalidImageData");
-                @memcpy(arena[image_len..][0..payload.len], payload);
-                image_len += payload.len;
-                return 1;
-            }
-            if (header.kind != .image_end or image_len != image_expected_bytes)
-                return fail("ExpectedImageEnd");
-            const end = p.decodeImageEnd(payload) catch |err| return fail(@errorName(err));
-            if (end.image_id != image_id or end.generation != image_generation)
-                return fail("ImageIdentityMismatch");
-            phase = 8;
+        7 => return fail("ImageRejected"),
+        9 => return fail("ExpectedInteractionStateSnapshot"),
+        10 => {
+            last_result_code = @backingInt(result.code);
+            selection_len = 0;
         },
         else => return fail("UnsolicitedFrame"),
     }
+    phase = 6;
     return 1;
 }
 
-// WebSocket messages need not coincide with Howl frames, even at the header.
 export fn hw_feed(length: usize) u32 {
     if (phase == 0 or phase == 99 or length > input.len) return 0;
     var offset: usize = 0;
     while (offset < length) {
-        const count = @min(length - offset, needed - used);
-        @memcpy(packet[used..][0..count], input[offset..][0..count]);
-        offset += count;
-        used += count;
-        if (used != needed) continue;
-        if (needed == p.header_bytes) {
-            const payload_len = if (phase == 1)
-                (server_protocol.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err))).payload_len
-            else
-                (p.decodeHeader(packet[0..p.header_bytes]) catch |err| return fail(@errorName(err))).payload_len;
-            needed = p.header_bytes + payload_len;
-            if (used != needed) continue;
-        }
-        const accepted = acceptFrame();
-        if (accepted == 0) return 0;
-        used = 0;
-        needed = p.header_bytes;
-        if (accepted == 2) {
-            if (offset != length) return fail("ControlFollowupRequired");
-            return 2;
+        const received = connection.?.feed(input[offset..length]) catch |err| return fail(switch (err) {
+            // The reusable API reports caller capacity accurately. Preserve the
+            // legacy private Web strings at this application boundary only.
+            error.ResultTooSmall => switch (phase) {
+                7 => "ImageIdentityMismatch",
+                10 => "InvalidTextExtractData",
+                else => @errorName(err),
+            },
+            else => @errorName(err),
+        });
+        offset += received.consumed;
+        switch (received.event) {
+            .progress => {},
+            .attached => phase = 2,
+            .observation => |begin| {
+                if (begin) |value| {
+                    projection_len = 0;
+                    projection_truncated = false;
+                    observed = value;
+                } else decodeSnapshot() catch |err| {
+                    projection_len = 0;
+                    return fail(@errorName(err));
+                };
+                phase = 4;
+            },
+            .result => |result| if (acceptResult(result) == 0) return 0,
+            .outgoing_followup => |result| {
+                output_len = connection.?.outgoing().len;
+                last_result_code = @backingInt(result.code);
+                if (offset != length) return fail("ControlFollowupRequired");
+                return 2;
+            },
+            .interaction => |value| {
+                interaction = value;
+                phase = 6;
+            },
+            .text => |bytes| {
+                selection_len = bytes.len;
+                last_result_code = @backingInt(p.ResultCode.ok);
+                phase = 6;
+            },
+            .image => phase = 8,
         }
     }
     return 1;
@@ -720,11 +417,7 @@ export fn hw_feed(length: usize) u32 {
 
 export fn hw_finish() u32 {
     if (phase == 99) return 0;
-    if (used != 0 or phase == 1 or phase == 3 or phase == 5 or phase == 7 or phase == 9 or phase == 10)
-        return fail("TruncatedResponse");
-    control_operation = .none;
-    pending_resize_rows = 0;
-    pending_resize_columns = 0;
+    if (connection) |value| value.finish() catch |err| return fail(@errorName(err));
     phase = 0;
     output_len = 0;
     return 1;

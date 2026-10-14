@@ -24,6 +24,9 @@ pub const Interrupt = impl.Interrupt;
 /// One established Server terminal connection owner.
 pub const Connection = impl.Connection;
 
+/// Caller-driven, allocation-free attachment transactions over supplied byte storage.
+pub const byte = @import("server_client_byte");
+
 /// Canonical client-side Instance mutation requests.
 pub const actions = @import("actions.zig");
 /// Host-consequence authority, observation, consume, and reply operations.

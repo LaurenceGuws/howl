@@ -23,3 +23,9 @@ test "public connection authority is opaque and has no raw constructor or storag
     inline for (.{ "create", "stateOf", "retire", "ownerAllocator", "stream", "allocator" }) |name|
         try std.testing.expect(!@hasDecl(client.terminal, name));
 }
+
+test "byte capability is opaque caller storage without native transport construction" {
+    try std.testing.expect(@typeInfo(client.terminal.byte.ByteClient) == .@"opaque");
+    inline for (.{ "State", "Stream", "Connection", "stateOf", "allocator", "socket" }) |name|
+        try std.testing.expect(!@hasDecl(client.terminal.byte, name));
+}

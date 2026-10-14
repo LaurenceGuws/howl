@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseSafe,
     });
     root.addImport("server_client", client_module);
+    root.addImport("server_client_byte", client.module("server_client_byte"));
     root.addImport("limits", render.module("howl_render_limits"));
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;

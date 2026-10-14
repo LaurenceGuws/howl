@@ -172,3 +172,11 @@ test "root exposes exact Instance native artifact and VT-owned header" {
     try std.testing.expect(native_vt.Terminal == vt.Terminal);
     try std.testing.expectEqual(@as(c_int, 0), howl_external_instance_abi());
 }
+
+test "root forwards the exact caller-driven byte client" {
+    const client = @import("server_client");
+    const byte = @import("server_client_byte");
+    try std.testing.expect(client.terminal.byte == byte);
+    try std.testing.expect(byte.protocol == @import("server_protocol").terminal);
+    try std.testing.expect(@typeInfo(byte.ByteClient) == .@"opaque");
+}

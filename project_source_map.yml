@@ -62,6 +62,15 @@ experimental:
     Instance, PTY, Server model or process ownership. Public control/attachment
     handles are opaque; raw constructors and socket/allocator storage stay in
     private child-owned build modules.
+  server-client-byte: >-
+    mods/server src/client/terminal/byte.zig owns caller-driven dedicated attachment
+    framing and transactions. server_client_byte is the exact module exposed as
+    server_client.terminal.byte; it imports only Server protocol vocabulary.
+    Opaque state lives in module-sized aligned caller Storage with disjoint caller
+    buffers. Typed starts and feed/finish events have no allocator, socket, clock,
+    worker, reconnect, renderer or canonical process owner. Collected observation
+    completion does not validate VT payloads. Web owns semantic rich projection,
+    private ABI budgets and application close/scheduling policy.
   server-client-abi: >-
     mods/server optional howl_server_client static artifact and owned
     include/howl_server_client.h header. Versioned C opaque handles expose catalog

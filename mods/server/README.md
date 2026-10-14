@@ -41,6 +41,7 @@ attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 | `server_terminal_service` | bounded adopted terminal streams and observation delivery |
 | `server_protocol` | pure Server wire plus optional VT observation codec |
 | `server_client` | control/attachment/terminal APIs and private transport |
+| `server_client_byte` | caller-driven attachment bytes over opaque caller storage; no allocator or transport |
 | `server_client_native` | optional native VT request/interaction facts and named replies; Server wire stays private |
 | `server_client_render` | optional client observation adapter to Howl Render |
 | `server_client_render_native` | exact forwarded Render-native module for the same adapter graph; Render owns its schemas and projection |
@@ -48,8 +49,9 @@ attachment; only explicit close destroys the Instance. UI owns tabs and layout.
 
 `zig build check test` proves the complete family, including a foreign C caller
 against a private live Server. `zig build wire` validates its
-wire corpus. The [runtime](docs/runtime.md), [client](docs/client.md) and
-[protocol](docs/protocol.md) contracts retain the current connection behavior.
+wire corpus. The [runtime](docs/runtime.md), [client](docs/client.md),
+[byte client](docs/byte-client.md) and [protocol](docs/protocol.md) contracts
+describe the selected connection interfaces.
 
 ## Control service
 

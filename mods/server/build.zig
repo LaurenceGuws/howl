@@ -17,6 +17,13 @@ pub fn build(b: *std.Build) void {
     });
     protocol.addImport("howl_vt_codec", codec);
 
+    const byte_client = b.addModule("server_client_byte", .{
+        .root_source_file = b.path("src/client/terminal/byte.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    byte_client.addImport("server_protocol", protocol);
+
     const terminal_service = b.addModule("server_terminal_service", .{
         .root_source_file = b.path("src/terminal_service.zig"),
         .target = target,
@@ -70,6 +77,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     terminal.addImport("server_protocol", protocol);
+    terminal.addImport("server_client_byte", byte_client);
     terminal.addImport("howl_vt_codec", codec);
     terminal.addImport("terminal_owner", terminal_owner);
     const control_owner = b.createModule(.{
@@ -196,6 +204,18 @@ pub fn build(b: *std.Build) void {
         check.dependOn(&artifact.step);
         tests.dependOn(&b.addRunArtifact(artifact).step);
     }
+    const byte_tests = b.createModule(.{
+        .root_source_file = b.path("test/byte.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    byte_tests.addImport("server_client_byte", byte_client);
+    byte_tests.addImport("server_protocol", protocol);
+    const byte_proof = b.addTest(.{ .name = "server-client-byte", .root_module = byte_tests, .use_llvm = false, .use_lld = false });
+    check.dependOn(&byte_proof.step);
+    const byte_run = b.addRunArtifact(byte_proof);
+    tests.dependOn(&byte_run.step);
+    b.step("test:byte", "Qualify caller-driven byte attachment transactions").dependOn(&byte_run.step);
     if (target.result.os.tag == .linux) {
         const artifact = b.addTest(.{ .name = "server-terminal-service", .root_module = terminal_service, .use_llvm = false, .use_lld = false });
         check.dependOn(&artifact.step);

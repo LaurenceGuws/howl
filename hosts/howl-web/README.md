@@ -120,9 +120,11 @@ Actual prior-Wasm v2/v3 JSON bytes, including text/cursor and external images, a
 preserved. This is Node/Wasm contract qualification; browser/device deployment is
 separate.
 
-The freestanding wire wrapper uses Server-owned codecs and rich/view helpers, but
-currently still implements asynchronous attachment/transaction framing in
-`src/wasm.zig`. A reviewed proposal would move reusable byte-client mechanics to a
-separately selectable Server-client capability while retaining Web’s sockets,
-buffers, scheduling and private ABI. That capability is not implemented yet; the
-ABI design tracker records the open ownership decision.
+The freestanding wire wrapper uses the exact `server_client_byte` module for
+split-frame assembly, attachment-ready validation, response correlation,
+observation/image transactions and explicit claim-then-resize. This caller-driven
+[byte client](../../mods/server/docs/byte-client.md) owns no socket or allocation.
+Web retains rich semantic decoding and projection, its private ABI, fixed memory
+budgets, four KiB input admission, phase/error policy and browser runtime. A
+complete rejection may be reusable in the byte client while Web still applies
+its existing close policy. The adapter adds no exports or memory lanes.
