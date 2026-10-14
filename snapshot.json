@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "version": "0.1.6-dev",
-  "zig": "0.17.0-dev.1980+e78ea8f2c",
+  "zig": "0.17.0",
   "packages": {
     "hosts/howl-app": "0.1.6-dev",
     "hosts/howl-cli": "0.1.6-dev",

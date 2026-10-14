@@ -2,7 +2,7 @@
 
 The existing `howl_render_native` Zig module remains the schema/projection leaf used by Instance and its clients. The separate `howl_render_owner_native` module owns a private Renderer, four optional canonical Text styles, one retained VT Reader and explicit reusable frame buffers. The `howl_render_native` shared artifact exports nine C operations through `include/howl_render_native.h`. Parents forward the exact child-owned modules/artifact; consumers do not import private sources.
 
-This first cut is native Linux/x86_64 using the exact compiler and qualified matching build. The self-hosted compiler aborts when a static library has this graph's transitive system FreeType/HarfBuzz linkage; the shared form follows Instance. Static packaging and other targets are not qualified.
+This first cut is native Linux/x86_64 using the exact compiler and qualified matching build. The initial shared form followed Instance because the development compiler aborted on static linkage with transitive system FreeType/HarfBuzz dependencies. Stable Zig 0.17.0 passes the isolated static compile and actual foreign-consumer proof. The accepted artifact stays shared until its separate static ABI qualification; other targets are not qualified.
 
 ## Source lifetime
 

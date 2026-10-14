@@ -329,7 +329,10 @@ fn upstreamToBrowser(io: Io, upstream: *Io.net.Stream, ws: *std.http.Server.WebS
     var chunk: [upstream_chunk_bytes]u8 = undefined;
     while (true) {
         var buffers: [1][]u8 = .{&chunk};
-        const count = upstream.read(io, &buffers) catch return .io_failure;
+        // Zig 0.17.0 Stream.read incorrectly destructures the named ReadResult.
+        // This entry point performs the same read with an empty control buffer.
+        const received = upstream.readWithControl(io, &buffers, &.{}) catch return .io_failure;
+        const count = received.data_len;
         if (count == 0) return .upstream_closed;
         ws.writeMessage(chunk[0..count], .binary) catch return .io_failure;
     }

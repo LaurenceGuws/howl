@@ -2,7 +2,7 @@
     .name = .howl_consumer_proof,
     .version = "0.1.6-dev",
     .fingerprint = 0x48ea8d5be84a3e76,
-    .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{ .howl = .{ .path = "../.." } },
     .paths = .{ ".zig-audit.json", "build.zig", "build.zig.zon", "consumer.zig", "client_abi.c", "instance_abi.c", "vt_abi.c", "render_abi.c" },
 }
