@@ -11,13 +11,24 @@ pub fn build(b: *std.Build) void {
     // configuration; public modules/artifacts are forwarded from their owners.
     for (b.available_deps) |entry| {
         const name = entry[0];
-        const child = b.dependency(name, .{ .target = target, .optimize = optimize });
+        // Match Instance's explicit text selection so standalone Render and
+        // local composition expose one exact schema/renderer module identity.
+        const child = if (std.mem.eql(u8, name, "howl_render"))
+            b.dependency(name, .{ .target = target, .optimize = optimize, .bundled_text = false })
+        else
+            b.dependency(name, .{ .target = target, .optimize = optimize });
         const composition_leaf =
             std.mem.eql(u8, name, "howl_vt") or
             std.mem.eql(u8, name, "howl_pty") or
             std.mem.eql(u8, name, "howl_text") or
             std.mem.eql(u8, name, "howl_render");
         forward(b, name, child, check, tests, !composition_leaf);
+        if (std.mem.eql(u8, name, "howl_render")) {
+            std.debug.assert(child.module("howl_render_native") == b.modules.get("howl_render_native").?);
+            // zig-audit: acknowledge panic
+            // reason: Forward the child-owned optional module; graph allocation failure is unrecoverable.
+            b.modules.put(b.allocator, "howl_render_owner_native", child.module("howl_render_owner_native")) catch @panic("OOM");
+        }
         audit.dependOn(childStep(child, "audit"));
     }
 

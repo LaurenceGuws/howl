@@ -76,6 +76,12 @@ Disconnect leaves the Instance alive; explicit close ends it. No Server-side byt
 Transport reachability, authentication, discovery, public routing and service
 supervision remain outside Howl.
 
+The optional [standalone Render native contract](mods/howl-render/native.md)
+composes explicit fonts with a retained VT observation capability and reusable
+immutable frame buffers. It supplies complete commands and residency-relative
+pixel uploads, while the embedder owns source service, GPU residency and scheduling.
+The ordinary local and existing native schema paths remain separate.
+
 The optional [standalone VT native contract](mods/howl-vt/native.md) publishes
 the exact `howl_vt_native` static artifact and header. Foreign callers construct
 a bare VT, feed their own bytes, encode semantic input, copy queries and explicitly

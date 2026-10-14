@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     root.linkLibrary(howl.artifact("howl_server_client"));
     root.linkLibrary(howl.artifact("howl_vt_native"));
     root.linkLibrary(howl.artifact("howl_instance_native"));
+    root.linkLibrary(howl.artifact("howl_render_native"));
+    root.addCSourceFile(.{ .file = b.path("render_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     root.addCSourceFile(.{ .file = b.path("instance_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     root.addCSourceFile(.{ .file = b.path("vt_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     root.addCSourceFile(.{ .file = b.path("client_abi.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });

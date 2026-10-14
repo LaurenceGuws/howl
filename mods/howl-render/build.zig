@@ -70,15 +70,14 @@ pub fn build(b: *std.Build) void {
     module.addImport("limits", limits);
     test_module.addImport("limits", limits);
 
-    const vt = b.dependency("howl_vt", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("howl_vt");
-    const text = b.dependency("howl_text", .{
+    const vt_dependency = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
+    const vt = vt_dependency.module("howl_vt");
+    const text_dependency = b.dependency("howl_text", .{
         .target = target,
         .optimize = optimize,
         .bundled = bundled_text,
-    }).module("howl_text");
+    });
+    const text = text_dependency.module("howl_text");
     const cache_module = b.createModule(.{ .root_source_file = b.path("src/glyph_cache.zig"), .target = target, .optimize = optimize });
     cache_module.addImport("howl_text", text);
     const cache_tests = b.addTest(.{ .name = "howl-render-cache", .root_module = cache_module, .use_llvm = false, .use_lld = false });
@@ -143,11 +142,50 @@ pub fn build(b: *std.Build) void {
     native.addImport("renderer", renderer);
     native.addImport("render_native_types", native_types.createModule());
     b.addNamedLazyPath("howl_render_native_header", b.path("include/howl_render_native.h"));
+    // Existing native remains the schema/projection leaf. Standalone ownership
+    // is separately selectable and never imported merely for those records.
+    const owner_native = b.addModule("howl_render_owner_native", .{ .root_source_file = b.path("src/native_owner.zig"), .target = target, .optimize = optimize });
+    owner_native.addImport("howl_render", module);
+    owner_native.addImport("howl_render_native", native);
+    owner_native.addImport("howl_vt_native", vt_dependency.module("howl_vt_native"));
+    const abi_root = b.createModule(.{ .root_source_file = b.path("src/abi.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    abi_root.addImport("howl_render_owner_native", owner_native);
+    const abi = b.addLibrary(.{ .name = "howl_render_native", .linkage = .dynamic, .root_module = abi_root, .use_llvm = false, .use_lld = false });
+    abi.installHeader(b.path("include/howl_render_native.h"), "howl_render_native.h");
+    b.installArtifact(abi);
+    b.installArtifact(vt_dependency.artifact("howl_vt_native"));
+    check.dependOn(&abi.step);
+
     const native_tests = b.addTest(.{ .name = "howl-render-native", .root_module = native, .use_llvm = false, .use_lld = false });
     check.dependOn(&native_tests.step);
     const native_run = b.addRunArtifact(native_tests);
     test_step.dependOn(&native_run.step);
     b.step("test:native", "Run the Render-owned native payload proofs").dependOn(&native_run.step);
+
+    const owner_root = b.createModule(.{ .root_source_file = b.path("test/native_owner.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    owner_root.addImport("howl_render_owner_native", owner_native);
+    owner_root.addImport("howl_render_native", native);
+    owner_root.addImport("howl_render", module);
+    owner_root.addImport("howl_vt_native", vt_dependency.module("howl_vt_native"));
+    owner_root.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
+    owner_root.addAnonymousImport("font_data", .{ .root_source_file = text_dependency.namedLazyPath("howl_text_test_font") });
+    const owner_tests = b.addTest(.{ .name = "howl-render-owner", .root_module = owner_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&owner_tests.step);
+    const owner_run = b.addRunArtifact(owner_tests);
+    test_step.dependOn(&owner_run.step);
+    b.step("test:owner", "Run standalone Render lifetime/frame/allocation proofs").dependOn(&owner_run.step);
+
+    const foreign_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    foreign_root.linkLibrary(abi);
+    foreign_root.linkLibrary(vt_dependency.artifact("howl_vt_native"));
+    foreign_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    foreign_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
+    const foreign = b.addExecutable(.{ .name = "howl-render-foreign", .root_module = foreign_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&foreign.step);
+    const foreign_run = b.addRunArtifact(foreign);
+    foreign_run.addFileArg(text_dependency.namedLazyPath("howl_text_test_font"));
+    test_step.dependOn(&foreign_run.step);
+    b.step("test:foreign", "Run C/C++ against exact Render/VT artifacts and installed headers").dependOn(&foreign_run.step);
 
     b.default_step = check;
 }

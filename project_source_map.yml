@@ -56,8 +56,14 @@ experimental:
   howl-render-native: >-
     Optional howl_render_native root owns versioned C/Odin command, upload, removal
     and residency schemas and bounded field-wise projection. Commands are bulk
-    caller-owned copies; upload pixels borrow one immutable Instance frame. It owns
-    no GUI backend, host scheduler or Server codec.
+    caller-owned copies; upload pixels borrow their immutable frame lease. The separate
+    howl_render_owner_native module and howl_render_native shared artifact bind one
+    retained VT Reader, private Text styles and canonical Renderer to explicit reusable
+    buffers. Open buffers pin the parent namespace; source closure ends capture without
+    invalidating copied frames. Capture uses complete commands and exact caller residency,
+    copying RGBA and alpha pixels before publication. One producer owns mutation; backend
+    read/release use atomic lease handoff. Direct and existing schema roots import no
+    standalone ownership. It owns no Instance, GUI backend, host scheduler or Server codec.
   howl-vt-codec: optional separately exported howl_vt_codec root inside mods/howl-vt owning portable terminal-only metadata and text/graphics/property payload grammar, decoded semantic values, full text-body decoding, retained bounded text compression/packing, complete/raw-delta row cache and borrow lifetime, immutable terminal observation storage and bounded text projection, optional read-only VT encoder specialization with compact live and exact historical delta retention, shared canonical OSC52 request validation through an exact pure VT-owned clipboard grammar leaf module, validation and allocation cleanup; no Server, socket, live parser or renderer dependency
   server-runtime: >-
     mods/server foreground `server_runtime` module owning exactly one Server control listener,

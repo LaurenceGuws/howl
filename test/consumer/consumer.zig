@@ -191,3 +191,16 @@ test "root forwards exact standalone VT artifact native owner and header" {
     try std.testing.expect(@TypeOf(native.owner.observation) == fn (*const native.owner.Owner) *const vt.Terminal.Observation);
     try std.testing.expectEqual(@as(c_int, 0), howl_external_vt_abi());
 }
+
+extern fn howl_external_render_abi([*]const u8, usize) c_int;
+test "root forwards one Render owner schema and exact source identity through real C composition" {
+    const owner = @import("howl_render_owner_native");
+    const native = @import("howl_render_native");
+    const native_vt = @import("howl_vt_native");
+    try std.testing.expect(owner.Reader == native_vt.observation.Reader);
+    try std.testing.expect(owner.c.hrc_command == native.c.hrc_command);
+    try std.testing.expect(@typeInfo(owner.Owner) == .@"opaque");
+    try std.testing.expect(@typeInfo(owner.Buffer) == .@"opaque");
+    const font = @import("howl_text_test_fonts").primary_font;
+    try std.testing.expectEqual(@as(c_int, 0), howl_external_render_abi(font.ptr, font.len));
+}

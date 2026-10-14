@@ -13,7 +13,9 @@
         "build.zig.zon",
         "src",
         "include",
+        "native.md",
         "bindings",
         "testdata",
+        "test",
     },
 }
