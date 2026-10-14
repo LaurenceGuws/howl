@@ -1,6 +1,6 @@
 # Optional Instance native contract
 
-The package owns `howl_instance_native`, an optional shared library, and
+The package owns `howl_instance_native`, an optional static library, and
 `howl_instance_native.h`. Its header composes the VT-owned
 `howl_vt_native.h` and Render-owned `howl_render_native.h`. The artifact selects the exact local `howl_instance`
 specialization; its handles cannot be interchanged with headless or Server handles.
@@ -160,12 +160,16 @@ admission before allocation/launch and verify the existing waiting Zig lane.
 
 ## Artifact and proof
 
-The shared artifact uses the pinned compiler's self-hosted code generation/linker.
-A minimal static-library graph with shared system-library dependencies reproduced
-a compiler null-value panic. Shared linkage preserves the exact local graph without
-a compiler substitution. The selected local graph links FreeType/HarfBuzz. Do not claim a presentation-free
-distribution or an idle-memory benefit. Those costs remain a packaging consideration
-before broader foreign adoption.
+The static artifact uses stable Zig 0.17.0's self-hosted code generation/linker.
+The earlier development-compiler static-link panic is closed for this exact
+Linux/x86_64 graph. An embedder can link the archive and its exact VT companion
+into an executable or its own shared runtime shim. The maintained shared-embedding
+proof runs the same real C lifecycle/C++ header consumer from such a shim;
+its shared library has no text relocations or Howl shared-library dependency.
+
+The selected local graph links system FreeType/HarfBuzz. Do not claim a
+presentation-free distribution or an idle-memory benefit. Those costs remain a
+packaging consideration before broader foreign adoption.
 
 `zig build test:native` runs an independent C lifecycle and C++ header/link proof.
 The C caller owns poll/time, launches real commands, sends copied input, verifies
@@ -175,10 +179,13 @@ record sizes, offsets and alignment. The repository's separate distribution
 consumer resolves the child-owned library and installed headers without private
 source imports.
 
-The complete default repository graph is separately required. An unchanged
-VT-codec ReleaseSafe allocation-failure proof has reproduced
-`NondeterministicMemoryUsage`; its failure is retained in workstream evidence and
-must not be described as a green full-VT ReleaseSafe result.
+`zig build test:static-embedding` exercises archive composition inside an
+embedder-owned shared library. These proof shims are not installed. Both complete
+default and ReleaseSafe repository graphs pass on the exact stable build.
+The old VT-codec `NondeterministicMemoryUsage` qualifier was corrected by making
+test fault numbering independent of in-place buffer growth; the full VT Safe
+campaign now passes without production encoder changes. Other native platforms
+remain separately qualified.
 
 ## Presentation endpoint
 

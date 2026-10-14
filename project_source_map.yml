@@ -35,7 +35,7 @@ experimental:
     RIS share one raw transition
     and each advances canonical identity exactly once.
   howl-instance-native: >-
-    Optional howl_instance_native shared artifact and owned aggregate C header
+    Optional howl_instance_native static artifact and owned aggregate C header
     expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,
     geometry/signals, bounded caller-driven headless service and VT-owned copied
     cells, queries and pending request facts; named canonical replies and explicit
@@ -57,7 +57,7 @@ experimental:
     Optional howl_render_native root owns versioned C/Odin command, upload, removal
     and residency schemas and bounded field-wise projection. Commands are bulk
     caller-owned copies; upload pixels borrow their immutable frame lease. The separate
-    howl_render_owner_native module and howl_render_native shared artifact bind one
+    howl_render_owner_native module and howl_render_native static artifact bind one
     retained VT Reader, private Text styles and canonical Renderer to explicit reusable
     buffers. Open buffers pin the parent namespace; source closure ends capture without
     invalidating copied frames. Capture uses complete commands and exact caller residency,

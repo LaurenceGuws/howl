@@ -1,8 +1,8 @@
 # Optional standalone Render native owner
 
-The existing `howl_render_native` Zig module remains the schema/projection leaf used by Instance and its clients. The separate `howl_render_owner_native` module owns a private Renderer, four optional canonical Text styles, one retained VT Reader and explicit reusable frame buffers. The `howl_render_native` shared artifact exports nine C operations through `include/howl_render_native.h`. Parents forward the exact child-owned modules/artifact; consumers do not import private sources.
+The existing `howl_render_native` Zig module remains the schema/projection leaf used by Instance and its clients. The separate `howl_render_owner_native` module owns a private Renderer, four optional canonical Text styles, one retained VT Reader and explicit reusable frame buffers. The `howl_render_native` static artifact exports nine C operations through `include/howl_render_native.h`. Parents forward the exact child-owned modules/artifact; consumers do not import private sources.
 
-This first cut is native Linux/x86_64 using the exact compiler and qualified matching build. The initial shared form followed Instance because the development compiler aborted on static linkage with transitive system FreeType/HarfBuzz dependencies. Stable Zig 0.17.0 passes the isolated static compile and actual foreign-consumer proof. The accepted artifact stays shared until its separate static ABI qualification; other targets are not qualified.
+This first cut is native Linux/x86_64 using stable Zig 0.17.0 and the qualified matching build. The development compiler's static Text-link panic is closed for this graph. Link the archive and its exact VT companion into an executable or the embedder's own shared runtime shim. Maintained C/C++ consumers exercise both forms; the shared proof has no text relocations or Howl shared-library dependency. System FreeType/HarfBuzz remain link dependencies. No compiler substitution, app runtime or other target qualification is implied.
 
 ## Source lifetime
 
@@ -36,6 +36,6 @@ The owner contains no Instance/Server dependency, codec, socket, process, timer,
 
 ## Maintained proofs
 
-Run `zig build check test -Doptimize=ReleaseSafe -j2` in this package. `test:owner` exercises injected allocation prefixes, source retirement, buffer lifetime, canonical command equivalence, exact/stale residency, held-frame independence, bounded capacity/retry and real backend-to-producer release handoff. `test:foreign` compiles and runs C11/C++17 against the child artifacts and installed headers, including copied font inputs and source closure. The separate root consumer composes a C Instance source with Render without an upward production dependency. Root gates include the structural isolation audit.
+Run `zig build check test -Doptimize=ReleaseSafe -j2` in this package. `test:owner` exercises injected allocation prefixes, source retirement, buffer lifetime, canonical command equivalence, exact/stale residency, held-frame independence, bounded capacity/retry and real backend-to-producer release handoff. `test:foreign` compiles and runs C11/C++17 against the child artifacts and installed headers, including copied font inputs and source closure. `test:static-embedding` runs the same C/C++ proof inside an embedder-owned shared library; the proof shim is not installed. The separate root consumer composes a C Instance source with Render without an upward production dependency. Complete default and ReleaseSafe root gates pass and include the structural isolation audit.
 
 The full VT package Safe graph now passes on stable Zig 0.17.0 after its allocator-dependent fault numbering was corrected in the test campaign. No production encoder behavior changed. Platform qualification remains explicit.

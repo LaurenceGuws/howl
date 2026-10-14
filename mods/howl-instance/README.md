@@ -58,3 +58,7 @@ queries/requests, and immutable frame leases. Explicit presentation owners copy
 path or memory fonts and can be shared across Instances; caller release leaves
 Instance references alive. Zig hosts can reuse the exact native contract helpers
 without emitting or calling through C exports.
+
+The static native archive and its exact VT companion can link into a caller-owned
+executable or shared runtime shim; scheduling and application runtime stay with
+the embedder. Linux/x86_64 C/C++ consumers qualify both forms.

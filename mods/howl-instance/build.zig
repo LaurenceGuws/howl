@@ -85,7 +85,7 @@ pub fn build(b: *std.Build) void {
     abi_root.addImport("instance_abi_owner", abi_owner);
     abi_root.addImport("howl_instance", module);
     abi_root.addImport("instance_native_frames", native_frames);
-    const native_library = b.addLibrary(.{ .name = "howl_instance_native", .linkage = .dynamic, .root_module = abi_root, .use_llvm = false, .use_lld = false });
+    const native_library = b.addLibrary(.{ .name = "howl_instance_native", .linkage = .static, .root_module = abi_root, .use_llvm = false, .use_lld = false });
     native_library.installHeader(b.path("include/howl_instance_native.h"), "howl_instance_native.h");
     native_library.installHeader(vt.namedLazyPath("howl_vt_native_header"), "howl_vt_native.h");
     native_library.installHeader(render.namedLazyPath("howl_render_native_header"), "howl_render_native.h");
@@ -171,6 +171,22 @@ pub fn build(b: *std.Build) void {
         const run_foreign = b.addRunArtifact(foreign);
         test_step.dependOn(&run_foreign.step);
         b.step("test:native", "Qualify the standalone Instance C lifecycle").dependOn(&run_foreign.step);
+        // Exercise the same foreign proof inside a host-owned shared library.
+        const shared_root = b.createModule(.{ .root_source_file = b.path("test/static_embedding.zig"), .target = target, .optimize = optimize, .link_libc = true });
+        shared_root.linkLibrary(native_library);
+        shared_root.linkLibrary(vt.artifact("howl_vt_native"));
+        shared_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
+        shared_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Dmain=howl_instance_static_c" } });
+        const shared = b.addLibrary(.{ .name = "howl_instance_static_embedding", .linkage = .dynamic, .root_module = shared_root, .use_llvm = false, .use_lld = false });
+        const shared_driver_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+        shared_driver_root.linkLibrary(shared);
+        shared_driver_root.addCSourceFile(.{ .file = b.path("test/static_embedding.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+        const shared_driver = b.addExecutable(.{ .name = "howl-instance-static-embedding", .root_module = shared_driver_root, .use_llvm = false, .use_lld = false });
+        check.dependOn(&shared_driver.step);
+        const shared_run = b.addRunArtifact(shared_driver);
+        test_step.dependOn(&shared_run.step);
+        b.step("test:static-embedding", "Qualify static Instance ABI inside a foreign shared library").dependOn(&shared_run.step);
+
         const frame_root = b.createModule(.{ .root_source_file = b.path("test/native_frames.zig"), .target = target, .optimize = optimize, .link_libc = true });
         frame_root.addImport("howl_instance", module);
         frame_root.addImport("howl_instance_native", native);

@@ -150,7 +150,7 @@ pub fn build(b: *std.Build) void {
     owner_native.addImport("howl_vt_native", vt_dependency.module("howl_vt_native"));
     const abi_root = b.createModule(.{ .root_source_file = b.path("src/abi.zig"), .target = target, .optimize = optimize, .link_libc = true });
     abi_root.addImport("howl_render_owner_native", owner_native);
-    const abi = b.addLibrary(.{ .name = "howl_render_native", .linkage = .dynamic, .root_module = abi_root, .use_llvm = false, .use_lld = false });
+    const abi = b.addLibrary(.{ .name = "howl_render_native", .linkage = .static, .root_module = abi_root, .use_llvm = false, .use_lld = false });
     abi.installHeader(b.path("include/howl_render_native.h"), "howl_render_native.h");
     b.installArtifact(abi);
     b.installArtifact(vt_dependency.artifact("howl_vt_native"));
@@ -186,6 +186,22 @@ pub fn build(b: *std.Build) void {
     foreign_run.addFileArg(text_dependency.namedLazyPath("howl_text_test_font"));
     test_step.dependOn(&foreign_run.step);
     b.step("test:foreign", "Run C/C++ against exact Render/VT artifacts and installed headers").dependOn(&foreign_run.step);
+    // The embedder may place these archives in its own language/runtime shim.
+    const shared_root = b.createModule(.{ .root_source_file = b.path("test/static_embedding.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    shared_root.linkLibrary(abi);
+    shared_root.linkLibrary(vt_dependency.artifact("howl_vt_native"));
+    shared_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Dmain=howl_render_static_c" } });
+    shared_root.addCSourceFile(.{ .file = b.path("test/header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
+    const shared = b.addLibrary(.{ .name = "howl_render_static_embedding", .linkage = .dynamic, .root_module = shared_root, .use_llvm = false, .use_lld = false });
+    const shared_driver_root = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    shared_driver_root.linkLibrary(shared);
+    shared_driver_root.addCSourceFile(.{ .file = b.path("test/static_embedding.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    const shared_driver = b.addExecutable(.{ .name = "howl-render-static-embedding", .root_module = shared_driver_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&shared_driver.step);
+    const shared_run = b.addRunArtifact(shared_driver);
+    shared_run.addFileArg(text_dependency.namedLazyPath("howl_text_test_font"));
+    test_step.dependOn(&shared_run.step);
+    b.step("test:static-embedding", "Qualify static Render ABI inside a foreign shared library").dependOn(&shared_run.step);
 
     b.default_step = check;
 }
