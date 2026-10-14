@@ -95,3 +95,7 @@ static_assert(offsetof(hi_presented_config, command_capacity) == 48);
 static_assert(offsetof(hi_presented_config, command_limit) == 56);
 static_assert(offsetof(hi_presented_config, incremental_commands) == 64);
 static_assert(offsetof(hi_presented_config, reserved) == 72);
+
+using hi_observation_signature = uint32_t(*)(uint32_t,hi_instance *,hvt_observation **);
+static_assert(__is_same(decltype(&hi_observation_open),hi_observation_signature));
+static_assert(HVT_MAX_OBSERVATION_REFERENCES==1024);

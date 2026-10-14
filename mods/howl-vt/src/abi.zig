@@ -82,6 +82,24 @@ pub export fn hvt_release(out: ?*?*c.hvt_terminal) void {
     slot.* = null;
     owner.destroy(mutable(raw));
 }
+/// Opens only a Reader reference; no mutable or lifetime-pinning VT authority.
+pub export fn hvt_observation_open(version: u32, raw: ?*c.hvt_terminal, out: ?*?*c.hvt_observation) u32 {
+    if (version != c.HVT_NATIVE_VERSION) return c.HVT_VERSION_MISMATCH;
+    const slot = out orelse return c.HVT_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HVT_INVALID_ARGUMENT;
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    const reader = owner.openObservation(mutable(value)) catch |err| return failure(err);
+    slot.* = native.observation.toC(reader);
+    return c.HVT_OK;
+}
+/// Clears one Reader reference; both null forms are harmless, even after teardown.
+pub export fn hvt_observation_release(out: ?*?*c.hvt_observation) u32 {
+    const slot = out orelse return c.HVT_OK;
+    const raw = slot.* orelse return c.HVT_OK;
+    slot.* = null;
+    native.observation.release(native.observation.fromC(raw));
+    return c.HVT_OK;
+}
 /// Copies coherent actual viewport metadata without exposing a borrow.
 pub export fn hvt_observe(raw: ?*const c.hvt_terminal, history: u32, out: ?*c.hvt_state) u32 {
     const result = out orelse return c.HVT_INVALID_ARGUMENT;

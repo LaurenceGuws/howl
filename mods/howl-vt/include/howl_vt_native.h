@@ -198,6 +198,8 @@ enum hvt_mutation {
     HVT_MUTATION_ICON=64, HVT_MUTATION_HISTORY_LOSS=128
 };
 typedef struct hvt_terminal hvt_terminal;
+#define HVT_MAX_OBSERVATION_REFERENCES 1024u
+typedef struct hvt_observation hvt_observation;
 typedef struct hvt_config {
     uint16_t rows, columns, history_rows, reserved;
     uint32_t cell_width, cell_height;
@@ -221,13 +223,32 @@ typedef struct hvt_animation {
 
 /* One serialized caller per owner; no thread, transport, process, scheduler or clock.
  * All fixed outputs/counts are initialized before later validation.
- * Buffers/records are caller-owned copies; no terminal observation borrow crosses C.
+ * Ordinary query buffers/records are caller-owned copies. Optional hvt_observation
+ * grants only retired-safe, synchronous module composition and owns no VT state.
  * Copying a handle creates no owner. Release once after all calls finish.
  * Constructor requires a null slot and publishes only complete state.
  * Rows/columns nonzero, rows*columns<=MAX_SCREEN_CELLS, config reserved=0.
  * Create cell dimensions are both zero (initially unknown) or both nonzero.
  * Release accepts both NULL slot pointer and NULL contained owner as no-ops. */
 uint32_t hvt_abi_version(void);
+
+/* An optional-native read capability: no C-readable VT data or mutation.
+ * Source owner and one reference per successful open retain a small wrapper.
+ * It never keeps terminal state alive or blocks source destruction.
+ * Open requires matching version and a null out slot, preserves it on failure,
+ * performs lazy allocation/reference admission and changes no VT revision.
+ * All calls on source owner serialize with capture and source destruction.
+ * Every reference must release once; copying a pointer adds no reference.
+ * After source destruction it is safe to release, and Render reports its source
+ * closed without touching freed VT. A new VT cannot revive the old capability.
+ * Output slot/handle storage and all other input/result ranges are disjoint. */
+uint32_t hvt_observation_open(uint32_t version, hvt_terminal *, hvt_observation **out);
+/* Clears a caller reference, including a closed-source capability.
+ * NULL slot/value are successful no-ops. Serializes with use of that reference;
+ * independent retained references may release concurrently. */
+uint32_t hvt_observation_release(hvt_observation **owner);
+
+
 uint32_t hvt_create(uint32_t version, const hvt_config *, hvt_terminal **out);
 void hvt_release(hvt_terminal **);
 uint32_t hvt_observe(const hvt_terminal *, uint32_t history_offset, hvt_state *);

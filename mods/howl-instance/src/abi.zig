@@ -14,15 +14,22 @@ const sendFocus = native.sendFocus;
 const heap = std.heap.c_allocator;
 const frames = @import("instance_native_frames");
 const presentation = @import("abi_presentation.zig");
+const c_owner = @import("instance_abi_owner");
 
 // zig-audit: acknowledge anytype
 // reason: This private conversion accepts only matching C/native opaque handle pointers at exact exported sites.
 fn convert(comptime T: type, value: anytype) T {
     // zig-audit: acknowledge ptr_cast
-    // reason: Only matching local Instance, frame endpoint or constructor-owned presentation wrapper handles are adapted; no records or headless specializations are reinterpreted.
+    // reason: Only matching C Instance wrappers, frame endpoints, presentation owners and VT Reader C tags are adapted; no records or direct Instance specializations are reinterpreted.
     // zig-audit: acknowledge align_cast
     // reason: The live constructor-owned opaque pointer retains the native owner alignment.
     return @ptrCast(@alignCast(value));
+}
+fn canonical(raw: *c.hi_instance) *Instance {
+    return c_owner.get(convert(*c_owner.Owner, raw));
+}
+fn canonicalConst(raw: *const c.hi_instance) *const Instance {
+    return c_owner.getConst(convert(*const c_owner.Owner, raw));
 }
 const Error = InputError || instance.InitError || instance.ResizeError || instance.ServiceError;
 fn status(err: Error) u32 {
@@ -184,9 +191,9 @@ fn create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance, pr
     };
     const environment = std.process.Environ{ .block = .{ .slice = entries } };
     const value = if (presented) |options|
-        instance.tryInitPresented(heap, environment, selected_launch, options) catch |failure| return presentedStatus(failure)
+        c_owner.createPresented(heap, environment, selected_launch, options) catch |failure| return presentedStatus(failure)
     else
-        instance.init(heap, environment, selected_launch) catch |failure| return status(failure);
+        c_owner.create(heap, environment, selected_launch) catch |failure| return status(failure);
     slot.* = convert(*c.hi_instance, value);
     return c.HI_OK;
 }
@@ -194,54 +201,67 @@ fn create(version: u32, request: ?*const c.hi_launch, out: ?*?*c.hi_instance, pr
 pub export fn hi_destroy(out: ?*?*c.hi_instance) u32 {
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
     const raw = slot.* orelse return c.HI_OK;
-    const value = convert(*Instance, raw);
-    instance.tryDeinit(value) catch return c.HI_BUSY;
+    c_owner.destroy(convert(*c_owner.Owner, raw)) catch return c.HI_BUSY;
     slot.* = null;
+    return c.HI_OK;
+}
+/// Lends only a VT-owned retired-safe Reader, never canonical Instance storage.
+pub export fn hi_observation_open(version: u32, raw: ?*c.hi_instance, out: ?*?*c.hvt_observation) u32 {
+    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HI_INVALID_ARGUMENT;
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
+    const reader = c_owner.openObservation(convert(*c_owner.Owner, value)) catch |err| return switch (err) {
+        error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+        error.ResourceLimit => c.HI_RESOURCE_LIMIT,
+    };
+    slot.* = convert(*c.hvt_observation, vt.observation.toC(reader));
     return c.HI_OK;
 }
 /// Admits copied child input in canonical order.
 pub export fn hi_send_text(raw: ?*c.hi_instance, ptr: [*c]const u8, len: usize) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     const text = bytes(ptr, len, 64 * 1024) orelse return c.HI_INVALID_ARGUMENT;
-    instance.input(convert(*Instance, value), .{ .bytes = text }) catch |err| return status(err);
+    instance.input(canonical(value), .{ .bytes = text }) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Admits one bounded semantic paste through canonical VT encoding.
 pub export fn hi_send_paste(raw: ?*c.hi_instance, ptr: [*c]const u8, len: usize) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     const text = bytes(ptr, len, 64 * 1024) orelse return c.HI_INVALID_ARGUMENT;
-    instance.input(convert(*Instance, value), .{ .paste = text }) catch |err| return status(err);
+    instance.input(canonical(value), .{ .paste = text }) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Uses the shared native named-key implementation.
 pub export fn hi_send_named_key(raw: ?*c.hi_instance, key: u8, action: u8, mods: u8) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    sendNamedKey(convert(*Instance, value), key, action, mods) catch |err| return status(err);
+    sendNamedKey(canonical(value), key, action, mods) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Uses the shared native Unicode-key implementation.
 pub export fn hi_send_unicode_key(raw: ?*c.hi_instance, scalar: u32, action: u8, mods: u8) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    sendUnicodeKey(convert(*Instance, value), scalar, action, mods) catch |err| return status(err);
+    sendUnicodeKey(canonical(value), scalar, action, mods) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Uses the shared native mouse-input implementation.
 pub export fn hi_send_mouse(raw: ?*c.hi_instance, kind: u8, button: u8, mods: u8, buttons: u8, row: i32, col: u16, pixels: u8, x: u32, y: u32) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    sendMouse(convert(*Instance, value), kind, button, mods, buttons, row, col, pixels, x, y) catch |err| return status(err);
+    sendMouse(canonical(value), kind, button, mods, buttons, row, col, pixels, x, y) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Uses the shared native focus-input implementation.
 pub export fn hi_send_focus(raw: ?*c.hi_instance, focus: u8) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    sendFocus(convert(*Instance, value), focus) catch |err| return status(err);
+    sendFocus(canonical(value), focus) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Commits explicit geometry without performing or scheduling a render.
 pub export fn hi_resize(raw: ?*c.hi_instance, rows: u16, cols: u16, width: u32, height: u32) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     if (width > 65535 or height > 65535) return c.HI_INVALID_ARGUMENT;
-    instance.resizeGeometry(convert(*Instance, value), rows, cols, @intCast(width), @intCast(height)) catch |err| return status(err);
+    instance.resizeGeometry(canonical(value), rows, cols, @intCast(width), @intCast(height)) catch |err| return status(err);
     return c.HI_OK;
 }
 /// Delivers a fixed process-group signal and reports its exact outcome.
@@ -250,7 +270,7 @@ pub export fn hi_signal_group(raw: ?*c.hi_instance, tag: u8, out: ?*u8) u32 {
     result.* = 0;
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     const selected = native.signalFromTag(tag) orelse return c.HI_INVALID_ARGUMENT;
-    result.* = switch (instance.signal(convert(*Instance, value), selected)) {
+    result.* = switch (instance.signal(canonical(value), selected)) {
         .delivered => c.HI_SIGNAL_DELIVERED,
         .target_missing => c.HI_SIGNAL_TARGET_MISSING,
         .permission_denied => c.HI_SIGNAL_PERMISSION_DENIED,
@@ -269,7 +289,7 @@ pub export fn hi_service_turn_policy(raw: ?*c.hi_instance, policy: u8, readable:
     const raw_value = raw orelse return c.HI_INVALID_ARGUMENT;
     if (readable > 1 or writable > 1) return c.HI_INVALID_ARGUMENT;
     if (comptime builtin.os.tag != .linux) return c.HI_UNSUPPORTED;
-    const value = convert(*Instance, raw_value);
+    const value = canonical(raw_value);
     const descriptor = instance.descriptor(value) catch |err| return status(err);
     const selected: instance.ConsequencePolicy = switch (policy) {
         c.HI_SERVICE_HEADLESS => .headless,
@@ -309,7 +329,7 @@ pub export fn hi_copy_cell(raw: ?*const c.hi_instance, history: u32, row: u16, c
     result.* = std.mem.zeroes(c.hvt_cell);
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
     var copied: vt.c.hvt_cell = undefined;
-    vt.copyCell(instance.terminal(convert(*const Instance, value)), history, row, col, &copied) catch return c.HI_INVALID_ARGUMENT;
+    vt.copyCell(instance.terminal(canonicalConst(value)), history, row, col, &copied) catch return c.HI_INVALID_ARGUMENT;
     result.* = .{ .scalars = copied.scalars, .scalar_count = copied.scalar_count, .width = copied.width, .height = copied.height, .x = copied.x, .y = copied.y, .reserved = @splat(0) };
     return c.HI_OK;
 }
@@ -320,7 +340,7 @@ pub export fn hi_frame_open(version: u32, raw: ?*c.hi_instance, out: ?*?*c.hi_fr
     const slot = out orelse return c.HI_INVALID_ARGUMENT;
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (slot.* != null) return c.HI_INVALID_ARGUMENT;
-    const stream = frames.open(heap, convert(*Instance, owner)) catch |failure| return switch (failure) {
+    const stream = frames.open(heap, canonical(owner)) catch |failure| return switch (failure) {
         error.OutOfMemory => c.HI_OUT_OF_MEMORY,
         error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
         error.PublicationBorrowed => c.HI_BUSY,
@@ -426,7 +446,7 @@ pub export fn hi_frame_abandon(raw: ?*c.hi_frame_stream) u32 {
 /// Explicit producer presentation work; scheduling and frame demand remain caller-owned.
 pub export fn hi_publish_frame(raw: ?*c.hi_instance, history: u32) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    instance.publishRenderAt(convert(*Instance, value), history) catch |failure| {
+    instance.publishRenderAt(canonical(value), history) catch |failure| {
         return switch (failure) {
             error.PresentationUnavailable => c.HI_PRESENTATION_UNAVAILABLE,
             error.PresentationBusy, error.PublicationBusy => c.HI_BUSY,
@@ -459,7 +479,7 @@ pub export fn hi_search(raw: ?*const c.hi_instance, ptr: [*c]const u8, len: usiz
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (reverse > 1 or origin_present > 1) return c.HI_INVALID_ARGUMENT;
     const query = bytes(ptr, len, c.HVT_MAX_SEARCH_QUERY_BYTES) orelse return c.HI_INVALID_ARGUMENT;
-    queries.search(instance.terminal(convert(*const Instance, owner)), heap, query, reverse != 0, origin_present != 0, row, column, result) catch |failure| return queryFailure(failure);
+    queries.search(instance.terminal(canonicalConst(owner)), heap, query, reverse != 0, origin_present != 0, row, column, result) catch |failure| return queryFailure(failure);
     return c.HI_OK;
 }
 /// Expands copied canonical selection endpoints against an exact geometry context.
@@ -468,7 +488,7 @@ pub export fn hi_expand_selection(raw: ?*const c.hi_instance, kind: u8, history:
     result.* = .{};
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (alternate > 1) return c.HI_INVALID_ARGUMENT;
-    queries.expandSelection(instance.terminal(convert(*const Instance, owner)), kind, history, row, column, columns, alternate != 0, result) catch |failure| return queryFailure(failure);
+    queries.expandSelection(instance.terminal(canonicalConst(owner)), kind, history, row, column, columns, alternate != 0, result) catch |failure| return queryFailure(failure);
     return c.HI_OK;
 }
 /// Copies complete selected text; a failure leaves byte output untouched and length zero.
@@ -479,7 +499,7 @@ pub export fn hi_copy_selection(raw: ?*const c.hi_instance, start_row: i32, star
     if (alternate > 1) return c.HI_INVALID_ARGUMENT;
     if (capacity > 1024 * 1024) return c.HI_RESOURCE_LIMIT;
     const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
-    copied.* = queries.copySelection(instance.terminal(convert(*const Instance, owner)), heap, start_row, start_column, end_row, end_column, columns, alternate != 0, output) catch |failure| return queryFailure(failure);
+    copied.* = queries.copySelection(instance.terminal(canonicalConst(owner)), heap, start_row, start_column, end_row, end_column, columns, alternate != 0, output) catch |failure| return queryFailure(failure);
     return c.HI_OK;
 }
 /// Copies one exact hyperlink and reports required bytes on a capacity failure.
@@ -490,7 +510,7 @@ pub export fn hi_copy_hyperlink(raw: ?*const c.hi_instance, history: u32, row: i
     if (alternate > 1) return c.HI_INVALID_ARGUMENT;
     if (capacity > 1024 * 1024) return c.HI_RESOURCE_LIMIT;
     const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
-    queries.copyHyperlink(instance.terminal(convert(*const Instance, owner)), history, row, column, columns, alternate != 0, output, required) catch |failure| return queryFailure(failure);
+    queries.copyHyperlink(instance.terminal(canonicalConst(owner)), history, row, column, columns, alternate != 0, output, required) catch |failure| return queryFailure(failure);
     return c.HI_OK;
 }
 /// Copies exactly the current row-shape extent; insufficient capacity writes no rows.
@@ -498,7 +518,7 @@ pub export fn hi_copy_row_shapes(raw: ?*const c.hi_instance, history: u32, out: 
     const required = count orelse return c.HI_INVALID_ARGUMENT;
     required.* = 0;
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    const observation = instance.terminal(convert(*const Instance, owner));
+    const observation = instance.terminal(canonicalConst(owner));
     const rows = observation.semanticView(history).rows;
     required.* = rows;
     if (capacity < rows) return c.HI_BUFFER_TOO_SMALL;
@@ -511,7 +531,7 @@ pub export fn hi_interaction(raw: ?*const c.hi_instance, out: ?*vt.c.hvt_interac
     const result = out orelse return c.HI_INVALID_ARGUMENT;
     result.* = .{};
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    result.* = queries.interaction(instance.terminal(convert(*const Instance, owner)));
+    result.* = queries.interaction(instance.terminal(canonicalConst(owner)));
     return c.HI_OK;
 }
 
@@ -538,7 +558,7 @@ pub export fn hi_request_head(raw: ?*const c.hi_instance, out: ?*vt.requests.Inf
     const result = out orelse return c.HI_INVALID_ARGUMENT;
     result.* = std.mem.zeroes(vt.requests.Info);
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    vt.requests.head(instance.terminal(convert(*const Instance, owner)), result) catch |failure| return requestCopyFailure(failure);
+    vt.requests.head(instance.terminal(canonicalConst(owner)), result) catch |failure| return requestCopyFailure(failure);
     return c.HI_OK;
 }
 /// Copies the exact current-head payload or reports its required byte extent.
@@ -548,13 +568,13 @@ pub export fn hi_copy_request_payload(raw: ?*const c.hi_instance, id: u64, out: 
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (capacity > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
     const output = queryOutput(out, capacity) orelse return c.HI_INVALID_ARGUMENT;
-    vt.requests.copyPayload(instance.terminal(convert(*const Instance, owner)), id, output, required) catch |failure| return requestCopyFailure(failure);
+    vt.requests.copyPayload(instance.terminal(canonicalConst(owner)), id, output, required) catch |failure| return requestCopyFailure(failure);
     return c.HI_OK;
 }
 /// Acknowledges only the matching consumable head; required replies are explicit.
 pub export fn hi_consume_request(raw: ?*c.hi_instance, id: u64) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.consumeRequest(convert(*Instance, owner), id) catch |failure| return requestFailure(failure);
+    native.consumeRequest(canonical(owner), id) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
@@ -563,7 +583,7 @@ pub export fn hi_reply_clipboard(raw: ?*c.hi_instance, id: u64, ptr: [*c]const u
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
     const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
-    native.replyClipboard(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    native.replyClipboard(canonical(owner), id, text) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
@@ -572,35 +592,35 @@ pub export fn hi_reply_pointer_shape(raw: ?*c.hi_instance, id: u64, ptr: [*c]con
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
     const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
-    native.replyPointerShape(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    native.replyPointerShape(canonical(owner), id, text) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
 /// Admits one named canonical exact-head operation without polling or flushing.
 pub export fn hi_reply_color_preference(raw: ?*c.hi_instance, id: u64, preference: u8) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.replyColorPreference(convert(*Instance, owner), id, preference) catch |failure| return requestFailure(failure);
+    native.replyColorPreference(canonical(owner), id, preference) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
 /// Admits one named canonical exact-head operation without polling or flushing.
 pub export fn hi_reply_container_state(raw: ?*c.hi_instance, id: u64, state: u8) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.replyContainerState(convert(*Instance, owner), id, state) catch |failure| return requestFailure(failure);
+    native.replyContainerState(canonical(owner), id, state) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
 /// Admits one named canonical exact-head operation without polling or flushing.
 pub export fn hi_reply_container_position(raw: ?*c.hi_instance, id: u64, x: u32, y: u32) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.replyContainerPosition(convert(*Instance, owner), id, x, y) catch |failure| return requestFailure(failure);
+    native.replyContainerPosition(canonical(owner), id, x, y) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
 /// Admits one named canonical exact-head operation without polling or flushing.
 pub export fn hi_reply_container_screen_cells(raw: ?*c.hi_instance, id: u64, rows: u32, columns: u32) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.replyContainerScreenCells(convert(*Instance, owner), id, rows, columns) catch |failure| return requestFailure(failure);
+    native.replyContainerScreenCells(canonical(owner), id, rows, columns) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
@@ -609,13 +629,13 @@ pub export fn hi_reply_container_icon_title(raw: ?*c.hi_instance, id: u64, ptr: 
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
     if (len > vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) return c.HI_RESOURCE_LIMIT;
     const text = bytes(ptr, len, vt.c.HVT_MAX_REQUEST_PAYLOAD_BYTES) orelse return c.HI_INVALID_ARGUMENT;
-    native.replyContainerIconTitle(convert(*Instance, owner), id, text) catch |failure| return requestFailure(failure);
+    native.replyContainerIconTitle(canonical(owner), id, text) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
 
 /// Admits one named canonical exact-head operation without polling or flushing.
 pub export fn hi_decline_container(raw: ?*c.hi_instance, id: u64) u32 {
     const owner = raw orelse return c.HI_INVALID_ARGUMENT;
-    native.declineContainer(convert(*Instance, owner), id) catch |failure| return requestFailure(failure);
+    native.declineContainer(canonical(owner), id) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }

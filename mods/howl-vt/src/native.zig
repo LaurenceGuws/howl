@@ -12,6 +12,8 @@ pub const queries = @import("native_queries.zig");
 pub const requests = @import("native_requests.zig");
 /// Optional stable bare VT owner for caller-driven foreign embedding.
 pub const owner = @import("native_owner.zig");
+/// Optional retired-safe source capability for synchronous module composition.
+pub const observation = @import("native_observation.zig");
 test {
     // zig-audit: acknowledge discard
     // reason: Include this optional root's sibling query proofs in the exact native-contract test artifact.
@@ -153,9 +155,9 @@ pub fn focusInput(value: u8) Error!Terminal.InputEvent {
     } };
 }
 /// Copies one bounded scalar/occupancy record from a synchronous const observation.
-pub fn copyCell(observation: *const Terminal.Observation, history: u32, row: u16, column: u16, out: *c.hvt_cell) Error!void {
+pub fn copyCell(observed: *const Terminal.Observation, history: u32, row: u16, column: u16, out: *c.hvt_cell) Error!void {
     out.* = std.mem.zeroes(c.hvt_cell);
-    const view = observation.semanticView(history);
+    const view = observed.semanticView(history);
     if (row >= view.rows or column >= view.cols) return error.InvalidArgument;
     var storage: [vt.scalar.maximum_scalars]u21 = undefined;
     const values = view.cellScalarsAt(row, column, &storage);

@@ -88,6 +88,16 @@ pub fn build(b: *std.Build) void {
     b.default_step = check;
 }
 
+fn sameInstallDirectory(left: ?std.Build.InstallDir, right: ?std.Build.InstallDir) bool {
+    const a = left orelse return right == null;
+    const b = right orelse return false;
+    if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+    return switch (a) {
+        .prefix, .lib, .bin, .header => true,
+        .custom => |path| std.mem.eql(u8, path, b.custom),
+    };
+}
+
 fn childStep(child: *std.Build.Dependency, name: []const u8) *std.Build.Step {
     return &child.builder.top_level_steps.get(name).?.step;
 }
@@ -120,6 +130,32 @@ fn forward(
     }
     for (child.builder.getInstallStep().dependencies.items) |step| {
         const install = step.cast(std.Build.Step.InstallArtifact) orelse continue;
+        var duplicate = false;
+        for (b.getInstallStep().dependencies.items) |published_step| {
+            const published = published_step.cast(std.Build.Step.InstallArtifact) orelse continue;
+            if (!std.mem.eql(u8, published.artifact.name, install.artifact.name)) continue;
+            const same_sub_path = if (published.dest_sub_path) |path|
+                if (install.dest_sub_path) |candidate| std.mem.eql(u8, path, candidate) else false
+            else
+                install.dest_sub_path == null;
+            // Shared child companions may arrive through several packages, but
+            // one public name must still denote one exact artifact and install.
+            if (published.artifact != install.artifact or
+                !sameInstallDirectory(published.dest_dir, install.dest_dir) or
+                !same_sub_path or
+                !sameInstallDirectory(published.pdb_dir, install.pdb_dir) or
+                !sameInstallDirectory(published.h_dir, install.h_dir) or
+                !sameInstallDirectory(published.implib_dir, install.implib_dir) or
+                published.dylib_symlinks != install.dylib_symlinks)
+            {
+                // zig-audit: acknowledge panic
+                // reason: A public artifact name cannot select conflicting child objects or installation contracts.
+                @panic("conflicting public artifact");
+            }
+            duplicate = true;
+            break;
+        }
+        if (duplicate) continue;
         // Re-install under the parent prefix while preserving the exact artifact.
         const forwarded = b.addInstallArtifact(install.artifact, .{
             .dest_dir = if (install.dest_dir) |dir| .{ .override = dir } else .disabled,

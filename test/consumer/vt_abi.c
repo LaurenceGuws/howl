@@ -2,6 +2,7 @@
 #include <string.h>
 int howl_external_vt_abi(void) {
     hvt_terminal *value=NULL;
+    hvt_observation *observation=NULL;
     hvt_config config={2,8,0,0,0,0};
     hvt_state state={0};
     hvt_feed_progress progress={0};
@@ -47,10 +48,12 @@ int howl_external_vt_abi(void) {
     if (hvt_reply_container_position(NULL,0,0,0)!=HVT_INVALID_ARGUMENT || hvt_reply_container_screen_cells(NULL,0,0,0)!=HVT_INVALID_ARGUMENT) return 24;
     if (hvt_reply_container_icon_title(NULL,0,NULL,0)!=HVT_INVALID_ARGUMENT || hvt_decline_container(NULL,0)!=HVT_INVALID_ARGUMENT) return 25;
     if (hvt_create(HVT_NATIVE_VERSION,&config,&value)!=HVT_OK || !value) return 26;
+    if (hvt_observation_open(HVT_NATIVE_VERSION,value,&observation)!=HVT_OK || !observation) { hvt_release(&value); return 28; }
     const uint32_t result=hvt_feed(value,(const uint8_t *)"E",1,1,&progress);
     const uint32_t copied=hvt_copy_cell(value,0,0,0,&cell);
     hvt_release(&value);
     hvt_release(&value);
     hvt_release(NULL);
+    if (hvt_observation_release(&observation)!=HVT_OK || observation) return 29;
     return result==HVT_OK && copied==HVT_OK && progress.consumed==1 && cell.scalar_count==1 && cell.scalars[0]=='E' && !value ? 0 : 27;
 }

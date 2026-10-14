@@ -69,6 +69,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&owner_run.step);
     native_step.dependOn(&owner_run.step);
 
+    const observation_root = b.createModule(.{ .root_source_file = b.path("test/native_observation.zig"), .target = target, .optimize = optimize });
+    observation_root.addImport("howl_vt_native", native);
+    const observation_tests = b.addTest(.{ .name = "howl-vt-native-observation", .root_module = observation_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&observation_tests.step);
+    const observation_run = b.addRunArtifact(observation_tests);
+    test_step.dependOn(&observation_run.step);
+    native_step.dependOn(&observation_run.step);
+
     // Optional observation encoding is never imported by the live VT root.
     const codec = b.addModule("howl_vt_codec", .{
         .root_source_file = b.path("src/codec.zig"),

@@ -119,7 +119,9 @@ typedef struct hi_service {
     uint8_t sync_ended, sync_trailing_effect, retained_fallback, descriptor_kind;
     uint8_t reserved[4];
 } hi_service;
-/* Live handles are constructor-owned, caller-serialized and invalid after destroy.
+/* Live C handles come only from hi_create/hi_create_presented and are invalid
+ * after hi_destroy. Direct Zig Instance pointers are a different opaque family
+ * and must not be cast here. Calls on one live owner serialize.
  * Different Instance specializations and Server handles must never be cast here.
  * Arrays/strings borrow caller memory only for the duration of each call.
  * create requires *out==NULL; failure preserves it.
@@ -134,6 +136,17 @@ typedef struct hi_service {
  * hi_create_presented derives its lattice from an explicit presentation owner. */
 uint32_t hi_abi_version(void);
 uint32_t hi_create(uint32_t version, const hi_launch *launch, hi_instance **out);
+/* Opens the VT-owned read capability from one matching C Instance:
+ * Same VT-owned capability, backed by the exact local Instance observation.
+ * May be opened for presented or unpresented Instance. No second observation API.
+ * Uses HI version/status mapping; source reference ceiling maps RESOURCE_LIMIT.
+ * Busy Instance destruction leaves capability live; successful destruction
+ * retires it before returning, without waiting for capability/frame consumers.
+ * Existing Instance input/service/lifecycle behavior and direct Zig owners remain
+ * canonical. All C hi_instance handles use the same new private C wrapper.
+ * Output requires a null slot and is unchanged on all failures. */
+uint32_t hi_observation_open(uint32_t version, hi_instance *, hvt_observation **out);
+
 /* A matching presentation is required.
  * Launch cell_width/cell_height must both be zero: regular-font metrics supply
  * the sole canonical pixel lattice. Construction only tries shared font access.

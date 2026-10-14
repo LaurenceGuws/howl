@@ -203,6 +203,30 @@ for package in ("howl-vt", "howl-pty", "howl-instance", "howl-text", "howl-rende
 PYCORE
 
 # The live VT and optional native owner are separate dependency capabilities.
+python3 - <<'PYINSTANCEABI'
+from pathlib import Path
+import re
+base = Path("mods/howl-instance/src").resolve()
+roots = ["instance.zig", "headless.zig", "runtime.zig", "native.zig", "native_frames.zig"]
+seen = set()
+def visit(path):
+    path = path.resolve()
+    if path in seen:
+        return
+    seen.add(path)
+    if path.name == "abi_owner.zig":
+        raise SystemExit("Instance direct/native-helper graph imports private C ownership")
+    for name in re.findall(r'@import\("([^"]+)"\)', path.read_text()):
+        if name == "instance_abi_owner":
+            raise SystemExit("Instance direct/native-helper graph imports private C ownership")
+        if name.endswith(".zig"):
+            child = (path.parent / name).resolve()
+            if child.is_relative_to(base):
+                visit(child)
+for root in roots:
+    visit(base / root)
+PYINSTANCEABI
+
 python3 - <<'PYVTNATIVE' || status=1
 from pathlib import Path
 import re

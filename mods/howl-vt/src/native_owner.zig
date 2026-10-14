@@ -5,6 +5,7 @@ const vt = @import("howl_vt");
 const Terminal = vt.Terminal;
 const c = @import("vt_native_types");
 const queries = @import("native_queries.zig");
+const source = @import("native_observation.zig");
 
 /// Canonical failures plus explicit boundary admission/capacity errors.
 pub const Error = Terminal.InitError || Terminal.FeedError || Terminal.ResizeError ||
@@ -17,7 +18,7 @@ pub const Error = Terminal.InitError || Terminal.FeedError || Terminal.ResizeErr
 // zig-audit: acknowledge opaque_type
 // reason: Foreign/native callers receive lifecycle and const observation capabilities, not mutable Terminal storage.
 pub const Owner = opaque {};
-const State = struct { allocator: std.mem.Allocator, terminal: Terminal };
+const State = struct { allocator: std.mem.Allocator, terminal: Terminal, source: ?*source.Controller };
 
 fn state(value: *Owner) *State {
     // zig-audit: acknowledge ptr_cast
@@ -54,6 +55,7 @@ pub fn create(allocator: std.mem.Allocator, config: *const c.hvt_config) Error!*
     const storage = try allocator.create(State);
     errdefer allocator.destroy(storage);
     storage.allocator = allocator;
+    storage.source = null;
     try Terminal.initWithHistoryInto(&storage.terminal, allocator, config.rows, config.columns, config.history_rows);
     errdefer storage.terminal.deinit();
     if (pixels) |value| try storage.terminal.setCellPixelSize(value.width, value.height);
@@ -66,6 +68,7 @@ pub fn create(allocator: std.mem.Allocator, config: *const c.hvt_config) Error!*
 pub fn destroy(value: *Owner) void {
     const storage = state(value);
     const allocator = storage.allocator;
+    if (storage.source) |controller| source.retire(controller);
     storage.terminal.deinit();
     allocator.destroy(storage);
 }
@@ -73,6 +76,17 @@ pub fn destroy(value: *Owner) void {
 /// Lends only canonical const observation to synchronous optional adapters.
 pub fn observation(value: *const Owner) *const Terminal.Observation {
     return stateConst(value).terminal.observation();
+}
+
+/// Lazily opens the same retired-safe source occurrence without changing VT state.
+pub fn openObservation(value: *Owner) Error!*source.Reader {
+    const storage = state(value);
+    if (storage.source) |controller| return source.open(controller);
+    const controller = try source.create(storage.allocator, storage.terminal.observation());
+    errdefer source.retire(controller);
+    const reader = try source.open(controller);
+    storage.source = controller;
+    return reader;
 }
 
 /// Copies coherent actual viewport facts; requested history is canonically clamped.

@@ -80,9 +80,58 @@ static int retained_requests(void) {
     REQUIRE(memcmp(copied,"c;?",3) == 0 && first.kind == HVT_REQUEST_CLIPBOARD);
     return 0;
 }
+/* Reader references cross the two exact module artifacts; they neither keep the
+ * process alive nor make Instance destruction busy. */
+static int observation_lifetime(void) {
+    int result=1;
+    hi_instance *owner=NULL,*fresh=NULL;
+    hvt_observation *reader=NULL,*peer=NULL,*next=NULL;
+    hvt_observation *extra[HVT_MAX_OBSERVATION_REFERENCES-3u]={0};
+    size_t count=0;
+    const char shell[]="/bin/sh", command[]="exec sleep 30", env[]="PATH=/usr/bin:/bin";
+    const hi_bytes environment={(const uint8_t *)env,sizeof(env)-1};
+    const hi_launch launch={{(const uint8_t *)shell,sizeof(shell)-1},
+        {(const uint8_t *)command,sizeof(command)-1},{NULL,0},&environment,1,2,8,0,0,8,16};
+    hvt_interaction before={0},after={0};
+#define SOURCE_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"source C proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
+    SOURCE_REQUIRE(hi_observation_open(0,NULL,&reader)==HI_VERSION_MISMATCH && !reader);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,NULL,&reader)==HI_INVALID_ARGUMENT && !reader);
+    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK && owner);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,NULL)==HI_INVALID_ARGUMENT);
+    SOURCE_REQUIRE(hi_interaction(owner,&before)==HI_OK);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&reader)==HI_OK && reader);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&peer)==HI_OK && peer==reader);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&peer)==HI_INVALID_ARGUMENT && peer==reader);
+    for (size_t n=0;n<sizeof extra/sizeof extra[0];++n) {
+        SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&extra[n])==HI_OK && extra[n]==reader);
+        ++count;
+    }
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&next)==HI_RESOURCE_LIMIT && !next);
+    SOURCE_REQUIRE(hi_interaction(owner,&after)==HI_OK && memcmp(&before,&after,sizeof before)==0);
+    SOURCE_REQUIRE(hvt_observation_release(&extra[count-1])==HVT_OK && !extra[count-1]);
+    --count;
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,owner,&extra[count])==HI_OK && extra[count]==reader);
+    ++count;
+    SOURCE_REQUIRE(hi_destroy(&owner)==HI_OK && !owner);
+    SOURCE_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&fresh)==HI_OK && fresh);
+    SOURCE_REQUIRE(hi_observation_open(HI_ABI_VERSION,fresh,&next)==HI_OK && next && next!=reader);
+    SOURCE_REQUIRE(hi_destroy(&fresh)==HI_OK && !fresh);
+    result=0;
+cleanup:
+    if (owner && hi_destroy(&owner)!=HI_OK) result=1;
+    if (fresh && hi_destroy(&fresh)!=HI_OK) result=1;
+    for (size_t n=0;n<count;++n) if (hvt_observation_release(&extra[n])!=HVT_OK || extra[n]) result=1;
+    if (hvt_observation_release(&next)!=HVT_OK || next) result=1;
+    if (hvt_observation_release(&peer)!=HVT_OK || peer) result=1;
+    if (hvt_observation_release(&reader)!=HVT_OK || reader) result=1;
+    if (hvt_observation_release(&reader)!=HVT_OK || hvt_observation_release(NULL)!=HVT_OK) result=1;
+#undef SOURCE_REQUIRE
+    return result;
+}
 extern int howl_instance_cpp_header(void);
 int main(void) {
     REQUIRE(howl_instance_cpp_header() == 0);
+    REQUIRE(observation_lifetime() == 0);
     REQUIRE(retained_requests() == 0);
     hi_instance *instance = NULL;
     char shell[] = "/bin/sh";

@@ -15,6 +15,7 @@ process lifetime, time, scheduling, request policy and UI.
 
 | Group | Entry points |
 | --- | --- |
+| Source capability | `hvt_observation_open`, `hvt_observation_release` |
 | Owner / observation | `hvt_abi_version`, `hvt_create`, `hvt_release`, `hvt_observe` |
 | Progress | `hvt_feed`, `hvt_resize`, `hvt_reset`, `hvt_service_animations` |
 | Input | `hvt_encode_named_key`, `hvt_encode_unicode_key`, `hvt_encode_mouse`, `hvt_encode_focus`, `hvt_encode_paste` |
@@ -28,10 +29,33 @@ Creation requires a null publication slot and publishes only complete state.
 Failures preserve the slot. Release clears it and accepts both a null slot pointer
 and a null contained handle as no-ops, after all calls end.
 
-Every C record and returned byte range is a caller-owned copy that survives later
-mutation and destruction. No observation pointer or result lease crosses C.
-The native Zig owner lends only synchronous const opaque VT Observation to optional
-adapters; that borrow ends before mutation or destruction.
+Ordinary query records and byte ranges are caller-owned copies that survive
+mutation and destruction. The separate `hvt_observation` capability has no
+C-readable terminal storage and grants no mutation authority.
+
+`hvt_observation_open` lazily creates one capability for this source occurrence
+and returns a Reader reference. Later opens share its identity. The source
+Controller, every successful open and every downstream retain count toward the
+1,024-reference ceiling. Source allocation/reference-limit failure changes no
+terminal state or revision and preserves the output slot.
+
+Destroying the VT retires its capability without waiting for readers or retaining
+terminal state. Existing Reader references remain safe to release; consumers
+report source closure before touching VT. Allocator reuse by a new terminal cannot
+revive an old capability. Source open/mutation/destruction and synchronous module
+reads serialize externally. Independent retained references may release
+concurrently. Copying a Reader pointer creates no reference.
+
+The native `observation` namespace separates opaque Controller retirement
+authority from Reader retain/read/release. The same helper lets the optional
+Instance C owner lend its exact canonical VT observation. A consumer retains only
+the small lifetime capability; it borrows const VT data during its serialized
+read and keeps no canonical slice afterward. Standalone Render construction is
+the next consumer under implementation.
+
+Composed native artifacts must come from the same qualified Howl build and remain
+loaded while their handles live. The C version is not a promise that private
+opaque capabilities from unrelated build combinations may be mixed.
 
 Fixed outputs/counts initialize before later validation. Data buffers remain
 untouched on failed admission, shortage, stale/context rejection or canonical
@@ -125,7 +149,7 @@ clipboard/window values belong to the caller. No automatic headless policy is ad
 
 Linux/x86_64 is the initial native target. Package proofs include a real standalone
 C/C++ lifecycle, every new record field/constant/function-signature, allocation
-prefixes and hostile boundaries. The distribution consumer resolves all 33 symbols
+prefixes and hostile boundaries. The distribution consumer resolves all 35 symbols
 through the exact artifact/header.
 
 `zig build check test:native test:terminal test:foreign -Doptimize=ReleaseSafe`

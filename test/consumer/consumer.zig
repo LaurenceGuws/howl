@@ -186,6 +186,8 @@ test "root forwards exact standalone VT artifact native owner and header" {
     const native = @import("howl_vt_native");
     try std.testing.expect(native.Terminal == vt.Terminal);
     try std.testing.expect(@typeInfo(native.owner.Owner) == .@"opaque");
+    try std.testing.expect(native.observation.Reader != native.observation.Controller);
+    try std.testing.expect(@TypeOf(native.observation.read) == fn (*const native.observation.Reader) native.observation.ReadError!*const vt.Terminal.Observation);
     try std.testing.expect(@TypeOf(native.owner.observation) == fn (*const native.owner.Owner) *const vt.Terminal.Observation);
     try std.testing.expectEqual(@as(c_int, 0), howl_external_vt_abi());
 }

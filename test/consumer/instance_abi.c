@@ -14,6 +14,8 @@ int howl_external_instance_abi(void) {
     if (hi_presentation_cell_size(0,&cell) != HI_INVALID_ARGUMENT || cell.width || cell.height || cell.reserved) return 6;
     if (hi_create_presented(99,0,0,0,&instance) != HI_VERSION_MISMATCH || instance) return 7;
     if (hi_presentation_release(&presentation) != HI_OK || presentation) return 8;
+    hvt_observation *observation = 0;
+    if (hi_observation_open(HI_ABI_VERSION,0,&observation) != HI_INVALID_ARGUMENT || observation) return 9;
     return 0;
 }
 _Static_assert(_Alignof(hvt_cell) == _Alignof(uint32_t), "VT cell alignment");

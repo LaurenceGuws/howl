@@ -149,3 +149,7 @@ static_assert(same_type<decltype(&hvt_reply_container_screen_cells),decltype(&ex
 static_assert(same_type<decltype(&hvt_reply_container_icon_title),decltype(&expected_hvt_reply_container_icon_title)>);
 static_assert(same_type<decltype(&hvt_decline_container),decltype(&expected_hvt_decline_container)>);
 extern "C" int hvt_cpp_proof(void) { return hvt_abi_version()==HVT_NATIVE_VERSION ? 0 : 1; }
+
+static_assert(HVT_MAX_OBSERVATION_REFERENCES==1024);
+static_assert(same_type<decltype(&hvt_observation_open),uint32_t(*)(uint32_t,hvt_terminal *,hvt_observation **)>);
+static_assert(same_type<decltype(&hvt_observation_release),uint32_t(*)(hvt_observation **)>);

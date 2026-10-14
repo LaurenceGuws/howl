@@ -21,6 +21,8 @@ preserving its existing retained-request policy and host runtime.
 ## Calling and memory
 
 One owner thread serializes operations on each live constructor-owned handle.
+A C handle comes only from `hi_create` or `hi_create_presented`; a direct Zig
+Instance pointer is a different opaque family and cannot be cast into this ABI.
 An input/launch buffer need only survive its call; accepted input and launch state
 are copied by the canonical owners. A copied `hvt_cell` survives later mutation
 and destruction. Its x/y offsets distinguish continuation cells from their lead;
@@ -53,6 +55,33 @@ The caller handles that failure explicitly rather than inferring a successful cu
 The Instance ABI version incorporates VT and Render native version 1. Changing an incorporated
 record requires coordinated Instance ABI review/versioning; compile-time guards
 reject silent version or scalar-capacity drift.
+
+## VT source capability
+
+`hi_observation_open` returns the same VT-owned opaque Reader family as bare VT.
+It works for presented and unpresented C Instances and changes no terminal
+revision. Link the exact `howl_vt_native` companion artifact for its
+`hvt_observation_release` operation. Instance forwards that same child artifact;
+the repository root deduplicates repeated forwarding only when object and install
+identity both match.
+
+A successful open creates one reference, bounded together with the source
+Controller and downstream retains to 1,024. Output must initially be null and is
+preserved on failure. No C-readable VT state or mutable terminal authority is
+exposed. Native module consumers read canonical const observation synchronously;
+there is no copied terminal model.
+
+Readers do not keep the PTY/VT alive and do not make Instance destruction busy.
+Successful destruction retires their source; already-retained references remain
+safe to release, and module readers report closure before dereferencing VT. Busy
+destruction caused by an existing frame endpoint leaves the source capability
+live. Open, source mutation/destruction, consumer construction and capture
+serialize. Independent retained references may release concurrently.
+
+This bookkeeping lives in an optional C wrapper around the exact local Instance.
+Direct Zig owners, host helpers, the core Instance layout and its service path
+retain their existing APIs. Use composed artifacts from the same qualified build
+and keep their origin libraries loaded while handles remain live.
 
 ## Presented construction
 
@@ -95,9 +124,11 @@ handle serialize against its release. Each Instance still serializes its own
 operations, and an open frame endpoint prevents its checked destruction.
 
 `hi_create_presented` uses Core's `tryInitPresented`: it retains and tries the
-shared font claim before State allocation or PTY launch, and holds that claim
+shared font claim before canonical State allocation or PTY launch, and holds that claim
 through the initial projection. A busy claim releases its attempted reference and
-returns `HI_BUSY` with no child. The caller chooses when to retry. Every failure
+returns `HI_BUSY` with no child. C admission may allocate environment/wrapper
+storage before invoking that Core factory; no C-level busy-before-allocation
+priority is promised. The caller chooses when to retry. Every failure
 unlocks before releasing the Store and unwinds staged native resources; child-side
 effects from a later failure cannot be undone. Existing direct Zig `initPresented`
 preserves its late waiting claim.

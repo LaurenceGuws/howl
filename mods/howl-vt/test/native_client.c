@@ -86,6 +86,7 @@ static uint32_t drain(hvt_terminal *value) {
 int main(void) {
     int failed=0;
     hvt_terminal *value=NULL,*fresh=NULL;
+    hvt_observation *source=NULL,*peer=NULL;
     hvt_config config={2,8,4,0,8,16};
     hvt_state state={0},before={0},after={0};
     hvt_feed_progress progress={0},zero_progress={0};
@@ -110,6 +111,14 @@ int main(void) {
     CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_RESOURCE_LIMIT && !value);
     config.rows=2; config.columns=8;
     CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK && value);
+    CHECK(hvt_observation_open(0,value,&source)==HVT_VERSION_MISMATCH && !source);
+    CHECK(hvt_observation_open(HVT_NATIVE_VERSION,NULL,&source)==HVT_INVALID_ARGUMENT && !source);
+    CHECK(hvt_observation_open(HVT_NATIVE_VERSION,value,NULL)==HVT_INVALID_ARGUMENT);
+    CHECK(hvt_observe(value,0,&before)==HVT_OK);
+    CHECK(hvt_observation_open(HVT_NATIVE_VERSION,value,&source)==HVT_OK && source);
+    CHECK(hvt_observation_open(HVT_NATIVE_VERSION,value,&peer)==HVT_OK && peer==source);
+    CHECK(hvt_observation_open(HVT_NATIVE_VERSION,value,&source)==HVT_INVALID_ARGUMENT && source==peer);
+    CHECK(hvt_observe(value,0,&after)==HVT_OK && memcmp(&before,&after,sizeof before)==0);
     hvt_terminal *saved=value;
     CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_INVALID_ARGUMENT && value==saved);
     config.rows=0; /* Constructor does not borrow config. */
@@ -298,6 +307,9 @@ cleanup:
     hvt_release(&value);
     hvt_release(&value);
     hvt_release(NULL);
+    if (hvt_observation_release(&source)!=HVT_OK || source ||
+        hvt_observation_release(&peer)!=HVT_OK || peer ||
+        hvt_observation_release(&source)!=HVT_OK || hvt_observation_release(NULL)!=HVT_OK) failed=1;
     if (!failed) puts("VT C peer: standalone owner, Unicode/input/query/request/reply/reset, hostile admission and lifetime PASS");
     return failed ? 1 : 0;
 }

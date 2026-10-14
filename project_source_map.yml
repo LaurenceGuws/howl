@@ -28,7 +28,11 @@ experimental:
     canonical RIS and caller-clocked animation. The native owner uses an injected
     allocator; only the C export root selects libc. It imports canonical VT but no
     Instance, Server, codec, Render or process/runtime owner. The live VT root
-    never imports native ownership. Direct and parsed RIS share one raw transition
+    never imports native ownership. Optional native observation separates Controller
+    retirement from Reader retain/read/release in one small bounded allocation.
+    It retains no terminal state; owner destruction retires it, and new terminal
+    address reuse cannot revive it. Only opaque Readers cross C. Direct and parsed
+    RIS share one raw transition
     and each advances canonical identity exactly once.
   howl-instance-native: >-
     Optional howl_instance_native shared artifact and owned aggregate C header
@@ -42,8 +46,13 @@ experimental:
     parent destruction; Odin embeds the exact artifact export root and owns worker
     handoff/pacing. Standalone presented C construction owns explicit copied
     path/memory font inputs and a caller reference to the canonical shared Store;
-    Instances retain it independently. Try-claim admission precedes allocation/child
-    launch; the ordinary Zig constructor preserves its waiting lane.
+    Instances retain it independently. Core try-claim admission precedes canonical
+    State allocation/child launch; C environment/wrapper admission may allocate
+    earlier. The ordinary Zig constructor preserves its waiting lane. A private
+    C-only wrapper delegates every hi_* operation to the exact local Instance and
+    lazily owns a VT observation Controller. Successful destruction retires it;
+    busy destruction preserves it. Readers never pin process/terminal lifetime.
+    Direct Zig modules/helpers do not import that wrapper.
   howl-render-native: >-
     Optional howl_render_native root owns versioned C/Odin command, upload, removal
     and residency schemas and bounded field-wise projection. Commands are bulk
