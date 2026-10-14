@@ -38,4 +38,4 @@ The owner contains no Instance/Server dependency, codec, socket, process, timer,
 
 Run `zig build check test -Doptimize=ReleaseSafe -j2` in this package. `test:owner` exercises injected allocation prefixes, source retirement, buffer lifetime, canonical command equivalence, exact/stale residency, held-frame independence, bounded capacity/retry and real backend-to-producer release handoff. `test:foreign` compiles and runs C11/C++17 against the child artifacts and installed headers, including copied font inputs and source closure. The separate root consumer composes a C Instance source with Render without an upward production dependency. Root gates include the structural isolation audit.
 
-The full-VT Safe codec allocation campaign's pre-existing nondeterministic-memory qualifier is unchanged. These focused Safe owner proofs do not qualify that campaign.
+The full VT package Safe graph now passes on stable Zig 0.17.0 after its allocator-dependent fault numbering was corrected in the test campaign. No production encoder behavior changed. Platform qualification remains explicit.

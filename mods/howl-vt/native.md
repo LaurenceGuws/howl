@@ -157,7 +157,15 @@ qualifies affected owners, canonical units and actual foreign callers. Default
 child/root graphs additionally run codec, fuzz, simulations, maintained consumers,
 protocol and audits.
 
-The older full-VT codec Safe allocation-failure proof has reproduced
-`NondeterministicMemoryUsage`. Targeted Safe results do not claim a green full-VT
-Safe graph. Direct foreign image/logical-output projection, standalone Render
-construction and other platform deployment remain separate.
+The full package now passes `zig build check test -Doptimize=ReleaseSafe -j2`
+on stable Zig 0.17.0: codec, encoder, native contracts, canonical units, embedding,
+fuzz, simulation and foreign callers are included. The former
+`NondeterministicMemoryUsage` qualifier came from allocator-dependent successful
+resize/remap changing the failure campaign's numbered allocation count. That one
+campaign now forces allocation/copy growth, testing all 17 allocation points while
+preserving every prefix, cache-revocation, cleanup and canonical-state assertion.
+Production encoder/VT behavior is unchanged.
+
+Direct foreign image/logical-output projection and other platform deployment
+remain separate. Standalone Render construction belongs to the Render native
+contract.

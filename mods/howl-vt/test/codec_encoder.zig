@@ -362,7 +362,10 @@ test "delta allocation failures revoke retained facts and preserve the caller pr
     var terminal = try vt.Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("\x1b]8;;https://example.invalid/failure\x07A\x1b]8;;\x07\r\nB\r\nC\r\nD")).stateChanged());
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testDeltaAllocation, .{terminal.observation()});
+    // Number every buffer growth as an allocation, independently of the backing
+    // allocator's resize/remap successes. Every failure point stays reachable.
+    var allocation_only = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
+    try std.testing.checkAllAllocationFailures(allocation_only.allocator(), testDeltaAllocation, .{terminal.observation()});
     var publisher: Encoder.DeltaCache = .{};
     defer publisher.deinit(std.testing.allocator);
     var body: std.ArrayList(u8) = .empty;
