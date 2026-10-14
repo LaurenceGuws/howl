@@ -5,6 +5,7 @@ const terminal = client.terminal;
 const view = terminal.view;
 const c = @import("native_abi_types");
 const native = @import("client_native");
+const queries = native.queries;
 const heap = std.heap.c_allocator;
 const OwnedTree = struct { value: client.Tree };
 const OwnedImage = struct { value: terminal.images.Resource };
@@ -31,8 +32,8 @@ fn failure(err: Error) u32 {
         error.ConnectionClosed => c.HSC_CLOSED,
         error.ConnectionRetired => c.HSC_RETIRED,
         error.StaleServerIncarnation => c.HSC_STALE_SERVER,
-        error.InvalidEndpoint, error.SocketPathTooLong, error.InvalidText, error.InvalidResize, error.InvalidArgument => c.HSC_INVALID_ARGUMENT,
-        error.PayloadTooLarge, error.SnapshotTooLarge, error.ViewTooLarge, error.RequestTooLarge => c.HSC_RESOURCE_LIMIT,
+        error.InvalidEndpoint, error.SocketPathTooLong, error.InvalidText, error.InvalidResize, error.InvalidArgument, error.InvalidPoint, error.InvalidQuery => c.HSC_INVALID_ARGUMENT,
+        error.PayloadTooLarge, error.SnapshotTooLarge, error.ViewTooLarge, error.RequestTooLarge, error.RowTooLarge, error.CoordinatesTooLarge => c.HSC_RESOURCE_LIMIT,
         error.SessionNotFound => c.HSC_SESSION_NOT_FOUND,
         error.InstanceNotFound => c.HSC_INSTANCE_NOT_FOUND,
         error.NameExists => c.HSC_NAME_EXISTS,
@@ -44,9 +45,10 @@ fn failure(err: Error) u32 {
         error.Unsupported => c.HSC_UNSUPPORTED,
         error.NotGeometryLeader => c.HSC_NOT_LEADER,
         error.NotAuthority => c.HSC_NOT_AUTHORITY,
-        error.ServerRejected => c.HSC_REJECTED,
+        error.ServerRejected, error.SelectionRejected, error.ContextChanged => c.HSC_REJECTED,
+        error.BufferTooSmall => c.HSC_BUFFER_TOO_SMALL,
         error.Malformed => c.HSC_INVALID_ARGUMENT,
-        error.InvalidMagic, error.UnsupportedFramingVersion, error.InvalidReservedBits, error.UnknownKind, error.InvalidPayload, error.UnexpectedFrame, error.UnexpectedHandshakeFrame, error.InvalidSnapshot, error.InvalidRichSnapshot, error.InvalidResource, error.DeltaBaselineMismatch => c.HSC_PROTOCOL_ERROR,
+        error.InvalidUtf8, error.InvalidMagic, error.UnsupportedFramingVersion, error.InvalidReservedBits, error.UnknownKind, error.InvalidPayload, error.UnexpectedFrame, error.UnexpectedHandshakeFrame, error.InvalidSnapshot, error.InvalidRichSnapshot, error.InvalidResource, error.DeltaBaselineMismatch => c.HSC_PROTOCOL_ERROR,
         error.SocketCreateFailed, error.SocketDuplicateFailed, error.SocketConnectFailed, error.SocketOptionFailed, error.SocketReadFailed, error.SocketShutdownFailed, error.SocketWriteFailed => c.HSC_TRANSPORT_ERROR,
     };
 }
@@ -678,5 +680,167 @@ pub export fn hsc_reply_container_icon_title(raw: ?*c.hsc_attachment, id: u64, p
 pub export fn hsc_decline_container(raw: ?*c.hsc_attachment, id: u64) u32 {
     const owner = raw orelse return c.HSC_INVALID_ARGUMENT;
     native.declineContainer(convert(*terminal.Connection, owner), id) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+fn queryBytes(ptr: ?[*]const u8, len: usize) Error![]const u8 {
+    if (len > c.HSC_MAX_SEARCH_QUERY_BYTES) return error.RequestTooLarge;
+    return bytes(ptr, len, c.HSC_MAX_SEARCH_QUERY_BYTES) orelse error.InvalidArgument;
+}
+
+/// Searches one immutable row without attachment I/O or retained-history paging.
+pub export fn hsc_snapshot_search_row(raw: ?*const c.hsc_snapshot, ptr: ?[*]const u8, len: usize, row: u16, column: u16, reverse: u32, out: ?*c.hvt_search_match) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_search_match);
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (reverse > 1) return c.HSC_INVALID_ARGUMENT;
+    const query = queryBytes(ptr, len) catch |err| return failure(err);
+    queries.searchRow(convert(*const view.Snapshot, snapshot), heap, query, row, column, reverse == 1, result) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Searches only the supplied immutable viewport, with row-local matching.
+pub export fn hsc_snapshot_search(raw: ?*const c.hsc_snapshot, ptr: ?[*]const u8, len: usize, row: u16, reverse: u32, out: ?*c.hvt_search_match) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_search_match);
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (reverse > 1) return c.HSC_INVALID_ARGUMENT;
+    const query = queryBytes(ptr, len) catch |err| return failure(err);
+    queries.search(convert(*const view.Snapshot, snapshot), heap, query, row, reverse == 1, result) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Copies canonical client word/visual-row endpoints and painted final width.
+pub export fn hsc_snapshot_expand_selection(raw: ?*const c.hsc_snapshot, kind: u32, row: u16, column: u16, out: ?*c.hvt_selection_range) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_selection_range);
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    queries.expandSelection(convert(*const view.Snapshot, snapshot), kind, row, column, result) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Distinguishes valid, context-changed and evicted copied ranges.
+pub export fn hsc_snapshot_selection_validity(raw: ?*const c.hsc_snapshot, input: ?*const c.hvt_selection_range, out: ?*u32) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = 0;
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const range = input orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = queries.selectionValidity(convert(*const view.Snapshot, snapshot), range) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Copies a same-snapshot text-shaped selection intersection.
+pub export fn hsc_snapshot_selection_span(raw: ?*const c.hsc_snapshot, input: ?*const c.hvt_selection_range, row: u16, out: ?*c.hsc_selection_span) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hsc_selection_span);
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const range = input orelse return c.HSC_INVALID_ARGUMENT;
+    queries.selectionSpan(convert(*const view.Snapshot, snapshot), range, row, result) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Copies all advertised row shapes or leaves the caller array untouched.
+pub export fn hsc_snapshot_row_shapes(raw: ?*const c.hsc_snapshot, output: ?[*]c.hvt_row_shape, capacity: usize, required: ?*usize) u32 {
+    const count = required orelse return c.HSC_INVALID_ARGUMENT;
+    count.* = 0;
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (capacity != 0 and output == null) return c.HSC_INVALID_ARGUMENT;
+    const value = convert(*const view.Snapshot, snapshot);
+    const extent = @min(capacity, view.rows(value).len);
+    queries.copyRowShapes(value, if (output) |p| p[0..extent] else &.{}, count) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Copies exact lead-cell URI bytes without retaining a snapshot borrow.
+pub export fn hsc_snapshot_copy_hyperlink(raw: ?*const c.hsc_snapshot, row: u16, column: u16, output: ?[*]u8, capacity: usize, required: ?*usize) u32 {
+    const count = required orelse return c.HSC_INVALID_ARGUMENT;
+    count.* = 0;
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (capacity > c.HSC_MAX_SELECTION_BYTES) return c.HSC_RESOURCE_LIMIT;
+    if (capacity != 0 and output == null) return c.HSC_INVALID_ARGUMENT;
+    queries.copyHyperlink(convert(*const view.Snapshot, snapshot), row, column, if (output) |p| p[0..capacity] else &.{}, count) catch |err| return failure(err);
+    return c.HSC_OK;
+}
+
+/// Publishes only a complete independently owned canonical text result.
+pub export fn hsc_selection_extract(raw: ?*c.hsc_attachment, input: ?*const c.hvt_selection_range, out: ?*?*c.hsc_text_view) u32 {
+    const slot = out orelse return c.HSC_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HSC_INVALID_ARGUMENT;
+    const connection = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const range = input orelse return c.HSC_INVALID_ARGUMENT;
+    const result = queries.extract(heap, convert(*terminal.Connection, connection), range) catch |err| return failure(err);
+    slot.* = convert(*c.hsc_text_view, result);
+    return c.HSC_OK;
+}
+
+/// Borrows UTF-8 only from the matching independent text result.
+pub export fn hsc_text_view_data(raw: ?*const c.hsc_text_view, out: ?*?[*]const u8, length: ?*usize) u32 {
+    if (out) |p| p.* = null;
+    if (length) |p| p.* = 0;
+    const slot = out orelse return c.HSC_INVALID_ARGUMENT;
+    const count = length orelse return c.HSC_INVALID_ARGUMENT;
+    const text = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const data = queries.textBytes(convert(*const queries.Text, text));
+    slot.* = if (data.len == 0) null else data.ptr;
+    count.* = data.len;
+    return c.HSC_OK;
+}
+
+/// Clears and releases only the matching text owner.
+pub export fn hsc_text_view_release(out: ?*?*c.hsc_text_view) void {
+    const slot = out orelse return;
+    const text = slot.* orelse return;
+    slot.* = null;
+    queries.releaseText(convert(*queries.Text, text));
+}
+
+/// Creates a cache bound by copied ready facts, with no attachment borrow.
+pub export fn hsc_cache_create(version: u32, raw: ?*c.hsc_attachment, out: ?*?*c.hsc_cache) u32 {
+    if (version != c.HSC_ABI_VERSION) return c.HSC_VERSION_MISMATCH;
+    const slot = out orelse return c.HSC_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HSC_INVALID_ARGUMENT;
+    const connection = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const cache = queries.createCache(heap, convert(*terminal.Connection, connection)) catch |err| return failure(err);
+    slot.* = convert(*c.hsc_cache, cache);
+    return c.HSC_OK;
+}
+
+/// Clears only cache-owned decoding state; prior snapshot owners remain live.
+pub export fn hsc_cache_release(out: ?*?*c.hsc_cache) void {
+    const slot = out orelse return;
+    const cache = slot.* orelse return;
+    slot.* = null;
+    queries.releaseCache(convert(*queries.Cache, cache));
+}
+
+/// Completes one bound raw/delta observation and publishes an independent snapshot.
+pub export fn hsc_observe_cached(raw: ?*c.hsc_attachment, cache: ?*c.hsc_cache, after: u64, offset: u32, out: ?*?*c.hsc_snapshot) u32 {
+    const slot = out orelse return c.HSC_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HSC_INVALID_ARGUMENT;
+    const connection = raw orelse return c.HSC_INVALID_ARGUMENT;
+    const owner = cache orelse return c.HSC_INVALID_ARGUMENT;
+    const snapshot = queries.observeCached(convert(*queries.Cache, owner), convert(*terminal.Connection, connection), heap, after, offset) catch |err| return failure(err);
+    slot.* = convert(*c.hsc_snapshot, snapshot);
+    return c.HSC_OK;
+}
+
+/// Copies change-mask, predecessor and row-shift presence without a cache borrow.
+pub export fn hsc_snapshot_changes(raw: ?*const c.hsc_snapshot, out: ?*c.hsc_changes) u32 {
+    const result = out orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hsc_changes);
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    result.* = queries.changes(convert(*const view.Snapshot, snapshot));
+    return c.HSC_OK;
+}
+
+/// Copies only the exact known mask, preserving all output bytes on shortage.
+pub export fn hsc_snapshot_changed_rows(raw: ?*const c.hsc_snapshot, output: ?[*]u8, capacity: usize, required: ?*usize) u32 {
+    const count = required orelse return c.HSC_INVALID_ARGUMENT;
+    count.* = 0;
+    const snapshot = raw orelse return c.HSC_INVALID_ARGUMENT;
+    if (capacity != 0 and output == null) return c.HSC_INVALID_ARGUMENT;
+    const value = convert(*const view.Snapshot, snapshot);
+    const extent = @min(capacity, if (view.changedRows(value)) |rows| rows.len else 0);
+    queries.copyChangedRows(value, if (output) |p| p[0..extent] else &.{}, count) catch |err| return failure(err);
     return c.HSC_OK;
 }

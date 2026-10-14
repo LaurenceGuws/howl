@@ -84,7 +84,8 @@ images and consequences; private transport retains bounded deadlines and cancell
 Opaque control handles inspect the tree and perform Session/Instance CRUD.
 Independent opaque attachments retain their exact ready identity. The optional
 `howl_server_client` static artifact and public C header expose versioned native
-connection/control/input/observation ownership. Local terminal ownership belongs to each host.
+connection/control/input/observation ownership, immutable snapshot queries,
+canonical text extraction and attachment-bound raw/delta caching. Local terminal ownership belongs to each host.
 
 `howl-cli` builds the machine-friendly `howl` executable with two deliberately distinct
 command families:

@@ -109,11 +109,11 @@ and header. The ABI imports only the curated client graph. Maintained native
 Flutter/Odin/CLI consumers use that same opaque Zig API; their UI-specific bridges
 remain host-owned.
 
-Version 1 uses opaque control, attachment, interrupt, catalog, snapshot and image
-handles. Constructor slots start null and publish an owner only after success.
+Version 1 uses opaque control, attachment, interrupt, catalog, snapshot, image,
+cache and text-result handles. Constructor slots start null and publish an owner only after success.
 Matching release functions clear the caller slot. Caller code releases an owner
 once, after all in-flight calls return; copying a handle never creates a new owner.
-Catalog/snapshot/image allocations are independent of connections. Names,
+Catalog/snapshot/image/text-result allocations are independent of connections. Names,
 Unicode scalar banks, URIs, property bytes and RGBA8 pixels are immutable borrows
 whose lifetime ends with the matching view/resource release. Strings are explicit
 byte lengths, with no NUL-termination promise; property presence bits distinguish
@@ -136,12 +136,60 @@ exact text/style/link/property/presentation/graphics facts; image retrieval name
 one exact manifest generation and owns its decoded pixels independently.
 
 The C boundary covers catalog CRUD, dedicated attachment, semantic terminal
-input, geometry, signals, complete packed observations and exact images. The
-richer Zig API also exposes reusable raw/delta caching and selection/search;
-those are not version-1 C entry points. Version 1 also exposes interaction state
-and retained terminal request authority through native C entry points.
-The public native ABI is independent of the renderer. Linux live qualification
-is in `test/native_client.c`; other platform deployment remains separately qualified.
+input, geometry, signals, complete packed observations, exact images, interaction
+state, retained request authority, snapshot queries, canonical selection extraction
+and reusable raw/delta observations. The public native ABI is independent of the
+renderer. Linux/x86_64 live qualification is in `test/native_client.c` and
+`test/native_queries.c`; other platform deployment remains separately qualified.
+
+## Native snapshot queries and cache
+
+The optional `server_client_native.queries` namespace and C entry points operate
+on the same independently owned immutable snapshot. Search is exact case-sensitive
+UTF-8 matching within individual projected rows, excluding concealed text. Whole
+snapshot search visits only the supplied viewport; it does not search undisplayed
+history or join soft-wrapped rows. The host retains history paging, Find navigation
+and UI. Queries accept 1–4096 bytes. Match metadata names the snapshot's terminal
+revision; completion describes only this immutable search domain.
+
+Selection expansion, validity, spans and row shapes use the existing client
+semantics and VT-owned native records. A copied range carries stable endpoints,
+columns and screen bank; it is a value, not an authority token. Context changes and
+eviction remain explicit. Hyperlink lookup resolves the lead cell, including wide
+continuations; a continuation whose lead is outside the snapshot is invalid.
+Row-shape, change-mask and URI copies are all-or-none: shortage reports the required
+extent and leaves the destination untouched. Oversized arrays write only actual
+rows. Output records/counts are initialized on failure.
+
+Canonical extraction still asks Server to extract from its current retained
+terminal state. It returns an independent `hsc_text_view`, limited by Server's
+1 MiB payload ceiling. Its borrowed UTF-8 survives snapshot, cache and attachment
+release. Invalid local ranges fail before I/O. A complete correlated rejection
+preserves the stream; malformed, truncated or allocation-interrupted responses
+retire it. Allocation failure when copying an already complete valid response
+preserves the stream.
+
+A cache copies the entire accepted attachment-ready record, including tree revision
+and client identity, and borrows no connection or Interrupt. Another attachment,
+including a reconnect to the same Instance, is rejected before I/O. Serialize cache
+use alongside the connection's existing single I/O owner. Cache release may follow
+attachment release.
+
+Cached observation reuses the existing raw/delta protocol and projects a fresh
+independent snapshot after every accepted response. A nonzero `after_revision`
+must match the cache's accepted delivery revision and history window; a mismatch
+fails before I/O. Zero requests immediate full resynchronization. Delivery revision
+and terminal revision are distinct. Change metadata distinguishes an absent mask
+from a known all-zero mask, retains the exact predecessor delivery revision and
+reports optional nonzero row rotation.
+
+Once a cached request has been sent, receive failures invalidate the cache and
+follow existing stream-retirement rules. Failure to project an already complete
+response also resets the cache, while preserving the stream; retry with zero.
+Old snapshots retain their cells, scalars, URIs, properties and damage facts across
+later cache updates, reset and release. This contract promises independent lifetime,
+not zero-copy storage. Neither the cache nor the query interface supplies threads,
+reconnection policy or a host runtime.
 
 ## Native terminal requests
 

@@ -2,6 +2,7 @@
 const std = @import("std");
 const runtime_mod = @import("server_runtime");
 extern fn hsc_external_probe(endpoint: [*]const u8, length: usize, server_id: u64) c_int;
+extern fn hsc_queries_probe(endpoint: [*]const u8, length: usize, server_id: u64) c_int;
 
 const Pump = struct {
     runtime: *runtime_mod.Runtime,
@@ -30,4 +31,5 @@ test "external C consumer exercises independent client artifact against private 
         std.debug.assert(!pump.failed.load(.acquire));
     }
     try std.testing.expectEqual(@as(c_int, 0), hsc_external_probe(endpoint.ptr, endpoint.len, 0xc11ab1));
+    try std.testing.expectEqual(@as(c_int, 0), hsc_queries_probe(endpoint.ptr, endpoint.len, 0xc11ab1));
 }

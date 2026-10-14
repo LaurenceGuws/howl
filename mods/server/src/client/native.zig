@@ -8,10 +8,12 @@ const owner = @import("terminal_owner");
 const vt_codec = @import("howl_vt_codec");
 /// Exact owned C declarations shared with the native artifact.
 pub const c = @import("native_abi_types");
+/// Native snapshot queries and independently owned text/cache capabilities.
+pub const queries = @import("queries.zig");
 /// Server authority alongside VT-owned native request facts.
 pub const RequestInfo = c.hsc_request_info;
 /// Native arguments and coherent client-response failures.
-pub const Error = terminal.consequences.Error || terminal.state.Error || error{InvalidArgument};
+pub const Error = terminal.consequences.Error || terminal.state.Error || queries.Error || error{InvalidArgument};
 comptime {
     std.debug.assert(c.HSC_MAX_CLIPBOARD_REPLY_BYTES == protocol.maximum_request_payload_bytes - protocol.payload_bytes.consequence_reply_header);
     std.debug.assert(c.HSC_MAX_POINTER_REPLY_BYTES == protocol.consequence_small_payload_bytes);
@@ -607,4 +609,8 @@ test "complete interaction rejection preserves a subsequent coherent interaction
     try std.testing.expectEqual(@as(u64, 99), value.terminal_revision);
     try std.testing.expect(value.flags & c.HVT_INTERACTION_FOCUS_REPORTING != 0);
     try std.testing.expect((try fixture.connection.readinessFd()) >= 0);
+}
+
+test {
+    std.testing.refAllDecls(queries);
 }

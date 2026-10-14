@@ -269,6 +269,89 @@ uint32_t hsc_snapshot_placement(const hsc_snapshot *, size_t index, hsc_placemen
 uint32_t hsc_image_fetch(hsc_attachment *, uint32_t image_id, uint64_t generation, hsc_image **out);
 void hsc_image_release(hsc_image **slot);
 uint32_t hsc_image_data(const hsc_image *, hsc_image_identity *, const uint8_t **pixels, size_t *length);
+/* Additive v1 native query and reusable observation contracts. */
+#define HSC_MAX_SEARCH_QUERY_BYTES HVT_MAX_SEARCH_QUERY_BYTES
+#define HSC_MAX_SELECTION_BYTES (1024u * 1024u)
+typedef struct hsc_cache hsc_cache;
+typedef struct hsc_text_view hsc_text_view;
+enum hsc_selection_validity {
+    HSC_SELECTION_VALID=1, HSC_SELECTION_CONTEXT_CHANGED=2, HSC_SELECTION_EVICTED=3
+};
+typedef struct hsc_selection_span {
+    uint16_t first, last;
+    uint8_t found, reserved[3];
+} hsc_selection_span;
+enum hsc_change_flags {
+    HSC_CHANGED_ROWS_PRESENT=1, HSC_CHANGE_BASE_PRESENT=2, HSC_ROW_SHIFT_PRESENT=4
+};
+typedef struct hsc_changes {
+    uint64_t base_revision;
+    uint32_t row_count;
+    uint16_t row_shift;
+    uint8_t flags, reserved;
+} hsc_changes;
+
+/* Pure queries on one immutable snapshot. No request, poll or mutation.
+ * Search is exact UTF-8 and row-local. hsc_snapshot_search_row searches exactly
+ * one projected row. hsc_snapshot_search begins at start_row and visits viewport
+ * rows forward (reverse=0) or backward (reverse=1). Neither operation fetches
+ * or pages retained history outside the supplied immutable snapshot.
+ * hvt_search_match is a copied coordinate record that remains usable after
+ * snapshot release; it conveys no handle or authority.
+ * complete=1 names that immutable domain, never all retained history.
+ * No substring match crosses a row boundary, including a soft wrap.
+ * cut_revision is terminal_revision; scanned_snapshots=1.
+ * Range inputs require found=1, positive columns, in-column nonnegative points,
+ * binary bank and zero reserved fields. Outputs are initialized before work. */
+uint32_t hsc_snapshot_search_row(const hsc_snapshot *, const uint8_t *, size_t,
+    uint16_t row, uint16_t column_bound, uint32_t reverse, hvt_search_match *);
+uint32_t hsc_snapshot_search(const hsc_snapshot *, const uint8_t *, size_t,
+    uint16_t start_row, uint32_t reverse, hvt_search_match *);
+uint32_t hsc_snapshot_expand_selection(const hsc_snapshot *, uint32_t kind,
+    uint16_t row, uint16_t column, hvt_selection_range *);
+uint32_t hsc_snapshot_selection_validity(const hsc_snapshot *,
+    const hvt_selection_range *, uint32_t *out);
+uint32_t hsc_snapshot_selection_span(const hsc_snapshot *,
+    const hvt_selection_range *, uint16_t viewport_row, hsc_selection_span *out);
+/* Short output writes no array/bytes and reports the exact required extent;
+ * oversized capacity writes only actual extent. URI capacity <= SELECTION_BYTES.
+ * Copy results survive snapshot release. No hyperlink has required=0. */
+uint32_t hsc_snapshot_row_shapes(const hsc_snapshot *, hvt_row_shape *,
+    size_t capacity, size_t *required);
+uint32_t hsc_snapshot_copy_hyperlink(const hsc_snapshot *, uint16_t row,
+    uint16_t column, uint8_t *, size_t capacity, size_t *required);
+
+/* Canonical live extraction. Null owner slot required; failure preserves it.
+ * A complete recognized rejection preserves attachment. Malformed/incomplete
+ * responses retire it. Valid result bytes borrow only the independent text view,
+ * remain valid after snapshot/cache/attachment release, and are not NUL-terminated.
+ * Release is serialized against use and clears the slot; NULL is a no-op. */
+uint32_t hsc_selection_extract(hsc_attachment *, const hvt_selection_range *,
+    hsc_text_view **out);
+uint32_t hsc_text_view_data(const hsc_text_view *, const uint8_t **out, size_t *length);
+void hsc_text_view_release(hsc_text_view **);
+
+/* Cache copies the complete accepted ready record (Server/Session/Instance/tree/client); borrows no connection
+ * or Interrupt. Different/reconnected attachment is rejected before I/O. Release
+ * may follow attachment release. Serialize every use of a cache.
+ * Cached observe is one complete synchronous request. Nonzero after must match
+ * accepted delivery revision/window; mismatch is pre-I/O INVALID_ARGUMENT.
+ * Zero is immediate resync. Returned snapshot is an independent immutable owner.
+ * Later cache advance/failure/release never invalidates earlier snapshots.
+ * Post-complete projection OOM resets cache and preserves stream: retry with zero.
+ * No zero-copy guarantee, implicit reconnect or library thread. */
+uint32_t hsc_cache_create(uint32_t version, hsc_attachment *, hsc_cache **out);
+void hsc_cache_release(hsc_cache **);
+uint32_t hsc_observe_cached(hsc_attachment *, hsc_cache *, uint64_t after_revision,
+    uint32_t history_offset, hsc_snapshot **out);
+/* Known mask differs from absent mask (all rows potentially changed).
+ * base_revision uses delivery revision. Absent fields are zero; row_count is
+ * the exact known-mask extent, or zero when absent. Copy mask as 0/1 bytes,
+ * all-or-none with required extent; oversized capacity writes only actual rows. */
+uint32_t hsc_snapshot_changes(const hsc_snapshot *, hsc_changes *out);
+uint32_t hsc_snapshot_changed_rows(const hsc_snapshot *, uint8_t *,
+    size_t capacity, size_t *required);
+
 #ifdef __cplusplus
 }
 #endif

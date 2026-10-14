@@ -257,19 +257,26 @@ pub fn rowShapeRich(snapshot: *const rich.View, viewport_row: u16) ?RowShape {
 
 /// Requests canonical UTF-8 for one client-local range. The returned allocation belongs to `allocator`.
 pub fn extract(connection: *client.Connection, allocator: std.mem.Allocator, range: Range) Error![]u8 {
+    if (range.columns == 0 or range.anchor.column >= range.columns or
+        range.focus.column >= range.columns or range.anchor.row < 0 or range.focus.row < 0)
+        return error.InvalidPoint;
     var payload: [protocol.payload_bytes.text_extract]u8 = undefined;
     protocol.encodeTextExtract(&payload, range.request());
     try connection.send(.text_extract, &payload);
+    var completed = false;
+    defer if (!completed) client.retire(connection);
     var frame = try connection.receive();
     defer frame.deinit();
     switch (frame.kind) {
         .text_extract_data => {
             if (!std.unicode.utf8ValidateSlice(frame.payload)) return error.InvalidUtf8;
+            completed = true;
             return allocator.dupe(u8, frame.payload);
         },
         .result => {
             const result = try protocol.decodeResult(frame.payload);
-            if (result.request_kind != .text_extract) return error.UnexpectedFrame;
+            if (result.request_kind != .text_extract or result.code == .ok) return error.UnexpectedFrame;
+            completed = true;
             return error.SelectionRejected;
         },
         else => return error.UnexpectedFrame,
@@ -283,8 +290,10 @@ fn retainedRows(begin: *const protocol.SnapshotBegin) ?RowBounds {
     if (begin.terminal.alternate_screen) return .{ .first = 0, .last = @intCast(begin.terminal.rows - 1) };
     const first: u64 = begin.terminal.history_row_base;
     const last = first + @as(u64, begin.terminal.history_count) + @as(u64, begin.terminal.rows) - 1;
-    if (last > std.math.maxInt(i32)) return null;
-    return .{ .first = @intCast(first), .last = @intCast(last) };
+    // Points name only the representable retained prefix. Newer unprojected
+    // rows beyond i32 cannot evict older coordinates that still name text.
+    if (first > std.math.maxInt(i32)) return null;
+    return .{ .first = @intCast(first), .last = @intCast(@min(last, std.math.maxInt(i32))) };
 }
 
 fn pointRetained(value: Point, columns: u16, bounds: RowBounds) bool {
@@ -341,23 +350,53 @@ fn selectableLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) b
     return first_scalar != ' ';
 }
 
-fn previousLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?ViewportPosition {
-    if (column > 0) return leadViewportPosition(snapshot, row_index, column - 1);
-    if (row_index == 0) return null;
-    const previous_row = view.rows(snapshot)[row_index - 1];
-    if (!previous_row.wrapped or previous_row.cell_count == 0) return null;
-    return leadViewportPosition(snapshot, row_index - 1, @intCast(previous_row.cell_count - 1));
+// Repeated lower-row occupancy is an earlier cluster, never a traversal step.
+// Every scan advances physically even when a malformed extent is zero.
+fn previousLead(snapshot: *const view.Snapshot, row_index: u16, column_index: u16) ?ViewportPosition {
+    const rows = view.rows(snapshot);
+    const cells = view.cells(snapshot);
+    var row = row_index;
+    var column: i32 = @as(i32, column_index) - 1;
+    while (true) {
+        const current = rows[row];
+        while (column >= 0) {
+            if (column >= current.cell_count) return null;
+            const cell = cells[@as(usize, current.cell_offset) + @as(usize, @intCast(column))];
+            if (cell.y == 0) {
+                const lead = leadViewportPosition(snapshot, row, @intCast(column)) orelse return null;
+                if (lead.row < row_index or (lead.row == row_index and lead.column < column_index)) return lead;
+            }
+            column -= @as(i32, cell.x) + 1;
+        }
+        if (row == 0 or !rows[row - 1].wrapped) return null;
+        row -= 1;
+        // Projected row count is bounded by the u16 column geometry.
+        column = @as(i32, @intCast(rows[row].cell_count)) - 1;
+    }
 }
 
-fn nextLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?ViewportPosition {
+fn nextLead(snapshot: *const view.Snapshot, row_index: u16, column_index: u16) ?ViewportPosition {
     const rows = view.rows(snapshot);
-    const row = rows[row_index];
-    if (column >= row.cell_count) return null;
-    const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
-    const next_column = @as(u32, column) + @as(u32, @max(cell.width, 1));
-    if (next_column < row.cell_count) return leadViewportPosition(snapshot, row_index, @intCast(next_column));
-    if (!row.wrapped or row_index + 1 >= rows.len) return null;
-    return leadViewportPosition(snapshot, row_index + 1, 0);
+    const cells = view.cells(snapshot);
+    const first_row = rows[row_index];
+    if (column_index >= first_row.cell_count) return null;
+    const first = cells[@as(usize, first_row.cell_offset) + column_index];
+    var row = row_index;
+    var column = @as(u32, column_index) + @max(@as(u32, first.width), 1);
+    while (true) {
+        const current = rows[row];
+        while (column < current.cell_count) {
+            const cell = cells[@as(usize, current.cell_offset) + column];
+            if (cell.y == 0) {
+                const lead = leadViewportPosition(snapshot, row, @intCast(column)) orelse return null;
+                if (lead.row > row_index or (lead.row == row_index and lead.column > column_index)) return lead;
+            }
+            column += @max(@as(u32, cell.width) -| cell.x, 1);
+        }
+        if (!current.wrapped or row + 1 >= rows.len) return null;
+        row += 1;
+        column = 0;
+    }
 }
 
 test "viewport points retain stable row identity while history offset changes" {
@@ -654,4 +693,49 @@ test "text-shaped blank and soft-wrap final rows have no invented newline" {
     try std.testing.expect(range.textSpan(&begin, 0, .{ .content_end_exclusive = 0, .wrapped = true }) == null);
     try std.testing.expect(range.textSpan(&begin, 1, .{ .content_end_exclusive = 0, .wrapped = false }) == null);
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 0, .end_column = 3 }), range.textSpan(&begin, 1, .{ .content_end_exclusive = 4, .wrapped = true }));
+}
+
+test "tall wrapped word traversal progresses through repeated occupancy in both directions" {
+    var cells: [2][8]rich.Cell = undefined;
+    for (&cells) |*row| for (row) |*cell| {
+        cell.* = testCell(&.{}, 1);
+    };
+    for (0..2) |row| for (0..4) |column| {
+        cells[row][column] = testCell(&.{}, 4);
+        cells[row][column].height = 2;
+        cells[row][column].x = @intCast(column);
+        cells[row][column].y = @intCast(row);
+    };
+    cells[0][0].scalars = &.{ 'H', 'i' };
+    const letters = [_]u32{ 'a', 'b', 'c', 'd', 'e' };
+    for (0..4) |column| cells[0][4 + column].scalars = letters[column..][0..1];
+    cells[1][4].scalars = letters[4..5];
+    var rows = [_]rich.Row{
+        .{ .wrapped = true, .line_geometry = 0, .cells = &cells[0] },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &cells[1] },
+    };
+    const source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBeginForRows(2, 8),
+        .presentation = testPresentation(@splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff })),
+        .rows = &rows,
+        .hyperlinks = &.{},
+    };
+    var snapshot = try view.project(std.testing.allocator, &source);
+    defer view.deinit(snapshot);
+    // Pin each physical transition before exercising the repeated word loop.
+    try std.testing.expectEqual(@as(?ViewportPosition, .{ .row = 1, .column = 4 }), nextLead(snapshot, 0, 7));
+    try std.testing.expectEqual(@as(?ViewportPosition, .{ .row = 0, .column = 7 }), previousLead(snapshot, 1, 4));
+    for ([_]ViewportPosition{ .{ .row = 0, .column = 0 }, .{ .row = 0, .column = 2 }, .{ .row = 1, .column = 4 } }) |entry| {
+        const range = (try word(snapshot, entry.row, entry.column)).?.ordered();
+        try std.testing.expectEqual(Point{ .row = 0, .column = 0 }, range.start);
+        try std.testing.expectEqual(Point{ .row = 1, .column = 4 }, range.end);
+    }
+    cells[0][6] = testCell(&.{' '}, 1);
+    const separated = try view.project(std.testing.allocator, &source);
+    view.deinit(snapshot);
+    snapshot = separated;
+    const range = (try word(snapshot, 1, 4)).?.ordered();
+    try std.testing.expectEqual(Point{ .row = 0, .column = 7 }, range.start);
+    try std.testing.expectEqual(Point{ .row = 1, .column = 4 }, range.end);
 }

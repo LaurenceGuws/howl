@@ -81,9 +81,10 @@ experimental:
     complete rich observation/image facts through the same client/VT codec graph.
     Optional server_client_native composes VT native request/interaction schemas with
     explicit Server authority and owns all transported request metadata decoding and
-    named reply serialization; it imports no live VT, Instance or renderer.
+    named reply serialization, immutable snapshot queries, canonical extraction and
+    attachment-bound raw/delta caching. It imports no live VT, Instance or renderer.
     C records are copied explicitly and immutable byte/scalar borrows expire with
-    their independent catalog/snapshot/image/request owner; no Zig layout, runtime,
+    their independent catalog/snapshot/image/request/text owner; no Zig layout, runtime,
     renderer or live terminal owner crosses the boundary.
   server-service: >-
     experimental listener-free `server_service` module. It borrows one Server,

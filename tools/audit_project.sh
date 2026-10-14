@@ -208,7 +208,7 @@ from pathlib import Path
 import re
 
 root = Path("mods/server/src/client")
-files = [root / "server_client.zig", root / "native.zig", root / "abi.zig"] + list((root / "terminal").glob("*.zig")) + list((root / "transport").glob("*.zig"))
+files = list(root.rglob("*.zig"))
 for path in files:
     if path.name == "render_test.zig":
         continue

@@ -244,6 +244,8 @@ pub fn build(b: *std.Build) void {
         foreign_root.addImport("server_runtime", runtime);
         foreign_root.linkLibrary(abi);
         foreign_root.addCSourceFile(.{ .file = b.path("test/native_client.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
+        foreign_root.addCSourceFile(.{ .file = b.path("test/native_queries.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
+        foreign_root.addCSourceFile(.{ .file = b.path("test/query_header.cpp"), .flags = &.{ "-std=c++17", "-Wall", "-Wextra", "-Werror" } });
         const foreign = b.addTest(.{ .name = "server-client-native-abi", .root_module = foreign_root });
         check.dependOn(&foreign.step);
         tests.dependOn(&b.addRunArtifact(foreign).step);
