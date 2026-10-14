@@ -21,6 +21,7 @@ process lifetime, time, scheduling, request policy and UI.
 | Input | `hvt_encode_named_key`, `hvt_encode_unicode_key`, `hvt_encode_mouse`, `hvt_encode_focus`, `hvt_encode_paste` |
 | Replies | `hvt_copy_replies`, `hvt_consume_replies` |
 | Queries | `hvt_copy_cell`, `hvt_search`, `hvt_expand_selection`, `hvt_copy_selection`, `hvt_copy_hyperlink`, `hvt_copy_row_shapes`, `hvt_get_interaction` |
+| Graphics | `hvt_copy_graphics`, `hvt_copy_image_pixels` |
 | Requests | `hvt_request_head`, `hvt_copy_request_payload`, `hvt_consume_request` |
 | Named responses | `hvt_reply_clipboard`, `hvt_reply_pointer_shape`, `hvt_reply_color_preference`, `hvt_reply_container_state`, `hvt_reply_container_position`, `hvt_reply_container_screen_cells`, `hvt_reply_container_icon_title`, `hvt_decline_container` |
 
@@ -50,8 +51,8 @@ The native `observation` namespace separates opaque Controller retirement
 authority from Reader retain/read/release. The same helper lets the optional
 Instance C owner lend its exact canonical VT observation. A consumer retains only
 the small lifetime capability; it borrows const VT data during its serialized
-read and keeps no canonical slice afterward. Standalone Render construction is
-the next consumer under implementation.
+read and keeps no canonical slice afterward. Standalone Render construction retains this Reader and copies complete immutable
+frames; source retirement leaves old frames readable and rejects new capture.
 
 Composed native artifacts must come from the same qualified Howl build and remain
 loaded while their handles live. The C version is not a promise that private
@@ -62,6 +63,37 @@ untouched on failed admission, shortage, stale/context rejection or canonical
 operation failure. Excess tails remain untouched. Callers supply valid aligned
 storage and keep fixed outputs/counts and owner slots disjoint from other argument
 storage. Paste data aliasing is checked explicitly.
+
+## Copied graphics
+
+`hvt_copy_graphics` returns one coherent serialized cut of all retained images
+and only visible placements. Images are dense canonical inventory, including
+unplaced resources and those used by the inactive bank. Image IDs are canonical
+internal identities from the manifest, not application-selected Kitty IDs. Placements densely filter
+the canonical sparse physical/Unicode-placeholder projection at the actual
+clamped history offset. Crop, cell offsets, destination pixels and signed layer
+remain canonical. Zero cell dimensions mean unknown, not an ABI failure.
+The graphics content revision is image-content identity, distinct from VT-wide
+content revision.
+
+Both caller arrays are admitted before either is written. On shortage the fixed
+manifest reports both required counts; other failures zero it. Arrays and their
+unused tails remain untouched on failure. Fixed output and both arrays must be
+valid, aligned and disjoint. Numeric ceilings mirror canonical graphics limits.
+
+`hvt_copy_image_pixels` copies exact tightly packed RGBA8 for the manifest's
+terminal revision, image ID and content generation. It rejects every intervening
+terminal mutation with `HVT_CONTEXT_CHANGED`, including unrelated text; callers
+may serialize across calls or retry a fresh manifest. The same live owner is
+required. It returns required bytes on shortage only, and zeros that count on
+other failures. Its separate 16 MiB ceiling admits one canonical image, unlike
+the smaller text-copy limit. Caller records and pixels survive mutation and
+destruction. No allocation, snapshot cache, lock, renderer or codec is introduced.
+
+Instance's matching `hi_*` operations supply their canonical const observation
+to the same VT-owned projection and admission. No presentation owner is required.
+Existing native v1 layouts and signatures are unchanged; consumers of the new
+symbols must use the matching updated headers and artifacts.
 
 ## Geometry and reset
 

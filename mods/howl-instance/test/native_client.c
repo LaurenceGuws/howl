@@ -129,10 +129,56 @@ cleanup:
     return result;
 }
 extern int howl_instance_cpp_header(void);
+
+/* Actual process bytes reach the same VT-owned copied graphics helper. */
+static int copied_graphics(void) {
+    int result=1;
+    hi_instance *owner=NULL;
+    const char shell[]="/bin/sh", env[]="PATH=/usr/bin:/bin";
+    const char command[]="printf '\\033_Ga=T,f=32,s=1,v=1,i=7,C=1,q=2;AQIDBA==\\033\\\\'; exec sleep 30";
+    const hi_bytes environment={(const uint8_t *)env,sizeof env-1};
+    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,0,0,8,16};
+    hvt_image images[2];
+    hvt_image_placement placements[2];
+    hvt_graphics manifest={0},zero={0};
+    uint8_t pixels[5]={0xa5,0xa5,0xa5,0xa5,0xa5};
+    size_t required=99;
+    hi_service state={0};
+#define GRAPHICS_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"Instance graphics proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
+    GRAPHICS_REQUIRE(hi_copy_graphics(NULL,0,NULL,0,NULL,0,&manifest)==HI_INVALID_ARGUMENT && memcmp(&manifest,&zero,sizeof zero)==0);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(NULL,0,1,1,pixels,sizeof pixels,&required)==HI_INVALID_ARGUMENT && required==0);
+    GRAPHICS_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK);
+    GRAPHICS_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
+    const uint64_t deadline=now_ns()+UINT64_C(5000000000);
+    do {
+        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+        if (state.write_pending) fd.events |= POLLOUT;
+        GRAPHICS_REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10)>=0);
+        GRAPHICS_REQUIRE(hi_service_turn(owner,(fd.revents & (POLLIN|POLLHUP))!=0,(fd.revents & POLLOUT)!=0,now_ns(),&state)==HI_OK);
+        GRAPHICS_REQUIRE(hi_copy_graphics(owner,0,images,2,placements,2,&manifest)==HI_OK);
+    } while (!manifest.image_count && now_ns()<deadline);
+    GRAPHICS_REQUIRE(manifest.image_count==1 && manifest.placement_count==1 && manifest.cell_width==8 && manifest.cell_height==16);
+    GRAPHICS_REQUIRE(images[0].byte_count==4 && placements[0].image_id==images[0].image_id);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,3,&required)==HI_BUFFER_TOO_SMALL && required==4 && pixels[0]==0xa5);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,sizeof pixels,&required)==HI_OK && required==4 && memcmp(pixels,"\1\2\3\4",4)==0 && pixels[4]==0xa5);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision-1,images[0].image_id,images[0].generation,pixels,sizeof pixels,&required)==HI_CONTEXT_CHANGED && required==0 && pixels[0]==1);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,0,images[0].generation,pixels,sizeof pixels,&required)==HI_INVALID_ARGUMENT && required==0);
+    GRAPHICS_REQUIRE(hi_copy_image_pixels(owner,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,HVT_MAX_IMAGE_BYTES+1u,&required)==HI_RESOURCE_LIMIT && required==0);
+    GRAPHICS_REQUIRE(hi_copy_graphics(owner,0,NULL,0,NULL,0,&manifest)==HI_BUFFER_TOO_SMALL && manifest.image_count==1 && manifest.placement_count==1);
+    GRAPHICS_REQUIRE(hi_destroy(&owner)==HI_OK && !owner);
+    GRAPHICS_REQUIRE(images[0].byte_count==4 && memcmp(pixels,"\1\2\3\4",4)==0);
+    result=0;
+cleanup:
+    if (hi_destroy(&owner)!=HI_OK) result=1;
+#undef GRAPHICS_REQUIRE
+    return result;
+}
+
 int main(void) {
     REQUIRE(howl_instance_cpp_header() == 0);
     REQUIRE(observation_lifetime() == 0);
     REQUIRE(retained_requests() == 0);
+    REQUIRE(copied_graphics() == 0);
     hi_instance *instance = NULL;
     char shell[] = "/bin/sh";
     const char command[] = "stty -echo; printf READY; IFS= read -r line; printf '\r\nREPLY:%s:%s:%s:%s' \"$line\" \"$ABI_TEST\" \"$TERM\" \"$COLORTERM\"; exit 7";

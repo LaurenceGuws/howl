@@ -99,3 +99,10 @@ static_assert(offsetof(hi_presented_config, reserved) == 72);
 using hi_observation_signature = uint32_t(*)(uint32_t,hi_instance *,hvt_observation **);
 static_assert(__is_same(decltype(&hi_observation_open),hi_observation_signature));
 static_assert(HVT_MAX_OBSERVATION_REFERENCES==1024);
+
+static_assert(sizeof(hvt_graphics)==56 && offsetof(hvt_graphics,image_count)==24);
+static_assert(sizeof(hvt_image)==24 && sizeof(hvt_image_placement)==56);
+template<typename A,typename B> constexpr bool graphics_same_type=false;
+template<typename A> constexpr bool graphics_same_type<A,A> = true;
+static_assert(graphics_same_type<decltype(&hi_copy_graphics),uint32_t(*)(const hi_instance *,uint32_t,hvt_image *,size_t,hvt_image_placement *,size_t,hvt_graphics *)>);
+static_assert(graphics_same_type<decltype(&hi_copy_image_pixels),uint32_t(*)(const hi_instance *,uint64_t,uint32_t,uint64_t,uint8_t *,size_t,size_t *)>);

@@ -83,6 +83,49 @@ static uint32_t drain(hvt_terminal *value) {
     uint32_t status=hvt_copy_replies(value,bytes,sizeof bytes,&count);
     return status==HVT_OK ? hvt_consume_replies(value,count) : status;
 }
+
+static int graphics_proof(void) {
+    int failed=0;
+    hvt_terminal *value=NULL;
+    const hvt_config config={2,8,4,0,8,16};
+    hvt_graphics manifest={0},zero={0};
+    hvt_image images[2];
+    hvt_image_placement placements[2];
+    uint8_t pixels[5]={0xa5,0xa5,0xa5,0xa5,0xa5};
+    size_t required=99;
+    memset(images,0xa5,sizeof images);memset(placements,0xa5,sizeof placements);
+    CHECK(hvt_copy_graphics(NULL,0,NULL,0,NULL,0,&manifest)==HVT_INVALID_ARGUMENT && memcmp(&manifest,&zero,sizeof zero)==0);
+    CHECK(hvt_copy_graphics(NULL,0,NULL,0,NULL,0,NULL)==HVT_INVALID_ARGUMENT);
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK);
+    CHECK(hvt_copy_graphics(value,0,NULL,0,NULL,0,&manifest)==HVT_OK && !manifest.image_count && !manifest.placement_count);
+    CHECK(feed_all(value,"\033_Ga=T,f=32,s=1,v=1,i=7,C=1,q=2;AQIDBA==\033\\")==HVT_OK);
+    CHECK(hvt_copy_graphics(value,0,NULL,0,placements,2,&manifest)==HVT_BUFFER_TOO_SMALL && manifest.image_count==1 && manifest.placement_count==1);
+    for (size_t n=0;n<sizeof placements;++n) CHECK(((const uint8_t *)placements)[n]==0xa5);
+    CHECK(hvt_copy_graphics(value,0,images,2,NULL,0,&manifest)==HVT_BUFFER_TOO_SMALL && manifest.image_count==1 && manifest.placement_count==1);
+    for (size_t n=0;n<sizeof images;++n) CHECK(((const uint8_t *)images)[n]==0xa5);
+    CHECK(hvt_copy_graphics(value,0,images,2,placements,2,&manifest)==HVT_OK && manifest.rows==2 && manifest.columns==8);
+    CHECK(images[0].image_id && images[0].generation && images[0].width==1 && images[0].height==1 && images[0].byte_count==4);
+    CHECK(placements[0].image_id==images[0].image_id && placements[0].row==0 && placements[0].column==0 && !placements[0].reserved);
+    for (size_t n=0;n<sizeof images[1];++n) CHECK(((const uint8_t *)&images[1])[n]==0xa5);
+    for (size_t n=0;n<sizeof placements[1];++n) CHECK(((const uint8_t *)&placements[1])[n]==0xa5);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,NULL,0,&required)==HVT_BUFFER_TOO_SMALL && required==4);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,3,&required)==HVT_BUFFER_TOO_SMALL && required==4 && pixels[0]==0xa5);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,sizeof pixels,&required)==HVT_OK && required==4 && memcmp(pixels,"\1\2\3\4",4)==0 && pixels[4]==0xa5);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,HVT_MAX_IMAGE_BYTES+1u,&required)==HVT_RESOURCE_LIMIT && required==0);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,NULL,1,&required)==HVT_INVALID_ARGUMENT && required==0);
+    CHECK(hvt_copy_graphics(value,0,images,HVT_MAX_IMAGES+1u,placements,2,&manifest)==HVT_RESOURCE_LIMIT && memcmp(&manifest,&zero,sizeof zero)==0);
+    CHECK(hvt_copy_graphics(value,0,images,2,placements,2,&manifest)==HVT_OK);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,(uint8_t *)(uintptr_t)(UINTPTR_MAX-1u),4,&required)==HVT_INVALID_ARGUMENT && required==0);
+    CHECK(hvt_copy_graphics(value,0,(hvt_image *)(uintptr_t)(UINTPTR_MAX-7u),1,placements,2,&zero)==HVT_INVALID_ARGUMENT);
+    CHECK(feed_all(value,"A")==HVT_OK);
+    CHECK(hvt_copy_image_pixels(value,manifest.terminal_revision,images[0].image_id,images[0].generation,pixels,sizeof pixels,&required)==HVT_CONTEXT_CHANGED && required==0 && pixels[0]==1);
+    hvt_release(&value);
+    CHECK(!value && images[0].byte_count==4 && memcmp(pixels,"\1\2\3\4",4)==0);
+cleanup:
+    hvt_release(&value);
+    return failed;
+}
+
 int main(void) {
     int failed=0;
     hvt_terminal *value=NULL,*fresh=NULL;
@@ -100,6 +143,7 @@ int main(void) {
     size_t count=0;
     const char expected_uri[]="https://example.invalid/vt";
     CHECK(hvt_cpp_proof()==0 && hvt_abi_version()==HVT_NATIVE_VERSION);
+    CHECK(graphics_proof()==0);
     CHECK(hvt_create(0,&config,&value)==HVT_VERSION_MISMATCH && !value);
     CHECK(hvt_create(HVT_NATIVE_VERSION,NULL,&value)==HVT_INVALID_ARGUMENT && !value);
     CHECK(hvt_create(HVT_NATIVE_VERSION,&config,NULL)==HVT_INVALID_ARGUMENT);
@@ -313,3 +357,43 @@ cleanup:
     if (!failed) puts("VT C peer: standalone owner, Unicode/input/query/request/reply/reset, hostile admission and lifetime PASS");
     return failed ? 1 : 0;
 }
+
+_Static_assert(sizeof(hvt_image)==24 && _Alignof(hvt_image)==8,"hvt_image layout");
+_Static_assert(offsetof(hvt_image,generation)==0,"hvt_image.generation");
+_Static_assert(offsetof(hvt_image,image_id)==8,"hvt_image.image_id");
+_Static_assert(offsetof(hvt_image,width)==12,"hvt_image.width");
+_Static_assert(offsetof(hvt_image,height)==16,"hvt_image.height");
+_Static_assert(offsetof(hvt_image,byte_count)==20,"hvt_image.byte_count");
+_Static_assert(sizeof(hvt_image_placement)==56 && _Alignof(hvt_image_placement)==8,"hvt_image_placement layout");
+_Static_assert(offsetof(hvt_image_placement,generation)==0,"hvt_image_placement.generation");
+_Static_assert(offsetof(hvt_image_placement,image_id)==8,"hvt_image_placement.image_id");
+_Static_assert(offsetof(hvt_image_placement,source_x)==12,"hvt_image_placement.source_x");
+_Static_assert(offsetof(hvt_image_placement,source_y)==16,"hvt_image_placement.source_y");
+_Static_assert(offsetof(hvt_image_placement,source_width)==20,"hvt_image_placement.source_width");
+_Static_assert(offsetof(hvt_image_placement,source_height)==24,"hvt_image_placement.source_height");
+_Static_assert(offsetof(hvt_image_placement,cell_x)==28,"hvt_image_placement.cell_x");
+_Static_assert(offsetof(hvt_image_placement,cell_y)==32,"hvt_image_placement.cell_y");
+_Static_assert(offsetof(hvt_image_placement,pixel_width)==36,"hvt_image_placement.pixel_width");
+_Static_assert(offsetof(hvt_image_placement,pixel_height)==40,"hvt_image_placement.pixel_height");
+_Static_assert(offsetof(hvt_image_placement,z)==44,"hvt_image_placement.z");
+_Static_assert(offsetof(hvt_image_placement,row)==48,"hvt_image_placement.row");
+_Static_assert(offsetof(hvt_image_placement,column)==50,"hvt_image_placement.column");
+_Static_assert(offsetof(hvt_image_placement,reserved)==52,"hvt_image_placement.reserved");
+_Static_assert(sizeof(hvt_graphics)==56 && _Alignof(hvt_graphics)==8,"hvt_graphics layout");
+_Static_assert(offsetof(hvt_graphics,terminal_revision)==0,"hvt_graphics.terminal_revision");
+_Static_assert(offsetof(hvt_graphics,graphics_revision)==8,"hvt_graphics.graphics_revision");
+_Static_assert(offsetof(hvt_graphics,content_revision)==16,"hvt_graphics.content_revision");
+_Static_assert(offsetof(hvt_graphics,image_count)==24,"hvt_graphics.image_count");
+_Static_assert(offsetof(hvt_graphics,placement_count)==28,"hvt_graphics.placement_count");
+_Static_assert(offsetof(hvt_graphics,history_offset)==32,"hvt_graphics.history_offset");
+_Static_assert(offsetof(hvt_graphics,cell_width)==36,"hvt_graphics.cell_width");
+_Static_assert(offsetof(hvt_graphics,cell_height)==40,"hvt_graphics.cell_height");
+_Static_assert(offsetof(hvt_graphics,rows)==44,"hvt_graphics.rows");
+_Static_assert(offsetof(hvt_graphics,columns)==46,"hvt_graphics.columns");
+_Static_assert(offsetof(hvt_graphics,alternate_screen)==48,"hvt_graphics.alternate_screen");
+_Static_assert(offsetof(hvt_graphics,reserved)==49,"hvt_graphics.reserved");
+_Static_assert(HVT_MAX_IMAGES==256,"HVT_MAX_IMAGES");
+_Static_assert(HVT_MAX_IMAGE_PLACEMENTS==16384,"HVT_MAX_IMAGE_PLACEMENTS");
+_Static_assert(HVT_MAX_IMAGE_DIMENSION==4096,"HVT_MAX_IMAGE_DIMENSION");
+_Static_assert(HVT_MAX_IMAGE_BYTES==16777216,"HVT_MAX_IMAGE_BYTES");
+_Static_assert(HVT_MAX_IMAGE_STORAGE_BYTES==67108864,"HVT_MAX_IMAGE_STORAGE_BYTES");

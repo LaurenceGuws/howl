@@ -639,3 +639,28 @@ pub export fn hi_decline_container(raw: ?*c.hi_instance, id: u64) u32 {
     native.declineContainer(canonical(owner), id) catch |failure| return requestFailure(failure);
     return c.HI_OK;
 }
+
+fn graphicsFailure(err: vt.graphics.Error) u32 {
+    return switch (err) {
+        error.InvalidArgument => c.HI_INVALID_ARGUMENT,
+        error.ResourceLimit => c.HI_RESOURCE_LIMIT,
+        error.BufferTooSmall => c.HI_BUFFER_TOO_SMALL,
+        error.ContextChanged => c.HI_CONTEXT_CHANGED,
+    };
+}
+/// VT owns graphics projection/admission; Instance supplies only const observation.
+pub export fn hi_copy_graphics(raw: ?*const c.hi_instance, history: u32, images: ?[*]vt.c.hvt_image, image_capacity: usize, placements: ?[*]vt.c.hvt_image_placement, placement_capacity: usize, out: ?*vt.c.hvt_graphics) u32 {
+    const result = out orelse return c.HI_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(vt.c.hvt_graphics);
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    vt.graphics.copyManifest(instance.terminal(canonicalConst(value)), history, images, image_capacity, placements, placement_capacity, result) catch |err| return graphicsFailure(err);
+    return c.HI_OK;
+}
+/// Copies current canonical image bytes with the same exact revision guard.
+pub export fn hi_copy_image_pixels(raw: ?*const c.hi_instance, revision: u64, id: u32, generation: u64, pixels: ?[*]u8, capacity: usize, out: ?*usize) u32 {
+    const required = out orelse return c.HI_INVALID_ARGUMENT;
+    required.* = 0;
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    vt.graphics.copyPixels(instance.terminal(canonicalConst(value)), revision, id, generation, pixels, capacity, required) catch |err| return graphicsFailure(err);
+    return c.HI_OK;
+}

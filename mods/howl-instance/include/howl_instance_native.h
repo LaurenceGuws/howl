@@ -204,6 +204,15 @@ uint32_t hi_copy_selection(const hi_instance *, int32_t start_row, uint16_t star
 uint32_t hi_copy_hyperlink(const hi_instance *, uint32_t history_offset, int32_t target_row, uint16_t target_column, uint16_t expected_columns, uint8_t expected_alternate, uint8_t *output, size_t capacity, size_t *required);
 uint32_t hi_copy_row_shapes(const hi_instance *, uint32_t history_offset, hvt_row_shape *output, size_t capacity, size_t *count);
 uint32_t hi_interaction(const hi_instance *, hvt_interaction *out);
+/* Same VT-owned copied graphics/revision/admission contract as hvt_copy_graphics
+ * and hvt_copy_image_pixels; Instance supplies its canonical const observation.
+ * Matching HI_* statuses apply. No presentation owner or renderer is required. */
+uint32_t hi_copy_graphics(const hi_instance *, uint32_t history_offset,
+    hvt_image *, size_t image_capacity,
+    hvt_image_placement *, size_t placement_capacity, hvt_graphics *);
+uint32_t hi_copy_image_pixels(const hi_instance *, uint64_t terminal_revision,
+    uint32_t image_id, uint64_t image_generation, uint8_t *, size_t capacity, size_t *required);
+
 /* Arrays are caller-owned copies. Upload pixel pointers borrow the immutable
  * frame only until release/abandon/close. Bulk capacity failure modifies no arrays. Command capacity may exceed the leased
  * count; only the advertised count is written. Counts exceeding uint32_t are

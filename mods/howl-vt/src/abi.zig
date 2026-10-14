@@ -4,7 +4,7 @@ const native = @import("howl_vt_native");
 const owner = native.owner;
 const c = native.c;
 const heap = std.heap.c_allocator;
-const Error = owner.Error || native.Error || native.requests.Error;
+const Error = owner.Error || native.Error || native.requests.Error || native.graphics.Error;
 
 fn failure(err: Error) u32 {
     return switch (err) {
@@ -385,5 +385,22 @@ pub export fn hvt_reply_container_icon_title(raw: ?*c.hvt_terminal, id: u64, ptr
 pub export fn hvt_decline_container(raw: ?*c.hvt_terminal, id: u64) u32 {
     const value = raw orelse return c.HVT_INVALID_ARGUMENT;
     owner.declineContainer(mutable(value), id) catch |err| return failure(err);
+    return c.HVT_OK;
+}
+
+/// Copies canonical graphics through the same optional VT-owned helper as Instance.
+pub export fn hvt_copy_graphics(raw: ?*const c.hvt_terminal, history: u32, images: ?[*]c.hvt_image, image_capacity: usize, placements: ?[*]c.hvt_image_placement, placement_capacity: usize, out: ?*c.hvt_graphics) u32 {
+    const result = out orelse return c.HVT_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_graphics);
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    native.graphics.copyManifest(owner.observation(constant(value)), history, images, image_capacity, placements, placement_capacity, result) catch |err| return failure(err);
+    return c.HVT_OK;
+}
+/// Copies exact current image bytes, never a terminal-owned pointer.
+pub export fn hvt_copy_image_pixels(raw: ?*const c.hvt_terminal, revision: u64, id: u32, generation: u64, bytes: ?[*]u8, capacity: usize, out: ?*usize) u32 {
+    const required = out orelse return c.HVT_INVALID_ARGUMENT;
+    required.* = 0;
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    native.graphics.copyPixels(owner.observation(constant(value)), revision, id, generation, bytes, capacity, required) catch |err| return failure(err);
     return c.HVT_OK;
 }

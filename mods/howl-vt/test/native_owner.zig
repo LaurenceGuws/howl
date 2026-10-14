@@ -368,3 +368,179 @@ fn unchangedReplyHead(value: *owner.Owner, head: native.Terminal.Consequence, be
     try owner.copyReplies(value, &bytes, &required);
     try std.testing.expectEqualSlices(u8, replies, bytes[0..required]);
 }
+
+fn graphicsCopy(value: *const owner.Owner, history: u32, images: []c.hvt_image, placements: []c.hvt_image_placement) !c.hvt_graphics {
+    var result: c.hvt_graphics = undefined;
+    try native.graphics.copyManifest(owner.observation(value), history, images.ptr, images.len, placements.ptr, placements.len, &result);
+    return result;
+}
+const graphics_packet = "\x1b_Ga=T,f=32,s=2,v=2,i=7,x=1,y=0,w=1,h=2,X=3,Y=5,z=-2,c=1,r=1,C=1,q=2;AQIDBAUGBwgJCgsMDQ4PEA==\x1b\\";
+const red_unplaced = "\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\";
+const red_placeholder = "\x1b[1;1H\x1b[38;5;56m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m";
+
+fn graphicsEquivalent(value: *const owner.Owner, history: u32, images: []c.hvt_image, placements: []c.hvt_image_placement) !c.hvt_graphics {
+    const before = owner.observe(value, history);
+    const expected = owner.observation(value).images(history);
+    const actual = try graphicsCopy(value, history, images, placements);
+    try std.testing.expectEqualDeep(before, owner.observe(value, history));
+    try std.testing.expectEqual(expected.semantic_generation, actual.terminal_revision);
+    try std.testing.expectEqual(expected.generation, actual.graphics_revision);
+    try std.testing.expectEqual(expected.content_generation, actual.content_revision);
+    try std.testing.expectEqual(expected.view.history_offset, actual.history_offset);
+    try std.testing.expectEqual(expected.cell_pixel_width, actual.cell_width);
+    try std.testing.expectEqual(expected.cell_pixel_height, actual.cell_height);
+    try std.testing.expectEqual(expected.view.rows, actual.rows);
+    try std.testing.expectEqual(expected.view.cols, actual.columns);
+    try std.testing.expectEqual(@intFromBool(expected.view.is_alternate_screen), actual.alternate_screen);
+    try std.testing.expect(std.mem.allEqual(u8, &actual.reserved, 0));
+    try std.testing.expectEqual(expected.imageCount(), actual.image_count);
+    for (images[0..actual.image_count], 0..) |copied, index| {
+        const image = expected.image(index).?;
+        try std.testing.expectEqual(image.id, copied.image_id);
+        try std.testing.expectEqual(image.generation, copied.generation);
+        try std.testing.expectEqual(image.width, copied.width);
+        try std.testing.expectEqual(image.height, copied.height);
+        try std.testing.expectEqual(image.pixels.len, copied.byte_count);
+    }
+    var visible: usize = 0;
+    for (0..expected.placementCount()) |index| {
+        const placement = expected.placement(index) orelse continue;
+        const copied = placements[visible];
+        try std.testing.expectEqual(placement.image_id, copied.image_id);
+        try std.testing.expectEqual(placement.generation, copied.generation);
+        try std.testing.expectEqual(placement.row, copied.row);
+        try std.testing.expectEqual(placement.col, copied.column);
+        try std.testing.expectEqual(placement.source_x, copied.source_x);
+        try std.testing.expectEqual(placement.source_y, copied.source_y);
+        try std.testing.expectEqual(placement.source_width, copied.source_width);
+        try std.testing.expectEqual(placement.source_height, copied.source_height);
+        try std.testing.expectEqual(placement.cell_x, copied.cell_x);
+        try std.testing.expectEqual(placement.cell_y, copied.cell_y);
+        try std.testing.expectEqual(placement.pixel_width, copied.pixel_width);
+        try std.testing.expectEqual(placement.pixel_height, copied.pixel_height);
+        try std.testing.expectEqual(placement.z, copied.z);
+        try std.testing.expectEqual(@as(u32, 0), copied.reserved);
+        visible += 1;
+    }
+    try std.testing.expectEqual(visible, actual.placement_count);
+    return actual;
+}
+
+test "native copied graphics preserves dense inventory and sparse physical placeholder history bank projection" {
+    const value = try create(std.testing.allocator);
+    defer owner.destroy(value);
+    var images: [3]c.hvt_image = undefined;
+    var placements: [4]c.hvt_image_placement = undefined;
+    const empty = try graphicsEquivalent(value, 0, &images, &placements);
+    try std.testing.expect(empty.image_count == 0 and empty.placement_count == 0);
+    try feedAll(value, red_unplaced ++ graphics_packet);
+    const physical = try graphicsEquivalent(value, 0, &images, &placements);
+    try std.testing.expect(physical.image_count == 2 and physical.placement_count == 1);
+    try std.testing.expect(placements[0].source_x == 1 and placements[0].source_height == 2 and placements[0].z == -2);
+    try std.testing.expect(placements[0].cell_x == 3 and placements[0].cell_y == 5);
+    try feedAll(value, "\r\nL\r\nM\r\nN");
+    const live = try graphicsEquivalent(value, 0, &images, &placements);
+    try std.testing.expectEqual(@as(u32, 0), live.placement_count);
+    const history = try graphicsEquivalent(value, std.math.maxInt(u32), &images, &placements);
+    try std.testing.expect(history.history_offset > 0 and history.placement_count == 1);
+    try feedAll(value, "\x1b[?1049h\x1b_Ga=p,i=56,p=2,c=1,r=1,U=1,q=2\x1b\\" ++ red_placeholder);
+    const alternate = try graphicsEquivalent(value, std.math.maxInt(u32), &images, &placements);
+    try std.testing.expect(alternate.alternate_screen == 1 and alternate.history_offset == 0 and alternate.image_count == 2);
+    try std.testing.expectEqual(@as(u32, 1), alternate.placement_count);
+    try std.testing.expect(owner.observation(value).images(0).placementCount() > alternate.placement_count);
+    try feedAll(value, "\x1b[?1049l");
+    const returned = try graphicsEquivalent(value, std.math.maxInt(u32), &images, &placements);
+    try std.testing.expect(returned.alternate_screen == 0 and returned.placement_count == 1);
+}
+
+test "native graphics permits unknown pixels and checks both arrays before any write" {
+    const value = try owner.create(std.testing.allocator, &.{ .rows = 2, .columns = 8, .history_rows = 4, .reserved = 0, .cell_width = 0, .cell_height = 0 });
+    defer owner.destroy(value);
+    try feedAll(value, "\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1,q=2;AQIDBA==\x1b\\");
+    var images: [2]c.hvt_image = undefined;
+    var placements: [2]c.hvt_image_placement = undefined;
+    const result = try graphicsEquivalent(value, 0, &images, &placements);
+    try std.testing.expect(result.cell_width == 0 and result.cell_height == 0 and result.placement_count == 1);
+    const observed = owner.observation(value);
+    var out: c.hvt_graphics = undefined;
+    for (0..2) |short| {
+        @memset(std.mem.asBytes(&images), 0xa5);
+        @memset(std.mem.asBytes(&placements), 0xa5);
+        try std.testing.expectError(error.BufferTooSmall, native.graphics.copyManifest(observed, 0, &images, if (short == 0) 0 else images.len, &placements, if (short == 1) 0 else placements.len, &out));
+        try std.testing.expectEqualDeep(result, out);
+        try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&images), 0xa5));
+        try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&placements), 0xa5));
+    }
+    try native.graphics.copyManifest(observed, 0, &images, images.len, &placements, placements.len, &out);
+    try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&images[1]), 0xa5));
+    try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&placements[1]), 0xa5));
+    try std.testing.expectError(error.ResourceLimit, native.graphics.copyManifest(observed, 0, &images, c.HVT_MAX_IMAGES + 1, &placements, 1, &out));
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.hvt_graphics), out);
+    try std.testing.expectError(error.ResourceLimit, native.graphics.copyManifest(observed, 0, &images, 1, &placements, c.HVT_MAX_IMAGE_PLACEMENTS + 1, &out));
+    try std.testing.expectError(error.InvalidArgument, native.graphics.copyManifest(observed, 0, null, 1, &placements, 1, &out));
+    try std.testing.expectError(error.InvalidArgument, native.graphics.copyManifest(observed, 0, &images, 1, null, 1, &out));
+    @memset(std.mem.asBytes(&images), 0xa5);
+    @memset(std.mem.asBytes(&placements), 0xa5);
+    // Both fake pointers are aligned; checked addition rejects them before any access.
+    // zig-audit: acknowledge ptr_from_int
+    // reason: An aligned wrapping address must be rejected by prefix admission before any memory access.
+    const wrapping_image: [*]c.hvt_image = @ptrFromInt(std.math.maxInt(usize) - 7);
+    // zig-audit: acknowledge ptr_from_int
+    // reason: A wrapping second array proves neither array is written before both prefixes are admitted.
+    const wrapping_placement: [*]c.hvt_image_placement = @ptrFromInt(std.math.maxInt(usize) - 7);
+    try std.testing.expectError(error.InvalidArgument, native.graphics.copyManifest(observed, 0, wrapping_image, 1, &placements, 1, &out));
+    try std.testing.expectError(error.InvalidArgument, native.graphics.copyManifest(observed, 0, &images, 1, wrapping_placement, 1, &out));
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.hvt_graphics), out);
+    try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&images), 0xa5));
+    try std.testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&placements), 0xa5));
+}
+
+test "native RGBA copies survive mutation destruction and reject unrelated reset replacement contexts" {
+    var images: [2]c.hvt_image = undefined;
+    var placements: [2]c.hvt_image_placement = undefined;
+    var pixels: [17]u8 = @splat(0xa5);
+    var copied: c.hvt_image = undefined;
+    var required: usize = 99;
+    {
+        const value = try create(std.testing.allocator);
+        defer owner.destroy(value);
+        try feedAll(value, graphics_packet);
+        const manifest = try graphicsCopy(value, 0, &images, &placements);
+        copied = images[0];
+        const observed = owner.observation(value);
+        const before = owner.observe(value, 0);
+        try std.testing.expectError(error.BufferTooSmall, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, null, 0, &required));
+        try std.testing.expectEqual(@as(usize, 16), required);
+        try std.testing.expectError(error.BufferTooSmall, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, &pixels, 15, &required));
+        try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+        try native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, &pixels, pixels.len, &required);
+        try std.testing.expectEqual(@as(usize, 16), required);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, pixels[0..16]);
+        try std.testing.expect(pixels[16] == 0xa5);
+        try std.testing.expectEqualDeep(before, owner.observe(value, 0));
+        var rejected: [16]u8 = @splat(0xa5);
+        try std.testing.expectError(error.InvalidArgument, native.graphics.copyPixels(observed, manifest.terminal_revision, 0, copied.generation, &rejected, rejected.len, &required));
+        try std.testing.expectError(error.InvalidArgument, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, 0, &rejected, rejected.len, &required));
+        try std.testing.expectError(error.InvalidArgument, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, null, 1, &required));
+        try std.testing.expectError(error.ResourceLimit, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, &rejected, c.HVT_MAX_IMAGE_BYTES + 1, &required));
+        // zig-audit: acknowledge ptr_from_int
+        // reason: The hostile RGBA address exercises checked prefix addition without any memory access.
+        try std.testing.expectError(error.InvalidArgument, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, @ptrFromInt(std.math.maxInt(usize) - 2), rejected.len, &required));
+        try std.testing.expectEqual(@as(usize, 0), required);
+        try std.testing.expectError(error.ContextChanged, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id + 999, copied.generation, &rejected, rejected.len, &required));
+        try std.testing.expectError(error.ContextChanged, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation + 1, &rejected, rejected.len, &required));
+        try feedAll(value, "A");
+        try std.testing.expectError(error.ContextChanged, native.graphics.copyPixels(observed, manifest.terminal_revision, copied.image_id, copied.generation, &rejected, rejected.len, &required));
+        const current = try graphicsCopy(value, 0, &images, &placements);
+        try feedAll(value, "\x1b_Ga=t,f=32,s=1,v=1,i=7,q=2;/wAA/w==\x1b\\");
+        try std.testing.expectError(error.ContextChanged, native.graphics.copyPixels(observed, current.terminal_revision, copied.image_id, copied.generation, &rejected, rejected.len, &required));
+        const replaced = try graphicsCopy(value, 0, &images, &placements);
+        try std.testing.expect(images[0].generation != copied.generation);
+        owner.reset(value);
+        try std.testing.expectError(error.ContextChanged, native.graphics.copyPixels(observed, replaced.terminal_revision, images[0].image_id, images[0].generation, &rejected, rejected.len, &required));
+        try std.testing.expectEqual(@as(usize, 0), required);
+        try std.testing.expect(std.mem.allEqual(u8, &rejected, 0xa5));
+    }
+    try std.testing.expect(copied.width == 2 and copied.height == 2 and copied.byte_count == 16);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, pixels[0..16]);
+}

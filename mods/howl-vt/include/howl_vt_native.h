@@ -186,6 +186,30 @@ extern "C" {
 #define HVT_INPUT_BUFFER_BYTES 512u
 #define HVT_PASTE_EXTRA_BYTES 12u
 #define HVT_MAX_COPY_BYTES 1048576u
+/* Copied graphics is independent of Render and Server encoding. */
+#define HVT_MAX_IMAGES 256u
+#define HVT_MAX_IMAGE_PLACEMENTS 16384u
+#define HVT_MAX_IMAGE_DIMENSION 4096u
+#define HVT_MAX_IMAGE_BYTES 16777216u
+#define HVT_MAX_IMAGE_STORAGE_BYTES 67108864u
+typedef struct hvt_image {
+    uint64_t generation;
+    uint32_t image_id, width, height, byte_count;
+} hvt_image;
+typedef struct hvt_image_placement {
+    uint64_t generation;
+    uint32_t image_id, source_x, source_y, source_width, source_height;
+    uint32_t cell_x, cell_y, pixel_width, pixel_height;
+    int32_t z;
+    uint16_t row, column;
+    uint32_t reserved;
+} hvt_image_placement;
+typedef struct hvt_graphics {
+    uint64_t terminal_revision, graphics_revision, content_revision;
+    uint32_t image_count, placement_count, history_offset, cell_width, cell_height;
+    uint16_t rows, columns;
+    uint8_t alternate_screen, reserved[7];
+} hvt_graphics;
 enum hvt_status {
     HVT_OK=0, HVT_INVALID_ARGUMENT=1, HVT_VERSION_MISMATCH=2,
     HVT_OUT_OF_MEMORY=3, HVT_RESOURCE_LIMIT=4, HVT_BUFFER_TOO_SMALL=5,
@@ -252,6 +276,30 @@ uint32_t hvt_observation_release(hvt_observation **owner);
 uint32_t hvt_create(uint32_t version, const hvt_config *, hvt_terminal **out);
 void hvt_release(hvt_terminal **);
 uint32_t hvt_observe(const hvt_terminal *, uint32_t history_offset, hvt_state *);
+
+/* One serialized observation cut: ALL retained images in canonical order, and
+ * only visible physical/Unicode-placeholder placements, densely filtered.
+ * history_offset is clamped; zero cell dimensions mean unknown.
+ * content_revision is graphics image-content identity, not VT contentSequence.
+ * RGBA8 image bytes are tightly packed; byte_count == width*height*4.
+ * Both arrays and fixed output must be disjoint. Capacities above their named
+ * ceilings are rejected. Null arrays require zero capacity.
+ * BUFFER_TOO_SMALL returns the coherent manifest and required counts without
+ * writing either array. Other failures zero the fixed record. Unused tails
+ * remain untouched. No terminal borrow or allocation escapes this call. */
+uint32_t hvt_copy_graphics(const hvt_terminal *, uint32_t history_offset,
+    hvt_image *, size_t image_capacity,
+    hvt_image_placement *, size_t placement_capacity, hvt_graphics *);
+/* Copy exact current image bytes for a manifest from THIS live owner. Caller
+ * serializes mutation across calls or retries a fresh manifest on CONTEXT_CHANGED.
+ * The guard rejects ANY intervening terminal mutation, including unrelated text.
+ * Zero id/generation is invalid. Missing/replaced identity is CONTEXT_CHANGED.
+ * BUFFER_TOO_SMALL alone reports required bytes; other failures zero the count.
+ * Capacity is bounded by HVT_MAX_IMAGE_BYTES. Copies survive source destruction;
+ * no shared snapshot cache, locking or automatic retry is supplied. */
+uint32_t hvt_copy_image_pixels(const hvt_terminal *, uint64_t terminal_revision,
+    uint32_t image_id, uint64_t image_generation, uint8_t *, size_t capacity, size_t *required);
+
 /* Feed exactly one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
  * On OK, consumed is exact (positive for nonempty input); continue at that offset.
  * Replies, retained requests and synchronized release may end the prefix.

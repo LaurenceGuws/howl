@@ -320,3 +320,16 @@ C consumer services a real retained clipboard query, proves invalid/stale/short
 copy/mandatory-consume calls preserve it, replies and observes exact child bytes.
 C++ and Odin prove descriptor/union layouts. A private Odin canary also observes
 clipboard, pointer and exact screen-size replies through the real worker.
+
+
+## Copied VT graphics
+
+`hi_copy_graphics` and `hi_copy_image_pixels` reuse VT's allocation-free native
+projection and admission, including dense retained image inventory, densely
+filtered visible placements and strict terminal-revision guarded RGBA copies.
+The VT header defines the records and ceilings. Shortage reports required counts
+without partial array writes; other failures zero fixed outputs. Copies survive
+Instance destruction. The caller serializes service across the query sequence
+or retries after `HI_CONTEXT_CHANGED`. No presentation owner is required;
+Instance supplies only its canonical const observation. See the
+[VT native contract](../../howl-vt/native.md#copied-graphics) for the shared rules.

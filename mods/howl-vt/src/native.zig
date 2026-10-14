@@ -8,6 +8,8 @@ pub const c = @import("vt_native_types");
 pub const Terminal = vt.Terminal;
 /// Bounded copied query operations over canonical const observation.
 pub const queries = @import("native_queries.zig");
+/// Allocation-free copied graphics over canonical const observation.
+pub const graphics = @import("native_graphics.zig");
 /// Copied exact-head request facts, independent of transport framing.
 pub const requests = @import("native_requests.zig");
 /// Optional stable bare VT owner for caller-driven foreign embedding.
