@@ -119,3 +119,10 @@ format negotiation, resource acknowledgement and UI remain host responsibilities
 Actual prior-Wasm v2/v3 JSON bytes, including text/cursor and external images, are
 preserved. This is Node/Wasm contract qualification; browser/device deployment is
 separate.
+
+The freestanding wire wrapper uses Server-owned codecs and rich/view helpers, but
+currently still implements asynchronous attachment/transaction framing in
+`src/wasm.zig`. A reviewed proposal would move reusable byte-client mechanics to a
+separately selectable Server-client capability while retaining Web’s sockets,
+buffers, scheduling and private ABI. That capability is not implemented yet; the
+ABI design tracker records the open ownership decision.
