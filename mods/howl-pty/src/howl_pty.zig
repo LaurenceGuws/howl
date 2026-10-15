@@ -103,6 +103,9 @@ fn checkedLinuxSignal(value: c_int) ?linux.SIG {
 
 /// Reports copied launch allocation, invalid environment, or a non-Linux build.
 pub const InitError = std.mem.Allocator.Error || error{
+    ArgumentByteLimit,
+    ArgumentCountLimit,
+    InvalidArgument,
     EnvironmentByteLimit,
     EnvironmentCountLimit,
     InvalidEnvironment,
@@ -333,6 +336,54 @@ const LaunchEnvironment = struct {
     }
 };
 
+// Mirror the pre-fork environment snapshot budget. The kernel additionally
+// enforces its combined exec argument/environment limits.
+const argument_max_entries: usize = 1024;
+const argument_max_bytes: usize = 1024 * 1024;
+
+const LaunchArguments = struct {
+    bytes: []u8,
+    entries: [:null]?[*:0]const u8,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        executable: [:0]const u8,
+        arguments: []const []const u8,
+    ) InitError!LaunchArguments {
+        if (arguments.len >= argument_max_entries) return error.ArgumentCountLimit;
+        var byte_count: usize = 0;
+        for (arguments) |argument| {
+            if (std.mem.indexOfScalar(u8, argument, 0) != null) return error.InvalidArgument;
+            byte_count = std.math.add(usize, byte_count, argument.len) catch
+                return error.ArgumentByteLimit;
+            byte_count = std.math.add(usize, byte_count, 1) catch
+                return error.ArgumentByteLimit;
+            if (byte_count > argument_max_bytes) return error.ArgumentByteLimit;
+        }
+        const bytes = try allocator.alloc(u8, byte_count);
+        errdefer allocator.free(bytes);
+        const entries = try allocator.allocSentinel(?[*:0]const u8, arguments.len + 1, null);
+        errdefer allocator.free(entries);
+        entries[0] = executable.ptr;
+        var offset: usize = 0;
+        for (arguments, 1..) |argument, index| {
+            @memcpy(bytes[offset..][0..argument.len], argument);
+            bytes[offset + argument.len] = 0;
+            entries[index] = bytes[offset..][0..argument.len :0].ptr;
+            offset += argument.len + 1;
+        }
+        std.debug.assert(offset == bytes.len);
+        std.debug.assert(entries[arguments.len + 1] == null);
+        return .{ .bytes = bytes, .entries = entries };
+    }
+
+    fn deinit(self: *LaunchArguments, allocator: std.mem.Allocator) void {
+        allocator.free(self.entries);
+        allocator.free(self.bytes);
+        self.* = undefined;
+    }
+};
+
 fn environmentBytes(current: usize, entry_len: usize) error{EnvironmentByteLimit}!usize {
     const with_entry = std.math.add(usize, current, entry_len) catch
         return error.EnvironmentByteLimit;
@@ -459,6 +510,7 @@ pub const Owned = struct {
     start_path: ?[:0]u8,
     start_path_ptr: ?[*:0]u8,
     environment: LaunchEnvironment,
+    arguments: ?LaunchArguments = null,
 
     // Live transport/process state belongs to one externally serialized owner.
     started: bool,
@@ -488,6 +540,35 @@ pub const Owned = struct {
     // -------------------------------------------------------------------------
     // Copied launch configuration and idle lifetime
     // -------------------------------------------------------------------------
+
+    /// Copies one executable and its literal arguments, without a shell.
+    /// Arguments exclude argv[0], which is the executable path. This uses the
+    /// same environment, child launch handshake, I/O and cleanup as shell launch.
+    pub fn initProgram(
+        allocator: std.mem.Allocator,
+        inherited_environment: std.process.Environ,
+        executable: []const u8,
+        arguments: []const []const u8,
+        start_path: ?[]const u8,
+        child_environment: ChildEnvironment,
+    ) InitError!Self {
+        if (executable.len == 0 or std.mem.indexOfScalar(u8, executable, 0) != null)
+            return error.InvalidArgument;
+        if (start_path) |path| {
+            if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidArgument;
+        }
+        var self = try Self.init(
+            allocator,
+            inherited_environment,
+            executable,
+            null,
+            start_path,
+            child_environment,
+        );
+        errdefer self.deinit();
+        self.arguments = try LaunchArguments.init(allocator, self.shell_path, arguments);
+        return self;
+    }
 
     /// Copies launch strings and initializes an idle PTY owner.
     pub fn init(
@@ -556,6 +637,7 @@ pub const Owned = struct {
     /// Stops the child group, closes descriptors, and releases copied launch strings.
     pub fn deinit(self: *Self) void {
         self.stop();
+        if (self.arguments) |*arguments| arguments.deinit(self.allocator);
         self.allocator.free(self.shell_path);
         if (self.command) |bytes| self.allocator.free(bytes);
         if (self.start_path) |bytes| self.allocator.free(bytes);
@@ -629,6 +711,7 @@ pub const Owned = struct {
                 pipes.launch_status.write_fd,
                 self.shell_path,
                 self.command_ptr,
+                if (self.arguments) |arguments| arguments.entries.ptr else null,
                 self.start_path_ptr,
                 self.environment.entries.ptr,
             );
@@ -1091,6 +1174,7 @@ fn childProcess(
     status_fd: posix.fd_t,
     shell_path: [:0]const u8,
     command: ?[*:0]const u8,
+    arguments: ?[*:null]const ?[*:0]const u8,
     cwd: ?[*:0]const u8,
     environment: [*]const ?[*:0]u8,
 ) noreturn {
@@ -1101,6 +1185,16 @@ fn childProcess(
 
     if (cwd) |dir| {
         if (linux.errno(linux.chdir(dir)) != .SUCCESS) childLaunchExit(status_fd, .cwd);
+    }
+
+    if (arguments) |argv| {
+        // zig-audit: acknowledge ptr_cast
+        // reason: LaunchEnvironment owns a null-terminated pointer table; execve only borrows its immutable child-side bytes.
+        const envp: [*:null]const ?[*:0]const u8 = @ptrCast(environment);
+        // zig-audit: acknowledge discard
+        // reason: execve never returns on success; every return is reported through the existing child-launch status pipe.
+        _ = linux.execve(shell_path.ptr, argv, envp);
+        childLaunchExit(status_fd, .exec);
     }
 
     if (command) |cmd| {
@@ -1899,4 +1993,75 @@ test "anchored unreaped leader cleanup kills HUP and TERM resistant descendants"
     try std.testing.expect(!owned.started);
     try std.testing.expect(owned.child == .none);
     try std.testing.expect(!signalTargetExists(-leader_pid));
+}
+
+fn programAllocation(allocator: std.mem.Allocator) !void {
+    var owned = try Owned.initProgram(
+        allocator,
+        std.testing.environ,
+        "/bin/sh",
+        &.{ "-c", "printf '%s' \"$1\"", "argument-probe", "literal argument" },
+        null,
+        test_environment,
+    );
+    owned.deinit();
+}
+
+test "direct program launch owns literal arguments through repeated start and stop" {
+    const before = try descriptorCount();
+    var argument = [_]u8{ 'a', ' ', 0x27, ';', '$', '(', 'x', ')' };
+    var owned = try Owned.initProgram(
+        std.testing.allocator,
+        std.testing.environ,
+        "/bin/sh",
+        &.{ "-c", "printf '<%s><%s>' \"$1\" \"$2\"", "probe", &argument, "" },
+        null,
+        test_environment,
+    );
+    defer owned.deinit();
+    @memset(&argument, 'z');
+    for (0..2) |_| {
+        try owned.start(80, 24);
+        try expectOutput(&owned, "<a ';$(x)><>");
+        owned.stop();
+    }
+    try std.testing.expectEqual(before, try descriptorCount());
+}
+
+test "direct program snapshot releases every partial allocation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, programAllocation, .{});
+}
+
+test "direct program rejects NUL, excessive argument count and bytes before launch" {
+    const before = try descriptorCount();
+    try std.testing.expectError(error.InvalidArgument, Owned.initProgram(
+        std.testing.allocator,
+        std.testing.environ,
+        "/bin/sh",
+        &.{"bad\x00argument"},
+        null,
+        test_environment,
+    ));
+    var many: [argument_max_entries][]const u8 = undefined;
+    @memset(&many, "");
+    try std.testing.expectError(error.ArgumentCountLimit, Owned.initProgram(
+        std.testing.allocator,
+        std.testing.environ,
+        "/bin/sh",
+        &many,
+        null,
+        test_environment,
+    ));
+    const long = try std.testing.allocator.alloc(u8, argument_max_bytes);
+    defer std.testing.allocator.free(long);
+    @memset(long, 'x');
+    try std.testing.expectError(error.ArgumentByteLimit, Owned.initProgram(
+        std.testing.allocator,
+        std.testing.environ,
+        "/bin/sh",
+        &.{long},
+        null,
+        test_environment,
+    ));
+    try std.testing.expectEqual(before, try descriptorCount());
 }

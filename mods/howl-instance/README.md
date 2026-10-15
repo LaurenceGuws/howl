@@ -62,3 +62,9 @@ without emitting or calling through C exports.
 The static native archive and its exact VT companion can link into a caller-owned
 executable or shared runtime shim; scheduling and application runtime stay with
 the embedder. Linux/x86_64 C/C++ consumers qualify both forms.
+
+On Linux, `Launch.arguments` supplies literal arguments (excluding argv[0]) for
+`Launch.shell` as a direct executable. It is mutually exclusive with `command`;
+no `-i` or `-c` is added. PTY owns the copied pre-fork argument snapshot and
+uses the same launch handshake, I/O, signals and cleanup as the shell path.
+Other platforms reject this optional launch mode with `UnsupportedPlatform`.

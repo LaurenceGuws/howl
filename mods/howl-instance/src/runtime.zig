@@ -188,6 +188,10 @@ pub fn Runtime(comptime Presentation: ?type) type {
         pub const Launch = struct {
             shell: []const u8,
             command: ?[]const u8 = null,
+            /// Literal program arguments excluding argv[0]. On Linux, executes
+            /// shell as the program path without -i/-c; mutually exclusive with
+            /// command. Unsupported on other PTY platforms until implemented.
+            arguments: ?[]const []const u8 = null,
             cwd: ?[]const u8 = null,
             rows: u16,
             columns: u16,
@@ -1165,7 +1169,19 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 if (launch.rows == 0 or launch.columns == 0 or
                     launch.cell_pixel_width == 0 or launch.cell_pixel_height == 0)
                     return error.InvalidDimensions;
-                var transport = try pty.Owned.init(
+                var transport = if (launch.arguments) |arguments| blk: {
+                    if (comptime @import("builtin").os.tag != .linux)
+                        return error.UnsupportedPlatform;
+                    if (launch.command != null) return error.InvalidArgument;
+                    break :blk try pty.Owned.initProgram(
+                        allocator,
+                        inherited_environment,
+                        launch.shell,
+                        arguments,
+                        launch.cwd,
+                        .{ .term = launch.term, .colorterm = launch.colorterm },
+                    );
+                } else try pty.Owned.init(
                     allocator,
                     inherited_environment,
                     launch.shell,
@@ -1674,6 +1690,29 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 sleepOneMillisecond();
             }
             return error.Timeout;
+        }
+
+        test "literal program arguments reach the canonical terminal without command interpolation" {
+            if (comptime @import("builtin").os.tag != .linux) return error.SkipZigTest;
+            const instance = try init(std.testing.allocator, std.testing.environ, .{
+                .shell = "/bin/sh",
+                .arguments = &.{
+                    "-c", "printf '%s\\n' \"$1\"; exec cat", "probe", "ARGV ;$(untouched)",
+                },
+                .rows = 4,
+                .columns = 40,
+                .history_rows = 0,
+            });
+            defer deinit(instance);
+            try serviceUntilContains(instance, "ARGV ;$(untouched)");
+            try std.testing.expectError(error.InvalidArgument, init(std.testing.allocator, std.testing.environ, .{
+                .shell = "/bin/sh",
+                .command = "must not execute",
+                .arguments = &.{},
+                .rows = 4,
+                .columns = 40,
+                .history_rows = 0,
+            }));
         }
 
         test "headless instance drains host consequences without an observer" {

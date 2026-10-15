@@ -37,7 +37,7 @@ fn status(err: Error) u32 {
     return switch (err) {
         error.OutOfMemory => c.HI_OUT_OF_MEMORY,
         error.InvalidArgument, error.InvalidDimensions, error.InvalidEnvironment, error.InvalidUtf8, error.InvalidText => c.HI_INVALID_ARGUMENT,
-        error.EnvironmentByteLimit, error.EnvironmentCountLimit, error.WriteQueueFull, error.LengthOverflow, error.KeyTextLimit, error.ReplyLimit, error.ScalarCapacity, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ParsedEventLimit => c.HI_RESOURCE_LIMIT,
+        error.ArgumentByteLimit, error.ArgumentCountLimit, error.EnvironmentByteLimit, error.EnvironmentCountLimit, error.WriteQueueFull, error.LengthOverflow, error.KeyTextLimit, error.ReplyLimit, error.ScalarCapacity, error.ConsequenceLimit, error.ConsequencePressure, error.PropertyLimit, error.ParsedEventLimit => c.HI_RESOURCE_LIMIT,
         error.UnsupportedPlatform => c.HI_UNSUPPORTED,
         error.WriteFailed, error.WouldBlock, error.EndOfStream, error.ReadFailed, error.NotStarted, error.ForegroundGroupFailed, error.SignalFailed, error.TermiosQueryFailed, error.AlreadyStarted, error.ChildCwdFailed, error.ChildExecFailed, error.ChildSessionFailed, error.ChildStdioFailed, error.ForkFailed, error.LaunchStatusFailed, error.LaunchStatusPipeFailed, error.MasterConfigureFailed, error.OpenPtyFailed, error.ShellUnavailable, error.ResizeFailed, error.Interrupted, error.ChildClosed, error.ObserveFailed, error.StaleClipboardRequest, error.StaleColorPreferenceQuery, error.StaleContainerRequest, error.ContainerReplyMismatch, error.StalePointerShape, error.PointerShapeReplyMismatch => c.HI_OPERATION_FAILED,
     };
