@@ -108,6 +108,64 @@ test "surface residency replaces and removes exact generations" {
     try std.testing.expectEqual(@as(usize, 0), resident.len);
 }
 
+test "surface residency accepts exact uploads repeated before producer feedback" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
+    defer store.deinit();
+    const key = try resourceKey(1, 2);
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    const commands = [_]surface.FrameCommand{alphaCommand(key, 0)};
+    try store.stage(frame(1, &.{upload(key, &pixels)}, &.{}, &commands));
+    try store.complete();
+
+    // A newer immutable publication may precede feedback for the first upload.
+    try store.stage(frame(2, &.{upload(key, &pixels)}, &.{}, &commands));
+    store.discard();
+    try store.stage(frame(3, &.{upload(key, &pixels)}, &.{}, &commands));
+    try store.complete();
+
+    const changed = [_]u8{ 1, 2, 3, 5 };
+    try std.testing.expectError(error.GenerationMismatch, store.stage(frame(4, &.{upload(key, &changed)}, &.{}, &commands)));
+    var changed_size = upload(key, &pixels);
+    changed_size.width = 1;
+    try std.testing.expectError(error.GenerationMismatch, store.stage(frame(4, &.{changed_size}, &.{}, &commands)));
+    const changed_format = surface.Upload{ .resource = key, .kind = .rgba, .width = 1, .height = 1, .stride = 4, .pixels = &pixels };
+    try std.testing.expectError(error.GenerationMismatch, store.stage(frame(4, &.{changed_format}, &.{}, &commands)));
+
+    // Each rejection preserves the exact accepted resource and permits reuse.
+    var output: [1]surface.Residency = undefined;
+    const resident = try store.enumerate(&output);
+    try std.testing.expectEqual(@as(usize, 1), resident.len);
+    try std.testing.expectEqual(key, resident[0].resource);
+    try store.stage(frame(5, &.{upload(key, &pixels)}, &.{}, &commands));
+    try store.complete();
+}
+
+test "surface removals repeated before feedback never retire a newer generation" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
+    defer store.deinit();
+    const first = try resourceKey(1, 1);
+    const second = try resourceKey(1, 2);
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(frame(1, &.{upload(first, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    try store.stage(frame(2, &.{}, &.{.{ .resource = first }}, &.{}));
+    try store.complete();
+
+    // The next publication may have been prepared before removal feedback.
+    try store.stage(frame(3, &.{}, &.{.{ .resource = first }}, &.{}));
+    try store.complete();
+    var output: [1]surface.Residency = undefined;
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
+
+    try store.stage(frame(4, &.{upload(second, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    try std.testing.expectError(error.GenerationMismatch, store.stage(frame(5, &.{}, &.{.{ .resource = first }}, &.{})));
+    try std.testing.expectEqual(second, (try store.enumerate(&output))[0].resource);
+    try store.stage(frame(6, &.{}, &.{.{ .resource = second }}, &.{}));
+    try store.complete();
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
+}
+
 test "surface residency rejects stale generations and preserves active bytes" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
     defer store.deinit();

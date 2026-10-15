@@ -2205,7 +2205,7 @@ draw_text :: proc(app: ^App, font: ^TTF.Font, text: string, x, y: f32, color: SD
     if app == nil || app.renderer == nil || font == nil || len(text) == 0 {
         return
     }
-    surface := TTF.RenderText_Blended(font, cstring(raw_data(text)), c.size_t(len(text)), color)
+    surface := TTF.RenderText_Blended(font, raw_data(text), c.size_t(len(text)), color)
     if surface == nil {
         return
     }
@@ -6807,7 +6807,7 @@ text_width :: proc(app: ^App, font: ^TTF.Font, text: string) -> f32 {
     assert(app != nil && font != nil && valid_canvas_scale(app.text_scale))
     if len(text) == 0 do return 0
     width, height: c.int
-    assert(TTF.GetStringSize(font, cstring(raw_data(text)), c.size_t(len(text)), &width, &height))
+    assert(TTF.GetStringSize(font, raw_data(text), c.size_t(len(text)), &width, &height))
     return f32(width) / app.text_scale
 }
 

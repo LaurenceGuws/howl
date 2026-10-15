@@ -111,11 +111,19 @@ not download the optional upstream dependencies. A consuming build can request
 `build.zig.zon`. `bundled.zig` owns their configuration and linkage. No caller
 passes machine-local source mirrors or modifies a dependency cache.
 
-This bundled configuration is **memory-only**: filesystem font streams,
-environment configuration, HarfBuzz file/mmap loading and threading are disabled.
-Use `FontSet.initMemory`, not filesystem path loading, with that configuration.
-The normal system-backed module retains path loading. Both configurations retain
-the actual FreeType/HarfBuzz shaping and rasterization implementations.
+Bundled Wasm is **memory-only** and uses `FontSet.initMemory`; FreeType
+filesystem streams are disabled there. Native bundled builds also support
+`FontSet.init` with caller-selected filesystem paths, matching the ordinary
+system-backed module. Environment configuration and HarfBuzz file/mmap loading
+and threading remain disabled. Both configurations retain the actual
+FreeType/HarfBuzz shaping and rasterization implementations.
+
+Run the native path/memory ownership proofs against both dependency selections:
+
+```sh
+zig build check test -Doptimize=ReleaseSafe
+zig build check test -Dbundled=true -Doptimize=ReleaseSafe
+```
 
 The current Web target is `wasm32-wasi` with exception handling plus reference types, not the
 zero-import freestanding wire canary. The exact pinned compiler's C nonlocal-jump

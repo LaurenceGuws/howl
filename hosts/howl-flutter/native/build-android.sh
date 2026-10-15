@@ -15,28 +15,27 @@ if [[ -z "$zig" ]]; then
 fi
 test "$($zig version)" = "$(cat "$repo/.zigversion")"
 
-export ANDROID_NDK_ROOT="$ndk"
-"$root/build-deps-android.sh" "$ndk"
 work=${HOWL_ANDROID_NATIVE_WORK:-$root/.work/android-arm64}
-prefix="$work/prefix"
 toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
+sysroot="$toolchain/sysroot"
+mkdir -p "$work"
+# Supply the NDK libc to every child compilation, including bundled text.
+# The Zig object already contains the package-owned FreeType/HarfBuzz build.
+libc="$work/libc.txt"
+cat >"$libc" <<EOF
+include_dir=$sysroot/usr/include
+sys_include_dir=$sysroot/usr/include/aarch64-linux-android
+crt_dir=$sysroot/usr/lib/aarch64-linux-android/24
+cc_dir=$sysroot/usr/lib/aarch64-linux-android/24
+msvc_lib_dir=
+kernel32_lib_dir=
+darwin_sdk_dir=
+EOF
 
-overlay="$root/ndk-overlay"
-mkdir -p "$overlay"
-python3 - "$toolchain/sysroot/usr/include/stdlib.h" "$overlay/stdlib.h" <<'PY'
-import pathlib,re,sys
-src=pathlib.Path(sys.argv[1]).read_text()
-src=re.sub(r'\[_(?:Nonnull|Nullable)(?:\s+([0-9]+))?\]', lambda m: '['+(m.group(1) or '')+']', src)
-pathlib.Path(sys.argv[2]).write_text(src)
-PY
-
-rm -rf "$root/.zig-cache" "$root/zig-out"
 ( cd "$root" && "$zig" build \
-  -Dtarget=aarch64-linux-android \
+  -Dtarget=aarch64-linux-android.24 \
   -Doptimize=ReleaseFast \
-  -Drepo="$repo" \
-  -Dndk="$ndk" \
-  -Ddeps="$prefix"
+  --libc "$libc"
 )
 
 obj="$root/zig-out/howl_flutter_native_host.o"
@@ -48,8 +47,6 @@ cxx="$toolchain/bin/aarch64-linux-android24-clang++"
   -Wl,-soname,libhowl_native_host.so \
   -Wl,--no-undefined \
   "$obj" \
-  "$prefix/lib/libharfbuzz.a" \
-  "$prefix/lib/libfreetype.a" \
   -static-libstdc++ -lm -ldl \
   -o "$out"
 

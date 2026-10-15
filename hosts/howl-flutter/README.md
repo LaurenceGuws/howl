@@ -44,7 +44,7 @@ The wrapper always performs a clean Flutter build with `--target-platform androi
 
 Physical Note10 pressure also covers the route-less app shell: fresh app data opens the button-only connection shell, a saved Server endpoint persists through Android DataStore, no-argument relaunch returns to that selected Server browser, exact running-Instance selection transitions through Server attach into its dedicated Server terminal connection, and leaving the terminal closes its managed observer/control streams before returning to the browser. The test route may be supplied externally through ADB reverse, so Android shell qualification does not depend on WARP/LAN reachability.
 
-`native/build-android.sh` builds the host explicitly; Gradle only verifies and packages the result. The native dependency furnace pins the pressure-proven FreeType and HarfBuzz revisions as static arm64 libraries and links them into one app-private host `.so`. Android does not depend on its private platform FreeType/HarfBuzz ABI.
+`native/build-android.sh` builds the host explicitly; Gradle only verifies and packages the result. The wrapper supplies the NDK's libc paths and API 24 target to the complete Zig build graph. `howl-text` owns the pinned FreeType/HarfBuzz sources and includes their target-built code in the native object; the wrapper links that object into one app-private `.so`. Native bundled text retains file-backed fonts, while Wasm stays memory-only. Android does not depend on its private platform FreeType/HarfBuzz ABI.
 
 The terminal font is presentation/deployment policy. The Android native host requires the externally provisioned app-private file:
 

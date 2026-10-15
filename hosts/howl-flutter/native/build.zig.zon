@@ -14,6 +14,5 @@
         "host.zig",
         "local.zig",
         "native.h",
-        "ndk-overlay",
     },
 }

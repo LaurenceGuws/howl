@@ -262,7 +262,7 @@ class WireConnection {
       this.socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once:true});
       this.socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error(`${this.role}: open error`)); }, {once:true});
     });
-    this.sendOutput();
+    // The gateway sends attachment-ready first; reset has no outgoing hello.
     await this.waitForPhase(2);
     this.clientId = this.exports.hw_identity();
     telemetry.record('ws_ready', {role:this.role, ms:Math.round((performance.now() - started) * 10) / 10});

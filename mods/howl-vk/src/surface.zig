@@ -891,7 +891,14 @@ pub const ResidencyStore = struct {
                 continue;
             }
             if (findUpload(frame.uploads, entry.resource)) |upload| {
-                if (upload.resource.generation <= entry.resource.generation) return error.GenerationMismatch;
+                if (upload.resource.generation < entry.resource.generation) return error.GenerationMismatch;
+                // Queued frames may repeat an upload prepared before feedback.
+                // One generation must still name exactly the same resource bytes.
+                if (upload.resource.generation == entry.resource.generation and
+                    (upload.kind != entry.kind or upload.width != entry.width or
+                        upload.height != entry.height or upload.stride != entry.stride or
+                        !std.mem.eql(u8, upload.pixels, self.active_pixels[entry.pixel_start .. entry.pixel_start + entry.pixel_count])))
+                    return error.GenerationMismatch;
                 try self.appendCandidate(upload.resource, upload.kind, upload.width, upload.height, upload.stride, upload.pixels);
                 continue;
             }
@@ -905,9 +912,7 @@ pub const ResidencyStore = struct {
             );
         }
 
-        for (frame.removals) |removal| {
-            if (findEntry(self.active[0..self.active_count], removal.resource) == null) return error.GenerationMismatch;
-        }
+        // A queued frame may repeat a removal already completed here.
         for (frame.uploads) |upload| {
             if (findEntry(self.active[0..self.active_count], upload.resource) != null) continue;
             try self.appendCandidate(upload.resource, upload.kind, upload.width, upload.height, upload.stride, upload.pixels);

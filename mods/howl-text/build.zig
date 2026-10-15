@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const test_fonts = testFontModule(b);
     // Foreign proof callers receive an asset through its owning package.
     b.addNamedLazyPath("howl_text_test_font", b.path("testdata/primary.ttf"));
-    const bundled = b.option(bool, "bundled", "Build pinned memory-only FreeType/HarfBuzz for this target") orelse false;
+    const bundled = b.option(bool, "bundled", "Build pinned FreeType/HarfBuzz for this target") orelse false;
     const module = addModule(b, b.path("."), target, optimize, bundled);
     // Tests exercise the same module recipe exported to external consumers.
     module.addImport("test_fonts", test_fonts);

@@ -32,6 +32,16 @@ pub fn build(b: *std.Build) void {
         audit.dependOn(childStep(child, "audit"));
     }
 
+    // Native bundled text must honor the same path/memory font contract.
+    // Its proof-only module never replaces a published native module identity.
+    const bundled_text = b.dependency("howl_text", .{
+        .target = b.graph.host,
+        .optimize = optimize,
+        .bundled = true,
+    });
+    check.dependOn(childStep(bundled_text, "check"));
+    tests.dependOn(childStep(bundled_text, "test"));
+
     const logger_tests = b.addTest(.{
         .name = "howl-json-logger",
         .root_module = b.createModule(.{

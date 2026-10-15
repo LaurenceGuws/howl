@@ -1,4 +1,4 @@
-//! Pinned memory-only FreeType/HarfBuzz builds for native and Wasm consumers.
+//! Pinned FreeType/HarfBuzz builds for native and memory-only Wasm consumers.
 const std = @import("std");
 
 /// Adds the real text engine with target-built C/C++ dependencies. No source
@@ -10,9 +10,9 @@ pub fn addModule(
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Module {
     const wasm = target.result.cpu.arch == .wasm32;
-    if (wasm and (target.result.os.tag != .wasi or
+    if (target.result.cpu.arch == .wasm64 or (wasm and (target.result.os.tag != .wasi or
         !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.exception_handling)) or
-        !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.reference_types))))
+        !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.reference_types)))))
         // zig-audit: acknowledge panic
         // reason: The caller selected an unsupported bundled Wasm target/feature set; configuration fails before publishing an invalid text module.
         @panic("bundled Wasm text requires wasm32-wasi with exception_handling and reference_types");
@@ -27,6 +27,7 @@ pub fn addModule(
     const ftmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     ftmod.addIncludePath(ft_include);
     ftmod.addIncludePath(package_root.path(b, "config"));
+    // Native FontSet.init opens caller-selected paths; Wasm uses initMemory.
     ftmod.addCSourceFiles(.{
         .root = ft_root,
         .files = &.{
@@ -49,7 +50,7 @@ pub fn addModule(
         .flags = if (wasm) &.{
             "-mllvm",              "-wasm-enable-sjlj",                         "-mllvm",                                    "-wasm-use-legacy-eh=false",
             "-DFT2_BUILD_LIBRARY", "-DFT_CONFIG_OPTIONS_H=\"howl-ftoption.h\"", "-DFT_CONFIG_OPTION_DISABLE_STREAM_SUPPORT",
-        } else &.{ "-DFT2_BUILD_LIBRARY", "-DFT_CONFIG_OPTIONS_H=\"howl-ftoption.h\"", "-DFT_CONFIG_OPTION_DISABLE_STREAM_SUPPORT" },
+        } else &.{ "-DFT2_BUILD_LIBRARY", "-DFT_CONFIG_OPTIONS_H=\"howl-ftoption.h\"" },
     });
     const ftlib = b.addLibrary(.{ .name = "howl-freetype", .linkage = .static, .root_module = ftmod });
     const hbmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true });
