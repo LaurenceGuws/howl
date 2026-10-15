@@ -10,6 +10,8 @@ pub const Terminal = vt.Terminal;
 pub const queries = @import("native_queries.zig");
 /// Allocation-free copied graphics over canonical const observation.
 pub const graphics = @import("native_graphics.zig");
+/// Source-independent immutable copies of canonical logical-output results.
+pub const logical_output = @import("native_output.zig");
 /// Copied exact-head request facts, independent of transport framing.
 pub const requests = @import("native_requests.zig");
 /// Optional stable bare VT owner for caller-driven foreign embedding.

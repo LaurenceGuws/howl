@@ -126,6 +126,72 @@ cleanup:
     return failed;
 }
 
+
+static int output_proof(void) {
+    int failed=0;
+    hvt_terminal *value=NULL;
+    hvt_output *result=NULL,*peer=NULL;
+    const hvt_config config={2,8,3,0,8,16};
+    hvt_output_view view={0},zero={0};
+    CHECK(hvt_output_open(0,NULL,0,0,0,NULL)==HVT_VERSION_MISMATCH);
+    CHECK(hvt_output_read(NULL,&view)==HVT_INVALID_ARGUMENT && memcmp(&view,&zero,sizeof zero)==0);
+    CHECK(hvt_output_read(NULL,NULL)==HVT_INVALID_ARGUMENT);
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&config,&value)==HVT_OK);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,0,1,&result)==HVT_INVALID_ARGUMENT && !result);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,1,0,&result)==HVT_INVALID_ARGUMENT && !result);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,1,HVT_MAX_COPY_BYTES+1u,&result)==HVT_INVALID_ARGUMENT && !result);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,NULL,0,1,1,&result)==HVT_INVALID_ARGUMENT && !result);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,1,1,NULL)==HVT_INVALID_ARGUMENT);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,1,1,&result)==HVT_OK && result);
+    hvt_output *saved=result;
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,1,1,&result)==HVT_INVALID_ARGUMENT && result==saved);
+    CHECK(hvt_output_read(result,&view)==HVT_OK && view.kind==HVT_OUTPUT_DATA && !view.text && !view.open_line && !view.losses && view.oldest==1 && !view.cursor && !view.newest);
+    hvt_output_release(&result);CHECK(!result);
+    CHECK(feed_all(value,"one\r\ntwo\r\nopen")==HVT_OK);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,4,64,&result)==HVT_OK);
+    CHECK(hvt_output_read(result,&view)==HVT_OK && view.kind==HVT_OUTPUT_DATA && view.line_count==2 && view.cursor==2 && view.newest==2 && !view.more && !view.open_line_omitted && !view.reported_id);
+    CHECK(view.text_len==7 && memcmp(view.text,"one\ntwo",7)==0 && view.open_line_len==4 && memcmp(view.open_line,"open",4)==0 && !view.losses && !view.loss_count);
+    for (size_t n=0;n<sizeof view.reserved;++n) CHECK(!view.reserved[n]);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,4,2,&peer)==HVT_OK);
+    hvt_output_view other={0};
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.kind==HVT_OUTPUT_LINE_TOO_LONG && other.reported_id==1 && !other.text && !other.open_line && !other.losses);
+    hvt_output_release(&peer);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,2,4,3,&peer)==HVT_OK);
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.kind==HVT_OUTPUT_OPEN_LINE_TOO_LONG && !other.reported_id);
+    hvt_output_release(&peer);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,999,4,64,&peer)==HVT_OK);
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.kind==HVT_OUTPUT_CURSOR_AHEAD && other.reported_id==2);
+    hvt_output_release(&peer);
+    CHECK(feed_all(value,"\r\nfour\r\nfive\r\nsix")==HVT_OK);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,4,64,&peer)==HVT_OK);
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.kind==HVT_OUTPUT_CURSOR_STALE && other.reported_id>1);
+    hvt_output_release(&peer);
+    CHECK(memcmp(view.text,"one\ntwo",7)==0 && memcmp(view.open_line,"open",4)==0);
+    hvt_release(&value);
+    CHECK(hvt_output_read(result,&other)==HVT_OK && other.text==view.text && other.open_line==view.open_line && memcmp(other.text,"one\ntwo",7)==0 && memcmp(other.open_line,"open",4)==0);
+
+    const hvt_config wide={2,65535,32,0,8,16};
+    CHECK(hvt_create(HVT_NATIVE_VERSION,&wide,&value)==HVT_OK);
+    char chunk[HVT_MAX_INPUT_BYTES+1u];memset(chunk,'x',sizeof chunk-1u);chunk[sizeof chunk-1u]=0;
+    const size_t chunks=HVT_MAX_COPY_BYTES/HVT_MAX_INPUT_BYTES+1u;
+    for (size_t n=0;n<chunks;++n) CHECK(feed_all(value,chunk)==HVT_OK);
+    CHECK(feed_all(value,"\r\nok\r\nnext")==HVT_OK);
+    CHECK(hvt_output_open(HVT_NATIVE_VERSION,value,0,4,64,&peer)==HVT_OK);
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.kind==HVT_OUTPUT_DATA && other.loss_count==1 && other.line_count==1 && other.cursor==2);
+    CHECK(other.losses && other.losses[0].id==1 && other.losses[0].byte_count==chunks*HVT_MAX_INPUT_BYTES && other.losses[0].reason==HVT_OUTPUT_LOSS_LINE_TOO_LONG);
+    for (size_t n=0;n<sizeof other.losses[0].reserved;++n) CHECK(!other.losses[0].reserved[n]);
+    hvt_release(&value);
+    CHECK(hvt_output_read(peer,&other)==HVT_OK && other.losses[0].byte_count==chunks*HVT_MAX_INPUT_BYTES && other.text_len==2 && memcmp(other.text,"ok",2)==0);
+
+cleanup:
+    hvt_release(&value);
+    hvt_output_release(&peer);
+    hvt_output_release(&result);
+    hvt_output_release(&result);
+    hvt_output_release(NULL);
+    return failed;
+}
+
 int main(void) {
     int failed=0;
     hvt_terminal *value=NULL,*fresh=NULL;
@@ -144,6 +210,7 @@ int main(void) {
     const char expected_uri[]="https://example.invalid/vt";
     CHECK(hvt_cpp_proof()==0 && hvt_abi_version()==HVT_NATIVE_VERSION);
     CHECK(graphics_proof()==0);
+    CHECK(output_proof()==0);
     CHECK(hvt_create(0,&config,&value)==HVT_VERSION_MISMATCH && !value);
     CHECK(hvt_create(HVT_NATIVE_VERSION,NULL,&value)==HVT_INVALID_ARGUMENT && !value);
     CHECK(hvt_create(HVT_NATIVE_VERSION,&config,NULL)==HVT_INVALID_ARGUMENT);
@@ -397,3 +464,32 @@ _Static_assert(HVT_MAX_IMAGE_PLACEMENTS==16384,"HVT_MAX_IMAGE_PLACEMENTS");
 _Static_assert(HVT_MAX_IMAGE_DIMENSION==4096,"HVT_MAX_IMAGE_DIMENSION");
 _Static_assert(HVT_MAX_IMAGE_BYTES==16777216,"HVT_MAX_IMAGE_BYTES");
 _Static_assert(HVT_MAX_IMAGE_STORAGE_BYTES==67108864,"HVT_MAX_IMAGE_STORAGE_BYTES");
+
+_Static_assert(sizeof(hvt_output_loss)==24 && _Alignof(hvt_output_loss)==8,"hvt_output_loss layout");
+_Static_assert(offsetof(hvt_output_loss,id)==0,"hvt_output_loss.id");
+_Static_assert(offsetof(hvt_output_loss,byte_count)==8,"hvt_output_loss.byte_count");
+_Static_assert(offsetof(hvt_output_loss,reason)==16,"hvt_output_loss.reason");
+_Static_assert(offsetof(hvt_output_loss,reserved)==17,"hvt_output_loss.reserved");
+_Static_assert(sizeof(hvt_output_view)==96 && _Alignof(hvt_output_view)==8,"hvt_output_view layout");
+_Static_assert(offsetof(hvt_output_view,text)==0,"hvt_output_view.text");
+_Static_assert(offsetof(hvt_output_view,text_len)==8,"hvt_output_view.text_len");
+_Static_assert(offsetof(hvt_output_view,open_line)==16,"hvt_output_view.open_line");
+_Static_assert(offsetof(hvt_output_view,open_line_len)==24,"hvt_output_view.open_line_len");
+_Static_assert(offsetof(hvt_output_view,losses)==32,"hvt_output_view.losses");
+_Static_assert(offsetof(hvt_output_view,loss_count)==40,"hvt_output_view.loss_count");
+_Static_assert(offsetof(hvt_output_view,terminal_revision)==48,"hvt_output_view.terminal_revision");
+_Static_assert(offsetof(hvt_output_view,oldest)==56,"hvt_output_view.oldest");
+_Static_assert(offsetof(hvt_output_view,cursor)==64,"hvt_output_view.cursor");
+_Static_assert(offsetof(hvt_output_view,newest)==72,"hvt_output_view.newest");
+_Static_assert(offsetof(hvt_output_view,reported_id)==80,"hvt_output_view.reported_id");
+_Static_assert(offsetof(hvt_output_view,line_count)==88,"hvt_output_view.line_count");
+_Static_assert(offsetof(hvt_output_view,kind)==90,"hvt_output_view.kind");
+_Static_assert(offsetof(hvt_output_view,more)==91,"hvt_output_view.more");
+_Static_assert(offsetof(hvt_output_view,open_line_omitted)==92,"hvt_output_view.open_line_omitted");
+_Static_assert(offsetof(hvt_output_view,reserved)==93,"hvt_output_view.reserved");
+_Static_assert(HVT_OUTPUT_DATA==1,"HVT_OUTPUT_DATA");
+_Static_assert(HVT_OUTPUT_CURSOR_STALE==2,"HVT_OUTPUT_CURSOR_STALE");
+_Static_assert(HVT_OUTPUT_CURSOR_AHEAD==3,"HVT_OUTPUT_CURSOR_AHEAD");
+_Static_assert(HVT_OUTPUT_LINE_TOO_LONG==4,"HVT_OUTPUT_LINE_TOO_LONG");
+_Static_assert(HVT_OUTPUT_OPEN_LINE_TOO_LONG==5,"HVT_OUTPUT_OPEN_LINE_TOO_LONG");
+_Static_assert(HVT_OUTPUT_LOSS_LINE_TOO_LONG==1,"HVT_OUTPUT_LOSS_LINE_TOO_LONG");

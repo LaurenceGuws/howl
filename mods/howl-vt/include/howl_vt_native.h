@@ -210,6 +210,29 @@ typedef struct hvt_graphics {
     uint16_t rows, columns;
     uint8_t alternate_screen, reserved[7];
 } hvt_graphics;
+/* Immutable logical-output snapshots own their copied bytes and loss records.
+ * DATA preserves canonical primary output even while alternate screen is active.
+ * max_entries counts text AND loss entries; line_count counts text entries only.
+ * max_bytes (1..HVT_MAX_COPY_BYTES) bounds text+open line, not the loss array.
+ * Non-DATA kinds retain only reported_id; every other field is zero/null. */
+enum hvt_output_kind {
+    HVT_OUTPUT_DATA=1, HVT_OUTPUT_CURSOR_STALE=2, HVT_OUTPUT_CURSOR_AHEAD=3,
+    HVT_OUTPUT_LINE_TOO_LONG=4, HVT_OUTPUT_OPEN_LINE_TOO_LONG=5
+};
+enum hvt_output_loss_reason { HVT_OUTPUT_LOSS_LINE_TOO_LONG=1 };
+typedef struct hvt_output hvt_output;
+typedef struct hvt_output_loss {
+    uint64_t id, byte_count;
+    uint8_t reason, reserved[7];
+} hvt_output_loss;
+typedef struct hvt_output_view {
+    const uint8_t *text; size_t text_len;
+    const uint8_t *open_line; size_t open_line_len;
+    const hvt_output_loss *losses; size_t loss_count;
+    uint64_t terminal_revision, oldest, cursor, newest, reported_id;
+    uint16_t line_count;
+    uint8_t kind, more, open_line_omitted, reserved[3];
+} hvt_output_view;
 enum hvt_status {
     HVT_OK=0, HVT_INVALID_ARGUMENT=1, HVT_VERSION_MISMATCH=2,
     HVT_OUT_OF_MEMORY=3, HVT_RESOURCE_LIMIT=4, HVT_BUFFER_TOO_SMALL=5,
@@ -299,6 +322,24 @@ uint32_t hvt_copy_graphics(const hvt_terminal *, uint32_t history_offset,
  * no shared snapshot cache, locking or automatic retry is supplied. */
 uint32_t hvt_copy_image_pixels(const hvt_terminal *, uint64_t terminal_revision,
     uint32_t image_id, uint64_t image_generation, uint8_t *, size_t capacity, size_t *required);
+
+/* Source mutation/destruction and open serialize externally. Version is checked
+ * first; out requires a null slot and publishes only a complete immutable result.
+ * Canonical cursor/retention/size outcomes are successful query kinds, not ABI
+ * errors: reported_id is oldest/newest/line id/0 respectively. DATA has id=0.
+ * No source, Instance, Reader or worker is retained. Existing result owners
+ * survive source mutation/destruction; creating one never changes VT state. */
+uint32_t hvt_output_open(uint32_t version, const hvt_terminal *, uint64_t cursor,
+    uint16_t max_entries, size_t max_bytes, hvt_output **out);
+/* Result-owned immutable spans, no NUL terminator promise. Empty spans are null.
+ * Borrowed pointers last only until result release; no read/use may race release.
+ * DATA.more concerns further finalized entries; open_line_omitted is independent.
+ * Read is allocation-free and zeros its fixed output on invalid-null failure. */
+uint32_t hvt_output_read(const hvt_output *, hvt_output_view *);
+/* End all reads/borrows first. Both null forms are no-ops; clears slot before free.
+ * Keep all originating matching-build libraries loaded through result release. */
+void hvt_output_release(hvt_output **);
+
 
 /* Feed exactly one canonical service-boundary prefix, input<=MAX_INPUT_BYTES.
  * On OK, consumed is exact (positive for nonempty input); continue at that offset.

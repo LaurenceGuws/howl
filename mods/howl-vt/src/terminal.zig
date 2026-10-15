@@ -5837,6 +5837,9 @@ pub const Terminal = struct {
 
     // Logical-output vocabulary.
 
+    /// Bounds copied finalized/open output bytes, separately from loss records.
+    pub const maximum_logical_output_bytes = Screen.retained_output_bytes_max;
+
     /// Names why one finalized logical line has no retained text.
     pub const LogicalOutputLossReason = OutputLossReason;
 

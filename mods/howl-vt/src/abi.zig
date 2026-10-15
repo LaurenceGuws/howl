@@ -4,7 +4,7 @@ const native = @import("howl_vt_native");
 const owner = native.owner;
 const c = native.c;
 const heap = std.heap.c_allocator;
-const Error = owner.Error || native.Error || native.requests.Error || native.graphics.Error;
+const Error = owner.Error || native.Error || native.requests.Error || native.graphics.Error || native.logical_output.Error;
 
 fn failure(err: Error) u32 {
     return switch (err) {
@@ -403,4 +403,36 @@ pub export fn hvt_copy_image_pixels(raw: ?*const c.hvt_terminal, revision: u64, 
     const value = raw orelse return c.HVT_INVALID_ARGUMENT;
     native.graphics.copyPixels(owner.observation(constant(value)), revision, id, generation, bytes, capacity, required) catch |err| return failure(err);
     return c.HVT_OK;
+}
+
+/// Allocates an immutable canonical logical-output result independent of source lifetime.
+pub export fn hvt_output_open(version: u32, raw: ?*const c.hvt_terminal, cursor: u64, max_entries: u16, max_bytes: usize, out: ?*?*c.hvt_output) u32 {
+    if (version != c.HVT_NATIVE_VERSION) return c.HVT_VERSION_MISMATCH;
+    const slot = out orelse return c.HVT_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HVT_INVALID_ARGUMENT;
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    const result = native.logical_output.create(heap, owner.observation(constant(value)), cursor, max_entries, max_bytes) catch |err| return failure(err);
+    // zig-audit: acknowledge ptr_cast
+    // reason: Only the exact VT-owned immutable result is published as its matching C handle.
+    slot.* = @ptrCast(result);
+    return c.HVT_OK;
+}
+/// Returns immutable result-owned spans; zeros fixed output before null rejection.
+pub export fn hvt_output_read(raw: ?*const c.hvt_output, out: ?*c.hvt_output_view) u32 {
+    const result = out orelse return c.HVT_INVALID_ARGUMENT;
+    result.* = std.mem.zeroes(c.hvt_output_view);
+    const value = raw orelse return c.HVT_INVALID_ARGUMENT;
+    // zig-audit: acknowledge ptr_cast
+    // reason: The matching C result handle lends only the exact optional native Owner.
+    result.* = native.logical_output.read(@ptrCast(value));
+    return c.HVT_OK;
+}
+/// Clears and releases one result after all immutable borrows end; nulls are no-ops.
+pub export fn hvt_output_release(out: ?*?*c.hvt_output) void {
+    const slot = out orelse return;
+    const value = slot.* orelse return;
+    slot.* = null;
+    // zig-audit: acknowledge ptr_cast
+    // reason: Only constructor-owned result handles enter the exact native destructor.
+    native.logical_output.destroy(@ptrCast(value));
 }

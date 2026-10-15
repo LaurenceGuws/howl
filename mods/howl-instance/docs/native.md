@@ -333,3 +333,15 @@ Instance destruction. The caller serializes service across the query sequence
 or retries after `HI_CONTEXT_CHANGED`. No presentation owner is required;
 Instance supplies only its canonical const observation. See the
 [VT native contract](../../howl-vt/native.md#copied-graphics) for the shared rules.
+
+
+## Copied logical output
+
+`hi_output_open` uses the VT-owned immutable logical-output result with the exact
+same cursor, text/open-line, loss, bounds and failure semantics as
+`hvt_output_open`. It needs no presentation owner. Read and release it through
+`hvt_output_read` and `hvt_output_release` from the exact VT companion.
+The result owns its copied storage; Instance destruction stays unblocked and
+does not invalidate the result. Its spans live until result release, so end their
+use before release and keep the originating matching libraries loaded.
+See [VT logical-output rules](../../howl-vt/native.md#immutable-logical-output-results).

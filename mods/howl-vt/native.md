@@ -21,6 +21,7 @@ process lifetime, time, scheduling, request policy and UI.
 | Input | `hvt_encode_named_key`, `hvt_encode_unicode_key`, `hvt_encode_mouse`, `hvt_encode_focus`, `hvt_encode_paste` |
 | Replies | `hvt_copy_replies`, `hvt_consume_replies` |
 | Queries | `hvt_copy_cell`, `hvt_search`, `hvt_expand_selection`, `hvt_copy_selection`, `hvt_copy_hyperlink`, `hvt_copy_row_shapes`, `hvt_get_interaction` |
+| Logical output | `hvt_output_open`, `hvt_output_read`, `hvt_output_release` |
 | Graphics | `hvt_copy_graphics`, `hvt_copy_image_pixels` |
 | Requests | `hvt_request_head`, `hvt_copy_request_payload`, `hvt_consume_request` |
 | Named responses | `hvt_reply_clipboard`, `hvt_reply_pointer_shape`, `hvt_reply_color_preference`, `hvt_reply_container_state`, `hvt_reply_container_position`, `hvt_reply_container_screen_cells`, `hvt_reply_container_icon_title`, `hvt_decline_container` |
@@ -94,6 +95,50 @@ Instance's matching `hi_*` operations supply their canonical const observation
 to the same VT-owned projection and admission. No presentation owner is required.
 Existing native v1 layouts and signatures are unchanged; consumers of the new
 symbols must use the matching updated headers and artifacts.
+
+## Immutable logical-output results
+
+`hvt_output_open` saves one read of canonical primary logical output. It includes
+finalized text after the supplied cursor, the current primary open line, ordered
+loss evidence, cursor bounds and semantic revision. Primary output remains the
+source while alternate screen is active. The result owns copied storage and no
+terminal, Instance or Reader reference. It survives source mutation/destruction.
+
+All five canonical outcomes are successful immutable query results:
+
+| Kind | Meaning |
+| --- | --- |
+| `HVT_OUTPUT_DATA` | Copied text/open line/losses and exact canonical metadata. |
+| `HVT_OUTPUT_CURSOR_STALE` | `reported_id` is the oldest retained line. |
+| `HVT_OUTPUT_CURSOR_AHEAD` | `reported_id` is the newest finalized line. |
+| `HVT_OUTPUT_LINE_TOO_LONG` | `reported_id` identifies the first retained line that cannot fit. |
+| `HVT_OUTPUT_OPEN_LINE_TOO_LONG` | The open line alone cannot fit; `reported_id` is zero. |
+
+Non-DATA outcomes zero every other field and span. DATA `reported_id` is zero.
+No cursor is clamped or automatically recovered. `max_entries` counts both text
+and loss entries; `line_count` counts finalized text entries only. `more` means
+further finalized entries remain. `open_line_omitted` independently reports a
+current open line that did not fit after accepted finalized evidence.
+`max_bytes` bounds text plus open bytes (1..1 MiB), not the loss array.
+At most 65,535 loss records fit the entry bound. Loss reasons are projected
+explicitly; current `HVT_OUTPUT_LOSS_LINE_TOO_LONG` retains the omitted line's
+exact byte count. The native byte budget is compile-time checked against VT's
+public canonical limit.
+
+Creation requires a null output slot and publishes only complete storage.
+Invalid limits/version/slot or OOM preserve the slot. Source service, destruction
+and creation serialize externally. `hvt_output_read` allocates nothing and returns
+immutable result-owned spans; empty spans are null and text has no terminator
+promise. No read or span use may race release. `hvt_output_release` ends these
+borrows, clears the slot, and accepts both null forms. Keep matching originating
+libraries loaded through release. The helper stores its originating allocator,
+transfers canonical text/open storage, converts loss records once and frees every
+partial allocation on failure.
+
+Instance's `hi_output_open` returns this same VT-owned result family; read/release
+through its exact forwarded VT companion. It neither pins the Instance nor makes
+Instance destruction busy. Ordinary local Zig APIs and canonical retention,
+output, scheduling and process lifetime are unchanged.
 
 ## Geometry and reset
 

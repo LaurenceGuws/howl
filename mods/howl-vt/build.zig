@@ -69,6 +69,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&owner_run.step);
     native_step.dependOn(&owner_run.step);
 
+    const output_root = b.createModule(.{ .root_source_file = b.path("test/native_output.zig"), .target = target, .optimize = optimize });
+    output_root.addImport("howl_vt_native", native);
+    const output_tests = b.addTest(.{ .name = "howl-vt-native-output", .root_module = output_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&output_tests.step);
+    const output_run = b.addRunArtifact(output_tests);
+    test_step.dependOn(&output_run.step);
+    native_step.dependOn(&output_run.step);
+    b.step("test:output", "Qualify immutable logical-output results and allocation transfer").dependOn(&output_run.step);
+
     const observation_root = b.createModule(.{ .root_source_file = b.path("test/native_observation.zig"), .target = target, .optimize = optimize });
     observation_root.addImport("howl_vt_native", native);
     const observation_tests = b.addTest(.{ .name = "howl-vt-native-observation", .root_module = observation_root, .use_llvm = false, .use_lld = false });

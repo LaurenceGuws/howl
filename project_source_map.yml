@@ -26,7 +26,10 @@ experimental:
     howl_vt_native static artifact/owned header expose a stable opaque bare VT,
     caller-driven boundary feed, copied observations, preflighted input encoding,
     explicit reply transfer, typed retained-request service, atomic geometry,
-    canonical RIS and caller-clocked animation. The native owner uses an injected
+    canonical RIS and caller-clocked animation. Optional immutable logical-output
+    results preserve all five canonical outcomes, copied text/open/loss evidence,
+    exact cursors and source-independent lifetime; Instance forwards the same owner.
+    The native owner uses an injected
     allocator; only the C export root selects libc. It imports canonical VT but no
     Instance, Server, codec, Render or process/runtime owner. The live VT root
     never imports native ownership. Optional native observation separates Controller
@@ -39,7 +42,7 @@ experimental:
     Optional howl_instance_native static artifact and owned aggregate C header
     expose the initial plain Linux/x86_64-qualified lifecycle, semantic input,
     geometry/signals, bounded caller-driven headless service and VT-owned copied
-    cells, queries, graphics manifests/pixels and pending request facts; named canonical replies and explicit
+    cells, queries, graphics manifests/pixels, immutable logical-output results and pending request facts; named canonical replies and explicit
     retained/headless service policy. Exact local Instance specialization; no host runtime, wait/poll loop,
     wake source, clock or Server/codec. Public native Zig helpers share input
     conversion/operations with Odin. Optional howl_instance_frames_native owns one

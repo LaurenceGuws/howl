@@ -174,11 +174,59 @@ cleanup:
     return result;
 }
 
+
+/* Result owns only copied output; the exact VT companion reads/releases it after
+ * the Instance process owner is gone. No frame or presentation owner is used. */
+static int copied_output(void) {
+    int result=1;
+    hi_instance *owner=NULL;
+    hvt_output *snapshot=NULL;
+    hvt_output_view view={0},after={0};
+    const char shell[]="/bin/sh",env[]="PATH=/usr/bin:/bin";
+    const char command[]="printf 'one\\r\\ntwo\\r\\nopen'; exec sleep 30";
+    const hi_bytes environment={(const uint8_t *)env,sizeof env-1};
+    const hi_launch launch={{(const uint8_t *)shell,sizeof shell-1},{(const uint8_t *)command,sizeof command-1},{NULL,0},&environment,1,2,8,4,0,8,16};
+    hi_service state={0};
+#define OUTPUT_REQUIRE(x) do { if (!(x)) { fprintf(stderr,"Instance output proof line %d: %s\n",__LINE__,#x); goto cleanup; } } while (0)
+    OUTPUT_REQUIRE(hi_output_open(0,NULL,0,0,0,NULL)==HI_VERSION_MISMATCH);
+    OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,NULL,0,1,1,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
+    OUTPUT_REQUIRE(hi_create(HI_ABI_VERSION,&launch,&owner)==HI_OK);
+    OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,0,1,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
+    OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,1,HVT_MAX_COPY_BYTES+1u,&snapshot)==HI_INVALID_ARGUMENT && !snapshot);
+    OUTPUT_REQUIRE(hi_service_turn(owner,0,0,now_ns(),&state)==HI_OK);
+    const uint64_t deadline=now_ns()+UINT64_C(5000000000);
+    do {
+        struct pollfd fd={state.descriptor,POLLIN|POLLHUP,0};
+        if (state.write_pending) fd.events |= POLLOUT;
+        OUTPUT_REQUIRE(poll(&fd,1,state.buffered_output_pending ? 0 : 10)>=0);
+        OUTPUT_REQUIRE(hi_service_turn(owner,(fd.revents & (POLLIN|POLLHUP))!=0,(fd.revents & POLLOUT)!=0,now_ns(),&state)==HI_OK);
+        hvt_output_release(&snapshot);
+        OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,4,64,&snapshot)==HI_OK);
+        OUTPUT_REQUIRE(hvt_output_read(snapshot,&view)==HVT_OK);
+    } while ((view.kind!=HVT_OUTPUT_DATA || view.text_len<7) && now_ns()<deadline);
+    OUTPUT_REQUIRE(view.kind==HVT_OUTPUT_DATA && view.line_count==2 && view.text_len==7 && memcmp(view.text,"one\ntwo",7)==0);
+    OUTPUT_REQUIRE(view.open_line_len==4 && memcmp(view.open_line,"open",4)==0 && view.loss_count==0);
+    hvt_output *saved=snapshot;
+    OUTPUT_REQUIRE(hi_output_open(HI_ABI_VERSION,owner,0,4,64,&snapshot)==HI_INVALID_ARGUMENT && snapshot==saved);
+    OUTPUT_REQUIRE(hi_destroy(&owner)==HI_OK && !owner);
+    OUTPUT_REQUIRE(hvt_output_read(snapshot,&after)==HVT_OK && after.text==view.text && after.open_line==view.open_line);
+    OUTPUT_REQUIRE(after.text_len==7 && memcmp(after.text,"one\ntwo",7)==0 && memcmp(after.open_line,"open",4)==0);
+    hvt_output_release(&snapshot);
+    OUTPUT_REQUIRE(!snapshot);
+    result=0;
+cleanup:
+    hvt_output_release(&snapshot);
+    if (hi_destroy(&owner)!=HI_OK) result=1;
+#undef OUTPUT_REQUIRE
+    return result;
+}
+
 int main(void) {
     REQUIRE(howl_instance_cpp_header() == 0);
     REQUIRE(observation_lifetime() == 0);
     REQUIRE(retained_requests() == 0);
     REQUIRE(copied_graphics() == 0);
+    REQUIRE(copied_output() == 0);
     hi_instance *instance = NULL;
     char shell[] = "/bin/sh";
     const char command[] = "stty -echo; printf READY; IFS= read -r line; printf '\r\nREPLY:%s:%s:%s:%s' \"$line\" \"$ABI_TEST\" \"$TERM\" \"$COLORTERM\"; exit 7";

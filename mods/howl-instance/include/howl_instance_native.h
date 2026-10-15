@@ -212,6 +212,12 @@ uint32_t hi_copy_graphics(const hi_instance *, uint32_t history_offset,
     hvt_image_placement *, size_t placement_capacity, hvt_graphics *);
 uint32_t hi_copy_image_pixels(const hi_instance *, uint64_t terminal_revision,
     uint32_t image_id, uint64_t image_generation, uint8_t *, size_t capacity, size_t *required);
+/* Same VT-owned immutable logical-output result. HI_ABI_VERSION/HI_* admission;
+ * read/release through the exact matching VT companion. Result neither retains
+ * Instance nor makes destruction busy, and remains readable after destruction. */
+uint32_t hi_output_open(uint32_t version, const hi_instance *, uint64_t cursor,
+    uint16_t max_entries, size_t max_bytes, hvt_output **out);
+
 
 /* Arrays are caller-owned copies. Upload pixel pointers borrow the immutable
  * frame only until release/abandon/close. Bulk capacity failure modifies no arrays. Command capacity may exceed the leased

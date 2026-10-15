@@ -106,3 +106,6 @@ template<typename A,typename B> constexpr bool graphics_same_type=false;
 template<typename A> constexpr bool graphics_same_type<A,A> = true;
 static_assert(graphics_same_type<decltype(&hi_copy_graphics),uint32_t(*)(const hi_instance *,uint32_t,hvt_image *,size_t,hvt_image_placement *,size_t,hvt_graphics *)>);
 static_assert(graphics_same_type<decltype(&hi_copy_image_pixels),uint32_t(*)(const hi_instance *,uint64_t,uint32_t,uint64_t,uint8_t *,size_t,size_t *)>);
+
+static_assert(graphics_same_type<decltype(&hi_output_open),uint32_t(*)(uint32_t,const hi_instance *,uint64_t,uint16_t,size_t,hvt_output **)>);
+static_assert(sizeof(hvt_output_view)==96 && sizeof(hvt_output_loss)==24);

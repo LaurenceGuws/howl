@@ -664,3 +664,17 @@ pub export fn hi_copy_image_pixels(raw: ?*const c.hi_instance, revision: u64, id
     vt.graphics.copyPixels(instance.terminal(canonicalConst(value)), revision, id, generation, pixels, capacity, required) catch |err| return graphicsFailure(err);
     return c.HI_OK;
 }
+
+/// VT owns the copied logical-output result; Instance contributes const observation.
+pub export fn hi_output_open(version: u32, raw: ?*const c.hi_instance, cursor: u64, max_entries: u16, max_bytes: usize, out: ?*?*vt.c.hvt_output) u32 {
+    if (version != c.HI_ABI_VERSION) return c.HI_VERSION_MISMATCH;
+    const slot = out orelse return c.HI_INVALID_ARGUMENT;
+    if (slot.* != null) return c.HI_INVALID_ARGUMENT;
+    const value = raw orelse return c.HI_INVALID_ARGUMENT;
+    const result = vt.logical_output.create(heap, instance.terminal(canonicalConst(value)), cursor, max_entries, max_bytes) catch |err| return switch (err) {
+        error.OutOfMemory => c.HI_OUT_OF_MEMORY,
+        error.InvalidArgument => c.HI_INVALID_ARGUMENT,
+    };
+    slot.* = convert(*vt.c.hvt_output, result);
+    return c.HI_OK;
+}
