@@ -790,10 +790,13 @@ fn writeBytes(buf: []u8, bytes: []const u8) []const u8 {
 // removed by Modifier.legacy and remains available only to extended protocols.
 fn legacyControlByte(codepoint: u21) ?u8 {
     return switch (codepoint) {
-        ' ' => 0,
+        ' ', '2' => 0,
+        '3'...'7' => @intCast(codepoint - '3' + 0x1b),
+        '8', '?' => 0x7f,
+        '/' => 0x1f,
+        '~' => 0x1e,
         '@'...'_' => @intCast(codepoint - '@'),
         'a'...'z' => @intCast(codepoint - 'a' + 1),
-        '?' => 0x7f,
         else => null,
     };
 }
@@ -946,6 +949,29 @@ test "legacy keys preserve application modes modifiers and text boundaries" {
         "\x1b\x1b",
         encodeKey(&buf, .{ .named = .escape }, .{ .alt = true }, false, false, 0, 0, 0),
     );
+}
+
+test "legacy number-row and punctuation control aliases retain exact C0 bytes" {
+    var buf: [max_encoded_len]u8 = undefined;
+    const cases = [_]struct { key: u21, byte: u8 }{
+        .{ .key = '2', .byte = 0 },
+        .{ .key = '3', .byte = 0x1b },
+        .{ .key = '4', .byte = 0x1c },
+        .{ .key = '5', .byte = 0x1d },
+        .{ .key = '6', .byte = 0x1e },
+        .{ .key = '7', .byte = 0x1f },
+        .{ .key = '8', .byte = 0x7f },
+        .{ .key = '/', .byte = 0x1f },
+        .{ .key = '~', .byte = 0x1e },
+    };
+    for (cases) |case| {
+        const key = try InputKey.initUnicode(case.key);
+        try std.testing.expectEqualStrings(&.{case.byte}, encodeKey(&buf, key, .{ .control = true }, false, false, 0, 0, 0));
+        try std.testing.expectEqualStrings(&.{ 0x1b, case.byte }, encodeKey(&buf, key, .{ .control = true, .alt = true }, false, false, 0, 0, 0));
+    }
+    for ([_]u21{ '0', '1', '9' }) |value| {
+        try std.testing.expectEqualStrings(&.{@intCast(value)}, encodeKey(&buf, try InputKey.initUnicode(value), .{ .control = true }, false, false, 0, 0, 0));
+    }
 }
 
 test "every modifier combination has one Kitty parameter" {
