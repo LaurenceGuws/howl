@@ -29,6 +29,13 @@ pub const Range = struct {
     text: Terminal.TextRange,
     context: Context,
 
+    /// Validates context and delegates lead normalization/ordering to canonical text authority.
+    pub fn normalized(self: Range, observation: *const Terminal.Observation) error{ ContextChanged, InvalidRange }!Range {
+        const current = observation.semanticView(0);
+        if (!self.context.matches(&current)) return error.ContextChanged;
+        return .{ .context = self.context, .text = try observation.normalizeTextRange(self.text) };
+    }
+
     /// Copies bounded UTF-8 through the canonical VT owner; never copies concealed text.
     /// The caller owns the result. Context rejection precedes any allocation.
     pub fn copy(self: Range, observation: *const Terminal.Observation, allocator: std.mem.Allocator, max_bytes: usize) Error![]const u8 {
@@ -245,6 +252,57 @@ pub fn expand(observation: *const Terminal.Observation, kind: Kind, history_offs
     return .{ .text = .{ .start = .{ .row = first_row, .col = first.column }, .end = .{ .row = last_row, .col = @intCast(end_column) } }, .context = Context.fromView(&view) };
 }
 
+/// One contiguous selected run in a visible row's logical text columns.
+pub const Span = struct { row: u16, column: u16, columns: u16 };
+
+/// Projects selected semantic leads into visible occupancy runs, including wide/tall
+/// continuations. No glyph/pixel/color
+/// policy enters VT. Output is caller-owned; SpanLimit retains no canonical effects.
+pub fn visibleSpans(observation: *const Terminal.Observation, history_offset: u32, range: Range, output: []Span) error{ ContextChanged, InvalidRange, SpanLimit }![]const Span {
+    const selected = try range.normalized(observation);
+    const view = observation.semanticView(history_offset);
+    var used: usize = 0;
+    for (0..view.rows) |row_index| {
+        const row: u16 = @intCast(row_index);
+        const absolute = stableRow(&view, row) orelse continue;
+        const columns = switch (view.lineGeometry(row)) {
+            .single_width => view.cols,
+            .double_width, .double_height_top, .double_height_bottom => @max(@as(u16, 1), view.cols / 2),
+        };
+        var start: ?u16 = null;
+        var column: u16 = 0;
+        while (column < columns) : (column += 1) {
+            const cell = view.cellInfoAt(row, column);
+            const lead: ?Terminal.TextPoint = if (cell.x <= column and cell.y <= absolute)
+                .{ .row = absolute - @as(i32, cell.y), .col = column - cell.x }
+            else
+                null;
+            const included = if (lead) |value|
+                !pointBefore(value, selected.text.start) and !pointBefore(selected.text.end, value)
+            else
+                false;
+            if (included) {
+                if (start == null) start = column;
+            } else if (start) |first| {
+                if (used == output.len) return error.SpanLimit;
+                output[used] = .{ .row = row, .column = first, .columns = column - first };
+                used += 1;
+                start = null;
+            }
+        }
+        if (start) |first| {
+            if (used == output.len) return error.SpanLimit;
+            output[used] = .{ .row = row, .column = first, .columns = columns - first };
+            used += 1;
+        }
+    }
+    return output[0..used];
+}
+
+fn pointBefore(left: Terminal.TextPoint, right: Terminal.TextPoint) bool {
+    return left.row < right.row or (left.row == right.row and left.col < right.col);
+}
+
 test "direct Zig selection preserves wide and combining occupancy without a foreign schema" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
@@ -355,4 +413,93 @@ test "hard reset has its own identity while retained history provenance survives
     try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     try std.testing.expectEqual(before + 2, terminal.observation().resetSequence());
     try std.testing.expectEqual(terminal.pointerShapeResetSequence(), terminal.observation().resetSequence());
+}
+
+test "copied scalar obeys byte limits smaller than its first UTF8 encoding" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("😀")).stateChanged());
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 0, .col = 0 } } };
+    for (0..4) |limit| try std.testing.expectError(error.TextLimit, range.copy(terminal.observation(), std.testing.failing_allocator, limit));
+    const text = try range.copy(terminal.observation(), std.testing.allocator, 4);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("😀", text);
+}
+
+test "normalization and spans select whole wide clusters from a continuation endpoint" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("A界B")).stateChanged());
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = 0, .col = 2 }, .end = .{ .row = 0, .col = 2 } } };
+    const normalized = try range.normalized(terminal.observation());
+    try std.testing.expectEqual(@as(u16, 1), normalized.text.start.col);
+    var output: [4]Span = undefined;
+    const spans = try visibleSpans(terminal.observation(), 0, range, &output);
+    try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 1, .columns = 2 }}, spans);
+    try std.testing.expectError(error.SpanLimit, visibleSpans(terminal.observation(), 0, range, &.{}));
+    const reversed: Range = .{ .context = range.context, .text = .{ .start = .{ .row = 0, .col = 3 }, .end = .{ .row = 0, .col = 0 } } };
+    const full = try visibleSpans(terminal.observation(), 0, reversed, &output);
+    try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 0, .columns = 4 }}, full);
+}
+
+test "copy handles the maximum representable projected row without increment overflow" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 4, 2);
+    defer terminal.deinit();
+    // A valid synthetic aged frontier avoids billions of irrelevant input rows.
+    terminal.screen_state.primary.history_store.?.row_base = std.math.maxInt(i32);
+    try std.testing.expect((try terminal.feed("X")).stateChanged());
+    const maximum = std.math.maxInt(i32);
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = maximum, .col = 0 }, .end = .{ .row = maximum, .col = 0 } } };
+    const text = try range.copy(terminal.observation(), std.testing.allocator, 1);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("X", text);
+}
+
+test "selection spans cover tall occupancy and respect canonical scroll cleanup" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 0, .col = 0 } } };
+    var output: [4]Span = undefined;
+    const whole = try visibleSpans(terminal.observation(), 0, range, &output);
+    try std.testing.expectEqualSlices(Span, &.{
+        .{ .row = 0, .column = 0, .columns = 4 },
+        .{ .row = 1, .column = 0, .columns = 4 },
+    }, whole);
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\r\n")).stateChanged());
+    const partial = try visibleSpans(terminal.observation(), 0, range, &output);
+    // Canonical scrolling clears non-semantic clusters that would straddle
+    // the live/history boundary; the query must not invent a surviving fragment.
+    try std.testing.expectEqual(@as(usize, 0), partial.len);
+    const text = try range.copy(terminal.observation(), std.testing.allocator, 16);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("", text);
+}
+
+test "unselected tall occupancy can split one selected visible row into separate runs" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[1;4H\x1b]66;s=2:w=1;X\x07")).stateChanged());
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = 0, .col = 5 }, .end = .{ .row = 2, .col = 7 } } };
+    var output: [4]Span = undefined;
+    const spans = try visibleSpans(terminal.observation(), 0, range, &output);
+    try std.testing.expectEqualSlices(Span, &.{
+        .{ .row = 0, .column = 5, .columns = 3 },
+        .{ .row = 1, .column = 0, .columns = 3 },
+        .{ .row = 1, .column = 5, .columns = 3 },
+        .{ .row = 2, .column = 0, .columns = 8 },
+    }, spans);
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(error.SpanLimit, visibleSpans(terminal.observation(), 0, range, output[0..3]));
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+}
+
+test "DEC wide-row selection spans stop at its logical text column frontier" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b#6AB")).stateChanged());
+    const range: Range = .{ .context = Context.fromView(&terminal.semanticView(0)), .text = .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 0, .col = 7 } } };
+    var output: [2]Span = undefined;
+    const spans = try visibleSpans(terminal.observation(), 0, range, &output);
+    try std.testing.expectEqualSlices(Span, &.{.{ .row = 0, .column = 0, .columns = 4 }}, spans);
 }

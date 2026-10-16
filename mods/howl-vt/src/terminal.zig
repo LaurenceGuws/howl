@@ -2028,7 +2028,7 @@ fn sourceRowWrapped(screen: *const Screen, source: RowSource) bool {
     };
 }
 
-fn normalizeTextPoint(screen_state: *const ScreenSet, point: Terminal.TextPoint) CopyError!Terminal.TextPoint {
+fn normalizeTextPoint(screen_state: *const ScreenSet, point: Terminal.TextPoint) error{InvalidRange}!Terminal.TextPoint {
     const active = screen_state.activeConst();
     if (active.cols == 0 or point.col >= active.cols) return error.InvalidRange;
     const source = rowSource(screen_state, point.row) orelse return error.InvalidRange;
@@ -2045,6 +2045,13 @@ fn normalizeTextPoint(screen_state: *const ScreenSet, point: Terminal.TextPoint)
     return normalized;
 }
 
+fn normalizedTextRange(screen_state: *const ScreenSet, range: Terminal.TextRange) error{InvalidRange}!Terminal.TextRange {
+    return orderedTextRange(.{
+        .start = try normalizeTextPoint(screen_state, range.start),
+        .end = try normalizeTextPoint(screen_state, range.end),
+    });
+}
+
 // Copy one caller-selected semantic range into caller-owned UTF-8 memory.
 //
 // The caller owns a successful non-empty result. Invalid stored codepoints
@@ -2055,11 +2062,7 @@ fn copyTextRange(
     range: Terminal.TextRange,
     max_bytes: usize,
 ) CopyError![]const u8 {
-    const normalized = Terminal.TextRange{
-        .start = try normalizeTextPoint(screen_state, range.start),
-        .end = try normalizeTextPoint(screen_state, range.end),
-    };
-    const ordered_selection = orderedTextRange(normalized);
+    const ordered_selection = try normalizedTextRange(screen_state, range);
     const active = screen_state.activeConst();
     if (active.cols == 0 or
         ordered_selection.start.col >= active.cols or ordered_selection.end.col >= active.cols or
@@ -2069,7 +2072,7 @@ fn copyTextRange(
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
     var row = ordered_selection.start.row;
-    while (row <= ordered_selection.end.row) : (row += 1) {
+    while (true) : (row += 1) {
         const source = rowSource(screen_state, row) orelse return error.InvalidRange;
         const row_start = if (row == ordered_selection.start.row) ordered_selection.start.col else 0;
         const row_end = if (row == ordered_selection.end.row)
@@ -2098,12 +2101,13 @@ fn copyTextRange(
                     var utf8: [4]u8 = undefined;
                     const codepoint = std.math.cast(u21, scalar) orelse return error.CodepointTooLarge;
                     const len = try std.unicode.utf8Encode(codepoint, &utf8);
-                    if (out.items.len > max_bytes -| len) return error.TextLimit;
+                    if (len > max_bytes -| out.items.len) return error.TextLimit;
                     try out.appendSlice(allocator, utf8[0..len]);
                 }
             }
         }
-        if (row != ordered_selection.end.row and !sourceRowWrapped(screen_state.activeConst(), source)) {
+        if (row == ordered_selection.end.row) break;
+        if (!sourceRowWrapped(screen_state.activeConst(), source)) {
             if (out.items.len == max_bytes) return error.TextLimit;
             try out.append(allocator, '\n');
         }
@@ -6077,6 +6081,11 @@ pub const Terminal = struct {
             return self.terminal().copyLogicalOutput(allocator, cursor, max_lines, max_bytes);
         }
 
+        /// Normalizes both endpoints to semantic leads, checks retention and orders them.
+        pub fn normalizeTextRange(self: *const Observation, range: TextRange) error{InvalidRange}!TextRange {
+            return self.terminal().normalizeTextRange(range);
+        }
+
         /// Copies one semantic cell range into caller-owned UTF-8 storage.
         pub fn copyText(
             self: *const Observation,
@@ -7482,6 +7491,11 @@ pub const Terminal = struct {
     /// Borrows the URI interned for one nonzero cell hyperlink identity.
     pub fn hyperlinkUri(self: *const Terminal, link_id: u32) ?[]const u8 {
         return self.properties.hyperlinkUriForId(link_id);
+    }
+
+    /// Normalizes selected endpoints to retained semantic leads and reading order.
+    pub fn normalizeTextRange(self: *const Terminal, range: TextRange) error{InvalidRange}!TextRange {
+        return normalizedTextRange(&self.screen_state, range);
     }
 
     /// Copies one caller-supplied semantic cell range as UTF-8.
