@@ -2069,8 +2069,25 @@ fn copyTextRange(
         rowSource(screen_state, ordered_selection.start.row) == null or
         rowSource(screen_state, ordered_selection.end.row) == null)
         return error.InvalidRange;
-    var out = std.ArrayList(u8).empty;
-    errdefer out.deinit(allocator);
+    // A copy is a cold user operation. Count through the same canonical traversal
+    // first, then allocate exactly once. No geometric spare or moving old+new
+    // payload allocation can escape the caller's explicit byte limit.
+    const count = try visitTextRange(screen_state, ordered_selection, max_bytes, null);
+    if (count == 0) return &.{};
+    const output = try allocator.alloc(u8, count);
+    errdefer allocator.free(output);
+    const written = try visitTextRange(screen_state, ordered_selection, count, output);
+    std.debug.assert(written == count);
+    return output;
+}
+
+fn visitTextRange(
+    screen_state: *const ScreenSet,
+    ordered_selection: Terminal.TextRange,
+    max_bytes: usize,
+    output: ?[]u8,
+) CopyError!usize {
+    var used: usize = 0;
     var row = ordered_selection.start.row;
     while (true) : (row += 1) {
         const source = rowSource(screen_state, row) orelse return error.InvalidRange;
@@ -2088,8 +2105,9 @@ fn copyTextRange(
                 };
                 if (cell.x != 0 or cell.y != 0 or cell.codepoint == 0) continue;
                 if (cell.attrs.invisible) {
-                    if (out.items.len == max_bytes) return error.TextLimit;
-                    try out.append(allocator, ' ');
+                    if (used == max_bytes) return error.TextLimit;
+                    if (output) |bytes| bytes[used] = ' ';
+                    used += 1;
                     continue;
                 }
                 var retained: [24]u32 = undefined;
@@ -2101,18 +2119,20 @@ fn copyTextRange(
                     var utf8: [4]u8 = undefined;
                     const codepoint = std.math.cast(u21, scalar) orelse return error.CodepointTooLarge;
                     const len = try std.unicode.utf8Encode(codepoint, &utf8);
-                    if (len > max_bytes -| out.items.len) return error.TextLimit;
-                    try out.appendSlice(allocator, utf8[0..len]);
+                    if (len > max_bytes -| used) return error.TextLimit;
+                    if (output) |bytes| @memcpy(bytes[used..][0..len], utf8[0..len]);
+                    used += len;
                 }
             }
         }
         if (row == ordered_selection.end.row) break;
         if (!sourceRowWrapped(screen_state.activeConst(), source)) {
-            if (out.items.len == max_bytes) return error.TextLimit;
-            try out.append(allocator, '\n');
+            if (used == max_bytes) return error.TextLimit;
+            if (output) |bytes| bytes[used] = '\n';
+            used += 1;
         }
     }
-    return out.toOwnedSlice(allocator);
+    return used;
 }
 
 // =============================================================================
@@ -10876,4 +10896,18 @@ test "content identity survives cursor movement and output bracketing but retain
     const before = terminal.contentSequence();
     try terminal.resize(4, 10);
     try std.testing.expect(terminal.contentSequence() > before);
+}
+
+test "selected text preflights the byte limit and allocates one exact owned result" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 80);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("alpha😀")).stateChanged());
+    const range: Terminal.TextRange = .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 0, .col = 5 } };
+    try std.testing.expectError(error.TextLimit, terminal.copyText(std.testing.failing_allocator, range, 8));
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1, .resize_fail_index = 0 });
+    const bytes = try terminal.copyText(failing.allocator(), range, 9);
+    defer failing.allocator().free(bytes);
+    try std.testing.expectEqualStrings("alpha😀", bytes);
+    try std.testing.expectEqual(@as(usize, 1), failing.alloc_index);
+    try std.testing.expectEqual(@as(usize, 9), failing.allocated_bytes);
 }
