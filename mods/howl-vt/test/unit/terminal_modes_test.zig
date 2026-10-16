@@ -2813,3 +2813,22 @@ test "DEC more-fix owns pending-wrap tab query save and reset lifetime" {
     try std.testing.expect((try terminal.feed("\x1b[?41$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
 }
+
+test "pointer reporting interest includes DEC locator and leaves one-shot consumption canonical" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const observation = terminal.observation();
+    try std.testing.expect(!observation.pointerReportingRequested());
+    write(&terminal, "\x1b[?1000h");
+    try std.testing.expect(observation.pointerReportingRequested());
+    write(&terminal, "\x1b[?1000l\x1b[2;0'z\x1b[1'*{");
+    try std.testing.expect(observation.pointerReportingRequested());
+    try std.testing.expect(observation.pointerReportingRequested());
+    try std.testing.expectEqual(@as(usize, 0), encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 }).len);
+    try std.testing.expectEqualStrings("\x1b[2;4;2;3;0&w", pendingOutput(&terminal));
+    try std.testing.expect(!observation.pointerReportingRequested());
+    write(&terminal, "\x1b[1;0'z");
+    try std.testing.expect(observation.pointerReportingRequested());
+    write(&terminal, "\x1bc");
+    try std.testing.expect(!observation.pointerReportingRequested());
+}

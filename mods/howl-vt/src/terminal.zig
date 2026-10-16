@@ -6015,6 +6015,11 @@ pub const Terminal = struct {
             return self.terminal().interactionState();
         }
 
+        /// True when Xterm mouse or DEC locator reporting needs caller pointer input.
+        pub fn pointerReportingRequested(self: *const Observation) bool {
+            return self.terminal().pointerReportingRequested();
+        }
+
         /// Reports whether synchronized-output mode is enabled.
         pub fn synchronizedOutput(self: *const Observation) bool {
             return self.terminal().synchronizedOutput();
@@ -7534,6 +7539,12 @@ pub const Terminal = struct {
     // -------------------------------------------------------------------------
     // Caller input and child replies
     // -------------------------------------------------------------------------
+
+    /// True when Xterm mouse or DEC locator reporting needs caller pointer input.
+    /// Querying this value does not consume locator one-shot/filter state.
+    pub fn pointerReportingRequested(self: *const Terminal) bool {
+        return self.modes.mouse_tracking != .off or self.locator.mode != .disabled;
+    }
 
     /// Encode one caller input event according to current terminal modes.
     ///
