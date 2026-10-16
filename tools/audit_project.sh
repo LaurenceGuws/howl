@@ -9,6 +9,7 @@ status=0
 # sharp-construct detection; this project audit owns only Howl-specific structure.
 root_publics=(
     'pub const Terminal = terminal.Terminal;'
+    'pub const selection = @import("selection.zig");'
     'pub const MutationSet = terminal.MutationSet;'
     'pub const ScalarStorage = scalar_storage.Storage;'
     'pub const UnicodeProperties = unicode_17.Properties;'

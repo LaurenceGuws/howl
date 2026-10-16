@@ -7,6 +7,8 @@ const std = @import("std");
 
 /// Owns one terminal emulator, its retained state, replies, and consequences.
 pub const Terminal = terminal.Terminal;
+/// Owns canonical selection geometry/extraction without importing a foreign ABI.
+pub const selection = @import("selection.zig");
 /// Packs the semantic owners affected by one accepted PTY feed.
 pub const MutationSet = terminal.MutationSet;
 /// Owns bounded overflow scalars for one caller-owned cell cohort.
@@ -30,4 +32,5 @@ pub const scalar = struct {
 test {
     std.testing.refAllDecls(Terminal);
     std.testing.refAllDecls(ScalarStorage);
+    std.testing.refAllDecls(selection);
 }

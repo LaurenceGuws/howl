@@ -11,132 +11,10 @@ pub const SearchMatchInfo = c.hvt_search_match;
 pub const SelectionRangeInfo = c.hvt_selection_range;
 /// Native observation argument, allocation, context and output-capacity failures.
 pub const Error = Terminal.TextError || error{ InvalidArgument, ContextChanged, BufferTooSmall, CoordinateLimit, Overflow };
-const NativeViewportPosition = struct {
-    row: u16,
-    column: u16,
-};
-
-fn nativeStableRow(
-    view: *const Terminal.SemanticView,
-    viewport_row: u16,
-) ?i32 {
-    if (viewport_row >= view.rows) return null;
-    if (view.is_alternate_screen) return @intCast(viewport_row);
-    if (view.history_offset > view.history_count) return null;
-    const row = @as(u64, view.history_row_base) +
-        view.history_count - view.history_offset + viewport_row;
-    if (row > std.math.maxInt(i32)) return null;
-    return @intCast(row);
-}
-
-fn nativeViewportRow(
-    view: *const Terminal.SemanticView,
-    stable_row: i32,
-) ?u16 {
-    if (view.rows == 0) return null;
-    if (view.is_alternate_screen) {
-        if (stable_row < 0 or stable_row >= view.rows) return null;
-        return @intCast(stable_row);
-    }
-    const top = @as(i64, view.history_row_base) +
-        view.history_count - view.history_offset;
-    const relative = @as(i64, stable_row) - top;
-    if (relative < 0 or relative >= view.rows) return null;
-    return @intCast(relative);
-}
-
-fn nativeLeadPosition(
-    view: *const Terminal.SemanticView,
-    row: u16,
-    column: u16,
-) ?NativeViewportPosition {
-    if (row >= view.rows or column >= view.cols) return null;
-    const cell = view.cellInfoAt(row, column);
-    if (cell.x > column or cell.y > row) return null;
-    return .{
-        .row = row - cell.y,
-        .column = column - cell.x,
-    };
-}
-
-fn nativeSelectableLead(
-    view: *const Terminal.SemanticView,
-    position: NativeViewportPosition,
-) bool {
-    const cell = view.cellInfoAt(position.row, position.column);
-    if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) return false;
-    var scalars: [maximum_cell_scalars]u21 = undefined;
-    const values = view.cellScalarsAt(
-        position.row,
-        position.column,
-        &scalars,
-    );
-    return values.len != 0 and values[0] != ' ';
-}
-
-// Traverse semantic leads in row order. Lower-row occupancy repeats an earlier
-// cluster; it is not another character and must never resolve traversal backward.
-fn nativePreviousLead(view: *const Terminal.SemanticView, position: NativeViewportPosition) ?NativeViewportPosition {
-    var row = position.row;
-    var column: i32 = @as(i32, position.column) - 1;
-    while (true) {
-        while (column >= 0) {
-            const cell = view.cellInfoAt(row, @intCast(column));
-            if (cell.y == 0) {
-                const lead = nativeLeadPosition(view, row, @intCast(column)) orelse return null;
-                if (lead.row < position.row or (lead.row == position.row and lead.column < position.column)) return lead;
-            }
-            // Skip the remaining left extent of a repeated lower-row cluster.
-            // This decreases the physical column even at a malformed empty extent.
-            column -= @as(i32, cell.x) + 1;
-        }
-        if (row == 0 or !view.rowWrapped(row - 1)) return null;
-        row -= 1;
-        column = @as(i32, view.cols) - 1;
-    }
-}
-
-fn nativeNextLead(view: *const Terminal.SemanticView, position: NativeViewportPosition) ?NativeViewportPosition {
-    const current = view.cellInfoAt(position.row, position.column);
-    var row = position.row;
-    var column = @as(u32, position.column) + @max(@as(u32, current.width), 1);
-    while (true) {
-        while (column < view.cols) {
-            const cell = view.cellInfoAt(row, @intCast(column));
-            if (cell.y == 0) {
-                const lead = nativeLeadPosition(view, row, @intCast(column)) orelse return null;
-                if (lead.row > position.row or (lead.row == position.row and lead.column > position.column)) return lead;
-            }
-            // A lower-row continuation belongs to an earlier lead. Skip its
-            // remaining physical extent instead of revisiting that earlier word.
-            column += @max(@as(u32, cell.width) -| cell.x, 1);
-        }
-        if (!view.rowWrapped(row) or row + 1 >= view.rows) return null;
-        row += 1;
-        column = 0;
-    }
-}
-
-fn nativeLastContentColumn(
-    view: *const Terminal.SemanticView,
-    row: u16,
-) ?u16 {
-    if (row >= view.rows) return null;
-    var column: usize = view.cols;
-    while (column != 0) {
-        column -= 1;
-        const cell = view.cellInfoAt(row, @intCast(column));
-        if (cell.x != 0 or cell.y != 0) continue;
-        // A lead cell's first scalar is its copied codepoint.
-        if (cell.codepoint == 0 or cell.codepoint == ' ') continue;
-        const end = @min(
-            @as(u32, view.cols - 1),
-            @as(u32, @intCast(column)) + @max(@as(u32, cell.width), 1) - 1,
-        );
-        return @intCast(end);
-    }
-    return null;
-}
+const selection = vt.selection;
+const nativeViewportRow = selection.viewportRow;
+const nativeLastContentColumn = selection.lastContentColumn;
+const nativeViewForStableRow = selection.viewForStableRow;
 
 fn nativeLastSearchColumn(
     view: *const Terminal.SemanticView,
@@ -166,109 +44,20 @@ pub fn expandSelection(
     output: *SelectionRangeInfo,
 ) Error!void {
     output.* = .{};
-    if (kind != c.HVT_SELECTION_WORD and kind != c.HVT_SELECTION_VISUAL_ROW) return error.InvalidArgument;
-    const view = observation.semanticView(history_offset);
-    if (view.cols != expected_columns or
-        view.is_alternate_screen != expected_alternate)
-    {
-        return error.ContextChanged;
-    }
-    const viewport_row = nativeViewportRow(&view, target_row) orelse {
-        return error.ContextChanged;
+    const typed_kind: selection.Kind = switch (kind) {
+        c.HVT_SELECTION_WORD => .word,
+        c.HVT_SELECTION_VISUAL_ROW => .visual_row,
+        else => return error.InvalidArgument,
     };
-    if (target_column >= view.cols) {
-        return error.ContextChanged;
-    }
-
-    if (kind == 2) {
-        const last = nativeLastContentColumn(&view, viewport_row) orelse return;
-        var first: ?u16 = null;
-        var column: u16 = 0;
-        while (column < view.cols) : (column += 1) {
-            const cell = view.cellInfoAt(viewport_row, column);
-            if (cell.x == 0 and cell.y == 0) {
-                first = column;
-                break;
-            }
-        }
-        const start_column = first orelse return;
-        const stable = nativeStableRow(&view, viewport_row) orelse
-            return error.ContextChanged;
-        output.* = .{
-            .start_row = stable,
-            .end_row = stable,
-            .start_column = start_column,
-            .end_column = last,
-            .columns = view.cols,
-            .found = 1,
-            .alternate_screen = @intFromBool(view.is_alternate_screen),
-        };
-        return;
-    }
-    if (kind != 1) return error.InvalidArgument;
-
-    const start = nativeLeadPosition(
-        &view,
-        viewport_row,
-        target_column,
-    ) orelse return error.ContextChanged;
-    if (!nativeSelectableLead(&view, start)) return;
-
-    var first = start;
-    while (nativePreviousLead(&view, first)) |candidate| {
-        if (!nativeSelectableLead(&view, candidate)) break;
-        first = candidate;
-    }
-    var last = start;
-    while (nativeNextLead(&view, last)) |candidate| {
-        if (!nativeSelectableLead(&view, candidate)) break;
-        last = candidate;
-    }
-    const first_row = nativeStableRow(&view, first.row) orelse
-        return error.ContextChanged;
-    const last_row = nativeStableRow(&view, last.row) orelse
-        return error.ContextChanged;
-    const last_cell = view.cellInfoAt(last.row, last.column);
-    const end_column = @min(
-        @as(u32, view.cols - 1),
-        @as(u32, last.column) + @max(@as(u32, last_cell.width), 1) - 1,
-    );
+    const range = try selection.expand(observation, typed_kind, history_offset, .{ .row = target_row, .col = target_column }, .{ .columns = expected_columns, .alternate = expected_alternate }) orelse return;
     output.* = .{
-        .start_row = first_row,
-        .end_row = last_row,
-        .start_column = first.column,
-        .end_column = @intCast(end_column),
-        .columns = view.cols,
+        .start_row = range.text.start.row,
+        .end_row = range.text.end.row,
+        .start_column = range.text.start.col,
+        .end_column = range.text.end.col,
+        .columns = range.context.columns,
         .found = 1,
-        .alternate_screen = @intFromBool(view.is_alternate_screen),
-    };
-    return;
-}
-
-fn nativeViewForStableRow(
-    observation: *const Terminal.Observation,
-    stable_row: i32,
-) ?struct {
-    view: Terminal.SemanticView,
-    viewport_row: u16,
-} {
-    const live = observation.semanticView(0);
-    if (live.is_alternate_screen) {
-        if (stable_row < 0 or stable_row >= live.rows) return null;
-        return .{ .view = live, .viewport_row = @intCast(stable_row) };
-    }
-    const live_top = @as(i64, live.history_row_base) + live.history_count;
-    const last = live_top + live.rows - 1;
-    if (stable_row < live.history_row_base or stable_row > last) return null;
-    if (stable_row >= live_top)
-        return .{
-            .view = live,
-            .viewport_row = @intCast(@as(i64, stable_row) - live_top),
-        };
-    const offset: u32 = @intCast(live_top - stable_row);
-    return .{
-        .view = observation.semanticView(offset),
-        .viewport_row = 0,
+        .alternate_screen = @intFromBool(range.context.alternate),
     };
 }
 
