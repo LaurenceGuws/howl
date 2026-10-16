@@ -1010,15 +1010,15 @@ test "input mode category preserves encoding gates screen stacks and reset lifet
     try std.testing.expect(!(try terminal.feed("\x1b[=3")).stateChanged());
     try std.testing.expect((try terminal.feed("u")).stateChanged());
     var release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
-        .key = try Terminal.Key.initUnicode('a'),
+        .key = .{ .named = .up },
         .action = .release,
     } });
     defer release.deinit();
-    try std.testing.expectEqualStrings("\x1b[97;1:3u", release.bytes);
+    try std.testing.expectEqualStrings("\x1b[1;1:3A", release.bytes);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
     var alternate_release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
-        .key = try Terminal.Key.initUnicode('a'),
+        .key = .{ .named = .up },
         .action = .release,
     } });
     defer alternate_release.deinit();

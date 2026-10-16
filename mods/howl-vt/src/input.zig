@@ -329,12 +329,15 @@ pub fn encodeEvent(
     const report_all = kitty_flags & 8 != 0;
     if (key == .named and isModifier(key.named) and !report_all)
         return buf[0..0];
-    if (key == .named and isLegacyControl(key.named) and !report_all and mod.none()) {
+    var unlocked = mod;
+    unlocked.caps_lock = false;
+    unlocked.num_lock = false;
+    if (key == .named and isLegacyControl(key.named) and !report_all and unlocked.none()) {
         if (action == .release) return buf[0..0];
         return encodeKey(
             buf,
             key,
-            mod,
+            unlocked,
             application_cursor_keys,
             application_keypad,
             modify_other_keys,
@@ -344,10 +347,21 @@ pub fn encodeEvent(
     }
     const report_events = kitty_flags & 2 != 0;
     if (action == .release and !report_events) return buf[0..0];
-    if (legacy_text.len != 0 and !report_all and action != .release)
-        return legacy_text;
-    if (kitty_flags & (2 | 4 | 8 | 16) != 0)
+    // Shift/lock-only text remains text until report-all is requested. Alternate
+    // identities and associated text decorate an existing encoding; they do not
+    // independently change which keys are represented as escape sequences.
+    const produces_text = !shortcutModifiers(mod) and
+        (legacy_text.len != 0 or text.len != 0 or (key == .unicode and
+            key.unicode.value >= 32 and !(key.unicode.value >= 127 and key.unicode.value <= 159)));
+    if (report_all)
         return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
+    if (produces_text) {
+        if (action == .release) return buf[0..0];
+    } else if (kitty_flags & (1 | 2) != 0) {
+        // Preserve the unshifted identity before the legacy fallback transforms it.
+        return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
+    }
+    if (legacy_text.len != 0 and action != .release) return legacy_text;
     return encodeKey(
         buf,
         legacyKey(key, mod, shifted, text),
@@ -356,8 +370,12 @@ pub fn encodeEvent(
         application_keypad,
         modify_other_keys,
         format_other_keys,
-        kitty_flags,
+        0,
     );
+}
+
+fn shortcutModifiers(mod: Modifier) bool {
+    return mod.control or mod.alt or mod.super or mod.hyper or mod.meta;
 }
 
 // Legacy terminals consume the produced Shift identity, while extended key
@@ -549,7 +567,7 @@ const Builder = struct {
 
 fn encodeDisambiguatedKey(buf: []u8, key: InputKey, mod: Modifier) ?[]const u8 {
     return switch (key) {
-        .unicode => null,
+        .unicode => if (shortcutModifiers(mod)) encodeKittyKey(buf, key, mod) else null,
         .named => |named| switch (named) {
             .escape => csiU(buf, 27, mod.protocolParameter()),
             .enter, .tab, .backspace => if (mod.none()) null else encodeKittyKey(buf, key, mod),
@@ -1381,4 +1399,37 @@ test "legacy produced text preserves caps and layout transforms with Alt" {
     try std.testing.expectEqualStrings("\x09", try encodeEvent(&buf, physical, .{ .control = true }, .press, null, null, "", "I", false, false, 0, 0, 0));
     // Report-all retains the physical identity and associates produced text.
     try std.testing.expectEqualStrings("\x1b[105;67;73u", try encodeEvent(&buf, physical, .{ .alt = true, .caps_lock = true }, .press, null, null, "", "I", false, false, 0, 0, 31));
+}
+
+test "basic Kitty disambiguates modified Unicode without changing printable text" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const key = try InputKey.initUnicode('i');
+    for ([_]u8{ 1, 3, 5, 7 }) |flags| {
+        try std.testing.expectEqualStrings("\x1b[105;5u", try encodeEvent(&buf, key, .{ .control = true }, .press, null, null, "", "", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("\x1b[105;3u", try encodeEvent(&buf, key, .{ .alt = true }, .press, null, null, "", "i", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("I", try encodeEvent(&buf, key, .{ .shift = true }, .press, 'I', null, "I", "I", false, false, 0, 0, flags));
+    }
+    try std.testing.expectEqualStrings("\x1b[105;5u", encodeKey(&buf, key, .{ .control = true }, false, false, 0, 0, 1));
+    try std.testing.expectEqualStrings("\x1b[105;6u", try encodeEvent(&buf, key, .{ .shift = true, .control = true }, .press, 'I', null, "", "", false, false, 0, 0, 1));
+}
+
+test "alternate-key and associated-text flags do not enable reporting by themselves" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const key = try InputKey.initUnicode('i');
+    for ([_]u8{ 0, 4, 16, 20 }) |flags| {
+        try std.testing.expectEqualStrings("\x09", try encodeEvent(&buf, key, .{ .control = true }, .press, 'I', 'j', "", "", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("\x1bi", try encodeEvent(&buf, key, .{ .alt = true }, .press, null, 'j', "", "i", false, false, 0, 0, flags));
+    }
+}
+
+test "event reporting leaves text keys and recovery controls usable without report-all" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const key = try InputKey.initUnicode('i');
+    for ([_]u8{ 2, 3, 6, 7 }) |flags| {
+        try std.testing.expectEqualStrings("i", try encodeEvent(&buf, key, .{}, .repeat, null, null, "i", "i", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("", try encodeEvent(&buf, key, .{}, .release, null, null, "", "", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("\r", try encodeEvent(&buf, .{ .named = .enter }, .{}, .press, null, null, "", "", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("", try encodeEvent(&buf, .{ .named = .enter }, .{}, .release, null, null, "", "", false, false, 0, 0, flags));
+        try std.testing.expectEqualStrings("\x1b[1;1:3A", try encodeEvent(&buf, .{ .named = .up }, .{}, .release, null, null, "", "", false, false, 0, 0, flags));
+    }
 }
