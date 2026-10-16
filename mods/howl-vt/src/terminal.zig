@@ -5321,6 +5321,8 @@ pub const Terminal = struct {
     pub const maximum_legacy_key_bytes = @sizeOf(InputScratch) - 1;
     /// Returns encoded input with explicit borrowed-or-owned byte lifetime.
     pub const EncodedInput = input.Encoded;
+    /// Exposes allocation-free framing captured once for a streaming paste.
+    pub const PasteFraming = input.PasteFraming;
     /// Reports paste construction or bounded locator-report retention failure.
     pub const InputError = input.PasteError || replies.AppendError ||
         error{ InvalidUtf8, InvalidText, KeyTextLimit };

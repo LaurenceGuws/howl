@@ -23,6 +23,14 @@ pub const acquirePublishedFrame = runtime.acquirePublishedFrame;
 pub const Instance = runtime.Instance;
 /// Canonical terminal engine type owned by one Instance.
 pub const Terminal = runtime.Terminal;
+/// Largest streaming paste chunk admitted without a permanent size failure.
+pub const maximum_paste_chunk_bytes = runtime.maximum_paste_chunk_bytes;
+/// Nonreused identity for one streaming paste in this composition.
+pub const PasteToken = runtime.PasteToken;
+/// Reports occupied input lane, older reply pressure, or exhausted identity.
+pub const BeginPasteError = runtime.BeginPasteError;
+/// Reports stale operation identity or whole-chunk admission failure.
+pub const PasteError = runtime.PasteError;
 /// Platform-native PTY readiness descriptor exposed only to platform service owners.
 pub const Descriptor = runtime.Descriptor;
 /// Host-neutral input accepted by the canonical VT owner.
@@ -143,6 +151,8 @@ pub const tryDeinit = runtime.tryDeinit;
 pub const descriptor = runtime.descriptor;
 /// True while a prior service turn retains child output in its bounded read buffer.
 pub const bufferedOutputPending = runtime.bufferedOutputPending;
+/// True when buffered child output can progress without another write/paste chunk.
+pub const bufferedOutputRunnable = runtime.bufferedOutputRunnable;
 /// True while caller input or terminal replies are queued for the child PTY.
 ///
 /// Poll owners include writable readiness whenever this is true; unlike the
@@ -220,7 +230,14 @@ pub const replyContainer = runtime.replyContainer;
 /// Declines one exact pending container query without fabricating host state.
 pub const declineContainerQuery = runtime.declineContainerQuery;
 /// Encodes and admits one input event in canonical instance order.
+/// Active streaming paste returns WriteQueueFull before encoding.
 pub const input = runtime.input;
+/// Opens one ordered paste after payload acquisition/validation; snapshots bracket mode.
+pub const beginPaste = runtime.beginPaste;
+/// Atomically copies one bounded chunk; final closes the paste and retires the token.
+pub const pasteChunk = runtime.pasteChunk;
+/// Closes an admitted prefix and retires its token without allocation.
+pub const cancelPaste = runtime.cancelPaste;
 /// Atomically applies one explicit canonical PTY and VT geometry.
 pub const resize = runtime.resize;
 /// Applies explicit cell-pixel metrics with canonical rows/columns and PTY size.

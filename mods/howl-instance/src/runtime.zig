@@ -24,6 +24,36 @@ pub fn Runtime(comptime Presentation: ?type) type {
         pub const acquirePublishedFrame = publication.acquireLatest;
 
         const write_queue_bytes: usize = 64 * 1024;
+        const bracketed_paste: vt.Terminal.PasteFraming = .{ .bracketed = true };
+        /// Largest chunk that always fits the empty outbox with both paste delimiters.
+        /// Larger chunks fail permanently; WriteQueueFull instead means retry after progress.
+        pub const maximum_paste_chunk_bytes: usize = write_queue_bytes - bracketed_paste.prefix().len - bracketed_paste.suffix().len;
+        /// Nonreused identity for one streaming paste in this composition.
+        pub const PasteToken = enum(u64) { _ };
+        /// Reports an occupied input lane, pending older replies, or exhausted identities.
+        pub const BeginPasteError = error{ PasteActive, WriteQueueFull, PasteIdentityExhausted };
+        /// Reports stale operation identity or whole-chunk admission failure.
+        pub const PasteError = error{ StalePaste, PasteChunkTooLarge, WriteQueueFull };
+
+        // Process-wide per composition, so a retired token cannot target a later
+        // Instance even when its allocator reuses the same address.
+        var paste_identity: std.atomic.Value(u64) = .init(0);
+
+        fn nextPasteIdentity(counter: *std.atomic.Value(u64)) error{PasteIdentityExhausted}!PasteToken {
+            var before = counter.load(.monotonic);
+            while (true) {
+                if (before == std.math.maxInt(u64)) return error.PasteIdentityExhausted;
+                before = counter.cmpxchgWeak(before, before + 1, .monotonic, .monotonic) orelse
+                    return @fromBackingInt(before + 1);
+            }
+        }
+
+        const Paste = struct {
+            token: ?PasteToken = null,
+            framing: vt.Terminal.PasteFraming = .{ .bracketed = false },
+            started: bool = false,
+        };
+
         const read_buffer_bytes: usize = 16 * 1024;
         const read_calls_per_turn: u8 = 8;
         const write_bytes_per_turn: usize = 64 * 1024;
@@ -353,6 +383,14 @@ pub fn Runtime(comptime Presentation: ?type) type {
             return state.read_start < state.read_end;
         }
 
+        /// True when retained child output can progress without another PTY write
+        /// or paste chunk. Use this for immediate service scheduling; pending bytes
+        /// alone can be blocked by ordered reply admission.
+        pub fn bufferedOutputRunnable(instance: *const Instance) bool {
+            const state = stateConst(instance);
+            return state.outputRunnable();
+        }
+
         /// True while caller input or terminal replies are queued for the child PTY.
         ///
         /// Poll owners include writable readiness whenever this is true; unlike the
@@ -563,8 +601,33 @@ pub fn Runtime(comptime Presentation: ?type) type {
         }
 
         /// Encodes and admits one input event in canonical instance order.
+        /// An active streaming paste returns WriteQueueFull before encoding;
+        /// its owner must finish/cancel before later input can be retried.
         pub fn input(instance: *Instance, event: Input) InputError!void {
             return stateMut(instance).input(event);
+        }
+
+        /// Opens one ordered paste lane and snapshots canonical bracket mode.
+        /// Begin only after payload acquisition/validation: callers supply progress
+        /// or cancellation, and Instance retains no payload borrow or allocation.
+        /// Older queued writes/replies precede the paste. Later inputs/replies wait.
+        pub fn beginPaste(instance: *Instance) BeginPasteError!PasteToken {
+            return stateMut(instance).beginPaste();
+        }
+
+        /// Atomically copies a complete chunk, or retains none on failure.
+        /// final=true appends the closing delimiter and retires the token. An empty
+        /// final chunk completes an empty paste using the ordinary VT framing.
+        /// Chunks are raw payload, never reinterpreted as termios signal events.
+        pub fn pasteChunk(instance: *Instance, token: PasteToken, bytes: []const u8, final: bool) PasteError!void {
+            return stateMut(instance).pasteChunk(token, bytes, final);
+        }
+
+        /// Retires the token and closes any admitted prefix without allocation.
+        /// Already admitted bytes cannot be recalled; delivery still depends on
+        /// PTY progress. Destruction instead closes the whole process-terminal.
+        pub fn cancelPaste(instance: *Instance, token: PasteToken) error{StalePaste}!void {
+            return stateMut(instance).cancelPaste(token);
         }
 
         /// Atomically applies one explicit canonical PTY and VT geometry.
@@ -640,6 +703,11 @@ pub fn Runtime(comptime Presentation: ?type) type {
 
             fn append(self: *WriteQueue, bytes: []const u8) error{WriteQueueFull}!void {
                 if (bytes.len > self.remaining()) return error.WriteQueueFull;
+                self.appendAssumeCapacity(bytes);
+            }
+
+            fn appendAssumeCapacity(self: *WriteQueue, bytes: []const u8) void {
+                std.debug.assert(bytes.len <= self.remaining());
                 @memcpy(self.bytes[self.count..][0..bytes.len], bytes);
                 self.count += bytes.len;
             }
@@ -1154,6 +1222,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
             terminal: vt.Terminal,
             presentation: if (Presentation != null) ?*PresentationState else void = if (Presentation != null) null else {},
             writes: WriteQueue = .{},
+            paste: Paste = .{},
             reads: [read_buffer_bytes]u8 = undefined,
             read_start: usize = 0,
             read_end: usize = 0,
@@ -1197,6 +1266,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 self.allocator = allocator;
                 self.transport = transport;
                 self.writes = .{};
+                self.paste = .{};
                 self.read_start = 0;
                 self.read_end = 0;
                 self.child_exit = null;
@@ -1350,7 +1420,52 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 };
             }
 
+            fn beginPaste(self: *State) BeginPasteError!PasteToken {
+                if (self.paste.token != null) return error.PasteActive;
+                try self.collectReplies();
+                const token = try nextPasteIdentity(&paste_identity);
+                self.paste = .{
+                    .token = token,
+                    .framing = .{ .bracketed = self.terminal.interactionState().bracketed_paste },
+                };
+                return token;
+            }
+
+            fn pasteChunk(self: *State, token: PasteToken, bytes: []const u8, final: bool) PasteError!void {
+                if (self.paste.token != token) return error.StalePaste;
+                if (bytes.len > maximum_paste_chunk_bytes) return error.PasteChunkTooLarge;
+                if (bytes.len == 0 and !final) return;
+                const prefix = if (self.paste.started) "" else self.paste.framing.prefix();
+                const suffix = self.paste.framing.suffix();
+                // Keep closing capacity reserved even on a nonfinal chunk.
+                const required = prefix.len + bytes.len + suffix.len;
+                if (required > self.writes.remaining()) return error.WriteQueueFull;
+                self.writes.appendAssumeCapacity(prefix);
+                self.writes.appendAssumeCapacity(bytes);
+                if (final) {
+                    self.writes.appendAssumeCapacity(suffix);
+                    self.paste = .{};
+                } else self.paste.started = true;
+            }
+
+            fn cancelPaste(self: *State, token: PasteToken) error{StalePaste}!void {
+                if (self.paste.token != token) return error.StalePaste;
+                if (self.paste.started) self.writes.appendAssumeCapacity(self.paste.framing.suffix());
+                self.paste = .{};
+            }
+
+            fn collectReplies(self: *State) error{WriteQueueFull}!void {
+                // The first reply-producing VT boundary retains its reply and
+                // unread tail until paste ends. This uses the existing bounded
+                // queues rather than mixing replies into payload or buffering
+                // unbounded output behind a stalled input operation.
+                if (self.paste.token != null and self.terminal.replyBytes().len != 0)
+                    return error.WriteQueueFull;
+                return transferReplies(&self.terminal, &self.writes);
+            }
+
             fn input(self: *State, event: Input) InputError!void {
+                if (self.paste.token != null) return error.WriteQueueFull;
                 const admission = try inputAdmissionBytes(event);
                 const required = std.math.add(usize, admission, self.terminal.replyBytes().len) catch
                     return error.WriteQueueFull;
@@ -1361,10 +1476,10 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 if (encoded.bytes.len == 1 and self.terminal.termiosSignals() and
                     try self.transport.handleTermiosSignal(encoded.bytes[0]))
                 {
-                    try collectReplies(&self.terminal, &self.writes);
+                    try self.collectReplies();
                     return;
                 }
-                try collectReplies(&self.terminal, &self.writes);
+                try self.collectReplies();
                 try self.writes.append(encoded.bytes);
             }
 
@@ -1381,6 +1496,12 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 prepared.commit();
             }
 
+            fn outputRunnable(self: *const State) bool {
+                const replies = self.terminal.replyBytes().len;
+                return self.read_start < self.read_end and
+                    (replies == 0 or (self.paste.token == null and replies <= self.writes.remaining()));
+            }
+
             fn service(
                 self: *State,
                 readable: bool,
@@ -1394,7 +1515,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 var retained_consequence_fallback = false;
                 if (consequence_policy == .headless) try self.drainConsequences();
                 if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
-                collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
+                self.collectReplies() catch |failure| switch (failure) {
                     error.WriteQueueFull => return self.serviceResult(
                         revision_before,
                         timestamp_ns,
@@ -1464,7 +1585,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 retained_consequence_fallback: *bool,
             ) ServiceError!void {
                 while (self.read_start < self.read_end) {
-                    collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
+                    self.collectReplies() catch |failure| switch (failure) {
                         error.WriteQueueFull => return,
                     };
                     const progress = if (consequence_policy == .retain)
@@ -1487,7 +1608,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                         retained_consequence_fallback.* or progress.consequence_pressure_relieved;
                     std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
                     if (consequence_policy == .headless) try self.drainConsequences();
-                    collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
+                    self.collectReplies() catch |failure| switch (failure) {
                         error.WriteQueueFull => return,
                     };
                     if (progress.summary.synchronized_output.ended and self.read_start < self.read_end) return;
@@ -1606,7 +1727,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
             return @ptrCast(@alignCast(instance));
         }
 
-        fn collectReplies(machine: *vt.Terminal, queue: *WriteQueue) error{WriteQueueFull}!void {
+        fn transferReplies(machine: *vt.Terminal, queue: *WriteQueue) error{WriteQueueFull}!void {
             const bytes = machine.replyBytes();
             if (bytes.len == 0) return;
             try queue.append(bytes);
@@ -1690,6 +1811,229 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 sleepOneMillisecond();
             }
             return error.Timeout;
+        }
+
+        // These proofs exercise only VT/input storage; no fake transport is used.
+        fn pasteTestState() !State {
+            var state: State = undefined;
+            state.allocator = std.testing.failing_allocator;
+            state.terminal = try Terminal.init(std.testing.allocator, 2, 16);
+            state.writes = .{};
+            state.paste = .{};
+            state.read_start = 0;
+            state.read_end = 0;
+            return state;
+        }
+
+        test "paste chunks match one atomic VT encoding across every split and mode changes" {
+            const payload = "\x03hi\xf0\x9f\x98\x80\n";
+            for ([_]bool{ false, true }) |bracketed| {
+                for (0..payload.len + 1) |split| {
+                    var state = try pasteTestState();
+                    defer state.terminal.deinit();
+                    if (bracketed) try std.testing.expect((try state.terminal.feed("\x1b[?2004h")).stateChanged());
+                    var scratch: Terminal.InputScratch = undefined;
+                    var expected = try state.terminal.encodeInput(std.testing.allocator, &scratch, .{ .paste = payload });
+                    defer expected.deinit();
+                    const token = try state.beginPaste();
+                    // The mode changes after acquisition, and a one-byte control
+                    // chunk must remain payload rather than invoke PTY signals.
+                    try std.testing.expect((try state.terminal.feed(if (bracketed) "\x1b[?2004l" else "\x1b[?2004h")).stateChanged());
+                    try state.pasteChunk(token, payload[0..split], false);
+                    try std.testing.expectError(error.WriteQueueFull, state.input(.{ .bytes = "later" }));
+                    try state.pasteChunk(token, payload[split..], true);
+                    try std.testing.expectEqualStrings(expected.bytes, state.writes.bytes[0..state.writes.count]);
+                    try std.testing.expectError(error.StalePaste, state.pasteChunk(token, "", true));
+                    try state.input(.{ .bytes = "ok" });
+                    try std.testing.expectEqualStrings("ok", state.writes.bytes[state.writes.count - 2 .. state.writes.count]);
+                }
+            }
+        }
+
+        test "paste cancellation retains its closing credit at the exact outbox bound" {
+            var state = try pasteTestState();
+            defer state.terminal.deinit();
+            try std.testing.expect((try state.terminal.feed("\x1b[?2004h")).stateChanged());
+            try state.writes.append("old");
+            const token = try state.beginPaste();
+            try std.testing.expectError(error.PasteActive, state.beginPaste());
+            var payload: [maximum_paste_chunk_bytes - 3]u8 = undefined;
+            @memset(&payload, 'x');
+            try state.pasteChunk(token, &payload, false);
+            try std.testing.expectEqual(@as(usize, 6), state.writes.remaining());
+            const count = state.writes.count;
+            try std.testing.expectError(error.WriteQueueFull, state.pasteChunk(token, "y", false));
+            try std.testing.expectEqual(count, state.writes.count);
+            try state.cancelPaste(token);
+            try std.testing.expectEqual(write_queue_bytes, state.writes.count);
+            try std.testing.expectEqualStrings("old\x1b[200~", state.writes.bytes[0..9]);
+            try std.testing.expectEqualStrings("\x1b[201~", state.writes.bytes[state.writes.count - 6 .. state.writes.count]);
+            try std.testing.expectError(error.StalePaste, state.cancelPaste(token));
+        }
+
+        test "paste identities reject another owner and never wrap at exhaustion" {
+            var first = try pasteTestState();
+            defer first.terminal.deinit();
+            var second = try pasteTestState();
+            defer second.terminal.deinit();
+            const first_token = try first.beginPaste();
+            const second_token = try second.beginPaste();
+            try std.testing.expect(first_token != second_token);
+            try std.testing.expectError(error.StalePaste, second.pasteChunk(first_token, "wrong", true));
+            try std.testing.expectError(error.StalePaste, first.cancelPaste(second_token));
+            try std.testing.expectEqual(@as(usize, 0), first.writes.count);
+            try std.testing.expectEqual(@as(usize, 0), second.writes.count);
+            try first.cancelPaste(first_token);
+            const next = try first.beginPaste();
+            try std.testing.expect(next != first_token);
+            try std.testing.expectError(error.StalePaste, first.pasteChunk(first_token, "old", true));
+            try first.cancelPaste(next);
+            try second.cancelPaste(second_token);
+            var counter: std.atomic.Value(u64) = .init(std.math.maxInt(u64) - 1);
+            try std.testing.expectEqual(std.math.maxInt(u64), @backingInt(try nextPasteIdentity(&counter)));
+            try std.testing.expectError(error.PasteIdentityExhausted, nextPasteIdentity(&counter));
+            try std.testing.expectEqual(std.math.maxInt(u64), counter.load(.monotonic));
+        }
+
+        test "empty paste completion matches VT while pre-content cancellation emits nothing" {
+            var state = try pasteTestState();
+            defer state.terminal.deinit();
+            try std.testing.expect((try state.terminal.feed("\x1b[?2004h")).stateChanged());
+            const cancelled = try state.beginPaste();
+            try state.pasteChunk(cancelled, "", false);
+            try state.cancelPaste(cancelled);
+            try std.testing.expectEqual(@as(usize, 0), state.writes.count);
+            const empty = try state.beginPaste();
+            try state.pasteChunk(empty, "", true);
+            try std.testing.expectEqualStrings("\x1b[200~\x1b[201~", state.writes.bytes[0..state.writes.count]);
+        }
+
+        test "paste permanent size failure and transient pressure both retain the whole chunk" {
+            var state = try pasteTestState();
+            defer state.terminal.deinit();
+            const token = try state.beginPaste();
+            var oversized: [maximum_paste_chunk_bytes + 1]u8 = undefined;
+            @memset(&oversized, 'x');
+            try std.testing.expectError(error.PasteChunkTooLarge, state.pasteChunk(token, &oversized, true));
+            try std.testing.expectEqual(@as(usize, 0), state.writes.count);
+            state.writes.count = write_queue_bytes;
+            try std.testing.expectError(error.WriteQueueFull, state.pasteChunk(token, "abc", true));
+            try std.testing.expectEqual(write_queue_bytes, state.writes.count);
+            try std.testing.expect(!state.paste.started);
+            state.writes.consume(state.writes.count);
+            try state.pasteChunk(token, "abc", true);
+            try std.testing.expectEqualStrings("abc", state.writes.bytes[0..state.writes.count]);
+        }
+
+        test "paste fences generated replies at the bounded VT boundary without a runnable busy loop" {
+            var state = try pasteTestState();
+            defer state.terminal.deinit();
+            try std.testing.expect((try state.terminal.feed("\x1b[?2004h\x1b[5n")).stateChanged());
+            try state.writes.append("old");
+            const token = try state.beginPaste();
+            try std.testing.expectEqualStrings("old\x1b[0n", state.writes.bytes[0..state.writes.count]);
+            try state.pasteChunk(token, "payload", false);
+            const output = "A\x1b[5nB";
+            @memcpy(state.reads[0..output.len], output);
+            state.read_end = output.len;
+            var viewport = false;
+            var synchronized: Terminal.SynchronizedOutputProgress = .{};
+            var fallback = false;
+            try std.testing.expect(state.outputRunnable());
+            try state.processBuffered(1, .headless, &viewport, &synchronized, &fallback);
+            try std.testing.expectEqual(output.len - 1, state.read_start);
+            try std.testing.expectEqualStrings("\x1b[0n", state.terminal.replyBytes());
+            try std.testing.expect(!state.outputRunnable());
+            try std.testing.expectEqualStrings("old\x1b[0n\x1b[200~payload", state.writes.bytes[0..state.writes.count]);
+            const before = state.terminal.semanticSequence();
+            try state.processBuffered(2, .headless, &viewport, &synchronized, &fallback);
+            try std.testing.expectEqual(before, state.terminal.semanticSequence());
+            try state.cancelPaste(token);
+            try std.testing.expect(state.outputRunnable());
+            try state.processBuffered(3, .headless, &viewport, &synchronized, &fallback);
+            try std.testing.expectEqualStrings("old\x1b[0n\x1b[200~payload\x1b[201~\x1b[0n", state.writes.bytes[0..state.writes.count]);
+            try std.testing.expectEqual(@as(usize, 0), state.read_end);
+            const view = state.terminal.semanticView(0);
+            try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+            try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+            // Ordinary reply pressure also waits for a writable descriptor.
+            try std.testing.expect((try state.terminal.feed("\x1b[5n")).stateChanged());
+            state.read_end = 1;
+            state.writes.count = write_queue_bytes;
+            try std.testing.expect(!state.outputRunnable());
+            state.writes.consume(state.writes.count);
+            try std.testing.expect(state.outputRunnable());
+        }
+
+        test "large paste crosses the real PTY with one delimiter pair and deferred terminal reply" {
+            if (comptime @import("builtin").os.tag != .linux) return error.SkipZigTest;
+            const payload_len = maximum_paste_chunk_bytes * 4 + 17;
+            const wire_len = payload_len + 12 + 4 + 2;
+            var command: [512]u8 = undefined;
+            const script = try std.fmt.bufPrint(
+                &command,
+                "stty raw -echo; printf '\\033[?2004hREADY'; " ++
+                    "{{ head -c 1024; printf '\\033[5n' > /dev/tty; head -c {d}; }} | sha256sum; printf DONE",
+                .{wire_len - 1024},
+            );
+            const instance = try init(std.testing.allocator, std.testing.environ, .{
+                .shell = "/bin/sh",
+                .command = script,
+                .rows = 4,
+                .columns = 80,
+                .history_rows = 0,
+            });
+            defer deinit(instance);
+            try serviceUntilContains(instance, "READY");
+            const token = try beginPaste(instance);
+            var chunk: [maximum_paste_chunk_bytes]u8 = undefined;
+            @memset(&chunk, 'x');
+            var admitted: usize = 0;
+            var finished = false;
+            var later = false;
+            var fenced_reply = false;
+            var pressure = false;
+            var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+            hasher.update("\x1b[200~");
+            for (0..4) |_| hasher.update(&chunk);
+            hasher.update(chunk[0..17]);
+            hasher.update("\x1b[201~\x1b[0nOK");
+            var digest: [32]u8 = undefined;
+            hasher.final(&digest);
+            const expected = std.fmt.bytesToHex(&digest, .lower);
+            var matched = false;
+            for (0..3000) |_| {
+                const progress = try service(instance, true, true, 0);
+                if (progress.child_exit != null and !finished) return error.ChildExited;
+                if (stateConst(instance).terminal.replyBytes().len != 0 and !finished)
+                    fenced_reply = true;
+                if (!finished) {
+                    const count = @min(chunk.len, payload_len - admitted);
+                    const final = admitted + count == payload_len;
+                    if (pasteChunk(instance, token, chunk[0..count], final)) |_| {
+                        admitted += count;
+                        finished = final;
+                    } else |err| switch (err) {
+                        error.WriteQueueFull => pressure = true,
+                        else => return err,
+                    }
+                } else if (!later) {
+                    input(instance, .{ .bytes = "OK" }) catch |err| switch (err) {
+                        error.WriteQueueFull => continue,
+                        else => return err,
+                    };
+                    later = true;
+                }
+                var snapshot: [4096]u8 = undefined;
+                if (std.mem.indexOf(u8, try snapshotAscii(instance, &snapshot), &expected) != null) {
+                    matched = true;
+                    break;
+                }
+                sleepOneMillisecond();
+            }
+            try std.testing.expect(matched);
+            try std.testing.expect(finished and later and fenced_reply and pressure);
+            try std.testing.expectEqual(payload_len, admitted);
         }
 
         test "literal program arguments reach the canonical terminal without command interpolation" {

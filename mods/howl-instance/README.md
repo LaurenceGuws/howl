@@ -50,6 +50,36 @@ Instance exposes semantic operations and canonical observation. Server communica
 remote client identities, resize/consequence authority and wire codecs belong to the
 optional Server implementation above this package.
 
+## Ordered large paste (direct Zig)
+
+Use `beginPaste` only after acquiring and validating the payload. It snapshots
+VT bracket mode and returns one nonreused `PasteToken`. `pasteChunk` copies a
+whole chunk into the existing 64 KiB outbox or returns `WriteQueueFull` without
+admitting a prefix. Limit each chunk to `maximum_paste_chunk_bytes`; larger
+chunks return the permanent `PasteChunkTooLarge` error. There is no whole-paste
+allocation, retained payload borrow, or total-payload limit inside Instance.
+
+Only the first chunk opens the VT-owned framing. A final chunk closes it and
+retires the token. Empty final completion matches ordinary VT paste encoding.
+`cancelPaste` closes any admitted prefix using reserved outbox capacity and
+retires the token without allocation. Cancellation cannot recall admitted bytes
+or promise their delivery after transport failure. Destroying Instance closes
+the whole process-terminal. Calls on one Instance remain caller-serialized.
+
+During the operation, ordinary `input` returns `WriteQueueFull` before encoding.
+Generated replies stay behind paste at the next VT reply-producing service
+boundary, retaining the bounded unread suffix. Plain output can still advance;
+a child whose input/output dependencies prevent progress applies normal
+backpressure. The paste owner must continue submitting prepared chunks or cancel;
+do not hold this lane while waiting for a clipboard producer or user decision.
+Explicit signals and geometry remain separately available.
+
+Poll writable readiness while `writePending`. Use `bufferedOutputRunnable` to
+schedule immediate buffered output: `bufferedOutputPending` reports storage
+only and may be waiting for reply space or paste completion. Both direct roots
+select this same implementation. The existing foreign interface still exposes
+atomic paste; this streaming API adds no C ABI or Server wire operation.
+
 ## Native foreign interface
 
 The optional module-owned [native contract](docs/native.md) exposes Linux

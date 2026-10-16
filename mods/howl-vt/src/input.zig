@@ -9,6 +9,22 @@ pub const Scratch = struct {
     buf: [512]u8 = undefined,
 };
 
+/// Immutable framing for one paste, captured before its first byte is admitted.
+/// Payload validation and clipboard policy remain the embedder's responsibility.
+pub const PasteFraming = struct {
+    bracketed: bool,
+
+    /// Prefix before the first payload byte (also used for an empty paste).
+    pub fn prefix(self: PasteFraming) []const u8 {
+        return if (self.bracketed) "\x1b[200~" else "";
+    }
+
+    /// Suffix after the final admitted byte, including cancellation after a prefix.
+    pub fn suffix(self: PasteFraming) []const u8 {
+        return if (self.bracketed) "\x1b[201~" else "";
+    }
+};
+
 /// Reports paste length overflow or allocation failure.
 pub const PasteError = error{ LengthOverflow, OutOfMemory };
 
@@ -19,8 +35,9 @@ pub const PasteError = error{ LengthOverflow, OutOfMemory };
 /// pair. Encoded-length overflow is distinct from allocator exhaustion. The
 /// caller must call `Encoded.deinit` once for either successful result.
 pub fn encodePaste(bracketed_paste: bool, allocator: std.mem.Allocator, text: []const u8) PasteError!Encoded {
-    const start = if (bracketed_paste) "\x1b[200~" else "";
-    const end = if (bracketed_paste) "\x1b[201~" else "";
+    const framing: PasteFraming = .{ .bracketed = bracketed_paste };
+    const start = framing.prefix();
+    const end = framing.suffix();
     if (start.len == 0 and end.len == 0) return .{ .bytes = text };
 
     const encoded_len = try bracketedPasteLength(text.len);
@@ -33,8 +50,9 @@ pub fn encodePaste(bracketed_paste: bool, allocator: std.mem.Allocator, text: []
 }
 
 fn bracketedPasteLength(text_len: usize) error{LengthOverflow}!usize {
-    const with_start = std.math.add(usize, "\x1b[200~".len, text_len) catch return error.LengthOverflow;
-    return std.math.add(usize, with_start, "\x1b[201~".len) catch return error.LengthOverflow;
+    const framing: PasteFraming = .{ .bracketed = true };
+    const with_start = std.math.add(usize, framing.prefix().len, text_len) catch return error.LengthOverflow;
+    return std.math.add(usize, with_start, framing.suffix().len) catch return error.LengthOverflow;
 }
 
 /// Copy fixed protocol bytes into caller scratch storage.
