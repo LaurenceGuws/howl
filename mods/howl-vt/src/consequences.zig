@@ -434,7 +434,7 @@ pub const State = struct {
     notifications: [notification_capacity]NotificationOwned = undefined,
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
-    pointer_shape_reset_generation: u64 = 1,
+    terminal_reset_generation: u64 = 1,
     pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
     pointer_shapes_start: u8 = 0,
     pointer_shapes_count: u8 = 0,
@@ -500,10 +500,10 @@ pub const State = struct {
 
     /// Records a terminal reset without discarding previously retained occurrences.
     pub fn resetTerminal(self: *State) void {
-        self.pointer_shape_reset_generation = std.math.add(u64, self.pointer_shape_reset_generation, 1) catch
+        self.terminal_reset_generation = std.math.add(u64, self.terminal_reset_generation, 1) catch
             // zig-audit: acknowledge panic
             // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
-            @panic("pointer reset identity exhausted");
+            @panic("terminal reset identity exhausted");
     }
 
     /// Returns the globally earliest retained occurrence, or null when empty.
@@ -601,7 +601,7 @@ pub const State = struct {
         @memcpy(slot.payload[0..payload.len], payload);
         self.commitConsequenceId(occurrence_id);
         slot.generation = occurrence_id;
-        slot.reset_generation = self.pointer_shape_reset_generation;
+        slot.reset_generation = self.terminal_reset_generation;
         slot.alternate_screen = alternate_screen;
         slot.payload_len = @intCast(payload.len);
         self.pointer_shapes_count += 1;
@@ -1143,5 +1143,5 @@ test "terminal reset advances pointer identity without consuming occurrences" {
     state.resetTerminal();
     try std.testing.expectEqual(@as(u8, 1), state.count());
     try std.testing.expectEqual(before.generation, state.head().?.pointer_shape.generation);
-    try std.testing.expectEqual(before.reset_generation + 1, state.pointer_shape_reset_generation);
+    try std.testing.expectEqual(before.reset_generation + 1, state.terminal_reset_generation);
 }

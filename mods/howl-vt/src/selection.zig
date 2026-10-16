@@ -280,3 +280,79 @@ test "direct saved selection rejects a different bank and eviction before alloca
     try std.testing.expectError(error.InvalidRange, selected.copy(terminal.observation(), failing.allocator(), 64));
     try std.testing.expect(!failing.has_induced_failure);
 }
+
+test "row mutation identity follows an unchanged live row into history" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 4, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AB")).stateChanged());
+    const live = terminal.semanticView(0);
+    const generation = live.rowGeneration(0).?;
+    try std.testing.expect((try terminal.feed("\r\n")).stateChanged());
+    const history = terminal.semanticView(1);
+    try std.testing.expect(history.rowGeneration(0) != null);
+    try std.testing.expectEqual(generation, history.rowGeneration(0).?);
+    try std.testing.expect(history.rowGeneration(1) == null);
+    try std.testing.expectEqual(@as(u21, 'A'), history.cellAt(0, 0));
+    try std.testing.expect((try terminal.feed("C\r\n")).stateChanged());
+    const retained = terminal.semanticView(2);
+    try std.testing.expectEqual(generation, retained.rowGeneration(0).?);
+}
+
+test "editing and restoring history cannot reuse a selected row mutation identity" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 4, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AB")).stateChanged());
+    const live_generation = terminal.semanticView(0).rowGeneration(0).?;
+    try std.testing.expect((try terminal.feed("\rC\r\n")).stateChanged());
+    const before = terminal.semanticView(1);
+    try std.testing.expect(before.rowGeneration(0) != null);
+    const archived_generation = before.rowGeneration(0).?;
+    try std.testing.expect(archived_generation != live_generation);
+    try std.testing.expectEqual(@as(u21, 'C'), before.cellAt(0, 0));
+    const coordinate = stableRow(&before, 0).?;
+    // CSI + T restores the newest history row. Edit and re-archive it in
+    // this same feed, ending with identical retained row coordinates/count.
+    try std.testing.expect((try terminal.feed("\x1b[+T\rD\r\n")).stateChanged());
+    const after = terminal.semanticView(1);
+    try std.testing.expectEqual(coordinate, stableRow(&after, 0).?);
+    try std.testing.expectEqual(before.history_count, after.history_count);
+    try std.testing.expect(after.rowGeneration(0).? != archived_generation);
+    try std.testing.expectEqual(@as(u21, 'D'), after.cellAt(0, 0));
+}
+
+test "reflow rebuilds history with fresh identities and eviction exposes no retired generation" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("ABCD\r\nEFGH\r\nIJKL\r\nMNOP")).stateChanged());
+    const old = terminal.semanticView(4);
+    var maximum: u64 = 0;
+    for (0..old.history_count + old.rows) |index| {
+        const located = viewForStableRow(terminal.observation(), @intCast(old.history_row_base + index)).?;
+        maximum = @max(maximum, located.view.rowGeneration(located.viewport_row).?);
+    }
+    try terminal.resize(2, 2);
+    const resized = terminal.semanticView(0);
+    for (0..resized.history_count + resized.rows) |index| {
+        const located = viewForStableRow(terminal.observation(), @intCast(resized.history_row_base + index)).?;
+        try std.testing.expect(located.view.rowGeneration(located.viewport_row).? > maximum);
+    }
+    const retired = @as(i32, @intCast(resized.history_row_base));
+    try std.testing.expect((try terminal.feed("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6")).stateChanged());
+    try std.testing.expect(viewForStableRow(terminal.observation(), retired) == null);
+}
+
+test "hard reset has its own identity while retained history provenance survives" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 4, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AB\r\n")).stateChanged());
+    const before = terminal.observation().resetSequence();
+    const history_generation = terminal.semanticView(1).rowGeneration(0).?;
+    try std.testing.expect((try terminal.feed("C\x1b[!p")).stateChanged());
+    try std.testing.expectEqual(before, terminal.observation().resetSequence());
+    terminal.hardReset();
+    try std.testing.expectEqual(before + 1, terminal.observation().resetSequence());
+    try std.testing.expectEqual(history_generation, terminal.semanticView(1).rowGeneration(0).?);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expectEqual(before + 2, terminal.observation().resetSequence());
+    try std.testing.expectEqual(terminal.pointerShapeResetSequence(), terminal.observation().resetSequence());
+}

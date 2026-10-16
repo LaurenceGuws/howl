@@ -5015,14 +5015,14 @@ pub const Terminal = struct {
             return output[0..values.len];
         }
 
-        /// Returns the current screen-row mutation identity when this visible row
-        /// maps directly to the active screen. History rows deliberately expose no
-        /// identity until history provenance is separately owned.
+        /// Returns this projected row's non-consuming mutation identity.
+        /// History admission preserves the live identity; edits before archival
+        /// remain detectable. Compare only within the same terminal/bank/geometry.
         pub fn rowGeneration(self: *const SemanticView, row: u16) ?u64 {
             if (row >= self.rows) return null;
             const screen = self.backingScreen();
             return switch (self.rowSource(row)) {
-                .history => null,
+                .history => |recency| screen.historyRowGeneration(recency),
                 .screen => |screen_row| screen.rowGeneration(screen_row),
             };
         }
@@ -6039,6 +6039,11 @@ pub const Terminal = struct {
         /// Returns the bounded retained consequence count.
         pub fn consequenceCount(self: *const Observation) u16 {
             return self.terminal().consequenceCount();
+        }
+
+        /// Copies canonical hard-reset identity; ordinary output/DECSTR do not advance it.
+        pub fn resetSequence(self: *const Observation) u64 {
+            return self.terminal().resetSequence();
         }
 
         /// Copies the terminal reset identity for pointer-shape stacks.
@@ -7334,9 +7339,14 @@ pub const Terminal = struct {
         return self.screen_state.primary.history_loss_generation;
     }
 
+    /// Returns canonical hard-reset identity, independently of retained history rows.
+    pub fn resetSequence(self: *const Terminal) u64 {
+        return self.consequences.terminal_reset_generation;
+    }
+
     /// Returns the terminal reset identity governing pointer-shape stacks.
     pub fn pointerShapeResetSequence(self: *const Terminal) u64 {
-        return self.consequences.pointer_shape_reset_generation;
+        return self.resetSequence();
     }
 
     /// Reports whether mode 2031 requests color-preference notifications.

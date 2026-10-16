@@ -381,6 +381,7 @@ const AttrStream = Stream(CellAttrs, 1024);
 const ScalarStream = Stream(u32, 16384);
 
 const Row = struct {
+    generation: u64,
     cell_start: ?CellStream.Cursor,
     attr_start: ?AttrStream.Cursor,
     scalar_start: ?ScalarStream.Cursor,
@@ -447,6 +448,8 @@ const Recycled = struct {
 
 /// One immutable hot-row source admitted into projected history.
 pub const Source = struct {
+    /// Mutation identity of the immutable source row; zero means unprovided.
+    generation: u64 = 0,
     cells: []const Cell,
     scalars: *const scalar_storage.Storage,
     scalar_start: usize,
@@ -807,6 +810,7 @@ pub const Store = struct {
         std.debug.assert(encoded_scalars == prepared.shape.scalars);
 
         self.rows[row_slot] = .{
+            .generation = prepared.source.generation,
             .cell_start = cell_start,
             .attr_start = attr_start,
             .scalar_start = scalar_start,
@@ -932,6 +936,13 @@ pub const Store = struct {
     pub fn contentLengthLogical(self: *const Store, logical: u32) u16 {
         if (logical >= self.row_count) return 0;
         return self.rowAtLogical(logical).cell_count;
+    }
+
+    /// Returns the archived source row's mutation identity, when supplied.
+    pub fn generationRecency(self: *const Store, recency: u32) ?u64 {
+        const logical = self.logicalForRecency(recency) orelse return null;
+        const generation = self.rowAtLogical(logical).generation;
+        return if (generation == 0) null else generation;
     }
 
     /// Returns retained row wrap state by newest-first recency.

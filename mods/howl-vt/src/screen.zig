@@ -745,6 +745,7 @@ pub const Screen = struct {
             else
                 return error.OutOfMemory;
             var prepared = store.preparePush(.{
+                .generation = self.nextRowGeneration(),
                 .cells = reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
                 .scalars = &reflow.scalars.?,
                 .scalar_start = row.start,
@@ -804,6 +805,7 @@ pub const Screen = struct {
         const incoming = self.cells.?[row_start..][0..len];
         const store = if (self.history_store) |*value| value else return;
         var prepared = store.preparePush(.{
+            .generation = self.rowGeneration(row) orelse 0,
             .cells = incoming,
             .scalars = &self.scalars.?,
             .scalar_start = row_start,
@@ -1377,6 +1379,12 @@ pub const Screen = struct {
         const cells = self.cells orelse unreachable;
         const start: usize = @intCast(self.rowStart(row));
         return cells[start..][0..self.cols];
+    }
+
+    /// Returns the live row mutation identity preserved by immutable history admission.
+    pub fn historyRowGeneration(self: *const Screen, history_idx: u32) ?u64 {
+        const store = if (self.history_store) |*value| value else return null;
+        return store.generationRecency(history_idx);
     }
 
     /// Return retained history row count.

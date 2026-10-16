@@ -142,7 +142,12 @@ fn copyLogicalOutputAllocation(allocator: std.mem.Allocator) !void {
     defer terminal.deinit();
     try feedChanged(&terminal, "one\r\ntwo\r\nopen");
 
-    var output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 128)) {
+    // Force the moving/shrinking fallback: whether the backing allocator can
+    // remap in place varies with heap layout and otherwise changes the number
+    // of alloc calls between failure trials. All fallback allocations still
+    // pass through the injected allocator and must unwind on failure.
+    var moving = std.testing.FailingAllocator.init(allocator, .{ .resize_fail_index = 0 });
+    var output = switch (try terminal.copyLogicalOutput(moving.allocator(), 0, 4, 128)) {
         .output => |value| value,
         else => return error.UnexpectedOutputResult,
     };
