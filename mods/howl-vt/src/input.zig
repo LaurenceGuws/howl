@@ -350,7 +350,7 @@ pub fn encodeEvent(
         return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
     return encodeKey(
         buf,
-        legacyKey(key, mod, shifted),
+        legacyKey(key, mod, shifted, text),
         mod,
         application_cursor_keys,
         application_keypad,
@@ -362,7 +362,18 @@ pub fn encodeEvent(
 
 // Legacy terminals consume the produced Shift identity, while extended key
 // protocols retain physical, shifted, and alternate identities separately.
-fn legacyKey(key: InputKey, mod: Modifier, shifted: ?u21) InputKey {
+fn legacyKey(key: InputKey, mod: Modifier, shifted: ?u21, text: []const u8) InputKey {
+    // The caller may retain an unshifted physical identity while Caps Lock or a
+    // layout transform produces different text. Preserve that scalar for legacy
+    // encoding, including its Alt prefix; Control continues to use key identity.
+    if (key == .unicode and !mod.control and !mod.super and !mod.hyper and !mod.meta and text.len != 0) {
+        var view = std.unicode.Utf8View.initUnchecked(text); // encodeEvent validated it.
+        var iterator = view.iterator();
+        if (iterator.nextCodepoint()) |scalar| {
+            if (iterator.nextCodepoint() == null and scalar >= 32 and !(scalar >= 127 and scalar <= 159))
+                return InputKey.initUnicode(scalar) catch key;
+        }
+    }
     if (!mod.shift) return key;
     return switch (key) {
         .named => key,
@@ -1359,4 +1370,15 @@ test "mouse protocols encode boundaries without partial sequences" {
         .sgr_pixel,
     ));
     try std.testing.expectEqual(@as(u32, 1), mouseRow1(std.math.minInt(i32)));
+}
+
+test "legacy produced text preserves caps and layout transforms with Alt" {
+    var buf: [max_kitty_encoded_bytes]u8 = undefined;
+    const physical = try InputKey.initUnicode('i');
+    try std.testing.expectEqualStrings("\x1bI", try encodeEvent(&buf, physical, .{ .alt = true, .caps_lock = true }, .press, null, null, "", "I", false, false, 0, 0, 0));
+    try std.testing.expectEqualStrings("\x1b\xc4\xb0", try encodeEvent(&buf, physical, .{ .alt = true }, .press, null, null, "", "\xc4\xb0", false, false, 0, 0, 0));
+    // Control identity stays independent of produced text.
+    try std.testing.expectEqualStrings("\x09", try encodeEvent(&buf, physical, .{ .control = true }, .press, null, null, "", "I", false, false, 0, 0, 0));
+    // Report-all retains the physical identity and associates produced text.
+    try std.testing.expectEqualStrings("\x1b[105;67;73u", try encodeEvent(&buf, physical, .{ .alt = true, .caps_lock = true }, .press, null, null, "", "I", false, false, 0, 0, 31));
 }
