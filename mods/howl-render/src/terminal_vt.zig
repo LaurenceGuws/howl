@@ -156,7 +156,8 @@ pub fn updateObservation(
 /// a complete baseline. No row hint or VT borrow survives this update.
 pub const RowChanges = struct {
     base_revision: ?u64,
-    rows: []const bool,
+    /// Null requests full glyph projection while retaining source provenance.
+    rows: ?[]const bool = null,
 };
 
 /// Projects a complete frame while reusing eligible unchanged row commands.

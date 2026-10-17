@@ -35,6 +35,7 @@ active:
   - dogfood the Odin/SDL3 desktop canary across accepted Local and Server-selected routes with tabs/splits, profiles, settings, explicit attachments and shared terminal-renderer presentation without duplicating terminal semantics
 
 deferred:
+  - reduce bounded ASCII/BG span bookkeeping overhead on styled VT writes and scrolling; compare VT-only cost and complete VT-to-frame cost while preserving plain-ASCII throughput, exact invalidation and observer independence
   - qualify ordinary Odin desktop installation and remaining accessibility/platform behavior
   - further Android visual/app-lifecycle polish beyond the accepted Note10 route-less shell, persistence, managed attach, and rotation canaries
   - authenticated/public remote Howl transport policy

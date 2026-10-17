@@ -304,6 +304,76 @@ const IncrementalPlan = struct {
     y_delta: i32,
 };
 
+// Resolved row backgrounds are independent of glyph and decoration reuse.
+// A row exceeding this bound is still projected completely; it just is not cached.
+const BackgroundRun = struct {
+    start: u16,
+    end: u16,
+    color: frame_vocabulary.Color,
+};
+
+const BackgroundRow = struct {
+    generation: u64 = 0,
+    runs: [8]BackgroundRun = undefined,
+    count: u8 = 0,
+    valid: bool = false,
+};
+
+const BackgroundCache = struct {
+    rows: []BackgroundRow,
+    ready: bool = false,
+    source_revision: u64 = 0,
+    row_count: u16 = 0,
+    columns: u16 = 0,
+    history_offset: u32 = 0,
+    alternate_screen: bool = false,
+    foreground: frame_vocabulary.Color = undefined,
+    background: frame_vocabulary.Color = undefined,
+    palette: [256]frame_vocabulary.Color = undefined,
+
+    fn matches(self: *const BackgroundCache, comptime Source: type, snapshot: *const Source.Snapshot) bool {
+        if (comptime !@hasDecl(Source, "rowBackgroundGeneration")) return false;
+        if (!self.ready or Source.rows(snapshot) != self.row_count or
+            Source.columns(snapshot) != self.columns or
+            Source.historyOffset(snapshot) != self.history_offset or
+            Source.alternateScreen(snapshot) != self.alternate_screen or
+            Source.presentation(snapshot).reverse_screen) return false;
+        const base = Source.changedRowsBaseRevision(snapshot) orelse return false;
+        if (base != self.source_revision or (Source.rowShift(snapshot) orelse 0) != 0) return false;
+        const presentation = Source.presentation(snapshot);
+        if (!std.meta.eql(self.foreground, contentRgba(Source, presentation.foreground)) or
+            !std.meta.eql(self.background, contentRgba(Source, presentation.background))) return false;
+        for (self.palette, presentation.palette) |old, new| {
+            if (!std.meta.eql(old, contentRgba(Source, new))) return false;
+        }
+        return true;
+    }
+
+    fn accept(self: *BackgroundCache, comptime Source: type, snapshot: *const Source.Snapshot) void {
+        self.ready = false;
+        if (comptime !@hasDecl(Source, "rowBackgroundGeneration")) return;
+        const rows = Source.rows(snapshot);
+        const presentation = Source.presentation(snapshot);
+        if (rows == 0 or rows > self.rows.len or presentation.reverse_screen or
+            Source.historyOffset(snapshot) != 0) return;
+        self.row_count = rows;
+        self.columns = Source.columns(snapshot);
+        self.history_offset = Source.historyOffset(snapshot);
+        self.alternate_screen = Source.alternateScreen(snapshot);
+        self.source_revision = Source.observationRevision(snapshot);
+        self.foreground = contentRgba(Source, presentation.foreground);
+        self.background = contentRgba(Source, presentation.background);
+        for (presentation.palette, 0..) |value, i| self.palette[i] = contentRgba(Source, value);
+        self.ready = true;
+    }
+};
+
+fn sourceBackgroundGeneration(comptime Source: type, snapshot: *const Source.Snapshot, row: usize) ?u64 {
+    if (comptime @hasDecl(Source, "rowBackgroundGeneration"))
+        return Source.rowBackgroundGeneration(snapshot, row);
+    return null;
+}
+
 const Impl = struct {
     allocator: std.mem.Allocator,
     config: Config,
@@ -316,6 +386,7 @@ const Impl = struct {
     incremental_rows: []IncrementalRowCommands,
     incremental_candidate_rows: []IncrementalRowCommands,
     incremental_repairs: []bool,
+    backgrounds: BackgroundCache,
     incremental_command_count: usize = 0,
     incremental_scene_kind: RowSceneKind = .baseline,
     incremental_scene_revision: u64 = 0,
@@ -544,6 +615,9 @@ fn initWithStoreInner(
     errdefer allocator.free(incremental_candidate_rows);
     const incremental_repairs = try allocator.alloc(bool, config.incremental_row_capacity);
     errdefer allocator.free(incremental_repairs);
+    const background_rows = try allocator.alloc(BackgroundRow, config.incremental_row_capacity);
+    errdefer allocator.free(background_rows);
+    @memset(background_rows, .{});
 
     impl.* = .{
         .allocator = allocator,
@@ -556,6 +630,7 @@ fn initWithStoreInner(
         .incremental_rows = incremental_rows,
         .incremental_candidate_rows = incremental_candidate_rows,
         .incremental_repairs = incremental_repairs,
+        .backgrounds = .{ .rows = background_rows },
     };
     // zig-audit: acknowledge ptr_cast
     // reason: Renderer is the opaque handle for this exact allocator-owned Impl allocation and preserves its address.
@@ -573,9 +648,11 @@ pub fn deinit(owner: *Renderer) void {
     const incremental_rows = impl.incremental_rows;
     const incremental_candidate_rows = impl.incremental_candidate_rows;
     const incremental_repairs = impl.incremental_repairs;
+    const background_rows = impl.backgrounds.rows;
     impl.* = undefined;
     allocator.free(commands);
     allocator.free(incremental_repairs);
+    allocator.free(background_rows);
     allocator.free(incremental_candidate_rows);
     allocator.free(incremental_rows);
     allocator.free(incremental_commands);
@@ -592,6 +669,7 @@ pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     const impl = rendererImpl(owner);
     impl.frame_ready = false;
     impl.incremental_ready = false;
+    impl.backgrounds.ready = false;
     impl.incremental_command_count = 0;
     try glyph_cache.resetAtlas(impl.atlas);
 }
@@ -708,6 +786,7 @@ fn updateInnerOnce(
     const store = storeImpl(impl.store);
     impl.frame_ready = false;
     errdefer impl.incremental_ready = false;
+    errdefer impl.backgrounds.ready = false;
     if (comptime Source.supports_incremental) if (impl.incremental_ready) {
         std.mem.swap([]frame_vocabulary.Input, &impl.commands, &impl.incremental_commands);
         impl.commands_use_incremental_allocation = !impl.commands_use_incremental_allocation;
@@ -742,6 +821,8 @@ fn updateInnerOnce(
         cached_commands,
         impl.incremental_rows,
         candidate_rows,
+        &impl.backgrounds,
+        impl.backgrounds.matches(Source, snapshot),
         impl.config.cell_size,
         store.clusters,
         store.shaped,
@@ -889,6 +970,7 @@ fn updateInnerOnce(
         impl.incremental_ready = false;
         impl.incremental_command_count = 0;
     }
+    impl.backgrounds.accept(Source, snapshot);
     impl.frame_ready = true;
 }
 
@@ -1550,6 +1632,42 @@ fn contentFontVisibleClip(
     return contentLineClip(row_strip, row, geometry, cell_size, surface);
 }
 
+fn appendBackgroundRun(
+    output: []frame_vocabulary.Input,
+    used: *usize,
+    run: BackgroundRun,
+    row: usize,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
+) Error!void {
+    var rect = try contentCellRect(row, run.start, cell_size);
+    rect.width = std.math.cast(u16, @as(u32, run.end - run.start) * cell_size.width) orelse
+        return error.InvalidPresentationGeometry;
+    try appendContentSolid(output, used, rect, contentSurfaceRect(surface), run.color);
+}
+
+fn flushBackgroundRun(
+    output: []frame_vocabulary.Input,
+    used: *usize,
+    run: BackgroundRun,
+    default_background: frame_vocabulary.Color,
+    cached: ?*BackgroundRow,
+    row: usize,
+    cell_size: frame_vocabulary.Size,
+    surface: frame_vocabulary.Size,
+) Error!void {
+    if (std.meta.eql(run.color, default_background)) return;
+    try appendBackgroundRun(output, used, run, row, cell_size, surface);
+    if (cached) |value| if (value.valid) {
+        if (value.count == value.runs.len) {
+            value.valid = false;
+        } else {
+            value.runs[value.count] = run;
+            value.count += 1;
+        }
+    };
+}
+
 fn appendContentLineSolid(
     output: []frame_vocabulary.Input,
     used: *usize,
@@ -1983,6 +2101,8 @@ fn buildContentCommands(
     incremental_commands: []const frame_vocabulary.Input,
     incremental_rows: []const IncrementalRowCommands,
     row_ranges: ?[]IncrementalRowCommands,
+    backgrounds: *BackgroundCache,
+    reuse_backgrounds: bool,
     cell_size: frame_vocabulary.Size,
     cluster_scratch: []u32,
     shaped_scratch: []text.Glyph,
@@ -2022,35 +2142,53 @@ fn buildContentCommands(
         const line_geometry = Source.lineGeometry(snapshot, row);
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, line_geometry);
-        // The retained plain-row cache proves clean rows have no background
-        // overrides or decorations. Changed rows are checked during this pass.
-        if (active_plan) |plan| if (!plan.repairs[row_index]) continue;
+        const cached: ?*BackgroundRow = if (row_index < backgrounds.rows.len) &backgrounds.rows[row_index] else null;
+        const generation = sourceBackgroundGeneration(Source, snapshot, row_index);
+        // The plain-row cache proves these rows have no BG overrides or decorations.
+        if (active_plan) |plan| if (!plan.repairs[row_index]) {
+            if (cached) |value| value.* = .{ .generation = generation orelse 0, .valid = generation != null };
+            continue;
+        };
+        const reuse = line_geometry == .single_width and reuse_backgrounds and generation != null and
+            cached != null and cached.?.valid and cached.?.generation == generation.?;
+        if (reuse) {
+            for (cached.?.runs[0..cached.?.count]) |run|
+                try appendBackgroundRun(output, &used, run, row_index, cell_size, surface);
+        } else if (cached) |value| {
+            value.valid = generation != null and line_geometry == .single_width;
+            value.generation = generation orelse 0;
+            value.count = 0;
+        }
+        var pending: ?BackgroundRun = null;
         var row_eligible = incremental_eligible and line_geometry == .single_width;
         for (0..line_columns) |column| {
             const cell = Source.cellAt(snapshot, row, column);
             const style = Source.cellStyle(cell);
             has_decorations = has_decorations or style.underline or style.strikethrough;
+            // BG equality cannot establish FG/decorations or plain-glyph eligibility.
             const reversed = style.reverse != presentation.reverse_screen;
             const default_cell_background = !reversed and Source.cellColor(cell, .background).kind == .default;
             if (row_eligible) row_eligible = default_cell_background and
                 !style.reverse and !style.underline and !style.strikethrough and
                 contentUsesPlainGeometry(Source, cell, line_geometry);
-            if (default_cell_background) continue;
-            const colors = try contentCellColors(Source, cell, presentation);
-            const physical = try contentCellRect(row_index, column, cell_size);
-            if (!std.meta.eql(colors.background, default_background))
-                try appendContentLineSolid(
-                    output,
-                    &used,
-                    physical,
-                    physical,
-                    colors.background,
-                    row_index,
-                    line_geometry,
-                    cell_size,
-                    surface,
-                );
+            if (reuse or default_cell_background) continue;
+            const color = (try contentCellColors(Source, cell, presentation)).background;
+            if (std.meta.eql(color, default_background)) continue;
+            if (line_geometry != .single_width) {
+                const physical = try contentCellRect(row_index, column, cell_size);
+                try appendContentLineSolid(output, &used, physical, physical, color, row_index, line_geometry, cell_size, surface);
+                continue;
+            }
+            if (pending) |*run| {
+                if (run.end == column and std.meta.eql(run.color, color)) {
+                    run.end = @intCast(column + 1);
+                    continue;
+                }
+                try flushBackgroundRun(output, &used, run.*, default_background, cached, row_index, cell_size, surface);
+            }
+            pending = .{ .start = @intCast(column), .end = @intCast(column + 1), .color = color };
         }
+        if (pending) |run| try flushBackgroundRun(output, &used, run, default_background, cached, row_index, cell_size, surface);
         incremental_eligible = incremental_eligible and row_eligible;
         if (!incremental_eligible) active_plan = null;
     }

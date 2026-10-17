@@ -137,6 +137,14 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&direct_tests.step);
     test_step.dependOn(&b.addRunArtifact(direct_tests).step);
 
+    const background_root = b.createModule(.{ .root_source_file = b.path("test/background.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    background_root.addImport("howl_render", module);
+    background_root.addImport("howl_vt", vt);
+    background_root.addImport("test_fonts", text_dependency.module("howl_text_test_fonts"));
+    const background_tests = b.addTest(.{ .name = "howl-render-background", .root_module = background_root, .use_llvm = false, .use_lld = false });
+    check.dependOn(&background_tests.step);
+    test_step.dependOn(&b.addRunArtifact(background_tests).step);
+
     const native_types = b.addTranslateC(.{ .root_source_file = b.path("include/howl_render_native.h"), .target = target, .optimize = optimize });
     const native = b.addModule("howl_render_native", .{ .root_source_file = b.path("src/native.zig"), .target = target, .optimize = optimize });
     native.addImport("renderer", renderer);

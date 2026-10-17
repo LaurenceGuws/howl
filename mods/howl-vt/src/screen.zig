@@ -2,6 +2,99 @@
 
 const std = @import("std");
 const cell_values = @import("cell.zig");
+
+// One bounded exact fact about ordinary cells in a physical row; end == 0 is unknown.
+const AsciiSpan = struct {
+    start: u16 = 0,
+    end: u16 = 0,
+    attrs: cell_values.CellAttrs = cell_values.default_attrs,
+};
+const BackgroundSpan = struct {
+    start: u16 = 0,
+    end: u16 = 0,
+    source: u64 = 0,
+};
+// TODO: Reduce styled-write/scroll bookkeeping cost without slowing the plain ASCII lane.
+const BackgroundSpans = struct {
+    const capacity = 4;
+    items: [capacity]BackgroundSpan = @splat(.{}),
+    count: u8 = 0,
+
+    fn blank(cols: u16) BackgroundSpans {
+        var result: BackgroundSpans = .{};
+        result.items[0].end = cols;
+        result.count = 1;
+        return result;
+    }
+
+    inline fn covers(self: *const BackgroundSpans, first: u16, after: u16, source: u64) bool {
+        for (self.items[0..self.count]) |span| {
+            if (span.start <= first and after <= span.end and span.source == source) return true;
+        }
+        return false;
+    }
+
+    // Keep exact ordinary-cell facts only. Overflow loses precision, never truth.
+    fn write(self: *BackgroundSpans, first: u16, after: u16, source: u64) void {
+        if (first >= after or self.covers(first, after, source)) return;
+        self.writeUncovered(first, after, source);
+    }
+
+    fn writeUncovered(self: *BackgroundSpans, first: u16, after: u16, source: u64) void {
+        std.debug.assert(first < after);
+        var pieces: [capacity + 2]BackgroundSpan = undefined;
+        var count: usize = 0;
+        for (self.items[0..self.count]) |span| {
+            if (span.end <= first or span.start >= after) {
+                pieces[count] = span;
+                count += 1;
+            } else {
+                if (span.start < first) {
+                    pieces[count] = .{ .start = span.start, .end = first, .source = span.source };
+                    count += 1;
+                }
+                if (span.end > after) {
+                    pieces[count] = .{ .start = after, .end = span.end, .source = span.source };
+                    count += 1;
+                }
+            }
+        }
+        pieces[count] = .{ .start = first, .end = after, .source = source };
+        count += 1;
+        var i: usize = 1;
+        while (i < count) : (i += 1) {
+            const value = pieces[i];
+            var j = i;
+            while (j > 0 and pieces[j - 1].start > value.start) : (j -= 1) pieces[j] = pieces[j - 1];
+            pieces[j] = value;
+        }
+        var merged: usize = 0;
+        for (pieces[0..count]) |piece| {
+            if (merged > 0 and pieces[merged - 1].end == piece.start and pieces[merged - 1].source == piece.source) {
+                pieces[merged - 1].end = piece.end;
+            } else {
+                pieces[merged] = piece;
+                merged += 1;
+            }
+        }
+        while (merged > capacity) {
+            var smallest: usize = 0;
+            for (pieces[1..merged], 1..) |piece, at| {
+                if (piece.end - piece.start < pieces[smallest].end - pieces[smallest].start) smallest = at;
+            }
+            std.mem.copyForwards(BackgroundSpan, pieces[smallest .. merged - 1], pieces[smallest + 1 .. merged]);
+            merged -= 1;
+        }
+        @memcpy(self.items[0..merged], pieces[0..merged]);
+        self.count = @intCast(merged);
+    }
+};
+const RowMetadata = struct {
+    generation: u64,
+    background_generation: u64 = 0,
+    ascii: AsciiSpan = .{},
+    background: BackgroundSpans = .{},
+};
 const history_store_mod = @import("history_store.zig");
 const scalar_storage = @import("scalar_storage.zig");
 const sized_text = @import("sized_text.zig");
@@ -255,7 +348,7 @@ pub const Screen = struct {
     row_flags: ?[]u8,
     // Non-consuming visible-row mutation identities. Physical-row storage moves
     // with the retained cell row; observers keep their own prior identities.
-    row_generations: ?[]u64,
+    row_metadata: ?[]RowMetadata,
     next_row_generation: u64,
     // Conservative fast-path hint. Once nonsemantic multicell state is
     // admitted, boundary cleanup remains enabled for this Screen lifetime.
@@ -328,7 +421,7 @@ pub const Screen = struct {
             .cells = cells,
             .scalars = null,
             .row_flags = row_flags,
-            .row_generations = null,
+            .row_metadata = null,
             .next_row_generation = 1,
             .nonsemantic_clusters_possible = false,
             .history_store = null,
@@ -389,9 +482,9 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (row_flags) |buf| allocator.free(buf);
-        const row_generations = try allocator.alloc(u64, rows);
-        errdefer allocator.free(row_generations);
-        for (row_generations, 1..) |*generation, value| generation.* = value;
+        const row_metadata = try allocator.alloc(RowMetadata, rows);
+        errdefer allocator.free(row_metadata);
+        for (row_metadata, 1..) |*metadata, value| metadata.* = .{ .generation = value, .background_generation = value, .ascii = .{ .end = cols }, .background = BackgroundSpans.blank(cols) };
         var tab_stops = try tab_stops_mod.State.init(allocator, cols);
         errdefer tab_stops.deinit(allocator);
         var result = initBase(
@@ -409,7 +502,7 @@ pub const Screen = struct {
             error.InvalidCapacity => return error.InvalidDimensions,
         };
         errdefer if (result.scalars) |*storage| storage.deinit();
-        result.row_generations = row_generations;
+        result.row_metadata = row_metadata;
         result.next_row_generation = @as(u64, rows) + 1;
         return result;
     }
@@ -457,8 +550,8 @@ pub const Screen = struct {
         self.scalars = null;
         if (self.row_flags) |buf| allocator.free(buf);
         self.row_flags = null;
-        if (self.row_generations) |buf| allocator.free(buf);
-        self.row_generations = null;
+        if (self.row_metadata) |buf| allocator.free(buf);
+        self.row_metadata = null;
         self.tab_stops.deinit(allocator);
         if (self.history_store) |*store| store.deinit();
         self.history_store = null;
@@ -600,7 +693,7 @@ pub const Screen = struct {
         replacement.cells = null;
         replacement.scalars = null;
         replacement.row_flags = null;
-        replacement.row_generations = null;
+        replacement.row_metadata = null;
         replacement.tab_stops = .empty;
         replacement.history_store = null;
         replacement.history_restore_plan = null;
@@ -625,7 +718,7 @@ pub const Screen = struct {
         self.cells = buffers.cells;
         self.scalars = buffers.scalars;
         self.row_flags = buffers.row_flags;
-        self.row_generations = buffers.row_generations;
+        self.row_metadata = buffers.row_metadata;
         self.tab_stops = buffers.tab_stops;
         self.history_store = null;
         self.history_restore_plan = null;
@@ -645,11 +738,11 @@ pub const Screen = struct {
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.scalars != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.row_flags != null) == (rows > 0));
-        std.debug.assert((self.row_generations != null) == (rows > 0));
+        std.debug.assert((self.row_metadata != null) == (rows > 0));
         std.debug.assert(self.tab_stops.ownsColumns(cols));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
         if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
-        if (self.row_generations) |buf| std.debug.assert(buf.len == rows);
+        if (self.row_metadata) |buf| std.debug.assert(buf.len == rows);
         std.debug.assert(self.historyCount() == 0);
         std.debug.assert(self.row_origin == 0);
         std.debug.assert(self.view_padding_rows == 0);
@@ -1322,11 +1415,50 @@ pub const Screen = struct {
         return result;
     }
 
+    inline fn backgroundSource(attrs: *const CellAttrs) u64 {
+        const color = if (attrs.reverse) attrs.fg else attrs.bg;
+        return @as(u64, color.value) | (@as(u64, @backingInt(color.kind)) << 32) |
+            (@as(u64, @intFromBool(attrs.reverse)) << 40);
+    }
+
+    inline fn backgroundSpanCovers(self: *const Screen, row: u16, first: u16, after: u16, source: u64) bool {
+        const metadata = self.row_metadata orelse return false;
+        const physical = self.rowWrapIndex(row) orelse return false;
+        return metadata[physical].background.covers(first, after, source);
+    }
+
+    inline fn markRowChangedWithBackground(self: *Screen, logical_row: u16, background_changed: bool) void {
+        const row = self.advanceRow(logical_row) orelse return;
+        if (background_changed) {
+            row.background_generation = row.generation;
+            row.background.count = 0;
+        }
+    }
+
+    inline fn markRowChangedRetainingBackground(self: *Screen, logical_row: u16, background_changed: bool) void {
+        const row = self.advanceRow(logical_row) orelse return;
+        if (background_changed) row.background_generation = row.generation;
+    }
+
+    inline fn advanceRow(self: *Screen, logical_row: u16) ?*RowMetadata {
+        const metadata = self.row_metadata orelse return null;
+        const index = self.rowWrapIndex(logical_row) orelse return null;
+        const row = &metadata[index];
+        row.generation = self.nextRowGeneration();
+        row.ascii.end = 0;
+        return row;
+    }
+
+    // Metadata-only changes preserve exact facts about the retained cell values.
+    fn refreshRowIdentity(self: *Screen, row: u16) void {
+        const metadata = self.row_metadata orelse return;
+        const physical = self.rowWrapIndex(row) orelse return;
+        metadata[physical].generation = self.nextRowGeneration();
+    }
+
     /// Advances one visible logical row's non-consuming mutation identity.
     pub fn markRowChanged(self: *Screen, logical_row: u16) void {
-        const generations = self.row_generations orelse return;
-        const index = self.rowWrapIndex(logical_row) orelse return;
-        generations[index] = self.nextRowGeneration();
+        self.markRowChangedWithBackground(logical_row, true);
     }
 
     /// Advances every visible logical row. Conservative callers may use this
@@ -1338,9 +1470,19 @@ pub const Screen = struct {
 
     /// Returns a non-consuming identity for one currently visible screen row.
     pub fn rowGeneration(self: *const Screen, logical_row: u16) ?u64 {
-        const generations = self.row_generations orelse return null;
+        const generations = self.row_metadata orelse return null;
         const index = self.rowWrapIndex(logical_row) orelse return null;
-        return generations[index];
+        return generations[index].generation;
+    }
+
+    /// Returns a non-consuming ordinary-cell BG-source witness for this live row.
+    /// Palette/default dependencies remain separate. This is not a display-pixel ID:
+    /// while global reverse is enabled, foreground writes can change displayed BG
+    /// without changing this witness, so consumers must use full rows or scan.
+    pub fn rowBackgroundGeneration(self: *const Screen, logical_row: u16) ?u64 {
+        const metadata = self.row_metadata orelse return null;
+        const index = self.rowWrapIndex(logical_row) orelse return null;
+        return metadata[index].background_generation;
     }
 
     fn noteRowChange(self: *Screen, row: u16, changed: bool) bool {
@@ -1852,7 +1994,11 @@ pub const Screen = struct {
                 changed = self.clearRowContinuation(self.cursor.row) or changed;
             }
         }
-        return self.noteRowChange(self.cursor.row, changed);
+        if (changed) {
+            self.forgetRowScanEnd(self.cursor.row);
+            self.refreshRowIdentity(self.cursor.row);
+        }
+        return changed;
     }
 
     /// Erases at least one character through the logical row edge.
@@ -1867,7 +2013,11 @@ pub const Screen = struct {
         if (self.cursor.col + amount == line_cols) {
             changed = self.clearRowContinuation(self.cursor.row) or changed;
         }
-        return self.noteRowChange(self.cursor.row, changed);
+        if (changed) {
+            self.forgetRowScanEnd(self.cursor.row);
+            self.refreshRowIdentity(self.cursor.row);
+        }
+        return changed;
     }
 
     /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
@@ -2501,6 +2651,10 @@ pub const Screen = struct {
         const default_empty_row =
             scan_code == row_scan_known_empty and
             cell_values.attrsEqual(&self.current_attrs, &initial_cell_attrs);
+        const metadata = self.row_metadata orelse return 0;
+        const span = &metadata[physical_row].ascii;
+        var matching_span = false;
+        var attributes_retained = default_empty_row;
         var count: usize = 0;
         if (default_empty_row) {
             while (count < limit) : (count += 1) {
@@ -2509,16 +2663,27 @@ pub const Screen = struct {
                 cells[start + count].codepoint = byte;
             }
         } else {
-            var template = blank_cell;
-            template.attrs = self.current_attrs;
-            while (count < limit) : (count += 1) {
-                const byte = bytes[count];
-                if (byte < 0x20 or byte > 0x7e) break;
-                const target = &cells[start + count];
-                if (target.width != 1 or target.height != 1 or target.x != 0 or
-                    target.y != 0 or target.combining_len != 0) break;
-                target.* = template;
-                target.codepoint = byte;
+            matching_span = span.start < span.end and cell_values.attrsEqual(&span.attrs, &self.current_attrs);
+            if (matching_span and col >= span.start and col < span.end) {
+                attributes_retained = true;
+                const span_limit = @min(limit, span.end - col);
+                while (count < span_limit) : (count += 1) {
+                    const byte = bytes[count];
+                    if (byte < 0x20 or byte > 0x7e) break;
+                    cells[start + count].codepoint = byte;
+                }
+            } else {
+                var template = blank_cell;
+                template.attrs = self.current_attrs;
+                while (count < limit) : (count += 1) {
+                    const byte = bytes[count];
+                    if (byte < 0x20 or byte > 0x7e) break;
+                    const target = &cells[start + count];
+                    if (target.width != 1 or target.height != 1 or target.x != 0 or
+                        target.y != 0 or target.combining_len != 0) break;
+                    target.* = template;
+                    target.codepoint = byte;
+                }
             }
         }
         if (count == 0) return 0;
@@ -2539,15 +2704,53 @@ pub const Screen = struct {
         self.cursor.setPositionStructural(self.cursor.row, @min(after, right));
         if (after > right and self.auto_wrap) self.wrap_pending = true;
         // Preserve the exact identities allocated by the scalar ASCII path.
-        if (self.row_generations) |generations| {
+        if (self.row_metadata) |generations| {
             const next = std.math.add(u64, self.next_row_generation, @intCast(count)) catch
                 // zig-audit: acknowledge panic
                 // reason: Row mutation identities are non-wrapping; this bounded batch reserves exactly one per accepted scalar.
                 @panic("row mutation identity exhausted");
-            generations[physical_row] = next - 1;
+            generations[physical_row].generation = next - 1;
             self.next_row_generation = next;
         }
+        if (!attributes_retained)
+            @call(.never_inline, Screen.rememberAsciiSpan, .{ self, physical_row, col, after, matching_span });
         return count;
+    }
+
+    fn rememberAsciiSpan(self: *Screen, physical_row: u32, first: u16, after: u16, same_attrs: bool) void {
+        const metadata = self.row_metadata orelse return;
+        const background = &metadata[physical_row].background;
+        const source = backgroundSource(&self.current_attrs);
+        if (!background.covers(first, after, source)) {
+            metadata[physical_row].background_generation = metadata[physical_row].generation;
+            background.writeUncovered(first, after, source);
+        }
+        const span = &metadata[physical_row].ascii;
+        if (retainSpan(&span.start, &span.end, first, after, same_attrs)) span.attrs = self.current_attrs;
+    }
+
+    // Returns true only when the newly written interval supplies the retained value.
+    inline fn retainSpan(start: *u16, end: *u16, first: u16, after: u16, same: bool) bool {
+        if (same and start.* < end.* and first <= end.* and after >= start.*) {
+            start.* = @min(start.*, first);
+            end.* = @max(end.*, after);
+            return false;
+        }
+        const left_end = @min(end.*, first);
+        const left_len = left_end -| start.*;
+        const right_start = @max(start.*, after);
+        const right_len = end.* -| right_start;
+        const written_len = after - first;
+        if (left_len >= written_len and left_len >= right_len) {
+            end.* = left_end;
+        } else if (right_len >= written_len) {
+            start.* = right_start;
+        } else {
+            start.* = first;
+            end.* = after;
+            return true;
+        }
+        return false;
     }
 
     /// Applies one Unicode scalar and reports exact accepted semantic mutation.
@@ -2918,6 +3121,14 @@ pub const Screen = struct {
             const inserted = self.insertChars(width);
             std.debug.assert(inserted or !self.wrap_pending);
         }
+        const row_metadata = if (self.row_metadata) |metadata|
+            if (self.rowWrapIndex(self.cursor.row)) |physical| &metadata[physical] else null
+        else
+            null;
+        const background_unchanged = if (row_metadata) |row|
+            width == 1 and !self.insert_mode and row.background.covers(self.cursor.col, self.cursor.col + 1, backgroundSource(&self.current_attrs))
+        else
+            false;
         if (self.cells) |cells| {
             const start = self.rowStart(self.cursor.row);
             var offset: u8 = 0;
@@ -2969,7 +3180,14 @@ pub const Screen = struct {
         } else {
             self.cursor.setColByClient(right);
         }
-        self.markRowChanged(self.cursor.row);
+        if (row_metadata) |row| {
+            row.generation = self.nextRowGeneration();
+            row.ascii.end = 0;
+            if (!background_unchanged) {
+                row.background_generation = row.generation;
+                row.background.count = 0;
+            }
+        }
         return true;
     }
 
@@ -3441,8 +3659,10 @@ pub const Screen = struct {
     fn scrollUp(self: *Screen) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
-        // The scroll-region owner clears every outgoing boundary before rotation.
+        // The outgoing physical row becomes the cleared bottom row after rotation.
+        const recycled = if (self.row_metadata) |metadata| &metadata[self.row_origin] else null;
         const clear_cols = self.rowScanEnd(0);
+        const background_unchanged = if (recycled) |row| row.background.covers(0, clear_cols, 0) else false;
         self.storeHistoryRow(0);
         self.row_origin = (self.row_origin + 1) % self.rows;
         const bottom_start = self.rowStart(self.rows - 1);
@@ -3452,6 +3672,14 @@ pub const Screen = struct {
         self.resetLineGeometry(self.rows - 1);
         if (self.history_capacity != 0)
             self.establishEmptyRowScanEnd(self.rows - 1);
+        if (recycled) |row| {
+            row.generation = self.nextRowGeneration();
+            if (!background_unchanged) {
+                row.background_generation = row.generation;
+                if (clear_cols != 0) row.background.writeUncovered(0, clear_cols, 0);
+            }
+            row.ascii = .{ .end = clear_cols };
+        }
     }
 
     /// Returns the effective lower vertical margin.
@@ -3589,12 +3817,8 @@ pub const Screen = struct {
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
             while (remaining > 0) : (remaining -= 1) self.scrollUp();
-            // A partial physical-row rotation already changes the generation
-            // observed at every logical row and preserves shifted-row
-            // provenance for consumers. A complete revolution returns each
-            // physical generation to its original logical index, so that
-            // degenerate full clear still requires fresh identities.
-            if (amount == self.rows) self.markAllRowsChanged();
+            // scrollUp refreshes every recycled physical row, including across
+            // multiple partial operations between independent observations.
             return true;
         }
 
@@ -3932,7 +4156,7 @@ pub const Screen = struct {
             flags[@intCast(idx)] |= row_wrapped_bit
         else
             flags[@intCast(idx)] &= ~row_wrapped_bit;
-        self.markRowChanged(logical_row);
+        self.refreshRowIdentity(logical_row);
     }
 
     fn rowFlags(wrapped: bool, geometry: LineGeometry) u8 {
@@ -4088,6 +4312,8 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         const start = self.rowStart(row);
         const erase_cell = self.eraseCell();
+        const source = backgroundSource(&erase_cell.attrs);
+        const background_unchanged = self.backgroundSpanCovers(row, start_col, end_col_exclusive, source);
         self.clearScalarCells(
             start + start_col,
             end_col_exclusive - start_col,
@@ -4096,7 +4322,13 @@ pub const Screen = struct {
             cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))],
             erase_cell,
         );
-        self.markRowChanged(row);
+        self.markRowChangedRetainingBackground(row, !background_unchanged);
+        if (self.row_metadata) |metadata| {
+            if (self.rowWrapIndex(row)) |physical| {
+                metadata[physical].background.write(start_col, end_col_exclusive, source);
+                metadata[physical].ascii = .{ .start = start_col, .end = end_col_exclusive, .attrs = erase_cell.attrs };
+            }
+        }
     }
 
     // Clear one structural-edit range and its row state, reporting only observable mutation.
@@ -4132,12 +4364,19 @@ pub const Screen = struct {
         const cells = self.cells orelse return false;
         const start = self.rowStart(row);
         const erase_cell = self.eraseCell();
+        const source = backgroundSource(&erase_cell.attrs);
+        const background_unchanged = self.backgroundSpanCovers(row, start_col, end_col_exclusive, source);
         var changed = false;
+        var ordinary_erased = true;
         var col = start_col;
         while (col < end_col_exclusive) : (col += 1) {
             const cell = &cells[@intCast(start + @as(u32, col))];
-            if (cell.attrs.protected == .iso or (selective and cell.attrs.protected == .dec)) continue;
+            if (cell.attrs.protected == .iso or (selective and cell.attrs.protected == .dec)) {
+                ordinary_erased = false;
+                continue;
+            }
             if (cell.width != 1 or cell.height != 1 or cell.x != 0 or cell.y != 0) {
+                ordinary_erased = false;
                 changed = self.clearClusterAt(row, col, false) or changed;
                 continue;
             }
@@ -4146,7 +4385,22 @@ pub const Screen = struct {
             cell.* = erase_cell;
             changed = true;
         }
-        return self.noteRowChange(row, changed);
+        if (changed) {
+            self.forgetRowScanEnd(row);
+            if (ordinary_erased)
+                self.markRowChangedRetainingBackground(row, !background_unchanged)
+            else
+                self.markRowChangedWithBackground(row, !background_unchanged);
+        }
+        if (ordinary_erased and start_col < end_col_exclusive) {
+            if (self.row_metadata) |metadata| {
+                if (self.rowWrapIndex(row)) |physical| {
+                    metadata[physical].ascii = .{ .start = start_col, .end = end_col_exclusive, .attrs = erase_cell.attrs };
+                    metadata[physical].background.write(start_col, end_col_exclusive, source);
+                }
+            }
+        }
+        return changed;
     }
 
     /// Reject an inverted rectangle, then clamp it to the active origin bounds.
@@ -6442,14 +6696,14 @@ const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
     scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
-    row_generations: ?[]u64,
+    row_metadata: ?[]RowMetadata,
     tab_stops: tab_stops_mod.State,
 
     const empty: ResizeBuffers = .{
         .cells = null,
         .scalars = null,
         .row_flags = null,
-        .row_generations = null,
+        .row_metadata = null,
         .tab_stops = .empty,
     };
 
@@ -6458,7 +6712,7 @@ const ResizeBuffers = struct {
         if (self.cells) |buf| allocator.free(buf);
         if (self.scalars) |*storage| storage.deinit();
         if (self.row_flags) |buf| allocator.free(buf);
-        if (self.row_generations) |buf| allocator.free(buf);
+        if (self.row_metadata) |buf| allocator.free(buf);
         self.tab_stops.deinit(allocator);
         self.* = empty;
     }
@@ -6893,13 +7147,13 @@ fn allocResizeBuffers(
         row_flags = buf;
     }
     errdefer if (row_flags) |buf| allocator.free(buf);
-    var row_generations: ?[]u64 = null;
+    var row_metadata: ?[]RowMetadata = null;
     if (rows > 0) {
-        const buf = try allocator.alloc(u64, rows);
-        @memset(buf, 0);
-        row_generations = buf;
+        const buf = try allocator.alloc(RowMetadata, rows);
+        @memset(buf, .{ .generation = 0 });
+        row_metadata = buf;
     }
-    errdefer if (row_generations) |buf| allocator.free(buf);
+    errdefer if (row_metadata) |buf| allocator.free(buf);
 
     var tab_stops = try tab_stops_mod.State.initCopied(allocator, cols, old_tab_stops);
     errdefer tab_stops.deinit(allocator);
@@ -6909,13 +7163,13 @@ fn allocResizeBuffers(
     std.debug.assert(tab_stops.ownsColumns(cols));
     if (cells) |buf| std.debug.assert(buf.len == cell_count);
     if (row_flags) |buf| std.debug.assert(buf.len == rows);
-    if (row_generations) |buf| std.debug.assert(buf.len == rows);
+    if (row_metadata) |buf| std.debug.assert(buf.len == rows);
 
     return .{
         .cells = cells,
         .scalars = scalars,
         .row_flags = row_flags,
-        .row_generations = row_generations,
+        .row_metadata = row_metadata,
         .tab_stops = tab_stops,
     };
 }
@@ -7811,7 +8065,7 @@ test "row scan hints preserve canonical state and text extents" {
     try Oracle.expectAll(&screen);
 }
 
-test "full scroll rotation carries unique row generations with physical rows" {
+test "full scroll carries shifted row identities and refreshes recycled rows" {
     var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 4, 4, 8);
     defer screen.deinit(std.testing.allocator);
 
@@ -7825,8 +8079,53 @@ test "full scroll rotation carries unique row generations with physical rows" {
 
     try std.testing.expectEqual(before[2], screen.rowGeneration(0).?);
     try std.testing.expectEqual(before[3], screen.rowGeneration(1).?);
-    try std.testing.expectEqual(before[0], screen.rowGeneration(2).?);
-    try std.testing.expectEqual(before[1], screen.rowGeneration(3).?);
+    const first_recycled = screen.rowGeneration(2).?;
+    const second_recycled = screen.rowGeneration(3).?;
+    for (before) |generation| {
+        try std.testing.expect(generation != first_recycled);
+        try std.testing.expect(generation != second_recycled);
+    }
+    try std.testing.expect(first_recycled != second_recycled);
+}
+
+test "bounded BG facts lose precision rather than inventing coverage" {
+    var facts = BackgroundSpans.blank(64);
+    var truth: [64]u64 = @splat(0);
+    // Split a known interval, merge matching neighbors, and overflow capacity.
+    facts.write(16, 48, 1);
+    @memset(truth[16..48], 1);
+    try std.testing.expect(facts.covers(0, 16, 0));
+    try std.testing.expect(facts.covers(16, 48, 1));
+    try std.testing.expect(facts.covers(48, 64, 0));
+    facts.write(16, 48, 0);
+    @memset(truth[16..48], 0);
+    try std.testing.expect(facts.covers(0, 64, 0));
+    var random = std.Random.DefaultPrng.init(0x62677370616e);
+    for (0..4096) |iteration| {
+        const first = random.random().uintLessThan(u16, 64);
+        const after = first + 1 + random.random().uintLessThan(u16, 64 - first);
+        const source = random.random().uintLessThan(u64, 8);
+        facts.write(first, after, source);
+        @memset(truth[first..after], source);
+        try std.testing.expect(facts.count <= BackgroundSpans.capacity);
+        for (facts.items[0..facts.count], 0..) |span, index| {
+            try std.testing.expect(span.start < span.end and span.end <= truth.len);
+            if (index > 0) {
+                const before = facts.items[index - 1];
+                try std.testing.expect(before.end <= span.start);
+                try std.testing.expect(before.end != span.start or before.source != span.source);
+            }
+            for (truth[span.start..span.end]) |actual| try std.testing.expectEqual(actual, span.source);
+        }
+        // Observe arbitrary ranges independently of the remembered partition.
+        for (0..8) |offset| {
+            const start: u16 = @intCast((iteration + offset * 7) % 64);
+            const end: u16 = @intCast(@min(@as(usize, start) + offset + 1, 64));
+            if (facts.covers(start, end, truth[start])) {
+                for (truth[start..end]) |actual| try std.testing.expectEqual(truth[start], actual);
+            }
+        }
+    }
 }
 
 test "complete row-ring revolution refreshes every generation" {

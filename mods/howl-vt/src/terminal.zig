@@ -5051,6 +5051,18 @@ pub const Terminal = struct {
             };
         }
 
+        /// Returns a live-row BG-source witness, or null for history/invalid rows.
+        /// Compare within one terminal/bank/geometry and invalidate on palette/default
+        /// changes. While global reverse is enabled, use full-row identities or scan
+        /// every observation: foreground rewrites can change the displayed background.
+        pub fn rowBackgroundGeneration(self: *const SemanticView, row: u16) ?u64 {
+            if (row >= self.rows) return null;
+            return switch (self.rowSource(row)) {
+                .history => null,
+                .screen => |screen_row| self.backingScreen().rowBackgroundGeneration(screen_row),
+            };
+        }
+
         /// Returns one visible row's DEC geometry without prescribing caller scaling.
         pub fn lineGeometry(self: *const SemanticView, row: u16) Screen.LineGeometry {
             const screen = self.backingScreen();
@@ -10794,7 +10806,9 @@ test "ASCII row prefixes preserve fragmented feed semantics cursor identities an
             try std.testing.expectEqual(reference.wrap_pending, actual.wrap_pending);
             try std.testing.expectEqualDeep(reference.last_graphic, actual.last_graphic);
             try std.testing.expectEqual(reference.next_row_generation, actual.next_row_generation);
-            try std.testing.expectEqualSlices(u64, reference.row_generations.?, actual.row_generations.?);
+            // Derived span precision may differ; canonical generation allocation must not.
+            for (reference.row_metadata.?, actual.row_metadata.?) |expected_metadata, actual_metadata|
+                try std.testing.expectEqual(expected_metadata.generation, actual_metadata.generation);
             try std.testing.expectEqualDeep(fragmented.charset, direct.charset);
             try std.testing.expectEqualSlices(u8, fragmented.replyBytes(), direct.replyBytes());
             for (0..3) |row| {
@@ -10921,4 +10935,180 @@ test "selected text preflights the byte limit and allocates one exact owned resu
     try std.testing.expectEqualStrings("alpha😀", bytes);
     try std.testing.expectEqual(@as(usize, 1), failing.alloc_index);
     try std.testing.expectEqual(@as(usize, 9), failing.allocated_bytes);
+}
+
+test "ordinary ASCII spans remain exact through TUI edits and skipped ring revolutions" {
+    const Proof = struct {
+        fn feed(terminal: *Terminal, reference: *Terminal, bytes: []const u8) !void {
+            // zig-audit: acknowledge discard
+            // reason: The reference-model proof compares canonical cells and metadata after each feed; the transient summary is not its oracle.
+            _ = try terminal.feed(bytes);
+            // Disable the new character-only qualification in the reference before
+            // every byte. The old ordinary-cell replacement lane remains the oracle.
+            for (bytes) |byte| {
+                for ([_]*Screen{ &reference.screen_state.primary, &reference.screen_state.alternate }) |screen| {
+                    if (screen.row_metadata) |metadata| for (metadata) |*row| {
+                        row.ascii.end = 0;
+                    };
+                }
+                // zig-audit: acknowledge discard
+                // reason: The per-byte reference oracle is checked by its resulting full screen, including generations and history.
+                _ = try reference.feed(&.{byte});
+            }
+            for ([_]*const Screen{ &reference.screen_state.primary, &reference.screen_state.alternate }, [_]*const Screen{ &terminal.screen_state.primary, &terminal.screen_state.alternate }) |expected, actual| {
+                try std.testing.expectEqualDeep(expected.cursor, actual.cursor);
+                try std.testing.expectEqual(expected.wrap_pending, actual.wrap_pending);
+                try std.testing.expectEqualDeep(expected.last_graphic, actual.last_graphic);
+                try std.testing.expectEqual(expected.next_row_generation, actual.next_row_generation);
+                try std.testing.expectEqual(expected.historyCount(), actual.historyCount());
+                for (0..actual.rows) |row| {
+                    const r: u16 = @intCast(row);
+                    try std.testing.expectEqual(expected.rowGeneration(r), actual.rowGeneration(r));
+                    try std.testing.expectEqual(expected.lineGeometry(r), actual.lineGeometry(r));
+                    try std.testing.expectEqual(expected.rowWrapped(r), actual.rowWrapped(r));
+                    for (0..actual.cols) |col| {
+                        const c: u16 = @intCast(col);
+                        var expected_scalars: [@import("scalar_storage.zig").maximum_scalars]u32 = undefined;
+                        var actual_scalars: [@import("scalar_storage.zig").maximum_scalars]u32 = undefined;
+                        try std.testing.expectEqualDeep(expected.cellInfoAt(r, c), actual.cellInfoAt(r, c));
+                        try std.testing.expectEqualSlices(u32, expected.cellScalarsAt(r, c, &expected_scalars), actual.cellScalarsAt(r, c, &actual_scalars));
+                    }
+                }
+                for (0..actual.historyCount()) |row| for (0..actual.cols) |col| {
+                    try std.testing.expectEqualDeep(expected.historyCellAt(@intCast(row), @intCast(col)), actual.historyCellAt(@intCast(row), @intCast(col)));
+                };
+            }
+            try check(terminal);
+        }
+        fn check(terminal: *const Terminal) !void {
+            for ([_]*const Screen{ &terminal.screen_state.primary, &terminal.screen_state.alternate }) |screen| {
+                const metadata = screen.row_metadata orelse continue;
+                const cells = screen.cells orelse continue;
+                for (metadata, 0..) |row, physical| {
+                    const span = row.ascii;
+                    if (span.start < span.end) {
+                        try std.testing.expect(span.end <= screen.cols);
+                        for (span.start..span.end) |col| {
+                            const cell = cells[physical * screen.cols + col];
+                            var expected = Screen.default_cell;
+                            expected.codepoint = cell.codepoint;
+                            expected.attrs = span.attrs;
+                            try std.testing.expectEqualDeep(expected, cell);
+                        }
+                    }
+                    for (row.background.items[0..row.background.count], 0..) |background, span_index| {
+                        try std.testing.expect(background.start < background.end);
+                        if (span_index > 0) try std.testing.expect(row.background.items[span_index - 1].end <= background.start);
+                        try std.testing.expect(background.end <= screen.cols);
+                        for (background.start..background.end) |col| {
+                            const cell = cells[physical * screen.cols + col];
+                            const color = if (cell.attrs.reverse) cell.attrs.fg else cell.attrs.bg;
+                            const source = @as(u64, color.value) | (@as(u64, @backingInt(color.kind)) << 32) |
+                                (@as(u64, @intFromBool(cell.attrs.reverse)) << 40);
+                            try std.testing.expectEqual(background.source, source);
+                            var ordinary = Screen.default_cell;
+                            ordinary.codepoint = cell.codepoint;
+                            ordinary.attrs = cell.attrs;
+                            try std.testing.expectEqualDeep(ordinary, cell);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    const edits = [_][]const u8{
+        "\x1b[44m\x1b[2J\x1b[0m\x1b[3;1H", "\n\n\n",                                             "\rABCDEFGH",                                               "\rabcdefgh",
+        "\x1b[1;1H\x1b[31;44mABCD",        "\r\x1b[32mWXYZ",                                     "\x1b[3G\x1b[K",                                            "\x1b[2K",
+        "\x1b[1m0123\r\x1b[22m4567",       "\x1b[2G\x1b[2@",                                     "\x1b[2P",                                                  "\x1b[3X",
+        "\x1b[2;1H\x1b[L",                 "\x1b[M",                                             "\x1b[2;3r\n\n\n",                                          "\x1b[r\x1bM",
+        "\x1b[1;1H\x1b#6",                 "ABC",                                                "\x1b#5\rDEF",                                              "\x1b[?1049hTEST",
+        "\x1b[?1049l",                     "\x1b[1;1Ha\xcc\x81\xcc\x82\xcc\x83\xcc\x84\xcc\x85", "\r1234",                                                   "\xe4\xb8\xad\xe6\x96\x87",
+        "\rabcdefgh",                      "\xe2\x9d\xa4\xef\xb8\x8f",                           "\rABCDEFGH",                                               "\x1b]66;s=2:w=2;XY\x1b\\",
+        "\x1b[2J",                         "\x1b[1\"qPROTECTED\x1b[0\"q",                        "\x1b[?2J",                                                 "\x1bVISO\x1bW",
+        "\x1b[2J",                         "\x1b[7mREVERSE\r\x1b[27mNORMAL",                     "\x1b]8;;https://example.invalid/\x1b\\LINK\x1b]8;;\x1b\\", "\x1b[2J",
+        "\x1b[?69h\x1b[2;7s\x1b[2;3r",     "\x1b[1;1HABCDEFGH\nIJKLMNOP",                        "\x1b[?69l\x1b[r",                                          "\x1b[65;1;1;2;4$x",
+        "\x1b[1;1;2;4$z",                  "\x1b[1;1;2;4${",                                     "\x1b[1;1;2;4;1;2;2;1$v",                                   "\x1b[1;1;2;4;31;44$r",
+        "\x1b[1;1;2;4;7$t",                "\x1b[1;1H\x1b[2'~",                                  "\x1b[2'}",                                                 "\x1bc",
+    };
+    for ([_]u16{ 0, 8 }) |history| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, history);
+        defer terminal.deinit();
+        var reference = try Terminal.initWithHistory(std.testing.allocator, 3, 8, history);
+        defer reference.deinit();
+        try Proof.check(&terminal);
+        for (edits) |edit| {
+            try Proof.feed(&terminal, &reference, edit);
+        }
+        for ([_][2]u16{ .{ 4, 11 }, .{ 1, 1 }, .{ 3, 8 } }) |size| {
+            try terminal.resize(size[0], size[1]);
+            try reference.resize(size[0], size[1]);
+            try Proof.check(&terminal);
+            for (edits) |edit| {
+                try Proof.feed(&terminal, &reference, edit);
+            }
+        }
+        var random = std.Random.DefaultPrng.init(0x7370616e);
+        for (0..512) |_| {
+            const edit = edits[random.random().uintLessThan(usize, edits.len)];
+            try Proof.feed(&terminal, &reference, edit);
+        }
+    }
+}
+
+test "BG spans preserve independent witnesses through foreground rewrites and matching erasure" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This feed establishes the blue background witness that the following assertions inspect.
+    _ = try terminal.feed("\x1b[44mABCDEFGH");
+    const before = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+    const full_before = terminal.semanticView(0).rowGeneration(0).?;
+    // zig-audit: acknowledge discard
+    // reason: The assertion tests unchanged background identity after a foreground-only rewrite.
+    _ = try terminal.feed("\r\x1b[31mabcdefgh");
+    try std.testing.expectEqual(before, terminal.semanticView(0).rowBackgroundGeneration(0).?);
+    try std.testing.expect(full_before != terminal.semanticView(0).rowGeneration(0).?);
+    // zig-audit: acknowledge discard
+    // reason: The assertion verifies that the background witness survives matching erase semantics.
+    _ = try terminal.feed("\x1b[2K");
+    try std.testing.expectEqual(before, terminal.semanticView(0).rowBackgroundGeneration(0).?);
+    try std.testing.expectEqual(before, terminal.observation().semanticView(0).rowBackgroundGeneration(0).?);
+    // zig-audit: acknowledge discard
+    // reason: The following witness comparison verifies the reversed background changed.
+    _ = try terminal.feed("\r\x1b[7mABCDEFGH");
+    const reversed = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+    try std.testing.expect(before != reversed);
+    // zig-audit: acknowledge discard
+    // reason: The following assertion verifies the background witness changes on the next color transition.
+    _ = try terminal.feed("\r\x1b[32mABCDEFGH");
+    try std.testing.expect(reversed != terminal.semanticView(0).rowBackgroundGeneration(0).?);
+    try std.testing.expectEqual(@as(?u64, null), terminal.semanticView(0).rowBackgroundGeneration(3));
+    // zig-audit: acknowledge discard
+    // reason: The final assertion checks out-of-range row-background identity after scroll.
+    _ = try terminal.feed("\x1b[0m\x1b[3;1H\n");
+    try std.testing.expectEqual(@as(?u64, null), terminal.semanticView(1).rowBackgroundGeneration(0));
+}
+
+test "independent observations cannot miss repeated partial row-ring revolutions" {
+    for ([_]u16{ 0, 8 }) |history| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 4, history);
+        defer terminal.deinit();
+        // zig-audit: acknowledge discard
+        // reason: This initializes the row-ring witness; the test compares subsequent row and background generations.
+        _ = try terminal.feed("\x1b[44m\x1b[2J\x1b[0m\x1b[3;1H");
+        var full: [3]u64 = undefined;
+        var bg: [3]u64 = undefined;
+        for (0..3) |row| {
+            full[row] = terminal.semanticView(0).rowGeneration(@intCast(row)).?;
+            bg[row] = terminal.semanticView(0).rowBackgroundGeneration(@intCast(row)).?;
+        }
+        // zig-audit: acknowledge discard
+        // reason: The assertions compare all row and background generations after a complete ring revolution.
+        _ = try terminal.feed("\n\n\n");
+        for (0..3) |row| {
+            try std.testing.expect(full[row] != terminal.semanticView(0).rowGeneration(@intCast(row)).?);
+            try std.testing.expect(bg[row] != terminal.semanticView(0).rowBackgroundGeneration(@intCast(row)).?);
+            for (0..4) |col| try std.testing.expectEqual(Screen.ColorKind.default, terminal.semanticView(0).cellInfoAt(@intCast(row), @intCast(col)).attrs.bg.kind);
+        }
+    }
 }

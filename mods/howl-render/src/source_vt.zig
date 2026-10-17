@@ -59,6 +59,13 @@ pub const Source = struct {
         return snapshot.changed_rows;
     }
 
+    /// Non-consuming BG-source identity for live ordinary rows. Global reverse
+    /// makes foreground writes affect backgrounds and therefore uses full projection.
+    pub fn rowBackgroundGeneration(snapshot: *const Snapshot, row: usize) ?u64 {
+        if (snapshot.colors.reverse_screen) return null;
+        return snapshot.view.rowBackgroundGeneration(@intCast(row));
+    }
+
     /// Native repairs are position-relative and carry no scrolling translation.
     pub fn rowShift(_: *const Snapshot) ?u16 {
         return 0;

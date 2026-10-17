@@ -982,11 +982,14 @@ pub fn Runtime(comptime Presentation: ?type) type {
                         self.row_generations[row] = generation;
                     }
                     captured_rows = known;
-                    // Broad repairs use the direct full-projection lane. Keep the
-                    // successful observer baseline without priming an unused cache.
-                    if (known and (!same_base or repaired_rows <= terminal_render.rowReuseLimit(view.rows))) changes = .{
+                    // Broad repairs rebuild glyphs without priming that cache.
+                    // Independent BG reuse still receives its valid source provenance.
+                    if (known) changes = .{
                         .base_revision = if (same_base) self.content_revision else null,
-                        .rows = self.row_repairs[0..view.rows],
+                        .rows = if (!same_base or repaired_rows <= terminal_render.rowReuseLimit(view.rows))
+                            self.row_repairs[0..view.rows]
+                        else
+                            null,
                     };
                 }
                 // Staging row scalars never leaves a usable baseline after failed work.
