@@ -42,51 +42,58 @@ const BackgroundSpans = struct {
 
     fn writeUncovered(self: *BackgroundSpans, first: u16, after: u16, source: u64) void {
         std.debug.assert(first < after);
+        if (self.count == 0 or
+            (first <= self.items[0].start and after >= self.items[self.count - 1].end))
+        {
+            self.items[0] = .{ .start = first, .end = after, .source = source };
+            self.count = 1;
+            return;
+        }
         var pieces: [capacity + 2]BackgroundSpan = undefined;
         var count: usize = 0;
+        // Existing facts are ordered; insert and merge during the same walk.
+        var inserted = false;
+        const written = BackgroundSpan{ .start = first, .end = after, .source = source };
         for (self.items[0..self.count]) |span| {
-            if (span.end <= first or span.start >= after) {
-                pieces[count] = span;
-                count += 1;
+            if (span.end <= first) {
+                append(&pieces, &count, span);
+            } else if (span.start >= after) {
+                if (!inserted) {
+                    append(&pieces, &count, written);
+                    inserted = true;
+                }
+                append(&pieces, &count, span);
             } else {
-                if (span.start < first) {
-                    pieces[count] = .{ .start = span.start, .end = first, .source = span.source };
-                    count += 1;
+                if (span.start < first)
+                    append(&pieces, &count, .{ .start = span.start, .end = first, .source = span.source });
+                if (!inserted) {
+                    append(&pieces, &count, written);
+                    inserted = true;
                 }
-                if (span.end > after) {
-                    pieces[count] = .{ .start = after, .end = span.end, .source = span.source };
-                    count += 1;
-                }
+                if (span.end > after)
+                    append(&pieces, &count, .{ .start = after, .end = span.end, .source = span.source });
             }
         }
-        pieces[count] = .{ .start = first, .end = after, .source = source };
-        count += 1;
-        var i: usize = 1;
-        while (i < count) : (i += 1) {
-            const value = pieces[i];
-            var j = i;
-            while (j > 0 and pieces[j - 1].start > value.start) : (j -= 1) pieces[j] = pieces[j - 1];
-            pieces[j] = value;
-        }
-        var merged: usize = 0;
-        for (pieces[0..count]) |piece| {
-            if (merged > 0 and pieces[merged - 1].end == piece.start and pieces[merged - 1].source == piece.source) {
-                pieces[merged - 1].end = piece.end;
-            } else {
-                pieces[merged] = piece;
-                merged += 1;
-            }
-        }
-        while (merged > capacity) {
+        if (!inserted) append(&pieces, &count, written);
+        while (count > capacity) {
             var smallest: usize = 0;
-            for (pieces[1..merged], 1..) |piece, at| {
+            for (pieces[1..count], 1..) |piece, at| {
                 if (piece.end - piece.start < pieces[smallest].end - pieces[smallest].start) smallest = at;
             }
-            std.mem.copyForwards(BackgroundSpan, pieces[smallest .. merged - 1], pieces[smallest + 1 .. merged]);
-            merged -= 1;
+            std.mem.copyForwards(BackgroundSpan, pieces[smallest .. count - 1], pieces[smallest + 1 .. count]);
+            count -= 1;
         }
-        @memcpy(self.items[0..merged], pieces[0..merged]);
-        self.count = @intCast(merged);
+        @memcpy(self.items[0..count], pieces[0..count]);
+        self.count = @intCast(count);
+    }
+
+    inline fn append(pieces: *[capacity + 2]BackgroundSpan, count: *usize, span: BackgroundSpan) void {
+        if (count.* > 0 and pieces[count.* - 1].end == span.start and pieces[count.* - 1].source == span.source) {
+            pieces[count.* - 1].end = span.end;
+        } else {
+            pieces[count.*] = span;
+            count.* += 1;
+        }
     }
 };
 const RowMetadata = struct {
@@ -2672,6 +2679,11 @@ pub const Screen = struct {
                     if (byte < 0x20 or byte > 0x7e) break;
                     cells[start + count].codepoint = byte;
                 }
+            } else if (col >= span.start and col < span.end) {
+                const span_limit = @min(limit, span.end - col);
+                count = @call(.never_inline, Screen.writeOrdinaryAsciiAttrs, .{
+                    cells[start..][0..span_limit], bytes[0..span_limit], self.current_attrs,
+                });
             } else {
                 var template = blank_cell;
                 template.attrs = self.current_attrs;
@@ -2714,6 +2726,19 @@ pub const Screen = struct {
         }
         if (!attributes_retained)
             @call(.never_inline, Screen.rememberAsciiSpan, .{ self, physical_row, col, after, matching_span });
+        return count;
+    }
+
+    // The retained ordinary span proves all non-text fields are already blank-cell geometry.
+    // Keep the changed-attribute loop separate from the codepoint-only writer.
+    fn writeOrdinaryAsciiAttrs(cells: []Cell, bytes: []const u8, attrs: CellAttrs) usize {
+        var count: usize = 0;
+        for (bytes, cells) |byte, *cell| {
+            if (byte < 0x20 or byte > 0x7e) break;
+            cell.codepoint = byte;
+            cell.attrs = attrs;
+            count += 1;
+        }
         return count;
     }
 
@@ -8274,4 +8299,41 @@ test "plain ASCII uses canonical empty-row state without losing attribute fallba
     screen.current_attrs.bold = true;
     try std.testing.expectEqual(@as(usize, 1), screen.writePlainAsciiPrefix("Z"));
     try std.testing.expect(screen.visibleRowCells(1)[0].attrs.bold);
+}
+
+test "ordinary ASCII overwrite replaces complete rendition and stops before controls" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 8);
+    defer screen.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 8), screen.writePlainAsciiPrefix("ABCDEFGH"));
+    screen.cursor.setColByClient(0);
+    screen.wrap_pending = false;
+    var attrs = initial_cell_attrs;
+    attrs.fg = .{ .kind = .rgb, .value = 0x123456 };
+    attrs.bg = .{ .kind = .indexed, .value = 5 };
+    attrs.font = 9;
+    attrs.baseline = .raised;
+    attrs.bold = true;
+    attrs.dim = true;
+    attrs.italic = true;
+    attrs.blink = true;
+    attrs.blink_fast = true;
+    attrs.reverse = true;
+    attrs.invisible = true;
+    attrs.underline = true;
+    attrs.strikethrough = true;
+    attrs.underline_style = .curly;
+    attrs.underline_color = .{ .kind = .rgb, .value = 0xabcdef };
+    attrs.protected = .iso;
+    attrs.link_id = 42;
+    screen.current_attrs = attrs;
+    try std.testing.expectEqual(@as(usize, 3), screen.writePlainAsciiPrefix("xyz\n"));
+    for ("xyz", 0..) |byte, col| {
+        var expected = blank_cell;
+        expected.codepoint = byte;
+        expected.attrs = attrs;
+        try std.testing.expectEqualDeep(expected, screen.cellInfoAt(0, @intCast(col)));
+    }
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u32, 'D'), screen.cellInfoAt(0, 3).codepoint);
+    try std.testing.expectEqualDeep(initial_cell_attrs, screen.cellInfoAt(0, 3).attrs);
 }
