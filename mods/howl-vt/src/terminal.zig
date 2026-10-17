@@ -10940,15 +10940,34 @@ test "selected text preflights the byte limit and allocates one exact owned resu
 test "ordinary ASCII spans remain exact through TUI edits and skipped ring revolutions" {
     const Proof = struct {
         fn feed(terminal: *Terminal, reference: *Terminal, bytes: []const u8) !void {
+            var before_background: [2][4]?u64 = undefined;
+            for ([_]*const Screen{ &terminal.screen_state.primary, &terminal.screen_state.alternate }, 0..) |screen, bank| {
+                std.debug.assert(screen.rows <= 4);
+                for (0..screen.rows) |row| before_background[bank][row] = screen.rowBackgroundGeneration(@intCast(row));
+            }
             // zig-audit: acknowledge discard
-            // reason: The reference-model proof compares canonical cells and metadata after each feed; the transient summary is not its oracle.
+            // reason: The reference-model proof compares canonical cells, cache truths and BG witnesses after each feed; the transient summary is not its oracle.
             _ = try terminal.feed(bytes);
-            // Disable the new character-only qualification in the reference before
+            for ([_]*const Screen{ &reference.screen_state.primary, &reference.screen_state.alternate }, [_]*const Screen{ &terminal.screen_state.primary, &terminal.screen_state.alternate }, 0..) |before, after, bank| {
+                for (0..after.rows) |row| {
+                    const identity = before_background[bank][row] orelse continue;
+                    if (after.rowBackgroundGeneration(@intCast(row)) != identity) continue;
+                    for (0..after.cols) |col| {
+                        const old = before.cellInfoAt(@intCast(row), @intCast(col)).attrs;
+                        const current = after.cellInfoAt(@intCast(row), @intCast(col)).attrs;
+                        try std.testing.expectEqual(old.reverse, current.reverse);
+                        try std.testing.expectEqualDeep(if (old.reverse) old.fg else old.bg, if (current.reverse) current.fg else current.bg);
+                    }
+                }
+            }
+            // Disable every cached write qualification in the reference before
             // every byte. The old ordinary-cell replacement lane remains the oracle.
             for (bytes) |byte| {
                 for ([_]*Screen{ &reference.screen_state.primary, &reference.screen_state.alternate }) |screen| {
                     if (screen.row_metadata) |metadata| for (metadata) |*row| {
                         row.ascii.end = 0;
+                        row.ordinary.end = 0;
+                        row.background.end = 0;
                     };
                 }
                 // zig-audit: acknowledge discard
@@ -10996,9 +11015,19 @@ test "ordinary ASCII spans remain exact through TUI edits and skipped ring revol
                             try std.testing.expectEqualDeep(expected, cell);
                         }
                     }
-                    for (row.background.items[0..row.background.count], 0..) |background, span_index| {
-                        try std.testing.expect(background.start < background.end);
-                        if (span_index > 0) try std.testing.expect(row.background.items[span_index - 1].end <= background.start);
+                    const ordinary_span = row.ordinary;
+                    if (ordinary_span.start < ordinary_span.end) {
+                        try std.testing.expect(ordinary_span.end <= screen.cols);
+                        for (ordinary_span.start..ordinary_span.end) |col| {
+                            const cell = cells[physical * screen.cols + col];
+                            var expected = Screen.default_cell;
+                            expected.codepoint = cell.codepoint;
+                            expected.attrs = cell.attrs;
+                            try std.testing.expectEqualDeep(expected, cell);
+                        }
+                    }
+                    const background = row.background;
+                    if (background.start < background.end) {
                         try std.testing.expect(background.end <= screen.cols);
                         for (background.start..background.end) |col| {
                             const cell = cells[physical * screen.cols + col];
@@ -11110,5 +11139,25 @@ test "independent observations cannot miss repeated partial row-ring revolutions
             try std.testing.expect(bg[row] != terminal.semanticView(0).rowBackgroundGeneration(@intCast(row)).?);
             for (0..4) |col| try std.testing.expectEqual(Screen.ColorKind.default, terminal.semanticView(0).cellInfoAt(@intCast(row), @intCast(col)).attrs.bg.kind);
         }
+    }
+}
+
+test "ASCII foreground rewrites retain BG identity beyond the retained BG interval" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 8, 0);
+    defer terminal.deinit();
+    const initial = try terminal.feed("\x1b[30;41mA\x1b[42mB\x1b[43mC\x1b[44mD\x1b[45mE\x1b[46mF");
+    try std.testing.expect(initial.mutations.text);
+    const before_bg = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+    const before_row = terminal.semanticView(0).rowGeneration(0).?;
+    const rewrite = try terminal.feed("\x1b[1;1H\x1b[92;41ma\x1b[42mb\x1b[43mc\x1b[44md\x1b[45me\x1b[46mf");
+    try std.testing.expect(rewrite.mutations.text);
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(before_bg, view.rowBackgroundGeneration(0).?);
+    try std.testing.expect(before_row != view.rowGeneration(0).?);
+    for ("abcdef", 0..) |byte, col| {
+        const cell = view.cellInfoAt(0, @intCast(col));
+        try std.testing.expectEqual(@as(u32, byte), cell.codepoint);
+        try std.testing.expectEqual(@as(u32, 10), cell.attrs.fg.value);
+        try std.testing.expectEqual(@as(u32, @intCast(col + 1)), cell.attrs.bg.value);
     }
 }

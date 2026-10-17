@@ -9,98 +9,51 @@ const AsciiSpan = struct {
     end: u16 = 0,
     attrs: cell_values.CellAttrs = cell_values.default_attrs,
 };
+// Known ordinary cells with one exact BG source; end == 0 is unknown.
+// This proves ordinary occupancy as well as color, so styled writes can reuse it.
 const BackgroundSpan = struct {
     start: u16 = 0,
     end: u16 = 0,
     source: u64 = 0,
+
+    fn blank(cols: u16) BackgroundSpan {
+        return .{ .end = cols };
+    }
+
+    inline fn covers(self: *const BackgroundSpan, first: u16, after: u16, source: u64) bool {
+        return self.start < self.end and self.start <= first and after <= self.end and self.source == source;
+    }
+
+    fn write(self: *BackgroundSpan, first: u16, after: u16, source: u64) void {
+        if (first < after and !self.covers(first, after, source)) self.writeUncovered(first, after, source);
+    }
+
+    fn writeUncovered(self: *BackgroundSpan, first: u16, after: u16, source: u64) void {
+        if (Screen.retainSpan(&self.start, &self.end, first, after, self.source == source)) self.source = source;
+    }
 };
-// TODO: Reduce styled-write/scroll bookkeeping cost without slowing the plain ASCII lane.
-const BackgroundSpans = struct {
-    const capacity = 4;
-    items: [capacity]BackgroundSpan = @splat(.{}),
-    count: u8 = 0,
-
-    fn blank(cols: u16) BackgroundSpans {
-        var result: BackgroundSpans = .{};
-        result.items[0].end = cols;
-        result.count = 1;
-        return result;
-    }
-
-    inline fn covers(self: *const BackgroundSpans, first: u16, after: u16, source: u64) bool {
-        for (self.items[0..self.count]) |span| {
-            if (span.start <= first and after <= span.end and span.source == source) return true;
-        }
-        return false;
-    }
-
-    // Keep exact ordinary-cell facts only. Overflow loses precision, never truth.
-    fn write(self: *BackgroundSpans, first: u16, after: u16, source: u64) void {
-        if (first >= after or self.covers(first, after, source)) return;
-        self.writeUncovered(first, after, source);
-    }
-
-    fn writeUncovered(self: *BackgroundSpans, first: u16, after: u16, source: u64) void {
-        std.debug.assert(first < after);
-        if (self.count == 0 or
-            (first <= self.items[0].start and after >= self.items[self.count - 1].end))
-        {
-            self.items[0] = .{ .start = first, .end = after, .source = source };
-            self.count = 1;
-            return;
-        }
-        var pieces: [capacity + 2]BackgroundSpan = undefined;
-        var count: usize = 0;
-        // Existing facts are ordered; insert and merge during the same walk.
-        var inserted = false;
-        const written = BackgroundSpan{ .start = first, .end = after, .source = source };
-        for (self.items[0..self.count]) |span| {
-            if (span.end <= first) {
-                append(&pieces, &count, span);
-            } else if (span.start >= after) {
-                if (!inserted) {
-                    append(&pieces, &count, written);
-                    inserted = true;
-                }
-                append(&pieces, &count, span);
-            } else {
-                if (span.start < first)
-                    append(&pieces, &count, .{ .start = span.start, .end = first, .source = span.source });
-                if (!inserted) {
-                    append(&pieces, &count, written);
-                    inserted = true;
-                }
-                if (span.end > after)
-                    append(&pieces, &count, .{ .start = after, .end = span.end, .source = span.source });
-            }
-        }
-        if (!inserted) append(&pieces, &count, written);
-        while (count > capacity) {
-            var smallest: usize = 0;
-            for (pieces[1..count], 1..) |piece, at| {
-                if (piece.end - piece.start < pieces[smallest].end - pieces[smallest].start) smallest = at;
-            }
-            std.mem.copyForwards(BackgroundSpan, pieces[smallest .. count - 1], pieces[smallest + 1 .. count]);
-            count -= 1;
-        }
-        @memcpy(self.items[0..count], pieces[0..count]);
-        self.count = @intCast(count);
-    }
-
-    inline fn append(pieces: *[capacity + 2]BackgroundSpan, count: *usize, span: BackgroundSpan) void {
-        if (count.* > 0 and pieces[count.* - 1].end == span.start and pieces[count.* - 1].source == span.source) {
-            pieces[count.* - 1].end = span.end;
-        } else {
-            pieces[count.*] = span;
-            count.* += 1;
+// Geometry only: default cell fields except codepoint and attributes.
+// Generic mutations discard this fact; accepted ordinary writes can extend it.
+const OrdinarySpan = struct {
+    start: u16 = 0,
+    end: u16 = 0,
+    fn remember(self: *OrdinarySpan, first: u16, after: u16) void {
+        if (self.start < self.end and first <= self.end and after >= self.start) {
+            self.start = @min(self.start, first);
+            self.end = @max(self.end, after);
+        } else if (after - first >= self.end -| self.start) {
+            self.start = first;
+            self.end = after;
         }
     }
 };
+const BackgroundWrite = enum { cached, unchanged, changed };
 const RowMetadata = struct {
     generation: u64,
     background_generation: u64 = 0,
     ascii: AsciiSpan = .{},
-    background: BackgroundSpans = .{},
+    ordinary: OrdinarySpan = .{},
+    background: BackgroundSpan = .{},
 };
 const history_store_mod = @import("history_store.zig");
 const scalar_storage = @import("scalar_storage.zig");
@@ -491,7 +444,7 @@ pub const Screen = struct {
         errdefer if (row_flags) |buf| allocator.free(buf);
         const row_metadata = try allocator.alloc(RowMetadata, rows);
         errdefer allocator.free(row_metadata);
-        for (row_metadata, 1..) |*metadata, value| metadata.* = .{ .generation = value, .background_generation = value, .ascii = .{ .end = cols }, .background = BackgroundSpans.blank(cols) };
+        for (row_metadata, 1..) |*metadata, value| metadata.* = .{ .generation = value, .background_generation = value, .ascii = .{ .end = cols }, .ordinary = .{ .end = cols }, .background = BackgroundSpan.blank(cols) };
         var tab_stops = try tab_stops_mod.State.init(allocator, cols);
         errdefer tab_stops.deinit(allocator);
         var result = initBase(
@@ -1438,7 +1391,7 @@ pub const Screen = struct {
         const row = self.advanceRow(logical_row) orelse return;
         if (background_changed) {
             row.background_generation = row.generation;
-            row.background.count = 0;
+            row.background.end = 0;
         }
     }
 
@@ -1453,6 +1406,7 @@ pub const Screen = struct {
         const row = &metadata[index];
         row.generation = self.nextRowGeneration();
         row.ascii.end = 0;
+        row.ordinary.end = 0;
         return row;
     }
 
@@ -2641,6 +2595,7 @@ pub const Screen = struct {
     }
 
     /// Writes an ordinary printable prefix within the current physical row.
+    /// Proven matching attributes stay in the codepoint-only loop; styled work has its own call boundary.
     /// Stops before controls, Unicode, wrapping or any cell requiring the canonical writer.
     pub fn writePlainAsciiPrefix(self: *Screen, bytes: []const u8) usize {
         if (self.cols == 0 or self.rows == 0 or self.wrap_pending or self.insert_mode or
@@ -2660,8 +2615,6 @@ pub const Screen = struct {
             cell_values.attrsEqual(&self.current_attrs, &initial_cell_attrs);
         const metadata = self.row_metadata orelse return 0;
         const span = &metadata[physical_row].ascii;
-        var matching_span = false;
-        var attributes_retained = default_empty_row;
         var count: usize = 0;
         if (default_empty_row) {
             while (count < limit) : (count += 1) {
@@ -2670,36 +2623,24 @@ pub const Screen = struct {
                 cells[start + count].codepoint = byte;
             }
         } else {
-            matching_span = span.start < span.end and cell_values.attrsEqual(&span.attrs, &self.current_attrs);
+            const matching_span = span.start < span.end and cell_values.attrsEqual(&span.attrs, &self.current_attrs);
             if (matching_span and col >= span.start and col < span.end) {
-                attributes_retained = true;
                 const span_limit = @min(limit, span.end - col);
                 while (count < span_limit) : (count += 1) {
                     const byte = bytes[count];
                     if (byte < 0x20 or byte > 0x7e) break;
                     cells[start + count].codepoint = byte;
                 }
-            } else if (col >= span.start and col < span.end) {
-                const span_limit = @min(limit, span.end - col);
-                count = @call(.never_inline, Screen.writeOrdinaryAsciiAttrs, .{
-                    cells[start..][0..span_limit], bytes[0..span_limit], self.current_attrs,
-                });
             } else {
-                var template = blank_cell;
-                template.attrs = self.current_attrs;
-                while (count < limit) : (count += 1) {
-                    const byte = bytes[count];
-                    if (byte < 0x20 or byte > 0x7e) break;
-                    const target = &cells[start + count];
-                    if (target.width != 1 or target.height != 1 or target.x != 0 or
-                        target.y != 0 or target.combining_len != 0) break;
-                    target.* = template;
-                    target.codepoint = byte;
-                }
+                return @call(.never_inline, Screen.writeStyledAsciiPrefix, .{ self, bytes, physical_row, col, matching_span });
             }
         }
         if (count == 0) return 0;
-        const last = bytes[count - 1];
+        @call(.always_inline, Screen.finishAsciiPrefix, .{ self, physical_row, col, count, bytes[count - 1] });
+        return count;
+    }
+
+    fn finishAsciiPrefix(self: *Screen, physical_row: u32, col: u16, count: usize, last: u8) void {
         if (self.last_graphic) |*graphic| {
             graphic.codepoint = last;
             graphic.width = 1;
@@ -2724,32 +2665,80 @@ pub const Screen = struct {
             generations[physical_row].generation = next - 1;
             self.next_row_generation = next;
         }
-        if (!attributes_retained)
-            @call(.never_inline, Screen.rememberAsciiSpan, .{ self, physical_row, col, after, matching_span });
-        return count;
     }
 
-    // The retained ordinary span proves all non-text fields are already blank-cell geometry.
-    // Keep the changed-attribute loop separate from the codepoint-only writer.
-    fn writeOrdinaryAsciiAttrs(cells: []Cell, bytes: []const u8, attrs: CellAttrs) usize {
+    fn writeStyledAsciiPrefix(self: *Screen, bytes: []const u8, physical_row: u32, col: u16, matching_span: bool) usize {
+        const cells = self.cells.?;
+        const row = &self.row_metadata.?[physical_row];
+        const start = physical_row * @as(u32, self.cols) + @as(u32, col);
+        const limit = @min(bytes.len, self.cols - col);
+        const geometry_known = col >= row.ordinary.start and col < row.ordinary.end;
+        var ordinary_after = if (geometry_known) row.ordinary.end else col;
+        if (!geometry_known) {
+            if (col >= row.ascii.start and col < row.ascii.end) ordinary_after = row.ascii.end;
+            const background = row.background;
+            if (col >= background.start and col < background.end) ordinary_after = @max(ordinary_after, background.end);
+        }
         var count: usize = 0;
-        for (bytes, cells) |byte, *cell| {
-            if (byte < 0x20 or byte > 0x7e) break;
-            cell.codepoint = byte;
-            cell.attrs = attrs;
-            count += 1;
+        var background_write: BackgroundWrite = .unchanged;
+        const background_source = backgroundSource(&self.current_attrs);
+        if (ordinary_after > col) {
+            const ordinary_limit = @min(limit, ordinary_after - col);
+            const after = col + @as(u16, @intCast(ordinary_limit));
+            const background = row.background;
+            var background_known = false;
+            if (background.start <= col and after <= background.end) {
+                background_known = true;
+                background_write = if (background.source == background_source) .cached else .changed;
+            } else if (row.ascii.start <= col and after <= row.ascii.end) {
+                background_known = true;
+                background_write = if (backgroundSource(&row.ascii.attrs) == background_source) .unchanged else .changed;
+            }
+            const attrs = self.current_attrs;
+            if (background_known) {
+                while (count < ordinary_limit) : (count += 1) {
+                    const byte = bytes[count];
+                    if (byte < 0x20 or byte > 0x7e) break;
+                    cells[start + count].codepoint = byte;
+                    cells[start + count].attrs = attrs;
+                }
+            } else {
+                while (count < ordinary_limit) : (count += 1) {
+                    const byte = bytes[count];
+                    if (byte < 0x20 or byte > 0x7e) break;
+                    const target = &cells[start + count];
+                    if (background_write != .changed and backgroundSource(&target.attrs) != background_source)
+                        background_write = .changed;
+                    target.codepoint = byte;
+                    target.attrs = attrs;
+                }
+            }
+        } else {
+            var template = blank_cell;
+            template.attrs = self.current_attrs;
+            while (count < limit) : (count += 1) {
+                const byte = bytes[count];
+                if (byte < 0x20 or byte > 0x7e) break;
+                const target = &cells[start + count];
+                if (target.width != 1 or target.height != 1 or target.x != 0 or target.y != 0 or target.combining_len != 0) break;
+                if (background_write != .changed and backgroundSource(&target.attrs) != background_source)
+                    background_write = .changed;
+                target.* = template;
+                target.codepoint = byte;
+            }
         }
+        if (count == 0) return 0;
+        @call(.always_inline, Screen.finishAsciiPrefix, .{ self, physical_row, col, count, bytes[count - 1] });
+        const after = col + @as(u16, @intCast(count));
+        if (!geometry_known) row.ordinary.remember(col, after);
+        @call(.always_inline, Screen.rememberAsciiSpan, .{ self, physical_row, col, after, matching_span, background_write });
         return count;
     }
 
-    fn rememberAsciiSpan(self: *Screen, physical_row: u32, first: u16, after: u16, same_attrs: bool) void {
+    fn rememberAsciiSpan(self: *Screen, physical_row: u32, first: u16, after: u16, same_attrs: bool, background_write: BackgroundWrite) void {
         const metadata = self.row_metadata orelse return;
-        const background = &metadata[physical_row].background;
-        const source = backgroundSource(&self.current_attrs);
-        if (!background.covers(first, after, source)) {
-            metadata[physical_row].background_generation = metadata[physical_row].generation;
-            background.writeUncovered(first, after, source);
-        }
+        if (background_write == .changed) metadata[physical_row].background_generation = metadata[physical_row].generation;
+        if (background_write != .cached) metadata[physical_row].background.write(first, after, backgroundSource(&self.current_attrs));
         const span = &metadata[physical_row].ascii;
         if (retainSpan(&span.start, &span.end, first, after, same_attrs)) span.attrs = self.current_attrs;
     }
@@ -3208,9 +3197,10 @@ pub const Screen = struct {
         if (row_metadata) |row| {
             row.generation = self.nextRowGeneration();
             row.ascii.end = 0;
+            row.ordinary.end = 0;
             if (!background_unchanged) {
                 row.background_generation = row.generation;
-                row.background.count = 0;
+                row.background.end = 0;
             }
         }
         return true;
@@ -3704,6 +3694,7 @@ pub const Screen = struct {
                 if (clear_cols != 0) row.background.writeUncovered(0, clear_cols, 0);
             }
             row.ascii = .{ .end = clear_cols };
+            row.ordinary = .{ .end = clear_cols };
         }
     }
 
@@ -8113,40 +8104,32 @@ test "full scroll carries shifted row identities and refreshes recycled rows" {
     try std.testing.expect(first_recycled != second_recycled);
 }
 
-test "bounded BG facts lose precision rather than inventing coverage" {
-    var facts = BackgroundSpans.blank(64);
+test "one BG fact forgets uncovered colors rather than inventing coverage" {
+    var fact = BackgroundSpan.blank(64);
     var truth: [64]u64 = @splat(0);
-    // Split a known interval, merge matching neighbors, and overflow capacity.
-    facts.write(16, 48, 1);
+    fact.write(16, 48, 1);
     @memset(truth[16..48], 1);
-    try std.testing.expect(facts.covers(0, 16, 0));
-    try std.testing.expect(facts.covers(16, 48, 1));
-    try std.testing.expect(facts.covers(48, 64, 0));
-    facts.write(16, 48, 0);
+    try std.testing.expect(fact.covers(16, 48, 1));
+    try std.testing.expect(!fact.covers(0, 16, 0));
+    try std.testing.expect(!fact.covers(48, 64, 0));
+    fact.write(16, 48, 0);
     @memset(truth[16..48], 0);
-    try std.testing.expect(facts.covers(0, 64, 0));
+    try std.testing.expect(!fact.covers(0, 64, 0));
+    fact.write(0, 64, 0);
+    try std.testing.expect(fact.covers(0, 64, 0));
     var random = std.Random.DefaultPrng.init(0x62677370616e);
     for (0..4096) |iteration| {
         const first = random.random().uintLessThan(u16, 64);
         const after = first + 1 + random.random().uintLessThan(u16, 64 - first);
         const source = random.random().uintLessThan(u64, 8);
-        facts.write(first, after, source);
+        fact.write(first, after, source);
         @memset(truth[first..after], source);
-        try std.testing.expect(facts.count <= BackgroundSpans.capacity);
-        for (facts.items[0..facts.count], 0..) |span, index| {
-            try std.testing.expect(span.start < span.end and span.end <= truth.len);
-            if (index > 0) {
-                const before = facts.items[index - 1];
-                try std.testing.expect(before.end <= span.start);
-                try std.testing.expect(before.end != span.start or before.source != span.source);
-            }
-            for (truth[span.start..span.end]) |actual| try std.testing.expectEqual(actual, span.source);
-        }
-        // Observe arbitrary ranges independently of the remembered partition.
+        try std.testing.expect(fact.start < fact.end and fact.end <= truth.len);
+        for (truth[fact.start..fact.end]) |actual| try std.testing.expectEqual(actual, fact.source);
         for (0..8) |offset| {
             const start: u16 = @intCast((iteration + offset * 7) % 64);
             const end: u16 = @intCast(@min(@as(usize, start) + offset + 1, 64));
-            if (facts.covers(start, end, truth[start])) {
+            if (fact.covers(start, end, truth[start])) {
                 for (truth[start..end]) |actual| try std.testing.expectEqual(truth[start], actual);
             }
         }
