@@ -780,3 +780,100 @@ test "memory fallback owns its bytes and preserves variation glyphs and masks" {
         try std.testing.expectEqualSlices(u8, lhs.pixels, rhs.pixels);
     }
 }
+
+test "intrinsic colour is straight RGBA while the alpha API keeps its contract" {
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer set.deinit();
+    const face = (try set.faceFor(&.{0x1f600})).?;
+    try std.testing.expectEqual(@as(u8, 1), face);
+    const id = try set.glyphForCodepoint(face, 0x1f600);
+    var color = try set.rasterizeGlyph(std.testing.allocator, face, id);
+    defer color.deinit();
+    try std.testing.expectEqual(text.RasterFormat.rgba8, color.format);
+    const raster = color.raster;
+    try std.testing.expectEqual(@as(usize, raster.width) * raster.height * 4, raster.pixels.len);
+    var red = false;
+    var translucent_blue = false;
+    for (0..@as(usize, raster.width) * raster.height) |pixel| {
+        const rgba = raster.pixels[pixel * 4 ..][0..4];
+        red = red or (rgba[0] > 240 and rgba[1] == 0 and rgba[2] == 0 and rgba[3] > 240);
+        translucent_blue = translucent_blue or (rgba[0] == 0 and rgba[1] == 0 and rgba[2] > 240 and rgba[3] >= 120 and rgba[3] <= 136);
+    }
+    try std.testing.expect(red and translucent_blue);
+    var alpha = try set.rasterize(std.testing.allocator, face, id);
+    defer alpha.deinit();
+    try std.testing.expectEqual(@as(usize, alpha.width) * alpha.height, alpha.pixels.len);
+    const ordinary = try set.glyphForCodepoint(0, 'M');
+    var produced = try set.rasterizeGlyph(std.testing.allocator, 0, ordinary);
+    defer produced.deinit();
+    var original = try set.rasterize(std.testing.allocator, 0, ordinary);
+    defer original.deinit();
+    try std.testing.expectEqual(text.RasterFormat.alpha8, produced.format);
+    try std.testing.expectEqualSlices(u8, original.pixels, produced.raster.pixels);
+}
+
+test "fixed bitmap fallback scales shaping and raster to requested pixels" {
+    const native = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.mono_font},
+        .size = .{ .pixels = 8 },
+    });
+    defer native.deinit();
+    const small = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.mono_font},
+        .size = .{ .pixels = 4 },
+    });
+    defer small.deinit();
+    const cp: u21 = 0x41;
+    const id = try native.glyphForCodepoint(1, cp);
+    var before = try native.rasterize(std.testing.allocator, 1, id);
+    defer before.deinit();
+    var after = try small.rasterize(std.testing.allocator, 1, id);
+    defer after.deinit();
+    try std.testing.expect(after.width < before.width and after.height < before.height);
+    try std.testing.expectEqual((@as(u32, before.width) + 1) / 2, after.width);
+}
+
+test "outline fitting preserves complete symbol and restores shaping size on success and allocation failure" {
+    const set = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer set.deinit();
+    const id = try set.glyphForCodepoint(1, 0x25b2);
+    var natural = try set.rasterize(std.testing.allocator, 1, id);
+    defer natural.deinit();
+    const width: u16 = 9;
+    try std.testing.expect(natural.width > width + 2);
+    const metrics = set.metrics();
+    var before = try shapeOwned(set, std.testing.allocator, .{ .codepoints = &.{0x25b2}, .clusters = &.{0} });
+    defer before.deinit();
+    var fitted = try set.rasterizeGlyphFitted(std.testing.allocator, 1, id, width, 2);
+    defer fitted.deinit();
+    try std.testing.expectEqual(text.RasterFormat.alpha8, fitted.format);
+    try std.testing.expect(fitted.raster.width <= width);
+    try std.testing.expect(fitted.raster.height < natural.height);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, fitAllocation, .{ set, id });
+    var after = try shapeOwned(set, std.testing.allocator, .{ .codepoints = &.{0x25b2}, .clusters = &.{0} });
+    defer after.deinit();
+    try std.testing.expectEqual(metrics, set.metrics());
+    try std.testing.expectEqualSlices(text.Glyph, before.glyphs, after.glyphs);
+    var restored = try set.rasterize(std.testing.allocator, 1, id);
+    defer restored.deinit();
+    try std.testing.expectEqual(natural.width, restored.width);
+    try std.testing.expectEqual(natural.height, restored.height);
+    try std.testing.expectEqual(natural.left, restored.left);
+    try std.testing.expectEqual(natural.top, restored.top);
+    try std.testing.expectEqualSlices(u8, natural.pixels, restored.pixels);
+}
+
+fn fitAllocation(allocator: std.mem.Allocator, set: *text.FontSet, id: u32) !void {
+    var raster = try set.rasterizeGlyphFitted(allocator, 1, id, 9, 2);
+    defer raster.deinit();
+}

@@ -53,6 +53,10 @@ pub const Glyph = engine.Glyph;
 pub const Run = engine.Run;
 /// Owns one bounded tightly packed glyph alpha mask and validated baseline placement.
 pub const Raster = engine.Raster;
+/// Names tightly packed glyph pixel formats.
+pub const RasterFormat = engine.RasterFormat;
+/// Owns either an alpha mask or straight RGBA intrinsic-colour glyph.
+pub const GlyphRaster = engine.GlyphRaster;
 
 const FontOwner = struct {
     value: engine.FontSet,
@@ -141,6 +145,27 @@ pub const FontSet = opaque {
             face_index,
             glyph_id,
         );
+    }
+    /// Preserves intrinsic font colour when available; ordinary glyphs remain alpha.
+    pub fn rasterizeGlyph(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+    ) RasterError!GlyphRaster {
+        return fontOwner(self).value.rasterizeGlyph(allocator, face_index, glyph_id);
+    }
+    /// Re-rasterizes substantial outline overflow to a caller-owned ink width.
+    /// Natural alpha rasterization and the FontSet's configured size stay intact.
+    pub fn rasterizeGlyphFitted(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+        maximum_width: u16,
+        tolerated_overflow: u16,
+    ) RasterError!GlyphRaster {
+        return fontOwner(self).value.rasterizeGlyphFitted(allocator, face_index, glyph_id, maximum_width, tolerated_overflow);
     }
 };
 

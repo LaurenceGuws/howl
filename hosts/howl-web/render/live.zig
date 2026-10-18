@@ -19,7 +19,7 @@ const command_wire_bytes: usize = command_capacity * command_record_bytes;
 const metadata_capacity: usize = 32 * 1024 * 1024;
 const atlas_bytes = 1024 * 1024;
 const maximum_terminal_images: usize = terminal.maximum_external_images;
-const residency_capacity = maximum_terminal_images + 1;
+const residency_capacity = terminal.maximum_frame_resources;
 
 comptime {
     if (render_native.c.HRC_NATIVE_VERSION != 1 or @sizeOf(render_native.CommandInfo) != 64 or

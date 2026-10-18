@@ -1456,7 +1456,7 @@ const App = struct {
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
             const width = @min(420, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.plus(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = 46, .width = width, .height = @min(@max(1, self.height - 58), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+            return .{ .x = @min(chrome.plus(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = chrome.height, .width = width, .height = @min(@max(1, self.height - chrome.height - 12), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));

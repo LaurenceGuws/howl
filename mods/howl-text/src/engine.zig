@@ -227,10 +227,45 @@ const FontStorage = union(enum) {
     }
 };
 
+/// Native colour is converted to straight RGBA; alpha-only callers keep Raster.
+pub const RasterFormat = enum { alpha8, rgba8 };
+/// Owns one raster with an explicit bytes-per-pixel contract.
+pub const GlyphRaster = struct {
+    format: RasterFormat,
+    raster: Raster,
+    /// Releases either format with its originating allocator.
+    pub fn deinit(self: *GlyphRaster) void {
+        self.raster.deinit();
+        self.* = undefined;
+    }
+};
+
+const RasterScale = struct {
+    numerator: u32 = 1,
+    denominator: u32 = 1,
+
+    fn fits(self: RasterScale, value: i32) bool {
+        const result = @divTrunc(@as(i64, value) * self.numerator, self.denominator);
+        return result >= std.math.minInt(i32) and result <= std.math.maxInt(i32);
+    }
+
+    fn position(self: RasterScale, value: i32) error{InvalidPlacement}!i32 {
+        const result = @divTrunc(@as(i64, value) * self.numerator, self.denominator);
+        return std.math.cast(i32, result) orelse error.InvalidPlacement;
+    }
+
+    fn extent(self: RasterScale, value: u16) error{RasterTooLarge}!u16 {
+        if (value == 0) return 0;
+        const result = (@as(u64, value) * self.numerator + self.denominator - 1) / self.denominator;
+        return std.math.cast(u16, result) orelse error.RasterTooLarge;
+    }
+};
+
 const Face = struct {
     storage: FontStorage,
     ft: c.FT_Face,
     hb: *c.hb_font_t,
+    scale: RasterScale,
 };
 
 // Native font construction, shaping, and rasterization.
@@ -302,9 +337,9 @@ pub const FontSet = struct {
             if (opened != 0) return error.FontOpen;
             errdefer doneFace(ft);
             if (c.FT_Select_Charmap(ft, c.FT_ENCODING_UNICODE) != 0) return error.UnicodeCharmap;
-            try setConfiguredSize(ft, size);
+            const scale = try setConfiguredSize(ft, size);
             const hb = try createHbFont(ft);
-            faces[loaded] = .{ .storage = storage, .ft = ft, .hb = hb };
+            faces[loaded] = .{ .storage = storage, .ft = ft, .hb = hb, .scale = scale };
         }
 
         const nominal_height_px = try nominalPixelHeight(size);
@@ -393,6 +428,16 @@ pub const FontSet = struct {
         for (0..info_count) |i| {
             try validateGlyphInfo(infos[i], text.clusters.len);
         }
+        // Preflight every scaled native position before touching caller storage.
+        // Shape errors retain the public all-or-nothing destination contract.
+        if (face.scale.numerator != face.scale.denominator) {
+            for (0..position_count) |i| {
+                const position = positions[i];
+                if (!face.scale.fits(position.x_advance) or !face.scale.fits(position.y_advance) or
+                    !face.scale.fits(position.x_offset) or !face.scale.fits(position.y_offset))
+                    return error.InvalidShapeResult;
+            }
+        }
         const glyphs = try shapeDestination(
             info_count,
             buffer.capacity,
@@ -408,6 +453,14 @@ pub const FontSet = struct {
                 .x_offset = positions[i].x_offset,
                 .y_offset = positions[i].y_offset,
             };
+        }
+        if (face.scale.numerator != face.scale.denominator) {
+            for (glyphs) |*glyph| {
+                glyph.x_advance = face.scale.position(glyph.x_advance) catch return error.InvalidShapeResult;
+                glyph.y_advance = face.scale.position(glyph.y_advance) catch return error.InvalidShapeResult;
+                glyph.x_offset = face.scale.position(glyph.x_offset) catch return error.InvalidShapeResult;
+                glyph.y_offset = face.scale.position(glyph.y_offset) catch return error.InvalidShapeResult;
+            }
         }
         return .{
             .face_index = face_index,
@@ -449,7 +502,79 @@ pub const FontSet = struct {
         glyph_id: u32,
     ) RasterError!Raster {
         if (face_index >= self.faces.len or glyph_id == 0) return error.InvalidRaster;
-        return rasterizeFace(allocator, self.faces[face_index].ft, glyph_id);
+        const face = self.faces[face_index];
+        return (try rasterizeFace(allocator, face.ft, glyph_id, face.scale, false)).raster;
+    }
+
+    /// Rasterizes intrinsic colour when available, otherwise the ordinary alpha
+    /// mask. Native bitmap strikes are scaled to this FontSet's requested size.
+    pub fn rasterizeGlyph(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+    ) RasterError!GlyphRaster {
+        if (face_index >= self.faces.len or glyph_id == 0) return error.InvalidRaster;
+        const face = self.faces[face_index];
+        return rasterizeFace(allocator, face.ft, glyph_id, face.scale, true);
+    }
+
+    /// Fits substantial glyph overflow by re-rasterizing scalable outlines.
+    /// Caller-selected small overhang keeps its native hinting. The exact original
+    /// FT_Size is restored before return, including every failure path.
+    pub fn rasterizeGlyphFitted(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+        maximum_width: u16,
+        tolerated_overflow: u16,
+    ) RasterError!GlyphRaster {
+        if (face_index >= self.faces.len or glyph_id == 0 or maximum_width == 0) return error.InvalidRaster;
+        const face = self.faces[face_index];
+        const ft = face.ft;
+        if (c.FT_Load_Glyph(ft, glyph_id, @intCast(c.FT_LOAD_RENDER | c.FT_LOAD_COLOR)) != 0)
+            return error.GlyphLoad;
+        const slot = ft.*.glyph orelse return error.GlyphRender;
+        const geometry = try bitmapGeometry(slot.*.bitmap);
+        const current_width = try face.scale.extent(geometry.width);
+        if (current_width <= @as(u32, maximum_width) + tolerated_overflow)
+            return rasterizeLoaded(allocator, slot, face.scale, true);
+        if (ft.*.face_flags & c.FT_FACE_FLAG_SCALABLE == 0) {
+            // Native bitmap strikes cannot be re-hinted. Filter their complete
+            // premultiplied raster to the requested extent instead.
+            return rasterizeLoaded(allocator, slot, .{
+                .numerator = maximum_width,
+                .denominator = geometry.width,
+            }, true);
+        }
+
+        const original = ft.*.size orelse return error.GlyphLoad;
+        var fitted: c.FT_Size = undefined;
+        if (c.FT_New_Size(ft, &fitted) != 0) return error.GlyphLoad;
+        defer if (c.FT_Done_Size(fitted) != 0)
+            // zig-audit: acknowledge panic
+            // reason: This native size was created by this call; failing to retire it violates exclusive FontSet ownership.
+            @panic("FreeType rejected an owned temporary glyph size");
+        defer if (c.FT_Activate_Size(original) != 0)
+            // zig-audit: acknowledge panic
+            // reason: Original FT_Size remains live under the exclusively borrowed FontSet; restoration failure would poison all later shaping and cache identities.
+            @panic("FreeType could not restore the original font size");
+        if (c.FT_Activate_Size(fitted) != 0) return error.GlyphLoad;
+        const width: c.FT_F26Dot6 = @intCast(@max(1, @as(u64, original.*.metrics.x_ppem) * 64 * maximum_width / geometry.width));
+        const height: c.FT_F26Dot6 = @intCast(@max(1, @as(u64, original.*.metrics.y_ppem) * 64 * maximum_width / geometry.width));
+        if (c.FT_Set_Char_Size(ft, width, height, 72, 72) != 0 or
+            c.FT_Load_Glyph(ft, glyph_id, @intCast(c.FT_LOAD_RENDER | c.FT_LOAD_COLOR)) != 0)
+            return error.GlyphLoad;
+        const resized = ft.*.glyph orelse return error.GlyphRender;
+        const actual = try bitmapGeometry(resized.*.bitmap);
+        // Hinting may round the new outline up by a pixel. Keep all its ink;
+        // filter that small residual rather than cutting off the symbol.
+        const scale: RasterScale = if (actual.width > maximum_width)
+            .{ .numerator = maximum_width, .denominator = actual.width }
+        else
+            .{};
+        return rasterizeLoaded(allocator, resized, scale, true);
     }
 
     fn selectFace(self: *FontSet, codepoints: []const u32) ?usize {
@@ -466,35 +591,85 @@ fn rasterizeFace(
     allocator: std.mem.Allocator,
     face: c.FT_Face,
     glyph_id: u32,
-) RasterError!Raster {
-    if (c.FT_Load_Glyph(face, glyph_id, c.FT_LOAD_RENDER) != 0) return error.GlyphLoad;
+    scale: RasterScale,
+    allow_color: bool,
+) RasterError!GlyphRaster {
+    const flags: c.FT_Int32 = @intCast(c.FT_LOAD_RENDER | (if (allow_color) @as(c_long, c.FT_LOAD_COLOR) else 0));
+    if (c.FT_Load_Glyph(face, glyph_id, flags) != 0) return error.GlyphLoad;
     const slot = face.*.glyph orelse return error.GlyphRender;
+    return rasterizeLoaded(allocator, slot, scale, allow_color);
+}
+
+fn rasterizeLoaded(
+    allocator: std.mem.Allocator,
+    slot: c.FT_GlyphSlot,
+    scale: RasterScale,
+    allow_color: bool,
+) RasterError!GlyphRaster {
     const bitmap = slot.*.bitmap;
+    const color = allow_color and bitmap.pixel_mode == c.FT_PIXEL_MODE_BGRA;
+    if (!allow_color and bitmap.pixel_mode == c.FT_PIXEL_MODE_BGRA) return error.UnsupportedPixelMode;
     const geometry = try bitmapGeometry(bitmap);
-    const placement = try bitmapPlacement(slot.*.bitmap_left, slot.*.bitmap_top);
-    const byte_count = try rasterByteCount(geometry.width, geometry.height);
-    const pixels = allocator.alloc(u8, byte_count) catch return error.OutOfMemory;
+    const placement = try bitmapPlacement(
+        try scale.position(slot.*.bitmap_left),
+        try scale.position(slot.*.bitmap_top),
+    );
+    const width = try scale.extent(geometry.width);
+    const height = try scale.extent(geometry.height);
+    const channels: usize = if (color) 4 else 1;
+    const count = std.math.mul(usize, try rasterByteCount(width, height), channels) catch return error.RasterTooLarge;
+    if (count > max_raster_bytes) return error.RasterTooLarge;
+    const pixels = allocator.alloc(u8, count) catch return error.OutOfMemory;
     errdefer allocator.free(pixels);
-    if (byte_count > 0) {
-        // FreeType owns exactly pitch × rows bytes for a rendered bitmap.
-        // `bitmapGeometry` validates and bounds that external extent first.
-        const source = geometry.source.?[0..geometry.source_bytes];
-        for (0..geometry.height) |y| for (0..geometry.width) |x| {
-            pixels[y * geometry.width + x] = try bitmapAlpha(
-                source,
-                geometry,
-                @intCast(x),
-                @intCast(y),
-            );
-        };
-    }
+    if (count > 0) try copyScaledBitmap(geometry, width, height, color, pixels);
     return .{
-        .allocator = allocator,
-        .width = geometry.width,
-        .height = geometry.height,
-        .left = placement.left,
-        .top = placement.top,
-        .pixels = pixels,
+        .format = if (color) .rgba8 else .alpha8,
+        .raster = .{ .allocator = allocator, .width = width, .height = height, .left = placement.left, .top = placement.top, .pixels = pixels },
+    };
+}
+
+// Box filtering averages premultiplied channels before unpremultiplication.
+// Integer overlap weights cover every source pixel, including small downscales.
+fn copyScaledBitmap(
+    geometry: BitmapGeometry,
+    width: u16,
+    height: u16,
+    color: bool,
+    output: []u8,
+) error{InvalidBitmap}!void {
+    const source = geometry.source.?[0..geometry.source_bytes];
+    if (!color and width == geometry.width and height == geometry.height) {
+        for (0..height) |y| for (0..width) |x| {
+            output[y * width + x] = try bitmapAlpha(source, geometry, @intCast(x), @intCast(y));
+        };
+        return;
+    }
+    const channels: usize = if (color) 4 else 1;
+    for (0..height) |y| for (0..width) |x| {
+        const x0 = x * @as(usize, geometry.width);
+        const x1 = (x + 1) * @as(usize, geometry.width);
+        const y0 = y * @as(usize, geometry.height);
+        const y1 = (y + 1) * @as(usize, geometry.height);
+        var sums: [4]u64 = @splat(0);
+        for (y0 / height..(y1 + height - 1) / height) |sy| {
+            const wy = @min(y1, (sy + 1) * height) - @max(y0, sy * height);
+            for (x0 / width..(x1 + width - 1) / width) |sx| {
+                const wx = @min(x1, (sx + 1) * width) - @max(x0, sx * width);
+                const weight: u64 = @as(u64, wx) * wy;
+                if (color) {
+                    const row = if (geometry.negative_pitch) geometry.source_height - 1 - sy else sy;
+                    const start = row * geometry.pitch + sx * 4;
+                    for (0..4) |channel| sums[channel] += source[start + channel] * weight;
+                } else sums[0] += (try bitmapAlpha(source, geometry, @intCast(sx), @intCast(sy))) * weight;
+            }
+        }
+        const area = @as(u64, geometry.width) * geometry.height;
+        const dest = (y * width + x) * channels;
+        if (color) {
+            const alpha = (sums[3] + area / 2) / area;
+            output[dest + 3] = @intCast(alpha);
+            for (0..3) |channel| output[dest + channel] = if (alpha == 0 or sums[3] == 0) 0 else @intCast(@min(255, (sums[2 - channel] * 255 + sums[3] / 2) / sums[3]));
+        } else output[dest] = @intCast((sums[0] + area / 2) / area);
     };
 }
 
@@ -551,7 +726,7 @@ fn pointNominalPixelHeight(
     return @intCast(pixels);
 }
 
-fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!void {
+fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!RasterScale {
     const result = switch (size) {
         .pixels => |height| c.FT_Set_Pixel_Sizes(face, 0, height),
         .points => |value| c.FT_Set_Char_Size(
@@ -562,7 +737,25 @@ fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!void {
             try dpiArgument(value.dpi_y),
         ),
     };
-    if (result != 0) return error.FontSize;
+    if (result == 0) return .{};
+    // Non-scalable colour fonts commonly expose one large bitmap strike. Select
+    // the nearest strike, then scale its output; never change the primary grid.
+    if (face.*.num_fixed_sizes <= 0 or face.*.num_fixed_sizes > 256 or
+        face.*.available_sizes == null) return error.FontSize;
+    const target: u32 = @as(u32, try nominalPixelHeight(size)) * 64;
+    var selected: c_int = -1;
+    var distance: u64 = std.math.maxInt(u64);
+    for (0..@intCast(face.*.num_fixed_sizes)) |index| {
+        const ppem = face.*.available_sizes[index].y_ppem;
+        if (ppem <= 0 or ppem > std.math.maxInt(u32)) continue;
+        const delta = @abs(@as(i64, ppem) - target);
+        if (delta < distance) {
+            distance = delta;
+            selected = @intCast(index);
+        }
+    }
+    if (selected < 0 or c.FT_Select_Size(face, selected) != 0) return error.FontSize;
+    return .{ .numerator = target, .denominator = @intCast(face.*.available_sizes[@intCast(selected)].y_ppem) };
 }
 
 /// Validates every path source and sizing argument before allocation.
@@ -942,6 +1135,7 @@ fn minimumPitch(mode: PixelMode, width: u16) error{UnsupportedPixelMode}!usize {
     return switch (mode) {
         c.FT_PIXEL_MODE_MONO => (@as(usize, width) + 7) / 8,
         c.FT_PIXEL_MODE_GRAY => width,
+        c.FT_PIXEL_MODE_BGRA => @as(usize, width) * 4,
         else => error.UnsupportedPixelMode,
     };
 }
@@ -1076,7 +1270,7 @@ test "bitmap geometry rejects hostile external input before slicing" {
     try expectBitmapError(error.UnsupportedPixelMode, c.FT_PIXEL_MODE_GRAY4, 1, 1, 1, pointer);
     try expectBitmapError(error.UnsupportedPixelMode, c.FT_PIXEL_MODE_LCD, 3, 1, 3, pointer);
     try expectBitmapError(error.UnsupportedPixelMode, c.FT_PIXEL_MODE_LCD_V, 1, 3, 1, pointer);
-    try expectBitmapError(error.UnsupportedPixelMode, c.FT_PIXEL_MODE_BGRA, 1, 1, 4, pointer);
+    try expectBitmapError(error.InvalidBitmap, c.FT_PIXEL_MODE_BGRA, 1, 1, 3, pointer);
     try expectBitmapError(error.InvalidBitmap, c.FT_PIXEL_MODE_GRAY, 1, 1, std.math.minInt(c_int), pointer);
     try expectBitmapError(error.InvalidBitmap, c.FT_PIXEL_MODE_GRAY, 1, 1, 1, null);
     try expectBitmapError(
@@ -1292,11 +1486,7 @@ test "symbol glyph natural raster preserves source overhang" {
     });
     defer set.deinit();
     const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf303);
-    var native = try rasterizeFace(
-        std.testing.allocator,
-        set.faces[0].ft,
-        glyph_id,
-    );
+    var native = try set.rasterize(std.testing.allocator, 0, glyph_id);
     defer native.deinit();
     try std.testing.expect(
         native.left < 0 or
@@ -1386,4 +1576,36 @@ fn syntheticBitmap(
     bitmap.buffer = buffer;
     bitmap.num_grays = if (mode == c.FT_PIXEL_MODE_GRAY) 256 else 0;
     return bitmap;
+}
+
+test "premultiplied colour filtering respects negative pitch and transparent edges" {
+    var pixels = [_]u8{
+        0, 0, 255, 255, 128, 0,   0, 128,
+        0, 0, 0,   0,   0,   255, 0, 255,
+    };
+    var bitmap = std.mem.zeroes(c.FT_Bitmap);
+    bitmap.width = 2;
+    bitmap.rows = 2;
+    bitmap.pitch = -8;
+    bitmap.pixel_mode = c.FT_PIXEL_MODE_BGRA;
+    bitmap.buffer = pixels[8..].ptr;
+    const geometry = try bitmapGeometry(bitmap);
+    var output: [4]u8 = undefined;
+    try copyScaledBitmap(geometry, 1, 1, true, &output);
+    try std.testing.expectEqual(@as(u8, 160), output[3]);
+    // Weighted source colours: red=255, green=255, blue=128, alpha=638.
+    try std.testing.expectEqual(@as(u8, 102), output[0]);
+    try std.testing.expectEqual(@as(u8, 102), output[1]);
+    try std.testing.expectEqual(@as(u8, 51), output[2]);
+    pixels = @splat(0);
+    try copyScaledBitmap(try bitmapGeometry(bitmap), 1, 1, true, &output);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, &output);
+}
+
+test "strike scaling preflights overflowing positions and extents" {
+    const scale: RasterScale = .{ .numerator = std.math.maxInt(u16) * 64, .denominator = 1 };
+    try std.testing.expect(!scale.fits(std.math.maxInt(i32)));
+    try std.testing.expect(!scale.fits(std.math.minInt(i32)));
+    try std.testing.expectError(error.InvalidPlacement, scale.position(std.math.maxInt(i32)));
+    try std.testing.expectError(error.RasterTooLarge, scale.extent(std.math.maxInt(u16)));
 }

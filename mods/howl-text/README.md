@@ -83,6 +83,21 @@ Deterministic redistributed font assets and proof fixtures are documented in
 assets consumed by maintained hosts; downstream product copies must remain byte-identical.
 Generated-glyph provenance is documented in `LICENSES/generated-glyphs.txt`.
 
+## Intrinsic colour glyphs
+
+The alpha-only rasterize API keeps its byte contract. rasterizeGlyph returns an
+explicit alpha8 or straight-RGBA raster. Native premultiplied BGRA is filtered
+before conversion, so translucent edges keep their colour. Both source bitmap
+extents and output byte counts are validated before copying.
+
+Non-scalable bitmap fonts select the nearest available strike when the requested
+size is unavailable. Shaping positions, raster dimensions and bearings share the
+same scale. Terminal allocation and clipping remain Render policy. rasterizeGlyphFitted can
+re-rasterize scalable outlines to a caller-supplied width and overflow allowance;
+a temporary native size restores the exact original shaping size on every exit. Colour format
+availability follows the configured FreeType build: COLRv0 needs no image codec;
+CBDT/PNG fonts additionally require FreeType PNG support.
+
 ## Owned font bytes
 
 `FontSet.initMemory(allocator, MemoryConfig)` complements the existing path-based

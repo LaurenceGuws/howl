@@ -68,6 +68,10 @@ pub const Config = renderer.Config;
 pub const ExternalImageBinding = renderer.ExternalImageBinding;
 /// Bounds simultaneously visible external terminal images.
 pub const maximum_external_images = renderer.maximum_external_images;
+/// Bounds both glyph planes and external image resources.
+pub const maximum_frame_resources = renderer.maximum_frame_resources;
+/// Reports current renderer-owned upload scratch bytes.
+pub const framePixelBytes = renderer.framePixelBytes;
 /// Uses the source-neutral terminal Renderer owner.
 pub const Renderer = renderer.Renderer;
 /// Uses the source-neutral Renderer usage counters.

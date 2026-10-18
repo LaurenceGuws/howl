@@ -8,7 +8,7 @@ const std = @import("std");
 const terminal = @import("howl_render").terminal;
 
 /// Bounds the backend's accepted current resource set: one glyph atlas plus every visible terminal image.
-pub const maximum_residencies: usize = terminal.maximum_external_images + 1;
+pub const maximum_residencies: usize = terminal.maximum_frame_resources;
 /// Bounds accepted residency plus one frame's not-yet-accepted external-image uploads.
 pub const maximum_prospective_residencies: usize =
     maximum_residencies + terminal.maximum_external_images;

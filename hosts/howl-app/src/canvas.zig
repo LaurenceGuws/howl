@@ -6,7 +6,7 @@ const terminal = @import("terminal.zig");
 const selection = @import("selection.zig");
 const render = instance.render.terminal;
 
-const resource_limit = render.maximum_external_images + 1;
+const resource_limit = render.maximum_frame_resources;
 const batch_quads = 2048;
 const quad_indices = blk: {
     @setEvalBranchQuota(batch_quads * 8);

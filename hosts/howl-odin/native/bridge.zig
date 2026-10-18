@@ -1696,7 +1696,7 @@ fn nativePresentationConfig(
     };
 }
 
-const render_resource_limit: usize = terminal_render.maximum_external_images + 1;
+const render_resource_limit: usize = terminal_render.maximum_frame_resources;
 const render_atlas_extent: u16 = 512;
 const render_pixel_capacity: usize = @as(usize, render_atlas_extent) * render_atlas_extent;
 const render_command_initial_capacity: usize = 4 * 1024;

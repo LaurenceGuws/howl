@@ -7,7 +7,7 @@ const instance = @import("howl_instance");
 /// Owns the exact desktop regular/style/fallback recipe and supplies bounded presentation policy.
 pub const Fonts = struct {
     allocator: std.mem.Allocator,
-    paths: [6][]const u8 = @splat(""),
+    paths: [7][]const u8 = @splat(""),
     // At most 8 tabs × 8 panes, plus one staged replacement size.
     stores: [65]?struct { pixels: u16, owner: *instance.PresentationStore } = @splat(null),
 
@@ -38,10 +38,14 @@ pub const Fonts = struct {
                 return failure;
             };
         }
+        self.paths[6] = match(allocator, "Noto Color Emoji") catch |failure| switch (failure) {
+            error.FontMissing => "",
+            else => return failure,
+        };
         return self;
     }
 
-    /// Frees the six owned path strings after all borrowers have retired.
+    /// Frees the owned path strings after all borrowers have retired.
     pub fn deinit(self: *Fonts) void {
         for (self.stores) |slot| if (slot) |store| instance.releasePresentationStore(store.owner);
         for (self.paths) |path| if (path.len != 0) self.allocator.free(path);
@@ -65,7 +69,7 @@ pub const Fonts = struct {
             if (store.pixels == pixels) return presentation(store.owner, shape_cache);
         };
         self.collect();
-        const fallbacks = self.paths[4..6];
+        const fallbacks = self.paths[4..@as(usize, if (self.paths[6].len == 0) 6 else 7)];
         for (&self.stores) |*slot| if (slot.* == null) {
             const owner = try instance.initPresentationStore(self.allocator, io, .{
                 .regular = .{ .path = .{ .primary = self.paths[0], .fallbacks = fallbacks, .size = .{ .pixels = pixels } } },
@@ -168,7 +172,7 @@ test "saved font paths take precedence and remain owned after their input retire
     const paths: [6][]const u8 = @splat(original);
     var fonts = try Fonts.discover(a, &env, paths);
     defer fonts.deinit();
-    for (fonts.paths) |path| {
+    for (fonts.paths[0..6]) |path| {
         try std.testing.expectEqualStrings(original, path);
         try std.testing.expect(path.ptr != original.ptr);
     }

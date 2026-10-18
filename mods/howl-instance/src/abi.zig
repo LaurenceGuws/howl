@@ -393,7 +393,7 @@ pub export fn hi_frame_commands(raw: ?*c.hi_frame_stream, out: ?[*]frames.render
 /// Copies upload metadata and borrows the exact immutable pixels until release.
 pub export fn hi_frame_uploads(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.Upload, capacity: usize) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    if (capacity > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    if (capacity > instance.render.terminal.maximum_frame_resources) return c.HI_RESOURCE_LIMIT;
     const storage: []frames.render.Upload = if (out) |ptr| ptr[0..capacity] else if (capacity == 0) &.{} else return c.HI_INVALID_ARGUMENT;
     // zig-audit: acknowledge discard
     // reason: The immutable count is in hi_frame_info; borrowed pixel metadata is supplied through the output array.
@@ -403,7 +403,7 @@ pub export fn hi_frame_uploads(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.
 /// Copies all exact resource retirements in one call.
 pub export fn hi_frame_removals(raw: ?*c.hi_frame_stream, out: ?[*]frames.render.RemovalInfo, capacity: usize) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    if (capacity > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    if (capacity > instance.render.terminal.maximum_frame_resources) return c.HI_RESOURCE_LIMIT;
     const storage: []frames.render.RemovalInfo = if (out) |ptr| ptr[0..capacity] else if (capacity == 0) &.{} else return c.HI_INVALID_ARGUMENT;
     // zig-audit: acknowledge discard
     // reason: The caller obtains the immutable retirement count from hi_frame_info.
@@ -413,9 +413,9 @@ pub export fn hi_frame_removals(raw: ?*c.hi_frame_stream, out: ?[*]frames.render
 /// Publishes exact backend residency feedback, leaving the lease held on rejection.
 pub export fn hi_frame_release(raw: ?*c.hi_frame_stream, values: [*c]const c.hrc_residency, count: usize) u32 {
     const value = raw orelse return c.HI_INVALID_ARGUMENT;
-    if (count > instance.render.terminal.maximum_external_images + 1) return c.HI_RESOURCE_LIMIT;
+    if (count > instance.render.terminal.maximum_frame_resources) return c.HI_RESOURCE_LIMIT;
     if (count != 0 and values == null) return c.HI_INVALID_ARGUMENT;
-    var storage: [instance.render.terminal.maximum_external_images + 1]instance.render.terminal.Residency = undefined;
+    var storage: [instance.render.terminal.maximum_frame_resources]instance.render.terminal.Residency = undefined;
     for (0..count) |index| {
         const item = values[index];
         if (item._reserved[0] != 0 or item._reserved[1] != 0 or item._reserved[2] != 0) return c.HI_INVALID_ARGUMENT;

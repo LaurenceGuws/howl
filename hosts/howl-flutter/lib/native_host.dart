@@ -289,13 +289,13 @@ Uint8List encodeNativeHostResidency(
       final logical = resource.key.resource;
       if (lease.images.containsKey(resource.key) &&
           !resources.containsKey(logical) &&
-          resources.length < 8) {
+          resources.length < 9) {
         resources[logical] = resource;
       }
     }
   }
   if (resources.isEmpty) return Uint8List(0);
-  if (resources.length > 8) {
+  if (resources.length > 9) {
     throw const NativeHostException('residency_limit');
   }
   final ordered = resources.values.toList(growable: false);

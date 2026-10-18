@@ -81,7 +81,7 @@ enum hrc_status {
 #define HRC_MAX_FRAME_COMMANDS 114689u
 #define HRC_MAX_FRAME_PIXEL_BYTES (80u * 1024u * 1024u)
 #define HRC_MAX_FRAME_BUFFERS 64u
-#define HRC_MAX_RESIDENCIES 8u
+#define HRC_MAX_RESIDENCIES 9u
 enum hrc_font_kind { HRC_FONT_NONE=0, HRC_FONT_PATH=1, HRC_FONT_MEMORY=2 };
 enum hrc_font_variant { HRC_FONT_REGULAR=0, HRC_FONT_ITALIC=1, HRC_FONT_BOLD=2, HRC_FONT_BOLD_ITALIC=3 };
 typedef struct hrc_bytes { const uint8_t *data; size_t len; } hrc_bytes;

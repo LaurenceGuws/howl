@@ -34,7 +34,6 @@ const State = struct {
     command_initial: usize,
     command_limit: usize,
     pixel_limit: usize,
-    atlas_bytes: usize,
     buffer_limit: u32,
     buffer_count: u32 = 0,
     commands: []terminal.Command = &.{},
@@ -90,7 +89,7 @@ comptime {
         c.HRC_MAX_ROWS != render.limits.maximum_rows or
         c.HRC_MAX_COLUMNS != render.limits.maximum_columns or
         c.HRC_MAX_FRAME_COMMANDS != render.limits.maximum_frame_commands or
-        c.HRC_MAX_RESIDENCIES != terminal.maximum_external_images + 1 or
+        c.HRC_MAX_RESIDENCIES != terminal.maximum_frame_resources or
         c.HRC_MAX_FRAME_PIXEL_BYTES != vt_native.Terminal.maximum_image_storage_bytes + render.text.max_raster_bytes)
         @compileError("Review standalone Render limits against exact child owners");
 }
@@ -157,7 +156,6 @@ pub fn readerFromC(value: *c.struct_hvt_observation) *Reader {
 /// Admits explicit fonts/budgets and permanently retains one live source Reader.
 pub fn create(allocator: std.mem.Allocator, config: *const c.hrc_config, reader: *Reader) Error!*Owner {
     var core_config = try admit(config);
-    const atlas_bytes = try multiply(config.atlas_width, config.atlas_height);
     // zig-audit: acknowledge discard
     // reason: Constructor validates liveness without dereferencing or retaining a canonical VT observation borrow.
     _ = try source.read(reader);
@@ -182,7 +180,6 @@ pub fn create(allocator: std.mem.Allocator, config: *const c.hrc_config, reader:
         .command_initial = config.command_capacity,
         .command_limit = config.command_limit,
         .pixel_limit = config.frame_pixel_limit,
-        .atlas_bytes = atlas_bytes,
         .buffer_limit = config.frame_buffer_limit,
     };
     // zig-audit: acknowledge ptr_cast
@@ -395,7 +392,7 @@ pub fn capture(value: *Buffer, history: u32, backend: []const c.hrc_residency) E
             error.PixelLimit => {
                 if (retried_pixels) return err;
                 retried_pixels = true;
-                try ensurePixels(frame, try add(external_bytes, parent.atlas_bytes), external_bytes);
+                try ensurePixels(frame, try add(external_bytes, terminal.framePixelBytes(parent.renderer)), external_bytes);
                 continue;
             },
             else => return err,

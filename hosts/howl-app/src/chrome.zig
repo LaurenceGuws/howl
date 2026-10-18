@@ -3,8 +3,8 @@ const std = @import("std");
 const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
-/// Existing client header height in logical pixels.
-pub const height: f32 = 46;
+/// Explicit client header: four pixels above and below the 30-pixel chips.
+pub const height: f32 = 38;
 /// Window caption control identity.
 pub const Button = enum { none, minimize, maximize, close };
 /// Compact Settings entry beside the caption controls.
@@ -27,7 +27,7 @@ pub fn plus(count: u8, width: f32) Rect {
 /// Unoccupied header strip available for compositor dragging.
 pub fn caption(count: u8, width: f32) Rect {
     const left = plus(count, width).x + 32;
-    return .{ .x = left, .y = 4, .width = @max(0, settings(width).x - left - 4), .height = 42 };
+    return .{ .x = left, .y = 4, .width = @max(0, settings(width).x - left - 4), .height = height - 4 };
 }
 /// One caption button; none has no hit area.
 pub fn control(button: Button, width: f32) Rect {
@@ -121,3 +121,17 @@ pub const restore_icon: []const Rect = &.{
     .{ .x = 14, .y = 10, .width = 1, .height = 7 },
     .{ .x = 23, .y = 10, .width = 1, .height = 7 },
 };
+
+test "compact header keeps controls and caption above terminal at fractional widths" {
+    for ([_]f32{ 401.25, 1000, 1536.5 }) |width| {
+        for ([_]u8{ 1, 8 }) |count| {
+            const chip = tab(0, count, width);
+            const cap = caption(count, width);
+            try std.testing.expect(chip.y + chip.height <= height - 4);
+            try std.testing.expect(cap.y + cap.height <= height);
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, count, c.SDL_WINDOW_MAXIMIZED));
+            try std.testing.expect(!chip.contains(chip.x + 1, height));
+            try std.testing.expect(!plus(count, width).contains(chip.x + 1, height));
+        }
+    }
+}

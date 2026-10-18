@@ -823,7 +823,6 @@ pub fn Runtime(comptime Presentation: ?type) type {
             terminal_history_offset: u32 = 0,
             backend_residency: [publication.maximum_residencies]terminal_render.Residency = undefined,
             backend_residency_count: usize = 0,
-            atlas_pixel_capacity: usize,
             command_capacity: usize,
             command_limit: usize,
             presentation_generation: u64 = 1,
@@ -876,11 +875,6 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     else => |err| return err,
                 };
                 errdefer publication.deinit(exchange);
-                const atlas_pixel_capacity = std.math.mul(
-                    usize,
-                    @as(usize, config.atlas.width),
-                    @as(usize, config.atlas.height),
-                ) catch return error.InvalidConfig;
 
                 const state = try allocator.create(PresentationState);
                 errdefer allocator.destroy(state);
@@ -892,7 +886,6 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     .renderer = renderer,
                     .store = store,
                     .exchange = exchange,
-                    .atlas_pixel_capacity = atlas_pixel_capacity,
                     .command_capacity = config.command_capacity,
                     .command_limit = command_limit,
                     .row_reuse_capacity = config.incremental_row_capacity,
@@ -1084,7 +1077,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 const pixel_capacity = std.math.add(
                     usize,
                     external_pixel_count,
-                    self.atlas_pixel_capacity,
+                    terminal_render.framePixelBytes(self.renderer),
                 ) catch return error.ArithmeticOverflow;
                 const pixels = try writer.pixelStorage(pixel_capacity);
                 const uploads = writer.uploadStorage();
@@ -1373,11 +1366,6 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     );
                     break :prepare planned;
                 };
-                const atlas_pixel_capacity = std.math.mul(
-                    usize,
-                    @as(usize, config.atlas.width),
-                    @as(usize, config.atlas.height),
-                ) catch return error.InvalidConfig;
 
                 const next_generation = std.math.add(
                     u64,
@@ -1410,7 +1398,6 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 presentation.content_revision = old_content_revision;
                 presentation.terminal_history_offset = 0;
                 presentation.backend_residency_count = 0;
-                presentation.atlas_pixel_capacity = atlas_pixel_capacity;
                 presentation.command_limit = if (config.command_limit == 0)
                     config.command_capacity
                 else
@@ -2608,8 +2595,8 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 const before = try renderUsage(instance);
                 try serviceUntilContains(instance, "DIRECT_RENDER");
 
-                var uploads: [terminal_render.maximum_external_images + 1]terminal_render.FrameResourceUpload = undefined;
-                var removals: [terminal_render.maximum_external_images + 1]terminal_render.ResourceRef = undefined;
+                var uploads: [terminal_render.maximum_frame_resources]terminal_render.FrameResourceUpload = undefined;
+                var removals: [terminal_render.maximum_frame_resources]terminal_render.ResourceRef = undefined;
                 var commands: [512]terminal_render.Command = undefined;
                 var frame_pixels: [256 * 256]u8 = undefined;
                 const frame = try renderFrame(instance, &.{}, .{
@@ -3127,8 +3114,8 @@ pub fn Runtime(comptime Presentation: ?type) type {
 
             fn expectPresentationCommandsEqual(candidate: *terminal_render.Renderer, baseline: *terminal_render.Renderer, published: ?[]const terminal_render.Command) !void {
                 var commands: [2][512]terminal_render.Command = undefined;
-                var uploads: [2][terminal_render.maximum_external_images + 1]terminal_render.FrameResourceUpload = undefined;
-                var removals: [2][terminal_render.maximum_external_images + 1]terminal_render.ResourceRef = undefined;
+                var uploads: [2][terminal_render.maximum_frame_resources]terminal_render.FrameResourceUpload = undefined;
+                var removals: [2][terminal_render.maximum_frame_resources]terminal_render.ResourceRef = undefined;
                 var pixels: [2][512 * 512]u8 = undefined;
                 var residency: [terminal_render.maximum_external_images]terminal_render.Residency = undefined;
                 var frames: [2]terminal_render.Frame = undefined;

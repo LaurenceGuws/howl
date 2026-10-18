@@ -6,6 +6,10 @@
 const std = @import("std");
 const text = @import("howl_text");
 const generated = text.generated;
+const limits = @import("limits");
+
+/// Contextual operators may span the complete bounded terminal row.
+pub const maximum_contextual_cells = limits.maximum_columns;
 
 /// Selects one caller-owned font face variant without owning terminal style policy.
 pub const FontVariant = enum(u2) {
@@ -147,7 +151,7 @@ pub const ShapeCacheInitError = std.mem.Allocator.Error || text.ShapeBufferInitE
 };
 
 /// Reports runtime shaping or bounded retained-shape capacity failures.
-pub const ShapeCacheError = text.ShapeError || error{
+pub const ShapeCacheError = text.ShapeError || text.ShapeBufferInitError || error{
     ShapeSequenceLimit,
     ShapeEntryFull,
     ShapeScalarFull,
@@ -159,6 +163,7 @@ const AtlasKey = union(enum) {
         variant: FontVariant,
         face_index: u8,
         glyph_id: u32,
+        fit_width: u16 = 0,
     },
     smooth_wave: struct {
         width: u16,
@@ -183,6 +188,7 @@ const AtlasEntry = struct {
     height: u16,
     left: i16,
     top: i16,
+    format: text.RasterFormat = .alpha8,
 };
 
 const ShapeEntry = struct {
@@ -211,6 +217,7 @@ const ShapeCacheImpl = struct {
     allocator: std.mem.Allocator,
     fonts: FontFaces,
     shape: *text.ShapeBuffer,
+    contextual_shape: ?*text.ShapeBuffer = null,
     entries: []ShapeEntry,
     scalars: []u32,
     glyphs: []text.Glyph,
@@ -227,6 +234,8 @@ const AtlasImpl = struct {
     box_drawing: generated.BoxDrawingConfig,
     entries: []AtlasEntry,
     pixels: []u8,
+    color_pixels: ?[]u8 = null,
+    color_entries: usize = 0,
     config: AtlasConfig,
     ascii_entries: [font_variant_count][printable_ascii_count]?usize = @splat(@splat(null)),
     entry_count: usize = 0,
@@ -252,6 +261,7 @@ pub const AtlasRaster = struct {
     height: u16,
     left: i16,
     top: i16,
+    format: text.RasterFormat = .alpha8,
 };
 
 /// Reports the fixed pixel extent of one atlas owner.
@@ -262,8 +272,8 @@ pub const AtlasSize = struct {
 
 /// Allocates one bounded shaped-run owner for one fixed face family.
 ///
-/// All entry/scalar/glyph storage and the reusable HarfBuzz buffer are allocated
-/// during construction. Cache hits and misses allocate nothing afterward.
+/// Retained-shape storage is allocated during construction. A separate bounded
+/// contextual buffer is created lazily only for runs exceeding that capacity.
 pub fn initShapeCache(
     allocator: std.mem.Allocator,
     fonts: FontFaces,
@@ -304,11 +314,13 @@ pub fn deinitShapeCache(cache: *ShapeCache) void {
     const impl = shapeCacheImpl(cache);
     const allocator = impl.allocator;
     const shape = impl.shape;
+    const contextual_shape = impl.contextual_shape;
     const entries = impl.entries;
     const scalars = impl.scalars;
     const glyphs = impl.glyphs;
     impl.* = undefined;
     shape.deinit();
+    if (contextual_shape) |value| value.deinit();
     allocator.free(glyphs);
     allocator.free(scalars);
     allocator.free(entries);
@@ -334,8 +346,8 @@ pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
     };
 }
 
-/// Allocates one bounded atlas owner. There are no allocations on cache hits or
-/// misses after initialization; misses rasterize through caller scratch.
+/// Allocates one bounded alpha atlas. Misses rasterize through caller scratch;
+/// the bounded colour plane is allocated lazily on the first colour glyph.
 pub fn initAtlas(
     allocator: std.mem.Allocator,
     fonts: FontFaces,
@@ -376,8 +388,10 @@ pub fn deinitAtlas(atlas: *Atlas) void {
     const allocator = impl.allocator;
     const entries = impl.entries;
     const pixels = impl.pixels;
+    const color_pixels = impl.color_pixels;
     impl.* = undefined;
     allocator.free(pixels);
+    if (color_pixels) |value| allocator.free(value);
     allocator.free(entries);
     allocator.destroy(impl);
 }
@@ -388,11 +402,13 @@ pub fn resetAtlas(atlas: *Atlas) error{GenerationOverflow}!void {
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
     impl.entry_count = 0;
+    impl.color_entries = 0;
     impl.ascii_entries = @splat(@splat(null));
     impl.next_x = 0;
     impl.shelf_y = 0;
     impl.shelf_height = 0;
     @memset(impl.pixels, 0);
+    if (impl.color_pixels) |value| @memset(value, 0);
 }
 
 /// Borrows the complete alpha image and private reset epoch until atlas mutation.
@@ -409,6 +425,23 @@ pub fn atlasView(atlas: *const Atlas) AtlasView {
 /// Returns the number of currently retained atlas entries.
 pub fn atlasEntryCount(atlas: *const Atlas) usize {
     return constAtlasImpl(atlas).entry_count;
+}
+
+/// Counts alpha entries independently from intrinsic-colour additions.
+pub fn alphaAtlasEntryCount(atlas: *const Atlas) usize {
+    const impl = constAtlasImpl(atlas);
+    return impl.entry_count - impl.color_entries;
+}
+
+/// Borrows the lazily allocated straight-RGBA plane, sharing the atlas packing.
+pub fn colorAtlasView(atlas: *const Atlas) ?AtlasView {
+    const impl = constAtlasImpl(atlas);
+    return .{ .generation = impl.generation, .width = impl.config.width, .height = impl.config.height, .pixels = impl.color_pixels orelse return null };
+}
+
+/// Counts colour entries independently so alpha misses do not republish colour.
+pub fn colorAtlasEntryCount(atlas: *const Atlas) usize {
+    return constAtlasImpl(atlas).color_entries;
 }
 
 /// Returns the fixed caller-owned font family shared by this atlas.
@@ -432,7 +465,7 @@ pub fn atlasSize(atlas: *const Atlas) AtlasSize {
     return .{ .width = impl.config.width, .height = impl.config.height };
 }
 
-/// Shapes one short multi-scalar operator run without retaining it in ShapeCache.
+/// Shapes one bounded row of operators without retaining it in ShapeCache.
 /// Returns null when the sequence is ineligible, exceeds caller scratch, or does
 /// not resolve wholly through the selected variant's primary face.
 pub fn shapeContextualPrimary(
@@ -445,14 +478,19 @@ pub fn shapeContextualPrimary(
     const impl = shapeCacheImpl(cache);
     const resolved_variant = impl.fonts.resolveVariant(variant);
     const fonts = impl.fonts.select(resolved_variant);
-    if (sequence.len < 2 or sequence.len > @as(usize, impl.max_sequence_scalars) or
+    if (sequence.len < 2 or sequence.len > maximum_contextual_cells or
         sequence.len > cluster_scratch.len)
         return null;
     if ((try fonts.faceFor(sequence)) != 0) return null;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index|
         cluster.* = @intCast(index);
+    const buffer = if (sequence.len <= impl.max_sequence_scalars) impl.shape else blk: {
+        if (impl.contextual_shape == null)
+            impl.contextual_shape = try text.ShapeBuffer.init(impl.allocator, maximum_contextual_cells * 2);
+        break :blk impl.contextual_shape.?;
+    };
     return try fonts.shape(
-        impl.shape,
+        buffer,
         .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
         glyph_scratch,
     );
@@ -560,6 +598,7 @@ pub fn resolveFontAtlas(
     glyph_id: u32,
     raster_scratch: []u8,
     ascii_index: ?usize,
+    fit_width: u16,
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
     const resolved_variant = impl.fonts.resolveVariant(variant);
@@ -569,6 +608,7 @@ pub fn resolveFontAtlas(
         .variant = resolved_variant,
         .face_index = face_index,
         .glyph_id = glyph_id,
+        .fit_width = fit_width,
     } };
     if (ascii_index) |index| {
         if (impl.ascii_entries[variant_index][index]) |entry_index| {
@@ -584,19 +624,20 @@ pub fn resolveFontAtlas(
     }
 
     var raster_allocator = std.heap.FixedBufferAllocator.init(raster_scratch);
-    var raster = try fonts.rasterize(
-        raster_allocator.allocator(),
-        face_index,
-        glyph_id,
-    );
-    defer raster.deinit();
-    const expected = std.math.mul(
+    var produced = if (fit_width == 0)
+        try fonts.rasterizeGlyph(raster_allocator.allocator(), face_index, glyph_id)
+    else
+        try fonts.rasterizeGlyphFitted(raster_allocator.allocator(), face_index, glyph_id, fit_width, 2);
+    defer produced.deinit();
+    const raster = produced.raster;
+    const expected_pixels = std.math.mul(
         usize,
         @as(usize, raster.width),
         @as(usize, raster.height),
     ) catch return error.RasterExtentMismatch;
+    const expected = std.math.mul(usize, expected_pixels, if (produced.format == .rgba8) 4 else 1) catch return error.RasterExtentMismatch;
     if (expected != raster.pixels.len) return error.RasterExtentMismatch;
-    const result = try cacheAtlas(
+    const result = try cacheRaster(
         impl,
         key,
         raster.width,
@@ -604,6 +645,7 @@ pub fn resolveFontAtlas(
         raster.left,
         raster.top,
         raster.pixels,
+        produced.format,
     );
     if (ascii_index) |index| {
         std.debug.assert(impl.entry_count != 0);
@@ -753,7 +795,7 @@ pub fn resolveGeneratedAtlas(
 // two u64 words retain every key bit without padding comparisons or hashing.
 fn atlasIdentity(key: AtlasKey) AtlasIdentity {
     return switch (key) {
-        .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = 0 },
+        .font => |v| .{ .low = @as(u64, v.glyph_id) | (@as(u64, v.face_index) << 32) | (@as(u64, @backingInt(v.variant)) << 40), .high = @as(u64, v.fit_width) << 32 },
         .smooth_wave => |v| .{ .low = @as(u64, v.width) | (@as(u64, v.thickness) << 16) | (@as(u64, v.line_height) << 32), .high = 1 << 16 },
         .generated => |v| .{ .low = @as(u64, v.codepoint) | (@as(u64, v.width) << 32) | (@as(u64, v.height) << 48), .high = (2 << 16) | @as(u64, v.sizing.scale) | (@as(u64, v.sizing.subscale_n) << 8) | (@as(u64, v.sizing.subscale_d) << 12) },
     };
@@ -774,6 +816,8 @@ test "atlas lookup matches generic key equality and first match across all varia
         .{ .font = .{ .variant = .bold_italic, .face_index = 0, .glyph_id = 7 } },
         .{ .font = .{ .variant = .regular, .face_index = 1, .glyph_id = 7 } },
         .{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 8 } },
+        .{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 8, .fit_width = 9 } },
+        .{ .font = .{ .variant = .regular, .face_index = 0, .glyph_id = 8, .fit_width = 18 } },
         .{ .font = .{ .variant = .regular, .face_index = 255, .glyph_id = std.math.maxInt(u32) } },
         .{ .generated = .{ .codepoint = 0x2500, .width = 10, .height = 20, .sizing = .{} } },
         .{ .generated = .{ .codepoint = 0x2501, .width = 10, .height = 20, .sizing = .{} } },
@@ -824,12 +868,34 @@ fn cacheAtlas(
     top: i16,
     pixels: []const u8,
 ) AtlasError!AtlasRaster {
+    return cacheRaster(impl, key, width, height, left, top, pixels, .alpha8);
+}
+
+fn cacheRaster(
+    impl: *AtlasImpl,
+    key: AtlasKey,
+    width: u16,
+    height: u16,
+    left: i16,
+    top: i16,
+    pixels: []const u8,
+    format: text.RasterFormat,
+) AtlasError!AtlasRaster {
     if (impl.entry_count == impl.entries.len) return error.CacheFull;
-    const expected = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch
+    const channels: usize = if (format == .rgba8) 4 else 1;
+    const expected = std.math.mul(usize, @as(usize, width) * height, channels) catch
         return error.RasterExtentMismatch;
     if (pixels.len != expected) return error.RasterExtentMismatch;
 
     const pack = try planAtlas(impl, width, height);
+    if (format == .rgba8 and impl.color_pixels == null) {
+        const total = std.math.mul(usize, impl.pixels.len, 5) catch return error.RasterTooLarge;
+        const bytes = total - impl.pixels.len;
+        const plane = try impl.allocator.alloc(u8, bytes);
+        @memset(plane, 0);
+        impl.color_pixels = plane;
+    }
+    const plane = if (format == .rgba8) impl.color_pixels.? else impl.pixels;
     if (width != 0 and height != 0) {
         const pixel_width = @as(usize, width);
         const pixel_height = @as(usize, height);
@@ -838,11 +904,11 @@ fn cacheAtlas(
         std.debug.assert(pack.x + pixel_width <= atlas_width);
         std.debug.assert(pack.y + pixel_height <= atlas_height);
         for (0..pixel_height) |row| {
-            const source_start = row * pixel_width;
-            const destination = (pack.y + row) * atlas_width + pack.x;
+            const source_start = row * pixel_width * channels;
+            const destination = ((pack.y + row) * atlas_width + pack.x) * channels;
             @memcpy(
-                impl.pixels[destination .. destination + pixel_width],
-                pixels[source_start .. source_start + pixel_width],
+                plane[destination .. destination + pixel_width * channels],
+                pixels[source_start .. source_start + pixel_width * channels],
             );
         }
     }
@@ -857,9 +923,11 @@ fn cacheAtlas(
         .height = height,
         .left = left,
         .top = top,
+        .format = format,
     };
     impl.entries[impl.entry_count] = entry;
     impl.entry_count += 1;
+    if (format == .rgba8) impl.color_entries += 1;
     return atlasRaster(entry);
 }
 
@@ -871,6 +939,7 @@ fn atlasRaster(entry: AtlasEntry) AtlasRaster {
         .height = entry.height,
         .left = entry.left,
         .top = entry.top,
+        .format = entry.format,
     };
 }
 

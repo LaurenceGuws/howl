@@ -124,7 +124,7 @@ const Harness = struct {
     removals: []terminal.ResourceRef,
     commands: []terminal.Command,
     pixels: []u8,
-    residencies: [terminal.maximum_external_images + 1]terminal.Residency = undefined,
+    residencies: [terminal.maximum_frame_resources]terminal.Residency = undefined,
     residency_count: usize = 0,
     missing: [terminal.maximum_external_images]terminal.FrameExternalResource = undefined,
 
@@ -143,9 +143,9 @@ const Harness = struct {
     ) !Harness {
         const owner = try terminal.initPrivate(allocator, font_faces, config);
         errdefer terminal.deinit(owner);
-        const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_external_images + 1);
+        const uploads = try allocator.alloc(terminal.FrameResourceUpload, terminal.maximum_frame_resources);
         errdefer allocator.free(uploads);
-        const removals = try allocator.alloc(terminal.ResourceRef, terminal.maximum_external_images + 1);
+        const removals = try allocator.alloc(terminal.ResourceRef, terminal.maximum_frame_resources);
         errdefer allocator.free(removals);
         const commands = try allocator.alloc(terminal.Command, config.command_capacity + 128);
         errdefer allocator.free(commands);

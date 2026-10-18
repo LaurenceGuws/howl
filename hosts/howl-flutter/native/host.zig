@@ -20,7 +20,7 @@ const frame_header_bytes: usize = 48;
 const resource_record_bytes: usize = 40;
 const removal_record_bytes: usize = 16;
 const command_record_bytes: usize = 40;
-const maximum_frame_resources: usize = 8;
+const maximum_frame_resources: usize = terminal.maximum_frame_resources;
 const image_refill_header_bytes: usize = 56;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
@@ -71,7 +71,7 @@ comptime {
         @compileError("native host command capacity does not consume the available packet budget");
     if (output_minimum_bytes - render_packet_budget != selection_rows_capacity + semantic_capacity)
         @compileError("native host selection/semantic allowance drifted from its packet budget");
-    if (maximum_terminal_images + 1 > maximum_frame_resources)
+    if (terminal.maximum_frame_resources > maximum_frame_resources)
         @compileError("native image bound leaves no room for the terminal glyph atlas");
 }
 
@@ -1763,7 +1763,7 @@ test "native host dense presentation budgets raster and commands together" {
     );
     try std.testing.expect(output_minimum_bytes < 8 * 1024 * 1024);
     try std.testing.expectEqual(@as(usize, 7), maximum_terminal_images);
-    try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
+    try std.testing.expectEqual(maximum_frame_resources, terminal.maximum_frame_resources);
 }
 
 test "native host distinguishes superseded image generation and failure classes" {

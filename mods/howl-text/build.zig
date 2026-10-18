@@ -33,6 +33,25 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
 
+    const engine_contract = b.createModule(.{
+        .root_source_file = b.path("src/engine.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // Both test roots borrow the same immutable native link recipe. All build
+    // allocations live in the Build arena; neither root mutates this list.
+    engine_contract.link_objects = module.link_objects;
+    engine_contract.link_libc = module.link_libc;
+    engine_contract.link_libcpp = module.link_libcpp;
+    engine_contract.addImport("native_c", module.import_table.get("native_c").?);
+    engine_contract.addImport("test_fonts", test_fonts);
+    const engine_tests = b.addTest(.{
+        .name = "howl-text-engine",
+        .root_module = engine_contract,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+
     const generated_contract = b.createModule(.{
         .root_source_file = b.path("src/generated_test.zig"),
         .target = target,
@@ -54,11 +73,13 @@ pub fn build(b: *std.Build) void {
     check.dependOn(audit);
     check.dependOn(&tests.step);
     check.dependOn(&contract_tests.step);
+    check.dependOn(&engine_tests.step);
     check.dependOn(&generated_tests.step);
 
     const test_step = b.step("test", "Run native text shaping and rasterization proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(contract_tests).step);
+    test_step.dependOn(&b.addRunArtifact(engine_tests).step);
     test_step.dependOn(&b.addRunArtifact(generated_tests).step);
     b.default_step = check;
 }
@@ -106,6 +127,9 @@ fn testFontModule(b: *std.Build) *std.Build.Module {
     fonts.addOption([]const u8, "normal_ligature_font", b.root.joinString(b.allocator, "testdata/fira-code-medium.otf") catch @panic("OOM"));
     // zig-audit: acknowledge panic
     // reason: Build graph construction has no recoverable allocator/configuration path here; aborting preserves the build-owner contract.
+    fonts.addOption([]const u8, "colour_font", b.root.joinString(b.allocator, "testdata/colour.ttf") catch @panic("OOM"));
+    // zig-audit: acknowledge panic
+    // reason: Build graph construction cannot proceed without its bounded test-font path; allocator exhaustion is fatal to this build process.
     fonts.addOption([]const u8, "mono_font", b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"));
     return b.addModule("howl_text_test_fonts", .{
         .root_source_file = fonts.getOutput(),
@@ -121,6 +145,7 @@ fn nativeCModule(
     const header = headers.add("howl-text-native.h",
         \\#include <ft2build.h>
         \\#include <freetype/freetype.h>
+        \\#include <freetype/ftsizes.h>
         \\#include <freetype/tttables.h>
         \\#include <harfbuzz/hb.h>
         \\#include <harfbuzz/hb-ft.h>

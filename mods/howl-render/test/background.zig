@@ -7,9 +7,9 @@ const allocator = std.testing.allocator;
 
 const Output = struct {
     commands: [32768]RR.Command = undefined,
-    pixels: [512 * 512]u8 = undefined,
-    uploads: [8]RR.FrameResourceUpload = undefined,
-    removals: [8]RR.ResourceRef = undefined,
+    pixels: [512 * 512 * 5]u8 = undefined,
+    uploads: [RR.maximum_frame_resources]RR.FrameResourceUpload = undefined,
+    removals: [RR.maximum_frame_resources]RR.ResourceRef = undefined,
 
     fn frame(self: *Output, owner: *RR.Renderer) !RR.Frame {
         return RR.frame(owner, &.{}, .{
@@ -201,4 +201,232 @@ test "compact backgrounds remain between deepest images and negative images and 
         try std.testing.expect(has_glyph);
         base = obs.contentSequence();
     }
+}
+
+fn fontConfig(font: *render.text.FontSet) RR.Config {
+    const metrics = font.metrics();
+    return .{
+        .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+        .shaped_capacity = 32,
+        .raster_bytes = 512 * 512,
+        .command_capacity = 64,
+        .command_limit = 32768,
+    };
+}
+
+test "full row contextual operators equal one native shaping run beyond retained cluster capacity" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").normal_ligature_font,
+        .size = .{ .pixels = 18 },
+    });
+    defer font.deinit();
+    const buffer = try render.text.ShapeBuffer.init(allocator, 1024);
+    defer buffer.deinit();
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const scalars: [512]u32 = @splat('#');
+    const bytes: [512]u8 = @splat('#');
+    var clusters: [512]u32 = undefined;
+    for (&clusters, 0..) |*value, i| value.* = @intCast(i);
+    var shaped: [1024]render.text.Glyph = undefined;
+    for ([_]u16{ 8, 31, 512 }) |count| {
+        var vt: VT = undefined;
+        try VT.initWithHistoryInto(&vt, allocator, 2, count, 0);
+        defer vt.deinit();
+        // zig-audit: acknowledge discard
+        // reason: Native glyph rasters and final positions below prove the complete output, independent of the feed summary.
+        _ = try vt.feed("\x1b[?25l");
+        // zig-audit: acknowledge discard
+        // reason: The shaped native run below is compared against every published glyph for these exact bytes.
+        _ = try vt.feed(bytes[0..count]);
+        const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
+        defer RR.deinit(owner);
+        try RR.updateObservation(owner, vt.observation(), 0, &.{});
+        const frame = try output.frame(owner);
+        const native = try font.shape(buffer, .{ .codepoints = scalars[0..count], .clusters = clusters[0..count] }, &shaped);
+        var command_index: usize = 0;
+        for (native.glyphs) |glyph| {
+            var raster = try font.rasterize(allocator, native.face_index, glyph.id);
+            defer raster.deinit();
+            if (raster.width == 0 or raster.height == 0) continue;
+            while (command_index < frame.commands.len and frame.commands[command_index] != .alpha_mask) command_index += 1;
+            try std.testing.expect(command_index < frame.commands.len);
+            const mask = frame.commands[command_index].alpha_mask;
+            command_index += 1;
+            const x = @as(i64, glyph.cluster) * font.metrics().advance_width * 64 + glyph.x_offset + @as(i64, raster.left) * 64;
+            try std.testing.expectEqual(@as(i32, @intCast(@divFloor(x, 64))), mask.destination.x);
+            try std.testing.expectEqual(raster.width, mask.resource.source.?.width);
+            try std.testing.expectEqual(raster.height, mask.resource.source.?.height);
+            const upload = frame.uploads[0];
+            for (0..raster.height) |row| {
+                const start = upload.pixel_offset + (@as(usize, mask.resource.source.?.y) + row) * upload.stride + mask.resource.source.?.x;
+                try std.testing.expectEqualSlices(u8, raster.pixels[row * raster.width ..][0..raster.width], frame.pixels[start..][0..raster.width]);
+            }
+        }
+        for (frame.commands[command_index..]) |command| try std.testing.expect(command != .alpha_mask);
+    }
+}
+
+test "colour glyph frame retains intrinsic ink through cursor residency eviction reset and failed frame scratch" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .fallbacks = &.{@import("test_fonts").colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 2, 12, 0);
+    defer vt.deinit();
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
+    defer RR.deinit(owner);
+    // zig-audit: acknowledge discard
+    // reason: The resulting two atlas planes, cursor replay, exact residency and recovery are asserted below.
+    _ = try vt.feed("M\xf0\x9f\x98\x80\x1b[2G");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const frame = try output.frame(owner);
+    try std.testing.expectEqual(@as(usize, 2), frame.uploads.len);
+    var residency: [2]RR.Residency = undefined;
+    var color_id: RR.ResourceRef = undefined;
+    for (frame.uploads, 0..) |upload, index| {
+        residency[index] = .{ .resource = upload.resource, .format = upload.format, .size = upload.size };
+        if (upload.format == .rgba8) {
+            color_id = upload.resource;
+            var red = false;
+            var blue = false;
+            for (0..upload.pixel_count / 4) |pixel| {
+                const rgba = frame.pixels[upload.pixel_offset + pixel * 4 ..][0..4];
+                red = red or (rgba[0] > 240 and rgba[2] == 0 and rgba[3] > 240);
+                blue = blue or (rgba[0] == 0 and rgba[2] > 240 and rgba[3] >= 120 and rgba[3] <= 136);
+            }
+            try std.testing.expect(red and blue);
+        }
+    }
+    var rgba_commands: usize = 0;
+    for (frame.commands) |command| if (command == .rgba) {
+        rgba_commands += 1;
+        const value = command.rgba;
+        try std.testing.expectEqual(color_id, value.resource.resource);
+        try std.testing.expect(value.destination.width <= font.metrics().advance_width * 2);
+        try std.testing.expect(value.destination.height <= font.metrics().line_height);
+    };
+    try std.testing.expectEqual(@as(usize, 2), rgba_commands); // content + untinted cursor replay
+    const cached = try RR.frame(owner, &residency, .{ .commands = &output.commands, .pixels = &.{}, .uploads = &.{}, .removals = &output.removals });
+    try std.testing.expectEqual(@as(usize, 0), cached.uploads.len);
+    @memset(output.pixels[0..16], 0xa5);
+    try std.testing.expectError(error.PixelLimit, RR.frame(owner, &.{}, .{
+        .commands = &output.commands,
+        .pixels = output.pixels[0..16],
+        .uploads = &output.uploads,
+        .removals = &output.removals,
+    }));
+    try std.testing.expectEqualSlices(u8, &@as([16]u8, @splat(0xa5)), output.pixels[0..16]);
+    try RR.resetCaches(owner);
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const reset = try RR.frame(owner, &residency, .{ .commands = &output.commands, .pixels = &output.pixels, .uploads = &output.uploads, .removals = &output.removals });
+    try std.testing.expectEqual(@as(usize, 2), reset.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), reset.removals.len);
+    for (reset.uploads) |upload| if (upload.format == .rgba8) {
+        try std.testing.expectEqual(color_id.resource, upload.resource.resource);
+        try std.testing.expect(@backingInt(upload.resource.generation) > @backingInt(color_id.generation));
+    };
+}
+
+test "lazy colour identity stays disjoint from same-batch external images" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .fallbacks = &.{@import("test_fonts").colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 3, 12, 0);
+    defer vt.deinit();
+    try vt.setCellPixelSize(font.metrics().advance_width, font.metrics().line_height);
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
+    defer RR.deinit(owner);
+    // zig-audit: acknowledge discard
+    // reason: The exact fresh image identities, colour identity and ensuing frame residency are checked below.
+    _ = try vt.feed("M\xf0\x9f\x98\x80\x1b[?25l\x1b[H\x1b_Ga=T,f=32,s=1,v=1,i=1,C=1,q=2;/wAA/w==\x1b\\");
+    var storage: [RR.maximum_external_images]RR.ExternalImageBinding = undefined;
+    const bindings = try RR.planObservationImageBindings(&.{}, RR.usage(owner), vt.observation(), 0, &storage);
+    try std.testing.expectEqual(@as(usize, 1), bindings.len);
+    try RR.updateObservation(owner, vt.observation(), 0, bindings);
+    const residency = [_]RR.Residency{.{ .resource = bindings[0].resource, .format = .rgba8, .size = .{ .width = 1, .height = 1 } }};
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const frame = try RR.frame(owner, &residency, .{
+        .commands = &output.commands,
+        .pixels = &output.pixels,
+        .uploads = &output.uploads,
+        .removals = &output.removals,
+    });
+    try std.testing.expectEqual(@as(usize, 2), frame.uploads.len);
+    for (frame.uploads) |upload| try std.testing.expect(upload.resource.resource != bindings[0].resource.resource);
+    // A later alpha-only miss must not invalidate the retained colour texture.
+    var complete: [3]RR.Residency = undefined;
+    complete[0] = residency[0];
+    for (frame.uploads, 0..) |upload, i| complete[i + 1] = .{ .resource = upload.resource, .format = upload.format, .size = upload.size };
+    // zig-audit: acknowledge discard
+    // reason: This adds a previously un-rasterized alpha glyph; only the alpha plane may be uploaded.
+    _ = try vt.feed("\x1b[2;1HZ");
+    try RR.updateObservation(owner, vt.observation(), 0, bindings);
+    const changed = try RR.frame(owner, &complete, .{
+        .commands = &output.commands,
+        .pixels = &output.pixels,
+        .uploads = &output.uploads,
+        .removals = &output.removals,
+    });
+    try std.testing.expectEqual(@as(usize, 1), changed.uploads.len);
+    try std.testing.expectEqual(RR.ResourceFormat.alpha8, changed.uploads[0].format);
+}
+
+test "wide symbol font fits complete up and down triangles into narrow terminal cells" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .fallbacks = &.{@import("test_fonts").colour_font},
+        .size = .{ .pixels = 20 },
+    });
+    defer font.deinit();
+    var cfg = fontConfig(font);
+    cfg.cell_size.width = 9;
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 2, 12, 0);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: Both full raster extents and opposing triangle ink directions are proved below.
+    _ = try vt.feed("\x1b[?25l\xe2\x96\xb2\xe2\x96\xbc");
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(owner);
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const frame = try output.frame(owner);
+    var masks: usize = 0;
+    for (frame.commands) |command| if (command == .alpha_mask) {
+        const mask = command.alpha_mask;
+        const src = mask.resource.source.?;
+        try std.testing.expectEqual(@as(u16, 9), mask.clip.width);
+        try std.testing.expect(mask.destination.x >= @as(i32, @intCast(masks * 9)));
+        try std.testing.expect(mask.destination.x + @as(i32, mask.destination.width) <= (masks + 1) * 9);
+        try std.testing.expectEqual(src.width, mask.destination.width);
+        var top: usize = 0;
+        var bottom: usize = 0;
+        const upload = frame.uploads[0];
+        for (0..src.height) |row| {
+            const start = (@as(usize, src.y) + row) * upload.stride + src.x;
+            var count: usize = 0;
+            for (frame.pixels[start..][0..src.width]) |alpha| if (alpha >= 100) {
+                count += 1;
+            };
+            if (row < src.height / 2) top += count else bottom += count;
+        }
+        if (masks == 0) try std.testing.expect(bottom > top) else try std.testing.expect(top > bottom);
+        masks += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 2), masks);
 }

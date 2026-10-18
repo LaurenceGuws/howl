@@ -97,9 +97,10 @@ pub const ExternalImageBinding = struct {
     resource: frame_vocabulary.ResourceRef,
 };
 
-/// Static image bound shared by maintained hosts. One resource slot is reserved
-/// for the glyph atlas, leaving seven exact terminal image resources.
+/// Static image bound shared by maintained hosts, independent of font planes.
 pub const maximum_external_images: usize = 7;
+/// Complete residency envelope: seven terminal images and two glyph planes.
+pub const maximum_frame_resources: usize = maximum_external_images + 2;
 
 /// One terminal presentation owner. There is no producer/compositor layer.
 // zig-audit: acknowledge opaque_type
@@ -409,6 +410,11 @@ const Impl = struct {
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
     atlas_resource_id: ?frame_vocabulary.ResourceId = null,
+    color_resource_id: ?frame_vocabulary.ResourceId = null,
+    color_resource_generation: u64 = 0,
+    published_color_generation: u64 = 0,
+    published_color_entries: usize = 0,
+    color_visible: bool = false,
     published_images: [maximum_external_images]PublishedImage = undefined,
     published_image_count: usize = 0,
     published_atlas_generation: u64 = 0,
@@ -683,7 +689,7 @@ pub fn usage(owner: *const Renderer) Usage {
         .command_capacity = impl.commands.len,
         .revision = impl.revision,
         .content_revision = impl.content_revision,
-        .resource_generation = impl.resource_generation,
+        .resource_generation = @max(impl.resource_generation, impl.color_resource_generation),
         .resource_high_water = impl.resource_high_water,
     };
 }
@@ -737,7 +743,7 @@ pub fn updateCursorSource(
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
     if (cursor) |value| {
         if (value.shape == .block and !impl.cursor_rows_ready)
-            try indexCursorRows(impl, surface, impl.command_count);
+            try indexCursorRows(impl, surface, impl.command_count, impl.color_resource_id);
     }
     impl.cursor = cursor;
     impl.revision += 1;
@@ -831,7 +837,7 @@ fn updateInnerOnce(
     const incremental_plan = projection.incremental_plan;
     var command_count = projection.command_count;
     const atlas = glyph_cache.atlasView(impl.atlas);
-    const atlas_entries = glyph_cache.atlasEntryCount(impl.atlas);
+    const atlas_entries = glyph_cache.alphaAtlasEntryCount(impl.atlas);
     const atlas_changed = atlas.generation != impl.published_atlas_generation or
         atlas_entries != impl.published_atlas_entries;
 
@@ -843,15 +849,40 @@ fn updateInnerOnce(
             return error.ResourceGenerationOverflow;
         next_resource_generation += 1;
     }
+    const color = glyph_cache.colorAtlasView(impl.atlas);
+    const color_entries = glyph_cache.colorAtlasEntryCount(impl.atlas);
+    const publish_color = projection.has_color and (impl.color_resource_generation == 0 or
+        color.?.generation != impl.published_color_generation or color_entries != impl.published_color_entries);
+    var next_color_generation = impl.color_resource_generation;
+    if (publish_color) {
+        if (next_color_generation == std.math.maxInt(u64)) return error.ResourceGenerationOverflow;
+        next_color_generation += 1;
+    }
     var next_resource_high_water = impl.resource_high_water;
     var next_atlas_resource_id = impl.atlas_resource_id;
-    if (publish_atlas and next_atlas_resource_id == null) {
+    if ((publish_atlas or publish_color) and next_atlas_resource_id == null) {
         if (next_resource_high_water >= frame_vocabulary.ResourceId.max_identity)
             return error.ResourceIdentityOverflow;
         next_resource_high_water += 1;
         next_atlas_resource_id = frame_vocabulary.ResourceId.init(next_resource_high_water) catch
             return error.ResourceIdentityOverflow;
     }
+    // Allocate after this batch's external identities. No caller-preallocated
+    // image identity may collide with a lazily introduced colour atlas.
+    const new_resource_floor = next_resource_high_water;
+    var next_color_resource_id = impl.color_resource_id;
+    if (publish_color and next_color_resource_id == null) {
+        for (image_bindings) |binding| {
+            next_resource_high_water = @max(next_resource_high_water, try contentExternalIdentity(binding.resource));
+        }
+        if (next_resource_high_water >= frame_vocabulary.ResourceId.max_identity) return error.ResourceIdentityOverflow;
+        next_resource_high_water += 1;
+        next_color_resource_id = frame_vocabulary.ResourceId.init(next_resource_high_water) catch return error.ResourceIdentityOverflow;
+    }
+    if (projection.has_color) bindColorResource(
+        impl.commands[0..command_count],
+        contentResource(next_color_resource_id.?, next_color_generation),
+    );
     const atlas_resource = if (projection.has_raster) contentResource(
         next_atlas_resource_id orelse return error.InvalidPresentationGeometry,
         next_resource_generation,
@@ -864,7 +895,6 @@ fn updateInnerOnce(
 
     var next_published_images: [maximum_external_images]PublishedImage = undefined;
     var next_published_count: usize = 0;
-    const new_resource_floor = next_resource_high_water;
     for (0..Source.graphicsImageCount(graphics)) |image_index| {
         const image = Source.graphicsImage(graphics, image_index);
         if (!Source.graphicsImageVisible(graphics, image.image_id)) continue;
@@ -876,6 +906,9 @@ fn updateInnerOnce(
         const image_identity = try contentExternalIdentity(published.external.resource);
         if (next_atlas_resource_id) |atlas_id| {
             if (atlas_id == published.external.resource.resource) return error.InvalidImageBinding;
+        }
+        if (next_color_resource_id) |id| {
+            if (id == published.external.resource.resource) return error.InvalidImageBinding;
         }
         for (next_published_images[0..next_published_count]) |prior| {
             if (prior.image_id == published.image_id or
@@ -924,19 +957,21 @@ fn updateInnerOnce(
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
     impl.cursor_rows_ready = false;
     if (cursor) |value| {
-        if (value.shape == .block) try indexCursorRows(impl, surface, command_count);
+        if (value.shape == .block) try indexCursorRows(impl, surface, command_count, next_color_resource_id);
     }
     const previous_revision = impl.revision;
     const next_revision = impl.revision + 1;
 
     const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
-    const incremental_eligible = incremental_enabled and projection.incremental_eligible;
+    const incremental_eligible = incremental_enabled and projection.incremental_eligible and !projection.has_color;
 
     impl.revision = next_revision;
     impl.content_revision = next_revision;
     impl.surface = surface;
     impl.command_count = command_count;
     impl.atlas_visible = projection.has_raster;
+    impl.color_visible = projection.has_color;
+    impl.color_resource_id = next_color_resource_id;
     impl.cursor = cursor;
     impl.resource_high_water = next_resource_high_water;
     impl.atlas_resource_id = next_atlas_resource_id;
@@ -949,6 +984,11 @@ fn updateInnerOnce(
         impl.resource_generation = next_resource_generation;
         impl.published_atlas_generation = atlas.generation;
         impl.published_atlas_entries = atlas_entries;
+    }
+    if (publish_color) {
+        impl.color_resource_generation = next_color_generation;
+        impl.published_color_generation = color.?.generation;
+        impl.published_color_entries = color_entries;
     }
     if (incremental_eligible) {
         rememberIncrementalCommands(Source, owner, snapshot);
@@ -972,6 +1012,16 @@ fn updateInnerOnce(
     }
     impl.backgrounds.accept(Source, snapshot);
     impl.frame_ready = true;
+}
+
+/// Complete renderer-owned upload scratch needed for the accepted frame.
+/// Colour storage is included only after colour ink becomes visible.
+pub fn framePixelBytes(owner: *const Renderer) usize {
+    const impl = constRendererImpl(owner);
+    const alpha = if (impl.atlas_visible) glyph_cache.atlasView(impl.atlas).pixels.len else 0;
+    const color = if (impl.color_visible) glyph_cache.colorAtlasView(impl.atlas).?.pixels.len else 0;
+    // Both planes came from one successfully allocated bounded atlas.
+    return alpha + color;
 }
 
 /// Borrows the current bounded retained plain-row glyph scene.
@@ -1057,6 +1107,20 @@ pub fn frame(
         .{ .width = atlas.width, .height = atlas.height },
     );
 
+    const color = glyph_cache.colorAtlasView(impl.atlas);
+    const color_ref: ?frame_vocabulary.ResourceRef = if (impl.color_resource_id) |id|
+        contentResource(id, impl.color_resource_generation)
+    else
+        null;
+    const color_upload = impl.color_visible and !frame_vocabulary.residencyMatches(
+        residency,
+        color_ref.?,
+        .rgba8,
+        .{ .width = color.?.width, .height = color.?.height },
+    );
+    const upload_needed: usize = @as(usize, @intFromBool(atlas_upload)) + @intFromBool(color_upload);
+    const pixel_needed = std.math.add(usize, if (atlas_upload) atlas.pixels.len else 0, if (color_upload) color.?.pixels.len else 0) catch return error.PixelLimit;
+
     var removal_count: usize = 0;
     for (residency) |value| {
         if (residencyRequired(impl, atlas, value)) continue;
@@ -1064,6 +1128,7 @@ pub fn frame(
         // Emitting a removal for that identity in the same frame would make the
         // replacement transaction internally contradictory.
         if (atlas_upload and value.resource.resource == atlas_ref.?.resource) continue;
+        if (color_upload and value.resource.resource == color_ref.?.resource) continue;
         if (removal_count == buffers.removals.len) return error.ResourceLimit;
         removal_count += 1;
     }
@@ -1071,10 +1136,8 @@ pub fn frame(
     const command_limit = std.math.add(usize, impl.command_count, cursor_extra) catch
         return error.CommandLimit;
     if (buffers.commands.len < command_limit) return error.CommandLimit;
-    if (atlas_upload) {
-        if (buffers.uploads.len < 1) return error.ResourceLimit;
-        if (buffers.pixels.len < atlas.pixels.len) return error.PixelLimit;
-    }
+    if (buffers.uploads.len < upload_needed) return error.ResourceLimit;
+    if (buffers.pixels.len < pixel_needed) return error.PixelLimit;
 
     var projected = reuse: {
         if (buffers.retained_content) |retained| {
@@ -1113,10 +1176,26 @@ pub fn frame(
         pixel_count = atlas.pixels.len;
     }
 
+    if (color_upload) {
+        const plane = color.?;
+        @memcpy(buffers.pixels[pixel_count..][0..plane.pixels.len], plane.pixels);
+        buffers.uploads[upload_count] = .{
+            .resource = color_ref.?,
+            .format = .rgba8,
+            .size = .{ .width = plane.width, .height = plane.height },
+            .pixel_offset = pixel_count,
+            .pixel_count = plane.pixels.len,
+            .stride = @as(u32, plane.width) * 4,
+        };
+        upload_count += 1;
+        pixel_count += plane.pixels.len;
+    }
+
     var removal_at: usize = 0;
     for (residency) |value| {
         if (residencyRequired(impl, atlas, value)) continue;
         if (atlas_upload and value.resource.resource == atlas_ref.?.resource) continue;
+        if (color_upload and value.resource.resource == color_ref.?.resource) continue;
         buffers.removals[removal_at] = value.resource;
         removal_at += 1;
     }
@@ -1145,6 +1224,12 @@ fn residencyRequired(
                     std.meta.eql(value.size, frame_vocabulary.Size{ .width = atlas.width, .height = atlas.height });
         }
     }
+    if (impl.color_visible) {
+        const plane = glyph_cache.colorAtlasView(impl.atlas).?;
+        const ref = contentResource(impl.color_resource_id.?, impl.color_resource_generation);
+        if (std.meta.eql(value.resource, ref)) return value.format == .rgba8 and
+            std.meta.eql(value.size, frame_vocabulary.Size{ .width = plane.width, .height = plane.height });
+    }
     for (impl.published_images[0..impl.published_image_count]) |published| {
         const external = published.external;
         if (!published.visible) continue;
@@ -1156,7 +1241,7 @@ fn residencyRequired(
 
 // Index content once when a block cursor needs it. Spans describe clipped ink,
 // preserving combining glyphs, ligatures, DEC geometry and cross-row overhang.
-fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: usize) Error!void {
+fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: usize, color_id: ?frame_vocabulary.ResourceId) Error!void {
     const height = impl.config.cell_size.height;
     const rows = surface.height / height;
     impl.cursor_rows_ready = rows <= impl.cursor_rows.len;
@@ -1164,19 +1249,32 @@ fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: u
     errdefer impl.cursor_rows_ready = false;
     @memset(&impl.cursor_rows, .{});
     const whole = contentSurfaceRect(surface);
-    for (impl.commands[0..command_count], 0..) |command, index| switch (command) {
-        .alpha_mask => |mask| {
-            if (!mask.cursor_component) continue;
-            const clipped = (try frame_vocabulary.intersectRects(mask.destination, mask.clip)) orelse continue;
-            const ink = (try frame_vocabulary.intersectRects(clipped, whole)) orelse continue;
-            const first = @as(usize, @intCast(ink.y)) / height;
-            const last = (@as(usize, @intCast(ink.y)) + ink.height - 1) / height;
-            for (impl.cursor_rows[first .. last + 1]) |*span| {
-                if (span.count == 0) span.start = index;
-                span.count = index + 1 - span.start;
-            }
-        },
-        else => {},
+    for (impl.commands[0..command_count], 0..) |command, index| {
+        const glyph = cursorGlyph(command, color_id) orelse continue;
+        const clipped = (try frame_vocabulary.intersectRects(glyph.destination, glyph.clip)) orelse continue;
+        const ink = (try frame_vocabulary.intersectRects(clipped, whole)) orelse continue;
+        const first = @as(usize, @intCast(ink.y)) / height;
+        const last = (@as(usize, @intCast(ink.y)) + ink.height - 1) / height;
+        for (impl.cursor_rows[first .. last + 1]) |*span| {
+            if (span.count == 0) span.start = index;
+            span.count = index + 1 - span.start;
+        }
+    }
+}
+
+const CursorGlyph = struct { destination: frame_vocabulary.Rect, clip: frame_vocabulary.Rect };
+
+fn cursorGlyph(command: frame_vocabulary.Input, color_id: ?frame_vocabulary.ResourceId) ?CursorGlyph {
+    return switch (command) {
+        .alpha_mask => |value| if (value.cursor_component)
+            .{ .destination = value.destination, .clip = value.clip }
+        else
+            null,
+        .rgba => |value| if (color_id != null and value.resource.resource.resource == color_id.?)
+            .{ .destination = value.destination, .clip = value.clip }
+        else
+            null,
+        else => null,
     };
 }
 
@@ -1200,14 +1298,11 @@ fn cursorCommandUpperBound(impl: *const Impl) Error!usize {
     const cursor = impl.cursor orelse return 0;
     var count: usize = 1;
     if (cursor.shape != .block) return count;
-    for (cursorInputs(impl, cursor)) |command| switch (command) {
-        .alpha_mask => |value| {
-            if (value.cursor_component and
-                (try frame_vocabulary.intersectRects(value.destination, cursor.rect)) != null)
-                count = std.math.add(usize, count, 1) catch return error.CommandLimit;
-        },
-        else => {},
-    };
+    for (cursorInputs(impl, cursor)) |command| {
+        const glyph = cursorGlyph(command, impl.color_resource_id) orelse continue;
+        if ((try frame_vocabulary.intersectRects(glyph.destination, cursor.rect)) != null)
+            count = std.math.add(usize, count, 1) catch return error.CommandLimit;
+    }
     return count;
 }
 
@@ -1249,6 +1344,16 @@ fn appendCursorCommands(
                 .cursor_component = false,
             } }, commands, used);
         },
+        .rgba => |value| {
+            if (cursorGlyph(command, impl.color_resource_id) == null) continue;
+            const clip = (try frame_vocabulary.intersectRects(value.clip, cursor.clip)) orelse continue;
+            const cursor_clip = (try frame_vocabulary.intersectRects(clip, cursor.rect)) orelse continue;
+            try appendProjectedInput(impl.surface, .{ .rgba = .{
+                .destination = value.destination,
+                .clip = cursor_clip,
+                .resource = value.resource,
+            } }, commands, used);
+        },
         else => {},
     };
 }
@@ -1265,7 +1370,7 @@ fn appendProjectedInput(
     if (projected.len == 1) used.* += 1;
 }
 
-const maximum_operator_run_cells: usize = 4;
+const maximum_operator_run_cells: usize = glyph_cache.maximum_contextual_cells;
 const placeholder_resource_id = frame_vocabulary.ResourceId.init(1) catch
     @compileError("renderer placeholder resource identity must remain nonzero");
 /// Kitty's deepest image layer is strictly below INT32_MIN/2. That phase is
@@ -1607,13 +1712,13 @@ fn contentSameContextualGlyphPresentation(
 
 fn contentContextualClustersPreserveCells(glyphs: []const text.Glyph, cell_count: usize) bool {
     if (cell_count < 2 or cell_count > maximum_operator_run_cells) return false;
-    var seen: u8 = 0;
+    if (glyphs.len == 0 or glyphs[0].cluster != 0) return false;
+    var previous: u32 = 0;
     for (glyphs) |glyph| {
-        if (glyph.cluster >= cell_count) return false;
-        seen |= @as(u8, 1) << @intCast(glyph.cluster);
+        if (glyph.cluster >= cell_count or glyph.cluster < previous) return false;
+        previous = glyph.cluster;
     }
-    const expected = (@as(u8, 1) << @intCast(cell_count)) - 1;
-    return seen == expected;
+    return true;
 }
 
 fn contentFontVisibleClip(
@@ -2086,6 +2191,7 @@ const ContentProjection = struct {
     default_background_end: usize,
     background_end: usize,
     has_raster: bool,
+    has_color: bool,
     incremental_eligible: bool,
     incremental_plan: ?IncrementalPlan,
 };
@@ -2201,6 +2307,7 @@ fn buildContentCommands(
     }
     const placeholder_resource = placeholderContentResource();
     var has_raster = false;
+    var has_color = false;
 
     // Decorations are foreground content. Ordinary negative-z images must sit
     // below them together with glyphs, not above them as if they were cells.
@@ -2318,18 +2425,14 @@ fn buildContentCommands(
 
             var run: text.Run = undefined;
             var contextual = false;
-            var cluster_stride_26_6: i64 = 0;
+            // These arrays are borrowed by run until its glyphs are emitted.
+            var operator_scalars: [maximum_operator_run_cells]u32 = undefined;
+            var operator_clusters: [maximum_operator_run_cells]u32 = undefined;
+            var operator_glyphs: [maximum_operator_run_cells * 2]text.Glyph = undefined;
             if (line_geometry == .single_width and
                 try contentIsContextualOperatorCell(Source, cell, sequence))
             {
-                const run_limit = @min(
-                    line_columns - column,
-                    @min(
-                        maximum_operator_run_cells,
-                        @as(usize, glyph_cache.maximumSequenceScalars(shape_cache)),
-                    ),
-                );
-                var operator_scalars: [maximum_operator_run_cells]u32 = undefined;
+                const run_limit = @min(line_columns - column, maximum_operator_run_cells);
                 operator_scalars[0] = sequence[0];
                 var run_end = column + 1;
                 while (run_end - column < run_limit) : (run_end += 1) {
@@ -2351,28 +2454,13 @@ fn buildContentCommands(
                         shape_cache,
                         font_variant,
                         operator_scalars[0 .. run_end - column],
-                        cluster_scratch,
-                        shaped_scratch,
+                        &operator_clusters,
+                        &operator_glyphs,
                     )) |candidate| {
                         if (contentContextualClustersPreserveCells(
                             candidate.glyphs,
                             run_end - column,
                         )) {
-                            const cell_advance = std.math.mul(
-                                i64,
-                                @as(i64, cell_size.width),
-                                64,
-                            ) catch return error.InvalidPresentationGeometry;
-                            const font_advance = std.math.mul(
-                                i64,
-                                @as(i64, metrics.advance_width),
-                                64,
-                            ) catch return error.InvalidPresentationGeometry;
-                            cluster_stride_26_6 = std.math.sub(
-                                i64,
-                                cell_advance,
-                                font_advance,
-                            ) catch return error.InvalidPresentationGeometry;
                             run = candidate;
                             contextual = true;
                             skip_until = run_end;
@@ -2491,12 +2579,22 @@ fn buildContentCommands(
                 break :blk value;
             };
             var pen_y: i64 = 0;
+            var previous_cluster: ?u32 = null;
             for (run.glyphs) |shaped| {
-                const cluster_adjust = std.math.mul(
-                    i64,
-                    @as(i64, shaped.cluster),
-                    cluster_stride_26_6,
-                ) catch return error.InvalidPresentationGeometry;
+                // HB advances can be fractional even when FT's terminal metrics
+                // are rounded. Anchor each cluster to its VT cell; preserve
+                // intra-cluster advances and offsets, including real ligatures.
+                if (contextual and previous_cluster != shaped.cluster) {
+                    pen_x = (@as(i64, physical.x) + @as(i64, shaped.cluster) * cell_size.width) * 64;
+                    pen_y = 0;
+                    previous_cluster = shaped.cluster;
+                }
+                const bounded_symbol = !contextual and sequence.len == 1 and
+                    isCellBoundSymbol(sequence[0]) and run.glyphs.len == 1;
+                const symbol_width = if (bounded_symbol)
+                    std.math.mul(u16, cell_size.width, cell.width) catch return error.InvalidPresentationGeometry
+                else
+                    0;
                 const raster = try glyph_cache.resolveFontAtlas(
                     atlas,
                     font_variant,
@@ -2504,11 +2602,11 @@ fn buildContentCommands(
                     shaped.id,
                     raster_scratch,
                     if (!contextual and run.glyphs.len == 1) ascii_index else null,
+                    symbol_width,
                 );
                 if (raster.width != 0 and raster.height != 0) {
-                    has_raster = true;
-                    var left = std.math.add(i64, pen_x, cluster_adjust) catch
-                        return error.InvalidPresentationGeometry;
+                    if (raster.format == .rgba8) has_color = true else has_raster = true;
+                    var left = pen_x;
                     left = std.math.add(i64, left, shaped.x_offset) catch
                         return error.InvalidPresentationGeometry;
                     left = std.math.add(i64, left, @as(i64, raster.left) * 64) catch
@@ -2531,34 +2629,40 @@ fn buildContentCommands(
                         base_destination
                     else
                         try contentCellTransformRect(base_destination, sizing.?);
-                    try appendContentInput(output, &used, .{ .alpha_mask = .{
-                        .destination = if (plain_geometry)
-                            sized_destination
-                        else
-                            try contentLineTransformRect(
-                                sized_destination,
-                                row_index,
-                                line_geometry,
-                                cell_size,
-                            ),
-                        .clip = font_clip,
-                        .resource = .{
-                            .resource = placeholder_resource,
-                            .format = .alpha8,
-                            .size = .{
-                                .width = atlas_size.width,
-                                .height = atlas_size.height,
-                            },
-                            .source = .{
-                                .x = raster.atlas_x,
-                                .y = raster.atlas_y,
-                                .width = raster.width,
-                                .height = raster.height,
-                            },
-                        },
-                        .color = colors.foreground,
-                        .cursor_component = true,
-                    } });
+                    var destination = if (plain_geometry) sized_destination else try contentLineTransformRect(sized_destination, row_index, line_geometry, cell_size);
+                    if (bounded_symbol) {
+                        // Preserve the bearing where it fits. Full-width fonts
+                        // may put narrow symbols far inside an 18px advance;
+                        // move the ink into its actual 9px VT allocation.
+                        const latest_x = allocation_clip.x + @as(i32, allocation_clip.width) - @as(i32, destination.width);
+                        destination.x = std.math.clamp(destination.x, allocation_clip.x, @max(allocation_clip.x, latest_x));
+                        destination.y = @max(destination.y, allocation_clip.y);
+                    }
+                    const resource: frame_vocabulary.ResourceView = .{
+                        .resource = placeholder_resource,
+                        .format = if (raster.format == .rgba8) .rgba8 else .alpha8,
+                        .size = .{ .width = atlas_size.width, .height = atlas_size.height },
+                        .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height },
+                    };
+                    if (raster.format == .rgba8) {
+                        // Emoji ink fits its VT allocation, with intrinsic colour
+                        // and aspect ratio intact; no neighbouring cell overpaint.
+                        const fitted = fitColorGlyph(destination, allocation_clip);
+                        try appendContentInput(output, &used, .{ .rgba = .{
+                            .destination = fitted,
+                            .clip = allocation_clip,
+                            .resource = resource,
+                        } });
+                    } else {
+                        const symbol_clip = if (bounded_symbol) allocation_clip else font_clip;
+                        try appendContentInput(output, &used, .{ .alpha_mask = .{
+                            .destination = destination,
+                            .clip = symbol_clip,
+                            .resource = resource,
+                            .color = colors.foreground,
+                            .cursor_component = true,
+                        } });
+                    }
                 }
                 pen_x = std.math.add(i64, pen_x, shaped.x_advance) catch
                     return error.InvalidPresentationGeometry;
@@ -2576,6 +2680,7 @@ fn buildContentCommands(
         .default_background_end = default_background_end,
         .background_end = background_end,
         .has_raster = has_raster,
+        .has_color = has_color,
         .incremental_eligible = incremental_eligible,
         .incremental_plan = active_plan,
     };
@@ -2588,6 +2693,30 @@ fn generatedSizing(comptime Source: type, cell: Source.Cell) generated.BoxDrawin
         .scale = cell.height,
         .subscale_n = if (proper_fraction) @intCast(cell.subscale_n) else 0,
         .subscale_d = if (proper_fraction) @intCast(cell.subscale_d) else 0,
+    };
+}
+
+// These standalone geometric symbols have one cell's allocation. Letter and
+// italic overhang, combining marks and contextual operator runs keep row clips.
+fn isCellBoundSymbol(scalar: u32) bool {
+    return scalar >= 0x2190 and scalar <= 0x21ff or scalar >= 0x25a0 and scalar <= 0x25ff;
+}
+
+fn fitColorGlyph(ink: frame_vocabulary.Rect, cell: frame_vocabulary.Rect) frame_vocabulary.Rect {
+    const width: u32 = cell.width;
+    const scale = @min(@as(f64, 1), @min(
+        @as(f64, @floatFromInt(width)) / @as(f64, @floatFromInt(ink.width)),
+        @as(f64, @floatFromInt(cell.height)) / @as(f64, @floatFromInt(ink.height)),
+    ));
+    const w: u16 = @intFromFloat(@max(1, @floor(@as(f64, @floatFromInt(ink.width)) * scale)));
+    const h: u16 = @intFromFloat(@max(1, @floor(@as(f64, @floatFromInt(ink.height)) * scale)));
+    return .{ .x = cell.x + @as(i32, @intCast((width - w) / 2)), .y = cell.y + @as(i32, @intCast((cell.height - h) / 2)), .width = w, .height = h };
+}
+
+fn bindColorResource(commands: []frame_vocabulary.Input, resource: frame_vocabulary.ResourceRef) void {
+    for (commands) |*command| switch (command.*) {
+        .rgba => command.rgba.resource.resource = resource,
+        else => {},
     };
 }
 
@@ -3008,7 +3137,7 @@ test "painted-row cursor search equals the complete command oracle including cli
             .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
             .text_color = .{ .r = 0, .g = 0, .b = 0, .a = 255 },
         };
-        try indexCursorRows(&impl, impl.surface, inputs.len);
+        try indexCursorRows(&impl, impl.surface, inputs.len, null);
         var indexed: usize = 0;
         try appendCursorCommands(&impl, &commands[0], &indexed);
         impl.cursor_rows_ready = false;
@@ -3016,9 +3145,9 @@ test "painted-row cursor search equals the complete command oracle including cli
         try appendCursorCommands(&impl, &commands[1], &complete);
         try std.testing.expectEqualDeep(commands[1][0..complete], commands[0][0..indexed]);
     };
-    try indexCursorRows(&impl, .{ .width = 30, .height = (limits.maximum_rows + 1) * 10 }, inputs.len);
+    try indexCursorRows(&impl, .{ .width = 30, .height = (limits.maximum_rows + 1) * 10 }, inputs.len, null);
     try std.testing.expect(!impl.cursor_rows_ready);
     inputs[1].alpha_mask.destination.height = 0;
-    try std.testing.expectError(error.InvalidRectangle, indexCursorRows(&impl, impl.surface, inputs.len));
+    try std.testing.expectError(error.InvalidRectangle, indexCursorRows(&impl, impl.surface, inputs.len, null));
     try std.testing.expect(!impl.cursor_rows_ready);
 }

@@ -10,7 +10,7 @@ const instance = @import("howl_instance");
 const terminal = instance.render.terminal;
 const vk_surface = @import("howl_vk").surface;
 
-const resource_limit: usize = terminal.maximum_external_images + 1;
+const resource_limit: usize = terminal.maximum_frame_resources;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 const command_capacity: usize = instance.render.limits.maximum_frame_commands;
 
