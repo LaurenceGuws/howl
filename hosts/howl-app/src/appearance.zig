@@ -2,6 +2,7 @@
 const c = @import("desktop");
 const std = @import("std");
 const colors = @import("colors.zig");
+const themes = @import("themes.zig");
 
 /// Existing application palettes; terminal colours remain canonical VT presentation policy.
 pub const Palette = struct {
@@ -15,7 +16,7 @@ pub const Palette = struct {
     muted: c.SDL_Color,
     accent: c.SDL_Color,
 };
-/// Resolves the three compatible saved theme ids; unknown ids fail rather than falling back.
+/// Resolves exact legacy or family ids; unknown ids fail rather than falling back.
 pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
     if (std.mem.eql(u8, id, "howl_dark")) return .{
         // Ayu-like charcoal surfaces, with the Howl logo's orange accent.
@@ -51,6 +52,14 @@ pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
         .muted = rgb(200, 200, 200),
         .accent = rgb(255, 210, 64),
     };
+    if (themes.find(id)) |preset| {
+        var result: Palette = undefined;
+        inline for (@typeInfo(themes.Chrome).@"struct".field_names) |field| {
+            const value = @field(preset.app, field);
+            @field(result, field) = rgb(@truncate(value >> 16), @truncate(value >> 8), @truncate(value));
+        }
+        return result;
+    }
     return error.InvalidTheme;
 }
 fn rgb(r: u8, g: u8, b: u8) c.SDL_Color {
@@ -68,4 +77,15 @@ pub fn resolve(id: []const u8, overrides: colors.Application) error{ InvalidThem
         }
     }
     return result;
+}
+
+test "every application preset resolves independently and preserves role overrides" {
+    for (themes.app_ids) |id| {
+        const base = try palette(id);
+        const edited = try resolve(id, .{ .accent = "#123456" });
+        try std.testing.expectEqual(base.window, edited.window);
+        try std.testing.expectEqual(rgb(0x12, 0x34, 0x56), edited.accent);
+    }
+    try std.testing.expectError(error.InvalidTheme, palette("howl_light"));
+    try std.testing.expectError(error.InvalidTheme, palette("unknown"));
 }

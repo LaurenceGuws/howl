@@ -1,6 +1,7 @@
 //! App-owned palette names and strict RGB configuration; VT owns resolved terminal colors.
 const std = @import("std");
 const Terminal = @import("howl_instance").Terminal;
+const themes = @import("themes.zig");
 
 /// Optional chrome role overrides; empty strings inherit the selected application theme.
 pub const Application = struct {
@@ -35,7 +36,7 @@ pub const Application = struct {
 /// Chrome labels in the exact role order above.
 pub const app_labels = [_][]const u8{ "Canvas margin", "Tab bar", "Active item", "Inactive / hover", "Panel", "Border", "Text", "Muted text", "Accent" };
 /// Supported terminal presets; these do not select an application theme.
-pub const terminal_themes = [_][]const u8{ "howl_dark", "howl_light" };
+pub const terminal_themes = themes.terminal_ids;
 /// Terminal defaults and ANSI overrides; direct RGB cells retain their specified color.
 pub const TerminalColors = struct {
     foreground: []const u8 = "",
@@ -71,6 +72,12 @@ pub const TerminalColors = struct {
             result.background = .{ .r = 246, .g = 244, .b = 239 };
             const palette = [_]u24{ 0x20252b, 0xb42935, 0x28783c, 0x936900, 0x2459a6, 0x833ca2, 0x007c8a, 0xc5c6c8, 0x626b77, 0xd3424c, 0x438e55, 0xab7c11, 0x497cbb, 0xa062b3, 0x238e9d, 0xffffff };
             for (palette, 0..) |value, i| result.palette[i] = unpack(value);
+        } else if (themes.find(theme)) |preset| {
+            result.foreground = unpack(preset.foreground);
+            result.background = unpack(preset.background);
+            result.cursor = unpack(preset.cursor);
+            result.cursor_text = unpack(preset.cursor_text);
+            for (preset.ansi, 0..) |value, i| result.palette[i] = unpack(value);
         } else if (!std.mem.eql(u8, theme, "howl_dark")) return error.InvalidTheme;
         if (self.foreground.len != 0) result.foreground = try parse(self.foreground);
         if (self.background.len != 0) result.background = try parse(self.background);
@@ -122,4 +129,26 @@ test "palette overrides are strict RGB and leave unrelated colors and app roles 
     try std.testing.expectError(error.InvalidColorRole, term.get(19));
     try std.testing.expectError(error.InvalidColorRole, app.set(9, "#000000"));
     try std.testing.expectError(error.InvalidTheme, term.resolve("unknown"));
+}
+
+test "family terminal defaults resolve completely while explicit roles override and extended slots remain native" {
+    const native: Terminal.ColorDefaults = .{};
+    for (themes.terminal_ids) |id| {
+        const baseline = try (TerminalColors{}).resolve(id);
+        var overrides: TerminalColors = .{ .foreground = "#123456", .background = "#654321", .cursor = "#abcdef" };
+        overrides.ansi[4] = "#102030";
+        const edited = try overrides.resolve(id);
+        try std.testing.expectEqual(try parse("#123456"), edited.foreground);
+        try std.testing.expectEqual(try parse("#654321"), edited.background);
+        try std.testing.expectEqual(try parse("#abcdef"), edited.cursor.?);
+        try std.testing.expectEqual(try parse("#102030"), edited.palette[4]);
+        try std.testing.expectEqual(baseline.palette[3], edited.palette[3]);
+        try std.testing.expectEqualSlices(Terminal.Rgb, native.palette[16..], edited.palette[16..]);
+    }
+    const solarized = try (TerminalColors{}).resolve("solarized_light");
+    try std.testing.expectEqual(try parse("#fdf6e3"), solarized.background);
+    try std.testing.expectEqual(try parse("#dc322f"), solarized.palette[1]);
+    const gruvbox = try (TerminalColors{}).resolve("gruvbox_dark");
+    try std.testing.expectEqual(try parse("#665c54"), gruvbox.cursor_text.?);
+    try std.testing.expectError(error.InvalidTheme, (TerminalColors{}).resolve("slate"));
 }

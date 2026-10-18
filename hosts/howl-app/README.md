@@ -79,7 +79,10 @@ through the existing Instance program launch, without shell interpolation.
 Colour schemes separates **App palette** from **Terminal palette**. App chrome
 keeps the existing howl_dark/slate/high_contrast presets with nine optional role
 overrides in app_colors. The terminal has independent howl_dark/howl_light
-presets and terminal_colors overrides for foreground, background, cursor and a
+presets. Both selectors also offer Catppuccin (four flavours), Dracula, Nord,
+Gruvbox Dark/Light, Solarized Dark/Light and Tokyo Night (Night, Storm, Moon and Day);
+[THEMES.md](THEMES.md) lists exact ids, source pins and adaptation scope.
+The terminal_colors overrides cover foreground, background, cursor and a
 16-entry ansi array. Every override is exactly #RRGGBB; blank inherits the preset.
 Settings shows resolved swatches and a terminal sample. Each group has its own
 reset-overrides action; changing a preset retains explicit overrides.

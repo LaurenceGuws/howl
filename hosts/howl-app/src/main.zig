@@ -18,6 +18,7 @@ const picker = @import("picker.zig");
 const palette_limit = picker.limit;
 const appearance = @import("appearance.zig");
 const color_config = @import("colors.zig");
+const theme_presets = @import("themes.zig");
 const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
@@ -901,7 +902,7 @@ const App = struct {
                     const next: u8 = @intCast(std.math.clamp(@as(i16, index) + delta, 0, @as(i16, self.configuration.profileCount()) - 1));
                     try self.changeSetting(.{ .set_default = next }, "");
                 } else if (row.target == .theme or row.target == .terminal_theme) {
-                    const themes: []const []const u8 = if (row.target == .theme) &.{ "howl_dark", "slate", "high_contrast" } else &color_config.terminal_themes;
+                    const themes: []const []const u8 = if (row.target == .theme) &theme_presets.app_ids else &color_config.terminal_themes;
                     const current = if (row.target == .theme) self.configuration.value.app_theme else self.configuration.value.terminal_theme;
                     var index: i16 = 0;
                     for (themes, 0..) |theme, i| if (std.mem.eql(u8, theme, current)) {

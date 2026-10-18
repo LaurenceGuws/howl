@@ -1,6 +1,7 @@
 const std = @import("std");
 const config = @import("config.zig");
 const colors = @import("colors.zig");
+const themes = @import("themes.zig");
 const bindings = @import("keybindings.zig");
 
 /// Qualified settings groups; every mutable field uses the same bounded editor.
@@ -55,8 +56,8 @@ pub const Row = struct {
         return switch (self.target) {
             .default_font => try std.fmt.bufPrint(buffer, "{d}", .{value.terminal_font_pixels}),
             .default_profile => (try current.profile(try current.defaultProfile())).id,
-            .theme => value.app_theme,
-            .terminal_theme => value.terminal_theme,
+            .theme => themes.label(value.app_theme),
+            .terminal_theme => themes.label(value.terminal_theme),
             .app_color => |index| try value.app_colors.get(index),
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
@@ -347,7 +348,11 @@ pub const Editor = struct {
     pub fn begin(self: *Editor, row: Row, current: *const config.Config) !void {
         if (!row.editable()) return error.ReadOnlySetting;
         var scratch: [4096]u8 = undefined;
-        const value = try row.text(current, &scratch);
+        const value = switch (row.target) {
+            .theme => current.value.app_theme,
+            .terminal_theme => current.value.terminal_theme,
+            else => try row.text(current, &scratch),
+        };
         if (value.len >= self.buffer.len) return error.SettingsTextLimit;
         @memcpy(self.buffer[0..value.len], value);
         self.len = value.len;
@@ -576,4 +581,26 @@ test "app and terminal palette edits remain independent and reject malformed can
     try std.testing.expectEqualStrings("#123456", current.value.app_colors.accent);
     try std.testing.expectEqualStrings("", current.value.terminal_colors.ansi[1]);
     try std.testing.expectEqualStrings("howl_light", current.value.terminal_theme);
+}
+
+test "theme display names never replace persisted ids during editing or preset changes" {
+    var original = config.Config.defaults(std.testing.allocator);
+    defer original.deinit();
+    for (themes.presets) |preset| {
+        var app = try change(&original, std.testing.io, .theme, preset.id);
+        defer app.deinit();
+        var both = try change(&app, std.testing.io, .terminal_theme, "solarized_light");
+        defer both.deinit();
+        try std.testing.expectEqualStrings(preset.id, both.value.app_theme);
+        try std.testing.expectEqualStrings("solarized_light", both.value.terminal_theme);
+        const row: Row = .{ .page = .colors, .label = "App palette", .target = .theme };
+        var scratch: [128]u8 = undefined;
+        try std.testing.expectEqualStrings(preset.label, try row.text(&both, &scratch));
+        var editor: Editor = .{};
+        try editor.begin(row, &both);
+        try std.testing.expectEqualStrings(preset.id, editor.buffer[0..editor.len]);
+        var reopened = try config.Config.fromValue(std.testing.allocator, std.testing.io, both.value);
+        defer reopened.deinit();
+        try std.testing.expectEqualStrings(preset.id, reopened.value.app_theme);
+    }
 }

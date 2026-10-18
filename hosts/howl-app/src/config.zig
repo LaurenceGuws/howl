@@ -1,6 +1,7 @@
 const std = @import("std");
 const bindings = @import("keybindings.zig");
 const colors = @import("colors.zig");
+const themes = @import("themes.zig");
 
 const file_limit = 2 * 1024 * 1024;
 const allocation_limit = 4 * 1024 * 1024;
@@ -270,8 +271,7 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
     // zig-audit: acknowledge discard
     // reason: Parsing every resolved terminal role validates the candidate; live workers receive a separate owned value after persistence.
     _ = try value.terminal_colors.resolve(value.terminal_theme);
-    if (!std.mem.eql(u8, value.app_theme, "howl_dark") and !std.mem.eql(u8, value.app_theme, "slate") and
-        !std.mem.eql(u8, value.app_theme, "high_contrast")) return error.InvalidTheme;
+    if (!themes.validApp(value.app_theme)) return error.InvalidTheme;
     const loaded_bindings = try bindings.Bindings.fromOverrides(value.keybindings);
     std.debug.assert(loaded_bindings.rows.len == bindings.definitions.len);
     if (value.profiles.len > 6) return error.ProfileLimit;
