@@ -14,7 +14,8 @@ const composition = @import("composition.zig");
 const config = @import("config.zig");
 const settings = @import("settings.zig");
 const discovery = @import("discovery.zig");
-const palette_limit = @max(keybindings.definitions.len, discovery.limit + 9);
+const picker = @import("picker.zig");
+const palette_limit = picker.limit;
 const appearance = @import("appearance.zig");
 const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
@@ -62,30 +63,7 @@ const Tab = struct {
     tree: layout.Tree = layout.Tree.init(),
     panes: [layout.pane_limit]?*Pane = @splat(null),
 };
-const Palette = struct {
-    query: [128]u8 = @splat(0),
-    len: usize = 0,
-    selected: usize = 0,
-    profile: bool = false,
-
-    fn indices(self: *const Palette, configuration: *const config.Config, discovered: ?*const discovery.Catalogue, out: *[palette_limit]usize) error{InvalidDefaultProfile}!usize {
-        var count: usize = 0;
-        const profiles = @as(usize, configuration.profileCount()) + (if (discovered) |catalogue| @as(usize, catalogue.count) else 0);
-        const limit = if (self.profile) profiles + 2 else keybindings.definitions.len;
-        for (0..limit) |i| {
-            if (!self.profile and keybindings.definitions[i].target != .action) continue;
-            const label = if (!self.profile) keybindings.definitions[i].label else if (i < configuration.profileCount())
-                (try configuration.profile(@intCast(i))).name
-            else if (i < profiles)
-                discovered.?.entries[i - configuration.profileCount()].recipe.name
-            else if (i == profiles) "Command Palette" else "Settings";
-            if (self.len != 0 and !containsIgnoreCase(label, self.query[0..self.len])) continue;
-            out[count] = i;
-            count += 1;
-        }
-        return count;
-    }
-};
+const Palette = picker.Picker;
 const FindEditor = struct {
     serial: u64 = 0,
     bytes: [find.query_limit]u8 = undefined,
@@ -969,7 +947,7 @@ const App = struct {
         self.palette = null;
         try self.gainKeyboard();
     }
-    fn paletteKey(self: *App, key: c.SDL_Keycode) !void {
+    fn paletteKey(self: *App, key: c.SDL_Keycode, mods: c.SDL_Keymod) !void {
         var matches: [palette_limit]usize = undefined;
         const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
         switch (key) {
@@ -978,10 +956,10 @@ const App = struct {
                 try self.gainKeyboard();
             },
             c.SDLK_UP => if (count != 0) {
-                self.palette.?.selected = if (self.palette.?.selected == 0) count - 1 else self.palette.?.selected - 1;
+                self.palette.?.selected -|= 1;
             },
             c.SDLK_DOWN => if (count != 0) {
-                self.palette.?.selected = (self.palette.?.selected + 1) % count;
+                self.palette.?.selected = @min(count - 1, self.palette.?.selected + 1);
             },
             c.SDLK_PAGEUP, c.SDLK_PAGEDOWN => if (count != 0) {
                 const delta = self.paletteRows();
@@ -990,16 +968,14 @@ const App = struct {
             },
             c.SDLK_HOME => self.palette.?.selected = 0,
             c.SDLK_END => self.palette.?.selected = count -| 1,
-            c.SDLK_BACKSPACE => {
-                var p = &self.palette.?;
-                if (p.len > 0) {
-                    p.len -= 1;
-                    while (p.len > 0 and p.query[p.len] & 0xc0 == 0x80) p.len -= 1;
-                    p.selected = 0;
-                }
-            },
+            c.SDLK_TAB => self.palette.?.cycle(mods & c.SDL_KMOD_SHIFT != 0),
+            c.SDLK_BACKSPACE => self.palette.?.erase(mods & c.SDL_KMOD_CTRL != 0),
             c.SDLK_RETURN => if (count != 0) try self.choosePalette(matches[@min(self.palette.?.selected, count - 1)]),
             else => {},
+        }
+        if (self.palette) |*p| {
+            p.hovered = null;
+            p.reveal(try p.indices(self.configuration, self.discovered, &matches), self.paletteRows());
         }
     }
     fn findRequest(self: *App, p: *Pane, request: find.Request) !void {
@@ -1119,7 +1095,7 @@ const App = struct {
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key) else try self.findKey(value.key),
+                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -1136,11 +1112,7 @@ const App = struct {
                 } else if (self.settings_editor) |*e| {
                     if (!e.recording) try e.append(text);
                 } else if (self.palette) |*p| {
-                    if (text.len <= p.query.len - p.len) {
-                        @memcpy(p.query[p.len..][0..text.len], text);
-                        p.len += text.len;
-                        p.selected = 0;
-                    }
+                    try p.append(text);
                 } else if (self.pane().finder != null) try self.findAppend(text) else try self.pane().submit(.{ .input = .{ .bytes = text } });
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (mouseButton(value.button.button)) |button|
@@ -1181,7 +1153,9 @@ const App = struct {
                     self.tab().tree.drag(self.drag.divider, value.motion.x, value.motion.y);
                 } else if (self.drag == .tab) {
                     self.moveTab(self.drag.tab.move(value.motion.x, self.tab_count, self.width));
-                } else if (self.palette == null and self.settings_editor == null) {
+                } else if (self.palette != null) {
+                    try self.paletteHover(value.motion.x, value.motion.y);
+                } else if (self.settings_editor == null) {
                     if (self.pointerPane(value.motion.x, value.motion.y)) |slot| {
                         const p = self.tab().panes[slot].?;
                         const state = p.snapshot().interaction orelse return;
@@ -1233,6 +1207,13 @@ const App = struct {
                 self.palette = null;
                 try self.gainKeyboard();
             } else {
+                if (self.palette.?.profile) for (0..picker.labels.len) |index| {
+                    if (self.paletteFilterRect(index).contains(x, y)) {
+                        self.palette.?.filter = @fromBackingInt(@intCast(index));
+                        self.palette.?.reset();
+                        return;
+                    }
+                };
                 const start = self.paletteStart(count);
                 for (0..@min(count - start, self.paletteRows())) |row| {
                     if (self.paletteRow(row).contains(x, y)) {
@@ -1471,7 +1452,7 @@ const App = struct {
             var matches: [palette_limit]usize = undefined;
             const count = try palette.indices(self.configuration, self.discovered, &matches);
             const delta: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
-            palette.selected = @intCast(std.math.clamp(@as(i32, @intCast(palette.selected)) + delta, 0, @as(i32, @intCast(count -| 1))));
+            palette.scroll(delta, count, self.paletteRows());
             return;
         }
         if (self.pane().finder != null) return;
@@ -1500,54 +1481,90 @@ const App = struct {
         }
     }
     fn paletteRows(self: *const App) usize {
-        if (self.palette.?.profile) return @min(self.menuProfileCount() + 2, @max(1, @as(usize, @intFromFloat(@floor(@max(0, self.height - self.headerHeight() - 114) / 48)))));
-        return @min(keybindings.definitions.len, @as(usize, @intFromFloat(@floor(@max(0, self.height - 134) / 36))));
+        if (self.palette.?.profile) return @min(self.menuProfileCount() + 2, @max(1, @as(usize, @intFromFloat(@floor(@max(0, self.height - self.headerHeight() - 148) / 44)))));
+        return @max(1, @min(keybindings.definitions.len, @as(usize, @intFromFloat(@floor(@max(0, self.height - 134) / 36)))));
     }
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
-            const width = @min(420, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+            const width = @min(480, @max(1, self.width - 24));
+            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 136 + @as(f32, @floatFromInt(self.paletteRows())) * 44) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));
         return .{ .x = (self.width - width) / 2, .y = @min(92, @max(0, (self.height - tall) / 2)), .width = width, .height = tall };
     }
-    fn paletteStart(self: *const App, count: usize) usize {
-        const rows = @max(1, self.paletteRows());
-        return (@min(self.palette.?.selected, count -| 1) + 1) -| rows;
+    fn paletteField(self: *const App) layout.Rect {
+        const box = self.paletteRect();
+        return .{ .x = box.x + 12, .y = box.y + 12, .width = @max(1, box.width - 24), .height = 34 };
+    }
+    fn paletteFilterRect(self: *const App, index: usize) layout.Rect {
+        const box = self.paletteRect();
+        const width = @max(1, (box.width - 24) / @as(f32, @floatFromInt(picker.labels.len)));
+        return .{ .x = box.x + 12 + @as(f32, @floatFromInt(index)) * width, .y = box.y + 54, .width = @max(1, width - 4), .height = 28 };
+    }
+    fn paletteStart(self: *App, count: usize) usize {
+        self.palette.?.reveal(count, self.paletteRows());
+        return self.palette.?.first;
     }
     fn paletteRow(self: *const App, number: usize) layout.Rect {
         const box = self.paletteRect();
         const profiles = self.palette.?.profile;
-        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + 62 + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 48) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 16) else 36)), .height = if (profiles) 42 else 34 };
+        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + (if (profiles) @as(f32, 94) else 62) + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 44) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 24) else 44)), .height = if (profiles) 42 else 34 };
+    }
+    fn paletteHover(self: *App, x: f32, y: f32) !void {
+        var matches: [palette_limit]usize = undefined;
+        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
+        const first = self.paletteStart(count);
+        self.palette.?.hovered = null;
+        for (0..@min(count - first, self.paletteRows())) |row| {
+            if (self.paletteRow(row).contains(x, y)) {
+                self.palette.?.hovered = first + row;
+                break;
+            }
+        }
     }
     fn drawPalette(self: *App) !void {
         var matches: [palette_limit]usize = undefined;
         const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
         const box = self.paletteRect();
         const colors = try self.uiPalette();
+        const profiles = self.palette.?.profile;
         try fill(self.renderer, box, colors.title);
         try outline(self.renderer, box, colors.border);
-        try self.clippedText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (self.palette.?.profile) "Profiles — type to filter" else "> Command Palette", .{ .x = box.x + 18, .y = box.y + 12, .width = @max(1, box.width - 36), .height = 28 }, box.x + 18);
+        const field = self.paletteField();
+        try fill(self.renderer, field, colors.panel);
+        try outline(self.renderer, field, colors.border);
+        try self.clippedTextColor(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (profiles) "Search profiles" else "Search commands", .{ .x = field.x + 8, .y = field.y + 1, .width = @max(1, field.width - 16), .height = 30 }, field.x + 8, if (self.palette.?.len == 0) colors.muted else colors.text);
+        if (profiles) for (picker.labels, 0..) |label, index| {
+            const chip = self.paletteFilterRect(index);
+            const active = @backingInt(self.palette.?.filter) == index;
+            try fill(self.renderer, chip, if (active) colors.active else colors.idle);
+            try outline(self.renderer, chip, if (active) colors.accent else colors.border);
+            try self.clippedTextColor(label, .{ .x = chip.x + 7, .y = chip.y, .width = @max(1, chip.width - 14), .height = chip.height }, chip.x + 7, if (active) colors.text else colors.muted);
+        };
         const start = self.paletteStart(count);
-        if (count == 0) try self.drawText("No matching entries", box.x + 18, box.y + 68);
-        for (matches[start..@min(count, start + self.paletteRows())], start..) |index, number| {
+        if (count == 0) try self.clippedTextColor("No matching entries", self.paletteRow(0), box.x + 18, colors.muted);
+        const shown = @min(count - start, self.paletteRows());
+        for (matches[start .. start + shown], start..) |index, number| {
             const row = self.paletteRow(number - start);
             if (number == self.palette.?.selected) {
                 try fill(self.renderer, row, colors.active);
                 try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
-            }
-            if (self.palette.?.profile) {
+            } else if (self.palette.?.hovered == number) try fill(self.renderer, row, colors.idle);
+            if (profiles) {
                 if (index < self.menuProfileCount()) {
                     const recipe = try self.menuProfile(index);
-                    try self.clippedText(recipe.name, row, row.x + 10);
-                    const detail = if (index < self.configuration.profileCount()) "Saved profile" else switch (self.discovered.?.entries[index - self.configuration.profileCount()].kind) {
-                        .shell => "Installed shell",
-                        .repl => "Installed REPL",
-                        .ssh => "SSH host",
+                    const default = index == try self.configuration.defaultProfile();
+                    try self.clippedText(recipe.name, .{ .x = row.x + 10, .y = row.y, .width = @max(1, row.width - (if (default) @as(f32, 90) else 20)), .height = 23 }, row.x + 10);
+                    var detail_buffer: [640]u8 = undefined;
+                    const kind = if (index < self.configuration.profileCount()) "Saved" else switch (self.discovered.?.entries[index - self.configuration.profileCount()].kind) {
+                        .shell => "Shell",
+                        .repl => "REPL",
+                        .ssh => "Remote",
                     };
-                    try self.drawText(detail, row.x + 10, row.y + 24);
-                    if (index == try self.configuration.defaultProfile()) try self.drawText("default", row.x + row.width - 72, row.y + 13);
+                    const detail = try std.fmt.bufPrint(&detail_buffer, "{s} · {s}", .{ kind, if (recipe.shell.len != 0) recipe.shell else "default shell" });
+                    try self.clippedTextColor(detail, .{ .x = row.x + 10, .y = row.y + 18, .width = @max(1, row.width - 20), .height = 23 }, row.x + 10, colors.muted);
+                    if (default) try self.clippedTextColor("default", .{ .x = row.x + row.width - 72, .y = row.y, .width = 68, .height = 23 }, row.x + row.width - 72, colors.muted);
                 } else try self.clippedText(if (index == self.menuProfileCount()) "Command Palette" else "Settings", row, row.x + 10);
             } else {
                 const binding = self.bindings.rows[index];
@@ -1557,10 +1574,21 @@ const App = struct {
             }
         }
         if (count > self.paletteRows()) {
-            var footer: [96]u8 = undefined;
-            const text = try std.fmt.bufPrint(&footer, "{d}–{d} of {d} · ↑↓ to navigate", .{ start + 1, @min(count, start + self.paletteRows()), count });
-            try self.clippedTextColor(text, .{ .x = box.x + 18, .y = box.y + box.height - 32, .width = @max(1, box.width - 36), .height = 26 }, box.x + 18, colors.muted);
+            const first = self.paletteRow(0);
+            const height = @as(f32, @floatFromInt(self.paletteRows())) * (if (profiles) @as(f32, 44) else 36) - 2;
+            const thumb = @max(16, height * @as(f32, @floatFromInt(shown)) / @as(f32, @floatFromInt(count)));
+            const offset = @as(f32, @floatFromInt(start)) / @as(f32, @floatFromInt(count - shown));
+            try fill(self.renderer, .{ .x = box.x + box.width - 10, .y = first.y, .width = 3, .height = height }, colors.border);
+            try fill(self.renderer, .{ .x = box.x + box.width - 10, .y = first.y + (height - thumb) * offset, .width = 3, .height = thumb }, colors.muted);
         }
+        var footer: [128]u8 = undefined;
+        const text = if (count > self.paletteRows())
+            try std.fmt.bufPrint(&footer, "{d}–{d} of {d} · {s}", .{ start + 1, start + shown, count, if (profiles) "Tab: category" else "↑↓: select" })
+        else if (profiles)
+            try std.fmt.bufPrint(&footer, "{d} entries · Tab: category", .{count})
+        else
+            "Enter: run · Esc: close";
+        try self.clippedTextColor(text, .{ .x = box.x + 18, .y = box.y + box.height - 32, .width = @max(1, box.width - 36), .height = 26 }, box.x + 18, colors.muted);
     }
     fn settingsRect(self: *const App) layout.Rect {
         const width = @min(760, @max(1, self.width - 24));
@@ -1848,10 +1876,9 @@ const App = struct {
             x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(text));
             y = clip.y + 6;
         } else if (self.palette) |p| {
-            const box = self.paletteRect();
-            clip = .{ .x = box.x + 12, .y = box.y + 12, .width = @max(1, box.width - 24), .height = 32 };
-            x = @min(clip.x + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
-            y = box.y + 12;
+            clip = self.paletteField();
+            x = @min(clip.x + 8 + try self.textWidth(p.query[0..p.len]), clip.x + clip.width - 1);
+            y = clip.y + 1;
         } else if (self.pane().finder) |editor| {
             const p = self.pane();
             var places: [layout.pane_limit]layout.Placement = undefined;
@@ -2313,6 +2340,7 @@ test {
     std.testing.refAllDecls(@import("config.zig"));
     std.testing.refAllDecls(settings);
     std.testing.refAllDecls(discovery);
+    std.testing.refAllDecls(picker);
     std.testing.refAllDecls(appearance);
 }
 
@@ -3011,10 +3039,10 @@ test "large discovered menus filter and page independently of saved settings" {
     catalogue.count = 100;
     const count = try app.palette.?.indices(&configuration, catalogue, &indices);
     try std.testing.expectEqual(@as(usize, 103), count);
-    try app.paletteKey(c.SDLK_END);
+    try app.paletteKey(c.SDLK_END, 0);
     try std.testing.expectEqual(count - 1, app.palette.?.selected);
     try std.testing.expect(app.paletteStart(count) + app.paletteRows() <= count);
-    try app.paletteKey(c.SDLK_PAGEUP);
+    try app.paletteKey(c.SDLK_PAGEUP, 0);
     try std.testing.expectEqual(count - 1 - app.paletteRows(), app.palette.?.selected);
     const query = "HOST-099";
     @memcpy(app.palette.?.query[0..query.len], query);
@@ -3022,4 +3050,16 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqual(@as(usize, 1), try app.palette.?.indices(&configuration, catalogue, &indices));
     try std.testing.expectEqualStrings("host-099", (try app.menuProfile(indices[0])).name);
     try std.testing.expectEqual(@as(u8, 1), configuration.profileCount());
+    app.palette.?.erase(true);
+    app.palette.?.selected = 2;
+    const hovered = app.paletteRow(4);
+    try app.paletteHover(hovered.x + 10, hovered.y + 10);
+    try std.testing.expectEqual(@as(usize, 2), app.palette.?.selected);
+    try std.testing.expectEqual(@as(?usize, 4), app.palette.?.hovered);
+    const remote = app.paletteFilterRect(@backingInt(picker.Filter.remote));
+    try app.pointerDown(remote.x + 10, remote.y + 10, .left, .{}, 1);
+    try std.testing.expectEqual(picker.Filter.remote, app.palette.?.filter);
+    try app.paletteKey(c.SDLK_TAB, c.SDL_KMOD_SHIFT);
+    try std.testing.expectEqual(picker.Filter.repl, app.palette.?.filter);
+    try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, catalogue, &indices));
 }

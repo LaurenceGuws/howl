@@ -46,8 +46,11 @@ odin.json stays independent.
 
 Startup has two independent, opt-in discovery switches: installed shells/REPLs
 and SSH config hosts. Opening the profile menu rebuilds a read-only snapshot;
-typing filters it, the wheel/arrows move through it, and PageUp/PageDown/Home/End
-navigate longer lists. Discovery never starts candidates or makes connections.
+typing ranks exact/prefix matches before substrings and abbreviations. The wheel
+scrolls a retained viewport; arrows and PageUp/PageDown/Home/End keep selection
+visible. All/Saved/Shell/REPL/Remote chips filter profiles; Tab and Shift+Tab
+cycle them without clearing the query. Saved commands stay in Saved rather than
+having their runtime category guessed; the built-in Local profile is also a Shell. Discovery never starts candidates or makes connections.
 Saved profiles remain separate; selecting a discovered entry copies its complete
 launch recipe before the snapshot can retire. New tabs use the saved default.
 
