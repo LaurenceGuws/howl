@@ -7,9 +7,9 @@ pub const Page = enum { startup, interaction, appearance, colors, mappings, defa
 /// Human titles in stable sidebar order.
 pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profiles", "Edit profile" };
 /// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
-pub const row_limit = 416;
+pub const row_limit = 432;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
-pub const ProfileField = enum { name, shell, command, cwd, font_pixels };
+pub const ProfileField = enum { name, shell, command, arguments, cwd, font_pixels };
 /// One catalogue index and exact custom-profile field.
 pub const ProfileTarget = struct { index: u8, field: ProfileField };
 /// One bounded environment row and its name/value field.
@@ -21,6 +21,8 @@ pub const Target = union(enum) {
     default_profile,
     theme,
     hide_single_tab,
+    discover_shells,
+    discover_ssh_hosts,
     font: u8,
     binding: u8,
     profile: ProfileTarget,
@@ -49,6 +51,8 @@ pub const Row = struct {
             .default_profile => (try current.profile(try current.defaultProfile())).id,
             .theme => value.app_theme,
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
+            .discover_shells => if (value.discover_shells) "On" else "Off",
+            .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,
             .binding => |index| blk: {
                 if (index >= bindings.definitions.len) return error.InvalidSetting;
@@ -58,6 +62,11 @@ pub const Row = struct {
             .profile => |field| blk: {
                 const recipe = try current.profile(field.index);
                 break :blk switch (field.field) {
+                    .arguments => if (recipe.arguments) |arguments| blk_args: {
+                        var writer = std.Io.Writer.fixed(buffer);
+                        try std.json.Stringify.value(arguments, .{}, &writer);
+                        break :blk_args writer.buffered();
+                    } else "",
                     .font_pixels => if (recipe.font_pixels == 0) "" else try std.fmt.bufPrint(buffer, "{d}", .{recipe.font_pixels}),
                     inline else => |tag| @field(recipe, @tagName(tag)),
                 };
@@ -94,6 +103,8 @@ const Builder = struct {
 pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     var b: Builder = .{ .out = out };
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
+    try b.add(.{ .page = .startup, .label = "Discover shells and REPLs", .target = .discover_shells });
+    try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
     try b.add(.{ .page = .interaction, .label = "Terminal input", .target = .{ .information = "Negotiated keys/mouse, owned input, local IME and stable history" } });
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
@@ -113,11 +124,12 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
             }
             continue;
         }
-        for ([_]ProfileField{ .name, .shell, .command, .cwd, .font_pixels }) |tag| {
+        for ([_]ProfileField{ .name, .shell, .command, .arguments, .cwd, .font_pixels }) |tag| {
             try b.add(.{ .page = .profiles, .label = switch (tag) {
                 .name => "Name",
                 .shell => "Shell",
                 .command => "Command",
+                .arguments => "Arguments (JSON; blank uses shell)",
                 .cwd => "Working directory",
                 .font_pixels => "Font size (blank inherits)",
             }, .scope = recipe.name, .target = .{ .profile = .{ .index = index, .field = tag } } });
@@ -136,6 +148,8 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
 /// Produces a fully validated owned candidate; failure leaves the live config and source file untouched.
 pub fn change(current: *const config.Config, io: std.Io, target: Target, text: []const u8) !config.Config {
     var value = current.value;
+    var parsed_arguments: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_arguments) |*parsed| parsed.deinit();
     var profiles: [6]config.Profile = @splat(.{});
     var environment: [16]config.Environment = @splat(.{});
     var overrides: [bindings.definitions.len]bindings.Override = @splat(.{});
@@ -148,6 +162,8 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .default_profile => value.default_profile = text,
         .theme => value.app_theme = text,
         .hide_single_tab => value.hide_single_tab = !value.hide_single_tab,
+        .discover_shells => value.discover_shells = !value.discover_shells,
+        .discover_ssh_hosts => value.discover_ssh_hosts = !value.discover_ssh_hosts,
         .font => |index| {
             if (index >= 6) return error.InvalidSetting;
             switch (index) {
@@ -174,6 +190,13 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .profile => |field| {
             const recipe = try mutableProfile(&profiles, value.profiles.len, field.index);
             switch (field.field) {
+                .arguments => {
+                    if (text.len >= 4096) return error.InvalidProfileArguments;
+                    if (text.len == 0) recipe.arguments = null else {
+                        parsed_arguments = try std.json.parseFromSlice([]const []const u8, current.allocator, text, .{ .allocate = .alloc_always, .max_value_len = 2048 });
+                        recipe.arguments = parsed_arguments.?.value;
+                    }
+                },
                 .font_pixels => recipe.font_pixels = if (text.len == 0) 0 else try std.fmt.parseInt(i32, text, 10),
                 inline else => |tag| @field(recipe, @tagName(tag)) = text,
             }
@@ -303,7 +326,7 @@ pub const Editor = struct {
     /// Copies one editable value, initially selected, before SDL text events can change it.
     pub fn begin(self: *Editor, row: Row, current: *const config.Config) !void {
         if (!row.editable()) return error.ReadOnlySetting;
-        var scratch: [32]u8 = undefined;
+        var scratch: [4096]u8 = undefined;
         const value = try row.text(current, &scratch);
         if (value.len >= self.buffer.len) return error.SettingsTextLimit;
         @memcpy(self.buffer[0..value.len], value);
@@ -498,4 +521,23 @@ test "single-tab bar preference defaults visible and toggles without editing tex
     try std.testing.expectEqualStrings("On", try row.text(&current, &scratch));
     try accept(&current, row.target, "");
     try std.testing.expectEqualStrings("Off", try row.text(&current, &scratch));
+}
+
+test "discovery toggles and explicit argument editing persist only validated complete candidates" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try std.testing.expect(!current.value.discover_shells and !current.value.discover_ssh_hosts);
+    try accept(&current, .discover_shells, "");
+    try accept(&current, .discover_ssh_hosts, "");
+    try std.testing.expect(current.value.discover_shells and current.value.discover_ssh_hosts);
+    try accept(&current, .add_profile, "");
+    try accept(&current, .{ .profile = .{ .index = 1, .field = .shell } }, "/usr/bin/ssh");
+    try accept(&current, .{ .profile = .{ .index = 1, .field = .arguments } }, "[\"-t\",\"--\",\"example\"]");
+    var bytes: [4096]u8 = undefined;
+    const row: Row = .{ .page = .profiles, .label = "Arguments", .target = .{ .profile = .{ .index = 1, .field = .arguments } } };
+    try std.testing.expectEqualStrings("[\"-t\",\"--\",\"example\"]", try row.text(&current, &bytes));
+    try std.testing.expectError(error.InvalidProfileArguments, change(&current, std.testing.io, .{ .profile = .{ .index = 1, .field = .command } }, "exit"));
+    try std.testing.expectEqualStrings("example", current.value.profiles[0].arguments.?[2]);
+    try accept(&current, row.target, "");
+    try std.testing.expect(current.value.profiles[0].arguments == null);
 }

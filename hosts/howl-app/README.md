@@ -44,6 +44,35 @@ Local recipe and up to six custom recipes. Unknown fields and invalid saved data
 fail explicitly. No route migration or Odin compatibility parser is retained;
 odin.json stays independent.
 
+Startup has two independent, opt-in discovery switches: installed shells/REPLs
+and SSH config hosts. Opening the profile menu rebuilds a read-only snapshot;
+typing filters it, the wheel/arrows move through it, and PageUp/PageDown/Home/End
+navigate longer lists. Discovery never starts candidates or makes connections.
+Saved profiles remain separate; selecting a discovered entry copies its complete
+launch recipe before the snapshot can retire. New tabs use the saved default.
+
+Shell discovery checks PATH for a curated shell/REPL list and reads /etc/shells.
+SSH discovery enumerates concrete Host aliases in ~/.ssh/config and
+/etc/ssh/ssh_config, including sorted Include patterns and their nested files.
+Wildcard/negated Host patterns are not destinations. Match conditions and command
+directives are never evaluated during discovery; aliases are candidates and
+OpenSSH decides the effective configuration at launch. Includes support current
+HOME, environment-variable expansion and the %d/%% tokens; target-dependent
+expansions and other-user tilde paths fail explicitly. Discovery reads no keys,
+writes no SSH configuration, and installs nothing remotely.
+
+A snapshot holds at most 512 entries. Configuration input is bounded to 64 files,
+eight include levels, 256 KiB per file and 2 MiB total; Include expansion inspects
+at most 8,192 directory entries and 32 path components. A failed census reports
+its error and leaves saved profiles usable. Discovered entries are not persisted
+and are not added to the saved-default selector.
+
+Profiles may specify an explicit argument array (at most 16 arguments and 2 KiB
+of argument bytes), mutually exclusive with Command. Edit it as JSON in the
+profile's Arguments field; blank retains ordinary interactive-shell mode,
+while [] launches the executable without extra arguments. Arguments pass literally
+through the existing Instance program launch, without shell interpolation.
+
 The worker applies bounded FIFO desktop replies and copied attention without
 stealing focus. Canonical OSC8 Ctrl-click copies owned HTTP(S) URIs. File drops
 use bounded POSIX quoting and text events use exact semantic paste. SDL Wayland

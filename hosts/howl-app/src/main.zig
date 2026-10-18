@@ -13,6 +13,8 @@ const pointer = @import("pointer.zig");
 const composition = @import("composition.zig");
 const config = @import("config.zig");
 const settings = @import("settings.zig");
+const discovery = @import("discovery.zig");
+const palette_limit = @max(keybindings.definitions.len, discovery.limit + 9);
 const appearance = @import("appearance.zig");
 const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
@@ -66,12 +68,17 @@ const Palette = struct {
     selected: usize = 0,
     profile: bool = false,
 
-    fn indices(self: *const Palette, configuration: *const config.Config, out: *[keybindings.definitions.len]usize) error{InvalidDefaultProfile}!usize {
+    fn indices(self: *const Palette, configuration: *const config.Config, discovered: ?*const discovery.Catalogue, out: *[palette_limit]usize) error{InvalidDefaultProfile}!usize {
         var count: usize = 0;
-        const limit = if (self.profile) configuration.profileCount() + 2 else keybindings.definitions.len;
+        const profiles = @as(usize, configuration.profileCount()) + (if (discovered) |catalogue| @as(usize, catalogue.count) else 0);
+        const limit = if (self.profile) profiles + 2 else keybindings.definitions.len;
         for (0..limit) |i| {
             if (!self.profile and keybindings.definitions[i].target != .action) continue;
-            const label = if (self.profile) (if (i < configuration.profileCount()) (try configuration.profile(@intCast(i))).name else if (i == configuration.profileCount()) "Command Palette" else "Settings") else keybindings.definitions[i].label;
+            const label = if (!self.profile) keybindings.definitions[i].label else if (i < configuration.profileCount())
+                (try configuration.profile(@intCast(i))).name
+            else if (i < profiles)
+                discovered.?.entries[i - configuration.profileCount()].recipe.name
+            else if (i == profiles) "Command Palette" else "Settings";
             if (self.len != 0 and !containsIgnoreCase(label, self.query[0..self.len])) continue;
             out[count] = i;
             count += 1;
@@ -111,6 +118,7 @@ const App = struct {
     selection_tick: u64 = 0,
     bindings: keybindings.Bindings,
     palette: ?Palette = null,
+    discovered: ?*discovery.Catalogue = null,
     settings_editor: ?settings.Editor = null,
     chooser: ?*font_chooser.Chooser = null,
     drag: Drag = .none,
@@ -127,6 +135,7 @@ const App = struct {
     notice_until: u64 = 0,
 
     fn deinit(self: *App) void {
+        if (self.discovered) |catalogue| catalogue.destroy(allocator);
         if (self.chooser) |chooser| chooser.destroy(allocator);
         for (self.tabs[0..self.tab_count]) |value| self.destroyTab(value.?);
     }
@@ -176,6 +185,7 @@ const App = struct {
         return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
+            .arguments = recipe.arguments,
             .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
             .rows = 37,
             .columns = 80,
@@ -331,6 +341,15 @@ const App = struct {
             return;
         }
         try self.loseKeyboard();
+        if (profile) {
+            if (self.discovered) |catalogue| catalogue.destroy(allocator);
+            self.discovered = null;
+            if (self.configuration.value.discover_shells or self.configuration.value.discover_ssh_hosts)
+                self.discovered = discovery.Catalogue.create(allocator, self.init.io, self.init.environ_map, self.configuration.value) catch |failure| blk: {
+                    self.report(failure);
+                    break :blk null;
+                };
+        }
         self.palette = .{ .profile = profile };
     }
     fn recover(self: *App) !void {
@@ -927,22 +946,32 @@ const App = struct {
         self.drag = .none;
         self.consume_left_release = true;
     }
+    fn menuProfileCount(self: *const App) usize {
+        return @as(usize, self.configuration.profileCount()) + (if (self.discovered) |catalogue| @as(usize, catalogue.count) else 0);
+    }
+    fn menuProfile(self: *const App, index: usize) !config.Profile {
+        if (index < self.configuration.profileCount()) return self.configuration.profile(@intCast(index));
+        const catalogue = self.discovered orelse return error.InvalidDefaultProfile;
+        const offset = index - self.configuration.profileCount();
+        if (offset >= catalogue.count) return error.InvalidDefaultProfile;
+        return catalogue.entries[offset].recipe;
+    }
     fn choosePalette(self: *App, index: usize) !void {
         if (!self.palette.?.profile) return self.dispatch(keybindings.definitions[index].target);
-        if (index >= self.configuration.profileCount()) {
+        if (index >= self.menuProfileCount()) {
             self.palette = null;
-            if (index == self.configuration.profileCount()) return self.openPalette(false);
+            if (index == self.menuProfileCount()) return self.openPalette(false);
             return self.toggleSettings();
         }
-        const recipe = try self.configuration.profile(@intCast(index));
+        const recipe = try self.menuProfile(index);
         // Keep the overlay and original input owner intact if construction cannot commit.
         try self.createTab(recipe, null);
         self.palette = null;
         try self.gainKeyboard();
     }
     fn paletteKey(self: *App, key: c.SDL_Keycode) !void {
-        var matches: [keybindings.definitions.len]usize = undefined;
-        const count = try self.palette.?.indices(self.configuration, &matches);
+        var matches: [palette_limit]usize = undefined;
+        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
         switch (key) {
             c.SDLK_ESCAPE => {
                 self.palette = null;
@@ -954,6 +983,13 @@ const App = struct {
             c.SDLK_DOWN => if (count != 0) {
                 self.palette.?.selected = (self.palette.?.selected + 1) % count;
             },
+            c.SDLK_PAGEUP, c.SDLK_PAGEDOWN => if (count != 0) {
+                const delta = self.paletteRows();
+                const selected = &self.palette.?.selected;
+                selected.* = if (key == c.SDLK_PAGEUP) selected.* -| delta else @min(count - 1, selected.* + delta);
+            },
+            c.SDLK_HOME => self.palette.?.selected = 0,
+            c.SDLK_END => self.palette.?.selected = count -| 1,
             c.SDLK_BACKSPACE => {
                 var p = &self.palette.?;
                 if (p.len > 0) {
@@ -1190,8 +1226,8 @@ const App = struct {
         }
         if (self.palette != null) {
             if (button != .left) return;
-            var matches: [keybindings.definitions.len]usize = undefined;
-            const count = try self.palette.?.indices(self.configuration, &matches);
+            var matches: [palette_limit]usize = undefined;
+            const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
             const box = self.paletteRect();
             if (!box.contains(x, y)) {
                 self.palette = null;
@@ -1430,7 +1466,15 @@ const App = struct {
             editor.content_focus = true;
             return;
         }
-        if (self.palette != null or self.pane().finder != null) return;
+        if (self.palette) |*palette| {
+            if (!std.math.isFinite(wheel.y)) return;
+            var matches: [palette_limit]usize = undefined;
+            const count = try palette.indices(self.configuration, self.discovered, &matches);
+            const delta: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
+            palette.selected = @intCast(std.math.clamp(@as(i32, @intCast(palette.selected)) + delta, 0, @as(i32, @intCast(count -| 1))));
+            return;
+        }
+        if (self.pane().finder != null) return;
         const slot = self.pointerPane(wheel.mouse_x, wheel.mouse_y) orelse return;
         const p = self.tab().panes[slot].?;
         const frame = p.canvas.frame() orelse return;
@@ -1456,13 +1500,13 @@ const App = struct {
         }
     }
     fn paletteRows(self: *const App) usize {
-        if (self.palette.?.profile) return self.configuration.profileCount() + 2;
+        if (self.palette.?.profile) return @min(self.menuProfileCount() + 2, @max(1, @as(usize, @intFromFloat(@floor(@max(0, self.height - self.headerHeight() - 114) / 48)))));
         return @min(keybindings.definitions.len, @as(usize, @intFromFloat(@floor(@max(0, self.height - 134) / 36))));
     }
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
             const width = @min(420, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));
@@ -1470,22 +1514,23 @@ const App = struct {
     }
     fn paletteStart(self: *const App, count: usize) usize {
         const rows = @max(1, self.paletteRows());
-        return @min((@min(self.palette.?.selected, count -| 1) / rows) * rows, count -| rows);
+        return (@min(self.palette.?.selected, count -| 1) + 1) -| rows;
     }
     fn paletteRow(self: *const App, number: usize) layout.Rect {
         const box = self.paletteRect();
         const profiles = self.palette.?.profile;
-        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + (if (profiles) @as(f32, 8) else 62) + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 48) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 16) else 36)), .height = if (profiles) 42 else 34 };
+        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + 62 + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 48) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 16) else 36)), .height = if (profiles) 42 else 34 };
     }
     fn drawPalette(self: *App) !void {
-        var matches: [keybindings.definitions.len]usize = undefined;
-        const count = try self.palette.?.indices(self.configuration, &matches);
+        var matches: [palette_limit]usize = undefined;
+        const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
         const box = self.paletteRect();
         const colors = try self.uiPalette();
         try fill(self.renderer, box, colors.title);
         try outline(self.renderer, box, colors.border);
-        if (!self.palette.?.profile) try self.clippedText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else "> Command Palette", .{ .x = box.x + 18, .y = box.y + 12, .width = @max(1, box.width - 36), .height = 28 }, box.x + 18);
+        try self.clippedText(if (self.palette.?.len != 0) self.palette.?.query[0..self.palette.?.len] else if (self.palette.?.profile) "Profiles — type to filter" else "> Command Palette", .{ .x = box.x + 18, .y = box.y + 12, .width = @max(1, box.width - 36), .height = 28 }, box.x + 18);
         const start = self.paletteStart(count);
+        if (count == 0) try self.drawText("No matching entries", box.x + 18, box.y + 68);
         for (matches[start..@min(count, start + self.paletteRows())], start..) |index, number| {
             const row = self.paletteRow(number - start);
             if (number == self.palette.?.selected) {
@@ -1493,12 +1538,17 @@ const App = struct {
                 try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
             }
             if (self.palette.?.profile) {
-                if (index < self.configuration.profileCount()) {
-                    const recipe = try self.configuration.profile(@intCast(index));
+                if (index < self.menuProfileCount()) {
+                    const recipe = try self.menuProfile(index);
                     try self.clippedText(recipe.name, row, row.x + 10);
-                    try self.drawText("Create Instance", row.x + 10, row.y + 24);
+                    const detail = if (index < self.configuration.profileCount()) "Saved profile" else switch (self.discovered.?.entries[index - self.configuration.profileCount()].kind) {
+                        .shell => "Installed shell",
+                        .repl => "Installed REPL",
+                        .ssh => "SSH host",
+                    };
+                    try self.drawText(detail, row.x + 10, row.y + 24);
                     if (index == try self.configuration.defaultProfile()) try self.drawText("default", row.x + row.width - 72, row.y + 13);
-                } else try self.clippedText(if (index == self.configuration.profileCount()) "Command Palette" else "Settings", row, row.x + 10);
+                } else try self.clippedText(if (index == self.menuProfileCount()) "Command Palette" else "Settings", row, row.x + 10);
             } else {
                 const binding = self.bindings.rows[index];
                 const label: layout.Rect = .{ .x = row.x + 10, .y = row.y + 2, .width = @max(1, row.width - 205), .height = 28 };
@@ -1506,7 +1556,7 @@ const App = struct {
                 if (binding.len != 0) try self.clippedText(binding.text[0..binding.len], .{ .x = row.x + row.width - 195, .y = row.y + 2, .width = 185, .height = 28 }, row.x + row.width - 195);
             }
         }
-        if (!self.palette.?.profile and count > self.paletteRows()) {
+        if (count > self.paletteRows()) {
             var footer: [96]u8 = undefined;
             const text = try std.fmt.bufPrint(&footer, "{d}–{d} of {d} · ↑↓ to navigate", .{ start + 1, @min(count, start + self.paletteRows()), count });
             try self.clippedTextColor(text, .{ .x = box.x + 18, .y = box.y + box.height - 32, .width = @max(1, box.width - 36), .height = 26 }, box.x + 18, colors.muted);
@@ -1711,9 +1761,9 @@ const App = struct {
             const rect: layout.Rect = .{ .x = body.x, .y = body.y + @as(f32, @floatFromInt(number - start)) * self.settingsRowHeight(), .width = body.width - 8, .height = self.settingsRowHeight() - 4 };
             if (number == e.selected and e.content_focus) try fill(self.renderer, rect, colors.active);
             try outline(self.renderer, rect, if (number == e.selected and e.content_focus) colors.accent else colors.border);
-            var label: [192]u8 = undefined;
+            var label: [512]u8 = undefined;
             const name = if (row.scope.len == 0 or !e.search) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
-            var value: [32]u8 = undefined;
+            var value: [4096]u8 = undefined;
             const raw_contents = if (number == e.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.configuration, &value);
             const contents = if (raw_contents.len != 0 or (number == e.selected and e.editing != null)) raw_contents else switch (row.target) {
                 .binding => "Unbound",
@@ -1721,6 +1771,7 @@ const App = struct {
                 .profile => |field| switch (field.field) {
                     .command => "Interactive shell",
                     .shell, .cwd, .font_pixels => "Inherited",
+                    .arguments => "Shell mode",
                     .name => "",
                 },
                 else => "",
@@ -2261,6 +2312,7 @@ test {
     std.testing.refAllDecls(composition);
     std.testing.refAllDecls(@import("config.zig"));
     std.testing.refAllDecls(settings);
+    std.testing.refAllDecls(discovery);
     std.testing.refAllDecls(appearance);
 }
 
@@ -2268,16 +2320,16 @@ test "command palette stays action-oriented while profile menu retains applicati
     var configuration = config.Config.defaults(std.testing.allocator);
     defer configuration.deinit();
     var p: Palette = .{};
-    var indices: [keybindings.definitions.len]usize = undefined;
-    const count = try p.indices(&configuration, &indices);
+    var indices: [palette_limit]usize = undefined;
+    const count = try p.indices(&configuration, null, &indices);
     try std.testing.expect(count > 0 and count < keybindings.definitions.len);
     for (indices[0..count]) |index| try std.testing.expect(keybindings.definitions[index].target == .action);
     const query = "FOCUS PANE";
     @memcpy(p.query[0..query.len], query);
     p.len = query.len;
-    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, null, &indices));
     p = .{ .profile = true };
-    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, null, &indices));
 }
 
 test "profile palette uses saved recipes and resolves its configured default" {
@@ -2286,11 +2338,11 @@ test "profile palette uses saved recipes and resolves its configured default" {
     );
     defer configuration.deinit();
     var p: Palette = .{ .profile = true };
-    var indices: [keybindings.definitions.len]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, &indices));
+    var indices: [palette_limit]usize = undefined;
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, null, &indices));
     @memcpy(p.query[0..5], "BUILD");
     p.len = 5;
-    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, &indices));
+    try std.testing.expectEqual(@as(usize, 1), try p.indices(&configuration, null, &indices));
     try std.testing.expectEqual(try configuration.defaultProfile(), indices[0]);
     const recipe = try configuration.profile(@intCast(indices[0]));
     try std.testing.expectEqualStrings("exec sh", recipe.command);
@@ -2923,4 +2975,51 @@ test "single-tab header gives all space and former caption hits back to the term
     try std.testing.expectEqual(@as(f32, 0), app.terminalBody().y);
     app.palette = .{ .profile = true };
     try std.testing.expectEqual(@as(f32, 0), app.paletteRect().y);
+}
+
+test "large discovered menus filter and page independently of saved settings" {
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const catalogue = try discovery.Catalogue.create(std.testing.allocator, std.testing.io, &env, configuration.value);
+    defer catalogue.destroy(std.testing.allocator);
+    for (0..100) |i| catalogue.entries[i] = .{ .kind = .ssh, .recipe = .{
+        .name = try std.fmt.allocPrint(catalogue.arena.allocator(), "host-{d:0>3}", .{i}),
+        .shell = "/usr/bin/ssh",
+        .arguments = &.{ "-t", "--", "literal-alias" },
+    } };
+    catalogue.count = 100;
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .tab_count = 1,
+        .discovered = catalogue,
+        .palette = .{ .profile = true },
+    };
+    var indices: [palette_limit]usize = undefined;
+    catalogue.count = 0;
+    try std.testing.expectEqual(@as(usize, 3), app.paletteRows());
+    catalogue.count = 100;
+    const count = try app.palette.?.indices(&configuration, catalogue, &indices);
+    try std.testing.expectEqual(@as(usize, 103), count);
+    try app.paletteKey(c.SDLK_END);
+    try std.testing.expectEqual(count - 1, app.palette.?.selected);
+    try std.testing.expect(app.paletteStart(count) + app.paletteRows() <= count);
+    try app.paletteKey(c.SDLK_PAGEUP);
+    try std.testing.expectEqual(count - 1 - app.paletteRows(), app.palette.?.selected);
+    const query = "HOST-099";
+    @memcpy(app.palette.?.query[0..query.len], query);
+    app.palette.?.len = query.len;
+    try std.testing.expectEqual(@as(usize, 1), try app.palette.?.indices(&configuration, catalogue, &indices));
+    try std.testing.expectEqualStrings("host-099", (try app.menuProfile(indices[0])).name);
+    try std.testing.expectEqual(@as(u8, 1), configuration.profileCount());
 }

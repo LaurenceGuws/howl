@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
         \\#include <poll.h>
         \\#include <unistd.h>
         \\#include <errno.h>
+        \\#include <fnmatch.h>
     );
     const translation = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
     const instance = b.dependency("howl_instance", .{ .target = target, .optimize = optimize });

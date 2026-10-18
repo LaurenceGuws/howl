@@ -26,6 +26,7 @@ pub const Profile = struct {
     name: []const u8 = "",
     shell: []const u8 = "",
     command: []const u8 = "",
+    arguments: ?[]const []const u8 = null,
     cwd: []const u8 = "",
     environment: []const Environment = &.{},
     font_pixels: i32 = 0,
@@ -39,6 +40,8 @@ pub const Schema = struct {
     keybindings: []const bindings.Override = &.{},
     app_theme: []const u8 = "howl_dark",
     hide_single_tab: bool = false,
+    discover_shells: bool = false,
+    discover_ssh_hosts: bool = false,
     font: Font = .{},
 };
 
@@ -53,6 +56,7 @@ pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || erro
     InvalidProfileName,
     InvalidProfileText,
     InvalidProfileEnvironment,
+    InvalidProfileArguments,
     DuplicateEnvironment,
     InvalidDefaultProfile,
     InvalidFontPath,
@@ -71,6 +75,11 @@ pub const Recipe = struct {
         const owned = result.arena.allocator();
         inline for (.{ "id", "name", "shell", "command", "cwd" }) |field|
             @field(result.value, field) = try owned.dupe(u8, @field(supplied, field));
+        if (supplied.arguments) |arguments| {
+            const copies = try owned.alloc([]const u8, arguments.len);
+            for (arguments, copies) |argument, *destination| destination.* = try owned.dupe(u8, argument);
+            result.value.arguments = copies;
+        }
         const environment = try owned.alloc(Environment, supplied.environment.len);
         for (supplied.environment, environment) |source, *destination| destination.* = .{
             .name = try owned.dupe(u8, source.name),
@@ -226,7 +235,19 @@ fn fontSize(value: i32, inherited: bool) bool {
 }
 fn validateProfile(p: Profile) !void {
     if (!id(p.id)) return error.InvalidProfileID;
-    if (!text(p.name, 80, true)) return error.InvalidProfileName;
+    if (!text(p.name, 256, true)) return error.InvalidProfileName;
+    if (p.arguments) |arguments| {
+        if (p.command.len != 0 or p.shell.len == 0 or arguments.len > 16) return error.InvalidProfileArguments;
+        var bytes: usize = 0;
+        var encoded: usize = 2;
+        for (arguments) |argument| {
+            if (!text(argument, 2049, false)) return error.InvalidProfileArguments;
+            bytes += argument.len;
+            encoded += 3;
+            for (argument) |byte| encoded += if (byte < 0x20) @as(usize, 6) else if (byte == '"' or byte == '\\') @as(usize, 2) else 1;
+        }
+        if (bytes > 2048 or encoded >= 4096) return error.InvalidProfileArguments;
+    }
     if (!fontSize(p.font_pixels, true)) return error.InvalidFontSize;
     if (!text(p.shell, 512, false) or !text(p.command, 4096, false) or !text(p.cwd, 1024, false)) return error.InvalidProfileText;
     if (p.environment.len > 16) return error.InvalidProfileEnvironment;
@@ -301,12 +322,15 @@ test "missing config differs from malformed data; rejected save and rename failu
     try std.testing.expectEqual(@as(u8, 0), try value.defaultProfile());
     value.value.terminal_font_pixels = 23;
     value.value.hide_single_tab = true;
+    value.value.discover_shells = true;
+    value.value.discover_ssh_hosts = true;
     value.value.default_profile = "local";
     try value.saveAt(std.testing.io, temporary.dir, "app.json");
     var reopened = try Config.loadAt(std.testing.allocator, std.testing.io, temporary.dir, "app.json");
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
     try std.testing.expect(reopened.value.hide_single_tab);
+    try std.testing.expect(reopened.value.discover_shells and reopened.value.discover_ssh_hosts);
     try std.testing.expectEqual(@as(u8, 0), try reopened.defaultProfile());
     const before = try temporary.dir.readFileAlloc(std.testing.io, "app.json", std.testing.allocator, .limited(file_limit));
     defer std.testing.allocator.free(before);
@@ -388,4 +412,22 @@ fn recipeAllocationProof(allocator: std.mem.Allocator) !void {
 }
 test "recipe copy retires every partial allocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, recipeAllocationProof, .{});
+}
+
+test "literal launch arguments are owned and cannot combine with a shell command" {
+    var current = try Config.parse(std.testing.allocator, std.testing.io, "{\"schema\":1,\"terminal_font_pixels\":15,\"profiles\":[{\"id\":\"ssh\",\"name\":\"Remote\",\"shell\":\"/usr/bin/ssh\",\"arguments\":[\"-t\",\"--\",\"alias\"]}]}");
+    var recipe = try Recipe.copy(std.testing.allocator, try current.profile(1));
+    defer recipe.deinit();
+    current.deinit();
+    try std.testing.expectEqualStrings("alias", recipe.value.arguments.?[2]);
+    recipe.value.command = "unexpected command";
+    try std.testing.expectError(error.InvalidProfileArguments, Recipe.copy(std.testing.allocator, recipe.value));
+    recipe.value.command = "";
+    recipe.value.arguments = &.{};
+    recipe.value.shell = "";
+    try std.testing.expectError(error.InvalidProfileArguments, Recipe.copy(std.testing.allocator, recipe.value));
+    var too_many: [17][]const u8 = @splat("");
+    recipe.value.shell = "/bin/sh";
+    recipe.value.arguments = &too_many;
+    try std.testing.expectError(error.InvalidProfileArguments, Recipe.copy(std.testing.allocator, recipe.value));
 }
