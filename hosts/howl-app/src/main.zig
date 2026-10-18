@@ -136,8 +136,12 @@ const App = struct {
     fn pane(self: *App) *Pane {
         return self.tab().panes[self.tab().tree.active].?;
     }
+    fn headerHeight(self: *const App) f32 {
+        return if (self.configuration.value.hide_single_tab and self.tab_count <= 1) 0 else chrome.height;
+    }
     fn terminalBody(self: *const App) layout.Rect {
-        return .{ .x = 0, .y = chrome.height, .width = @max(1, self.width), .height = @max(1, self.height - chrome.height) };
+        const top = self.headerHeight();
+        return .{ .x = 0, .y = top, .width = @max(1, self.width), .height = @max(1, self.height - top) };
     }
     fn setNotice(self: *App, message: []const u8) void {
         self.notice_len = @min(message.len, self.notice.len);
@@ -1203,7 +1207,7 @@ const App = struct {
             }
             return;
         }
-        if (y < chrome.height) {
+        if (y < self.headerHeight()) {
             if (button != .left) return;
             for (0..self.tab_count) |number| {
                 const index: u8 = @intCast(number);
@@ -1218,6 +1222,8 @@ const App = struct {
             }
             if (chrome.plus(self.tab_count, self.width).contains(x, y)) {
                 try self.createTab(try self.startup(), null);
+            } else if (chrome.profiles(self.tab_count, self.width).contains(x, y)) {
+                try self.openPalette(true);
             } else if (chrome.settings(self.width).contains(x, y)) {
                 try self.toggleSettings();
             }
@@ -1456,7 +1462,7 @@ const App = struct {
     fn paletteRect(self: *const App) layout.Rect {
         if (self.palette.?.profile) {
             const width = @min(420, @max(1, self.width - 24));
-            return .{ .x = @min(chrome.plus(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = chrome.height, .width = width, .height = @min(@max(1, self.height - chrome.height - 12), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
+            return .{ .x = @min(chrome.profiles(self.tab_count, self.width).x, @max(0, self.width - width - 12)), .y = self.headerHeight(), .width = width, .height = @min(@max(1, self.height - self.headerHeight() - 12), 16 + @as(f32, @floatFromInt(self.paletteRows())) * 48) };
         }
         const tall = @min(@max(1, self.height - 32), 102 + @as(f32, @floatFromInt(self.paletteRows())) * 36);
         const width = @min(580, @max(1, self.width - 32));
@@ -1868,7 +1874,7 @@ const App = struct {
         }
         if (event_value.type == c.SDL_EVENT_WINDOW_MOUSE_LEAVE) self.chrome_hover = .none;
         if (event_value.type == c.SDL_EVENT_MOUSE_MOTION) {
-            self.chrome_hover = chrome.buttonAt(event_value.motion.x, event_value.motion.y, self.width);
+            self.chrome_hover = if (self.headerHeight() == 0) .none else chrome.buttonAt(event_value.motion.x, event_value.motion.y, self.width);
             return self.chrome_pressed != .none;
         }
         const down = event_value.type == c.SDL_EVENT_MOUSE_BUTTON_DOWN;
@@ -1878,6 +1884,7 @@ const App = struct {
             const bit = @as(u32, 1) << @as(u5, @intCast(event_button.button));
             if (down) self.pointer_buttons |= bit else self.pointer_buttons &= ~bit;
         }
+        if (self.headerHeight() == 0) return false;
         const target = chrome.buttonAt(event_button.x, event_button.y, self.width);
         if (event_button.button == c.SDL_BUTTON_LEFT) {
             if (down and target != .none) {
@@ -1942,17 +1949,9 @@ const App = struct {
             }
         }
     }
-    fn draw(self: *App) !void {
-        try self.desktopHost();
-        var width: c_int = 0;
-        var height: c_int = 0;
-        if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
-        self.width = @floatFromInt(@max(1, width));
-        self.height = @floatFromInt(@max(1, height));
-        self.displayScale();
+    fn drawHeader(self: *App) !void {
+        if (self.headerHeight() == 0) return;
         const colors = try self.uiPalette();
-        if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
-            !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
         try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
         for (0..self.tab_count) |number| {
             const index: u8 = @intCast(number);
@@ -1967,10 +1966,23 @@ const App = struct {
             try self.drawTab(self.active, rect);
             try outline(self.renderer, rect, colors.accent);
         }
-        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.settings_icon }) |rect, glyph| {
+        for ([_]layout.Rect{ chrome.plus(self.tab_count, self.width), chrome.profiles(self.tab_count, self.width), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
             for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();
+    }
+    fn draw(self: *App) !void {
+        try self.desktopHost();
+        var width: c_int = 0;
+        var height: c_int = 0;
+        if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
+        self.width = @floatFromInt(@max(1, width));
+        self.height = @floatFromInt(@max(1, height));
+        self.displayScale();
+        const colors = try self.uiPalette();
+        if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
+            !c.SDL_SetRenderDrawColor(self.renderer, colors.window.r, colors.window.g, colors.window.b, colors.window.a) or !c.SDL_RenderClear(self.renderer)) return error.SDL;
+        try self.drawHeader();
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
         const result = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
@@ -2176,7 +2188,7 @@ fn windowHitTest(window: ?*c.SDL_Window, point: [*c]const c.SDL_Point, data: ?*a
     var width: c_int = 0;
     var height: c_int = 0;
     if (!c.SDL_GetWindowSize(window, &width, &height)) return c.SDL_HITTEST_NORMAL;
-    return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.tab_count, c.SDL_GetWindowFlags(window));
+    return chrome.hit(@floatFromInt(point.*.x), @floatFromInt(point.*.y), @floatFromInt(width), @floatFromInt(height), app.tab_count, c.SDL_GetWindowFlags(window), app.headerHeight() != 0);
 }
 fn outline(renderer: *c.SDL_Renderer, rect: layout.Rect, color: c.SDL_Color) !void {
     const target: c.SDL_FRect = .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
@@ -2201,14 +2213,14 @@ fn clearClip(renderer: *c.SDL_Renderer) void {
 fn paneContent(rect: layout.Rect) c.SDL_FRect {
     return .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
 }
-// Centre only the accepted frame; available pane size remains the resize authority.
-// Align the absolute origin to physical pixels.
+// Centre horizontally and anchor at the top: incomplete rows leave slack below the grid.
+// Available pane size remains the resize authority; align absolute origins to physical pixels.
 fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
     return .{
         .x = std.math.clamp(@round((available.x + (available.w - width) / 2) * scale) / scale, available.x, available.x + available.w - width),
-        .y = std.math.clamp(@round((available.y + (available.h - height) / 2) * scale) / scale, available.y, available.y + available.h - height),
+        .y = std.math.clamp(@ceil(available.y * scale) / scale, available.y, available.y + available.h - height),
         .w = width,
         .h = height,
     };
@@ -2404,6 +2416,11 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     try app.drawComposition();
     try app.openPalette(false);
     try std.testing.expectEqual(@as(usize, 0), app.preedit.len);
+    const profile_button = chrome.profiles(app.tab_count, app.width);
+    try app.pointerDown(profile_button.x + 16, profile_button.y + 15, .left, .{}, 1);
+    try std.testing.expect(app.palette.?.profile);
+    try app.openPalette(true);
+    try std.testing.expect(app.palette == null);
     event_value.text.timestamp = 202;
     event_value.text.text = "COMMITTED\n";
     try app.event(event_value);
@@ -2764,7 +2781,7 @@ test "Local child keeps copied profile environment after caller retirement and t
     try std.testing.expectEqualStrings("changed-after-launch", parent.get("HOWL_BASE").?);
 }
 
-test "centred accepted terminal lattice shares slack, clips stale frames and maps input at fractional scale" {
+test "top-aligned terminal lattice leaves sub-row slack below, clips stale frames and maps input at fractional scale" {
     const available: c.SDL_FRect = .{ .x = 9, .y = 55, .w = 983, .h = 527 };
     const cell: instance.render.terminal.Size = .{ .width = 17, .height = 41 };
     for ([_]f32{ 1, 1.7, 2 }) |scale| {
@@ -2780,7 +2797,8 @@ test "centred accepted terminal lattice shares slack, clips stale frames and map
         const top = placed.y - available.y;
         const bottom = available.y + available.h - placed.y - placed.h;
         try std.testing.expect(@abs(left - right) <= 1 / scale + 0.001);
-        try std.testing.expect(@abs(top - bottom) <= 1 / scale + 0.001);
+        try std.testing.expect(top < 1 / scale + 0.001);
+        try std.testing.expect(bottom >= top);
         const rect: layout.Rect = .{ .x = placed.x, .y = placed.y, .width = placed.w, .height = placed.h };
         const hit = pointer.locate(rect, scale, cell, surface, placed.x + 18 / scale, placed.y + 42 / scale, false).?;
         try std.testing.expectEqual(@as(u16, 1), hit.col);
@@ -2860,4 +2878,50 @@ test "notice expiry wakes a quiet window once and preserves bounded selection sc
     try std.testing.expectEqual(@as(?c_int, 50), app.waitTimeout(10000));
     app.selecting = null;
     try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(10000));
+}
+
+test "single-tab header gives all space and former caption hits back to the terminal" {
+    var configuration = config.Config.defaults(std.testing.allocator);
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = undefined,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .tab_count = 1,
+    };
+    const shown = app.terminalBody();
+    try std.testing.expectEqual(chrome.height, shown.y);
+    configuration.value.hide_single_tab = true;
+    try std.testing.expectEqual(@as(f32, 0), app.terminalBody().y);
+    try std.testing.expectEqual(app.height, app.terminalBody().height);
+    var event_value: c.SDL_Event = undefined;
+    event_value.button = .{
+        .type = c.SDL_EVENT_MOUSE_BUTTON_DOWN,
+        .reserved = 0,
+        .timestamp = 0,
+        .windowID = 0,
+        .which = 0,
+        .button = c.SDL_BUTTON_LEFT,
+        .down = true,
+        .clicks = 1,
+        .padding = 0,
+        .x = app.width - 20,
+        .y = 16,
+    };
+    try std.testing.expect(!try app.chromeEvent(event_value));
+    try std.testing.expectEqual(chrome.Button.none, app.chrome_pressed);
+    try std.testing.expect(app.running);
+    app.tab_count = 2;
+    try std.testing.expectEqualDeep(shown, app.terminalBody());
+    app.tab_count = 1;
+    try std.testing.expectEqual(@as(f32, 0), app.terminalBody().y);
+    app.palette = .{ .profile = true };
+    try std.testing.expectEqual(@as(f32, 0), app.paletteRect().y);
 }

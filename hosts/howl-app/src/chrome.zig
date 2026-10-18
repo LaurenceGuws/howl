@@ -3,8 +3,8 @@ const std = @import("std");
 const c = @import("desktop");
 const Rect = @import("layout.zig").Rect;
 
-/// Explicit client header: four pixels above and below the 30-pixel chips.
-pub const height: f32 = 38;
+/// Explicit client header: four pixels above the 30-pixel chips; canvas starts immediately below.
+pub const height: f32 = 34;
 /// Window caption control identity.
 pub const Button = enum { none, minimize, maximize, close };
 /// Compact Settings entry beside the caption controls.
@@ -13,7 +13,7 @@ pub fn settings(width: f32) Rect {
 }
 /// Bounded tab stride leaving room for header controls.
 pub fn step(count: u8, width: f32) f32 {
-    return std.math.clamp((width - 234) / @as(f32, @floatFromInt(@max(1, count))), 20, 200);
+    return std.math.clamp((width - 266) / @as(f32, @floatFromInt(@max(1, count))), 20, 200);
 }
 /// Chip geometry shared by paint, drag and hit testing.
 pub fn tab(index: u8, count: u8, width: f32) Rect {
@@ -24,9 +24,14 @@ pub fn tab(index: u8, count: u8, width: f32) Rect {
 pub fn plus(count: u8, width: f32) Rect {
     return .{ .x = 8 + @as(f32, @floatFromInt(count)) * step(count, width), .y = 4, .width = 32, .height = 30 };
 }
+/// Profile-menu button beside New Tab, sharing its exact vertical hit surface.
+pub fn profiles(count: u8, width: f32) Rect {
+    const previous = plus(count, width);
+    return .{ .x = previous.x + previous.width, .y = previous.y, .width = 32, .height = previous.height };
+}
 /// Unoccupied header strip available for compositor dragging.
 pub fn caption(count: u8, width: f32) Rect {
-    const left = plus(count, width).x + 32;
+    const left = profiles(count, width).x + 32;
     return .{ .x = left, .y = 4, .width = @max(0, settings(width).x - left - 4), .height = height - 4 };
 }
 /// One caption button; none has no hit area.
@@ -40,7 +45,7 @@ pub fn buttonAt(x: f32, y: f32, width: f32) Button {
     return .none;
 }
 /// Native drag/resize policy; compositor flags remain authoritative.
-pub fn hit(x: f32, y: f32, width: f32, tall: f32, count: u8, flags: c.SDL_WindowFlags) c.SDL_HitTestResult {
+pub fn hit(x: f32, y: f32, width: f32, tall: f32, count: u8, flags: c.SDL_WindowFlags, visible: bool) c.SDL_HitTestResult {
     if (flags & c.SDL_WINDOW_FULLSCREEN != 0 or x < 0 or y < 0 or x >= width or y >= tall) return c.SDL_HITTEST_NORMAL;
     if (flags & c.SDL_WINDOW_MAXIMIZED == 0) {
         const left = x < 4;
@@ -56,7 +61,7 @@ pub fn hit(x: f32, y: f32, width: f32, tall: f32, count: u8, flags: c.SDL_Window
         if (left) return c.SDL_HITTEST_RESIZE_LEFT;
         if (right) return c.SDL_HITTEST_RESIZE_RIGHT;
     }
-    return if (caption(count, width).contains(x, y)) c.SDL_HITTEST_DRAGGABLE else c.SDL_HITTEST_NORMAL;
+    return if (visible and caption(count, width).contains(x, y)) c.SDL_HITTEST_DRAGGABLE else c.SDL_HITTEST_NORMAL;
 }
 /// Pointer-relative chip drag with bounded reorder geometry.
 pub const Drag = struct {
@@ -73,13 +78,13 @@ pub const Drag = struct {
     }
 };
 test "custom caption excludes controls and tabs; maximized/fullscreen never resize" {
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, 1000, 650, 2, 0));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(1, 1, 1000, 650, 2, c.SDL_WINDOW_MAXIMIZED));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(400, 20, 1000, 650, 2, c.SDL_WINDOW_FULLSCREEN));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, 1000, 650, 2, 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(1, 1, 1000, 650, 2, c.SDL_WINDOW_MAXIMIZED, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(400, 20, 1000, 650, 2, c.SDL_WINDOW_FULLSCREEN, true));
     const drag = caption(2, 1000);
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_DRAGGABLE), hit(drag.x + 1, 20, 1000, 650, 2, 0));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(settings(1000).x + 1, 20, 1000, 650, 2, 0));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(20, 20, 1000, 650, 2, 0));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_DRAGGABLE), hit(drag.x + 1, 20, 1000, 650, 2, 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(settings(1000).x + 1, 20, 1000, 650, 2, 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(20, 20, 1000, 650, 2, 0, true));
 }
 test "dragged chip preserves grab offset, reorders at midpoint and clamps outside header" {
     const rect = tab(0, 3, 1000);
@@ -127,11 +132,41 @@ test "compact header keeps controls and caption above terminal at fractional wid
         for ([_]u8{ 1, 8 }) |count| {
             const chip = tab(0, count, width);
             const cap = caption(count, width);
-            try std.testing.expect(chip.y + chip.height <= height - 4);
+            try std.testing.expect(chip.y + chip.height == height);
             try std.testing.expect(cap.y + cap.height <= height);
-            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, count, c.SDL_WINDOW_MAXIMIZED));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, count, c.SDL_WINDOW_MAXIMIZED, true));
             try std.testing.expect(!chip.contains(chip.x + 1, height));
             try std.testing.expect(!plus(count, width).contains(chip.x + 1, height));
+        }
+    }
+}
+
+/// Font-independent right chevron beside New Tab.
+pub const profile_icon: []const Rect = &.{
+    .{ .x = 12, .y = 10, .width = 1, .height = 1 },
+    .{ .x = 13, .y = 11, .width = 1, .height = 1 },
+    .{ .x = 14, .y = 12, .width = 1, .height = 1 },
+    .{ .x = 15, .y = 13, .width = 1, .height = 1 },
+    .{ .x = 16, .y = 14, .width = 1, .height = 1 },
+    .{ .x = 17, .y = 15, .width = 1, .height = 1 },
+    .{ .x = 16, .y = 16, .width = 1, .height = 1 },
+    .{ .x = 15, .y = 17, .width = 1, .height = 1 },
+    .{ .x = 14, .y = 18, .width = 1, .height = 1 },
+    .{ .x = 13, .y = 19, .width = 1, .height = 1 },
+    .{ .x = 12, .y = 20, .width = 1, .height = 1 },
+};
+
+test "profile button never becomes caption; hidden header retains only native edge resizing" {
+    for ([_]f32{ 401.25, 1000, 1536.5 }) |width| {
+        for ([_]u8{ 1, 8 }) |count| {
+            const plus_rect = plus(count, width);
+            const menu = profiles(count, width);
+            try std.testing.expectEqual(plus_rect.x + plus_rect.width, menu.x);
+            try std.testing.expect(menu.x + menu.width <= settings(width).x);
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(menu.x + 16, 20, width, 650, count, 0, true));
+            const cap = caption(count, width);
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, 20, width, 650, count, 0, false));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, width, 650, count, 0, false));
         }
     }
 }

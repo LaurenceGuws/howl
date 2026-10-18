@@ -38,6 +38,7 @@ pub const Schema = struct {
     profiles: []const Profile = &.{},
     keybindings: []const bindings.Override = &.{},
     app_theme: []const u8 = "howl_dark",
+    hide_single_tab: bool = false,
     font: Font = .{},
 };
 
@@ -299,11 +300,13 @@ test "missing config differs from malformed data; rejected save and rename failu
     defer value.deinit();
     try std.testing.expectEqual(@as(u8, 0), try value.defaultProfile());
     value.value.terminal_font_pixels = 23;
+    value.value.hide_single_tab = true;
     value.value.default_profile = "local";
     try value.saveAt(std.testing.io, temporary.dir, "app.json");
     var reopened = try Config.loadAt(std.testing.allocator, std.testing.io, temporary.dir, "app.json");
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
+    try std.testing.expect(reopened.value.hide_single_tab);
     try std.testing.expectEqual(@as(u8, 0), try reopened.defaultProfile());
     const before = try temporary.dir.readFileAlloc(std.testing.io, "app.json", std.testing.allocator, .limited(file_limit));
     defer std.testing.allocator.free(before);

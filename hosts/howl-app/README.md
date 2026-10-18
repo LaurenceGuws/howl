@@ -10,7 +10,11 @@ The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, zoom, leaf collapse and restart.
 One bounded mapping registry supplies shortcuts; the command palette exposes
 context-enabled actions; Ctrl+Shift+Space opens the profile menu. The compact
-`⋯` header button opens Settings, and Ctrl+Shift+P opens Command Palette. SDL
+`>` button beside `+` opens the profile menu; `⋯` opens Settings, and
+Ctrl+Shift+P opens Command Palette. Appearance → “Hide top bar with one tab”
+reclaims the whole header for a single terminal (saved as `hide_single_tab`,
+default `false`). Ctrl+T, Ctrl+Shift+Space and Ctrl+, remain available
+when the bar is hidden. SDL
 client chrome owns caption controls, native drag/resize regions and the wider
 pointer-following tab chips without an idle timer. Physical key ownership fences
 repeats/releases across focus changes.
@@ -22,7 +26,8 @@ Find bounds queries to 255 UTF-8 bytes, retains 512 stable matches and scans fou
 rows per service turn. Reflow/eviction/bank changes remain explicit failures.
 
 Canvas draws canonical physical-pixel commands at SDL scale one, then restores
-the UI scale. The centred origin aligns to the physical grid; generated blocks
+the UI scale. The horizontally centred, top-aligned origin keeps sub-row slack
+below the terminal and aligns to the physical grid; generated blocks
 and box rules retain their raster coverage at fractional desktop scales.
 
 The right-side Settings panel retains sidebar/content focus, pointer selectors,

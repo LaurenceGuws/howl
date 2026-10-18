@@ -20,6 +20,7 @@ pub const Target = union(enum) {
     font_family,
     default_profile,
     theme,
+    hide_single_tab,
     font: u8,
     binding: u8,
     profile: ProfileTarget,
@@ -47,6 +48,7 @@ pub const Row = struct {
             .default_font => try std.fmt.bufPrint(buffer, "{d}", .{value.terminal_font_pixels}),
             .default_profile => (try current.profile(try current.defaultProfile())).id,
             .theme => value.app_theme,
+            .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,
             .binding => |index| blk: {
                 if (index >= bindings.definitions.len) return error.InvalidSetting;
@@ -93,6 +95,7 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     var b: Builder = .{ .out = out };
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
     try b.add(.{ .page = .interaction, .label = "Terminal input", .target = .{ .information = "Negotiated keys/mouse, owned input, local IME and stable history" } });
+    try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
     try b.add(.{ .page = .appearance, .label = "Default terminal font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
@@ -144,6 +147,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .default_font => value.terminal_font_pixels = try std.fmt.parseInt(i32, text, 10),
         .default_profile => value.default_profile = text,
         .theme => value.app_theme = text,
+        .hide_single_tab => value.hide_single_tab = !value.hide_single_tab,
         .font => |index| {
             if (index >= 6) return error.InvalidSetting;
             switch (index) {
@@ -481,4 +485,17 @@ test "profile editor shows only selected recipe while global search still finds 
     editor.search = true;
     const global = editor.indices(all[0..count], &found);
     try std.testing.expect(global > shown);
+}
+
+test "single-tab bar preference defaults visible and toggles without editing text" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    const row: Row = .{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab };
+    var scratch: [32]u8 = undefined;
+    try std.testing.expect(!row.editable());
+    try std.testing.expectEqualStrings("Off", try row.text(&current, &scratch));
+    try accept(&current, row.target, "");
+    try std.testing.expectEqualStrings("On", try row.text(&current, &scratch));
+    try accept(&current, row.target, "");
+    try std.testing.expectEqualStrings("Off", try row.text(&current, &scratch));
 }
