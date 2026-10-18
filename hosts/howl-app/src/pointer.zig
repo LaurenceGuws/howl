@@ -7,10 +7,10 @@ pub const WheelRoute = enum { wait, history, terminal, alternate, ignore };
 
 /// UI routing uses copied interaction facts and the accepted immutable frame.
 pub fn wheelRoute(history: bool, shift: bool, state: ?instance.Terminal.InteractionState, alternate: bool) WheelRoute {
-    if (history or shift) return .history;
-    const known = state orelse return .wait;
+    if (history) return .history;
+    const known = state orelse return if (shift) .history else .wait;
     if (known.mouse_tracking != .off) return .terminal;
-    if (!alternate) return .history;
+    if (shift or !alternate) return .history;
     return if (known.alternate_scroll) .alternate else .ignore;
 }
 
@@ -82,7 +82,7 @@ pub fn buttonBit(button: instance.MouseButton) u8 {
     };
 }
 
-test "wheel routing preserves local overrides, negotiated mouse, and alternate scroll" {
+test "wheel routing preserves history while negotiated mouse receives modifiers" {
     var state = std.mem.zeroes(instance.Terminal.InteractionState);
     try std.testing.expectEqual(WheelRoute.wait, wheelRoute(false, false, null, false));
     try std.testing.expectEqual(WheelRoute.history, wheelRoute(false, true, null, true));
@@ -94,6 +94,9 @@ test "wheel routing preserves local overrides, negotiated mouse, and alternate s
     try std.testing.expectEqual(WheelRoute.alternate, wheelRoute(false, false, state, true));
     state.mouse_tracking = .normal;
     try std.testing.expectEqual(WheelRoute.terminal, wheelRoute(false, false, state, true));
+    try std.testing.expectEqual(WheelRoute.terminal, wheelRoute(false, true, state, true));
+    try std.testing.expectEqual(WheelRoute.terminal, wheelRoute(false, true, state, false));
+    try std.testing.expectEqual(WheelRoute.history, wheelRoute(true, true, state, true));
     try std.testing.expectEqual(WheelRoute.history, wheelRoute(true, false, state, true));
 }
 
@@ -123,4 +126,24 @@ test "pointer coordinates honor fractional scale, clipping, capture and hostile 
     try std.testing.expectEqual(@as(u32, 0), captured.pixel_y);
     try std.testing.expect(locate(rect, 1, cell, surface, std.math.nan(f32), 20, true) == null);
     try std.testing.expect(locate(.{ .x = 0, .y = 0, .width = 0.1, .height = 0.1 }, 1, cell, surface, 0, 0, true) == null);
+}
+
+test "Shift wheel routed to application preserves canonical SGR modifier bytes" {
+    const allocator = std.testing.allocator;
+    var vt: instance.Terminal = undefined;
+    try instance.Terminal.initWithHistoryInto(&vt, allocator, 24, 80, 0);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: The resulting application wheel route and exact encoded reports are asserted below.
+    _ = try vt.feed("\x1b[?1049h\x1b[?1002h\x1b[?1006h");
+    const state = vt.interactionState();
+    try std.testing.expectEqual(WheelRoute.terminal, wheelRoute(false, true, state, true));
+    const point: Location = .{ .row = 4, .col = 6, .pixel_x = 63, .pixel_y = 95 };
+    var scratch: instance.Terminal.InputScratch = undefined;
+    for ([_]instance.MouseButton{ .wheel_up, .wheel_down }, [_][]const u8{ "\x1b[<68;7;5M", "\x1b[<69;7;5M" }) |button, expected| {
+        const event = point.event(.wheel, button, .{ .shift = true }, 0);
+        var encoded = try vt.encodeInput(allocator, &scratch, event);
+        defer encoded.deinit();
+        try std.testing.expectEqualStrings(expected, encoded.bytes);
+    }
 }
