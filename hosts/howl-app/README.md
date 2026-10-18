@@ -26,8 +26,8 @@ Find bounds queries to 255 UTF-8 bytes, retains 512 stable matches and scans fou
 rows per service turn. Reflow/eviction/bank changes remain explicit failures.
 
 Canvas draws canonical physical-pixel commands at SDL scale one, then restores
-the UI scale. The horizontally centred, top-aligned origin keeps sub-row slack
-below the terminal and aligns to the physical grid; generated blocks
+the UI scale. The centred origin splits sub-cell slack above/below and left/right
+while aligning to the physical grid; generated blocks
 and box rules retain their raster coverage at fractional desktop scales.
 
 The right-side Settings panel retains sidebar/content focus, pointer selectors,

@@ -2213,14 +2213,14 @@ fn clearClip(renderer: *c.SDL_Renderer) void {
 fn paneContent(rect: layout.Rect) c.SDL_FRect {
     return .{ .x = rect.x, .y = rect.y, .w = rect.width, .h = rect.height };
 }
-// Centre horizontally and anchor at the top: incomplete rows leave slack below the grid.
-// Available pane size remains the resize authority; align absolute origins to physical pixels.
+// Split sub-cell slack evenly around the accepted frame; the pane remains resize authority.
+// Align absolute origins to physical pixels.
 fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
     return .{
         .x = std.math.clamp(@round((available.x + (available.w - width) / 2) * scale) / scale, available.x, available.x + available.w - width),
-        .y = std.math.clamp(@ceil(available.y * scale) / scale, available.y, available.y + available.h - height),
+        .y = std.math.clamp(@round((available.y + (available.h - height) / 2) * scale) / scale, available.y, available.y + available.h - height),
         .w = width,
         .h = height,
     };
@@ -2781,7 +2781,7 @@ test "Local child keeps copied profile environment after caller retirement and t
     try std.testing.expectEqualStrings("changed-after-launch", parent.get("HOWL_BASE").?);
 }
 
-test "top-aligned terminal lattice leaves sub-row slack below, clips stale frames and maps input at fractional scale" {
+test "centred terminal lattice shares slack, clips stale frames and maps input at fractional scale" {
     const available: c.SDL_FRect = .{ .x = 9, .y = 55, .w = 983, .h = 527 };
     const cell: instance.render.terminal.Size = .{ .width = 17, .height = 41 };
     for ([_]f32{ 1, 1.7, 2 }) |scale| {
@@ -2797,8 +2797,7 @@ test "top-aligned terminal lattice leaves sub-row slack below, clips stale frame
         const top = placed.y - available.y;
         const bottom = available.y + available.h - placed.y - placed.h;
         try std.testing.expect(@abs(left - right) <= 1 / scale + 0.001);
-        try std.testing.expect(top < 1 / scale + 0.001);
-        try std.testing.expect(bottom >= top);
+        try std.testing.expect(@abs(top - bottom) <= 1 / scale + 0.001);
         const rect: layout.Rect = .{ .x = placed.x, .y = placed.y, .width = placed.w, .height = placed.h };
         const hit = pointer.locate(rect, scale, cell, surface, placed.x + 18 / scale, placed.y + 42 / scale, false).?;
         try std.testing.expectEqual(@as(u16, 1), hit.col);
