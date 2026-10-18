@@ -3139,10 +3139,9 @@ pub const Screen = struct {
             if (self.rowWrapIndex(self.cursor.row)) |physical| &metadata[physical] else null
         else
             null;
-        const background_unchanged = if (row_metadata) |row|
-            width == 1 and !self.insert_mode and row.background.covers(self.cursor.col, self.cursor.col + 1, backgroundSource(&self.current_attrs))
-        else
-            false;
+        // One-cell replacement can prove its BG source from the destination
+        // already inspected below; insertion and cluster clearing stay conservative.
+        var background_unchanged = false;
         if (self.cells) |cells| {
             const start = self.rowStart(self.cursor.row);
             var offset: u8 = 0;
@@ -3157,8 +3156,10 @@ pub const Screen = struct {
                         col,
                         col != self.clusterAnchorCol(self.cursor.row, col),
                     ));
-                } else if (target.combining_len != 0) {
-                    clearAcceptedTail(
+                } else {
+                    if (width == 1 and !self.insert_mode)
+                        background_unchanged = backgroundSource(&target.attrs) == backgroundSource(&self.current_attrs);
+                    if (target.combining_len != 0) clearAcceptedTail(
                         &self.scalars.?,
                         start + @as(u32, col),
                         target.combining_len,

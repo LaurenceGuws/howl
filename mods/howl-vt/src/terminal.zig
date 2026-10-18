@@ -11161,3 +11161,89 @@ test "ASCII foreground rewrites retain BG identity beyond the retained BG interv
         try std.testing.expectEqual(@as(u32, @intCast(col + 1)), cell.attrs.bg.value);
     }
 }
+
+test "narrow Unicode foreground rewrites retain BG identity outside the retained interval" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 8, 0);
+    defer terminal.deinit();
+    const initial = try terminal.feed("\x1b[30;41mA\x1b[42mB\x1b[43mC\x1b[44mD\x1b[45mE\x1b[46mF");
+    try std.testing.expect(initial.mutations.text);
+    const before_bg = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+    const before_row = terminal.semanticView(0).rowGeneration(0).?;
+    const rewrite = try terminal.feed("\x1b[1G\x1b[92;41m\xce\xb1\x1b[42m\xce\xb2\x1b[43m\xce\xb3\x1b[44m\xce\xb4\x1b[45m\xce\xb5\x1b[46m\xce\xb6");
+    try std.testing.expect(rewrite.mutations.text);
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(before_bg, view.rowBackgroundGeneration(0).?);
+    try std.testing.expect(before_row != view.rowGeneration(0).?);
+    for (0..6) |col| {
+        const cell = view.cellInfoAt(0, @intCast(col));
+        try std.testing.expectEqual(@as(u32, @intCast(0x3b1 + col)), cell.codepoint);
+        try std.testing.expectEqual(@as(u32, 10), cell.attrs.fg.value);
+        try std.testing.expectEqual(@as(u32, @intCast(col + 1)), cell.attrs.bg.value);
+    }
+    const recolor = try terminal.feed("\x1b[1G\x1b[47m\xce\xb7");
+    try std.testing.expect(recolor.mutations.text);
+    try std.testing.expect(before_bg != terminal.semanticView(0).rowBackgroundGeneration(0).?);
+    try std.testing.expectEqual(@as(u32, 7), terminal.semanticView(0).cellInfoAt(0, 0).attrs.bg.value);
+}
+
+test "one-cell Unicode replacement retains BG through scalar-tail and fractional geometry cleanup" {
+    const inputs = [_][]const u8{
+        "\x1b[44m\xce\xb1\xcc\x81\xcc\x82\xcc\x83\xcc\x84\xcc\x85",
+        "\x1b[44m\x1b]66;s=1:w=1:n=1:d=2:v=1:h=2;\xce\xb1\x1b\\",
+    };
+    for (inputs, 0..) |fixture, index| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 8, 0);
+        defer terminal.deinit();
+        const initial = try terminal.feed(fixture);
+        try std.testing.expect(initial.mutations.text);
+        const before = terminal.semanticView(0);
+        const old = before.cellInfoAt(0, 0);
+        if (index == 0) try std.testing.expect(old.combining_len > old.combining.len) else {
+            try std.testing.expectEqual(@as(u4, 1), old.subscale_n);
+            try std.testing.expectEqual(@as(u4, 2), old.subscale_d);
+        }
+        const before_bg = before.rowBackgroundGeneration(0).?;
+        const rewrite = try terminal.feed("\x1b[1G\x1b[32m\xce\xb2");
+        try std.testing.expect(rewrite.mutations.text);
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(before_bg, after.rowBackgroundGeneration(0).?);
+        const cell = after.cellInfoAt(0, 0);
+        var expected = Screen.default_cell;
+        expected.codepoint = 0x3b2;
+        expected.attrs = cell.attrs;
+        try std.testing.expectEqualDeep(expected, cell);
+    }
+}
+
+test "Unicode BG preservation uses the selected reversed color" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 8, 0);
+    defer terminal.deinit();
+    const initial = try terminal.feed("\x1b[34;41;7m\xce\xb1");
+    try std.testing.expect(initial.mutations.text);
+    const before = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+    const foreground = try terminal.feed("\x1b[1G\x1b[42m\xce\xb2");
+    try std.testing.expect(foreground.mutations.text);
+    try std.testing.expectEqual(before, terminal.semanticView(0).rowBackgroundGeneration(0).?);
+    const background = try terminal.feed("\x1b[1G\x1b[31m\xce\xb3");
+    try std.testing.expect(background.mutations.text);
+    try std.testing.expect(before != terminal.semanticView(0).rowBackgroundGeneration(0).?);
+}
+
+test "Unicode wide-cluster replacement and insertion retain conservative BG invalidation" {
+    const inputs = [_][]const u8{
+        "\x1b[44m\xe4\xb8\xad\x1b[2G",
+        "\x1b[44mABCDEFGH\x1b[1G\x1b[4h",
+    };
+    for (inputs, 0..) |fixture, index| {
+        var terminal = try Terminal.initWithHistory(std.testing.allocator, 1, 8, 0);
+        defer terminal.deinit();
+        const initial = try terminal.feed(fixture);
+        try std.testing.expect(initial.mutations.text);
+        const before = terminal.semanticView(0).rowBackgroundGeneration(0).?;
+        const rewrite = try terminal.feed("\xce\xb2");
+        try std.testing.expect(rewrite.mutations.text);
+        const after = terminal.semanticView(0);
+        try std.testing.expect(before != after.rowBackgroundGeneration(0).?);
+        try std.testing.expectEqual(@as(u32, 0x3b2), after.cellInfoAt(0, if (index == 0) 1 else 0).codepoint);
+    }
+}
