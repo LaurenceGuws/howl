@@ -1,6 +1,7 @@
 //! Shell palettes; terminal colours remain owned by canonical presentation.
 const c = @import("desktop");
 const std = @import("std");
+const colors = @import("colors.zig");
 
 /// Existing application palettes; terminal colours remain canonical VT presentation policy.
 pub const Palette = struct {
@@ -54,4 +55,17 @@ pub fn palette(id: []const u8) error{InvalidTheme}!Palette {
 }
 fn rgb(r: u8, g: u8, b: u8) c.SDL_Color {
     return .{ .r = r, .g = g, .b = b, .a = 255 };
+}
+
+/// Resolves chrome overrides independently of every terminal palette and program color.
+pub fn resolve(id: []const u8, overrides: colors.Application) error{ InvalidTheme, InvalidColor }!Palette {
+    var result = try palette(id);
+    inline for (@typeInfo(colors.Application).@"struct".field_names) |field| {
+        const value = @field(overrides, field);
+        if (value.len != 0) {
+            const parsed = try colors.parse(value);
+            @field(result, field) = .{ .r = parsed.r, .g = parsed.g, .b = parsed.b, .a = 255 };
+        }
+    }
+    return result;
 }

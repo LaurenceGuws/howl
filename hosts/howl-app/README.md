@@ -76,6 +76,21 @@ profile's Arguments field; blank retains ordinary interactive-shell mode,
 while [] launches the executable without extra arguments. Arguments pass literally
 through the existing Instance program launch, without shell interpolation.
 
+Colour schemes separates **App palette** from **Terminal palette**. App chrome
+keeps the existing howl_dark/slate/high_contrast presets with nine optional role
+overrides in app_colors. The terminal has independent howl_dark/howl_light
+presets and terminal_colors overrides for foreground, background, cursor and a
+16-entry ansi array. Every override is exactly #RRGGBB; blank inherits the preset.
+Settings shows resolved swatches and a terminal sample. Each group has its own
+reset-overrides action; changing a preset retains explicit overrides.
+
+Successful terminal palette changes apply to live panes and future launches.
+They replace current terminal colours; subsequent program OSC changes still
+apply, and OSC/Kitty/iTerm resets return to the configured baseline. Indexed
+cells resolve through that palette; explicit RGB cells retain their colour.
+Application-only changes leave terminal state untouched. Color-preference
+queries/opt-in notifications follow the configured terminal background.
+
 The worker applies bounded FIFO desktop replies and copied attention without
 stealing focus. Canonical OSC8 Ctrl-click copies owned HTTP(S) URIs. File drops
 use bounded POSIX quoting and text events use exact semantic paste. SDL Wayland

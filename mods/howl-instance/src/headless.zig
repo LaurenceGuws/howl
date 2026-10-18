@@ -62,6 +62,12 @@ pub const ConsequencePolicy = runtime.ConsequencePolicy;
 pub const ChildExit = runtime.ChildExit;
 /// Supplies one local shell launch and bounded canonical terminal geometry.
 pub const Launch = runtime.Launch;
+/// Applies the host-configured VT color baseline without parsing synthetic output.
+pub const setColorDefaults = runtime.setColorDefaults;
+/// Reports opt-in color-preference notification admission failure.
+pub const ColorPreferenceNotificationError = runtime.ColorPreferenceNotificationError;
+/// Notifies a program only when its canonical mode2031 requests host preference changes.
+pub const reportColorSchemePreference = runtime.reportColorSchemePreference;
 /// Reports construction failure before a instance becomes observable.
 pub const InitError = runtime.InitError;
 /// Reports terminal input encoding, signal, or bounded write admission failure.

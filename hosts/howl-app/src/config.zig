@@ -1,5 +1,6 @@
 const std = @import("std");
 const bindings = @import("keybindings.zig");
+const colors = @import("colors.zig");
 
 const file_limit = 2 * 1024 * 1024;
 const allocation_limit = 4 * 1024 * 1024;
@@ -39,6 +40,9 @@ pub const Schema = struct {
     profiles: []const Profile = &.{},
     keybindings: []const bindings.Override = &.{},
     app_theme: []const u8 = "howl_dark",
+    app_colors: colors.Application = .{},
+    terminal_theme: []const u8 = "howl_dark",
+    terminal_colors: colors.TerminalColors = .{},
     hide_single_tab: bool = false,
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
@@ -50,6 +54,7 @@ pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || erro
     UnsupportedSchema,
     InvalidFontSize,
     InvalidTheme,
+    InvalidColor,
     ProfileLimit,
     InvalidProfileID,
     DuplicateProfileID,
@@ -261,6 +266,10 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
     if (supplied.schema != 1) return error.UnsupportedSchema;
     if (!fontSize(supplied.terminal_font_pixels, false)) return error.InvalidFontSize;
     const value = supplied;
+    try value.app_colors.validate();
+    // zig-audit: acknowledge discard
+    // reason: Parsing every resolved terminal role validates the candidate; live workers receive a separate owned value after persistence.
+    _ = try value.terminal_colors.resolve(value.terminal_theme);
     if (!std.mem.eql(u8, value.app_theme, "howl_dark") and !std.mem.eql(u8, value.app_theme, "slate") and
         !std.mem.eql(u8, value.app_theme, "high_contrast")) return error.InvalidTheme;
     const loaded_bindings = try bindings.Bindings.fromOverrides(value.keybindings);
@@ -322,6 +331,9 @@ test "missing config differs from malformed data; rejected save and rename failu
     try std.testing.expectEqual(@as(u8, 0), try value.defaultProfile());
     value.value.terminal_font_pixels = 23;
     value.value.hide_single_tab = true;
+    value.value.app_colors.accent = "#010203";
+    value.value.terminal_theme = "howl_light";
+    value.value.terminal_colors.foreground = "#654321";
     value.value.discover_shells = true;
     value.value.discover_ssh_hosts = true;
     value.value.default_profile = "local";
@@ -330,6 +342,9 @@ test "missing config differs from malformed data; rejected save and rename failu
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
     try std.testing.expect(reopened.value.hide_single_tab);
+    try std.testing.expectEqualStrings("#010203", reopened.value.app_colors.accent);
+    try std.testing.expectEqualStrings("howl_light", reopened.value.terminal_theme);
+    try std.testing.expectEqualStrings("#654321", reopened.value.terminal_colors.foreground);
     try std.testing.expect(reopened.value.discover_shells and reopened.value.discover_ssh_hosts);
     try std.testing.expectEqual(@as(u8, 0), try reopened.defaultProfile());
     const before = try temporary.dir.readFileAlloc(std.testing.io, "app.json", std.testing.allocator, .limited(file_limit));

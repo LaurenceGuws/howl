@@ -116,6 +116,15 @@ pub const Terminal = opaque {
     pub fn submit(self: *Terminal, task: Task) !void {
         return self.state().submit(task);
     }
+    /// Copies the latest app color preference into one bounded mailbox, without allocation.
+    /// The sole worker applies it canonically; stopped panes use the saved preference on restart.
+    pub fn setColorDefaults(self: *Terminal, defaults: instance.Terminal.ColorDefaults) void {
+        const owned = self.state();
+        owned.mutex.lockUncancelable(owned.io);
+        owned.pending_colors = defaults;
+        owned.wake();
+        owned.mutex.unlock(owned.io);
+    }
     /// Borrows a font recipe only until the sole worker completes its transaction.
     /// Waiting is uncancelable, so queued configuration cannot outlive these borrowed paths.
     pub fn reconfigure(self: *Terminal, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
@@ -179,6 +188,9 @@ const State = struct {
     input_bytes: usize = 0,
     stopping: bool = false,
     status: Status = .{},
+    pending_colors: ?instance.Terminal.ColorDefaults = null,
+    color_preference: instance.ColorSchemePreference = .dark,
+    preference_pending: bool = false,
     visible: std.atomic.Value(bool) = .init(true),
     credit: std.atomic.Value(bool) = .init(true),
     new_frame: std.atomic.Value(bool) = .init(false),
@@ -217,6 +229,7 @@ const State = struct {
             .allocator = allocator,
             .io = io,
             .value = value,
+            .color_preference = desktop.colorPreference(launch.color_defaults.background),
             .exchange = exchange,
             .wake_fd = fd,
             .event_type = event_type,
@@ -571,7 +584,7 @@ const State = struct {
 
     fn service(self: *State, readable: bool, writable: bool, now: u64) !instance.Service {
         const result = try instance.serviceWithConsequencePolicy(self.value, readable, writable, now, .retain);
-        var host = try desktop.drain(self.value, self.allocator);
+        var host = try desktop.drain(self.value, self.allocator, self.color_preference);
         defer host.deinit(self.allocator);
         self.consequence_worked = host.worked;
         var host_notify = false;
@@ -690,6 +703,14 @@ const State = struct {
         };
     }
 
+    fn takeColors(self: *State) ?instance.Terminal.ColorDefaults {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.pending_colors;
+        self.pending_colors = null;
+        return result;
+    }
+
     fn loop(self: *State) !void {
         var readable = true;
         var writable = true;
@@ -702,6 +723,20 @@ const State = struct {
                 .configure => |request| self.applyConfiguration(request),
                 .copy => |request| self.applyCopy(request),
             };
+            if (self.takeColors()) |defaults| {
+                instance.setColorDefaults(self.value, defaults);
+                const preference = desktop.colorPreference(defaults.background);
+                self.preference_pending = self.preference_pending or preference != self.color_preference;
+                self.color_preference = preference;
+                self.gate.pending = true;
+            }
+            if (self.preference_pending) {
+                const sent: ?bool = instance.reportColorSchemePreference(self.value, self.color_preference) catch |failure| switch (failure) {
+                    error.ReplyLimit => null,
+                    else => return failure,
+                };
+                if (sent != null) self.preference_pending = false;
+            }
             const now: u64 = @intCast(std.Io.Clock.awake.now(self.io).toNanoseconds());
             const result = try self.service(readable, writable, now);
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;

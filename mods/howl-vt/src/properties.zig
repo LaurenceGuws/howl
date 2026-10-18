@@ -93,6 +93,7 @@ pub const TitleStackEffect = struct { changed: bool = false, title_changed: bool
 pub const State = struct {
     allocator: std.mem.Allocator,
     colors: ColorState = .{},
+    color_defaults: ColorState = .{},
     color_stack: ColorStack = .{},
     task_progress: progress.State = .{},
     current_title: ?[]u8 = null,
@@ -130,7 +131,7 @@ pub const State = struct {
         const palette = self.colors.palette;
         const foreground = self.colors.foreground;
         const background = self.colors.background;
-        self.colors = .{};
+        self.colors = self.color_defaults;
         self.colors.palette = palette;
         self.colors.foreground = foreground;
         self.colors.background = background;

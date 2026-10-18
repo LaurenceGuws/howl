@@ -217,6 +217,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
         /// Supplies one local shell launch and bounded canonical terminal geometry.
         pub const Launch = struct {
             shell: []const u8,
+            color_defaults: Terminal.ColorDefaults = .{},
             command: ?[]const u8 = null,
             /// Literal program arguments excluding argv[0]. On Linux, executes
             /// shell as the program path without -i/-c; mutually exclusive with
@@ -370,6 +371,18 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     if (!publication.canDeinit(presented_state.exchange)) return error.PublicationBorrowed;
             }
             deinit(instance);
+        }
+
+        /// Reports notification append failure without changing terminal mode or reply bytes.
+        pub const ColorPreferenceNotificationError = @typeInfo(@typeInfo(@TypeOf(Terminal.reportColorSchemePreference)).@"fn".return_type.?).error_union.error_set;
+        /// Appends an opt-in terminal-owned light/dark preference notification.
+        pub fn reportColorSchemePreference(instance: *Instance, preference: ColorSchemePreference) ColorPreferenceNotificationError!bool {
+            return stateMut(instance).terminal.reportColorSchemePreference(preference);
+        }
+
+        /// Applies one caller-serialized host color preference to the canonical VT.
+        pub fn setColorDefaults(instance: *Instance, defaults: Terminal.ColorDefaults) void {
+            stateMut(instance).terminal.setColorDefaults(defaults);
         }
 
         /// Returns the PTY descriptor for caller-owned poll integration.
@@ -1276,6 +1289,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     launch.history_rows,
                 );
                 errdefer self.terminal.deinit();
+                self.terminal.setColorDefaults(launch.color_defaults);
                 try self.terminal.setCellPixelSize(launch.cell_pixel_width, launch.cell_pixel_height);
             }
 

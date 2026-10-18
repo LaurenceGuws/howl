@@ -73,7 +73,7 @@ pub fn eventText(data: [*:0]const u8, file: bool) DropError![]const u8 {
     return error.DropLimit;
 }
 /// Applies the existing deterministic desktop policy in exact canonical FIFO order.
-pub fn drain(value: *instance.Instance, allocator: std.mem.Allocator) Error!Applied {
+pub fn drain(value: *instance.Instance, allocator: std.mem.Allocator, preference: instance.ColorSchemePreference) Error!Applied {
     var result: Applied = .{};
     errdefer result.deinit(allocator);
     while (instance.consequenceHead(value)) |head| {
@@ -109,7 +109,7 @@ pub fn drain(value: *instance.Instance, allocator: std.mem.Allocator) Error!Appl
                 continue;
             },
             .color_preference_query => {
-                try instance.replyColorPreference(value, id, .dark);
+                try instance.replyColorPreference(value, id, preference);
                 continue;
             },
             .container => |request| switch (request.request) {
@@ -162,4 +162,14 @@ test "file and text drop preserve exact paste spelling while rejecting invalid a
     try std.testing.expectEqualStrings("界\nline", try eventText("界\nline", false));
     const full: [file_limit]u8 = @splat('\'');
     try std.testing.expectEqual(@as(usize, quoted_limit), (try quoteFile(&full, &output)).len);
+}
+
+/// Host light/dark preference follows the configured background, independently of app chrome.
+pub fn colorPreference(background: instance.Terminal.Rgb) instance.ColorSchemePreference {
+    const luma = @as(u32, background.r) * 299 + @as(u32, background.g) * 587 + @as(u32, background.b) * 114;
+    return if (luma >= 128000) .light else .dark;
+}
+test "terminal background decides host color preference rather than application chrome" {
+    try std.testing.expectEqual(instance.ColorSchemePreference.light, colorPreference(.{ .r = 246, .g = 244, .b = 239 }));
+    try std.testing.expectEqual(instance.ColorSchemePreference.dark, colorPreference(.{ .r = 24, .g = 25, .b = 33 }));
 }

@@ -27,6 +27,7 @@ fn byteCount(bytes: []const u8) u32 {
 pub fn apply(
     allocator: std.mem.Allocator,
     colors: *properties.ColorState,
+    defaults: *const properties.ColorState,
     output: *replies.Buffer,
     encode_buf: []u8,
     command: Command,
@@ -38,7 +39,7 @@ pub fn apply(
         output.truncate(output_before);
     }
     switch (command.command) {
-        21 => try handleKittyControl(allocator, colors, output, command.payload),
+        21 => try handleKittyControl(allocator, colors, output, command.payload, defaults),
         4 => try handleXtermPaletteControl(allocator, colors, output, encode_buf, command.payload),
         5 => try handleXtermSpecialPaletteControl(allocator, colors, output, encode_buf, command.payload),
         10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
@@ -49,11 +50,12 @@ pub fn apply(
             command.command,
             command.payload,
         ),
-        104 => resetXtermPalette(colors, command.payload),
+        104 => resetXtermPalette(colors, command.payload, defaults),
         110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
             colors,
             command.command,
             command.payload,
+            defaults,
         ),
         else => {},
     }
@@ -61,9 +63,9 @@ pub fn apply(
 }
 
 /// Applies the accepted iTerm SetColors subset and reports retained mutation.
-pub fn applyItermSetColors(colors: *properties.ColorState, payload: []const u8) bool {
+pub fn applyItermSetColors(colors: *properties.ColorState, defaults: *const properties.ColorState, payload: []const u8) bool {
     const before = colors.*;
-    handleItermSetColors(colors, payload);
+    handleItermSetColors(colors, defaults, payload);
     return !std.meta.eql(before, colors.*);
 }
 
@@ -73,6 +75,7 @@ fn handleKittyControl(
     colors: *KittyColorState,
     output: *replies.Buffer,
     payload: []const u8,
+    defaults: *const properties.ColorState,
 ) replies.AppendError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |raw_part| {
@@ -88,7 +91,7 @@ fn handleKittyControl(
                 setColorKey(colors, key, value);
             }
         } else {
-            resetColorKey(colors, std.mem.trim(u8, part, " \t"));
+            resetColorKey(colors, std.mem.trim(u8, part, " \t"), defaults);
         }
     }
 }
@@ -117,8 +120,6 @@ fn appendKittyQueryReply(
 const color_osc_max_bytes = 18;
 
 const TerminalColorState = properties.ColorState;
-const default_terminal_foreground = properties.default_foreground;
-const default_terminal_background = properties.default_background;
 
 const SpecialKey = enum { foreground, background, cursor, cursor_text, selection_background, selection_foreground };
 const DynamicKey = enum {
@@ -211,23 +212,23 @@ fn handleXtermDynamicColor(
 }
 
 // Resets selected OSC 104 palette entries or the complete palette.
-fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8) void {
+fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8, defaults: *const TerminalColorState) void {
     if (payload.len == 0) {
-        colors.palette = (TerminalColorState{}).palette;
+        colors.palette = defaults.palette;
         return;
     }
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const idx = std.fmt.parseUnsigned(u8, idx_text, 10) catch continue;
-        resetPaletteTarget(colors, idx);
+        resetPaletteTarget(colors, idx, defaults);
     }
 }
 
 // Resets one dynamic color selected by its OSC command.
-fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []const u8) void {
+fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []const u8, defaults: *const TerminalColorState) void {
     if (payload.len != 0) return;
     const key = dynamicKeyForResetCommand(command) orelse return;
-    resetDynamicColor(colors, key);
+    resetDynamicColor(colors, key, defaults);
 }
 
 // Converts a cursor color-control request into a semantic event when applicable.
@@ -259,9 +260,8 @@ fn parseColor(value: []const u8) ?Rgb {
 // are intentionally left to an embedder with those domains. Matching iTerm's
 // command loop, each valid pair commits independently while malformed or
 // unsupported pairs are ignored without affecting their valid neighbors;
-// `default` restores the corresponding native TerminalColorState default.
-fn handleItermSetColors(colors: *TerminalColorState, payload: []const u8) void {
-    const defaults = TerminalColorState{};
+// `default` restores the corresponding configured terminal default.
+fn handleItermSetColors(colors: *TerminalColorState, defaults: *const TerminalColorState, payload: []const u8) void {
     var parts = std.mem.splitScalar(u8, payload, ',');
     while (parts.next()) |part| {
         const separator = std.mem.indexOfScalar(u8, part, '=') orelse continue;
@@ -270,7 +270,7 @@ fn handleItermSetColors(colors: *TerminalColorState, payload: []const u8) void {
         const target = parseItermColorTarget(name) orelse continue;
         var value = part[separator + 1 ..];
         if (std.mem.eql(u8, value, "default")) {
-            resetItermColor(colors, defaults, target);
+            resetItermColor(colors, defaults.*, target);
             continue;
         }
         if (std.mem.startsWith(u8, value, "srgb:")) value = value[5..];
@@ -396,8 +396,8 @@ fn setPaletteTarget(colors: *TerminalColorState, idx: u16, color: Rgb) void {
     colors.special_palette[special_idx] = color;
 }
 
-fn resetPaletteTarget(colors: *TerminalColorState, idx: u8) void {
-    colors.palette[idx] = properties.defaultPaletteColor(idx);
+fn resetPaletteTarget(colors: *TerminalColorState, idx: u8, defaults: *const TerminalColorState) void {
+    colors.palette[idx] = defaults.palette[idx];
 }
 
 fn dynamicKeyForCommand(command: u16) ?DynamicKey {
@@ -525,18 +525,18 @@ fn setDynamicColor(colors: *TerminalColorState, key: DynamicKey, color: Rgb) voi
     }
 }
 
-fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey) void {
+fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey, defaults: *const TerminalColorState) void {
     switch (key) {
-        .foreground => colors.foreground = default_terminal_foreground,
-        .background => colors.background = default_terminal_background,
-        .cursor => colors.cursor = null,
-        .pointer_foreground => colors.pointer_foreground = null,
-        .pointer_background => colors.pointer_background = null,
-        .tektronix_foreground => colors.tektronix_foreground = null,
-        .tektronix_background => colors.tektronix_background = null,
-        .selection_background => colors.selection_background = null,
-        .tektronix_cursor => colors.tektronix_cursor = null,
-        .selection_foreground => colors.selection_foreground = null,
+        .foreground => colors.foreground = defaults.foreground,
+        .background => colors.background = defaults.background,
+        .cursor => colors.cursor = defaults.cursor,
+        .pointer_foreground => colors.pointer_foreground = defaults.pointer_foreground,
+        .pointer_background => colors.pointer_background = defaults.pointer_background,
+        .tektronix_foreground => colors.tektronix_foreground = defaults.tektronix_foreground,
+        .tektronix_background => colors.tektronix_background = defaults.tektronix_background,
+        .selection_background => colors.selection_background = defaults.selection_background,
+        .tektronix_cursor => colors.tektronix_cursor = defaults.tektronix_cursor,
+        .selection_foreground => colors.selection_foreground = defaults.selection_foreground,
     }
 }
 
@@ -561,18 +561,18 @@ fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) 
 }
 
 // Restores a recognized Kitty color key to its default value.
-fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
+fn resetColorKey(colors: *TerminalColorState, key: []const u8, defaults: *const TerminalColorState) void {
     if (std.fmt.parseUnsigned(u8, key, 10)) |idx| {
-        colors.palette[idx] = properties.defaultPaletteColor(idx);
+        colors.palette[idx] = defaults.palette[idx];
         return;
     } else |_| {}
     if (specialColorKey(key)) |special| switch (special) {
-        .foreground => colors.foreground = default_terminal_foreground,
-        .background => colors.background = default_terminal_background,
-        .cursor => colors.cursor = null,
-        .cursor_text => colors.cursor_text = null,
-        .selection_background => colors.selection_background = null,
-        .selection_foreground => colors.selection_foreground = null,
+        .foreground => colors.foreground = defaults.foreground,
+        .background => colors.background = defaults.background,
+        .cursor => colors.cursor = defaults.cursor,
+        .cursor_text => colors.cursor_text = defaults.cursor_text,
+        .selection_background => colors.selection_background = defaults.selection_background,
+        .selection_foreground => colors.selection_foreground = defaults.selection_foreground,
     };
 }
 
@@ -703,6 +703,7 @@ test "color control set query and transaction rollback are exact" {
     try std.testing.expect(try apply(
         std.testing.allocator,
         &colors,
+        &.{},
         &output,
         &scratch,
         .{ .command = 4, .payload = "1;#123;1;?" },
@@ -721,6 +722,7 @@ test "color control set query and transaction rollback are exact" {
         apply(
             std.testing.allocator,
             &colors,
+            &.{},
             &output,
             &scratch,
             .{ .command = 4, .payload = "2;#010203;3;?" },
@@ -748,7 +750,7 @@ test "cursor color action mutates canonical cursor owner" {
 
 test "iTerm SetColors remains presentation-state only" {
     var colors: properties.ColorState = .{};
-    try std.testing.expect(applyItermSetColors(&colors, "fg=123,bg=srgb:010203,curbg=default,red=abcdef"));
+    try std.testing.expect(applyItermSetColors(&colors, &.{}, "fg=123,bg=srgb:010203,curbg=default,red=abcdef"));
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.foreground);
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);

@@ -17,6 +17,7 @@ const discovery = @import("discovery.zig");
 const picker = @import("picker.zig");
 const palette_limit = picker.limit;
 const appearance = @import("appearance.zig");
+const color_config = @import("colors.zig");
 const font_chooser = @import("font_chooser.zig");
 const selection = @import("selection.zig");
 const find = @import("find.zig");
@@ -28,7 +29,7 @@ const tab_limit = 8;
 const GraphicsFailure = @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.update)).@"fn".return_type.?).error_union.error_set ||
     @typeInfo(@typeInfo(@TypeOf(canvas.Canvas.draw)).@"fn".return_type.?).error_union.error_set;
 
-const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set;
+const CreationError = @typeInfo(@typeInfo(@TypeOf(terminal.Terminal.create)).@"fn".return_type.?).error_union.error_set || error{ InvalidColor, InvalidTheme };
 const Pane = struct {
     owner: ?*terminal.Terminal = null,
     recipe: config.Recipe,
@@ -165,6 +166,7 @@ const App = struct {
             .command = if (recipe.command.len != 0) recipe.command else null,
             .arguments = recipe.arguments,
             .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
+            .color_defaults = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme),
             .rows = 37,
             .columns = 80,
         }, presentation, self.wake_event, false);
@@ -489,8 +491,8 @@ const App = struct {
             self.configureFont(value, value.font_size, true) catch |failure| self.report(failure);
         };
     }
-    fn uiPalette(self: *const App) error{InvalidTheme}!appearance.Palette {
-        return appearance.palette(self.configuration.value.app_theme);
+    fn uiPalette(self: *const App) error{ InvalidTheme, InvalidColor }!appearance.Palette {
+        return appearance.resolve(self.configuration.value.app_theme, self.configuration.value.app_colors);
     }
     fn applyConfiguration(self: *App, candidate: *config.Config) !void {
         const target = try config.Config.path(allocator, self.init.environ_map);
@@ -503,6 +505,9 @@ const App = struct {
     fn updateConfiguration(self: *App, candidate: *config.Config, dir: std.Io.Dir, target: []const u8, persist: bool) !void {
         defer self.fonts.collect();
         const bindings = try keybindings.Bindings.fromOverrides(candidate.value.keybindings);
+        const previous_colors = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme);
+        const next_colors = try candidate.value.terminal_colors.resolve(candidate.value.terminal_theme);
+        const colors_changed = !std.meta.eql(previous_colors, next_colors);
         var paths_changed = false;
         for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
             paths_changed = paths_changed or !std.mem.eql(u8, old, new);
@@ -559,6 +564,11 @@ const App = struct {
         // Swapping returns the old configuration to the caller's existing cleanup path.
         std.mem.swap(config.Config, self.configuration, candidate);
         self.bindings = bindings;
+        if (colors_changed) {
+            for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |target_pane| {
+                if (target_pane.owner) |owner| owner.setColorDefaults(next_colors);
+            };
+        }
         if (next_ui) |owned| {
             self.ui_fonts.deinit();
             self.ui_fonts.* = owned;
@@ -890,14 +900,15 @@ const App = struct {
                     const index = try self.configuration.defaultProfile();
                     const next: u8 = @intCast(std.math.clamp(@as(i16, index) + delta, 0, @as(i16, self.configuration.profileCount()) - 1));
                     try self.changeSetting(.{ .set_default = next }, "");
-                } else if (row.target == .theme) {
-                    const themes = [_][]const u8{ "howl_dark", "slate", "high_contrast" };
+                } else if (row.target == .theme or row.target == .terminal_theme) {
+                    const themes: []const []const u8 = if (row.target == .theme) &.{ "howl_dark", "slate", "high_contrast" } else &color_config.terminal_themes;
+                    const current = if (row.target == .theme) self.configuration.value.app_theme else self.configuration.value.terminal_theme;
                     var index: i16 = 0;
-                    for (themes, 0..) |theme, i| if (std.mem.eql(u8, theme, self.configuration.value.app_theme)) {
+                    for (themes, 0..) |theme, i| if (std.mem.eql(u8, theme, current)) {
                         index = @intCast(i);
                         break;
                     };
-                    try self.changeSetting(row.target, themes[@intCast(@mod(index + delta, 3))]);
+                    try self.changeSetting(row.target, themes[@intCast(@mod(index + delta, @as(i16, @intCast(themes.len))))]);
                 }
             },
             else => {},
@@ -1726,13 +1737,13 @@ const App = struct {
         if (all[indices[chosen]].target == .set_default) e.profile = all[indices[chosen]].target.set_default;
         e.content_focus = true;
         const target_row = all[indices[chosen]];
-        if ((target_row.target == .default_font or target_row.target == .default_profile or target_row.target == .theme) and (x < body.x + 36 or x >= body.x + body.width - 36)) {
+        if ((target_row.target == .default_font or target_row.target == .default_profile or target_row.target == .theme or target_row.target == .terminal_theme) and (x < body.x + 36 or x >= body.x + body.width - 36)) {
             var key_event = std.mem.zeroes(c.SDL_KeyboardEvent);
             key_event.key = if (x < body.x + 36) c.SDLK_LEFT else c.SDLK_RIGHT;
             return self.settingsKey(key_event);
         }
         if (target_row.target == .set_default and x < body.x + body.width - 82) return;
-        if (target_row.editable() and target_row.target != .default_font and target_row.target != .default_profile and target_row.target != .theme and x < body.x + body.width * 0.46) return;
+        if (target_row.editable() and target_row.target != .default_font and target_row.target != .default_profile and target_row.target != .theme and target_row.target != .terminal_theme and x < body.x + body.width * 0.46) return;
         try self.activateSetting(target_row);
     }
     fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
@@ -1743,6 +1754,29 @@ const App = struct {
         if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
         defer clearClip(self.renderer);
         try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
+    }
+    fn settingRgb(self: *const App, row: settings.Row) !?instance.Terminal.Rgb {
+        switch (row.target) {
+            .app_color => |index| {
+                const resolved = try self.uiPalette();
+                inline for (@typeInfo(appearance.Palette).@"struct".field_names, 0..) |field, i| if (index == i) {
+                    const rgb = @field(resolved, field);
+                    return .{ .r = rgb.r, .g = rgb.g, .b = rgb.b };
+                };
+                return error.InvalidColorRole;
+            },
+            .terminal_color => |index| {
+                const resolved = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme);
+                return switch (index) {
+                    0 => resolved.foreground,
+                    1 => resolved.background,
+                    2 => resolved.cursor orelse resolved.foreground,
+                    3...18 => resolved.palette[index - 3],
+                    else => error.InvalidColorRole,
+                };
+            },
+            else => return null,
+        }
     }
     fn drawSettings(self: *App) !void {
         const e = &self.settings_editor.?;
@@ -1790,11 +1824,12 @@ const App = struct {
             if (number == e.selected and e.content_focus) try fill(self.renderer, rect, colors.active);
             try outline(self.renderer, rect, if (number == e.selected and e.content_focus) colors.accent else colors.border);
             var label: [512]u8 = undefined;
-            const name = if (row.scope.len == 0 or !e.search) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
+            const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [4096]u8 = undefined;
             const raw_contents = if (number == e.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.configuration, &value);
             const contents = if (raw_contents.len != 0 or (number == e.selected and e.editing != null)) raw_contents else switch (row.target) {
                 .binding => "Unbound",
+                .app_color, .terminal_color => "Preset",
                 .font => "Inherited",
                 .profile => |field| switch (field.field) {
                     .command => "Interactive shell",
@@ -1806,7 +1841,7 @@ const App = struct {
             };
             const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.46 - 12), .height = rect.height };
             const right: layout.Rect = .{ .x = rect.x + rect.width * 0.46, .y = rect.y, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height };
-            if (row.target == .default_font or row.target == .default_profile or row.target == .theme) {
+            if (row.target == .default_font or row.target == .default_profile or row.target == .theme or row.target == .terminal_theme) {
                 try self.clippedText(if (row.target == .default_font) "-" else "<", .{ .x = rect.x, .y = rect.y, .width = 36, .height = rect.height }, rect.x + 12);
                 try self.clippedText(row.label, .{ .x = rect.x + 40, .y = rect.y - 2, .width = @max(1, rect.width - 80), .height = 22 }, rect.x + 48);
                 try self.clippedText(contents, .{ .x = rect.x + 40, .y = rect.y + 18, .width = @max(1, rect.width - 80), .height = 24 }, rect.x + 48);
@@ -1816,7 +1851,15 @@ const App = struct {
                 try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
             } else {
                 try self.clippedText(name, left, left.x);
-                try self.clippedTextColor(contents, right, right.x, if (row.target == .information) colors.muted else colors.text);
+                const rgb = try self.settingRgb(row);
+                var value_rect = right;
+                if (rgb) |swatch_color| {
+                    value_rect.width = @max(1, right.width - 30);
+                    const swatch: layout.Rect = .{ .x = rect.x + rect.width - 25, .y = rect.y + 12, .width = 16, .height = 20 };
+                    try fill(self.renderer, swatch, .{ .r = swatch_color.r, .g = swatch_color.g, .b = swatch_color.b, .a = 255 });
+                    try outline(self.renderer, swatch, colors.border);
+                }
+                try self.clippedTextColor(contents, value_rect, right.x, if (row.target == .information) colors.muted else colors.text);
             }
         }
         if (visible > self.settingsVisible()) {
@@ -1824,6 +1867,14 @@ const App = struct {
             const offset = @as(f32, @floatFromInt(start)) / @as(f32, @floatFromInt(visible - self.settingsVisible()));
             try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y, .width = 3, .height = body.height }, colors.idle);
             try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y + offset * (body.height - tall), .width = 3, .height = tall }, colors.accent);
+        }
+        if (e.page == .colors) {
+            const resolved = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme);
+            const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
+            try fill(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 });
+            try self.clippedTextColor("Terminal  AaBb 0123", preview, preview.x + 8, .{ .r = resolved.foreground.r, .g = resolved.foreground.g, .b = resolved.foreground.b, .a = 255 });
+            const width = body.width / 16;
+            for (resolved.palette[0..16], 0..) |rgb, i| try fill(self.renderer, .{ .x = body.x + @as(f32, @floatFromInt(i)) * width, .y = preview.y + 38, .width = @max(1, width - 2), .height = 16 }, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 });
         }
         if (e.page == .defaults) {
             const button: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 96, .width = 136, .height = 30 };
@@ -2342,6 +2393,7 @@ test {
     std.testing.refAllDecls(discovery);
     std.testing.refAllDecls(picker);
     std.testing.refAllDecls(appearance);
+    std.testing.refAllDecls(color_config);
 }
 
 test "command palette stays action-oriented while profile menu retains application entry points" {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const config = @import("config.zig");
+const colors = @import("colors.zig");
 const bindings = @import("keybindings.zig");
 
 /// Qualified settings groups; every mutable field uses the same bounded editor.
@@ -7,7 +8,7 @@ pub const Page = enum { startup, interaction, appearance, colors, mappings, defa
 /// Human titles in stable sidebar order.
 pub const titles = [_][]const u8{ "Startup", "Interaction", "Appearance", "Color schemes", "Mappings", "Profiles", "Edit profile" };
 /// Maximum derived rows for six custom profiles, sixteen environment pairs each and the mapping registry.
-pub const row_limit = 432;
+pub const row_limit = 480;
 /// Editable custom-profile fields; built-in profiles must first be duplicated.
 pub const ProfileField = enum { name, shell, command, arguments, cwd, font_pixels };
 /// One catalogue index and exact custom-profile field.
@@ -20,6 +21,11 @@ pub const Target = union(enum) {
     font_family,
     default_profile,
     theme,
+    terminal_theme,
+    app_color: u8,
+    terminal_color: u8,
+    reset_app_colors,
+    reset_terminal_colors,
     hide_single_tab,
     discover_shells,
     discover_ssh_hosts,
@@ -50,6 +56,9 @@ pub const Row = struct {
             .default_font => try std.fmt.bufPrint(buffer, "{d}", .{value.terminal_font_pixels}),
             .default_profile => (try current.profile(try current.defaultProfile())).id,
             .theme => value.app_theme,
+            .terminal_theme => value.terminal_theme,
+            .app_color => |index| try value.app_colors.get(index),
+            .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .discover_shells => if (value.discover_shells) "On" else "Off",
             .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
@@ -85,7 +94,7 @@ pub const Row = struct {
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -111,7 +120,13 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .appearance, .label = "Default terminal font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
-    try b.add(.{ .page = .colors, .label = "Application theme", .target = .theme });
+    try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });
+    for (colors.app_labels, 0..) |label, index| try b.add(.{ .page = .colors, .scope = "App", .label = label, .target = .{ .app_color = @intCast(index) } });
+    try b.add(.{ .page = .colors, .label = "Reset app overrides", .target = .reset_app_colors });
+    try b.add(.{ .page = .colors, .label = "Terminal palette", .target = .terminal_theme });
+    for (colors.terminal_labels, 0..) |label, index| try b.add(.{ .page = .colors, .scope = "Terminal", .label = label, .target = .{ .terminal_color = @intCast(index) } });
+    try b.add(.{ .page = .colors, .label = "Reset terminal overrides", .target = .reset_terminal_colors });
+    try b.add(.{ .page = .colors, .label = "Color input", .target = .{ .information = "#RRGGBB; blank inherits preset" } });
     for (bindings.definitions, 0..) |definition, index| try b.add(.{ .page = .mappings, .label = definition.label, .target = .{ .binding = @intCast(index) } });
     for (0..current.profileCount()) |number| {
         const index: u8 = @intCast(number);
@@ -161,6 +176,11 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .default_font => value.terminal_font_pixels = try std.fmt.parseInt(i32, text, 10),
         .default_profile => value.default_profile = text,
         .theme => value.app_theme = text,
+        .terminal_theme => value.terminal_theme = text,
+        .app_color => |index| try value.app_colors.set(index, text),
+        .terminal_color => |index| try value.terminal_colors.set(index, text),
+        .reset_app_colors => value.app_colors = .{},
+        .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = !value.hide_single_tab,
         .discover_shells => value.discover_shells = !value.discover_shells,
         .discover_ssh_hosts => value.discover_ssh_hosts = !value.discover_ssh_hosts,
@@ -540,4 +560,20 @@ test "discovery toggles and explicit argument editing persist only validated com
     try std.testing.expectEqualStrings("example", current.value.profiles[0].arguments.?[2]);
     try accept(&current, row.target, "");
     try std.testing.expect(current.value.profiles[0].arguments == null);
+}
+
+test "app and terminal palette edits remain independent and reject malformed candidates" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try accept(&current, .{ .app_color = 8 }, "#123456");
+    try accept(&current, .terminal_theme, "howl_light");
+    try accept(&current, .{ .terminal_color = 4 }, "#abcdef");
+    try std.testing.expectEqualStrings("#123456", current.value.app_colors.accent);
+    try std.testing.expectEqualStrings("#abcdef", current.value.terminal_colors.ansi[1]);
+    try std.testing.expectError(error.InvalidColor, change(&current, std.testing.io, .{ .app_color = 8 }, "#bad"));
+    try std.testing.expectEqualStrings("#123456", current.value.app_colors.accent);
+    try accept(&current, .reset_terminal_colors, "");
+    try std.testing.expectEqualStrings("#123456", current.value.app_colors.accent);
+    try std.testing.expectEqualStrings("", current.value.terminal_colors.ansi[1]);
+    try std.testing.expectEqualStrings("howl_light", current.value.terminal_theme);
 }

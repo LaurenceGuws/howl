@@ -2169,6 +2169,7 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .color_control => |cmd| return color_control.apply(
             allocator,
             &vt.properties.colors,
+            &vt.properties.color_defaults,
             &vt.reply_buffer,
             scratch.buf[0..],
             cmd,
@@ -3549,10 +3550,21 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
                 !std.meta.eql(primary_before, vt.screen_state.primary.cursor) or
                 !std.meta.eql(alternate_before, vt.screen_state.alternate.cursor);
         },
-        .iterm_set_colors => |payload| return color_control.applyItermSetColors(
-            &vt.properties.colors,
-            payload,
-        ),
+        .iterm_set_colors => |payload| {
+            const changed = color_control.applyItermSetColors(
+                &vt.properties.colors,
+                &vt.properties.color_defaults,
+                payload,
+            );
+            if (changed) {
+                // iTerm changes the shared color owner. Old OSC cursor shadows must not mask it.
+                vt.screen_state.primary.cursor.cursor_color = vt.properties.colors.cursor;
+                vt.screen_state.alternate.cursor.cursor_color = vt.properties.colors.cursor;
+                vt.screen_state.primary.cursor.cursor_text_color = vt.properties.colors.cursor_text;
+                vt.screen_state.alternate.cursor.cursor_text_color = vt.properties.colors.cursor_text;
+            }
+            return changed;
+        },
         .bell,
         .title_and_icon_set,
         .title_set,
@@ -5474,6 +5486,9 @@ pub const Terminal = struct {
         };
     }
 
+    /// Complete copied host-configured color baseline, separate from program changes and stacks.
+    pub const ColorDefaults = properties.ColorState;
+
     /// Provides the canonical default terminal cell attributes.
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
@@ -6486,6 +6501,22 @@ pub const Terminal = struct {
             // reason: The operation runs on state or storage already validated/reserved by this owner; failure would contradict the established invariant.
         ) catch unreachable;
         return @intCast(prefix.len + payload.len);
+    }
+
+    /// Replaces the configured baseline and current colors on explicit host preference change.
+    /// Same baseline is a no-op, preserving program overrides; no allocation or parser input.
+    /// OSC resets restore this baseline. Future program color controls remain authoritative.
+    pub fn setColorDefaults(self: *Terminal, defaults: ColorDefaults) void {
+        self.requireNoPreparedResize();
+        if (std.meta.eql(self.properties.color_defaults, defaults)) return;
+        self.properties.color_defaults = defaults;
+        self.properties.colors = defaults;
+        self.screen_state.primary.cursor.cursor_color = null;
+        self.screen_state.alternate.cursor.cursor_color = null;
+        self.screen_state.primary.cursor.cursor_text_color = null;
+        self.screen_state.alternate.cursor.cursor_text_color = null;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -11246,4 +11277,67 @@ test "Unicode wide-cluster replacement and insertion retain conservative BG inva
         try std.testing.expect(before != after.rowBackgroundGeneration(0).?);
         try std.testing.expectEqual(@as(u32, 0x3b2), after.cellInfoAt(0, if (index == 0) 1 else 0).codepoint);
     }
+}
+
+test "configured color baseline is queried and restored by OSC, Kitty and iTerm resets" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var defaults: Terminal.ColorDefaults = .{};
+    defaults.foreground = .{ .r = 1, .g = 2, .b = 3 };
+    defaults.background = .{ .r = 4, .g = 5, .b = 6 };
+    defaults.cursor = .{ .r = 7, .g = 8, .b = 9 };
+    defaults.palette[1] = .{ .r = 10, .g = 11, .b = 12 };
+    terminal.setColorDefaults(defaults);
+    const configured = terminal.contentSequence();
+    terminal.setColorDefaults(defaults);
+    try std.testing.expectEqual(configured, terminal.contentSequence());
+    // zig-audit: acknowledge discard
+    // reason: Effective presentation assertions below prove a program can replace the host cursor and reset to it across both control families.
+    _ = try terminal.feed("\x1b]12;#ffffff\x1b\\\x1b]1337;SetColors=curbg=123456\x1b\\");
+    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 0x12, .g = 0x34, .b = 0x56 }), terminal.presentation().cursor);
+    // zig-audit: acknowledge discard
+    // reason: This assertion checks effective cursor presentation, including screen shadows, after the configured iTerm cursor reset.
+    _ = try terminal.feed("\x1b]1337;SetColors=curbg=default\x1b\\");
+    try std.testing.expectEqual(defaults.cursor, terminal.presentation().cursor);
+
+    // zig-audit: acknowledge discard
+    // reason: The exact OSC foreground reply below is the proof; feed summary counters are not the query contract.
+    _ = try terminal.feed("\x1b]10;?\x1b\\");
+    try std.testing.expectEqualStrings("\x1b]10;rgb:0101/0202/0303\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    // zig-audit: acknowledge discard
+    // reason: The following unchanged-baseline assertion proves program foreground overrides survive repeated host preference.
+    _ = try terminal.feed("\x1b]10;#ffffff\x1b\\\x1b]4;1;#ffffff\x1b\\\x1b]12;#ffffff\x1b\\");
+    terminal.setColorDefaults(defaults);
+    try std.testing.expectEqual(@as(u8, 255), terminal.presentation().foreground.r);
+    // zig-audit: acknowledge discard
+    // reason: The following foreground, palette and cursor assertions prove configured OSC resets.
+    _ = try terminal.feed("\x1b]110\x1b\\\x1b]104;1\x1b\\\x1b]112\x1b\\");
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(defaults.palette[1], terminal.presentation().palette[1]);
+    try std.testing.expectEqual(defaults.cursor, terminal.presentation().cursor);
+    // zig-audit: acknowledge discard
+    // reason: The following foreground and palette assertions prove configured Kitty resets.
+    _ = try terminal.feed("\x1b]21;foreground=#ffffff;1=#ffffff\x1b\\\x1b]21;foreground;1\x1b\\");
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(defaults.palette[1], terminal.presentation().palette[1]);
+    // zig-audit: acknowledge discard
+    // reason: The following white-color assertions prove the iTerm set actually applied before its reset is exercised.
+    _ = try terminal.feed("\x1b]1337;SetColors=fg=ffffff,red=ffffff\x1b\\");
+    try std.testing.expectEqual(@as(u8, 255), terminal.presentation().foreground.r);
+    try std.testing.expectEqual(@as(u8, 255), terminal.presentation().palette[1].r);
+    // zig-audit: acknowledge discard
+    // reason: The following foreground and palette assertions prove configured iTerm default resets.
+    _ = try terminal.feed("\x1b]1337;SetColors=fg=default,red=default\x1b\\");
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
+    try std.testing.expectEqual(defaults.palette[1], terminal.presentation().palette[1]);
+    // zig-audit: acknowledge discard
+    // reason: The following canonical cell assertion proves truecolor remains distinct from palette references.
+    _ = try terminal.feed("\x1b[38;2;12;34;56mX");
+    try std.testing.expectEqual(Terminal.ColorKind.rgb, terminal.semanticView(0).cellInfoAt(0, 0).attrs.fg.kind);
+    // zig-audit: acknowledge discard
+    // reason: The following palette and foreground assertions prove full-palette reset and RIS retain configured defaults.
+    _ = try terminal.feed("\x1b]104\x1b\\\x1bc\x1b]110\x1b\\");
+    try std.testing.expectEqual(defaults.palette[1], terminal.presentation().palette[1]);
+    try std.testing.expectEqual(defaults.foreground, terminal.presentation().foreground);
 }
