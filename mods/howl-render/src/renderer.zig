@@ -299,10 +299,25 @@ const Cursor = struct {
 
 const IncrementalRowCommands = RowSceneRow;
 
+// Cache indices fit u32; larger generic frames still use complete projection.
+// Both values replace the original count word on native 64-bit hosts.
+const IncrementalGlyphSpan = packed struct(u64) {
+    count: u32 = 0,
+    start: u32 = 1,
+
+    fn init(count: usize, start: usize) ?IncrementalGlyphSpan {
+        return .{
+            .count = std.math.cast(u32, count) orelse return null,
+            .start = std.math.cast(u32, start) orelse return null,
+        };
+    }
+};
+
 const IncrementalPlan = struct {
     shift: u16,
     repairs: []const bool,
     y_delta: i32,
+    uniform_background: bool,
 };
 
 // Resolved row backgrounds are independent of glyph and decoration reuse.
@@ -388,7 +403,7 @@ const Impl = struct {
     incremental_candidate_rows: []IncrementalRowCommands,
     incremental_repairs: []bool,
     backgrounds: BackgroundCache,
-    incremental_command_count: usize = 0,
+    incremental_glyphs: IncrementalGlyphSpan = .{},
     incremental_scene_kind: RowSceneKind = .baseline,
     incremental_scene_revision: u64 = 0,
     incremental_scene_base_revision: ?u64 = null,
@@ -676,7 +691,7 @@ pub fn resetCaches(owner: *Renderer) error{GenerationOverflow}!void {
     impl.frame_ready = false;
     impl.incremental_ready = false;
     impl.backgrounds.ready = false;
-    impl.incremental_command_count = 0;
+    impl.incremental_glyphs.count = 0;
     try glyph_cache.resetAtlas(impl.atlas);
 }
 
@@ -768,7 +783,7 @@ fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
         std.mem.swap([]frame_vocabulary.Input, &impl.commands, &impl.incremental_commands);
         impl.commands_use_incremental_allocation = false;
         impl.incremental_ready = false;
-        impl.incremental_command_count = 0;
+        impl.incremental_glyphs.count = 0;
         return true;
     }
     const doubled = std.math.mul(usize, impl.commands.len, 2) catch limit;
@@ -778,7 +793,7 @@ fn growCommandStorage(owner: *Renderer) std.mem.Allocator.Error!bool {
     impl.commands = replacement;
     impl.frame_ready = false;
     impl.incremental_ready = false;
-    impl.incremental_command_count = 0;
+    impl.incremental_glyphs.count = 0;
     return true;
 }
 
@@ -798,10 +813,12 @@ fn updateInnerOnce(
         impl.commands_use_incremental_allocation = !impl.commands_use_incremental_allocation;
     };
     const command_storage = impl.commands[0..@min(impl.commands.len, commandLimit(impl.config))];
-    if (impl.incremental_ready and impl.incremental_command_count >= impl.incremental_commands.len)
+    if (impl.incremental_ready and
+        (impl.incremental_glyphs.start > impl.incremental_commands.len or
+            impl.incremental_glyphs.count > impl.incremental_commands.len - impl.incremental_glyphs.start))
         return error.InvalidView;
     const cached_commands: []const frame_vocabulary.Input = if (impl.incremental_ready)
-        impl.incremental_commands[1..][0..impl.incremental_command_count]
+        impl.incremental_commands[impl.incremental_glyphs.start..][0..impl.incremental_glyphs.count]
     else
         &.{};
     const rows = Source.rows(snapshot);
@@ -991,7 +1008,7 @@ fn updateInnerOnce(
         impl.published_color_entries = color_entries;
     }
     if (incremental_eligible) {
-        rememberIncrementalCommands(Source, owner, snapshot);
+        rememberIncrementalCommands(Source, owner, snapshot, projection.background_end);
         if (impl.incremental_ready) {
             impl.incremental_scene_revision = next_revision;
             if (incremental_plan) |plan| {
@@ -1008,7 +1025,7 @@ fn updateInnerOnce(
         }
     } else {
         impl.incremental_ready = false;
-        impl.incremental_command_count = 0;
+        impl.incremental_glyphs.count = 0;
     }
     impl.backgrounds.accept(Source, snapshot);
     impl.frame_ready = true;
@@ -1033,8 +1050,11 @@ pub fn rowScene(owner: *const Renderer) ?RowScene {
     const rows = @as(usize, impl.incremental_rows_count);
     if (rows == 0 or rows > impl.incremental_rows.len or rows > impl.incremental_repairs.len)
         return null;
-    if (impl.incremental_command_count >= impl.commands.len or
-        impl.incremental_command_count >= impl.command_count)
+    // The public row scene has one uniform background. Internal glyph reuse
+    // can also accompany independently projected cell-background overrides.
+    if (impl.incremental_glyphs.start != 1 or
+        impl.incremental_glyphs.count >= impl.commands.len or
+        impl.incremental_glyphs.count >= impl.command_count)
         return null;
     return .{
         .kind = impl.incremental_scene_kind,
@@ -1044,7 +1064,7 @@ pub fn rowScene(owner: *const Renderer) ?RowScene {
         .surface = impl.surface,
         .cell_size = impl.config.cell_size,
         .background = impl.incremental_background,
-        .commands = impl.commands[1..][0..impl.incremental_command_count],
+        .commands = impl.commands[1..][0..impl.incremental_glyphs.count],
         .rows = impl.incremental_rows[0..rows],
         .repairs = impl.incremental_repairs[0..rows],
     };
@@ -2093,6 +2113,7 @@ fn planIncrementalRows(
         impl.incremental_source_revision.? != base_revision)
         return null;
     const shift = Source.rowShift(snapshot) orelse 0;
+    if (shift != 0 and impl.incremental_glyphs.start != 1) return null;
     const repairs = Source.changedRows(snapshot) orelse return null;
     if (shift >= rows or repairs.len != rows or
         !sameIncrementalCellPresentation(Source, impl, Source.presentation(snapshot)))
@@ -2109,6 +2130,7 @@ fn planIncrementalRows(
     return .{
         .shift = shift,
         .repairs = repairs,
+        .uniform_background = impl.incremental_glyphs.start == 1,
         // Cell eligibility and signed translation finish in the background pass.
         .y_delta = 0,
     };
@@ -2135,6 +2157,7 @@ fn rememberIncrementalCommands(
     comptime Source: type,
     content: *Renderer,
     snapshot: *const Source.Snapshot,
+    glyph_start: usize,
 ) void {
     if (comptime !Source.supports_incremental) return;
     const impl = rendererImpl(content);
@@ -2149,7 +2172,7 @@ fn rememberIncrementalCommands(
             impl.incremental_ready = false;
             return;
         };
-        const expected_start = std.math.add(usize, used, 1) catch {
+        const expected_start = std.math.add(usize, used, glyph_start) catch {
             impl.incremental_ready = false;
             return;
         };
@@ -2163,6 +2186,15 @@ fn rememberIncrementalCommands(
         impl.incremental_rows[row_index] = .{ .start = used, .count = candidate.count };
         used += candidate.count;
     }
+    const limit = incrementalCommandLimit(impl.config);
+    if (glyph_start > limit or used > limit - glyph_start) {
+        impl.incremental_ready = false;
+        return;
+    }
+    const glyphs = IncrementalGlyphSpan.init(used, glyph_start) orelse {
+        impl.incremental_ready = false;
+        return;
+    };
     const presentation = Source.presentation(snapshot);
     impl.incremental_rows_count = rows;
     impl.incremental_columns_count = Source.columns(snapshot);
@@ -2174,7 +2206,7 @@ fn rememberIncrementalCommands(
     impl.incremental_foreground = contentRgba(Source, presentation.foreground);
     impl.incremental_background = contentRgba(Source, presentation.background);
     impl.incremental_source_revision = Source.observationRevision(snapshot);
-    impl.incremental_command_count = used;
+    impl.incremental_glyphs = glyphs;
     impl.incremental_ready = true;
 }
 
@@ -2250,11 +2282,22 @@ fn buildContentCommands(
         const line_columns = try contentLineColumnCount(columns, line_geometry);
         const cached: ?*BackgroundRow = if (row_index < backgrounds.rows.len) &backgrounds.rows[row_index] else null;
         const generation = sourceBackgroundGeneration(Source, snapshot, row_index);
-        // The plain-row cache proves these rows have no BG overrides or decorations.
-        if (active_plan) |plan| if (!plan.repairs[row_index]) {
-            if (cached) |value| value.* = .{ .generation = generation orelse 0, .valid = generation != null };
-            continue;
-        };
+        // The glyph cache proves geometry/style for unchanged rows, independently
+        // of their background. Reuse BG runs only against their own exact witness.
+        const retained_glyphs = if (active_plan) |plan| !plan.repairs[row_index] else false;
+        if (retained_glyphs) {
+            if (active_plan.?.uniform_background) {
+                if (cached) |value| value.* = .{ .generation = generation orelse 0, .valid = generation != null };
+                continue;
+            }
+            if (reuse_backgrounds and generation != null) {
+                if (cached) |value| if (value.valid and value.generation == generation.?) {
+                    for (value.runs[0..value.count]) |run|
+                        try appendBackgroundRun(output, &used, run, row_index, cell_size, surface);
+                    continue;
+                };
+            }
+        }
         const reuse = line_geometry == .single_width and reuse_backgrounds and generation != null and
             cached != null and cached.?.valid and cached.?.generation == generation.?;
         if (reuse) {
@@ -2274,8 +2317,7 @@ fn buildContentCommands(
             // BG equality cannot establish FG/decorations or plain-glyph eligibility.
             const reversed = style.reverse != presentation.reverse_screen;
             const default_cell_background = !reversed and Source.cellColor(cell, .background).kind == .default;
-            if (row_eligible) row_eligible = default_cell_background and
-                !style.reverse and !style.underline and !style.strikethrough and
+            if (row_eligible) row_eligible = !style.reverse and !style.underline and !style.strikethrough and
                 contentUsesPlainGeometry(Source, cell, line_geometry);
             if (reuse or default_cell_background) continue;
             const color = (try contentCellColors(Source, cell, presentation)).background;
@@ -3150,4 +3192,26 @@ test "painted-row cursor search equals the complete command oracle including cli
     inputs[1].alpha_mask.destination.height = 0;
     try std.testing.expectError(error.InvalidRectangle, indexCursorRows(&impl, impl.surface, inputs.len, null));
     try std.testing.expect(!impl.cursor_rows_ready);
+}
+
+test "retained glyph range rejects narrowing without changing generic frame limits" {
+    const maximum = std.math.maxInt(u32);
+    const span = IncrementalGlyphSpan.init(maximum, maximum).?;
+    try std.testing.expectEqual(maximum, span.count);
+    try std.testing.expectEqual(maximum, span.start);
+    if (comptime @bitSizeOf(usize) > 32) {
+        const oversized: usize = @as(usize, maximum) + 1;
+        try std.testing.expect(IncrementalGlyphSpan.init(oversized, 1) == null);
+        try std.testing.expect(IncrementalGlyphSpan.init(1, oversized) == null);
+    }
+    try std.testing.expect(validCommandBounds(.{
+        .cell_size = .{ .width = 1, .height = 1 },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 1, .scalar_capacity = 1, .glyph_capacity = 1, .max_sequence_scalars = 1 },
+        .atlas = .{ .width = 1, .height = 1, .entry_capacity = 1 },
+        .shaped_capacity = 1,
+        .raster_bytes = 1,
+        .command_capacity = 1,
+        .command_limit = std.math.maxInt(usize),
+    }));
 }

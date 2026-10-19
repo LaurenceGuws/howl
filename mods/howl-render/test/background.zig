@@ -430,3 +430,100 @@ test "wide symbol font fits complete up and down triangles into narrow terminal 
     };
     try std.testing.expectEqual(@as(usize, 2), masks);
 }
+
+test "coloured background rows retain glyphs through sparse edits overflow and rejected preparation" {
+    const font = try render.text.FontSet.init(allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 12 },
+    });
+    defer font.deinit();
+    const metrics = font.metrics();
+    for ([_][2]u16{ .{ 3, 20 }, .{ 7, 40 }, .{ 24, 80 }, .{ 66, 320 } }) |grid| {
+        for ([_]usize{ 1, 32768 }) |budget| {
+            var vt: VT = undefined;
+            try VT.initWithHistoryInto(&vt, allocator, grid[0], grid[1], 8);
+            defer vt.deinit();
+            var cfg: RR.Config = .{
+                .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+                .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+                .shape_cache = .{ .entry_capacity = 256, .scalar_capacity = 512, .glyph_capacity = 512, .max_sequence_scalars = 16 },
+                .atlas = .{ .width = 512, .height = 512, .entry_capacity = 256 },
+                .shaped_capacity = 32,
+                .raster_bytes = 512 * 512,
+                .command_capacity = 64,
+                .command_limit = 32768,
+            };
+            const full = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+            defer RR.deinit(full);
+            cfg.incremental_row_capacity = grid[0];
+            cfg.incremental_command_capacity = budget;
+            const cached = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+            defer RR.deinit(cached);
+            const left = try allocator.create(Output);
+            defer allocator.destroy(left);
+            const right = try allocator.create(Output);
+            defer allocator.destroy(right);
+            var generations: [66]u64 = @splat(0);
+            var repairs: [66]bool = @splat(false);
+            var previous: ?u64 = null;
+            const steps = [_][]const u8{
+                "\x1b[44m\x1b[2J\x1b[Hfirst\x1b[2;1Hsecond\x1b[3;1Hthird",
+                "\x1b[H\x1b[31mFIRST",
+                "\x1b[2;1H\x1b[42mSECOND",
+                "\x1b[3;1H\x1b[33mTHIRD",
+                "\x1b[H\x1b[41mA\x1b[42mB\x1b[43mC\x1b[44mD\x1b[45mE\x1b[46mF\x1b[47mG\x1b[40mH\x1b[41mI\x1b[42mJ",
+                "\x1b[2;1H\x1b[34moverflows remain",
+                "\x1b]4;4;rgb:ab/cd/ef\x07",
+                "\x1b]10;rgb:20/30/40\x07\x1b]11;rgb:40/30/20\x07",
+                "\x1b[3;1H\x1b[4mdecoration",
+                "\x1b[24m\x1b[?5h\x1b[Hreverse",
+                "\x1b[?5l\x1b[H\x1b[0m\x1b[44mnormal",
+                "\x1b[999;1H\n\n\n\n\n\n\n\n",
+                "\x1b[2;1Hafter rotation",
+                "\x1b[?1049h\x1b[45m\x1b[2J\x1b[Halternate",
+                "\x1b[?1049l\x1b[Hrestored",
+                "\x1b[2;1Hresize",
+                "\x1b[Hretry",
+            };
+            for (steps, 0..) |bytes, index| {
+                // zig-audit: acknowledge discard
+                // reason: Each feed's complete projected cells, colours, glyphs and resources are checked against the independent full projection below.
+                _ = try vt.feed(bytes);
+                if (index == 15) try vt.resize(grid[0] - 1, grid[1] - 3);
+                if (index == 16) try vt.resize(grid[0], grid[1]);
+                const obs = vt.observation();
+                const view = obs.semanticView(0);
+                for (0..view.rows) |row| {
+                    const generation = view.rowGeneration(@intCast(row)).?;
+                    repairs[row] = previous == null or generation != generations[row];
+                    generations[row] = generation;
+                }
+                const hint: RR.RowChanges = .{ .base_revision = previous, .rows = repairs[0..view.rows] };
+                if (index == 3) {
+                    const bogus: RR.ExternalImageBinding = .{
+                        .image_id = 1,
+                        .generation = 1,
+                        .resource = .{ .resource = try RR.ResourceId.init(2), .generation = @fromBackingInt(1) },
+                    };
+                    try std.testing.expectError(error.InvalidImageBinding, RR.updateObservationRows(cached, obs, 0, hint, &.{bogus}));
+                }
+                try RR.updateObservationRows(cached, obs, 0, hint, &.{});
+                try RR.updateObservation(full, obs, 0, &.{});
+                const expected = try left.frame(full);
+                const actual = try right.frame(cached);
+                errdefer std.debug.print("coloured glyph mismatch grid={d}x{d} budget={d} step={d}\n", .{ grid[0], grid[1], budget, index });
+                try std.testing.expectEqualDeep(expected.commands, actual.commands);
+                try std.testing.expectEqualDeep(expected.uploads, actual.uploads);
+                try std.testing.expectEqualSlices(u8, expected.pixels, actual.pixels);
+                try std.testing.expectEqual(expected.content_command_count, actual.content_command_count);
+                // A uniform RowScene may return after scrolling away every BG
+                // override; when present, it must cover the complete glyph scene.
+                if (RR.rowScene(cached) != null) {
+                    for (actual.commands[1..actual.content_command_count]) |command|
+                        try std.testing.expect(command != .solid);
+                }
+                previous = obs.contentSequence();
+            }
+        }
+    }
+}

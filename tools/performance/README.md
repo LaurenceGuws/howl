@@ -1072,3 +1072,41 @@ and qualification/cleanup receipts are local under
 `~/.local/state/workstreams/howl-current/performance-20261019/`:
 `RESULTS.md`, `queue-folded.json`, `queue-manifest.json`, `queue-gpu-proof-2.log`
 and `rgba8-proof.json`. Keep this cohort separate from historical race tables.
+
+## Independent backgrounds and glyph-row retention, 2026-10-19
+
+Against 149a779, the C3 private KWin 60 Hz cohort has 24 fresh-process trials:
+four pairs for plain ASCII and two each for colour ASCII, Unicode and the two
+preserved Neovim casts. The root process CPU clock includes all app threads;
+producer/coordinator are excluded. Casts run at 320×66 / 12 px, Zoo at 384×77 / 10 px,
+with a 378×74 payload, 4096 writes/frame and 240 Hz producer target.
+
+| Case | Baseline CPU, one core | Independent retention |
+| --- | ---: | ---: |
+| Plain ASCII + FG |43.212%|43.307%, flat within observed variation|
+| ASCII + FG/BG |54.159%|53.449%,1.31% lower|
+| Unicode + FG/BG |58.511%|58.481%, flat|
+| Positive Neovim cast |4.021%|3.943%,1.93% lower|
+| Negative Neovim cast |6.509%|6.195%,4.82% lower|
+
+Cell backgrounds no longer disqualify unchanged glyph rows. Render retains the
+glyph span with its actual command offset and projects BG runs independently.
+The public uniform-background RowScene remains unavailable when BG overrides
+exist. Cache-budget overflow and coloured row shifts conservatively fall back.
+One packed range replaces the existing native count word. VT, host pacing, wire
+and ABI stay unchanged. This does not establish glyph equality within mutated rows.
+
+Narrow VT colour stores and the foreground-resolution cache were withdrawn.
+Qualified quiet colour-write controls regress 2.6–4.9%; an earlier apparent gain
+overlapped compilation and is explicitly unqualified. C1/C2 and C3 cohorts remain
+separate; C2's plain-path regression blocked promotion. Final-source every-release Render update+frame totals fall 23.83% and 25.25% on
+the two casts; feeding/painting are excluded, and skipped observations often
+lose this opportunity. Complete commands and uploaded pixels match the full
+baseline across replay and hostile controls.
+Candidate Zoo runs skip no producer slots; controls skip five total. No displayed
+240Hz, latency or RAM-saving claim. Cold memory outliers remain in raw results.
+
+Evidence: ~/.local/state/workstreams/howl-current/fg-bg-20261019/
+(RESULTS.md, METHOD.md, separate folded cohorts, raw per-process samples,
+source hashes, proofs and cleanup receipts). Separate SDL diagnostics qualify
+presentation and submitted work; their CPU samples are not pooled above.
