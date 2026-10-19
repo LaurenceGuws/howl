@@ -303,7 +303,16 @@ fn candidateOwnershipProof(a: std.mem.Allocator) !void {
 }
 test "font recipe candidates own catalogue strings and survive every partial allocation failure" {
     try candidateOwnershipProof(std.testing.allocator);
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, candidateOwnershipProof, .{});
+    // JSON growth/shrink may remap in place depending on allocator layout.
+    // Deny that optimization so every allocation reaches fault injection.
+    const vtable: std.mem.Allocator.VTable = .{
+        .alloc = std.testing.allocator.vtable.alloc,
+        .resize = std.mem.Allocator.noResize,
+        .remap = std.mem.Allocator.noRemap,
+        .free = std.testing.allocator.vtable.free,
+    };
+    const allocating: std.mem.Allocator = .{ .ptr = std.testing.allocator.ptr, .vtable = &vtable };
+    try std.testing.checkAllAllocationFailures(allocating, candidateOwnershipProof, .{});
 }
 test "font catalogue and query bounds reject overlong paths without inventing a selection" {
     const a = std.testing.allocator;
