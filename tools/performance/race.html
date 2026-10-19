@@ -20,9 +20,20 @@ ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
 </style></head><body><main>
-<header><div class="kicker">Howl · qualified controls · 11 October 2026</div><h1>Where the horses stand.</h1>
-<p class="lede">A four-horse reference, shared-text stress, and separate SDL submission and cursor index controls. CPU, memory and producer progress remain separate. There is no single overall winner.</p>
-<nav aria-label="Race overview"><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#direct-row">Direct rows</a><a href="#glyph-bound-profile">Glyph bounds</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
+<header><div class="kicker">Howl · measurement record · updated 19 October 2026</div><h1>Where the horses stand.</h1>
+<p class="lede">Latest: a bounded SDL colour-glyph queue comparison. The four-horse reference remains the separate 11 October cohort below. CPU, memory and producer progress stay distinct.</p>
+<nav aria-label="Race overview"><a href="#colour-queue">Colour queue · Oct 19</a><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#direct-row">Direct rows</a><a href="#glyph-bound-profile">Glyph bounds</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
+<section id="colour-queue"><h2>Colour-glyph queue · 19 October</h2>
+<p class="context">24 balanced internal trials against fb9ecb0. Private KWin 60 Hz, NVIDIA OpenGL, Zig 0.17.0 ReleaseFast, 10px Iosevka Nerd Font, 378×74 payload, 4096 writes and 240 producer Hz. This is a separate cohort, not an update to the four-horse reference.</p>
+<div class="scroll"><table><thead><tr><th>One-core CPU median</th><th>Baseline</th><th>Bounded SDL queue</th></tr></thead><tbody>
+<tr><th>ASCII + foreground</th><td>34.43%</td><td>34.21%<small>Within observed noise</small></td></tr>
+<tr><th>ASCII + foreground/background</th><td>48.34%</td><td>48.12%<small>Within observed noise</small></td></tr>
+<tr><th>Unicode + foreground/background</th><td>60.70%</td><td>52.50%<small>13.51% lower; every pair improves</small></td></tr>
+</tbody></table></div>
+<p class="context">The 2048-quad bound now covers geometry and RGBA copies across texture changes, with exact painter order. All 24 trials sustain approximately 240 producer FPS without skips; displayed 240Hz and photon latency are not measured. Independent OpenGL queues match 230400 RGBA pixels, with an exact 2048-quad high water.</p>
+<p class="context">A separate 512×192 colour-only grid at 8px completes every frame. Candidate anonymous peaks 60.12/61.07 MiB compare with baseline 133.08/80.71 MiB; the first baseline outlier stays visible. No general RAM or leak claim.</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/performance-20261019/RESULTS.md">Decision and limits</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/performance-20261019/queue-folded.json">24 paired controls</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/performance-20261019/rgba8-proof.json">Colour-only guard</a></p>
+</section><p class="note">Historical reference follows: 11 October 2026. Its compiler, source, fonts and cohorts are not pooled with the newer queue comparison.</p>
 <div class="cards">
 <div class="card"><h3>CPU</h3><p>Howl's parent beats Foot and Kitty on rich cells and Rain. Foot leads light cells and cursor movement; Alacritty leads dense and rich CPU.</p></div>
 <div class="card"><h3>Memory</h3><p>Foot leads this field. The parent reproduces a 1.5–1.6 GiB sparse-cell PSS fault in NVIDIA device mappings; the qualified batch boundary keeps that control near 93–96 MiB.</p></div>

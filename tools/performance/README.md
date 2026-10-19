@@ -6,7 +6,10 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
-`horses.sh` runs deterministic TUI Zoo workloads through fresh terminal processes while WMIO owns graphical identity, placement, focus and close.
+The historical `horses.sh` harness uses WMIO's retired `--environment`/`launch`
+interface and needs migration before reuse. Its recipes and old invocations below
+remain evidence context. Current private cohorts run inside kwin-seat under
+Walker; WMIO owns observation, placement and close through an exact attachment.
 
 The benchmark configs under `configs/` are intentionally separate from Captain's daily terminal settings. The optimized KDE track uses the same IosevkaTerm Nerd Font family, opaque backgrounds, no blur, no cursor animation, minimal/no window chrome and padding, and ordinary 4096-row scrollback policy where a terminal exposes line-count history.
 
@@ -21,7 +24,7 @@ Performance-specific choices are documented product knobs:
 
 On Home KDE/KWin Wayland, exact 1920x1036 placement currently probes near 378-384 columns and 74-77 rows across the prepared horses. `tracks/kde.env` therefore fixes the common workload lattice at 378x74 (27,972 cells).
 
-Before a race:
+Historical invocation (the runner API needs migration before reuse):
 
 ```bash
 set -a; source tools/performance/tracks/kde.env; set +a
@@ -50,41 +53,27 @@ the run.
 
 ## Isolated visual KWin lab
 
-Autonomous Howl work should not consume Captain's physical desktop. WMIO can
-route the same marshal through a managed KWin compositor with its own Wayland,
-D-Bus/XDG roots, and private EIS seat.
-
-The persistent visual lab is created outside the repository:
+Autonomous work uses kwin-seat under Walker's whole-workload containment.
+The cohort is an existing workstream-owned executable; it launches its fresh
+clients inside the inherited private environment and uses the exact attachment:
 
 ```bash
-wmio create-environment private-howl-lab --width 1920 --height 1080 --scale 1 --visible
+walker run --name howl-lab --cwd "$HOME/personal/howl" \
+  --containment delegated_cgroup_v2 -- \
+  kwin-seat run --directory /run/user/1000/howl-lab \
+  --width 1920 --height 1080 --scale 1 -- /absolute/path/to/cohort
+wmio --attachment /run/user/1000/howl-lab/attachment.json desktop
 ```
 
-`--visible` keeps the managed compositor isolated while nesting its output as
-one host window so Captain can watch or intervene. Input issued with
-`wmio --environment private-howl-lab ...` stays on the private seat and does
-not use Home's physical keyboard/mouse path.
+The seat directory must be new. The cohort owns copied configurations, exact
+binaries, process identities, geometry, workload release and cleanup. kwin-seat
+owns private D-Bus/HOME/XDG/input namespaces and retires with the workload.
+WMIO attaches; it does not provision the seat or launch clients.
+See the kwin-seat owner README for its current contract.
 
-Source `tracks/kwin-private-visible.env` for this lane:
-
-```bash
-set -a; source tools/performance/tracks/kwin-private-visible.env; set +a
-./tools/performance/horses.sh doctor
-./tools/performance/horses.sh probe howl
-./tools/performance/horses.sh run howl 16
-```
-
-`HORSES_ENVIRONMENT` defaults to `physical`; changing it routes all WMIO
-observation/mutation and process launch through that managed environment.
-Managed clients are launched with `wmio --environment ID launch`, never by
-inheriting the caller's physical Wayland session. `HORSES_HOME_DIR` preserves
-the real workspace/evidence root inside managed environments whose own `HOME`
-is intentionally private.
-
-The visual nested client area is presently 1912x1047, with Howl probing at
-380x76, so the track retains the established 378x74 cell lattice. Treat its
-numbers as a separate KWin-private track; do not splice them into the earlier
-physical 1920x1036 KDE index without an explicit cross-track qualification.
+Keep private/physical tracks and actual presentation cadence separate. The old
+`tracks/kwin-private-visible.env` geometry and managed-environment API describe
+historical receipts and do not qualify the current owner interface.
 
 ## Benchmark Howl build
 
@@ -1056,3 +1045,30 @@ host launch-policy experiment; next qualify CPU and pixels before promotion.
 Keep provider selection out of VT/core ownership and retain the SDL submission
 bound. Exact artifacts, raw phase samples/maps, the failed probe, diagnostics and
 folds live under memory-btop-20261011 in the current Home workstream.
+
+## Colour-glyph queue qualification, 2026-10-19
+
+Against exact baseline `fb9ecb0`, 24 fresh balanced private KWin 60 Hz trials used
+the same 378×74 payload, 10px Iosevka Nerd Font and 240 Hz ReleaseFast TUI Zoo
+producer. Total application CPU (one-core percent) was 34.43→34.21 for ASCII/FG,
+48.34→48.12 for ASCII/FG/BG and 60.70→52.50 for Unicode/FG/BG including emoji.
+The Unicode median falls 13.51%, with every pair improving 11.49–15.83%;
+plain/colour ASCII remain within observed noise. All 24 trials have zero skipped
+producer slots. These rates do not measure displayed 240 Hz or photon latency.
+
+Canvas now bounds the entire SDL content queue to 2048 quads, including RGBA
+copies, while preserving painter order and draining final tails. This avoids
+forcing an SDL submission for every tiny mixed colour-glyph packet.
+VT, Render commands, appearance and presentation pacing are unchanged.
+
+Independent old/new OpenGL queues match 230400 RGBA pixels across 36 fixtures;
+queued high water is exactly 2048. Separate 8px colour-only guards exercise
+49152 emoji per frame on a 512×192 grid; all frames complete. Candidate anonymous
+peaks 60.12/61.07 MiB compare with baseline 133.08/80.71 MiB; the first baseline
+outlier remains recorded. This is not a universal RAM or leak claim.
+
+Conditions, exact hashes, all trial ranges, the withdrawn clip-only experiment
+and qualification/cleanup receipts are local under
+`~/.local/state/workstreams/howl-current/performance-20261019/`:
+`RESULTS.md`, `queue-folded.json`, `queue-manifest.json`, `queue-gpu-proof-2.log`
+and `rgba8-proof.json`. Keep this cohort separate from historical race tables.

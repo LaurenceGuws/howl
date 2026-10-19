@@ -7,6 +7,9 @@ const selection = @import("selection.zig");
 const render = instance.render.terminal;
 
 const resource_limit = render.maximum_frame_resources;
+// SDL3.4.18 merges queued geometry. Historical NVIDIA client-array uploads
+// above 4 MiB retained growing storage. Bound the whole content queue, including
+// colour-only copies: 2048 quads need at most 393216 bytes of GL vertex data.
 const batch_quads = 2048;
 const quad_indices = blk: {
     @setEvalBranchQuota(batch_quads * 8);
@@ -27,19 +30,37 @@ const Texture = struct {
 pub const Geometry = struct {
     vertices: [batch_quads * 4]c.SDL_Vertex = undefined,
     count: usize = 0,
+    queued_quads: usize = 0,
     texture: ?*c.SDL_Texture = null,
     clip: c.SDL_Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
 
+    // SDL owns copied vertex data after RenderGeometry returns. Bound the
+    // entire queued content batch, including RGBA copies, rather than forcing
+    // a backend submission whenever texture or clip changes.
+    fn reserve(self: *Geometry, renderer: *c.SDL_Renderer, quads: usize) !void {
+        std.debug.assert(self.queued_quads <= batch_quads and quads <= batch_quads);
+        if (self.queued_quads > batch_quads - quads) try self.submit(renderer);
+    }
+
+    fn submit(self: *Geometry, renderer: *c.SDL_Renderer) !void {
+        if (self.queued_quads == 0) return;
+        if (!c.SDL_FlushRenderer(renderer)) return error.SDLGeometry;
+        self.queued_quads = 0;
+    }
+
     fn flush(self: *Geometry, renderer: *c.SDL_Renderer) !void {
         if (self.count == 0) return;
-        // SDL 3.4.18 merges adjacent geometry calls despite our scratch bound.
-        // NVIDIA 615.71.09 retained growing client-array uploads above 4 MiB.
-        // Submit each bounded batch before SDL can merge it into a whole grid.
+        try self.reserve(renderer, self.count);
         if (!c.SDL_SetRenderClipRect(renderer, &self.clip) or
-            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &quad_indices, @intCast(self.count * 6)) or
-            !c.SDL_FlushRenderer(renderer))
+            !c.SDL_RenderGeometry(renderer, self.texture, &self.vertices, @intCast(self.count * 4), &quad_indices, @intCast(self.count * 6)))
             return error.SDLGeometry;
+        self.queued_quads += self.count;
         self.count = 0;
+    }
+
+    fn finish(self: *Geometry, renderer: *c.SDL_Renderer) !void {
+        try self.flush(renderer);
+        try self.submit(renderer);
     }
 
     fn append(
@@ -224,7 +245,11 @@ pub const Canvas = struct {
 
     fn drawCommands(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, commands: []const render.Command) !void {
         const pane_clip = pixelClip(pane);
+        // Retire any preceding UI/target commands before accounting this
+        // content pass. A failed prior pass cannot lend uncounted queue work.
+        if (!c.SDL_FlushRenderer(renderer)) return error.SDLGeometry;
         geometry.count = 0;
+        geometry.queued_quads = 0;
         for (commands) |command| {
             switch (command) {
                 .solid => |solid| try geometry.append(renderer, null, pane_clip, destination(solid.rect, pane), .{ .x = 0, .y = 0, .w = 0, .h = 0 }, solid.color),
@@ -253,12 +278,14 @@ pub const Canvas = struct {
                     const src: render.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
                     const source: c.SDL_FRect = .{ .x = @floatFromInt(src.x), .y = @floatFromInt(src.y), .w = @floatFromInt(src.width), .h = @floatFromInt(src.height) };
                     const dest = destination(image.destination, pane);
+                    try geometry.reserve(renderer, 1);
                     if (!c.SDL_SetRenderClipRect(renderer, &clip) or
                         !c.SDL_RenderTexture(renderer, texture, &source, &dest)) return error.SDLTexture;
+                    geometry.queued_quads += 1;
                 },
             }
         }
-        try geometry.flush(renderer);
+        try geometry.finish(renderer);
     }
 
     fn find(self: *const Canvas, resource: render.ResourceRef) ?*c.SDL_Texture {
@@ -590,4 +617,28 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
     try std.testing.expectEqual(@as(f32, 2), restored_x);
     try std.testing.expectEqual(@as(f32, 2), restored_y);
     try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
+}
+
+test "SDL queue budget admits its exact limit and retires before the next packet" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(8, 8, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry = try std.testing.allocator.create(Geometry);
+    defer std.testing.allocator.destroy(geometry);
+    geometry.* = .{};
+    geometry.queued_quads = batch_quads - 1;
+    try geometry.reserve(renderer, 1);
+    try std.testing.expectEqual(batch_quads - 1, geometry.queued_quads);
+    geometry.queued_quads += 1;
+    try geometry.reserve(renderer, 1);
+    try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
+    geometry.queued_quads = 1;
+    try geometry.reserve(renderer, batch_quads);
+    try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
+    geometry.queued_quads = batch_quads;
+    try geometry.finish(renderer);
+    try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
 }
