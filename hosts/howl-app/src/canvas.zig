@@ -256,9 +256,7 @@ pub const Canvas = struct {
                 .alpha_mask => |mask| {
                     const texture = self.find(mask.resource.resource) orelse return error.MissingTexture;
                     const dest = destination(mask.destination, pane);
-                    var clip: c.SDL_Rect = undefined;
-                    const requested = if (contained(mask.destination, mask.clip)) pane_clip else pixelClip(destination(mask.clip, pane));
-                    if (!c.SDL_GetRectIntersection(&requested, &pane_clip, &clip)) continue;
+                    const clip = commandClip(mask.destination, mask.clip, pane, pane_clip) orelse continue;
                     const src: render.SourceRect = mask.resource.source orelse .{ .x = 0, .y = 0, .width = mask.resource.size.width, .height = mask.resource.size.height };
                     const width: f32 = @floatFromInt(mask.resource.size.width);
                     const height: f32 = @floatFromInt(mask.resource.size.height);
@@ -272,9 +270,7 @@ pub const Canvas = struct {
                 .rgba => |image| {
                     try geometry.flush(renderer);
                     const texture = self.find(image.resource.resource) orelse return error.MissingTexture;
-                    var clip: c.SDL_Rect = undefined;
-                    const requested = if (contained(image.destination, image.clip)) pane_clip else pixelClip(destination(image.clip, pane));
-                    if (!c.SDL_GetRectIntersection(&requested, &pane_clip, &clip)) continue;
+                    const clip = commandClip(image.destination, image.clip, pane, pane_clip) orelse continue;
                     const src: render.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
                     const source: c.SDL_FRect = .{ .x = @floatFromInt(src.x), .y = @floatFromInt(src.y), .w = @floatFromInt(src.width), .h = @floatFromInt(src.height) };
                     const dest = destination(image.destination, pane);
@@ -329,6 +325,17 @@ fn pixelClip(rect: c.SDL_FRect) c.SDL_Rect {
     return .{ .x = x, .y = y, .w = @as(c_int, @intFromFloat(@ceil(rect.x + rect.w))) - x, .h = @as(c_int, @intFromFloat(@ceil(rect.y + rect.h))) - y };
 }
 
+fn commandClip(ink: render.Rect, clip: render.Rect, pane: c.SDL_FRect, pane_clip: c.SDL_Rect) ?c.SDL_Rect {
+    if (contained(ink, clip)) {
+        if (pane_clip.w <= 0 or pane_clip.h <= 0) return null;
+        return pane_clip;
+    }
+    const requested = pixelClip(destination(clip, pane));
+    var visible: c.SDL_Rect = undefined;
+    if (!c.SDL_GetRectIntersection(&requested, &pane_clip, &visible)) return null;
+    return visible;
+}
+
 fn rectEqual(a: c.SDL_Rect, b: c.SDL_Rect) bool {
     return a.x == b.x and a.y == b.y and a.w == b.w and a.h == b.h;
 }
@@ -342,6 +349,28 @@ fn contained(a: render.Rect, b: render.Rect) bool {
     return a.x >= b.x and a.y >= b.y and
         @as(i64, a.x) + a.width <= @as(i64, b.x) + b.width and
         @as(i64, a.y) + a.height <= @as(i64, b.y) + b.height;
+}
+
+test "command clipping equals SDL for contained clipped fractional negative and empty panes" {
+    for (0..10000) |i| {
+        const pane: c.SDL_FRect = .{
+            .x = @as(f32, @floatFromInt(@as(i32, @intCast(i % 31)) - 15)) + @as(f32, @floatFromInt(i % 4)) / 4,
+            .y = @as(f32, @floatFromInt(@as(i32, @intCast(i % 23)) - 11)) + @as(f32, @floatFromInt(i % 3)) / 3,
+            .w = @floatFromInt(if (i % 17 == 0) @as(usize, 0) else 1 + i % 257),
+            .h = @floatFromInt(if (i % 19 == 0) @as(usize, 0) else 1 + i % 193),
+        };
+        const pane_clip = pixelClip(pane);
+        const ink: render.Rect = .{ .x = @as(i32, @intCast(i % 43)) - 21, .y = @as(i32, @intCast(i % 37)) - 18, .width = @intCast(2 + i % 19), .height = @intCast(2 + i % 29) };
+        const clip: render.Rect = switch (i % 3) {
+            0 => ink,
+            1 => .{ .x = ink.x + 1, .y = ink.y + 1, .width = ink.width - 1, .height = ink.height - 1 },
+            else => .{ .x = 0, .y = 0, .width = 320, .height = 200 },
+        };
+        const requested = if (contained(ink, clip)) pane_clip else pixelClip(destination(clip, pane));
+        var intersection: c.SDL_Rect = undefined;
+        const expected: ?c.SDL_Rect = if (c.SDL_GetRectIntersection(&requested, &pane_clip, &intersection)) intersection else null;
+        try std.testing.expectEqualDeep(expected, commandClip(ink, clip, pane, pane_clip));
+    }
 }
 
 test "overhanging commands keep their exact clip, contained quads share the pane clip" {
