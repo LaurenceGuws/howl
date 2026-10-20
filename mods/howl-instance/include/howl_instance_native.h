@@ -27,6 +27,7 @@ enum hi_signal_result { HI_SIGNAL_DELIVERED=1, HI_SIGNAL_TARGET_MISSING=2, HI_SI
  * handoff. Presented construction uses the matching hi_create_presented contract. */
 typedef struct hi_frame_stream hi_frame_stream;
 typedef struct hi_frame_info {
+    /* content_revision identifies drawing within presentation_generation; terminal cuts may advance independently. */
     uint64_t sequence, presentation_generation, revision, content_revision, terminal_revision;
     uint32_t command_count, content_command_count, upload_count, removal_count;
     uint32_t history_offset, history_count, history_row_base;

@@ -124,6 +124,13 @@ pub fn build(b: *std.Build) void {
         source_semantics,
         vt,
     );
+    const source_tests_module = b.createModule(.{ .root_source_file = b.path("src/source_vt.zig"), .target = target, .optimize = optimize });
+    source_tests_module.addImport("howl_vt", vt);
+    source_tests_module.addImport("source", source_semantics);
+    const source_tests = b.addTest(.{ .name = "howl-render-source", .root_module = source_tests_module, .use_llvm = false, .use_lld = false });
+    check.dependOn(&source_tests.step);
+    test_step.dependOn(&b.addRunArtifact(source_tests).step);
+
     module.addImport("adapter", adapter);
     module.addImport("terminal", terminal_vt);
     test_module.addImport("adapter", adapter);

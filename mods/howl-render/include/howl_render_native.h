@@ -109,6 +109,7 @@ typedef struct hrc_cell_size {
     uint32_t reserved;
 } hrc_cell_size;
 typedef struct hrc_frame_info {
+    /* content_revision identifies reusable drawing and may stay unchanged across newer terminal cuts. */
     uint64_t revision, content_revision, terminal_revision;
     uint32_t command_count, content_command_count, upload_count, removal_count;
     uint32_t history_offset, history_count, history_row_base, background_rgba;

@@ -23,8 +23,10 @@ pub const Source = struct {
 
     /// Borrows a live row once per projection pass; history uses copied-cell fallback.
     pub const Row = struct { index: u16, cells: ?[]const VT.Cell };
-    /// Copies one canonical VT cell value while its extended scalar tail remains view-addressed.
-    pub const Cell = VT.Cell;
+    /// Borrows one canonical cell only for this synchronous projection.
+    pub const Cell = *const VT.Cell;
+    /// Owns fallback storage when a projected history row has no live cell slice.
+    pub const CellScratch = VT.Cell;
     /// Copies the canonical terminal palette and dynamic presentation colors.
     pub const Presentation = VT.Presentation;
     /// Uses the canonical four-channel terminal color carried by Presentation.
@@ -117,10 +119,12 @@ pub const Source = struct {
         return if (row.cells) |cells| cells.len else snapshot.view.cols;
     }
 
-    /// Copies one canonical cell at already-validated physical row/column coordinates.
-    pub inline fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
-        if (row.cells) |cells| return cells[column];
-        return @call(.always_inline, VT.SemanticView.cellInfoAt, .{ &snapshot.view, row.index, @as(u16, @intCast(column)) });
+    /// Borrows a live cell or copies a history cell into caller-owned scratch.
+    /// A history borrow lasts only until that scratch is reused.
+    pub inline fn cellAt(snapshot: *const Snapshot, row: Row, column: usize, scratch: *CellScratch) Cell {
+        if (row.cells) |cells| return &cells[column];
+        scratch.* = @call(.always_inline, VT.SemanticView.cellInfoAt, .{ &snapshot.view, row.index, @as(u16, @intCast(column)) });
+        return scratch;
     }
 
     /// Normalizes one VT DEC line-geometry value into renderer-private semantics.
@@ -271,3 +275,37 @@ pub const Source = struct {
         return false;
     }
 };
+
+test "native cell borrows keep independent history scratch and live storage separate" {
+    const std = @import("std");
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, std.testing.allocator, 3, 12, 8);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: Exact historical/live cells, the combining tail and unchanged canonical sequence are asserted below.
+    _ = try vt.feed("A\xcc\x81B\r\nCD\r\nEF\r\nGH");
+    const observation = vt.observation();
+    const sequence = observation.contentSequence();
+    const snapshot: Source.Snapshot = .{
+        .view = observation.semanticView(1),
+        .colors = observation.presentation(),
+        .images = observation.images(1),
+    };
+    const history = Source.rowAt(&snapshot, 0);
+    const live = Source.rowAt(&snapshot, 1);
+    try std.testing.expect(history.cells == null);
+    try std.testing.expect(live.cells != null);
+    var first_scratch: Source.CellScratch = undefined;
+    var second_scratch: Source.CellScratch = undefined;
+    const first = Source.cellAt(&snapshot, history, 0, &first_scratch);
+    const second = Source.cellAt(&snapshot, history, 1, &second_scratch);
+    try std.testing.expectEqual(@as(u32, 'A'), first.codepoint);
+    try std.testing.expectEqual(@as(u32, 'B'), second.codepoint);
+    var scalars: [24]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, &.{ 'A', 0x301 }, Source.cellScalars(&snapshot, 0, 0, first, &scalars));
+    const live_cell = Source.cellAt(&snapshot, live, 0, &first_scratch);
+    // Reading history into the same fallback storage cannot overwrite the live borrow.
+    try std.testing.expectEqual(@as(u32, 'B'), Source.cellAt(&snapshot, history, 1, &first_scratch).codepoint);
+    try std.testing.expectEqual(@as(u32, 'C'), live_cell.codepoint);
+    try std.testing.expectEqual(sequence, observation.contentSequence());
+}

@@ -158,6 +158,7 @@ pub const FrameBuffers = struct {
 /// Borrows one completed backend-facing frame until the next Renderer mutation.
 pub const Frame = struct {
     revision: u64,
+    /// Identifies reusable content drawing; a newer canonical cut may retain this value.
     content_revision: u64,
     /// Commands before this boundary paint content; the suffix paints the cursor.
     content_command_count: usize,
@@ -982,8 +983,10 @@ fn updateInnerOnce(
     const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
     const incremental_eligible = incremental_enabled and projection.incremental_eligible and !projection.has_color;
 
+    const unchanged_content = projection.incremental_plan != null and !publish_atlas and !publish_color and
+        @call(.never_inline, contentCommandsUnchanged, .{ impl, projection, command_count, surface });
     impl.revision = next_revision;
-    impl.content_revision = next_revision;
+    if (!unchanged_content) impl.content_revision = next_revision;
     impl.surface = surface;
     impl.command_count = command_count;
     impl.atlas_visible = projection.has_raster;
@@ -2228,6 +2231,47 @@ const ContentProjection = struct {
     incremental_plan: ?IncrementalPlan,
 };
 
+// Repaired rows are the only glyph spans needing comparison. Unrepaired rows
+// were copied exactly with no shift; resource replacement is excluded by the caller.
+fn contentCommandsUnchanged(
+    impl: *const Impl,
+    projection: ContentProjection,
+    command_count: usize,
+    surface: frame_vocabulary.Size,
+) bool {
+    const plan = projection.incremental_plan orelse return false;
+    // A valid plan means the buffers have exchanged roles for this preparation.
+    if (!impl.incremental_ready or impl.command_count > impl.incremental_commands.len) return false;
+    const previous = impl.incremental_commands[0..impl.command_count];
+    if (plan.shift != 0 or !projection.incremental_eligible or projection.has_color or
+        !std.meta.eql(impl.surface, surface) or previous.len != command_count)
+        return false;
+    const background_end: usize = impl.incremental_glyphs.start;
+    if (projection.background_end != background_end or background_end > previous.len)
+        return false;
+    if (!sameContentInputs(previous[0..background_end], impl.commands[0..background_end]))
+        return false;
+    for (plan.repairs, 0..) |repair, row| {
+        if (!repair) continue;
+        const before = impl.incremental_rows[row];
+        const after = impl.incremental_candidate_rows[row];
+        if (before.count != after.count) return false;
+        const start = std.math.add(usize, background_end, before.start) catch return false;
+        if (start > previous.len or before.count > previous.len - start or
+            after.start > command_count or after.count > command_count - after.start)
+            return false;
+        if (!sameContentInputs(previous[start..][0..before.count], impl.commands[after.start..][0..after.count]))
+            return false;
+    }
+    return true;
+}
+
+fn sameContentInputs(left: []const frame_vocabulary.Input, right: []const frame_vocabulary.Input) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| if (!std.meta.eql(a, b)) return false;
+    return true;
+}
+
 fn buildContentCommands(
     comptime Source: type,
     snapshot: *const Source.Snapshot,
@@ -2311,7 +2355,8 @@ fn buildContentCommands(
         var pending: ?BackgroundRun = null;
         var row_eligible = incremental_eligible and line_geometry == .single_width;
         for (0..line_columns) |column| {
-            const cell = Source.cellAt(snapshot, row, column);
+            var cell_scratch: Source.CellScratch = undefined;
+            const cell = Source.cellAt(snapshot, row, column, &cell_scratch);
             const style = Source.cellStyle(cell);
             has_decorations = has_decorations or style.underline or style.strikethrough;
             // BG equality cannot establish FG/decorations or plain-glyph eligibility.
@@ -2360,7 +2405,8 @@ fn buildContentCommands(
         if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(columns, line_geometry);
         for (0..line_columns) |column| {
-            const cell = Source.cellAt(snapshot, row, column);
+            var cell_scratch: Source.CellScratch = undefined;
+            const cell = Source.cellAt(snapshot, row, column, &cell_scratch);
             const style = Source.cellStyle(cell);
             var scalar_scratch: [24]u32 = undefined;
             const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
@@ -2427,9 +2473,15 @@ fn buildContentCommands(
                     return error.InvalidView;
                 if (cached.count > output.len - @min(used, output.len))
                     return error.CommandLimit;
-                for (incremental_commands[cached.start..cached_end]) |command| {
-                    output[used] = try translateIncrementalGlyph(command, plan.y_delta);
-                    used += 1;
+                if (plan.y_delta == 0) {
+                    // Separately owned buffers preserve the complete proven row without translation.
+                    @memcpy(output[used..][0..cached.count], incremental_commands[cached.start..cached_end]);
+                    used += cached.count;
+                } else {
+                    for (incremental_commands[cached.start..cached_end]) |command| {
+                        output[used] = try translateIncrementalGlyph(command, plan.y_delta);
+                        used += 1;
+                    }
                 }
                 has_raster = has_raster or cached.count != 0;
                 if (row_ranges) |ranges| ranges[row_index] = .{
@@ -2446,7 +2498,8 @@ fn buildContentCommands(
         var plain_row_baseline: ?i64 = null;
         var skip_until: usize = 0;
         for (0..line_columns) |column| {
-            const cell = Source.cellAt(snapshot, row, column);
+            var cell_scratch: Source.CellScratch = undefined;
+            const cell = Source.cellAt(snapshot, row, column, &cell_scratch);
             if (column < skip_until) continue;
             var scalar_scratch: [24]u32 = undefined;
             const sequence = Source.cellScalars(snapshot, row_index, column, cell, &scalar_scratch);
@@ -2464,6 +2517,39 @@ fn buildContentCommands(
             const ascii_index = glyph_cache.printableAsciiIndex(sequence);
             const colors = try contentCellColors(Source, cell, presentation);
             const font_variant = contentFontVariant(Source.cellStyle(cell));
+            if (ascii_index) |index| {
+                if (contentUsesPlainGeometry(Source, cell, line_geometry) and
+                    !try contentIsContextualOperatorCell(Source, cell, sequence))
+                {
+                    if (@call(.always_inline, glyph_cache.asciiPlacement, .{ atlas, font_variant, index })) |placed| {
+                        const physical = try contentCellRect(row_index, column, cell_size);
+                        const baseline = @as(i64, physical.y) + line_offset + @as(i64, metrics.baseline);
+                        var clip = physical;
+                        clip.x = 0;
+                        clip.width = surface.width;
+                        const raster = placed.raster;
+                        try appendContentInput(output, &used, .{ .alpha_mask = .{
+                            .destination = .{
+                                .x = std.math.add(i32, physical.x, placed.x) catch return error.InvalidPresentationGeometry,
+                                .y = std.math.cast(i32, baseline + placed.y) orelse return error.InvalidPresentationGeometry,
+                                .width = raster.width,
+                                .height = raster.height,
+                            },
+                            .clip = clip,
+                            .resource = .{
+                                .resource = placeholder_resource,
+                                .format = .alpha8,
+                                .size = .{ .width = atlas_size.width, .height = atlas_size.height },
+                                .source = .{ .x = raster.atlas_x, .y = raster.atlas_y, .width = raster.width, .height = raster.height },
+                            },
+                            .color = colors.foreground,
+                            .cursor_component = true,
+                        } });
+                        has_raster = true;
+                        continue;
+                    }
+                }
+            }
 
             var run: text.Run = undefined;
             var contextual = false;
@@ -2478,7 +2564,8 @@ fn buildContentCommands(
                 operator_scalars[0] = sequence[0];
                 var run_end = column + 1;
                 while (run_end - column < run_limit) : (run_end += 1) {
-                    const next = Source.cellAt(snapshot, row, run_end);
+                    var next_cell_scratch: Source.CellScratch = undefined;
+                    const next = Source.cellAt(snapshot, row, run_end, &next_cell_scratch);
                     var next_scalar_scratch: [24]u32 = undefined;
                     const next_sequence = Source.cellScalars(snapshot, row_index, run_end, next, &next_scalar_scratch);
                     if (!try contentIsContextualOperatorCell(Source, next, next_sequence)) break;
@@ -2696,6 +2783,8 @@ fn buildContentCommands(
                             .resource = resource,
                         } });
                     } else {
+                        if (plain_geometry and !contextual and run.glyphs.len == 1 and ascii_index != null)
+                            glyph_cache.rememberAsciiPlacement(atlas, font_variant, ascii_index.?, shaped, raster);
                         const symbol_clip = if (bounded_symbol) allocation_clip else font_clip;
                         try appendContentInput(output, &used, .{ .alpha_mask = .{
                             .destination = destination,

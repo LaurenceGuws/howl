@@ -207,6 +207,8 @@ fn ClientSource(comptime Storage: type) type {
         pub const Row = Storage.Row;
         /// One source cell record in the selected client storage representation.
         pub const Cell = Storage.Cell;
+        /// Client storage already returns complete values and needs no fallback scratch.
+        pub const CellScratch = struct {};
         /// Complete decoded terminal presentation retained by the selected client view.
         pub const Presentation = View.Presentation;
         /// Four-channel presentation color shared by owned and borrowed client views.
@@ -272,7 +274,7 @@ fn ClientSource(comptime Storage: type) type {
         }
 
         /// Copies one cell from the selected client storage representation.
-        pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize) Cell {
+        pub fn cellAt(snapshot: *const Snapshot, row: Row, column: usize, _: *CellScratch) Cell {
             return Storage.cellAt(snapshot, row, column);
         }
 

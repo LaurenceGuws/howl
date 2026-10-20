@@ -228,6 +228,15 @@ const ShapeCacheImpl = struct {
     glyph_count: usize = 0,
 };
 
+// A raster lookup may additionally retain the placement of one shaped glyph.
+// Font/raster coordinates are independent of terminal position and colour.
+const AsciiAtlasEntry = struct {
+    index: usize = 0,
+    x: i16 = 0,
+    y: i16 = 0,
+    state: enum { missing, raster, placed } = .missing,
+};
+
 const AtlasImpl = struct {
     allocator: std.mem.Allocator,
     fonts: FontFaces,
@@ -237,7 +246,7 @@ const AtlasImpl = struct {
     color_pixels: ?[]u8 = null,
     color_entries: usize = 0,
     config: AtlasConfig,
-    ascii_entries: [font_variant_count][printable_ascii_count]?usize = @splat(@splat(null)),
+    ascii_entries: [font_variant_count][printable_ascii_count]AsciiAtlasEntry = @splat(@splat(.{})),
     entry_count: usize = 0,
     next_x: usize = 0,
     shelf_y: usize = 0,
@@ -403,7 +412,7 @@ pub fn resetAtlas(atlas: *Atlas) error{GenerationOverflow}!void {
     impl.generation += 1;
     impl.entry_count = 0;
     impl.color_entries = 0;
-    impl.ascii_entries = @splat(@splat(null));
+    impl.ascii_entries = @splat(@splat(.{}));
     impl.next_x = 0;
     impl.shelf_y = 0;
     impl.shelf_height = 0;
@@ -611,7 +620,9 @@ pub fn resolveFontAtlas(
         .fit_width = fit_width,
     } };
     if (ascii_index) |index| {
-        if (impl.ascii_entries[variant_index][index]) |entry_index| {
+        const lookup = impl.ascii_entries[variant_index][index];
+        if (lookup.state != .missing) {
+            const entry_index = lookup.index;
             std.debug.assert(entry_index < impl.entry_count);
             const entry = impl.entries[entry_index];
             std.debug.assert(std.meta.eql(entry.key, atlasIdentity(key)));
@@ -619,7 +630,7 @@ pub fn resolveFontAtlas(
         }
     }
     if (findAtlasIndex(impl, key)) |entry_index| {
-        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = entry_index;
+        if (ascii_index) |index| impl.ascii_entries[variant_index][index] = .{ .index = entry_index, .state = .raster };
         return atlasRaster(impl.entries[entry_index]);
     }
 
@@ -649,9 +660,62 @@ pub fn resolveFontAtlas(
     );
     if (ascii_index) |index| {
         std.debug.assert(impl.entry_count != 0);
-        impl.ascii_entries[variant_index][index] = impl.entry_count - 1;
+        impl.ascii_entries[variant_index][index] = .{ .index = impl.entry_count - 1, .state = .raster };
     }
     return result;
+}
+
+/// Copies a single alpha glyph's atlas locator and integer baseline-relative placement.
+pub const AsciiPlacement = struct { raster: AtlasRaster, x: i32, y: i32 };
+
+/// Reuses only placement previously admitted for this immutable font variant and scalar.
+pub fn asciiPlacement(atlas: *const Atlas, variant: FontVariant, index: usize) ?AsciiPlacement {
+    const impl = constAtlasImpl(atlas);
+    const lookup = impl.ascii_entries[fontVariantIndex(impl.fonts.resolveVariant(variant))][index];
+    if (lookup.state != .placed) return null;
+    return .{ .raster = atlasRaster(impl.entries[lookup.index]), .x = lookup.x, .y = lookup.y };
+}
+
+/// Retains one proven single-glyph alpha placement; unrepresentable offsets keep the ordinary path.
+pub fn rememberAsciiPlacement(atlas: *Atlas, variant: FontVariant, index: usize, shaped: text.Glyph, raster: AtlasRaster) void {
+    if (raster.format != .alpha8 or raster.width == 0 or raster.height == 0) return;
+    const position = asciiPlacementOffset(shaped, raster) orelse return;
+    const impl = atlasImpl(atlas);
+    const lookup = &impl.ascii_entries[fontVariantIndex(impl.fonts.resolveVariant(variant))][index];
+    std.debug.assert(lookup.state != .missing);
+    lookup.x = position.x;
+    lookup.y = position.y;
+    lookup.state = .placed;
+}
+
+fn asciiPlacementOffset(shaped: text.Glyph, raster: AtlasRaster) ?struct { x: i16, y: i16 } {
+    // Narrow cache admission only; the ordinary geometry path keeps its full range.
+    return .{
+        .x = std.math.cast(i16, @divFloor(@as(i64, shaped.x_offset) + @as(i64, raster.left) * 64, 64)) orelse return null,
+        .y = std.math.cast(i16, @divFloor(-@as(i64, shaped.y_offset) - @as(i64, raster.top) * 64, 64)) orelse return null,
+    };
+}
+
+test "ASCII placement cache floors negative fractions and declines oversized offsets" {
+    if (@sizeOf(usize) == 8) try std.testing.expectEqual(@sizeOf(?usize), @sizeOf(AsciiAtlasEntry));
+    var shaped = std.mem.zeroes(text.Glyph);
+    var raster: AtlasRaster = .{ .atlas_x = 0, .atlas_y = 0, .width = 1, .height = 1, .left = -1, .top = 1, .format = .alpha8 };
+    shaped.x_offset = -1;
+    shaped.y_offset = -1;
+    const offset = asciiPlacementOffset(shaped, raster).?;
+    try std.testing.expectEqual(@as(i16, -2), offset.x);
+    try std.testing.expectEqual(@as(i16, -1), offset.y);
+    shaped.x_offset = std.math.maxInt(i32);
+    try std.testing.expect(asciiPlacementOffset(shaped, raster) == null);
+    shaped.x_offset = 0;
+    shaped.y_offset = std.math.minInt(i32);
+    try std.testing.expect(asciiPlacementOffset(shaped, raster) == null);
+    shaped.y_offset = 0;
+    raster.left = std.math.minInt(i16);
+    raster.top = std.math.maxInt(i16);
+    const edge = asciiPlacementOffset(shaped, raster).?;
+    try std.testing.expectEqual(std.math.minInt(i16), edge.x);
+    try std.testing.expectEqual(-std.math.maxInt(i16), edge.y);
 }
 
 /// Resolves one smooth supersampled wave into the shared alpha atlas.

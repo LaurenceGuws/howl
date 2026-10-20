@@ -527,3 +527,113 @@ test "coloured background rows retain glyphs through sparse edits overflow and r
         }
     }
 }
+
+test "warm ASCII placement preserves cold glyph geometry through Store and atlas resets" {
+    for ([_][]const u8{ @import("test_fonts").primary_font, @import("test_fonts").normal_ligature_font }) |path| {
+        for ([_]u16{ 10, 12, 29 }) |pixels| {
+            const font = try render.text.FontSet.init(allocator, .{ .primary = path, .size = .{ .pixels = pixels } });
+            defer font.deinit();
+            const cfg = fontConfig(font);
+            const store = try RR.initStore(allocator, .{ .regular = font }, .{
+                .shape_cache = cfg.shape_cache,
+                .shaped_capacity = cfg.shaped_capacity,
+                .raster_bytes = cfg.raster_bytes,
+            });
+            defer RR.deinitStore(store);
+            const owner = try RR.initWithStore(allocator, store, cfg);
+            defer RR.deinit(owner);
+            var vt: VT = undefined;
+            try VT.initWithHistoryInto(&vt, allocator, 4, 94, 0);
+            defer vt.deinit();
+            var bytes: [64]u8 = undefined;
+            for ([_]u8{ 0, 1, 3, 7 }, 0..) |style, row| {
+                // zig-audit: acknowledge discard
+                // reason: Cold/warm complete commands and atlas pixels below prove every rendition and all printable ASCII positions.
+                _ = try vt.feed(try std.fmt.bufPrint(&bytes, "\x1b[{d};1H\x1b[0;{d};38;5;{d};48;5;{d}m", .{ row + 1, style, row + 1, row + 4 }));
+                for (0..94) |column| {
+                    // zig-audit: acknowledge discard
+                    // reason: Every scalar appears first through ordinary placement and then through the warm lane at the same position.
+                    _ = try vt.feed(&.{@as(u8, @intCast('!' + column))});
+                }
+            }
+            const first = try allocator.create(Output);
+            defer allocator.destroy(first);
+            const second = try allocator.create(Output);
+            defer allocator.destroy(second);
+            for (0..2) |phase| {
+                if (phase != 0) try RR.resetCaches(owner);
+                try RR.updateObservation(owner, vt.observation(), 0, &.{});
+                const cold = try first.frame(owner);
+                // Forget shaping without changing immutable fonts or resident raster coordinates.
+                RR.resetStore(store);
+                try RR.updateObservation(owner, vt.observation(), 0, &.{});
+                const warm = try second.frame(owner);
+                try std.testing.expectEqualDeep(cold.commands, warm.commands);
+                try std.testing.expectEqualDeep(cold.uploads, warm.uploads);
+                try std.testing.expectEqualSlices(u8, cold.pixels, warm.pixels);
+            }
+        }
+    }
+}
+
+test "retained row equality preserves drawing identity while canonical cuts and cursor advance" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    var cfg = fontConfig(font);
+    cfg.incremental_row_capacity = 3;
+    cfg.incremental_command_capacity = 32768;
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(owner);
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 3, 20, 0);
+    defer vt.deinit();
+    const out = try allocator.create(Output);
+    defer allocator.destroy(out);
+    const reference = try allocator.create(Output);
+    defer allocator.destroy(reference);
+    var content_commands: usize = 0;
+    var previous: ?u64 = null;
+    var content: u64 = 0;
+    var revision: u64 = 0;
+    const bytes = [_][]const u8{
+        "\x1b[H\x1b[44mHi",
+        "\x1b[HHi", // Same cells written again.
+        "\x1b[H\x1b[41mHi\x1b[H\x1b[44mHi", // Intermediate red never becomes a prepared frame.
+        "\x1b[H\x1b[31mHi", // A lasting FG change must repaint.
+        "\x1b[HHi\x1b[2;1H", // Same content, new cursor overlay.
+        "\x1b[H\x1b[42mHi", // A lasting BG change must repaint.
+        "\x1b[HHi",
+    };
+    for (bytes, 0..) |feed, step| {
+        // zig-audit: acknowledge discard
+        // reason: Frame drawing identity, canonical progress and lasting foreground/background changes are asserted below.
+        _ = try vt.feed(feed);
+        const observation = vt.observation();
+        try RR.updateObservationRows(owner, observation, 0, .{ .base_revision = previous, .rows = &.{ true, false, false } }, &.{});
+        const expected = try reference.frame(owner);
+        const frame = try RR.frame(owner, &.{}, .{
+            .commands = &out.commands,
+            .pixels = &out.pixels,
+            .uploads = &out.uploads,
+            .removals = &out.removals,
+            .retained_content = if (content == 0) null else .{ .revision = content, .commands = out.commands[0..content_commands] },
+        });
+        try std.testing.expectEqualDeep(expected.commands, frame.commands);
+        try std.testing.expectEqualSlices(u8, expected.pixels, frame.pixels);
+        content_commands = frame.content_command_count;
+        try std.testing.expect(frame.revision > revision);
+        if (step == 1 or step == 2 or step == 4 or step == 6) {
+            try std.testing.expectEqual(content, frame.content_revision);
+        } else {
+            try std.testing.expect(frame.content_revision > content);
+        }
+        revision = frame.revision;
+        content = frame.content_revision;
+        previous = observation.contentSequence();
+    }
+    // An explicit atlas reset invalidates the old reuse proof even for equal VT cells.
+    try RR.resetCaches(owner);
+    try RR.updateObservationRows(owner, vt.observation(), 0, .{ .base_revision = previous, .rows = &.{ false, false, false } }, &.{});
+    const reset = try out.frame(owner);
+    try std.testing.expect(reset.content_revision > content);
+}

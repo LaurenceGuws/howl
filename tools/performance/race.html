@@ -20,9 +20,41 @@ ul{padding-left:22px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;color:black}main{max-width:none;padding:0}.card,.note,thead{background:none}.context,.lede,small,footer,.scroll{overflow:visible}table{min-width:0}details{display:block}nav{display:none}section{break-inside:avoid}}
 </style></head><body><main>
-<header><div class="kicker">Howl · measurement record · updated 19 October 2026</div><h1>Where the horses stand.</h1>
-<p class="lede">Latest: independent background and retained glyph-row work. The SDL colour-glyph queue comparison remains separate. The four-horse reference remains the separate 11 October cohort below. CPU, memory and producer progress stay distinct.</p>
-<nav aria-label="Race overview"><a href="#bg-glyph">BG / glyph retention · Oct 19</a><a href="#colour-queue">Colour queue · Oct 19</a><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#direct-row">Direct rows</a><a href="#glyph-bound-profile">Glyph bounds</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
+<header><div class="kicker">Howl · measurement record · updated 20 October 2026</div><h1>Where the horses stand.</h1>
+<p class="lede">Latest: qualified Render work across three font densities. The physical Hyprland screening and historical cohorts remain separate. CPU, memory and producer progress stay distinct.</p>
+<nav aria-label="Race overview"><a href="#sparse-night-20261020">Render reuse · Oct 20</a><a href="#hyprland-20261020">Physical race · Oct 20</a><a href="#bg-glyph">BG / glyph retention · Oct 19</a><a href="#colour-queue">Colour queue · Oct 19</a><a href="#cpu">CPU</a><a href="#memory">Memory</a><a href="#progress">Progress</a><a href="#boundary">Submission bound</a><a href="#cursor-index">Cursor index</a><a href="#row-reuse">Row reuse</a><a href="#cutoff">Cutoff tradeoffs</a><a href="#direct-row">Direct rows</a><a href="#glyph-bound-profile">Glyph bounds</a><a href="#ownership">Shared text</a><a href="#limits">Missing races</a><a href="#evidence">Evidence</a></nav></header>
+<section id="sparse-night-20261020"><h2>Render reuse · 20 October nightshift</h2>
+<p class="context">72 fresh exact baseline/final trials against 7235c7f, two per build/case in ABBA order. Private KWin 60 Hz, OpenGL, Zig 0.17.0 ReleaseFast, fixed 1920×1036 window, Iosevka Nerd Font and 240Hz producer. CPU includes all app threads and excludes producer/coordinator/compositor. Zoo details below use 10px, actual 384×77 and payload 382×69; casts use 12px and 320×66. These are observed one-core CPU medians, not confidence intervals or a new four-horse ranking.</p>
+<div class="scroll"><table><thead><tr><th>Case</th><th>Original CPU</th><th>Final CPU</th><th>Relative change</th></tr></thead><tbody>
+<tr><th>64 alnum + FG writes</th><td>17.749%</td><td>13.111%</td><td>-26.13%</td></tr>
+<tr><th>4096 alnum + FG</th><td>29.236%</td><td>24.594%</td><td>-15.88%</td></tr>
+<tr><th>4096 alnum + FG/BG</th><td>40.379%</td><td>36.162%</td><td>-10.44%</td></tr>
+<tr><th>4096 Unicode + FG/BG</th><td>45.315%</td><td>44.546%</td><td>-1.70%</td></tr>
+<tr><th>4096 printable ASCII + FG</th><td>30.230%</td><td>26.551%</td><td>-12.17%</td></tr>
+<tr><th>Positive Neovim cast · 12px, 320×66</th><td>3.669%</td><td>3.288%</td><td>-10.38%</td></tr>
+<tr><th>Negative Neovim cast · 12px, 320×66</th><td>6.558%</td><td>5.779%</td><td>-11.88%</td></tr>
+</tbody></table></div>
+<div class="scroll"><table><thead><tr><th>Font / actual grid</th><th>Sparse change</th><th>Dense ASCII + FG</th><th>ASCII + FG/BG</th><th>Unicode + FG/BG</th></tr></thead><tbody>
+<tr><th>8px · 480×100</th><td>-27.61%</td><td>-19.59%</td><td>-10.83%</td><td>-2.77%</td></tr>
+<tr><th>10px · 384×77</th><td>-26.13%</td><td>-15.88%</td><td>-10.44%</td><td>-1.70%</td></tr>
+<tr><th>18px · 213×43</th><td>-19.02%</td><td>-7.23%</td><td>-4.63%</td><td>-0.23%</td></tr>
+</tbody></table></div>
+<p class="context">Render caches immutable ASCII placement, borrows native live cells synchronously, bulk-copies zero-shift rows and preserves drawing identity after exact repaired-row comparison. Canonical/cursor progress continues and complete frames remain complete. No new VT bookkeeping, heap buffer, pacing delay, wire or C ABI layout. Native ASCII lookup storage remains the same size.</p>
+<p class="context">Synthetic red→blue cancellation uses 68.73% less app CPU; this is not a Neovim-wide saving. A lasting one-cell edit remains flat and still rebuilds the whole target. All 107,520 Zoo frames hold their producer slots. Display cadence, photon latency and general RAM savings are not established.</p>
+<p class="context">Independent old/new output matches 2424 synthetic and 2882 cast observations. Thirty actual settled SDL/KWin comparisons at 8/12/18px match terminal RGBA pixels exactly through dense BG/glyphs, cancellation, lasting edits, cursor movement, resize and ring scrolling. Complete root test/check/audit and native/Web/foreign consumer gates pass; audit covers 20 roots / 241 Zig files. Final ELF grows 39,978 bytes (0.258%).</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/nightshift-20261020/RESULTS.md">Decision and limits</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/nightshift-20261020/DESIGN.md">Design explained</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/nightshift-20261020/final-folded.json">72 final controls</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/nightshift-20261020/pixel-folded.json">30 pixel comparisons</a></p>
+</section>
+<section id="hyprland-20261020"><h2>Physical Hyprland screening · 20 October</h2>
+<p class="context">32 fresh-process trials, two per horse and case: Howl 7235c7f, Foot 1.28.0, Kitty 0.49.2, Alacritty 0.17.0. DP-1 at 240 Hz, scale 1, 1920×1036 windows, the same Iosevka primary font source and a 382×69 payload. Actual grids are 384 columns and 77/79/79/71 rows respectively; line metrics differ.</p>
+<div class="scroll"><table><thead><tr><th>One-core CPU median</th><th>Howl</th><th>Foot</th><th>Kitty</th><th>Alacritty</th></tr></thead><tbody>
+<tr><th>Sparse · 64 alnum + FG writes</th><td>54.75%</td><td>9.18%</td><td>89.97%</td><td>32.22%</td></tr>
+<tr><th>Dense · 4096 alnum + FG</th><td>80.33%</td><td>120.61%</td><td>95.97%</td><td>49.46%</td></tr>
+<tr><th>4096 alnum + FG/BG</th><td>109.32%</td><td>124.02%</td><td>97.32%</td><td>54.90%</td></tr>
+<tr><th>4096 Unicode + FG/BG</th><td>108.62%</td><td>167.85%</td><td>77.93%</td><td>58.31%</td></tr>
+</tbody></table></div>
+<p class="context">CPU includes all root application threads and excludes the producer, coordinator and compositor. Foot leads sparse CPU; Alacritty leads the dense cases in this configuration. All Howl producer slots hold; Foot skips four Unicode slots across the screening's 61,440 scheduled slots. Emitted 240Hz is not measured displayed cadence or photon latency. These short observed medians support no universal fastest claim.</p>
+<p class="context"><a href="file:///home/home/.local/state/workstreams/howl-current/race-20261020/RESULTS.md">Results and limits</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/race-20261020/METHOD.md">Method</a> · <a href="file:///home/home/.local/state/workstreams/howl-current/race-20261020/folded.json">32 controls</a></p>
+</section>
 <section id="bg-glyph"><h2>Independent BG / glyph-row retention · 19 October</h2>
 <p class="context">Separate C3 cohort against 149a779: 24 fresh-process trials in private KWin 60 Hz, OpenGL, Zig 0.17.0 ReleaseFast. Four pairs for plain ASCII, two pairs for each other case. CPU includes all app threads and excludes producer/coordinator. Recorded casts use 12px Iosevka Nerd Font and 320×66 actual cells; Zoo uses 10px, 384×77 actual cells and a 378×74 payload.</p>
 <div class="scroll"><table><thead><tr><th>One-core CPU median</th><th>Baseline</th><th>Independent retention</th></tr></thead><tbody>
