@@ -209,18 +209,18 @@ pub fn projectPrepared(
         return error.AliasedStorage;
 
     var used: usize = 0;
-    for (inputs) |input| {
-        const visible = (try visibleRect(input, surface)) orelse continue;
-        commands[used] = switch (input) {
-            .solid => |value| .{ .solid = .{ .rect = visible, .color = value.color } },
-            .alpha_mask => |value| .{ .alpha_mask = .{
+    for (inputs) |*input| {
+        const visible = (try visibleRect(input.*, surface)) orelse continue;
+        commands[used] = switch (input.*) {
+            .solid => |*value| .{ .solid = .{ .rect = visible, .color = value.color } },
+            .alpha_mask => |*value| .{ .alpha_mask = .{
                 .destination = value.destination,
                 .clip = visible,
                 .resource = value.resource,
                 .color = value.color,
                 .cursor_component = value.cursor_component,
             } },
-            .rgba => |value| .{ .rgba = .{
+            .rgba => |*value| .{ .rgba = .{
                 .destination = value.destination,
                 .clip = visible,
                 .resource = value.resource,
@@ -439,4 +439,27 @@ test "prepared projection requires capacity for every input" {
         error.InsufficientCommands,
         projectPrepared(.{ .width = 2, .height = 2 }, &inputs, &output),
     );
+}
+
+test "prepared projection rejects exact and partial aliases without changing inputs" {
+    var inputs: [3]Input = @splat(.{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } });
+    const before = inputs;
+    // The shared byte arena deliberately exercises the public rejection path;
+    // neither exact nor offset overlap may become a noalias precondition.
+    try std.testing.expectEqual(@sizeOf(Input), @sizeOf(Command));
+    const commands = std.mem.bytesAsSlice(Command, std.mem.asBytes(&inputs));
+    try std.testing.expectError(
+        error.AliasedStorage,
+        projectPrepared(.{ .width = 2, .height = 2 }, inputs[0..2], commands[0..2]),
+    );
+    try std.testing.expectEqualDeep(before, inputs);
+    try std.testing.expectError(
+        error.AliasedStorage,
+        projectPrepared(.{ .width = 2, .height = 2 }, inputs[0..2], commands[1..3]),
+    );
+    try std.testing.expectEqualDeep(before, inputs);
 }
