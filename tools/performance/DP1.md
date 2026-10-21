@@ -2,7 +2,7 @@
 
 Qualified on physical **DP-1: 1920×1080, scale 1, 240 Hz**, and separately in
 private KWin. The complete native PTY grid is **384×83 = 31,872 cells** for
-all four horses. Use the full 384×83 producer lattice in the next race.
+all four horses. The physical race uses the full 384×83 producer lattice.
 
 | Horse | Installed version / build | Font | Native grid | Cell pixels |
 |---|---|---|---|---|
@@ -49,8 +49,9 @@ README/config/source, and the official online references:
 - Foot: /usr/share/man/man5/foot.ini.5.gz; upstream https://codeberg.org/dnkl/foot.
 
 The previous CPU tables used different grids and Kitty pacing choices. Preserve
-their original conditions; these profiles need fresh timing. This calibration
-provides geometry and configuration qualification, without a new CPU ranking.
+their original conditions; the fresh 32-run physical Hyprland timing is now in
+[race.html](race.html#dp1-race-20261021). This calibration provides its geometry
+and configuration qualification.
 
 ## Launch and acceptance
 
@@ -94,3 +95,11 @@ dp1-attempt1/ contain geometry, terminal queries, owned window identities, logs,
 screenshots and exact hashes. docs/ contains manual snapshots. DECISIONS.md
 records settings and rejected-attempt details. No diagnostic code enters product
 source.
+
+## Physical race completed
+
+The fresh 32-run cohort and every CPU observation, cold peak and producer miss
+are recorded in [the race report](race.html#dp1-race-20261021). Raw evidence is
+under day-20261021/dp1-race/final-cohort; two interrupted attempts remain separate
+and are excluded from its medians. Per-trial full-grid assertions use the
+calibrated profiles above.

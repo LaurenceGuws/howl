@@ -6,14 +6,16 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
-## Current DP-1 calibration
+## Current DP-1 race and calibration
 
 [DP1.md](DP1.md) is the current four-horse setup: physical 1920×1080, scale 1,
 240 Hz, native fullscreen **384×83 cells**, **5×13 pixels per cell** for Howl,
 Foot, Kitty and Alacritty. It documents version-matched settings, Alacritty's
 warning repair, pacing choices and actual full-grid/corner proofs. The configs
 under configs/ contain these choices. New races must verify the whole native
-grid and use the full 384×83 producer lattice.
+grid and use the full 384×83 producer lattice. The fresh 32-run physical Hyprland
+race is recorded in [race.html](race.html#dp1-race-20261021), including every CPU
+observation, cold memory peak and producer miss.
 
 ## Historical tracks
 
