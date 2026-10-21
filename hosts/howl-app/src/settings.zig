@@ -31,6 +31,7 @@ pub const Target = union(enum) {
     hide_single_tab,
     tab_width,
     cursor_blink,
+    cursor_shape,
     discover_shells,
     discover_ssh_hosts,
     font: u8,
@@ -66,6 +67,11 @@ pub const Row = struct {
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
+            .cursor_shape => switch (value.cursor_shape) {
+                .block => "Block",
+                .bar => "Bar",
+                .underline => "Underline",
+            },
             .cursor_blink => switch (value.cursor_blink) {
                 .off => "Off",
                 .application => "Application",
@@ -105,14 +111,14 @@ pub const Row = struct {
     /// Finite settings use staged choices and never accept arbitrary text.
     pub fn choice(self: Row) bool {
         return switch (self.target) {
-            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .discover_shells, .discover_ssh_hosts => true,
+            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .discover_shells, .discover_ssh_hosts => true,
             else => false,
         };
     }
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -143,6 +149,7 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
     try b.add(.{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink });
+    try b.add(.{ .page = .appearance, .label = "Cursor shape", .target = .cursor_shape });
     try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });
     for (colors.app_labels, 0..) |label, index| try b.add(.{ .page = .colors, .scope = "App", .label = label, .target = .{ .app_color = @intCast(index) } });
     try b.add(.{ .page = .colors, .label = "Reset app overrides", .target = .reset_app_colors });
@@ -206,6 +213,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
         .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .cursor_shape => value.cursor_shape = if (std.mem.eql(u8, text, "Block")) .block else if (std.mem.eql(u8, text, "Bar")) .bar else if (std.mem.eql(u8, text, "Underline")) .underline else return error.InvalidSetting,
         .cursor_blink => value.cursor_blink = if (std.mem.eql(u8, text, "Off")) .off else if (std.mem.eql(u8, text, "Application")) .application else if (std.mem.eql(u8, text, "Always")) .always else return error.InvalidSetting,
         .discover_shells => value.discover_shells = if (text.len == 0) !value.discover_shells else try boolean(text),
         .discover_ssh_hosts => value.discover_ssh_hosts = if (text.len == 0) !value.discover_ssh_hosts else try boolean(text),
@@ -416,14 +424,17 @@ pub const Editor = struct {
                 };
                 next = ids[@intCast(@mod(index + delta, @as(i16, @intCast(ids.len))))];
             },
-            .cursor_blink => {
-                const choices = [_][]const u8{ "Off", "Application", "Always" };
+            .cursor_blink, .cursor_shape => {
+                const choices: []const []const u8 = if (target == .cursor_shape)
+                    &.{ "Block", "Bar", "Underline" }
+                else
+                    &.{ "Off", "Application", "Always" };
                 var index: i16 = 0;
                 for (choices, 0..) |item, i| if (std.mem.eql(u8, item, value)) {
                     index = @intCast(i);
                     break;
                 };
-                next = choices[@intCast(@mod(index + delta, @as(i16, choices.len)))];
+                next = choices[@intCast(@mod(index + delta, @as(i16, @intCast(choices.len))))];
             },
             .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
             .hide_single_tab, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
@@ -731,4 +742,25 @@ test "blink policy stages finite choices and cursor text color roundtrips indepe
     try std.testing.expectEqualStrings("#abcdef", reopened.value.terminal_colors.cursor_text);
     try std.testing.expectEqual(.application, reopened.value.cursor_blink);
     try std.testing.expectError(error.InvalidColor, change(&current, std.testing.io, .{ .terminal_color = 19 }, "#gg0011"));
+}
+
+test "cursor shape choice stages and wraps without accepting text" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    var editor: Editor = .{};
+    const row: Row = .{ .page = .appearance, .label = "Cursor shape", .target = .cursor_shape };
+    try editor.begin(row, &current);
+    try editor.cycle(&current, -1);
+    try editor.append("hidden");
+    try std.testing.expectEqualStrings("Underline", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(.block, current.value.cursor_shape);
+    var next = try change(&current, std.testing.io, .cursor_shape, editor.buffer[0..editor.len]);
+    defer next.deinit();
+    try std.testing.expectEqual(.underline, next.value.cursor_shape);
+    try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .cursor_shape, "none"));
+    var reopened = try config.Config.fromValue(std.testing.allocator, std.testing.io, next.value);
+    defer reopened.deinit();
+    try std.testing.expectEqual(.underline, reopened.value.cursor_shape);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("Block", editor.buffer[0..editor.len]);
 }

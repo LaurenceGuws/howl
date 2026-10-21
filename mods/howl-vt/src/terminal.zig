@@ -5471,6 +5471,8 @@ pub const Terminal = struct {
     pub const Baseline = Screen.Baseline;
     /// Uses the canonical resolved cursor shape.
     pub const CursorShape = Screen.CursorShape;
+    /// Configured cursor baseline; program controls remain authoritative.
+    pub const CursorStyle = Screen.CursorStyle;
     /// Uses one row's DEC presentation geometry.
     pub const LineGeometry = Screen.LineGeometry;
     /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
@@ -6531,6 +6533,17 @@ pub const Terminal = struct {
         self.screen_state.alternate.cursor.cursor_text_color = null;
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;
+    }
+
+    /// Replaces both screen defaults without disturbing program overrides or content.
+    /// Cursor resets expose this baseline; repeated configuration is a no-op.
+    pub fn setDefaultCursorStyle(self: *Terminal, style: CursorStyle) void {
+        self.requireNoPreparedResize();
+        if (std.meta.eql(self.screen_state.primary.cursor.default_style, style) and
+            std.meta.eql(self.screen_state.alternate.cursor.default_style, style)) return;
+        self.screen_state.primary.setDefaultCursorStyle(style);
+        self.screen_state.alternate.setDefaultCursorStyle(style);
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -11385,4 +11398,63 @@ test "parameterized SGR preserves synchronized progress noops and failure before
     const recovered = try terminal.feed("B");
     try std.testing.expect(recovered.mutations.text);
     try std.testing.expectEqual(Screen.Color.indexed(42), terminal.screen_state.active().cellInfoAt(0, 1).attrs.fg);
+}
+
+test "configured cursor defaults preserve overrides across screens and reset without touching content" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const content = terminal.contentSequence();
+    const before = terminal.semanticSequence();
+    terminal.setDefaultCursorStyle(.{ .shape = .bar, .blink = false });
+    try std.testing.expectEqual(before + 1, terminal.semanticSequence());
+    try std.testing.expectEqual(content, terminal.contentSequence());
+    try std.testing.expectEqual(.bar, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(!terminal.semanticView(0).cursor_blink);
+    terminal.setDefaultCursorStyle(.{ .shape = .bar, .blink = false });
+    try std.testing.expectEqual(before + 1, terminal.semanticSequence());
+
+    // zig-audit: acknowledge discard
+    // reason: Effective cursor and content assertions prove the program override independently of feed counters.
+    _ = try terminal.feed("\x1b[4 q");
+    terminal.setDefaultCursorStyle(.{ .shape = .block, .blink = true });
+    try std.testing.expectEqual(.underline, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(!terminal.semanticView(0).cursor_blink);
+    try std.testing.expectEqual(content, terminal.contentSequence());
+    // zig-audit: acknowledge discard
+    // reason: Cursor-style reset must reveal the newly configured baseline.
+    _ = try terminal.feed("\x1b[0 q");
+    try std.testing.expectEqual(.block, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(terminal.semanticView(0).cursor_blink);
+    // zig-audit: acknowledge discard
+    // reason: Alternate-screen reset and primary override assertions prove independent screen state.
+    _ = try terminal.feed("\x1b[6 q\x1b[?47h");
+    try std.testing.expectEqual(.block, terminal.semanticView(0).cursor_shape);
+    // zig-audit: acknowledge discard
+    // reason: The alternate program override must survive a live default change.
+    _ = try terminal.feed("\x1b[3 q");
+    terminal.setDefaultCursorStyle(.{ .shape = .bar, .blink = true });
+    try std.testing.expectEqual(.underline, terminal.semanticView(0).cursor_shape);
+    // zig-audit: acknowledge discard
+    // reason: DECSTR restores the active screen's configured cursor defaults.
+    _ = try terminal.feed("\x1b[!p");
+    try std.testing.expectEqual(.bar, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(terminal.semanticView(0).cursor_blink);
+    // zig-audit: acknowledge discard
+    // reason: The primary program-selected steady bar survives work on the alternate screen.
+    _ = try terminal.feed("\x1b[?47l");
+    try std.testing.expectEqual(.bar, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(!terminal.semanticView(0).cursor_blink);
+    // zig-audit: acknowledge discard
+    // reason: Configured shape must not unhide a program-hidden cursor.
+    _ = try terminal.feed("\x1b[?25l");
+    terminal.setDefaultCursorStyle(.{ .shape = .underline, .blink = false });
+    try std.testing.expect(!terminal.semanticView(0).cursor_visible);
+    terminal.hardReset();
+    try std.testing.expectEqual(.underline, terminal.semanticView(0).cursor_shape);
+    try std.testing.expect(!terminal.semanticView(0).cursor_blink);
+    try std.testing.expect(terminal.semanticView(0).cursor_visible);
+    // zig-audit: acknowledge discard
+    // reason: RIS preserves the configured default on the previously inactive bank too.
+    _ = try terminal.feed("\x1b[?47h");
+    try std.testing.expectEqual(.underline, terminal.semanticView(0).cursor_shape);
 }

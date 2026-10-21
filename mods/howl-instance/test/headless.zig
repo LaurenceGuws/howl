@@ -14,8 +14,15 @@ test "headless public owner serves canonical VT and explicit geometry" {
         .rows = 2,
         .columns = 4,
         .history_rows = 4,
+        .cursor_style = .{ .shape = .bar, .blink = false },
     });
     defer instance.deinit(owner);
+    try std.testing.expectEqual(.bar, instance.terminal(owner).semanticView(0).cursor_shape);
+    const content = instance.terminal(owner).contentSequence();
+    instance.setDefaultCursorStyle(owner, .{ .shape = .underline, .blink = false });
+    try std.testing.expectEqual(content, instance.terminal(owner).contentSequence());
+    try std.testing.expectEqual(.underline, instance.terminal(owner).semanticView(0).cursor_shape);
+    try std.testing.expect(!instance.terminal(owner).semanticView(0).cursor_blink);
     try instance.resizeGeometry(owner, 3, 6, 11, 22);
     const observation = instance.terminal(owner);
     const view = observation.semanticView(0);

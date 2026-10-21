@@ -45,8 +45,21 @@ suffix; no text shaping, frame publication or content texture rebuild runs for a
 blink tick. Off/steady presentation has no cursor timer. Terminal color overrides
 include independent cursor and cursor_text colors; blank inherits the preset.
 The text color recolors clipped monochrome glyph ink under a block; color glyphs
-keep their colors. Shape defaults, unfocused outlines, thickness/contrast polish,
-and motion/trails remain future cursor increments.
+keep their colors.
+
+Appearance → “Cursor shape” selects Block (default), Bar or Underline, persisted as
+cursor_shape="block", "bar" or "underline". The baseline applies to new and existing
+panes on both screen banks. Application style overrides survive a preference
+change; DECSCUSR 0, DECSTR and RIS reveal the configured default according to their
+normal screen/reset scope. Changing the default does not unhide a program-hidden
+cursor or invalidate terminal content.
+
+Inactive panes and unfocused terminals show a steady hollow cell in the effective
+cursor color. It uses one physical pixel per edge at every scale, preserves the
+original glyph underneath, and stays absent when the program hides its cursor.
+Focus changes compose this outline from the same immutable frame and retained
+content texture. Wide/colored glyph edge cases, thickness/contrast polish and
+motion/trails remain future cursor increments.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

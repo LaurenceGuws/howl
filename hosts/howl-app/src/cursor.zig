@@ -2,6 +2,22 @@
 const std = @import("std");
 const instance = @import("howl_instance");
 
+/// Configured visible baseline; applications may still select or hide their cursor.
+pub const Shape = enum {
+    block,
+    bar,
+    underline,
+
+    /// Converts the host preference to canonical cursor defaults.
+    pub fn style(self: Shape) instance.Terminal.CursorStyle {
+        return .{ .shape = switch (self) {
+            .block => .block,
+            .bar => .bar,
+            .underline => .underline,
+        }, .blink = true };
+    }
+};
+
 /// Off preserves steady presentation; application follows DECSCUSR/DEC blink intent.
 pub const Policy = enum { off, application, always };
 const half_period_ms: u64 = 500;

@@ -218,6 +218,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
         pub const Launch = struct {
             shell: []const u8,
             color_defaults: Terminal.ColorDefaults = .{},
+            cursor_style: Terminal.CursorStyle = .{ .shape = .block, .blink = true },
             command: ?[]const u8 = null,
             /// Literal program arguments excluding argv[0]. On Linux, executes
             /// shell as the program path without -i/-c; mutually exclusive with
@@ -378,6 +379,11 @@ pub fn Runtime(comptime Presentation: ?type) type {
         /// Appends an opt-in terminal-owned light/dark preference notification.
         pub fn reportColorSchemePreference(instance: *Instance, preference: ColorSchemePreference) ColorPreferenceNotificationError!bool {
             return stateMut(instance).terminal.reportColorSchemePreference(preference);
+        }
+
+        /// Changes canonical defaults while preserving program-selected cursor styles.
+        pub fn setDefaultCursorStyle(instance: *Instance, style: Terminal.CursorStyle) void {
+            stateMut(instance).terminal.setDefaultCursorStyle(style);
         }
 
         /// Applies one caller-serialized host color preference to the canonical VT.
@@ -1181,6 +1187,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     external_pixel_count + frame.pixels.len,
                     view.cursor_blink,
                     view.cursor_movement_timestamp_ns,
+                    frame.cursor,
                 );
             }
         };
@@ -1292,6 +1299,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                 );
                 errdefer self.terminal.deinit();
                 self.terminal.setColorDefaults(launch.color_defaults);
+                self.terminal.setDefaultCursorStyle(launch.cursor_style);
                 try self.terminal.setCellPixelSize(launch.cell_pixel_width, launch.cell_pixel_height);
             }
 

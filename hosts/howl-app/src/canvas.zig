@@ -6,6 +6,9 @@ const terminal = @import("terminal.zig");
 const selection = @import("selection.zig");
 const render = instance.render.terminal;
 
+/// Host focus/blink composition over one immutable cursor frame.
+pub const CursorDisplay = enum { shown, hidden, outline };
+
 const resource_limit = render.maximum_frame_resources;
 // SDL3.4.18 merges queued geometry. Historical NVIDIA client-array uploads
 // above 4 MiB retained growing storage. Bound the whole content queue, including
@@ -174,7 +177,7 @@ pub const Canvas = struct {
     }
 
     /// Draws canonical commands with exact pane/resource clipping using shared bounded batches.
-    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, show_cursor: bool) !void {
+    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, cursor: CursorDisplay) !void {
         const value = self.frame() orelse return;
         // Canonical commands already use physical pixels. Dividing then letting
         // SDL scale them back introduces fractional cell edges and visible seams.
@@ -231,7 +234,23 @@ pub const Canvas = struct {
         };
         if (!c.SDL_SetRenderClipRect(renderer, &pane_clip) or
             !c.SDL_RenderTexture(renderer, target, null, &destination_rect)) return error.SDLTexture;
-        if (show_cursor) try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]);
+        switch (cursor) {
+            .shown => try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]),
+            .hidden => {},
+            .outline => if (value.cursor) |overlay| {
+                const r = overlay.rect;
+                const right = r.x + @as(i32, r.width) - 1;
+                const bottom = r.y + @as(i32, r.height) - 1;
+                // Four filled physical-pixel edges avoid scale-dependent SDL strokes.
+                const commands = [_]render.Command{
+                    .{ .solid = .{ .rect = .{ .x = r.x, .y = r.y, .width = r.width, .height = 1 }, .color = overlay.color } },
+                    .{ .solid = .{ .rect = .{ .x = r.x, .y = bottom, .width = r.width, .height = 1 }, .color = overlay.color } },
+                    .{ .solid = .{ .rect = .{ .x = r.x, .y = r.y, .width = 1, .height = r.height }, .color = overlay.color } },
+                    .{ .solid = .{ .rect = .{ .x = right, .y = r.y, .width = 1, .height = r.height }, .color = overlay.color } },
+                };
+                try self.drawCommands(renderer, geometry, pane, &commands);
+            },
+        }
         if (!c.SDL_SetRenderClipRect(renderer, null)) return error.SDLClip;
         if (!c.SDL_SetRenderScale(renderer, previous_x, previous_y)) return error.SDLScale;
     }
@@ -459,7 +478,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, true);
+    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(@as(?terminal.Failure, null), owner.snapshot().failure);
 }
@@ -517,7 +536,7 @@ test "repeated alternate-screen blank and text cuts retain exact backend residen
         const blank = step >= 2 and (step - 2) % 2 == 0;
         try std.testing.expectEqual(step >= 2 and (step - 2) % 4 != 3, value.alternate_screen);
         errdefer std.debug.print("alternate texture failure at step {d}, title {s}, uploads {d}, removals {d}, textures {d}\n", .{ step, title, value.uploads.len, value.removals.len, backend.count });
-        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, true);
+        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         try std.testing.expectEqual(@as(usize, if (blank) 0 else 1), backend.count);
         var retained: [250 * 100][3]u8 = undefined;
@@ -594,7 +613,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
             .y = 11 / scale,
             .w = @as(f32, @floatFromInt(frame.surface.width)) / scale,
             .h = @as(f32, @floatFromInt(frame.surface.height)) / scale,
-        }, scale, true);
+        }, scale, .shown);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         var restored_x: f32 = 0;
         var restored_y: f32 = 0;
@@ -639,7 +658,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
     };
     try std.testing.expect(c.SDL_SetRenderScale(renderer, 2, 2));
     backend.clearTextures();
-    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2, true));
+    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2, .shown));
     var restored_x: f32 = 0;
     var restored_y: f32 = 0;
     try std.testing.expect(c.SDL_GetRenderScale(renderer, &restored_x, &restored_y));
@@ -672,7 +691,7 @@ test "SDL queue budget admits its exact limit and retires before the next packet
     try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
 }
 
-test "all cursor shapes blink over exact retained content without replacing the texture or leased frame" {
+test "cursor shapes blink and outline over retained content at fractional scales without replacing texture or frame" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -722,6 +741,7 @@ test "all cursor shapes blink over exact retained content without replacing the 
     }
     if (ready_attempts == 5000) return error.Timeout;
     var retained_revision: ?u64 = null;
+    var retained_texture: ?*c.SDL_Texture = null;
     var pixels: [160 * 160][3]u8 = undefined;
     for ([_][]const u8{ "2", "1", "4", "3", "6", "5" }) |style| {
         const before_revision = owner.snapshot().revision;
@@ -744,12 +764,14 @@ test "all cursor shapes blink over exact retained content without replacing the 
         try std.testing.expect(frame.content_command_count < frame.commands.len);
         if (retained_revision) |revision| try std.testing.expectEqual(revision, frame.content_revision) else retained_revision = frame.content_revision;
         const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(frame.surface.width), .h = @floatFromInt(frame.surface.height) };
-        for ([_]bool{ true, false, true, false }) |show| {
+        for ([_]CursorDisplay{ .shown, .hidden, .outline }) |mode| for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| {
+            try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
-            try backend.draw(renderer, geometry, pane, 1, show);
+            try backend.draw(renderer, geometry, pane, scale, mode);
             try std.testing.expect(c.SDL_RenderPresent(renderer));
             const target = backend.content.?;
+            if (retained_texture) |previous| try std.testing.expectEqual(previous, target) else retained_texture = target;
             var green_ink: usize = 0;
             for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
                 const at = y * frame.surface.width + x;
@@ -757,19 +779,30 @@ test "all cursor shapes blink over exact retained content without replacing the 
                 try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &pixel[0], &pixel[1], &pixel[2], null));
                 if (@as(u16, pixel[1]) > @as(u16, pixel[0]) + 50 and @as(u16, pixel[1]) > @as(u16, pixel[2]) + 50) green_ink += 1;
             };
-            try std.testing.expect((green_ink != 0) == (show and (style[0] == '1' or style[0] == '2')));
+            try std.testing.expect((green_ink != 0) == (mode == .shown and (style[0] == '1' or style[0] == '2')));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
-            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..if (show) frame.commands.len else frame.content_command_count]);
+            // Independent full-command oracle plus exact one-pixel outline edges.
+            try std.testing.expect(c.SDL_SetRenderScale(renderer, 1, 1));
+            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..if (mode == .shown) frame.commands.len else frame.content_command_count]);
             try std.testing.expect(c.SDL_RenderPresent(renderer));
             for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
                 var actual: [3]u8 = undefined;
                 try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &actual[0], &actual[1], &actual[2], null));
+                if (mode == .outline) {
+                    const overlay = frame.cursor.?;
+                    const r = overlay.rect;
+                    const left: usize = @intCast(r.x);
+                    const top: usize = @intCast(r.y);
+                    if (x >= left and x < left + r.width and y >= top and y < top + r.height and
+                        (x == left or x == left + r.width - 1 or y == top or y == top + r.height - 1))
+                        actual = .{ overlay.color.r, overlay.color.g, overlay.color.b };
+                }
                 try std.testing.expectEqual(pixels[y * frame.surface.width + x], actual);
             };
             try std.testing.expectEqual(target, backend.content.?);
             try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
             try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
-        }
+        };
     }
 }

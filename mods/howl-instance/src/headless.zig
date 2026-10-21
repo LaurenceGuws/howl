@@ -64,6 +64,8 @@ pub const ChildExit = runtime.ChildExit;
 pub const Launch = runtime.Launch;
 /// Applies the host-configured VT color baseline without parsing synthetic output.
 pub const setColorDefaults = runtime.setColorDefaults;
+/// Replaces canonical cursor defaults without clearing application overrides.
+pub const setDefaultCursorStyle = runtime.setDefaultCursorStyle;
 /// Reports opt-in color-preference notification admission failure.
 pub const ColorPreferenceNotificationError = runtime.ColorPreferenceNotificationError;
 /// Notifies a program only when its canonical mode2031 requests host preference changes.

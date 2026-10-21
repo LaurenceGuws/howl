@@ -155,6 +155,12 @@ pub const FrameBuffers = struct {
     pixels: []u8,
 };
 
+/// Renderer-owned visible cursor cell for alternate host composition.
+pub const CursorOverlay = struct {
+    rect: frame_vocabulary.Rect,
+    color: frame_vocabulary.Color,
+};
+
 /// Borrows one completed backend-facing frame until the next Renderer mutation.
 pub const Frame = struct {
     revision: u64,
@@ -162,6 +168,8 @@ pub const Frame = struct {
     content_revision: u64,
     /// Commands before this boundary paint content; the suffix paints the cursor.
     content_command_count: usize,
+    /// Null for a hidden or off-viewport cursor; independent of its painted shape.
+    cursor: ?CursorOverlay = null,
     uploads: []const frame_vocabulary.FrameResourceUpload,
     removals: []const frame_vocabulary.ResourceRef,
     commands: []const frame_vocabulary.Command,
@@ -1227,6 +1235,7 @@ pub fn frame(
         .revision = impl.revision,
         .content_revision = impl.content_revision,
         .content_command_count = content_command_count,
+        .cursor = if (impl.cursor) |value| .{ .rect = value.rect, .color = value.color } else null,
         .uploads = buffers.uploads[0..upload_count],
         .removals = buffers.removals[0..removal_at],
         .commands = projected,

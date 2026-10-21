@@ -50,6 +50,7 @@ pub const Schema = struct {
     hide_single_tab: bool = false,
     tab_width: TabWidth = .fixed,
     cursor_blink: cursor.Policy = .off,
+    cursor_shape: cursor.Shape = .block,
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
     font: Font = .{},

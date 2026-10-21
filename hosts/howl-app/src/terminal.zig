@@ -125,6 +125,14 @@ pub const Terminal = opaque {
         owned.wake();
         owned.mutex.unlock(owned.io);
     }
+    /// Coalesces cursor defaults without bypassing the sole canonical worker.
+    pub fn setDefaultCursorStyle(self: *Terminal, style: instance.Terminal.CursorStyle) void {
+        const owned = self.state();
+        owned.mutex.lockUncancelable(owned.io);
+        owned.pending_cursor = style;
+        owned.wake();
+        owned.mutex.unlock(owned.io);
+    }
     /// Borrows a font recipe only until the sole worker completes its transaction.
     /// Waiting is uncancelable, so queued configuration cannot outlive these borrowed paths.
     pub fn reconfigure(self: *Terminal, config: instance.PresentationConfig, surface: ?instance.render.terminal.Size) ConfigureError!instance.PresentationGeometry {
@@ -189,6 +197,7 @@ const State = struct {
     stopping: bool = false,
     status: Status = .{},
     pending_colors: ?instance.Terminal.ColorDefaults = null,
+    pending_cursor: ?instance.Terminal.CursorStyle = null,
     color_preference: instance.ColorSchemePreference = .dark,
     preference_pending: bool = false,
     visible: std.atomic.Value(bool) = .init(true),
@@ -711,6 +720,14 @@ const State = struct {
         return result;
     }
 
+    fn takeCursor(self: *State) ?instance.Terminal.CursorStyle {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.pending_cursor;
+        self.pending_cursor = null;
+        return result;
+    }
+
     fn loop(self: *State) !void {
         var readable = true;
         var writable = true;
@@ -723,6 +740,10 @@ const State = struct {
                 .configure => |request| self.applyConfiguration(request),
                 .copy => |request| self.applyCopy(request),
             };
+            if (self.takeCursor()) |style| {
+                instance.setDefaultCursorStyle(self.value, style);
+                self.gate.pending = true;
+            }
             if (self.takeColors()) |defaults| {
                 instance.setColorDefaults(self.value, defaults);
                 const preference = desktop.colorPreference(defaults.background);

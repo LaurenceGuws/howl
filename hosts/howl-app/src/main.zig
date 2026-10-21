@@ -192,6 +192,7 @@ const App = struct {
             .arguments = recipe.arguments,
             .cwd = if (recipe.cwd.len != 0) recipe.cwd else null,
             .color_defaults = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme),
+            .cursor_style = self.configuration.value.cursor_shape.style(),
             .rows = 37,
             .columns = 80,
         }, presentation, self.wake_event, false);
@@ -550,6 +551,7 @@ const App = struct {
         const previous_colors = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme);
         const next_colors = try candidate.value.terminal_colors.resolve(candidate.value.terminal_theme);
         const colors_changed = !std.meta.eql(previous_colors, next_colors);
+        const cursor_changed = self.configuration.value.cursor_shape != candidate.value.cursor_shape;
         var paths_changed = false;
         for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
             paths_changed = paths_changed or !std.mem.eql(u8, old, new);
@@ -609,6 +611,11 @@ const App = struct {
         if (colors_changed) {
             for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |target_pane| {
                 if (target_pane.owner) |owner| owner.setColorDefaults(next_colors);
+            };
+        }
+        if (cursor_changed) {
+            for (self.tabs[0..self.tab_count]) |maybe_tab| for (maybe_tab.?.panes) |maybe_pane| if (maybe_pane) |target_pane| {
+                if (target_pane.owner) |owner| owner.setDefaultCursorStyle(self.configuration.value.cursor_shape.style());
             };
         }
         if (next_ui) |owned| {
@@ -2424,11 +2431,13 @@ const App = struct {
                     p.columns = columns;
                 }
                 const placed = terminalPlacement(rect, frame.surface, self.scale);
-                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, self.focused and active and !status.closed and p.graphics_failure == null and
+                const cursor_focused = self.focused and active and !status.closed and p.graphics_failure == null and
                     self.palette == null and self.settings_editor == null and self.chooser == null and
-                    c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0, self.configuration.value.cursor_blink);
+                    c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0;
+                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, cursor_focused, self.configuration.value.cursor_blink);
+                const cursor_display: canvas.CursorDisplay = if (!cursor_focused) .outline else if (show_cursor) .shown else .hidden;
                 if (p.blink.deadline) |deadline| self.cursor_deadline = deadline;
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, show_cursor) catch |failure| {
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {

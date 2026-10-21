@@ -82,6 +82,8 @@ pub const FrameBuffers = renderer.FrameBuffers;
 pub const RetainedContent = renderer.RetainedContent;
 /// Uses the source-neutral completed frame view.
 pub const Frame = renderer.Frame;
+/// Renderer-owned visible cursor cell for alternate host composition.
+pub const CursorOverlay = renderer.CursorOverlay;
 /// Uses the retained-row scene update kind.
 pub const RowSceneKind = renderer.RowSceneKind;
 /// Uses one retained-row command span.
