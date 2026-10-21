@@ -54,6 +54,7 @@ pub const Range = struct {
     focus: vt.TextPoint,
     columns: u16,
     alternate: bool,
+    empty: bool = false,
 
     /// Eviction, reflow or screen-bank changes invalidate explicitly; vertical growth and scrolling do not.
     pub fn validity(self: Range, context: Context) Validity {
@@ -67,8 +68,16 @@ pub const Range = struct {
             return .{ .start = self.anchor, .end = self.focus };
         return .{ .start = self.focus, .end = self.anchor };
     }
+    /// Extends a retained range; entering actual text activates an initially empty padding anchor.
+    pub fn extend(self: *Range, view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!void {
+        self.focus = try dragPoint(view, row_index, column);
+        const raw = try point(view, row_index, column);
+        if (!std.meta.eql(self.anchor, self.focus) or
+            (std.meta.eql(raw, self.focus) and (try textEnd(view)) != null)) self.empty = false;
+    }
     /// Copies canonical text only after validating the current retained domain.
     pub fn copy(self: Range, observation: *const vt.Observation, allocator: std.mem.Allocator, max_bytes: usize) ![]const u8 {
+        if (self.empty) return error.NoSelection;
         switch (self.validity(Context.fromView(observation.semanticView(0)))) {
             .valid => {},
             .context_changed => return error.SelectionContextChanged,
@@ -91,6 +100,7 @@ pub const Range = struct {
     /// Paints text-shaped spans, including a hard newline cell and the complete final wide glyph.
     pub fn paint(self: Range, view: vt.SemanticView, serial: u64) !Paint {
         var result: Paint = .{ .serial = serial, .rows = view.rows };
+        if (self.empty) return result;
         if (view.rows > result.spans.len) return error.InvalidSelection;
         const context = Context.fromView(view);
         if (self.validity(context) != .valid) return result;
@@ -138,13 +148,6 @@ pub fn textEnd(view: vt.SemanticView) error{InvalidSelection}!?vt.TextPoint {
     }
     return null;
 }
-/// Primary live padding cannot start a selection; interior blank rows remain selectable.
-pub fn canStart(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!bool {
-    if (view.is_alternate_screen or view.history_offset != 0) return true;
-    const end = (try textEnd(view)) orelse return false;
-    const value = try point(view, row_index, column);
-    return !after(value, end);
-}
 /// A drag into unused live rows stops at the last actual glyph.
 pub fn dragPoint(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSelection}!vt.TextPoint {
     const value = try point(view, row_index, column);
@@ -164,10 +167,13 @@ pub fn point(view: vt.SemanticView, row_index: u16, column: u16) error{InvalidSe
     if (!context.retained(value)) return error.InvalidSelection;
     return value;
 }
-/// Starts a collapsed range from the exact canonical lead cell.
+/// Starts at canonical text, retaining an empty end anchor when the pointer is in live padding.
 pub fn start(view: vt.SemanticView, row_index: u16, column: u16) !Range {
-    const value = try point(view, row_index, column);
-    return .{ .anchor = value, .focus = value, .columns = view.cols, .alternate = view.is_alternate_screen };
+    const raw = try point(view, row_index, column);
+    const value = try dragPoint(view, row_index, column);
+    const empty = !view.is_alternate_screen and view.history_offset == 0 and
+        ((try textEnd(view)) == null or !std.meta.eql(raw, value));
+    return .{ .anchor = value, .focus = value, .columns = view.cols, .alternate = view.is_alternate_screen, .empty = empty };
 }
 /// Selects one projected visual row's text, deliberately without inventing logical-line search.
 pub fn visualRow(view: vt.SemanticView, row_index: u16) !?Range {
@@ -289,9 +295,9 @@ test "prompt selection excludes unused live padding but retains interior blank r
     // reason: This selection proof checks canonical text and overlay spans instead of parser progress counters.
     _ = try terminal.feed("first\r\n\r\nwide: 界\r\nprompt> ");
     const view = terminal.semanticView(0);
-    try std.testing.expect(!(try canStart(view, 5, 0)));
-    try std.testing.expect(!(try canStart(view, 3, 19)));
-    try std.testing.expect(try canStart(view, 1, 0));
+    try std.testing.expect((try start(view, 5, 0)).empty);
+    try std.testing.expect((try start(view, 3, 19)).empty);
+    try std.testing.expect(!(try start(view, 1, 0)).empty);
     var selected = try start(view, 0, 0);
     selected.focus = try point(view, 5, 19);
     const text = try selected.copy(terminal.observation(), std.testing.allocator, 128);
@@ -305,5 +311,30 @@ test "prompt selection excludes unused live padding but retains interior blank r
     // zig-audit: acknowledge discard
     // reason: The assertions inspect content after cursor-only movement, not parser counters.
     _ = try terminal.feed("\x1b[H");
-    try std.testing.expect(try canStart(terminal.semanticView(0), 3, 0));
+    try std.testing.expect(!(try start(terminal.semanticView(0), 3, 0)).empty);
+}
+
+test "a drag beginning below or right of the prompt selects backwards without a whitespace tail" {
+    var terminal = try vt.init(std.testing.allocator, 6, 20);
+    defer terminal.deinit();
+    // zig-audit: acknowledge discard
+    // reason: This test asserts selection endpoints, exact copied text and spans instead of feed counters.
+    _ = try terminal.feed("first\r\n\r\nprompt> ");
+    const view = terminal.semanticView(0);
+    for ([_]Position{ .{ .row = 5, .col = 19 }, .{ .row = 2, .col = 19 } }) |origin| {
+        var selected = try start(view, origin.row, origin.col);
+        try std.testing.expect(selected.empty);
+        try std.testing.expectError(error.NoSelection, selected.copy(terminal.observation(), std.testing.allocator, 128));
+        const empty_paint = try selected.paint(view, 1);
+        try std.testing.expect(empty_paint.spans[2] == null and empty_paint.spans[5] == null);
+        try selected.extend(view, 0, 0);
+        const copied = try selected.copy(terminal.observation(), std.testing.allocator, 128);
+        defer std.testing.allocator.free(copied);
+        try std.testing.expectEqualStrings("first\n\nprompt>", copied);
+        selected = try start(view, origin.row, origin.col);
+        try selected.extend(view, 2, 6);
+        const last = try selected.copy(terminal.observation(), std.testing.allocator, 8);
+        defer std.testing.allocator.free(last);
+        try std.testing.expectEqualStrings(">", last);
+    }
 }

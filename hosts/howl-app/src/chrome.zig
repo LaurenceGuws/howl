@@ -19,33 +19,20 @@ pub fn step(count: u8, width: f32) f32 {
 pub const Tabs = struct {
     count: u8,
     window_width: f32,
-    strides: [8]f32 = @splat(0),
+    stride: f32,
 
-    /// Fixed chips preserve the current policy; fitted titles share overflow proportionally.
-    pub fn init(count: u8, width: f32, desired: ?[]const f32) Tabs {
+    /// Fit shares the available tab area equally; Fixed retains its 200-pixel cap.
+    pub fn init(count: u8, width: f32, fit: bool) Tabs {
         std.debug.assert(count <= 8);
-        var result: Tabs = .{ .count = count, .window_width = width };
-        if (desired) |sizes| {
-            std.debug.assert(sizes.len == count);
-            var extra: f32 = 0;
-            for (sizes) |size| extra += std.math.clamp(size, 48, 400) - 20;
-            const available = @max(0, width - 266 - @as(f32, @floatFromInt(count)) * 20);
-            const ratio = if (extra == 0) 0 else @min(1, available / extra);
-            for (sizes, 0..) |size, i| result.strides[i] = 20 + (std.math.clamp(size, 48, 400) - 20) * ratio;
-        } else for (result.strides[0..count]) |*stride| stride.* = step(count, width);
-        return result;
+        return .{ .count = count, .window_width = width, .stride = if (fit) @max(20, (width - 266) / @as(f32, @floatFromInt(@max(1, count)))) else step(count, width) };
     }
     /// Chip geometry including the shared three-pixel gap.
     pub fn tab(self: Tabs, index: u8) Rect {
-        var x: f32 = 8;
-        for (self.strides[0..index]) |stride| x += stride;
-        return .{ .x = x, .y = 4, .width = self.strides[index] - 3, .height = 30 };
+        return .{ .x = 8 + @as(f32, @floatFromInt(index)) * self.stride, .y = 4, .width = self.stride - 3, .height = 30 };
     }
     /// New-tab button immediately follows the occupied strip.
     pub fn plus(self: Tabs) Rect {
-        var x: f32 = 8;
-        for (self.strides[0..self.count]) |stride| x += stride;
-        return .{ .x = x, .y = 4, .width = 32, .height = 30 };
+        return .{ .x = 8 + @as(f32, @floatFromInt(self.count)) * self.stride, .y = 4, .width = 32, .height = 30 };
     }
     /// Profile-menu button beside New Tab.
     pub fn profiles(self: Tabs) Rect {
@@ -61,19 +48,19 @@ pub const Tabs = struct {
 };
 /// Fixed chip geometry for callers without fitted title measurements.
 pub fn tab(index: u8, count: u8, width: f32) Rect {
-    return Tabs.init(count, width, null).tab(index);
+    return Tabs.init(count, width, false).tab(index);
 }
 /// New-tab button for the fixed strip.
 pub fn plus(count: u8, width: f32) Rect {
-    return Tabs.init(count, width, null).plus();
+    return Tabs.init(count, width, false).plus();
 }
 /// Profile button for the fixed strip.
 pub fn profiles(count: u8, width: f32) Rect {
-    return Tabs.init(count, width, null).profiles();
+    return Tabs.init(count, width, false).profiles();
 }
 /// Unoccupied fixed caption.
 pub fn caption(count: u8, width: f32) Rect {
-    return Tabs.init(count, width, null).caption();
+    return Tabs.init(count, width, false).caption();
 }
 /// One caption button; none has no hit area.
 pub fn control(button: Button, width: f32) Rect {
@@ -125,22 +112,22 @@ pub const Drag = struct {
     }
 };
 test "custom caption excludes controls and tabs; maximized/fullscreen never resize" {
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, 1000, 650, Tabs.init(2, 1000, null), 0, true));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(1, 1, 1000, 650, Tabs.init(2, 1000, null), c.SDL_WINDOW_MAXIMIZED, true));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(400, 20, 1000, 650, Tabs.init(2, 1000, null), c.SDL_WINDOW_FULLSCREEN, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, 1000, 650, Tabs.init(2, 1000, false), 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(1, 1, 1000, 650, Tabs.init(2, 1000, false), c.SDL_WINDOW_MAXIMIZED, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(400, 20, 1000, 650, Tabs.init(2, 1000, false), c.SDL_WINDOW_FULLSCREEN, true));
     const drag = caption(2, 1000);
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_DRAGGABLE), hit(drag.x + 1, 20, 1000, 650, Tabs.init(2, 1000, null), 0, true));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(settings(1000).x + 1, 20, 1000, 650, Tabs.init(2, 1000, null), 0, true));
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(20, 20, 1000, 650, Tabs.init(2, 1000, null), 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_DRAGGABLE), hit(drag.x + 1, 20, 1000, 650, Tabs.init(2, 1000, false), 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(settings(1000).x + 1, 20, 1000, 650, Tabs.init(2, 1000, false), 0, true));
+    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(20, 20, 1000, 650, Tabs.init(2, 1000, false), 0, true));
 }
 test "dragged chip preserves grab offset, reorders at midpoint and clamps outside header" {
     const rect = tab(0, 3, 1000);
     var dragging = Drag.begin(rect, rect.x + 20);
-    try std.testing.expectEqual(@as(u8, 0), dragging.move(28, Tabs.init(3, 1000, null)));
-    try std.testing.expectEqual(@as(u8, 1), dragging.move(28 + step(3, 1000), Tabs.init(3, 1000, null)));
+    try std.testing.expectEqual(@as(u8, 0), dragging.move(28, Tabs.init(3, 1000, false)));
+    try std.testing.expectEqual(@as(u8, 1), dragging.move(28 + step(3, 1000), Tabs.init(3, 1000, false)));
     try std.testing.expectEqual(@as(f32, 8 + step(3, 1000)), dragging.x);
-    try std.testing.expectEqual(@as(u8, 2), dragging.move(4000, Tabs.init(3, 1000, null)));
-    try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, Tabs.init(3, 1000, null)));
+    try std.testing.expectEqual(@as(u8, 2), dragging.move(4000, Tabs.init(3, 1000, false)));
+    try std.testing.expectEqual(@as(u8, 0), dragging.move(-100, Tabs.init(3, 1000, false)));
 }
 
 /// Font-independent New Tab strokes in the existing 32x30 header box.
@@ -181,7 +168,7 @@ test "compact header keeps controls and caption above terminal at fractional wid
             const cap = caption(count, width);
             try std.testing.expect(chip.y + chip.height == height);
             try std.testing.expect(cap.y + cap.height <= height);
-            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, Tabs.init(count, width, null), c.SDL_WINDOW_MAXIMIZED, true));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, height + 0.01, width, 700, Tabs.init(count, width, false), c.SDL_WINDOW_MAXIMIZED, true));
             try std.testing.expect(!chip.contains(chip.x + 1, height));
             try std.testing.expect(!plus(count, width).contains(chip.x + 1, height));
         }
@@ -210,23 +197,27 @@ test "profile button never becomes caption; hidden header retains only native ed
             const menu = profiles(count, width);
             try std.testing.expectEqual(plus_rect.x + plus_rect.width, menu.x);
             try std.testing.expect(menu.x + menu.width <= settings(width).x);
-            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(menu.x + 16, 20, width, 650, Tabs.init(count, width, null), 0, true));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(menu.x + 16, 20, width, 650, Tabs.init(count, width, false), 0, true));
             const cap = caption(count, width);
-            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, 20, width, 650, Tabs.init(count, width, null), 0, false));
-            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, width, 650, Tabs.init(count, width, null), 0, false));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(cap.x + cap.width / 2, 20, width, 650, Tabs.init(count, width, false), 0, false));
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_RESIZE_TOPLEFT), hit(1, 1, width, 650, Tabs.init(count, width, false), 0, false));
         }
     }
 }
 
-test "fitted chip geometry preserves controls and reorder targets under compression" {
-    const fitted = Tabs.init(3, 1000, &.{ 60, 240, 120 });
-    try std.testing.expectEqual(@as(f32, 57), fitted.tab(0).width);
-    try std.testing.expectEqual(@as(f32, 237), fitted.tab(1).width);
-    try std.testing.expectEqual(@as(f32, 428), fitted.plus().x);
+test "fit shares all tab space equally while fixed stays capped and controls remain distinct" {
+    for ([_]f32{ 401.25, 1000, 1536.5 }) |width| {
+        for ([_]u8{ 1, 2, 3, 8 }) |count| {
+            const fitted = Tabs.init(count, width, true);
+            for (1..count) |i| try std.testing.expectEqual(fitted.tab(0).width, fitted.tab(@intCast(i)).width);
+            try std.testing.expectApproxEqAbs(@max(@as(f32, 20), (width - 266) / @as(f32, @floatFromInt(count))), fitted.stride, 0.001);
+            try std.testing.expect(fitted.profiles().x + 32 <= settings(width).x);
+            try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(fitted.tab(0).x + 8, 20, width, 650, fitted, 0, true));
+        }
+    }
+    const fitted = Tabs.init(2, 1000, true);
+    try std.testing.expectEqual(@as(f32, 367), fitted.stride);
+    try std.testing.expectEqual(@as(f32, 200), Tabs.init(2, 1000, false).stride);
     var dragging = Drag.begin(fitted.tab(0), 28);
-    try std.testing.expectEqual(@as(u8, 1), dragging.move(150, fitted));
-    const narrow = Tabs.init(3, 450, &.{ 60, 240, 120 });
-    try std.testing.expect(narrow.profiles().x + 32 <= settings(450).x);
-    for (0..3) |i| try std.testing.expect(narrow.tab(@intCast(i)).width >= 17);
-    try std.testing.expectEqual(@as(c.SDL_HitTestResult, c.SDL_HITTEST_NORMAL), hit(90, 20, 1000, 650, fitted, 0, true));
+    try std.testing.expectEqual(@as(u8, 1), dragging.move(28 + fitted.stride, fitted));
 }

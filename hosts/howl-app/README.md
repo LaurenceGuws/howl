@@ -14,8 +14,9 @@ context-enabled actions; Ctrl+Shift+Space opens the profile menu. The compact
 Ctrl+Shift+P opens Command Palette. Appearance → “Hide top bar with one tab”
 reclaims the whole header for a single terminal (saved as `hide_single_tab`,
 default `false`). Appearance → “Tab chip width” switches between Fixed (the default)
-and Fit title, persisted as tab_width="fixed" or "fit". Fitted chips use measured
-titles up to 400 logical pixels and share limited header space; paint, close,
+and Fit available space, persisted as tab_width="fixed" or "fit". Fit divides the
+available tab area equally: two tabs each get half, three each get a third.
+The header buttons keep their reserved space; paint, close,
 reorder and native caption hits use the same rectangles. Ctrl+T, Ctrl+Shift+Space and Ctrl+, remain available
 when the bar is hidden. SDL
 client chrome owns caption controls, native drag/resize regions and the wider
@@ -27,11 +28,13 @@ and IME text keep their text-input path.
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal
 Find and the frame-derived scrollbar use the same worker and immutable facts.
-Primary-screen selection ignores unused space after the last visible text;
+Primary-screen selection anchors drags from unused space at the end of visible text;
 drags and clipboard extraction stop there while preserving interior blank rows,
 soft wraps and complete wide glyphs. It uses text content rather than cursor
 position. Command/profile search fields show a steady caret without an idle
-blink timer; selecting Profile Menu from Command Palette switches overlays.
+blink timer. Left/Right move through the UTF-8 query; Home/End move to its ends,
+typing inserts at the caret, and Backspace/Delete edit around it. Up/Down still
+select results. Selecting Profile Menu from Command Palette switches overlays.
 Find bounds queries to 255 UTF-8 bytes, retains 512 stable matches and scans four
 rows per service turn. Reflow/eviction/bank changes remain explicit failures.
 

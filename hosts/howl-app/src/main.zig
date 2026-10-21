@@ -88,7 +88,6 @@ const App = struct {
     scale: f32,
     tabs: [tab_limit]?*Tab = @splat(null),
     tab_count: u8 = 0,
-    tab_desired: [tab_limit]f32 = @splat(200),
     active: u8 = 0,
     keyboard: input.Keyboard = .{},
     preedit: composition.Composition = .{},
@@ -127,7 +126,7 @@ const App = struct {
         return self.tab().panes[self.tab().tree.active].?;
     }
     fn headerTabs(self: *const App, width: f32) chrome.Tabs {
-        return chrome.Tabs.init(self.tab_count, width, if (self.configuration.value.tab_width == .fit) self.tab_desired[0..self.tab_count] else null);
+        return chrome.Tabs.init(self.tab_count, width, self.configuration.value.tab_width == .fit);
     }
     fn headerHeight(self: *const App) f32 {
         return if (self.configuration.value.hide_single_tab and self.tab_count <= 1) 0 else chrome.height;
@@ -984,8 +983,19 @@ const App = struct {
                 const selected = &self.palette.?.selected;
                 selected.* = if (key == c.SDLK_PAGEUP) selected.* -| delta else @min(count - 1, selected.* + delta);
             },
-            c.SDLK_HOME => self.palette.?.selected = 0,
-            c.SDLK_END => self.palette.?.selected = count -| 1,
+            c.SDLK_LEFT => self.palette.?.moveCursor(-1),
+            c.SDLK_RIGHT => self.palette.?.moveCursor(1),
+            c.SDLK_HOME => if (mods & c.SDL_KMOD_CTRL != 0) {
+                self.palette.?.selected = 0;
+            } else {
+                self.palette.?.cursor = 0;
+            },
+            c.SDLK_END => if (mods & c.SDL_KMOD_CTRL != 0) {
+                self.palette.?.selected = count -| 1;
+            } else {
+                self.palette.?.cursor = self.palette.?.len;
+            },
+            c.SDLK_DELETE => self.palette.?.delete(),
             c.SDLK_TAB => self.palette.?.cycle(mods & c.SDL_KMOD_SHIFT != 0),
             c.SDLK_BACKSPACE => self.palette.?.erase(mods & c.SDL_KMOD_CTRL != 0),
             c.SDLK_RETURN => if (count != 0) try self.choosePalette(matches[@min(self.palette.?.selected, count - 1)]),
@@ -1554,9 +1564,10 @@ const App = struct {
         try outline(self.renderer, field, colors.border);
         const query = self.palette.?.query[0..self.palette.?.len];
         const query_width = try self.textWidth(query);
-        const query_scroll = @max(0, query_width - @max(1, field.width - 20));
+        const caret_width = try self.textWidth(query[0..self.palette.?.cursor]);
+        const query_scroll = self.palette.?.revealCursor(caret_width, query_width, field.width - 20);
         try self.clippedTextColor(if (query.len != 0) query else if (profiles) "Search profiles" else "Search commands", .{ .x = field.x + 8, .y = field.y + 1, .width = @max(1, field.width - 16), .height = 30 }, field.x + 8 - query_scroll, if (query.len == 0) colors.muted else colors.text);
-        if (self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = field.x + 8 + query_width - query_scroll, .y = field.y + 7, .width = 1, .height = @min(18, @max(1, field.height - 8)) }, colors.accent);
+        if (self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = field.x + 8 + caret_width - query_scroll, .y = field.y + 7, .width = 1, .height = @min(18, @max(1, field.height - 8)) }, colors.accent);
         if (profiles) for (picker.labels, 0..) |label, index| {
             const chip = self.paletteFilterRect(index);
             const active = @backingInt(self.palette.?.filter) == index;
@@ -1939,7 +1950,7 @@ const App = struct {
             y = clip.y + 6;
         } else if (self.palette) |p| {
             clip = self.paletteField();
-            x = clip.x + 8 + @min(try self.textWidth(p.query[0..p.len]), @max(1, clip.width - 20));
+            x = clip.x + 8 + try self.textWidth(p.query[0..p.cursor]) - p.query_scroll;
             y = clip.y + 1;
         } else if (self.pane().finder) |editor| {
             const p = self.pane();
@@ -2092,11 +2103,6 @@ const App = struct {
     fn drawHeader(self: *App) !void {
         if (self.headerHeight() == 0) return;
         const colors = try self.uiPalette();
-        if (self.configuration.value.tab_width == .fit) for (self.tabs[0..self.tab_count], 0..) |value, i| {
-            const t = value.?;
-            const status = t.panes[t.tree.active].?.snapshot();
-            self.tab_desired[i] = try self.textWidth(status.title[0..status.title_len]) + (if (self.tab_count > 1) @as(f32, 45) else 15);
-        };
         try fill(self.renderer, .{ .x = 0, .y = 0, .width = self.width, .height = chrome.height }, colors.title);
         for (0..self.tab_count) |number| {
             const index: u8 = @intCast(number);
@@ -3115,7 +3121,7 @@ test "large discovered menus filter and page independently of saved settings" {
     catalogue.count = 100;
     const count = try app.palette.?.indices(&configuration, catalogue, &indices);
     try std.testing.expectEqual(@as(usize, 103), count);
-    try app.paletteKey(c.SDLK_END, 0);
+    try app.paletteKey(c.SDLK_END, c.SDL_KMOD_CTRL);
     try std.testing.expectEqual(count - 1, app.palette.?.selected);
     try std.testing.expect(app.paletteStart(count) + app.paletteRows() <= count);
     try app.paletteKey(c.SDLK_PAGEUP, 0);

@@ -443,9 +443,8 @@ const State = struct {
         const view = resolved.view;
         const row_index = resolved.row;
         const current = selection.Context.fromView(view);
-        const point = try selection.dragPoint(view, row_index, intent.point.col);
         switch (intent.kind) {
-            .start => self.selected = if (try selection.canStart(view, row_index, intent.point.col)) try selection.start(view, row_index, intent.point.col) else null,
+            .start => self.selected = try selection.start(view, row_index, intent.point.col),
             .extend => {
                 const range = self.selected orelse return;
                 switch (range.validity(current)) {
@@ -453,7 +452,7 @@ const State = struct {
                     .context_changed => return error.SelectionContextChanged,
                     .evicted => return error.SelectionEvicted,
                 }
-                self.selected.?.focus = point;
+                try self.selected.?.extend(view, row_index, intent.point.col);
             },
             .word => self.selected = try selection.word(view, @intCast(row_index), intent.point.col),
             .row => self.selected = try selection.visualRow(view, @intCast(row_index)),

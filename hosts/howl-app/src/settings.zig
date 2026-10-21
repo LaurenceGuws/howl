@@ -62,7 +62,7 @@ pub const Row = struct {
             .app_color => |index| try value.app_colors.get(index),
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
-            .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit title",
+            .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
             .discover_shells => if (value.discover_shells) "On" else "Off",
             .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,

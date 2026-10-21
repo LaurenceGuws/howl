@@ -15,6 +15,8 @@ pub const labels = [_][]const u8{ "All", "Saved", "Shell", "REPL", "Remote" };
 pub const Picker = struct {
     query: [128]u8 = @splat(0),
     len: usize = 0,
+    cursor: usize = 0,
+    query_scroll: f32 = 0,
     selected: usize = 0,
     first: usize = 0,
     hovered: ?usize = null,
@@ -68,17 +70,52 @@ pub const Picker = struct {
     pub fn append(self: *Picker, bytes: []const u8) error{ InvalidPickerText, PickerQueryLimit }!void {
         if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidPickerText;
         if (bytes.len > self.query.len - self.len) return error.PickerQueryLimit;
-        @memcpy(self.query[self.len..][0..bytes.len], bytes);
+        std.mem.copyBackwards(u8, self.query[self.cursor + bytes.len .. self.len + bytes.len], self.query[self.cursor..self.len]);
+        @memcpy(self.query[self.cursor..][0..bytes.len], bytes);
         self.len += bytes.len;
+        self.cursor += bytes.len;
         self.reset();
     }
-    /// Removes one codepoint, or the whole query when explicitly requested.
+    /// Moves by complete UTF-8 codepoints without changing the search or list selection.
+    pub fn moveCursor(self: *Picker, direction: i8) void {
+        if (direction < 0 and self.cursor != 0) {
+            self.cursor -= 1;
+            while (self.cursor != 0 and self.query[self.cursor] & 0xc0 == 0x80) self.cursor -= 1;
+        } else if (direction > 0 and self.cursor < self.len) {
+            self.cursor += 1;
+            while (self.cursor < self.len and self.query[self.cursor] & 0xc0 == 0x80) self.cursor += 1;
+        }
+    }
+    /// Removes the previous codepoint, or clears the entire query when explicitly requested.
     pub fn erase(self: *Picker, all: bool) void {
-        if (all) self.len = 0 else if (self.len > 0) {
-            self.len -= 1;
-            while (self.len > 0 and self.query[self.len] & 0xc0 == 0x80) self.len -= 1;
+        if (all) {
+            self.len = 0;
+            self.cursor = 0;
+        } else if (self.cursor != 0) {
+            const end = self.cursor;
+            self.moveCursor(-1);
+            std.mem.copyForwards(u8, self.query[self.cursor .. self.len - (end - self.cursor)], self.query[end..self.len]);
+            self.len -= end - self.cursor;
         }
         self.reset();
+    }
+    /// Delete removes one complete codepoint after the caret.
+    pub fn delete(self: *Picker) void {
+        const start = self.cursor;
+        self.moveCursor(1);
+        const end = self.cursor;
+        self.cursor = start;
+        std.mem.copyForwards(u8, self.query[start .. self.len - (end - start)], self.query[end..self.len]);
+        self.len -= end - start;
+        self.reset();
+    }
+    /// Keeps the measured caret visible while bounding stale scroll after deletion or resize.
+    pub fn revealCursor(self: *Picker, caret_width: f32, text_width: f32, width: f32) f32 {
+        const available = @max(1, width);
+        self.query_scroll = @min(self.query_scroll, @max(0, text_width - available));
+        if (caret_width < self.query_scroll) self.query_scroll = caret_width;
+        if (caret_width > self.query_scroll + available) self.query_scroll = caret_width - available;
+        return self.query_scroll;
     }
     /// Changes category while retaining typed search; command palettes have no categories.
     pub fn cycle(self: *Picker, reverse: bool) void {
@@ -218,4 +255,36 @@ test "a full catalogue stays bounded and keeps exact launch indexes through filt
     for (0..labels.len) |_| p.cycle(false);
     try std.testing.expectEqual(Filter.remote, p.filter);
     try std.testing.expectEqualStrings("host", p.query[0..p.len]);
+}
+
+test "palette caret inserts and deletes inside UTF8 text without splitting codepoints or overflowing" {
+    var p: Picker = .{};
+    try p.append("a界z");
+    p.moveCursor(-1);
+    p.moveCursor(-1);
+    try std.testing.expectEqual(@as(usize, 1), p.cursor);
+    try p.append("é");
+    try std.testing.expectEqualStrings("aé界z", p.query[0..p.len]);
+    p.erase(false);
+    try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
+    p.delete();
+    try std.testing.expectEqualStrings("az", p.query[0..p.len]);
+    try p.append("界");
+    try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
+    p.cursor = 0;
+    p.moveCursor(-1);
+    p.erase(false);
+    try std.testing.expectEqual(@as(usize, 0), p.cursor);
+    p.cursor = p.len;
+    p.moveCursor(1);
+    p.delete();
+    try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
+    const too_long: [128]u8 = @splat('x');
+    try std.testing.expectError(error.PickerQueryLimit, p.append(&too_long));
+    try std.testing.expectEqual(@as(usize, 5), p.cursor);
+    try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
+    try std.testing.expectEqual(@as(f32, 80), p.revealCursor(100, 100, 20));
+    try std.testing.expectEqual(@as(f32, 0), p.revealCursor(0, 100, 20));
+    p.erase(true);
+    try std.testing.expectEqual(@as(usize, 0), p.cursor);
 }
