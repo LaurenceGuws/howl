@@ -833,12 +833,15 @@ test "cursor timing and overlay stay coherent with a stalled immutable publicati
     const exchange = try init(std.testing.allocator, 1);
     defer deinit(exchange);
     var writer = beginWrite(exchange).?;
-    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, true, 123, .{ .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .color = .{ .r = 10, .g = 20, .b = 30, .a = 255 } });
+    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, true, 123, .{ .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .color = .{ .r = 10, .g = 20, .b = 30, .a = 255 }, .text_color = .{ .r = 40, .g = 50, .b = 60, .a = 255 }, .shape = .bar, .color_resource = try terminal.ResourceId.init(7) });
     var held = acquireLatest(exchange).?;
     var next = beginWrite(exchange).?;
     next.finish(1, 2, 1, 0, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, false, 456, null);
     try std.testing.expect(held.value.cursor_blink);
     try std.testing.expectEqual(@as(u8, 20), held.value.cursor.?.color.g);
+    try std.testing.expectEqual(@as(u8, 50), held.value.cursor.?.text_color.g);
+    try std.testing.expectEqual(.bar, held.value.cursor.?.shape);
+    try std.testing.expectEqual(try terminal.ResourceId.init(7), held.value.cursor.?.color_resource.?);
     try std.testing.expectEqual(@as(u64, 123), held.value.cursor_movement);
     held.abandon();
     var latest = acquireLatest(exchange).?;

@@ -64,6 +64,8 @@ pub const FrameExternalResource = frame_vocabulary.FrameExternalResource;
 pub const Command = frame_vocabulary.Command;
 /// Re-exports one ordered pre-projection draw fact used by retained row scenes.
 pub const Input = frame_vocabulary.Input;
+/// Shared clipped painted-row lookup for cursor composition.
+pub const CursorRows = frame_vocabulary.CursorRows;
 
 // File map:
 //   - bounded Content lifecycle and Renderer resource publication
@@ -161,6 +163,9 @@ pub const FrameBuffers = struct {
 pub const CursorOverlay = struct {
     rect: frame_vocabulary.Rect,
     color: frame_vocabulary.Color,
+    text_color: frame_vocabulary.Color,
+    shape: source_semantics.CursorShape,
+    color_resource: ?frame_vocabulary.ResourceId,
 };
 
 /// Borrows one completed backend-facing frame until the next Renderer mutation.
@@ -450,8 +455,7 @@ const Impl = struct {
     atlas_visible: bool = false,
     // Command spans indexed by painted physical row, including glyph overhang.
     // Larger generic sources use the complete list; maintained hosts fit this bound.
-    cursor_rows: [limits.maximum_rows]RowSceneRow = @splat(.{}),
-    cursor_rows_ready: bool = false,
+    cursor_rows: CursorRows = .{},
     cursor: ?Cursor = null,
 };
 
@@ -770,7 +774,7 @@ pub fn updateCursorSource(
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
     if (cursor) |value| {
-        if (value.shape == .block and !impl.cursor_rows_ready)
+        if (value.shape == .block and !impl.cursor_rows.ready)
             try indexCursorRows(impl, surface, impl.command_count, impl.color_resource_id);
     }
     impl.cursor = cursor;
@@ -985,7 +989,7 @@ fn updateInnerOnce(
     }
     const cursor = try contentCursor(Source, snapshot, surface, impl.config.cell_size);
     if (impl.revision == std.math.maxInt(u64)) return error.RevisionOverflow;
-    impl.cursor_rows_ready = false;
+    impl.cursor_rows.ready = false;
     if (cursor) |value| {
         if (value.shape == .block) try indexCursorRows(impl, surface, command_count, next_color_resource_id);
     }
@@ -1239,7 +1243,7 @@ pub fn frame(
         .revision = impl.revision,
         .content_revision = impl.content_revision,
         .content_command_count = content_command_count,
-        .cursor = if (impl.cursor) |value| .{ .rect = value.rect, .color = value.color } else null,
+        .cursor = if (impl.cursor) |value| .{ .rect = value.rect, .color = value.color, .text_color = value.text_color, .shape = value.shape, .color_resource = impl.color_resource_id } else null,
         .uploads = buffers.uploads[0..upload_count],
         .removals = buffers.removals[0..removal_at],
         .commands = projected,
@@ -1278,56 +1282,15 @@ fn residencyRequired(
 // Index content once when a block cursor needs it. Spans describe clipped ink,
 // preserving combining glyphs, ligatures, DEC geometry and cross-row overhang.
 fn indexCursorRows(impl: *Impl, surface: frame_vocabulary.Size, command_count: usize, color_id: ?frame_vocabulary.ResourceId) Error!void {
-    const height = impl.config.cell_size.height;
-    const rows = surface.height / height;
-    impl.cursor_rows_ready = rows <= impl.cursor_rows.len;
-    if (!impl.cursor_rows_ready) return;
-    errdefer impl.cursor_rows_ready = false;
-    @memset(&impl.cursor_rows, .{});
-    const whole = contentSurfaceRect(surface);
-    for (impl.commands[0..command_count], 0..) |command, index| {
-        const glyph = cursorGlyph(command, color_id) orelse continue;
-        const clipped = (try frame_vocabulary.intersectRects(glyph.destination, glyph.clip)) orelse continue;
-        const ink = (try frame_vocabulary.intersectRects(clipped, whole)) orelse continue;
-        const first = @as(usize, @intCast(ink.y)) / height;
-        const last = (@as(usize, @intCast(ink.y)) + ink.height - 1) / height;
-        for (impl.cursor_rows[first .. last + 1]) |*span| {
-            if (span.count == 0) span.start = index;
-            span.count = index + 1 - span.start;
-        }
-    }
+    try impl.cursor_rows.build(frame_vocabulary.Input, impl.commands[0..command_count], surface, impl.config.cell_size.height, color_id);
 }
 
-const CursorGlyph = struct { destination: frame_vocabulary.Rect, clip: frame_vocabulary.Rect };
-
-fn cursorGlyph(command: frame_vocabulary.Input, color_id: ?frame_vocabulary.ResourceId) ?CursorGlyph {
-    return switch (command) {
-        .alpha_mask => |value| if (value.cursor_component)
-            .{ .destination = value.destination, .clip = value.clip }
-        else
-            null,
-        .rgba => |value| if (color_id != null and value.resource.resource.resource == color_id.?)
-            .{ .destination = value.destination, .clip = value.clip }
-        else
-            null,
-        else => null,
-    };
+fn cursorGlyph(command: frame_vocabulary.Input, color_id: ?frame_vocabulary.ResourceId) ?CursorRows.Glyph {
+    return CursorRows.glyph(frame_vocabulary.Input, command, color_id);
 }
 
 fn cursorInputs(impl: *const Impl, cursor: Cursor) []const frame_vocabulary.Input {
-    const commands = impl.commands[0..impl.command_count];
-    if (!impl.cursor_rows_ready) return commands;
-    const height = impl.config.cell_size.height;
-    const first = @as(usize, @intCast(cursor.rect.y)) / height;
-    const last = (@as(usize, @intCast(cursor.rect.y)) + cursor.rect.height - 1) / height;
-    var start = commands.len;
-    var end: usize = 0;
-    for (impl.cursor_rows[first .. last + 1]) |span| {
-        if (span.count == 0) continue;
-        start = @min(start, span.start);
-        end = @max(end, span.start + span.count);
-    }
-    return if (end == 0) commands[0..0] else commands[start..end];
+    return impl.cursor_rows.candidates(frame_vocabulary.Input, impl.commands[0..impl.command_count], cursor.rect);
 }
 
 fn cursorCommandUpperBound(impl: *const Impl) Error!usize {
@@ -3319,6 +3282,7 @@ test "painted-row cursor search equals the complete command oracle including cli
     impl.commands = &inputs;
     impl.command_count = inputs.len;
     impl.config.cell_size = .{ .width = 10, .height = 10 };
+    impl.cursor_rows = .{};
     impl.surface = .{ .width = 30, .height = 30 };
     var commands: [2][16]frame_vocabulary.Command = undefined;
     for (0..3) |row| for (0..3) |column| {
@@ -3332,16 +3296,16 @@ test "painted-row cursor search equals the complete command oracle including cli
         try indexCursorRows(&impl, impl.surface, inputs.len, null);
         var indexed: usize = 0;
         try appendCursorCommands(&impl, &commands[0], &indexed);
-        impl.cursor_rows_ready = false;
+        impl.cursor_rows.ready = false;
         var complete: usize = 0;
         try appendCursorCommands(&impl, &commands[1], &complete);
         try std.testing.expectEqualDeep(commands[1][0..complete], commands[0][0..indexed]);
     };
     try indexCursorRows(&impl, .{ .width = 30, .height = (limits.maximum_rows + 1) * 10 }, inputs.len, null);
-    try std.testing.expect(!impl.cursor_rows_ready);
+    try std.testing.expect(!impl.cursor_rows.ready);
     inputs[1].alpha_mask.destination.height = 0;
     try std.testing.expectError(error.InvalidRectangle, indexCursorRows(&impl, impl.surface, inputs.len, null));
-    try std.testing.expect(!impl.cursor_rows_ready);
+    try std.testing.expect(!impl.cursor_rows.ready);
 }
 
 test "retained glyph range rejects narrowing without changing generic frame limits" {

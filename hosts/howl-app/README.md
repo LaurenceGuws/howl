@@ -83,8 +83,19 @@ Stroke changes use the existing transactional presentation/save/rollback path;
 timing changes and accepted-input resets only change host overlay composition.
 An idle stop retires its deadline and stays stopped through unrelated redraws.
 Input resets immediately even if the program produces no echo. Hidden, inactive,
-Off and application-steady cursors have no blink deadline. Motion/trails remain
-the next cursor increment.
+Off and application-steady cursors have no blink deadline.
+
+Appearance → “Cursor motion” enables short linear movement (Off by default).
+“Cursor motion duration (ms)” accepts 20–250ms, default 80ms. New movement
+retargets from the current visual position. Focus/modal/history/hidden transitions,
+pane placement/size, screen bank, presentation generation, shape/cell width and
+preference changes snap cleanly. Motion uses finite 16ms deadlines, ending exactly
+at the target; settled or disabled motion schedules no work. Blink remains independent.
+Block ink is replayed at its original destination through the moving cursor clip
+using the shared painted-row lookup. Alpha glyphs recolor; intrinsic RGBA glyphs
+keep their colors. The host indexes immutable content lazily without allocating
+on motion ticks. Frame publication, text shaping and retained content pixels do
+not change for an animation tick. Easing, stretch and trails remain deferred.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

@@ -108,6 +108,8 @@ pub const Canvas = struct {
     content: ?*c.SDL_Texture = null,
     content_revision: ?u64 = null,
     content_size: render.Size = .{ .width = 1, .height = 1 },
+    cursor_rows: render.CursorRows = .{},
+    cursor_index_revision: ?u64 = null,
 
     /// Creates an empty backend resource owner with no canonical or frame authority.
     pub fn init(allocator: std.mem.Allocator) Canvas {
@@ -177,7 +179,7 @@ pub const Canvas = struct {
     }
 
     /// Draws canonical commands with exact pane/resource clipping using shared bounded batches.
-    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, cursor: CursorDisplay, outline_pixels: u8) !void {
+    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, cursor: CursorDisplay, outline_pixels: u8, motion: ?render.Rect) !void {
         std.debug.assert(outline_pixels >= 1 and outline_pixels <= 16);
         const value = self.frame() orelse return;
         // Canonical commands already use physical pixels. Dividing then letting
@@ -237,7 +239,10 @@ pub const Canvas = struct {
             !c.SDL_RenderTexture(renderer, target, null, &destination_rect)) return error.SDLTexture;
         try self.drawSelection(renderer, pane, value);
         switch (cursor) {
-            .shown => try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]),
+            .shown => if (motion) |rect|
+                try self.drawMovingCursor(renderer, geometry, pane, value, rect)
+            else
+                try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]),
             .hidden => {},
             .outline => if (value.cursor) |overlay| {
                 const r = overlay.rect;
@@ -257,6 +262,28 @@ pub const Canvas = struct {
         }
         if (!c.SDL_SetRenderClipRect(renderer, null)) return error.SDLClip;
         if (!c.SDL_SetRenderScale(renderer, previous_x, previous_y)) return error.SDLScale;
+    }
+
+    fn drawMovingCursor(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, value: instance.PublishedFrame, rect: render.Rect) !void {
+        const overlay = value.cursor orelse return;
+        const suffix = value.commands[value.content_command_count..];
+        if (suffix.len == 0) return;
+        std.debug.assert(suffix[0] == .solid);
+        var painted = suffix[0];
+        painted.solid.rect.x += rect.x - overlay.rect.x;
+        painted.solid.rect.y += rect.y - overlay.rect.y;
+        try self.drawCommands(renderer, geometry, pane, &.{painted});
+        if (overlay.shape != .block) return;
+        const content = value.commands[0..value.content_command_count];
+        if (self.cursor_index_revision != value.content_revision) {
+            try self.cursor_rows.build(render.Command, content, value.surface, value.cell_size.height, overlay.color_resource);
+            self.cursor_index_revision = value.content_revision;
+        }
+        for (self.cursor_rows.candidates(render.Command, content, rect)) |command| {
+            const replay = (try render.CursorRows.recolor(command, rect, overlay.text_color, overlay.color_resource)) orelse continue;
+            try self.appendCommand(renderer, geometry, pane, pixelClip(pane), replay);
+        }
+        try geometry.finish(renderer);
     }
 
     fn drawSelection(self: *const Canvas, renderer: *c.SDL_Renderer, pane: c.SDL_FRect, value: instance.PublishedFrame) !void {
@@ -284,6 +311,8 @@ pub const Canvas = struct {
         if (self.content) |target| c.SDL_DestroyTexture(target);
         self.content = null;
         self.content_revision = null;
+        self.cursor_index_revision = null;
+        self.cursor_rows.ready = false;
     }
 
     fn drawCommands(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, commands: []const render.Command) !void {
@@ -293,38 +322,40 @@ pub const Canvas = struct {
         if (!c.SDL_FlushRenderer(renderer)) return error.SDLGeometry;
         geometry.count = 0;
         geometry.queued_quads = 0;
-        for (commands) |command| {
-            switch (command) {
-                .solid => |solid| try geometry.append(renderer, null, pane_clip, destination(solid.rect, pane), .{ .x = 0, .y = 0, .w = 0, .h = 0 }, solid.color),
-                .alpha_mask => |mask| {
-                    const texture = self.find(mask.resource.resource) orelse return error.MissingTexture;
-                    const dest = destination(mask.destination, pane);
-                    const clip = commandClip(mask.destination, mask.clip, pane, pane_clip) orelse continue;
-                    const src: render.SourceRect = mask.resource.source orelse .{ .x = 0, .y = 0, .width = mask.resource.size.width, .height = mask.resource.size.height };
-                    const width: f32 = @floatFromInt(mask.resource.size.width);
-                    const height: f32 = @floatFromInt(mask.resource.size.height);
-                    try geometry.append(renderer, texture, clip, dest, .{
-                        .x = @as(f32, @floatFromInt(src.x)) / width,
-                        .y = @as(f32, @floatFromInt(src.y)) / height,
-                        .w = @as(f32, @floatFromInt(src.width)) / width,
-                        .h = @as(f32, @floatFromInt(src.height)) / height,
-                    }, mask.color);
-                },
-                .rgba => |image| {
-                    try geometry.flush(renderer);
-                    const texture = self.find(image.resource.resource) orelse return error.MissingTexture;
-                    const clip = commandClip(image.destination, image.clip, pane, pane_clip) orelse continue;
-                    const src: render.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
-                    const source: c.SDL_FRect = .{ .x = @floatFromInt(src.x), .y = @floatFromInt(src.y), .w = @floatFromInt(src.width), .h = @floatFromInt(src.height) };
-                    const dest = destination(image.destination, pane);
-                    try geometry.reserve(renderer, 1);
-                    if (!c.SDL_SetRenderClipRect(renderer, &clip) or
-                        !c.SDL_RenderTexture(renderer, texture, &source, &dest)) return error.SDLTexture;
-                    geometry.queued_quads += 1;
-                },
-            }
-        }
+        for (commands) |command| try self.appendCommand(renderer, geometry, pane, pane_clip, command);
         try geometry.finish(renderer);
+    }
+
+    fn appendCommand(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, pane: c.SDL_FRect, pane_clip: c.SDL_Rect, command: render.Command) !void {
+        switch (command) {
+            .solid => |solid| try geometry.append(renderer, null, pane_clip, destination(solid.rect, pane), .{ .x = 0, .y = 0, .w = 0, .h = 0 }, solid.color),
+            .alpha_mask => |mask| {
+                const texture = self.find(mask.resource.resource) orelse return error.MissingTexture;
+                const dest = destination(mask.destination, pane);
+                const clip = commandClip(mask.destination, mask.clip, pane, pane_clip) orelse return;
+                const src: render.SourceRect = mask.resource.source orelse .{ .x = 0, .y = 0, .width = mask.resource.size.width, .height = mask.resource.size.height };
+                const width: f32 = @floatFromInt(mask.resource.size.width);
+                const height: f32 = @floatFromInt(mask.resource.size.height);
+                try geometry.append(renderer, texture, clip, dest, .{
+                    .x = @as(f32, @floatFromInt(src.x)) / width,
+                    .y = @as(f32, @floatFromInt(src.y)) / height,
+                    .w = @as(f32, @floatFromInt(src.width)) / width,
+                    .h = @as(f32, @floatFromInt(src.height)) / height,
+                }, mask.color);
+            },
+            .rgba => |image| {
+                try geometry.flush(renderer);
+                const texture = self.find(image.resource.resource) orelse return error.MissingTexture;
+                const clip = commandClip(image.destination, image.clip, pane, pane_clip) orelse return;
+                const src: render.SourceRect = image.resource.source orelse .{ .x = 0, .y = 0, .width = image.resource.size.width, .height = image.resource.size.height };
+                const source: c.SDL_FRect = .{ .x = @floatFromInt(src.x), .y = @floatFromInt(src.y), .w = @floatFromInt(src.width), .h = @floatFromInt(src.height) };
+                const dest = destination(image.destination, pane);
+                try geometry.reserve(renderer, 1);
+                if (!c.SDL_SetRenderClipRect(renderer, &clip) or
+                    !c.SDL_RenderTexture(renderer, texture, &source, &dest)) return error.SDLTexture;
+                geometry.queued_quads += 1;
+            },
+        }
     }
 
     fn find(self: *const Canvas, resource: render.ResourceRef) ?*c.SDL_Texture {
@@ -502,7 +533,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown, 1);
+    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown, 1, null);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(@as(?terminal.Failure, null), owner.snapshot().failure);
 }
@@ -560,7 +591,7 @@ test "repeated alternate-screen blank and text cuts retain exact backend residen
         const blank = step >= 2 and (step - 2) % 2 == 0;
         try std.testing.expectEqual(step >= 2 and (step - 2) % 4 != 3, value.alternate_screen);
         errdefer std.debug.print("alternate texture failure at step {d}, title {s}, uploads {d}, removals {d}, textures {d}\n", .{ step, title, value.uploads.len, value.removals.len, backend.count });
-        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown, 1);
+        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, .shown, 1, null);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         try std.testing.expectEqual(@as(usize, if (blank) 0 else 1), backend.count);
         var retained: [250 * 100][3]u8 = undefined;
@@ -637,7 +668,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
             .y = 11 / scale,
             .w = @as(f32, @floatFromInt(frame.surface.width)) / scale,
             .h = @as(f32, @floatFromInt(frame.surface.height)) / scale,
-        }, scale, .shown, 1);
+        }, scale, .shown, 1, null);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         var restored_x: f32 = 0;
         var restored_y: f32 = 0;
@@ -682,7 +713,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
     };
     try std.testing.expect(c.SDL_SetRenderScale(renderer, 2, 2));
     backend.clearTextures();
-    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2, .shown, 1));
+    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2, .shown, 1, null));
     var restored_x: f32 = 0;
     var restored_y: f32 = 0;
     try std.testing.expect(c.SDL_GetRenderScale(renderer, &restored_x, &restored_y));
@@ -795,7 +826,7 @@ test "cursor shapes blink and outline above selection at fractional scales witho
             try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
-            try backend.draw(renderer, geometry, pane, scale, mode, outline);
+            try backend.draw(renderer, geometry, pane, scale, mode, outline, null);
             try std.testing.expect(c.SDL_RenderPresent(renderer));
             const target = backend.content.?;
             if (retained_texture) |previous| try std.testing.expectEqual(previous, target) else retained_texture = target;
@@ -835,6 +866,57 @@ test "cursor shapes blink and outline above selection at fractional scales witho
                 try std.testing.expectEqual(pixels[y * frame.surface.width + x], actual);
             };
             try std.testing.expectEqual(target, backend.content.?);
+            try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
+            try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
+        };
+        for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| for ([_][2]i32{ .{ 1, 0 }, .{ @intCast(frame.cell_size.width / 2), 0 }, .{ @intCast(frame.cell_size.width), 0 }, .{ @intCast(frame.cell_size.width / 2), @intCast(frame.cell_size.height / 2) } }) |point| for ([_]bool{ false, true }) |selected| {
+            const moving: render.Rect = .{ .x = point[0], .y = point[1], .width = frame.cursor.?.rect.width, .height = frame.cursor.?.rect.height };
+            backend.selection_paint = .{ .rows = 2 };
+            if (selected) backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+            try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
+            try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+            try std.testing.expect(c.SDL_RenderClear(renderer));
+            try backend.draw(renderer, geometry, pane, scale, .shown, 1, moving);
+            try std.testing.expect(c.SDL_RenderPresent(renderer));
+            for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
+                const pixel = &pixels[y * frame.surface.width + x];
+                try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &pixel[0], &pixel[1], &pixel[2], null));
+            };
+            // Independent whole-content oracle; only clips move, glyph destinations never do.
+            try std.testing.expect(c.SDL_SetRenderScale(renderer, 1, 1));
+            try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+            try std.testing.expect(c.SDL_RenderClear(renderer));
+            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..frame.content_command_count]);
+            try backend.drawSelection(renderer, pane, frame);
+            var solid = frame.commands[frame.content_command_count];
+            solid.solid.rect.x += moving.x;
+            solid.solid.rect.y += moving.y;
+            try backend.drawCommands(renderer, geometry, pane, &.{solid});
+            if (frame.cursor.?.shape == .block) {
+                const cursor_clip: c.SDL_Rect = .{ .x = moving.x, .y = moving.y, .w = moving.width, .h = moving.height };
+                for (frame.commands[0..frame.content_command_count]) |command| {
+                    var replay = command;
+                    switch (replay) {
+                        .alpha_mask => |*ink| {
+                            if (!ink.cursor_component) continue;
+                            const original: c.SDL_Rect = .{ .x = ink.clip.x, .y = ink.clip.y, .w = ink.clip.width, .h = ink.clip.height };
+                            var intersection: c.SDL_Rect = undefined;
+                            if (!c.SDL_GetRectIntersection(&original, &cursor_clip, &intersection)) continue;
+                            ink.clip = .{ .x = intersection.x, .y = intersection.y, .width = @intCast(intersection.w), .height = @intCast(intersection.h) };
+                            ink.color = frame.cursor.?.text_color;
+                        },
+                        else => continue,
+                    }
+                    try backend.drawCommands(renderer, geometry, pane, &.{replay});
+                }
+            }
+            try std.testing.expect(c.SDL_RenderPresent(renderer));
+            for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
+                var actual: [3]u8 = undefined;
+                try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &actual[0], &actual[1], &actual[2], null));
+                try std.testing.expectEqual(pixels[y * frame.surface.width + x], actual);
+            };
+            try std.testing.expectEqual(retained_texture.?, backend.content.?);
             try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
             try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
         };

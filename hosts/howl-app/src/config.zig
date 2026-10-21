@@ -51,6 +51,8 @@ pub const Schema = struct {
     tab_width: TabWidth = .fixed,
     cursor_blink: cursor.Policy = .off,
     cursor_shape: cursor.Shape = .block,
+    cursor_motion: bool = false,
+    cursor_motion_ms: u16 = 80,
     cursor_stroke_pixels: u8 = 2,
     cursor_outline_pixels: u8 = 1,
     cursor_blink_interval_ms: u16 = 500,
@@ -66,6 +68,7 @@ pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || erro
     InvalidFontSize,
     InvalidCursorStroke,
     InvalidCursorTiming,
+    InvalidCursorMotion,
     InvalidTheme,
     InvalidColor,
     ProfileLimit,
@@ -283,6 +286,8 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
         value.cursor_outline_pixels == 0 or value.cursor_outline_pixels > 16) return error.InvalidCursorStroke;
     if (!(cursor.Options{ .interval_ms = value.cursor_blink_interval_ms, .idle_ms = value.cursor_blink_idle_ms }).valid())
         return error.InvalidCursorTiming;
+    if (!(cursor.MotionOptions{ .enabled = value.cursor_motion, .duration_ms = value.cursor_motion_ms }).valid())
+        return error.InvalidCursorMotion;
     try value.app_colors.validate();
     // zig-audit: acknowledge discard
     // reason: Parsing every resolved terminal role validates the candidate; live workers receive a separate owned value after persistence.

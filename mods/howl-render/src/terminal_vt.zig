@@ -84,6 +84,8 @@ pub const RetainedContent = renderer.RetainedContent;
 pub const Frame = renderer.Frame;
 /// Renderer-owned visible cursor cell for alternate host composition.
 pub const CursorOverlay = renderer.CursorOverlay;
+/// Shared painted-row cursor ink lookup.
+pub const CursorRows = renderer.CursorRows;
 /// Uses the retained-row scene update kind.
 pub const RowSceneKind = renderer.RowSceneKind;
 /// Uses one retained-row command span.

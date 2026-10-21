@@ -39,6 +39,7 @@ const Pane = struct {
     creation_failure: ?CreationError = null,
     canvas: canvas.Canvas,
     blink: terminal_cursor.Blink = .{},
+    motion: terminal_cursor.Motion = .{},
     rows: u16 = 0,
     columns: u16 = 0,
     size_control: bool = true,
@@ -241,7 +242,10 @@ const App = struct {
     }
     fn loseKeyboard(self: *App) !void {
         self.cursor_deadline = null;
-        if (self.tab_count != 0) self.pane().blink.reset();
+        if (self.tab_count != 0) {
+            self.pane().blink.reset();
+            self.pane().motion.reset();
+        }
         self.hover_divider = null;
         self.setPointer(null) catch |failure| self.report(failure);
         self.cancelDrag();
@@ -265,7 +269,10 @@ const App = struct {
             const t = maybe.?;
             for (t.panes, 0..) |maybe_p, slot| if (maybe_p) |p| {
                 const visible = index == self.active and (!t.tree.zoomed or slot == t.tree.active);
-                if (!visible) p.canvas.invalidateContent();
+                if (!visible) {
+                    p.canvas.invalidateContent();
+                    p.motion.reset();
+                }
                 if (p.owner) |owner| owner.setVisible(visible);
             };
         }
@@ -2426,12 +2433,15 @@ const App = struct {
                 }
                 const placed = terminalPlacement(rect, frame.surface, self.scale);
                 const cursor_focused = self.focused and active and !status.closed and p.graphics_failure == null and
-                    self.palette == null and self.settings_editor == null and self.chooser == null and
+                    self.palette == null and self.settings_editor == null and self.chooser == null and p.finder == null and
                     c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0;
-                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, cursor_focused, .{ .policy = self.configuration.value.cursor_blink, .interval_ms = self.configuration.value.cursor_blink_interval_ms, .idle_ms = self.configuration.value.cursor_blink_idle_ms });
+                const cursor_now = c.SDL_GetTicks();
+                const show_cursor = p.blink.update(cursor_now, frame, cursor_focused, .{ .policy = self.configuration.value.cursor_blink, .interval_ms = self.configuration.value.cursor_blink_interval_ms, .idle_ms = self.configuration.value.cursor_blink_idle_ms });
                 const cursor_display: canvas.CursorDisplay = if (!cursor_focused) .outline else if (show_cursor) .shown else .hidden;
-                if (p.blink.deadline) |deadline| self.cursor_deadline = deadline;
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels) catch |failure| {
+                const motion_rect = p.motion.update(cursor_now, frame, cursor_focused and show_cursor, .{ .enabled = self.configuration.value.cursor_motion, .duration_ms = self.configuration.value.cursor_motion_ms }, .{ placed.x, placed.y, placed.w, placed.h });
+                if (p.blink.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
+                if (p.motion.deadline) |deadline| self.cursor_deadline = @min(self.cursor_deadline orelse deadline, deadline);
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels, motion_rect) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {

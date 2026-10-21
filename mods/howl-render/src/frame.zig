@@ -149,6 +149,90 @@ pub const Command = union(enum) {
     rgba: struct { destination: Rect, clip: Rect, resource: ResourceView },
 };
 
+/// Bounded painted-row lookup shared by projection and host cursor composition.
+/// Stores command spans only; invalidate when content storage changes.
+pub const CursorRows = struct {
+    const Span = struct { start: usize = 0, count: usize = 0 };
+    rows: [@import("limits").maximum_rows]Span = @splat(.{}),
+    ready: bool = false,
+    height: u16 = 1,
+    row_count: usize = 0,
+
+    /// Indexes clipped alpha ink and the intrinsic color glyph plane.
+    /// Larger surfaces retain the complete-command fallback.
+    pub fn build(self: *CursorRows, comptime T: type, commands: []const T, surface: Size, height: u16, color_id: ?ResourceId) Error!void {
+        self.ready = false;
+        if (height == 0 or surface.height == 0 or surface.width == 0) return error.InvalidSurface;
+        const count = (@as(usize, surface.height) + height - 1) / height;
+        if (count > self.rows.len) return;
+        @memset(&self.rows, .{});
+        const whole: Rect = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height };
+        for (commands, 0..) |command, index| {
+            const ink = glyph(T, command, color_id) orelse continue;
+            const clipped_ink = (try intersectRects(ink.destination, ink.clip)) orelse continue;
+            const visible = (try intersectRects(clipped_ink, whole)) orelse continue;
+            const first = @as(usize, @intCast(visible.y)) / height;
+            const last = (@as(usize, @intCast(visible.y)) + visible.height - 1) / height;
+            for (self.rows[first .. last + 1]) |*span| {
+                if (span.count == 0) span.start = index;
+                span.count = index + 1 - span.start;
+            }
+        }
+        self.height = height;
+        self.row_count = count;
+        self.ready = true;
+    }
+
+    /// Borrows an ordered candidate span for a surface-contained cursor rectangle.
+    pub fn candidates(self: *const CursorRows, comptime T: type, commands: []const T, rect: Rect) []const T {
+        if (!self.ready) return commands;
+        if (rect.y < 0 or rect.height == 0) return commands[0..0];
+        const first = @as(usize, @intCast(rect.y)) / self.height;
+        const last = (@as(usize, @intCast(rect.y)) + rect.height - 1) / self.height;
+        if (last >= self.row_count) return commands;
+        var start = commands.len;
+        var end: usize = 0;
+        for (self.rows[first .. last + 1]) |span| {
+            if (span.count == 0) continue;
+            start = @min(start, span.start);
+            end = @max(end, span.start + span.count);
+        }
+        std.debug.assert(end <= commands.len);
+        return if (end == 0) commands[0..0] else commands[start..end];
+    }
+
+    /// Replays stationary content ink through an arbitrary host cursor rectangle.
+    /// Intrinsic RGBA glyphs retain their original pixels and source mapping.
+    pub fn recolor(command: Command, rect: Rect, color: Color, color_id: ?ResourceId) Error!?Command {
+        const ink = glyph(Command, command, color_id) orelse return null;
+        const clip = (try intersectRects(ink.clip, rect)) orelse return null;
+        if (try intersectRects(ink.destination, clip) == null) return null;
+        var result = command;
+        switch (result) {
+            .alpha_mask => |*value| {
+                value.clip = clip;
+                value.color = color;
+                value.cursor_component = false;
+            },
+            .rgba => |*value| value.clip = clip,
+            else => return null,
+        }
+        return result;
+    }
+
+    /// Exact clipped glyph geometry without resource or font ownership.
+    pub const Glyph = struct { destination: Rect, clip: Rect };
+
+    /// Selects the same cursor ink before and after final frame projection.
+    pub fn glyph(comptime T: type, command: T, color_id: ?ResourceId) ?Glyph {
+        return switch (command) {
+            .alpha_mask => |v| if (v.cursor_component) .{ .destination = v.destination, .clip = v.clip } else null,
+            .rgba => |v| if (color_id != null and v.resource.resource.resource == color_id.?) .{ .destination = v.destination, .clip = v.clip } else null,
+            else => null,
+        };
+    }
+};
+
 fn project(
     surface: Size,
     inputs: []const Input,
@@ -462,4 +546,34 @@ test "prepared projection rejects exact and partial aliases without changing inp
         projectPrepared(.{ .width = 2, .height = 2 }, inputs[0..2], commands[1..3]),
     );
     try std.testing.expectEqualDeep(before, inputs);
+}
+
+test "moving cursor preserves intrinsic color ink and excludes unrelated graphics and decorations" {
+    const color_id = try ResourceId.init(4);
+    const other_id = try ResourceId.init(5);
+    const resource: ResourceView = .{
+        .resource = .{ .resource = color_id, .generation = @fromBackingInt(3) },
+        .format = .rgba8,
+        .size = .{ .width = 32, .height = 32 },
+        .source = .{ .x = 3, .y = 5, .width = 8, .height = 10 },
+    };
+    const ink: Command = .{ .rgba = .{ .destination = .{ .x = 2, .y = -3, .width = 16, .height = 20 }, .clip = .{ .x = 4, .y = 0, .width = 12, .height = 17 }, .resource = resource } };
+    const rect: Rect = .{ .x = 8, .y = 8, .width = 10, .height = 10 };
+    const tint: Color = .{ .r = 1, .g = 2, .b = 3, .a = 255 };
+    const replay = (try CursorRows.recolor(ink, rect, tint, color_id)).?;
+    try std.testing.expectEqualDeep(ink.rgba.resource, replay.rgba.resource);
+    try std.testing.expectEqualDeep(ink.rgba.destination, replay.rgba.destination);
+    try std.testing.expectEqualDeep(Rect{ .x = 8, .y = 8, .width = 8, .height = 9 }, replay.rgba.clip);
+    try std.testing.expectEqual(null, try CursorRows.recolor(ink, rect, tint, other_id));
+    var mask: Command = .{ .alpha_mask = .{ .destination = ink.rgba.destination, .clip = ink.rgba.clip, .resource = resource, .color = tint, .cursor_component = false } };
+    try std.testing.expectEqual(null, try CursorRows.recolor(mask, rect, tint, color_id));
+    mask.alpha_mask.cursor_component = true;
+    const alpha = (try CursorRows.recolor(mask, rect, tint, color_id)).?;
+    try std.testing.expectEqualDeep(mask.alpha_mask.destination, alpha.alpha_mask.destination);
+    try std.testing.expectEqualDeep(mask.alpha_mask.resource, alpha.alpha_mask.resource);
+    try std.testing.expect(!alpha.alpha_mask.cursor_component);
+    var index: CursorRows = .{};
+    try index.build(Command, &.{ink}, .{ .width = 30, .height = 30 }, 10, color_id);
+    try std.testing.expectEqual(@as(usize, 1), index.candidates(Command, &.{ink}, rect).len);
+    try std.testing.expectEqual(@as(usize, 0), index.candidates(Command, &.{ink}, .{ .x = 0, .y = 20, .width = 10, .height = 10 }).len);
 }

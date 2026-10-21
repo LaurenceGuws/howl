@@ -32,6 +32,8 @@ pub const Target = union(enum) {
     tab_width,
     cursor_blink,
     cursor_shape,
+    cursor_motion,
+    cursor_motion_ms,
     cursor_stroke_pixels,
     cursor_outline_pixels,
     cursor_blink_interval_ms,
@@ -71,6 +73,8 @@ pub const Row = struct {
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
+            .cursor_motion => if (value.cursor_motion) "On" else "Off",
+            .cursor_motion_ms => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_motion_ms}),
             .cursor_stroke_pixels => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_stroke_pixels}),
             .cursor_outline_pixels => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_outline_pixels}),
             .cursor_blink_interval_ms => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_blink_interval_ms}),
@@ -119,14 +123,14 @@ pub const Row = struct {
     /// Finite settings use staged choices and never accept arbitrary text.
     pub fn choice(self: Row) bool {
         return switch (self.target) {
-            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .discover_shells, .discover_ssh_hosts => true,
+            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .discover_shells, .discover_ssh_hosts => true,
             else => false,
         };
     }
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_stroke_pixels, .cursor_outline_pixels, .cursor_blink_interval_ms, .cursor_blink_idle_ms, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_motion, .cursor_motion_ms, .cursor_stroke_pixels, .cursor_outline_pixels, .cursor_blink_interval_ms, .cursor_blink_idle_ms, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -158,6 +162,8 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
     try b.add(.{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink });
     try b.add(.{ .page = .appearance, .label = "Cursor shape", .target = .cursor_shape });
+    try b.add(.{ .page = .appearance, .label = "Cursor motion", .target = .cursor_motion });
+    try b.add(.{ .page = .appearance, .label = "Cursor motion duration (ms)", .target = .cursor_motion_ms });
     try b.add(.{ .page = .appearance, .label = "Cursor stroke (px)", .target = .cursor_stroke_pixels });
     try b.add(.{ .page = .appearance, .label = "Inactive cursor stroke (px)", .target = .cursor_outline_pixels });
     try b.add(.{ .page = .appearance, .label = "Blink interval (ms)", .target = .cursor_blink_interval_ms });
@@ -225,6 +231,8 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
         .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .cursor_motion => value.cursor_motion = try boolean(text),
+        .cursor_motion_ms => value.cursor_motion_ms = try std.fmt.parseInt(u16, text, 10),
         .cursor_stroke_pixels => value.cursor_stroke_pixels = try std.fmt.parseInt(u8, text, 10),
         .cursor_outline_pixels => value.cursor_outline_pixels = try std.fmt.parseInt(u8, text, 10),
         .cursor_blink_interval_ms => value.cursor_blink_interval_ms = try std.fmt.parseInt(u16, text, 10),
@@ -453,7 +461,7 @@ pub const Editor = struct {
                 next = choices[@intCast(@mod(index + delta, @as(i16, @intCast(choices.len))))];
             },
             .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
-            .hide_single_tab, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
+            .hide_single_tab, .cursor_motion, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
             else => return,
         }
         @memcpy(self.buffer[0..next.len], next);
@@ -807,4 +815,25 @@ test "cursor controls stage bounded physical strokes and blink timing without ch
     try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_interval_ms, "99"));
     try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_interval_ms, "2001"));
     try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_idle_ms, "60001"));
+}
+
+test "cursor motion choices and duration stage bounded preferences with unchanged defaults" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    var editor: Editor = .{};
+    const row: Row = .{ .page = .appearance, .label = "Cursor motion", .target = .cursor_motion };
+    try editor.begin(row, &current);
+    try editor.append("arbitrary text");
+    try std.testing.expectEqualStrings("Off", editor.buffer[0..editor.len]);
+    try editor.cycle(&current, 1);
+    try std.testing.expectEqualStrings("On", editor.buffer[0..editor.len]);
+    try std.testing.expect(!current.value.cursor_motion);
+    var enabled = try change(&current, std.testing.io, .cursor_motion, editor.buffer[0..editor.len]);
+    defer enabled.deinit();
+    var duration = try change(&enabled, std.testing.io, .cursor_motion_ms, "120");
+    defer duration.deinit();
+    try std.testing.expect(duration.value.cursor_motion and duration.value.cursor_motion_ms == 120);
+    try std.testing.expect(!current.value.cursor_motion and current.value.cursor_motion_ms == 80);
+    try std.testing.expectError(error.InvalidCursorMotion, change(&current, std.testing.io, .cursor_motion_ms, "19"));
+    try std.testing.expectError(error.InvalidCursorMotion, change(&current, std.testing.io, .cursor_motion_ms, "251"));
 }
