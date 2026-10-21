@@ -2626,9 +2626,13 @@ fn paneContent(rect: layout.Rect) c.SDL_FRect {
 fn terminalPlacement(available: c.SDL_FRect, surface: instance.render.terminal.Size, scale: f32) c.SDL_FRect {
     const width = @min(available.w, @as(f32, @floatFromInt(surface.width)) / scale);
     const height = @min(available.h, @as(f32, @floatFromInt(surface.height)) / scale);
+    // Subtract extents before adding the origin. An oversized stale frame
+    // has zero slack; (origin + extent) - extent can round below origin.
+    const slack_x = available.w - width;
+    const slack_y = available.h - height;
     return .{
-        .x = std.math.clamp(@round((available.x + (available.w - width) / 2) * scale) / scale, available.x, available.x + available.w - width),
-        .y = std.math.clamp(@round((available.y + (available.h - height) / 2) * scale) / scale, available.y, available.y + available.h - height),
+        .x = std.math.clamp(@round((available.x + slack_x / 2) * scale) / scale, available.x, available.x + slack_x),
+        .y = std.math.clamp(@round((available.y + slack_y / 2) * scale) / scale, available.y, available.y + slack_y),
         .w = width,
         .h = height,
     };
@@ -3534,4 +3538,40 @@ test "Gruvbox selected text stays inside even a short scrolled text field" {
     try std.testing.expectEqual(sentinel, try testPixel(surface, 90, 20));
     try std.testing.expectEqual(sentinel, try testPixel(surface, 18, 9));
     try std.testing.expectEqual(sentinel, try testPixel(surface, 18, 38));
+}
+
+test "split reversal clips an oversized stale frame at fractional pane origins" {
+    // Captain's core: (855.000061 + 1537) - 1537 rounds down to 855.
+    // A clamp over absolute coordinates therefore inverted its bounds.
+    const available: c.SDL_FRect = .{ .x = 855.000061, .y = 34, .w = 1537, .h = 1308 };
+    const placed = terminalPlacement(available, .{ .width = 2670, .height = 2072 }, 1.6);
+    try std.testing.expectEqual(available.x, placed.x);
+    try std.testing.expectEqual(available.w, placed.w);
+    for ([_]f32{ 1, 1.25, 1.6, 1.7, 2 }) |scale| {
+        for (0..10000) |i| {
+            const ratio = @as(f32, @floatFromInt(1000 + i % 8001)) / 10000;
+            const first = @as(f32, 2392) * ratio;
+            // Exercise both sides, horizontal/vertical, and frames both older
+            // (oversized) and newer (smaller) than the current pane geometry.
+            for ([_]c.SDL_FRect{
+                .{ .x = 0, .y = 34, .w = first, .h = 1308 },
+                .{ .x = first, .y = 34, .w = 2392 - first, .h = 1308 },
+                .{ .x = 0, .y = first, .w = 2392, .h = 2392 - first },
+            }) |pane| {
+                for ([_]instance.render.terminal.Size{
+                    .{ .width = 4000, .height = 4000 },
+                    .{ .width = 17, .height = 41 },
+                    .{ .width = 2670, .height = 2072 },
+                }) |surface| {
+                    const rect = terminalPlacement(pane, surface, scale);
+                    try std.testing.expect(rect.x >= pane.x and rect.y >= pane.y);
+                    try std.testing.expect(rect.w <= pane.w and rect.h <= pane.h);
+                    try std.testing.expect(rect.x + rect.w <= pane.x + pane.w + 0.001);
+                    try std.testing.expect(rect.y + rect.h <= pane.y + pane.h + 0.001);
+                    if (rect.w == pane.w) try std.testing.expectEqual(pane.x, rect.x);
+                    if (rect.h == pane.h) try std.testing.expectEqual(pane.y, rect.y);
+                }
+            }
+        }
+    }
 }
