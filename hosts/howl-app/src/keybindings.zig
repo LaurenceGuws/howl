@@ -10,6 +10,9 @@ pub const Action = enum {
     split_vertical,
     split_horizontal,
     toggle_pane_zoom,
+    next_pane,
+    previous_pane,
+    balance_panes,
     open_local,
     recover_instance,
     open_settings,
@@ -53,6 +56,9 @@ pub const definitions = [_]Definition{
     .{ .target = .{ .action = .split_vertical }, .id = "split_right", .label = "Split pane right", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .split_horizontal }, .id = "split_down", .label = "Split pane down", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .toggle_pane_zoom }, .id = "toggle_pane_zoom", .label = "Toggle pane zoom", .default_shortcut = "Ctrl+Shift+Z", .category = .pane },
+    .{ .target = .{ .action = .next_pane }, .id = "next_pane", .label = "Next pane", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .previous_pane }, .id = "previous_pane", .label = "Previous pane", .default_shortcut = "", .category = .pane },
+    .{ .target = .{ .action = .balance_panes }, .id = "balance_panes", .label = "Balance pane splits", .default_shortcut = "", .category = .pane },
     .{ .target = .{ .action = .open_local }, .id = "open_local", .label = "Open Local shell", .default_shortcut = "", .category = .profile },
     .{ .target = .{ .action = .recover_instance }, .id = "recover_instance", .label = "Restart pane", .default_shortcut = "Ctrl+Shift+R", .category = .pane },
     .{ .target = .{ .action = .open_settings }, .id = "open_settings", .label = "Open settings", .default_shortcut = "Ctrl+,", .category = .application },
@@ -214,7 +220,7 @@ pub fn indexForId(id: []const u8) ?usize {
 
 test "daily defaults preserve Local mappings, unbound Alt directions and shifted Plus" {
     const bindings = try Bindings.init();
-    try std.testing.expectEqual(@as(usize, 49), definitions.len);
+    try std.testing.expectEqual(@as(usize, 52), definitions.len);
     for (definitions, bindings.rows) |definition, binding| {
         if (definition.target == .pane_focus or definition.target == .pane_resize or definition.target == .pane_swap)
             try std.testing.expectEqual(@as(c.SDL_Keycode, 0), binding.shortcut.key);

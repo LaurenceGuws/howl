@@ -12,6 +12,7 @@ const input = @import("input.zig");
 const pointer = @import("pointer.zig");
 const composition = @import("composition.zig");
 const config = @import("config.zig");
+const widgets = @import("widgets.zig");
 const settings = @import("settings.zig");
 const discovery = @import("discovery.zig");
 const picker = @import("picker.zig");
@@ -67,6 +68,7 @@ const Tab = struct {
 };
 const Palette = picker.Picker;
 const FindEditor = struct {
+    edit: widgets.Text = .{},
     serial: u64 = 0,
     bytes: [find.query_limit]u8 = undefined,
     len: usize = 0,
@@ -105,6 +107,10 @@ const App = struct {
     chrome_pressed: chrome.Button = .none,
     chrome_hover: chrome.Button = .none,
     pointer_buttons: u32 = 0,
+    hover_divider: ?u8 = null,
+    color_drag: ?u8 = null,
+    cursors: [3]?*c.SDL_Cursor = @splat(null),
+    cursor_shape: ?usize = null,
     consume_left_release: bool = false,
     focused: bool = false,
     running: bool = true,
@@ -115,6 +121,8 @@ const App = struct {
     notice_until: u64 = 0,
 
     fn deinit(self: *App) void {
+        if (!c.SDL_SetCursor(c.SDL_GetDefaultCursor())) self.report(error.SDL);
+        for (self.cursors) |cursor| if (cursor) |owned| c.SDL_DestroyCursor(owned);
         if (self.discovered) |catalogue| catalogue.destroy(allocator);
         if (self.chooser) |chooser| chooser.destroy(allocator);
         for (self.tabs[0..self.tab_count]) |value| self.destroyTab(value.?);
@@ -213,6 +221,8 @@ const App = struct {
         if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
     }
     fn loseKeyboard(self: *App) !void {
+        self.hover_divider = null;
+        self.setPointer(null) catch |failure| self.report(failure);
         self.cancelDrag();
         self.cancelComposition();
         try self.finishPointer();
@@ -364,7 +374,7 @@ const App = struct {
         return switch (action) {
             .new_tab, .duplicate_tab, .open_local => self.tab_count < tab_limit,
             .split_vertical, .split_horizontal => panes < layout.pane_limit,
-            .toggle_pane_zoom => panes > 1,
+            .toggle_pane_zoom, .next_pane, .previous_pane, .balance_panes => panes > 1,
             .next_tab, .previous_tab => self.tab_count > 1,
             .move_tab_left => self.active > 0,
             .move_tab_right => self.active + 1 < self.tab_count,
@@ -373,8 +383,17 @@ const App = struct {
             else => true,
         };
     }
+    fn targetEnabled(self: *App, target: keybindings.Target) bool {
+        return switch (target) {
+            .action => |action| self.actionEnabled(action),
+            .select_tab => |index| index < self.tab_count,
+            .pane_focus, .pane_swap => |direction| self.tab().tree.neighbor(self.terminalBody(), direction) != null,
+            .pane_resize => self.tab().tree.count > 1 and !self.tab().tree.zoomed,
+            else => true,
+        };
+    }
     fn dispatch(self: *App, target: keybindings.Target) !void {
-        if (target == .action and !self.actionEnabled(target.action)) return;
+        if (!self.targetEnabled(target)) return;
         self.notice_len = 0;
         if (self.settings_editor != null and !(target == .action and target.action == .open_settings)) {
             self.settings_editor = null;
@@ -398,6 +417,8 @@ const App = struct {
                     self.tab().tree.zoomed = !self.tab().tree.zoomed;
                     self.syncVisible();
                 },
+                .next_pane, .previous_pane => try self.focusPane(self.tab().tree.cycle(action == .previous_pane)),
+                .balance_panes => self.tab().tree.balance(),
                 .close_pane => try self.closePane(),
                 .close_tab => try self.closeTab(),
                 .next_tab => try self.selectTab((self.active + 1) % self.tab_count),
@@ -648,7 +669,7 @@ const App = struct {
                 .delete_environment => |field| field.profile,
                 else => editor.profile,
             };
-            editor.selected = 0;
+            editor.list = .{};
             editor.content_focus = true;
             var all: [settings.row_limit]settings.Row = undefined;
             var shown: [settings.row_limit]u16 = undefined;
@@ -656,7 +677,7 @@ const App = struct {
             const visible = editor.indices(all[0..count], &shown);
             for (shown[0..visible], 0..) |index, number| {
                 if (std.meta.eql(all[index].target, row.target)) {
-                    editor.selected = number;
+                    editor.list.selected = number;
                     break;
                 }
             }
@@ -667,7 +688,7 @@ const App = struct {
         if (row.target == .set_default and !editor.search) {
             editor.profile = row.target.set_default;
             editor.page = .profiles;
-            editor.selected = 0;
+            editor.list = .{};
             editor.content_focus = true;
             return;
         }
@@ -722,21 +743,25 @@ const App = struct {
         self.chooser.?.destroy(allocator);
         self.chooser = null;
     }
-    fn chooserKey(self: *App, key: c.SDL_Keycode) !void {
+    fn chooserKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
         const chooser = self.chooser.?;
+        const key = event_value.key;
         switch (key) {
             c.SDLK_ESCAPE => try self.chooserCancel(),
-            c.SDLK_RETURN => try self.chooserApply(true),
-            c.SDLK_RIGHT => try self.chooserApply(false),
-            c.SDLK_LEFT => try self.chooserRestore(),
+            c.SDLK_TAB => {
+                const position: u8 = if (chooser.button) |button| button + 1 else 0;
+                const next = (position + @as(u8, if (event_value.mod & c.SDL_KMOD_SHIFT != 0) 3 else 1)) % 4;
+                chooser.button = if (next == 0) null else next - 1;
+            },
+            c.SDLK_RETURN => if (chooser.button == 0) try self.chooserApply(false) else if (chooser.button == 2) try self.chooserCancel() else try self.chooserApply(true),
             c.SDLK_UP => chooser.move(-1),
             c.SDLK_DOWN => chooser.move(1),
-            c.SDLK_PAGEUP => chooser.move(-10),
-            c.SDLK_PAGEDOWN => chooser.move(10),
-            c.SDLK_HOME => chooser.selected = 0,
-            c.SDLK_END => chooser.selected = chooser.result_count -| 1,
-            c.SDLK_BACKSPACE => chooser.backspace(),
-            else => {},
+            c.SDLK_PAGEUP => chooser.move(-@as(i16, @intCast(self.chooserVisible()))),
+            c.SDLK_PAGEDOWN => chooser.move(@intCast(self.chooserVisible())),
+            else => if (chooser.button == null and try self.textKey(&chooser.edit, chooser.query[0 .. chooser.query.len - 1], &chooser.query_len, event_value)) {
+                chooser.list = .{};
+                chooser.refresh();
+            },
         }
     }
     fn chooserField(self: *const App) layout.Rect {
@@ -747,25 +772,31 @@ const App = struct {
         const box = self.settingsRect();
         return .{ .x = box.x + 12, .y = box.y + 86, .width = @max(1, (box.width - 36) * 0.45), .height = @max(1, box.height - 142) };
     }
-    fn chooserVisible(self: *const App) u16 {
-        return @intFromFloat(std.math.clamp(@floor(self.chooserList().height / 32), 1, 10));
+    fn chooserRows(self: *const App) widgets.Rows {
+        return .{ .rect = self.chooserList(), .stride = 36 };
     }
-    fn chooserStart(self: *const App) u16 {
-        return (self.chooser.?.selected + 1) -| self.chooserVisible();
+    fn chooserVisible(self: *const App) usize {
+        return self.chooserRows().visible();
+    }
+    fn chooserStart(self: *App) usize {
+        self.chooser.?.list.reveal(self.chooser.?.result_count, self.chooserVisible());
+        return self.chooser.?.list.first;
     }
     fn chooserClick(self: *App, x: f32, y: f32) !void {
         const box = self.settingsRect();
         if (!box.contains(x, y)) return self.chooserCancel();
+        if (self.chooserField().contains(x, y)) {
+            self.chooser.?.button = null;
+            return;
+        }
         const list = self.chooserList();
         if (y >= box.y + box.height - 42) {
             const third = @max(1, box.width / 3);
             if (x < box.x + third) try self.chooserApply(false) else if (x < box.x + 2 * third) try self.chooserApply(true) else try self.chooserCancel();
         } else if (list.contains(x, y)) {
-            const relative = @floor((y - list.y) / 32);
-            if (relative >= @as(f32, @floatFromInt(self.chooserVisible()))) return;
-            const row: u16 = @intFromFloat(relative);
+            const row = self.chooserRows().hit(x, y) orelse return;
             const chosen = row + self.chooserStart();
-            if (row < self.chooserVisible() and chosen < self.chooser.?.result_count) self.chooser.?.selected = chosen;
+            if (chosen < self.chooser.?.result_count) self.chooser.?.list.selected = chosen;
         }
     }
     fn drawChooser(self: *App) !void {
@@ -774,19 +805,20 @@ const App = struct {
         const box = self.settingsRect();
         const list = self.chooserList();
         const field = self.chooserField();
-        try fill(self.renderer, box, colors.panel);
+        try fill(self.renderer, box, colors.title);
+        try outline(self.renderer, box, colors.border);
         try self.drawText(if (chooser.truncated) "Installed terminal fonts — first 256 families" else "Installed terminal fonts", box.x + 12, box.y + 12);
-        try fill(self.renderer, field, colors.title);
-        try self.clippedText(if (chooser.query_len == 0) "Type to search families" else chooser.query[0..chooser.query_len], field, field.x + 6);
+        try self.drawField(field, &chooser.edit, chooser.query[0..chooser.query_len], "Search installed font families", chooser.button == null);
         const start = self.chooserStart();
         for (start..@min(chooser.result_count, start + self.chooserVisible())) |index| {
-            const row: layout.Rect = .{ .x = list.x, .y = list.y + @as(f32, @floatFromInt(index - start)) * 32, .width = list.width, .height = 30 };
-            if (index == chooser.selected) try fill(self.renderer, row, colors.active);
+            const row = self.chooserRows().row(index - start);
+            try self.drawListRow(row, index == chooser.list.selected, chooser.list.hovered == index, true);
             try self.clippedText(try chooser.label(@intCast(index)), row, row.x + 6);
         }
+        try self.drawListScroll(self.chooserRows(), start, chooser.result_count);
         const sample: layout.Rect = .{ .x = list.x + list.width + 12, .y = list.y, .width = @max(1, box.x + box.width - 12 - list.x - list.width - 12), .height = list.height };
         if (chooser.result_count == 0) try self.clippedText("No matching terminal font families", sample, sample.x) else {
-            try self.clippedText(try chooser.label(chooser.selected), .{ .x = sample.x, .y = sample.y, .width = sample.width, .height = 30 }, sample.x);
+            try self.clippedText(try chooser.label(chooser.list.selected), .{ .x = sample.x, .y = sample.y, .width = sample.width, .height = 30 }, sample.x);
             try self.clippedText(try chooser.regularPath(), .{ .x = sample.x, .y = sample.y + 32, .width = sample.width, .height = 30 }, sample.x);
             const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(sample.x)), .y = @intFromFloat(@floor(sample.y + 68)), .w = @intFromFloat(@ceil(sample.width)), .h = @intFromFloat(@ceil(@max(1, sample.height - 68))) };
             if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
@@ -798,11 +830,65 @@ const App = struct {
             }
         }
         const button_width = @max(1, (box.width - 24) / 3);
-        for ([_][]const u8{ "Preview →", "Save Enter", "Cancel Esc" }, 0..) |label, index| {
+        for ([_][]const u8{ "Preview", "Save · Enter", "Cancel · Esc" }, 0..) |label, index| {
             const button: layout.Rect = .{ .x = box.x + 12 + @as(f32, @floatFromInt(index)) * button_width, .y = box.y + box.height - 38, .width = @max(1, button_width - 4), .height = 30 };
-            try fill(self.renderer, button, colors.active);
+            try fill(self.renderer, button, colors.idle);
+            try outline(self.renderer, button, if (chooser.button == @as(u8, @intCast(index))) colors.accent else colors.border);
             try self.clippedText(label, button, button.x + 6);
         }
+    }
+    fn textKey(self: *App, edit: *widgets.Text, buffer: []u8, len: *usize, event_value: c.SDL_KeyboardEvent) !bool {
+        const key = event_value.key;
+        const mods = input.semanticModifiers(event_value.mod);
+        if (mods.control and key == c.SDLK_A) {
+            edit.select_all = true;
+            self.keyboard.suppress_text = true;
+        } else if (mods.control and key == c.SDLK_V) {
+            self.keyboard.suppress_text = true;
+            const text = c.SDL_GetClipboardText() orelse return error.SDL;
+            defer c.SDL_free(text);
+            try edit.insert(buffer, len, std.mem.span(text));
+            return true;
+        } else switch (key) {
+            c.SDLK_LEFT, c.SDLK_RIGHT => edit.move(buffer[0..len.*], if (key == c.SDLK_LEFT) -1 else 1),
+            c.SDLK_HOME, c.SDLK_END => {
+                edit.cursor = if (key == c.SDLK_HOME) 0 else len.*;
+                edit.select_all = false;
+            },
+            c.SDLK_BACKSPACE, c.SDLK_DELETE => {
+                if (mods.control and key == c.SDLK_BACKSPACE) edit.select_all = true;
+                edit.erase(buffer, len, key == c.SDLK_DELETE);
+                return true;
+            },
+            else => {},
+        }
+        return false;
+    }
+    fn drawField(self: *App, rect: layout.Rect, edit: *widgets.Text, text: []const u8, placeholder: []const u8, active: bool) !void {
+        const colors = try self.uiPalette();
+        try fill(self.renderer, rect, colors.panel);
+        try outline(self.renderer, rect, if (active) colors.accent else colors.border);
+        const inner: layout.Rect = .{ .x = rect.x + 7, .y = rect.y, .width = @max(1, rect.width - 14), .height = rect.height };
+        const caret = try self.textWidth(text[0..edit.cursor]);
+        const scroll = edit.reveal(caret, try self.textWidth(text), inner.width - 2);
+        if (active and edit.select_all) try fill(self.renderer, inner, colors.active);
+        try self.clippedTextColor(if (text.len == 0) placeholder else text, inner, inner.x - scroll, if (text.len == 0) colors.muted else colors.text);
+        if (active and self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = inner.x + caret - scroll, .y = rect.y + 6, .width = 1, .height = @min(18, @max(1, rect.height - 8)) }, colors.accent);
+    }
+    fn drawListScroll(self: *App, rows: widgets.Rows, first: usize, count: usize) !void {
+        const shown = @min(count, rows.visible());
+        if (count <= shown) return;
+        const colors = try self.uiPalette();
+        const height = @as(f32, @floatFromInt(rows.visible())) * rows.stride - rows.gap;
+        const thumb = @max(16, height * @as(f32, @floatFromInt(shown)) / @as(f32, @floatFromInt(count)));
+        const offset = @as(f32, @floatFromInt(first)) / @as(f32, @floatFromInt(count - shown));
+        try fill(self.renderer, .{ .x = rows.rect.x + rows.rect.width - 3, .y = rows.rect.y, .width = 3, .height = height }, colors.border);
+        try fill(self.renderer, .{ .x = rows.rect.x + rows.rect.width - 3, .y = rows.rect.y + (height - thumb) * offset, .width = 3, .height = thumb }, colors.muted);
+    }
+    fn drawListRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
+        const colors = try self.uiPalette();
+        if (selected or hovered) try fill(self.renderer, rect, if (selected) colors.active else colors.idle);
+        if (selected and focused) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + 4, .width = 2, .height = @max(1, rect.height - 8) }, colors.accent);
     }
     fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
         const e = &self.settings_editor.?;
@@ -818,31 +904,39 @@ const App = struct {
                 key == c.SDLK_LALT or key == c.SDLK_RALT or key == c.SDLK_LGUI or key == c.SDLK_RGUI) return;
             self.keyboard.suppress_text = true;
             var buffer: [64]u8 = undefined;
-            try self.changeSetting(e.editing.?, try keybindings.format(key, event_value.mod, &buffer));
+            const shortcut = try keybindings.format(key, event_value.mod, &buffer);
+            @memcpy(e.buffer[0..shortcut.len], shortcut);
+            e.len = shortcut.len;
+            e.edit = .{ .cursor = shortcut.len };
+            e.recording = false;
+            self.setNotice("Shortcut captured — Enter saves; Esc cancels");
             return;
         }
         if (e.editing) |target| {
-            if (mods.control and key == c.SDLK_A) e.select_all = true else if (mods.control and key == c.SDLK_V) {
-                self.keyboard.suppress_text = true;
-                const text = c.SDL_GetClipboardText() orelse return error.SDL;
-                defer c.SDL_free(text);
-                try e.append(std.mem.span(text));
-            } else switch (key) {
-                c.SDLK_ESCAPE => {
-                    self.cancelComposition();
-                    e.cancel();
-                },
-                c.SDLK_RETURN => try self.changeSetting(target, e.buffer[0..e.len]),
-                c.SDLK_BACKSPACE, c.SDLK_DELETE => e.backspace(),
-                else => {},
+            if (key == c.SDLK_ESCAPE) {
+                self.cancelComposition();
+                e.cancel();
+            } else if (key == c.SDLK_TAB) {
+                const position: u8 = if (e.button) |button| button + 1 else 0;
+                const next = (position + @as(u8, if (mods.shift) 2 else 1)) % 3;
+                e.button = if (next == 0) null else next - 1;
+            } else if (key == c.SDLK_RETURN) {
+                if (e.button == 1) e.cancel() else try self.changeSetting(target, e.buffer[0..e.len]);
+            } else if (e.button == null) {
+                const row: settings.Row = .{ .page = e.page, .label = "", .target = target };
+                if (row.choice()) {
+                    if (key == c.SDLK_LEFT or key == c.SDLK_UP or key == c.SDLK_RIGHT or key == c.SDLK_DOWN or key == c.SDLK_SPACE) try e.cycle(self.configuration, if (key == c.SDLK_LEFT or key == c.SDLK_UP) -1 else 1);
+                } else if (try self.textKey(&e.edit, e.buffer[0 .. e.buffer.len - 1], &e.len, event_value)) self.cancelComposition();
             }
             return;
         }
         if (mods.control and key == c.SDLK_F) {
             self.cancelComposition();
-            e.search = !e.search;
+            e.search = true;
+            e.content_focus = false;
             e.query_len = 0;
-            e.selected = 0;
+            e.query_edit = .{};
+            e.list = .{};
             e.delete_pending = null;
             return;
         }
@@ -851,15 +945,26 @@ const App = struct {
             if (e.search) {
                 e.search = false;
                 e.query_len = 0;
-                e.selected = 0;
+                e.query_edit = .{};
+                e.list = .{};
+                e.content_focus = true;
+            } else if (e.page == .profiles) {
+                e.page = .defaults;
+                e.list = .{ .selected = e.profile };
+            } else if (e.content_focus) {
+                e.content_focus = false;
             } else try self.toggleSettings();
+            return;
+        }
+        if (e.search and (key == c.SDLK_LEFT or key == c.SDLK_RIGHT or key == c.SDLK_HOME or key == c.SDLK_END or key == c.SDLK_DELETE or key == c.SDLK_BACKSPACE or (mods.control and (key == c.SDLK_A or key == c.SDLK_V)))) {
+            if (try self.textKey(&e.query_edit, &e.query, &e.query_len, event_value)) e.list = .{};
             return;
         }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
-        if (key == c.SDLK_TAB and !e.search) {
+        if (key == c.SDLK_TAB) {
             e.content_focus = !e.content_focus;
             return;
         }
@@ -867,59 +972,41 @@ const App = struct {
             if (key == c.SDLK_UP or key == c.SDLK_DOWN) {
                 const page_number = @as(i16, @backingInt(e.page)) + @as(i16, if (key == c.SDLK_UP) -1 else 1);
                 e.page = @fromBackingInt(@intCast(std.math.clamp(page_number, 0, settings.titles.len - 1)));
-                e.selected = 0;
+                e.list = .{};
                 e.delete_pending = null;
             } else if (key == c.SDLK_RETURN or key == c.SDLK_RIGHT) e.content_focus = true;
             return;
         }
         if (visible == 0) return;
-        e.selected = @min(e.selected, visible - 1);
-        const row = all[indices[e.selected]];
+        e.list.selected = @min(e.list.selected, visible - 1);
+        const row = all[indices[e.list.selected]];
         switch (key) {
             c.SDLK_UP, c.SDLK_PAGEUP => {
-                e.selected -|= if (key == c.SDLK_UP) 1 else 10;
+                e.list.selected -|= if (key == c.SDLK_UP) 1 else self.settingsVisible();
                 e.delete_pending = null;
             },
             c.SDLK_DOWN, c.SDLK_PAGEDOWN => {
-                e.selected = @min(visible - 1, e.selected + (if (key == c.SDLK_DOWN) @as(usize, 1) else 10));
+                e.list.selected = @min(visible - 1, e.list.selected + (if (key == c.SDLK_DOWN) @as(usize, 1) else self.settingsVisible()));
                 e.delete_pending = null;
             },
             c.SDLK_RETURN => try self.activateSetting(row),
-            c.SDLK_BACKSPACE => if (e.search) {
-                e.backspace();
-            } else if (row.target == .binding) {
-                try self.changeSetting(row.target, keybindings.definitions[row.target.binding].default_shortcut);
-            } else if (row.target == .font) {
-                try self.changeSetting(row.target, "");
+            c.SDLK_BACKSPACE, c.SDLK_DELETE => if (row.target == .binding or row.target == .font) {
+                try e.begin(row, self.configuration);
+                e.edit.select_all = true;
+                try e.append(if (key == c.SDLK_BACKSPACE and row.target == .binding) keybindings.definitions[row.target.binding].default_shortcut else "");
             },
-            c.SDLK_DELETE => if (row.target == .binding) try self.changeSetting(row.target, ""),
             c.SDLK_LEFT, c.SDLK_RIGHT => {
-                const delta: i8 = if (key == c.SDLK_LEFT) -1 else 1;
                 if (mods.alt and row.target == .environment) {
                     const field = row.target.environment;
-                    try self.changeSetting(.{ .move_environment = .{ .profile = field.profile, .index = field.index, .delta = delta } }, "");
-                } else if (row.target == .default_font) {
-                    const next = std.math.clamp(self.configuration.value.terminal_font_pixels + delta, 8, 48);
-                    var text: [16]u8 = undefined;
-                    try self.changeSetting(row.target, try std.fmt.bufPrint(&text, "{d}", .{next}));
-                } else if (row.target == .default_profile) {
-                    const index = try self.configuration.defaultProfile();
-                    const next: u8 = @intCast(std.math.clamp(@as(i16, index) + delta, 0, @as(i16, self.configuration.profileCount()) - 1));
-                    try self.changeSetting(.{ .set_default = next }, "");
-                } else if (row.target == .theme or row.target == .terminal_theme) {
-                    const themes: []const []const u8 = if (row.target == .theme) &theme_presets.app_ids else &color_config.terminal_themes;
-                    const current = if (row.target == .theme) self.configuration.value.app_theme else self.configuration.value.terminal_theme;
-                    var index: i16 = 0;
-                    for (themes, 0..) |theme, i| if (std.mem.eql(u8, theme, current)) {
-                        index = @intCast(i);
-                        break;
-                    };
-                    try self.changeSetting(row.target, themes[@intCast(@mod(index + delta, @as(i16, @intCast(themes.len))))]);
-                }
+                    try self.changeSetting(.{ .move_environment = .{ .profile = field.profile, .index = field.index, .delta = if (key == c.SDLK_LEFT) -1 else 1 } }, "");
+                } else if (row.choice()) {
+                    try e.begin(row, self.configuration);
+                    try e.cycle(self.configuration, if (key == c.SDLK_LEFT) -1 else 1);
+                } else if (key == c.SDLK_LEFT) e.content_focus = false;
             },
             else => {},
         }
-        if (!e.search and e.page == .defaults) e.profile = @intCast(e.selected);
+        if (!e.search and e.page == .defaults) e.profile = @intCast(e.list.selected);
     }
     fn newWindow(self: *App) !void {
         // Linux fork/exec resolves this exact running image even after an on-disk upgrade.
@@ -929,6 +1016,7 @@ const App = struct {
         thread.detach();
     }
     fn cancelDrag(self: *App) void {
+        self.color_drag = null;
         if (self.scrolling != null) {
             self.scrolling = null;
             self.consume_left_release = true;
@@ -973,36 +1061,35 @@ const App = struct {
                 try self.gainKeyboard();
             },
             c.SDLK_UP => if (count != 0) {
-                self.palette.?.selected -|= 1;
+                self.palette.?.list.selected -|= 1;
             },
             c.SDLK_DOWN => if (count != 0) {
-                self.palette.?.selected = @min(count - 1, self.palette.?.selected + 1);
+                self.palette.?.list.selected = @min(count - 1, self.palette.?.list.selected + 1);
             },
             c.SDLK_PAGEUP, c.SDLK_PAGEDOWN => if (count != 0) {
                 const delta = self.paletteRows();
-                const selected = &self.palette.?.selected;
+                const selected = &self.palette.?.list.selected;
                 selected.* = if (key == c.SDLK_PAGEUP) selected.* -| delta else @min(count - 1, selected.* + delta);
             },
-            c.SDLK_LEFT => self.palette.?.moveCursor(-1),
-            c.SDLK_RIGHT => self.palette.?.moveCursor(1),
-            c.SDLK_HOME => if (mods & c.SDL_KMOD_CTRL != 0) {
-                self.palette.?.selected = 0;
+            c.SDLK_HOME, c.SDLK_END => if (mods & c.SDL_KMOD_CTRL != 0) {
+                self.palette.?.list.selected = if (key == c.SDLK_HOME) 0 else count -| 1;
             } else {
-                self.palette.?.cursor = 0;
+                self.palette.?.edit.cursor = if (key == c.SDLK_HOME) 0 else self.palette.?.len;
+                self.palette.?.edit.select_all = false;
             },
-            c.SDLK_END => if (mods & c.SDL_KMOD_CTRL != 0) {
-                self.palette.?.selected = count -| 1;
-            } else {
-                self.palette.?.cursor = self.palette.?.len;
-            },
-            c.SDLK_DELETE => self.palette.?.delete(),
             c.SDLK_TAB => self.palette.?.cycle(mods & c.SDL_KMOD_SHIFT != 0),
-            c.SDLK_BACKSPACE => self.palette.?.erase(mods & c.SDL_KMOD_CTRL != 0),
-            c.SDLK_RETURN => if (count != 0) try self.choosePalette(matches[@min(self.palette.?.selected, count - 1)]),
-            else => {},
+
+            c.SDLK_RETURN => if (count != 0) try self.choosePalette(matches[@min(self.palette.?.list.selected, count - 1)]),
+            else => {
+                var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
+                event_value.key = key;
+                event_value.mod = mods;
+                const p = &self.palette.?;
+                if (try self.textKey(&p.edit, &p.query, &p.len, event_value)) p.reset();
+            },
         }
         if (self.palette) |*p| {
-            p.hovered = null;
+            p.list.hovered = null;
             p.reveal(try p.indices(self.configuration, self.discovered, &matches), self.paletteRows());
         }
     }
@@ -1032,9 +1119,7 @@ const App = struct {
     fn findAppend(self: *App, text: []const u8) !void {
         const p = self.pane();
         var editor = p.finder.?;
-        if (text.len > editor.bytes.len - editor.len) return error.InvalidQuery;
-        @memcpy(editor.bytes[editor.len..][0..text.len], text);
-        editor.len += text.len;
+        try editor.edit.insert(&editor.bytes, &editor.len, text);
         try self.findRequest(p, try find.Request.query(0, editor.bytes[0..editor.len]));
         editor.serial = p.selection_serial;
         p.finder = editor;
@@ -1047,30 +1132,26 @@ const App = struct {
                 .serial = 0,
                 .kind = if (event_key.key == c.SDLK_UP or event_key.mod & c.SDL_KMOD_SHIFT != 0) .previous else .next,
             }),
-            c.SDLK_BACKSPACE => {
+            else => {
                 var editor = p.finder.?;
-                if (editor.len == 0) return;
-                editor.len -= 1;
-                while (editor.len != 0 and editor.bytes[editor.len] & 0xc0 == 0x80) editor.len -= 1;
-                try self.findRequest(p, try find.Request.query(0, editor.bytes[0..editor.len]));
-                editor.serial = p.selection_serial;
+                if (try self.textKey(&editor.edit, &editor.bytes, &editor.len, event_key)) {
+                    try self.findRequest(p, try find.Request.query(0, editor.bytes[0..editor.len]));
+                    editor.serial = p.selection_serial;
+                }
                 p.finder = editor;
             },
-            else => {},
         }
     }
     fn findField(rect: c.SDL_FRect) layout.Rect {
         return .{ .x = rect.x, .y = rect.y + @max(0, rect.h - 28), .width = rect.w, .height = @min(28, rect.h) };
     }
     fn drawFind(self: *App, p: *Pane, rect: c.SDL_FRect, status: terminal.Status) !void {
-        const editor = p.finder orelse return;
+        const editor = if (p.finder) |*value| value else return;
         const field = findField(rect);
         const colors = try self.uiPalette();
         try fill(self.renderer, field, colors.active);
         const query_rect: layout.Rect = .{ .x = field.x + 6, .y = field.y, .width = @max(1, field.width * 0.55 - 12), .height = field.height };
-        const query_text = if (editor.len == 0) "Find — type text" else editor.bytes[0..editor.len];
-        const query_scroll = if (editor.len == 0) 0 else @max(0, try self.textWidth(query_text) - query_rect.width + 12);
-        try self.clippedText(query_text, query_rect, query_rect.x - query_scroll);
+        try self.drawField(query_rect, &editor.edit, editor.bytes[0..editor.len], "Find — type text", true);
         const progress = status.search;
         var buffer: [128]u8 = undefined;
         const text = if (progress.serial != editor.serial) "Waiting…" else if (progress.failure) |failure| @errorName(failure) else switch (progress.phase) {
@@ -1123,7 +1204,7 @@ const App = struct {
                 switch (route) {
                     .handled => {},
                     .command => |target| try self.dispatch(target),
-                    .overlay => if (self.chooser != null) try self.chooserKey(value.key.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
+                    .overlay => if (self.chooser != null) try self.chooserKey(value.key) else if (self.settings_editor != null) try self.settingsKey(value.key) else if (self.palette != null) try self.paletteKey(value.key.key, value.key.mod) else try self.findKey(value.key),
                 }
             },
             c.SDL_EVENT_TEXT_EDITING => {
@@ -1147,6 +1228,12 @@ const App = struct {
                 try self.pointerDown(value.button.x, value.button.y, button, input.semanticModifiers(c.SDL_GetModState()), value.button.clicks),
             c.SDL_EVENT_MOUSE_BUTTON_UP => {
                 const button = mouseButton(value.button.button) orelse return;
+                if (button == .left and self.color_drag != null) {
+                    const channel = self.color_drag.?;
+                    self.color_drag = null;
+                    try self.colorPoint(channel, value.button.x);
+                    return;
+                }
                 if (button == .left and self.scrolling != null) {
                     defer self.scrolling = null;
                     try self.scrollPoint(value.button.y);
@@ -1166,7 +1253,9 @@ const App = struct {
                 if (button == .left) self.drag = .none;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
-                if (self.scrolling != null) {
+                if (self.color_drag) |channel| {
+                    try self.colorPoint(channel, value.motion.x);
+                } else if (self.scrolling != null) {
                     try self.scrollPoint(value.motion.y);
                 } else if (self.selecting) |*dragging| {
                     dragging.x = value.motion.x;
@@ -1223,7 +1312,7 @@ const App = struct {
             return;
         }
         if (self.settings_editor != null) {
-            if (button == .left) try self.settingsClick(x, y);
+            if (button == .left) try self.settingsClick(x, y, clicks);
             return;
         }
         if (self.palette != null) {
@@ -1461,7 +1550,7 @@ const App = struct {
     }
     fn pointerWheel(self: *App, wheel: c.SDL_MouseWheelEvent) !void {
         if (self.chooser) |chooser| {
-            if (std.math.isFinite(wheel.y)) chooser.move(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)));
+            if (std.math.isFinite(wheel.y)) chooser.list.scroll(@intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256)), chooser.result_count, self.chooserVisible());
             return;
         }
         if (self.settings_editor) |*editor| {
@@ -1471,7 +1560,7 @@ const App = struct {
             const count = try settings.rows(self.configuration, &rows);
             const visible = editor.indices(rows[0..count], &filtered);
             const offset: i32 = @intFromFloat(std.math.clamp(-wheel.y * 3, -256, 256));
-            editor.selected = @intCast(std.math.clamp(@as(i32, @intCast(editor.selected)) + offset, 0, @as(i32, @intCast(visible -| 1))));
+            editor.list.scroll(offset, visible, self.settingsVisible());
             editor.content_focus = true;
             return;
         }
@@ -1532,21 +1621,25 @@ const App = struct {
     }
     fn paletteStart(self: *App, count: usize) usize {
         self.palette.?.reveal(count, self.paletteRows());
-        return self.palette.?.first;
+        return self.palette.?.list.first;
     }
-    fn paletteRow(self: *const App, number: usize) layout.Rect {
+    fn paletteList(self: *const App) widgets.Rows {
         const box = self.paletteRect();
         const profiles = self.palette.?.profile;
-        return .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + (if (profiles) @as(f32, 94) else 62) + @as(f32, @floatFromInt(number)) * (if (profiles) @as(f32, 44) else 36), .width = @max(1, box.width - (if (profiles) @as(f32, 24) else 44)), .height = if (profiles) 42 else 34 };
+        const stride: f32 = if (profiles) 44 else 36;
+        return .{ .rect = .{ .x = box.x + (if (profiles) @as(f32, 8) else 18), .y = box.y + (if (profiles) @as(f32, 94) else 62), .width = @max(1, box.width - (if (profiles) @as(f32, 24) else 44)), .height = @as(f32, @floatFromInt(self.paletteRows())) * stride }, .stride = stride };
+    }
+    fn paletteRow(self: *const App, number: usize) layout.Rect {
+        return self.paletteList().row(number);
     }
     fn paletteHover(self: *App, x: f32, y: f32) !void {
         var matches: [palette_limit]usize = undefined;
         const count = try self.palette.?.indices(self.configuration, self.discovered, &matches);
         const first = self.paletteStart(count);
-        self.palette.?.hovered = null;
+        self.palette.?.list.hovered = null;
         for (0..@min(count - first, self.paletteRows())) |row| {
             if (self.paletteRow(row).contains(x, y)) {
-                self.palette.?.hovered = first + row;
+                self.palette.?.list.hovered = first + row;
                 break;
             }
         }
@@ -1560,14 +1653,7 @@ const App = struct {
         try fill(self.renderer, box, colors.title);
         try outline(self.renderer, box, colors.border);
         const field = self.paletteField();
-        try fill(self.renderer, field, colors.panel);
-        try outline(self.renderer, field, colors.border);
-        const query = self.palette.?.query[0..self.palette.?.len];
-        const query_width = try self.textWidth(query);
-        const caret_width = try self.textWidth(query[0..self.palette.?.cursor]);
-        const query_scroll = self.palette.?.revealCursor(caret_width, query_width, field.width - 20);
-        try self.clippedTextColor(if (query.len != 0) query else if (profiles) "Search profiles" else "Search commands", .{ .x = field.x + 8, .y = field.y + 1, .width = @max(1, field.width - 16), .height = 30 }, field.x + 8 - query_scroll, if (query.len == 0) colors.muted else colors.text);
-        if (self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = field.x + 8 + caret_width - query_scroll, .y = field.y + 7, .width = 1, .height = @min(18, @max(1, field.height - 8)) }, colors.accent);
+        try self.drawField(field, &self.palette.?.edit, self.palette.?.query[0..self.palette.?.len], if (profiles) "Search profiles" else "Search commands", true);
         if (profiles) for (picker.labels, 0..) |label, index| {
             const chip = self.paletteFilterRect(index);
             const active = @backingInt(self.palette.?.filter) == index;
@@ -1580,10 +1666,7 @@ const App = struct {
         const shown = @min(count - start, self.paletteRows());
         for (matches[start .. start + shown], start..) |index, number| {
             const row = self.paletteRow(number - start);
-            if (number == self.palette.?.selected) {
-                try fill(self.renderer, row, colors.active);
-                try fill(self.renderer, .{ .x = row.x, .y = row.y + 4, .width = 2, .height = row.height - 8 }, colors.accent);
-            } else if (self.palette.?.hovered == number) try fill(self.renderer, row, colors.idle);
+            try self.drawListRow(row, number == self.palette.?.list.selected, self.palette.?.list.hovered == number, true);
             if (profiles) {
                 if (index < self.menuProfileCount()) {
                     const recipe = try self.menuProfile(index);
@@ -1602,18 +1685,11 @@ const App = struct {
             } else {
                 const binding = self.bindings.rows[index];
                 const label: layout.Rect = .{ .x = row.x + 10, .y = row.y + 2, .width = @max(1, row.width - 205), .height = 28 };
-                try self.clippedTextColor(keybindings.definitions[index].label, label, label.x, if (self.actionEnabled(keybindings.definitions[index].target.action)) colors.text else colors.muted);
+                try self.clippedTextColor(keybindings.definitions[index].label, label, label.x, if (self.targetEnabled(keybindings.definitions[index].target)) colors.text else colors.muted);
                 if (binding.len != 0) try self.clippedText(binding.text[0..binding.len], .{ .x = row.x + row.width - 195, .y = row.y + 2, .width = 185, .height = 28 }, row.x + row.width - 195);
             }
         }
-        if (count > self.paletteRows()) {
-            const first = self.paletteRow(0);
-            const height = @as(f32, @floatFromInt(self.paletteRows())) * (if (profiles) @as(f32, 44) else 36) - 2;
-            const thumb = @max(16, height * @as(f32, @floatFromInt(shown)) / @as(f32, @floatFromInt(count)));
-            const offset = @as(f32, @floatFromInt(start)) / @as(f32, @floatFromInt(count - shown));
-            try fill(self.renderer, .{ .x = box.x + box.width - 10, .y = first.y, .width = 3, .height = height }, colors.border);
-            try fill(self.renderer, .{ .x = box.x + box.width - 10, .y = first.y + (height - thumb) * offset, .width = 3, .height = thumb }, colors.muted);
-        }
+        try self.drawListScroll(self.paletteList(), start, count);
         var footer: [128]u8 = undefined;
         const text = if (count > self.paletteRows())
             try std.fmt.bufPrint(&footer, "{d}–{d} of {d} · {s}", .{ start + 1, start + shown, count, if (profiles) "Tab: category" else "↑↓: select" })
@@ -1632,25 +1708,27 @@ const App = struct {
         const sidebar = @min(178, box.width / 3);
         return .{ .x = box.x + sidebar + 16, .y = box.y + 92, .width = @max(1, box.width - sidebar - 32), .height = @max(1, box.height - 198) };
     }
+    fn settingsRows(self: *const App) widgets.Rows {
+        var body = self.settingsBody();
+        body.width = @max(1, body.width - 8);
+        return .{ .rect = body, .stride = 48, .gap = 4 };
+    }
     fn settingsField(self: *const App) layout.Rect {
         const box = self.settingsRect();
         const body = self.settingsBody();
-        if (self.settings_editor.?.editing != null and !self.settings_editor.?.search) {
-            const row: usize = @min(self.settings_editor.?.selected, self.settingsVisible() - 1);
-            return .{ .x = body.x + body.width * 0.46, .y = body.y + @as(f32, @floatFromInt(row)) * self.settingsRowHeight() + 5, .width = @max(1, body.width * 0.54 - 8), .height = self.settingsRowHeight() - 10 };
+        if (self.settings_editor.?.editing != null) {
+            const e = self.settings_editor.?;
+            const rect = self.settingsRows().row(e.list.selected -| e.list.first);
+            return .{ .x = rect.x + rect.width * 0.46, .y = rect.y + 5, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height - 10 };
         }
         return .{ .x = body.x, .y = box.y + 48, .width = body.width, .height = 32 };
     }
-    fn settingsRowHeight(self: *const App) f32 {
-        const e = self.settings_editor.?;
-        return if (e.search or e.page == .mappings) 32 else 48;
-    }
     fn settingsVisible(self: *const App) usize {
-        return @max(1, @as(usize, @intFromFloat(@floor(self.settingsBody().height / self.settingsRowHeight()))));
+        return self.settingsRows().visible();
     }
-    fn settingsStart(self: *const App, count: usize) usize {
-        const selected = @min(self.settings_editor.?.selected, count -| 1);
-        return (selected + 1) -| self.settingsVisible();
+    fn settingsStart(self: *App, count: usize) usize {
+        self.settings_editor.?.list.reveal(count, self.settingsVisible());
+        return self.settings_editor.?.list.first;
     }
     fn settingsToolbarCount(self: *const App) usize {
         return if (self.settings_editor.?.editing != null) 2 else 3;
@@ -1677,14 +1755,14 @@ const App = struct {
                     try self.changeSetting(.add_profile, "");
                     e.profile = self.configuration.profileCount() - 1;
                     e.page = .profiles;
-                    e.selected = 0;
+                    e.list = .{};
                     try e.begin(.{ .page = .profiles, .label = "Name", .target = .{ .profile = .{ .index = e.profile, .field = .name } } }, self.configuration);
                 },
                 1 => {
                     try self.changeSetting(.{ .clone_profile = e.profile }, "");
                     e.profile = self.configuration.profileCount() - 1;
                     e.page = .profiles;
-                    e.selected = 0;
+                    e.list = .{};
                 },
                 2 => {
                     try self.activateSetting(.{ .page = .profiles, .label = "Delete profile", .target = .{ .delete_profile = e.profile } });
@@ -1695,26 +1773,97 @@ const App = struct {
         } else if (e.page == .profiles) switch (number) {
             0 => {
                 e.page = .defaults;
-                e.selected = e.profile;
+                e.list.selected = e.profile;
             },
             1 => {
                 try self.changeSetting(.{ .clone_profile = e.profile }, "");
                 e.profile = self.configuration.profileCount() - 1;
-                e.selected = 0;
+                e.list = .{};
             },
             2 => try self.changeSetting(.{ .set_default = e.profile }, ""),
             else => {},
         };
         e.content_focus = true;
     }
-    fn settingsClick(self: *App, x: f32, y: f32) !void {
+    fn colorBar(self: *const App, channel: usize) layout.Rect {
+        const box = self.settingsRect();
+        const body = self.settingsBody();
+        return .{ .x = body.x + 24, .y = box.y + box.height - 100 + @as(f32, @floatFromInt(channel)) * 22, .width = @max(1, body.width - 120), .height = 18 };
+    }
+    fn colorReset(self: *const App) layout.Rect {
+        const body = self.settingsBody();
+        const bar = self.colorBar(0);
+        return .{ .x = body.x + body.width - 82, .y = bar.y, .width = 78, .height = 62 };
+    }
+    fn editedColor(self: *App) !instance.Terminal.Rgb {
+        const e = self.settings_editor.?;
+        return color_config.parse(e.buffer[0..e.len]) catch (try self.settingRgb(.{ .page = e.page, .label = "", .target = e.editing.? })).?;
+    }
+    fn colorPoint(self: *App, channel: u8, x: f32) !void {
+        const e = &self.settings_editor.?;
+        const bar = self.colorBar(channel);
+        var rgb = try self.editedColor();
+        const value: u8 = @intFromFloat(@round(std.math.clamp((x - bar.x) / bar.width, 0, 1) * 255));
+        switch (channel) {
+            0 => rgb.r = value,
+            1 => rgb.g = value,
+            2 => rgb.b = value,
+            else => return error.InvalidColorRole,
+        }
+        const text = try std.fmt.bufPrint(&e.buffer, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb.r, rgb.g, rgb.b });
+        e.len = text.len;
+        e.edit = .{ .kind = .color, .cursor = text.len };
+        e.button = null;
+    }
+    fn drawColorEditor(self: *App) !void {
+        const rgb = try self.editedColor();
+        const colors = try self.uiPalette();
+        for ([_]u8{ rgb.r, rgb.g, rgb.b }, [_][]const u8{ "R", "G", "B" }, 0..) |value, label, channel| {
+            const bar = self.colorBar(channel);
+            try self.clippedText(label, .{ .x = bar.x - 24, .y = bar.y - 4, .width = 24, .height = 24 }, bar.x - 24);
+            for (0..64) |step| {
+                var shade = rgb;
+                const component: u8 = @intCast(step * 4);
+                switch (channel) {
+                    0 => shade.r = component,
+                    1 => shade.g = component,
+                    2 => shade.b = component,
+                    else => return error.InvalidColorRole,
+                }
+                try fill(self.renderer, .{ .x = bar.x + @as(f32, @floatFromInt(step)) * bar.width / 64, .y = bar.y, .width = bar.width / 64 + 1, .height = bar.height }, .{ .r = shade.r, .g = shade.g, .b = shade.b, .a = 255 });
+            }
+            try outline(self.renderer, bar, colors.border);
+            const thumb: layout.Rect = .{ .x = bar.x + @as(f32, @floatFromInt(value)) * bar.width / 255 - 2, .y = bar.y - 2, .width = 4, .height = bar.height + 4 };
+            try fill(self.renderer, thumb, colors.text);
+        }
+        const reset = self.colorReset();
+        try fill(self.renderer, reset, colors.idle);
+        try outline(self.renderer, reset, colors.border);
+        try self.clippedText("Preset", reset, reset.x + 8);
+        const sample: layout.Rect = .{ .x = reset.x + 8, .y = reset.y + 30, .width = reset.width - 16, .height = 22 };
+        try fill(self.renderer, sample, .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 });
+        try outline(self.renderer, sample, colors.border);
+    }
+    fn settingsClick(self: *App, x: f32, y: f32, clicks: u8) !void {
         const e = &self.settings_editor.?;
         const box = self.settingsRect();
+        if (x >= box.x + box.width - 70 and y >= box.y and y < box.y + 40) return self.toggleSettings();
         if (e.editing != null) {
             for (0..self.settingsToolbarCount()) |number| if (self.settingsToolbarButton(number).contains(x, y)) return self.settingsToolbarAction(number);
+            if (self.settingsField().contains(x, y)) e.button = null;
+            if (e.edit.kind == .color) {
+                for (0..3) |channel| if (self.colorBar(channel).contains(x, y)) {
+                    self.color_drag = @intCast(channel);
+                    return self.colorPoint(@intCast(channel), x);
+                };
+                if (self.colorReset().contains(x, y)) {
+                    e.button = null;
+                    e.len = 0;
+                    e.edit = .{ .kind = .color };
+                }
+            }
             return;
         }
-        if (x >= box.x + box.width - 70 and y >= box.y and y < box.y + 40) return self.toggleSettings();
         if (!box.contains(x, y)) return;
         const body = self.settingsBody();
         if (x < body.x - 12 and y >= box.y + 52) {
@@ -1725,7 +1874,7 @@ const App = struct {
                 e.content_focus = false;
                 e.search = false;
                 e.query_len = 0;
-                e.selected = 0;
+                e.list = .{};
                 e.delete_pending = null;
             }
             return;
@@ -1741,8 +1890,8 @@ const App = struct {
         const field = self.settingsField();
         if (field.contains(x, y)) {
             e.search = true;
-            e.query_len = 0;
-            e.selected = 0;
+            e.query_edit = .{ .cursor = e.query_len };
+            e.list = .{};
             self.cancelComposition();
             return;
         }
@@ -1751,23 +1900,16 @@ const App = struct {
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
-        const row: usize = @intFromFloat(@floor((y - body.y) / self.settingsRowHeight()));
+        const row = self.settingsRows().hit(x, y) orelse return;
         const chosen = row + self.settingsStart(visible);
-        if (row >= self.settingsVisible() or chosen >= visible) return;
-        if (e.selected != chosen) e.delete_pending = null;
-        e.selected = chosen;
+        if (chosen >= visible) return;
+        if (e.list.selected != chosen) e.delete_pending = null;
+        e.list.selected = chosen;
         if (all[indices[chosen]].target == .set_default) e.profile = all[indices[chosen]].target.set_default;
         e.content_focus = true;
-        const target_row = all[indices[chosen]];
-        if ((target_row.target == .default_font or target_row.target == .default_profile or target_row.target == .theme or target_row.target == .terminal_theme) and (x < body.x + 36 or x >= body.x + body.width - 36)) {
-            var key_event = std.mem.zeroes(c.SDL_KeyboardEvent);
-            key_event.key = if (x < body.x + 36) c.SDLK_LEFT else c.SDLK_RIGHT;
-            return self.settingsKey(key_event);
-        }
-        if (target_row.target == .set_default and x < body.x + body.width - 82) return;
-        if (target_row.editable() and target_row.target != .default_font and target_row.target != .default_profile and target_row.target != .theme and target_row.target != .terminal_theme and x < body.x + body.width * 0.46) return;
-        try self.activateSetting(target_row);
+        if (clicks >= 2) try self.activateSetting(all[indices[chosen]]);
     }
+
     fn clippedText(self: *App, text: []const u8, rect: layout.Rect, x: f32) !void {
         return self.clippedTextColor(text, rect, x, (try self.uiPalette()).text);
     }
@@ -1810,7 +1952,7 @@ const App = struct {
         try outline(self.renderer, box, colors.border);
         try fill(self.renderer, .{ .x = box.x, .y = box.y, .width = body.x - box.x - 16, .height = box.height }, colors.idle);
         try self.drawText("Settings", box.x + 18, box.y + 18);
-        try self.drawText(settings.titles[@backingInt(e.page)], body.x, box.y + 18);
+        try self.drawText(if (e.search) "Search settings" else settings.titles[@backingInt(e.page)], body.x, box.y + 18);
         try self.drawText("Close", box.x + box.width - 60, box.y + 12);
         for (settings.titles, 0..) |title, index| {
             const row: layout.Rect = .{ .x = box.x + 8, .y = box.y + 52 + @as(f32, @floatFromInt(index)) * 34, .width = @max(1, body.x - box.x - 24), .height = 32 };
@@ -1825,31 +1967,29 @@ const App = struct {
             for (labels[0..self.settingsToolbarCount()], 0..) |label, number| {
                 const button = self.settingsToolbarButton(number);
                 try fill(self.renderer, button, colors.idle);
-                try outline(self.renderer, button, colors.border);
+                try outline(self.renderer, button, if (e.editing != null and e.button == @as(u8, @intCast(number))) colors.accent else colors.border);
                 try self.clippedText(label, button, button.x + 8);
             }
         } else {
             const field = self.settingsField();
-            try fill(self.renderer, field, if (e.search) colors.panel else colors.title);
-            const text = if (e.search) e.query[0..e.query_len] else "Changes save automatically · Ctrl+F search";
-            try self.clippedText(text, field, field.x + 6);
+            if (e.search) try self.drawField(field, &e.query_edit, e.query[0..e.query_len], "Search settings", true) else try self.clippedTextColor("Enter or double-click to edit · Ctrl+F search", field, field.x + 6, colors.muted);
         }
         var all: [settings.row_limit]settings.Row = undefined;
         var indices: [settings.row_limit]u16 = undefined;
         const count = try settings.rows(self.configuration, &all);
         const visible = e.indices(all[0..count], &indices);
-        e.selected = @min(e.selected, visible -| 1);
+        e.list.selected = @min(e.list.selected, visible -| 1);
         const start = self.settingsStart(visible);
         for (indices[start..@min(visible, start + self.settingsVisible())], start..) |index, number| {
             const row = all[index];
-            const rect: layout.Rect = .{ .x = body.x, .y = body.y + @as(f32, @floatFromInt(number - start)) * self.settingsRowHeight(), .width = body.width - 8, .height = self.settingsRowHeight() - 4 };
-            if (number == e.selected and e.content_focus) try fill(self.renderer, rect, colors.active);
-            try outline(self.renderer, rect, if (number == e.selected and e.content_focus) colors.accent else colors.border);
+            const rect = self.settingsRows().row(number - start);
+            try self.drawListRow(rect, number == e.list.selected, e.list.hovered == number, e.content_focus);
+            try outline(self.renderer, rect, colors.border);
             var label: [512]u8 = undefined;
             const name = if (row.scope.len == 0 or (!e.search and e.page != .colors)) row.label else try std.fmt.bufPrint(&label, "{s} / {s}", .{ row.scope, row.label });
             var value: [4096]u8 = undefined;
-            const raw_contents = if (number == e.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.configuration, &value);
-            const contents = if (raw_contents.len != 0 or (number == e.selected and e.editing != null)) raw_contents else switch (row.target) {
+            const raw_contents = if (number == e.list.selected and e.editing != null) (if (e.recording) "Press a shortcut — Esc cancels" else e.buffer[0..e.len]) else try row.text(self.configuration, &value);
+            const contents = if (raw_contents.len != 0 or (number == e.list.selected and e.editing != null)) raw_contents else switch (row.target) {
                 .binding => "Unbound",
                 .app_color, .terminal_color => "Preset",
                 .font => "Inherited",
@@ -1863,11 +2003,14 @@ const App = struct {
             };
             const left: layout.Rect = .{ .x = rect.x + 6, .y = rect.y, .width = @max(1, rect.width * 0.46 - 12), .height = rect.height };
             const right: layout.Rect = .{ .x = rect.x + rect.width * 0.46, .y = rect.y, .width = @max(1, rect.width * 0.54 - 6), .height = rect.height };
-            if (row.target == .default_font or row.target == .default_profile or row.target == .theme or row.target == .terminal_theme) {
-                try self.clippedText(if (row.target == .default_font) "-" else "<", .{ .x = rect.x, .y = rect.y, .width = 36, .height = rect.height }, rect.x + 12);
-                try self.clippedText(row.label, .{ .x = rect.x + 40, .y = rect.y - 2, .width = @max(1, rect.width - 80), .height = 22 }, rect.x + 48);
-                try self.clippedText(contents, .{ .x = rect.x + 40, .y = rect.y + 18, .width = @max(1, rect.width - 80), .height = 24 }, rect.x + 48);
-                try self.clippedText(if (row.target == .default_font) "+" else ">", .{ .x = rect.x + rect.width - 36, .y = rect.y, .width = 36, .height = rect.height }, rect.x + rect.width - 24);
+            if (number == e.list.selected and e.editing != null and !e.recording) {
+                try self.clippedText(name, left, left.x);
+                if (row.choice()) {
+                    const display = if (row.target == .theme or row.target == .terminal_theme) theme_presets.label(contents) else contents;
+                    try fill(self.renderer, self.settingsField(), colors.panel);
+                    try outline(self.renderer, self.settingsField(), colors.accent);
+                    try self.clippedText(display, self.settingsField(), self.settingsField().x + 7);
+                } else try self.drawField(self.settingsField(), &e.edit, contents, if (e.edit.kind == .color) "#RRGGBB; blank = preset" else "", e.button == null);
             } else if (row.target == .set_default and !e.search) {
                 try self.clippedText(row.label, .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - 94), .height = rect.height }, rect.x + 8);
                 try self.clippedText("Edit", .{ .x = rect.x + rect.width - 74, .y = rect.y, .width = 70, .height = rect.height }, rect.x + rect.width - 66);
@@ -1877,20 +2020,17 @@ const App = struct {
                 var value_rect = right;
                 if (rgb) |swatch_color| {
                     value_rect.width = @max(1, right.width - 30);
-                    const swatch: layout.Rect = .{ .x = rect.x + rect.width - 25, .y = rect.y + 12, .width = 16, .height = 20 };
+                    const swatch: layout.Rect = .{ .x = rect.x + rect.width - 25, .y = rect.y + 12, .width = 16, .height = @min(20, rect.height - 16) };
                     try fill(self.renderer, swatch, .{ .r = swatch_color.r, .g = swatch_color.g, .b = swatch_color.b, .a = 255 });
                     try outline(self.renderer, swatch, colors.border);
                 }
                 try self.clippedTextColor(contents, value_rect, right.x, if (row.target == .information) colors.muted else colors.text);
             }
         }
-        if (visible > self.settingsVisible()) {
-            const tall = body.height * @as(f32, @floatFromInt(self.settingsVisible())) / @as(f32, @floatFromInt(visible));
-            const offset = @as(f32, @floatFromInt(start)) / @as(f32, @floatFromInt(visible - self.settingsVisible()));
-            try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y, .width = 3, .height = body.height }, colors.idle);
-            try fill(self.renderer, .{ .x = body.x + body.width - 3, .y = body.y + offset * (body.height - tall), .width = 3, .height = tall }, colors.accent);
-        }
-        if (e.page == .colors) {
+        try self.drawListScroll(self.settingsRows(), start, visible);
+        if (e.editing != null and e.edit.kind == .color) {
+            try self.drawColorEditor();
+        } else if (e.page == .colors) {
             const resolved = try self.configuration.value.terminal_colors.resolve(self.configuration.value.terminal_theme);
             const preview: layout.Rect = .{ .x = body.x, .y = box.y + box.height - 100, .width = body.width, .height = 32 };
             try fill(self.renderer, preview, .{ .r = resolved.background.r, .g = resolved.background.g, .b = resolved.background.b, .a = 255 });
@@ -1904,7 +2044,7 @@ const App = struct {
             try outline(self.renderer, button, colors.border);
             try self.clippedText(if (e.profile == try self.configuration.defaultProfile()) "Default" else "Set default", button, button.x + 8);
         }
-        try self.clippedText(if (e.page == .profiles and e.profile == 0) "Read-only template · Duplicate to customize" else "Enter edits · Tab focus · ↑↓ choose · Ctrl+F search", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
+        try self.clippedText(if (e.page == .profiles and e.profile == 0) "Read-only template · Duplicate to customize" else if (e.editing != null) (if ((settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice()) "←↑↓→ change · Enter saves · Esc cancels" else "Enter saves · Esc cancels · Tab: field / Save / Cancel") else "↑↓ choose · Enter edits · Tab focus · Esc back", .{ .x = body.x, .y = box.y + box.height - 36, .width = body.width, .height = 30 }, body.x);
     }
     fn drawText(self: *App, bytes: []const u8, x: f32, y: f32) !void {
         try self.drawTextFont(self.ui_fonts.faces[0], bytes, x, y);
@@ -1937,20 +2077,21 @@ const App = struct {
         var logical_font: f32 = 15;
         if (self.chooser) |chooser| {
             clip = self.chooserField();
-            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(chooser.query[0..chooser.query_len]));
+            x = clip.x + 7 + try self.textWidth(chooser.query[0..chooser.edit.cursor]) - chooser.edit.scroll;
             y = clip.y + 6;
         } else if (self.settings_editor) |e| {
-            if ((e.editing == null and !e.search) or e.recording) {
+            if ((e.editing == null and !e.search) or e.recording or (e.editing != null and (settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice()) or e.button != null) {
                 if (!c.SDL_SetTextInputArea(self.window, null, 0)) return error.SDL;
                 return;
             }
             clip = self.settingsField();
             const text = if (e.editing != null) e.buffer[0..e.len] else e.query[0..e.query_len];
-            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(text));
+            const edit = if (e.editing != null) e.edit else e.query_edit;
+            x = clip.x + 7 + try self.textWidth(text[0..edit.cursor]) - edit.scroll;
             y = clip.y + 6;
         } else if (self.palette) |p| {
             clip = self.paletteField();
-            x = clip.x + 8 + try self.textWidth(p.query[0..p.cursor]) - p.query_scroll;
+            x = clip.x + 7 + try self.textWidth(p.query[0..p.edit.cursor]) - p.edit.scroll;
             y = clip.y + 1;
         } else if (self.pane().finder) |editor| {
             const p = self.pane();
@@ -1965,7 +2106,7 @@ const App = struct {
                 break;
             };
             if (!found) return;
-            x = clip.x + @min(@max(1, clip.width - 8), 6 + try self.textWidth(editor.bytes[0..editor.len]));
+            x = clip.x + 13 + try self.textWidth(editor.bytes[0..editor.edit.cursor]) - editor.edit.scroll;
             y = clip.y + @min(6, @max(0, clip.height - 1));
         } else {
             const p = self.pane();
@@ -2018,13 +2159,56 @@ const App = struct {
         try self.drawText(text, x, y);
         try fill(self.renderer, .{ .x = x, .y = y + cell_height - 1, .width = @min(available, @max(2, text_width)), .height = 1 }, (try self.uiPalette()).accent);
     }
+    fn setPointer(self: *App, shape: ?usize) !void {
+        if (shape == self.cursor_shape) return;
+        if (shape) |index| {
+            if (self.cursors[index] == null) self.cursors[index] = c.SDL_CreateSystemCursor(([_]c.SDL_SystemCursor{ c.SDL_SYSTEM_CURSOR_EW_RESIZE, c.SDL_SYSTEM_CURSOR_NS_RESIZE, c.SDL_SYSTEM_CURSOR_TEXT })[index]) orelse return error.SDL;
+            if (!c.SDL_SetCursor(self.cursors[index].?)) return error.SDL;
+        } else if (!c.SDL_SetCursor(c.SDL_GetDefaultCursor())) return error.SDL;
+        self.cursor_shape = shape;
+    }
+    fn pointerHover(self: *App, x: f32, y: f32) !void {
+        self.hover_divider = null;
+        if (self.chooser) |chooser| {
+            const start = self.chooserStart();
+            chooser.list.hovered = if (self.chooserRows().hit(x, y)) |row| if (start + row < chooser.result_count) start + row else null else null;
+            return self.setPointer(if (self.chooserField().contains(x, y)) 2 else null);
+        }
+        if (self.settings_editor) |*e| {
+            var all: [settings.row_limit]settings.Row = undefined;
+            var indices: [settings.row_limit]u16 = undefined;
+            const count = try settings.rows(self.configuration, &all);
+            const shown = e.indices(all[0..count], &indices);
+            const start = self.settingsStart(shown);
+            e.list.hovered = if (self.settingsRows().hit(x, y)) |row| if (start + row < shown) start + row else null else null;
+            return self.setPointer(if ((e.search or (e.editing != null and !(settings.Row{ .page = e.page, .label = "", .target = e.editing.? }).choice())) and self.settingsField().contains(x, y)) 2 else null);
+        }
+        if (self.palette != null) return self.setPointer(if (self.paletteField().contains(x, y)) 2 else null);
+        if (self.drag == .divider) {
+            self.hover_divider = self.drag.divider.node;
+            return self.setPointer(if (self.drag.divider.axis == .horizontal) 0 else 1);
+        }
+        var places: [layout.pane_limit]layout.Placement = undefined;
+        var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
+        const visible = self.tab().tree.layout(self.terminalBody(), &places, &dividers);
+        for (dividers[0..visible.dividers]) |divider| if (divider.rect.contains(x, y)) {
+            self.hover_divider = divider.node;
+            return self.setPointer(if (divider.axis == .horizontal) 0 else 1);
+        };
+        try self.setPointer(null);
+    }
     fn chromeEvent(self: *App, event_value: c.SDL_Event) !bool {
         if (event_value.type == c.SDL_EVENT_WINDOW_FOCUS_LOST) {
             self.pointer_buttons = 0;
             self.chrome_pressed = .none;
         }
-        if (event_value.type == c.SDL_EVENT_WINDOW_MOUSE_LEAVE) self.chrome_hover = .none;
+        if (event_value.type == c.SDL_EVENT_WINDOW_MOUSE_LEAVE) {
+            self.chrome_hover = .none;
+            self.hover_divider = null;
+            try self.setPointer(null);
+        }
         if (event_value.type == c.SDL_EVENT_MOUSE_MOTION) {
+            try self.pointerHover(event_value.motion.x, event_value.motion.y);
             self.chrome_hover = if (self.headerHeight() == 0) .none else chrome.buttonAt(event_value.motion.x, event_value.motion.y, self.width);
             return self.chrome_pressed != .none;
         }
@@ -2192,6 +2376,19 @@ const App = struct {
                     try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.w, .height = @min(28, rect.h) }, .{ .r = 96, .g = 35, .b = 43, .a = 255 });
                     try self.drawText(@errorName(value), rect.x + 8, rect.y + 6);
                 } else try self.drawText("Exited — Ctrl+Shift+R to restart", rect.x + 8, rect.y + 6);
+            }
+        }
+        for (dividers[0..result.dividers]) |divider| {
+            if (self.hover_divider == divider.node or (self.drag == .divider and self.drag.divider.node == divider.node)) {
+                var line = divider.rect;
+                if (divider.axis == .horizontal) {
+                    line.x += @max(0, (line.width - 2) / 2);
+                    line.width = @min(2, line.width);
+                } else {
+                    line.y += @max(0, (line.height - 2) / 2);
+                    line.height = @min(2, line.height);
+                }
+                try fill(self.renderer, line, colors.accent);
             }
         }
         self.expireNotice(c.SDL_GetTicks());
@@ -2418,18 +2615,18 @@ test {
     std.testing.refAllDecls(color_config);
 }
 
-test "command palette stays action-oriented while profile menu retains application entry points" {
+test "command palette exposes every mapping including directional multiplexing commands" {
     var configuration = config.Config.defaults(std.testing.allocator);
     defer configuration.deinit();
     var p: Palette = .{};
     var indices: [palette_limit]usize = undefined;
     const count = try p.indices(&configuration, null, &indices);
-    try std.testing.expect(count > 0 and count < keybindings.definitions.len);
-    for (indices[0..count]) |index| try std.testing.expect(keybindings.definitions[index].target == .action);
+    try std.testing.expectEqual(keybindings.definitions.len, count);
     const query = "FOCUS PANE";
     @memcpy(p.query[0..query.len], query);
     p.len = query.len;
-    try std.testing.expectEqual(@as(usize, 0), try p.indices(&configuration, null, &indices));
+    try std.testing.expectEqual(@as(usize, 4), try p.indices(&configuration, null, &indices));
+    for (indices[0..4]) |index| try std.testing.expect(keybindings.definitions[index].target == .pane_focus);
     p = .{ .profile = true };
     try std.testing.expectEqual(@as(usize, 3), try p.indices(&configuration, null, &indices));
 }
@@ -2627,7 +2824,7 @@ test "SDL composition stays local, uses its caret area and clears before pane in
     event_value.text.timestamp = 208;
     event_value.text.text = "OLD-FIELD";
     try app.event(event_value);
-    try std.testing.expectEqual(@as(u8, 0), app.chooser.?.query_len);
+    try std.testing.expectEqual(@as(usize, 0), app.chooser.?.query_len);
     event_value.edit = .{ .type = c.SDL_EVENT_TEXT_EDITING, .reserved = 0, .timestamp = 210, .windowID = c.SDL_GetWindowID(window), .text = "é", .start = 1, .length = 0 };
     try app.event(event_value);
     try app.drawComposition();
@@ -3122,10 +3319,10 @@ test "large discovered menus filter and page independently of saved settings" {
     const count = try app.palette.?.indices(&configuration, catalogue, &indices);
     try std.testing.expectEqual(@as(usize, 103), count);
     try app.paletteKey(c.SDLK_END, c.SDL_KMOD_CTRL);
-    try std.testing.expectEqual(count - 1, app.palette.?.selected);
+    try std.testing.expectEqual(count - 1, app.palette.?.list.selected);
     try std.testing.expect(app.paletteStart(count) + app.paletteRows() <= count);
     try app.paletteKey(c.SDLK_PAGEUP, 0);
-    try std.testing.expectEqual(count - 1 - app.paletteRows(), app.palette.?.selected);
+    try std.testing.expectEqual(count - 1 - app.paletteRows(), app.palette.?.list.selected);
     const query = "HOST-099";
     @memcpy(app.palette.?.query[0..query.len], query);
     app.palette.?.len = query.len;
@@ -3133,15 +3330,91 @@ test "large discovered menus filter and page independently of saved settings" {
     try std.testing.expectEqualStrings("host-099", (try app.menuProfile(indices[0])).name);
     try std.testing.expectEqual(@as(u8, 1), configuration.profileCount());
     app.palette.?.erase(true);
-    app.palette.?.selected = 2;
+    app.palette.?.list.selected = 2;
     const hovered = app.paletteRow(4);
     try app.paletteHover(hovered.x + 10, hovered.y + 10);
-    try std.testing.expectEqual(@as(usize, 2), app.palette.?.selected);
-    try std.testing.expectEqual(@as(?usize, 4), app.palette.?.hovered);
+    try std.testing.expectEqual(@as(usize, 2), app.palette.?.list.selected);
+    try std.testing.expectEqual(@as(?usize, 4), app.palette.?.list.hovered);
     const remote = app.paletteFilterRect(@backingInt(picker.Filter.remote));
     try app.pointerDown(remote.x + 10, remote.y + 10, .left, .{}, 1);
     try std.testing.expectEqual(picker.Filter.remote, app.palette.?.filter);
     try app.paletteKey(c.SDLK_TAB, c.SDL_KMOD_SHIFT);
     try std.testing.expectEqual(picker.Filter.repl, app.palette.?.filter);
     try std.testing.expectEqual(@as(usize, 0), try app.palette.?.indices(&configuration, catalogue, &indices));
+}
+
+test "settings clicks select without saving; staged choices and Escape unwind focus before closing" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    const window = c.SDL_CreateWindow("settings focus proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    var configuration = try config.Config.parse(std.testing.allocator, std.testing.io,
+        \\{"schema":1,"terminal_font_pixels":15,"profiles":[{"id":"build","name":"Build"}]}
+    );
+    defer configuration.deinit();
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = undefined,
+        .window = window,
+        .renderer = undefined,
+        .ui_fonts = undefined,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .settings_editor = .{ .content_focus = true },
+    };
+    var event_value = std.mem.zeroes(c.SDL_KeyboardEvent);
+    event_value.key = c.SDLK_RETURN;
+    try app.settingsKey(event_value);
+    try std.testing.expectEqual(settings.Target.default_profile, app.settings_editor.?.editing.?);
+    try app.settings_editor.?.append("not a profile");
+    try std.testing.expectEqualStrings("local", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
+    event_value.key = c.SDLK_DOWN;
+    try app.settingsKey(event_value);
+    try std.testing.expectEqualStrings("build", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
+    try std.testing.expectEqual(@as(u8, 0), try configuration.defaultProfile());
+    event_value.key = c.SDLK_ESCAPE;
+    try app.settingsKey(event_value);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+
+    const toggle = app.settingsRows().row(1);
+    try app.settingsClick(toggle.x + toggle.width - 10, toggle.y + 12, 1);
+    try std.testing.expect(app.settings_editor.?.editing == null);
+    try std.testing.expect(!configuration.value.discover_shells);
+    try app.settingsClick(toggle.x + toggle.width - 10, toggle.y + 12, 2);
+    try std.testing.expect(app.settings_editor.?.editing.? == .discover_shells);
+    event_value.key = c.SDLK_RIGHT;
+    try app.settingsKey(event_value);
+    try std.testing.expectEqualStrings("On", app.settings_editor.?.buffer[0..app.settings_editor.?.len]);
+    event_value.key = c.SDLK_TAB;
+    try app.settingsKey(event_value);
+    try std.testing.expectEqual(@as(?u8, 0), app.settings_editor.?.button);
+    const field = app.settingsField();
+    try app.settingsClick(field.x + 10, field.y + 10, 1);
+    try std.testing.expect(app.settings_editor.?.button == null);
+    try app.settingsKey(event_value);
+    try app.settingsKey(event_value);
+    try std.testing.expectEqual(@as(?u8, 1), app.settings_editor.?.button);
+    event_value.key = c.SDLK_RETURN;
+    try app.settingsKey(event_value);
+    try std.testing.expect(!configuration.value.discover_shells);
+
+    const ordinary = app.settingsRows().row(1);
+    event_value.key = c.SDLK_F;
+    event_value.mod = c.SDL_KMOD_CTRL;
+    try app.settingsKey(event_value);
+    try std.testing.expectEqual(ordinary, app.settingsRows().row(1));
+    try app.settings_editor.?.append("palette");
+    try std.testing.expect(app.settings_editor.?.search);
+    event_value.mod = 0;
+    event_value.key = c.SDLK_ESCAPE;
+    try app.settingsKey(event_value);
+    try std.testing.expect(!app.settings_editor.?.search and app.settings_editor.?.content_focus);
+    try app.settingsKey(event_value);
+    try std.testing.expect(app.settings_editor != null and !app.settings_editor.?.content_focus);
+    try app.settingsKey(event_value);
+    try std.testing.expect(app.settings_editor == null);
 }

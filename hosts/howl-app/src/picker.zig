@@ -1,5 +1,6 @@
 //! App-owned search and navigation. No I/O, retained catalogue or launch ownership.
 const std = @import("std");
+const widgets = @import("widgets.zig");
 const config = @import("config.zig");
 const discovery = @import("discovery.zig");
 const keybindings = @import("keybindings.zig");
@@ -15,11 +16,8 @@ pub const labels = [_][]const u8{ "All", "Saved", "Shell", "REPL", "Remote" };
 pub const Picker = struct {
     query: [128]u8 = @splat(0),
     len: usize = 0,
-    cursor: usize = 0,
-    query_scroll: f32 = 0,
-    selected: usize = 0,
-    first: usize = 0,
-    hovered: ?usize = null,
+    edit: widgets.Text = .{},
+    list: widgets.List = .{},
     profile: bool = false,
     filter: Filter = .all,
 
@@ -32,7 +30,6 @@ pub const Picker = struct {
         const profiles = @as(usize, saved) + (if (discovered) |catalogue| @as(usize, catalogue.count) else 0);
         const candidates = if (self.profile) profiles + 2 else keybindings.definitions.len;
         for (0..candidates) |i| {
-            if (!self.profile and keybindings.definitions[i].target != .action) continue;
             if (self.profile and self.filter != .all) {
                 const accepted = if (i < saved)
                     self.filter == .saved or (i == 0 and self.filter == .shell)
@@ -62,60 +59,34 @@ pub const Picker = struct {
     }
     /// Restarts navigation after a query/category change without changing either input.
     pub fn reset(self: *Picker) void {
-        self.selected = 0;
-        self.first = 0;
-        self.hovered = null;
+        self.list = .{};
     }
-    /// Accepts only complete UTF-8 events and leaves the query untouched on failure.
+    /// Shares the same UTF-8 editor as settings and installed fonts.
     pub fn append(self: *Picker, bytes: []const u8) error{ InvalidPickerText, PickerQueryLimit }!void {
-        if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidPickerText;
-        if (bytes.len > self.query.len - self.len) return error.PickerQueryLimit;
-        std.mem.copyBackwards(u8, self.query[self.cursor + bytes.len .. self.len + bytes.len], self.query[self.cursor..self.len]);
-        @memcpy(self.query[self.cursor..][0..bytes.len], bytes);
-        self.len += bytes.len;
-        self.cursor += bytes.len;
+        self.edit.insert(&self.query, &self.len, bytes) catch |failure| return switch (failure) {
+            error.InvalidText => error.InvalidPickerText,
+            error.TextLimit => error.PickerQueryLimit,
+        };
         self.reset();
     }
-    /// Moves by complete UTF-8 codepoints without changing the search or list selection.
+    /// Moves the caret without changing query results.
     pub fn moveCursor(self: *Picker, direction: i8) void {
-        if (direction < 0 and self.cursor != 0) {
-            self.cursor -= 1;
-            while (self.cursor != 0 and self.query[self.cursor] & 0xc0 == 0x80) self.cursor -= 1;
-        } else if (direction > 0 and self.cursor < self.len) {
-            self.cursor += 1;
-            while (self.cursor < self.len and self.query[self.cursor] & 0xc0 == 0x80) self.cursor += 1;
-        }
+        self.edit.move(self.query[0..self.len], direction);
     }
-    /// Removes the previous codepoint, or clears the entire query when explicitly requested.
+    /// Removes the previous scalar or an explicitly selected complete query.
     pub fn erase(self: *Picker, all: bool) void {
-        if (all) {
-            self.len = 0;
-            self.cursor = 0;
-        } else if (self.cursor != 0) {
-            const end = self.cursor;
-            self.moveCursor(-1);
-            std.mem.copyForwards(u8, self.query[self.cursor .. self.len - (end - self.cursor)], self.query[end..self.len]);
-            self.len -= end - self.cursor;
-        }
+        if (all) self.edit.select_all = true;
+        self.edit.erase(&self.query, &self.len, false);
         self.reset();
     }
-    /// Delete removes one complete codepoint after the caret.
+    /// Removes the following scalar.
     pub fn delete(self: *Picker) void {
-        const start = self.cursor;
-        self.moveCursor(1);
-        const end = self.cursor;
-        self.cursor = start;
-        std.mem.copyForwards(u8, self.query[start .. self.len - (end - start)], self.query[end..self.len]);
-        self.len -= end - start;
+        self.edit.erase(&self.query, &self.len, true);
         self.reset();
     }
-    /// Keeps the measured caret visible while bounding stale scroll after deletion or resize.
+    /// Shares the measured-caret viewport.
     pub fn revealCursor(self: *Picker, caret_width: f32, text_width: f32, width: f32) f32 {
-        const available = @max(1, width);
-        self.query_scroll = @min(self.query_scroll, @max(0, text_width - available));
-        if (caret_width < self.query_scroll) self.query_scroll = caret_width;
-        if (caret_width > self.query_scroll + available) self.query_scroll = caret_width - available;
-        return self.query_scroll;
+        return self.edit.reveal(caret_width, text_width, width);
     }
     /// Changes category while retaining typed search; command palettes have no categories.
     pub fn cycle(self: *Picker, reverse: bool) void {
@@ -126,22 +97,11 @@ pub const Picker = struct {
     }
     /// Clamps after resize/filtering and moves the viewport only when selection leaves it.
     pub fn reveal(self: *Picker, count: usize, visible: usize) void {
-        const rows = @max(1, visible);
-        self.selected = @min(self.selected, count -| 1);
-        self.first = @min(self.first, count -| rows);
-        if (self.selected < self.first) self.first = self.selected;
-        if (self.selected >= self.first + rows) self.first = self.selected - rows + 1;
-        if (self.hovered) |hover| if (hover < self.first or hover >= @min(count, self.first + rows)) {
-            self.hovered = null;
-        };
+        self.list.reveal(count, visible);
     }
-    /// Scrolls the viewport independently; keeps Enter's selection inside the visible rows.
+    /// Scrolls using the same viewport policy as settings and fonts.
     pub fn scroll(self: *Picker, delta: i32, count: usize, visible: usize) void {
-        const rows = @max(1, visible);
-        self.first = @min(self.first, count -| rows);
-        self.first = if (delta < 0) self.first -| @as(usize, @intCast(-@as(i64, delta))) else @min(count -| rows, self.first +| @as(usize, @intCast(delta)));
-        self.selected = std.math.clamp(self.selected, self.first, @min(count -| 1, self.first + rows - 1));
-        self.hovered = null;
+        self.list.scroll(delta, count, visible);
     }
 };
 
@@ -206,26 +166,26 @@ test "categories preserve custom saved identity and never admit app actions" {
 test "viewport stays still until needed; wheel, empty results and resize keep selection valid" {
     var p: Picker = .{};
     for (0..6) |selected| {
-        p.selected = selected;
+        p.list.selected = selected;
         p.reveal(100, 10);
-        try std.testing.expectEqual(@as(usize, 0), p.first);
+        try std.testing.expectEqual(@as(usize, 0), p.list.first);
     }
-    p.selected = 10;
+    p.list.selected = 10;
     p.reveal(100, 10);
-    try std.testing.expectEqual(@as(usize, 1), p.first);
-    p.hovered = 8;
+    try std.testing.expectEqual(@as(usize, 1), p.list.first);
+    p.list.hovered = 8;
     p.scroll(8, 100, 10);
-    try std.testing.expectEqual(@as(usize, 9), p.first);
-    try std.testing.expectEqual(@as(usize, 10), p.selected);
-    try std.testing.expectEqual(@as(?usize, null), p.hovered);
+    try std.testing.expectEqual(@as(usize, 9), p.list.first);
+    try std.testing.expectEqual(@as(usize, 10), p.list.selected);
+    try std.testing.expectEqual(@as(?usize, null), p.list.hovered);
     p.scroll(1000, 100, 10);
-    try std.testing.expectEqual(@as(usize, 90), p.first);
+    try std.testing.expectEqual(@as(usize, 90), p.list.first);
     p.reveal(100, 4);
-    try std.testing.expect(p.selected >= p.first and p.selected < p.first + 4);
+    try std.testing.expect(p.list.selected >= p.list.first and p.list.selected < p.list.first + 4);
     p.scroll(-1000, 0, 0);
     p.reveal(0, 0);
-    try std.testing.expectEqual(@as(usize, 0), p.first);
-    try std.testing.expectEqual(@as(usize, 0), p.selected);
+    try std.testing.expectEqual(@as(usize, 0), p.list.first);
+    try std.testing.expectEqual(@as(usize, 0), p.list.selected);
     const maximum: [128]u8 = @splat('a');
     try p.append(&maximum);
     try std.testing.expectError(error.PickerQueryLimit, p.append("b"));
@@ -249,9 +209,9 @@ test "a full catalogue stays bounded and keeps exact launch indexes through filt
     try p.append("host");
     try std.testing.expectEqual(@as(usize, discovery.limit), try p.indices(&configuration, &catalogue, &indexes));
     for (indexes[0..discovery.limit], 1..) |index, expected| try std.testing.expectEqual(expected, index);
-    p.first = 500;
+    p.list.first = 500;
     p.scroll(1, 0, 8);
-    try std.testing.expectEqual(@as(usize, 0), p.first);
+    try std.testing.expectEqual(@as(usize, 0), p.list.first);
     for (0..labels.len) |_| p.cycle(false);
     try std.testing.expectEqual(Filter.remote, p.filter);
     try std.testing.expectEqualStrings("host", p.query[0..p.len]);
@@ -262,7 +222,7 @@ test "palette caret inserts and deletes inside UTF8 text without splitting codep
     try p.append("a界z");
     p.moveCursor(-1);
     p.moveCursor(-1);
-    try std.testing.expectEqual(@as(usize, 1), p.cursor);
+    try std.testing.expectEqual(@as(usize, 1), p.edit.cursor);
     try p.append("é");
     try std.testing.expectEqualStrings("aé界z", p.query[0..p.len]);
     p.erase(false);
@@ -271,20 +231,20 @@ test "palette caret inserts and deletes inside UTF8 text without splitting codep
     try std.testing.expectEqualStrings("az", p.query[0..p.len]);
     try p.append("界");
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
-    p.cursor = 0;
+    p.edit.cursor = 0;
     p.moveCursor(-1);
     p.erase(false);
-    try std.testing.expectEqual(@as(usize, 0), p.cursor);
-    p.cursor = p.len;
+    try std.testing.expectEqual(@as(usize, 0), p.edit.cursor);
+    p.edit.cursor = p.len;
     p.moveCursor(1);
     p.delete();
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
     const too_long: [128]u8 = @splat('x');
     try std.testing.expectError(error.PickerQueryLimit, p.append(&too_long));
-    try std.testing.expectEqual(@as(usize, 5), p.cursor);
+    try std.testing.expectEqual(@as(usize, 5), p.edit.cursor);
     try std.testing.expectEqualStrings("a界z", p.query[0..p.len]);
     try std.testing.expectEqual(@as(f32, 80), p.revealCursor(100, 100, 20));
     try std.testing.expectEqual(@as(f32, 0), p.revealCursor(0, 100, 20));
     p.erase(true);
-    try std.testing.expectEqual(@as(usize, 0), p.cursor);
+    try std.testing.expectEqual(@as(usize, 0), p.edit.cursor);
 }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const widgets = @import("widgets.zig");
 const config = @import("config.zig");
 const colors = @import("colors.zig");
 const themes = @import("themes.zig");
@@ -56,6 +57,7 @@ pub const Row = struct {
         const value = current.value;
         return switch (self.target) {
             .default_font => try std.fmt.bufPrint(buffer, "{d}", .{value.terminal_font_pixels}),
+            .font_family => "Browse installed…",
             .default_profile => (try current.profile(try current.defaultProfile())).id,
             .theme => themes.label(value.app_theme),
             .terminal_theme => themes.label(value.terminal_theme),
@@ -94,10 +96,17 @@ pub const Row = struct {
             else => "",
         };
     }
+    /// Finite settings use staged choices and never accept arbitrary text.
+    pub fn choice(self: Row) bool {
+        return switch (self.target) {
+            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .discover_shells, .discover_ssh_hosts => true,
+            else => false,
+        };
+    }
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -117,11 +126,14 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .startup, .label = "Default profile", .target = .default_profile });
     try b.add(.{ .page = .startup, .label = "Discover shells and REPLs", .target = .discover_shells });
     try b.add(.{ .page = .startup, .label = "Discover SSH config hosts", .target = .discover_ssh_hosts });
-    try b.add(.{ .page = .interaction, .label = "Terminal input", .target = .{ .information = "Negotiated keys/mouse, owned input, local IME and stable history" } });
+    for (bindings.definitions, 0..) |definition, index| switch (definition.target) {
+        .copy_selection, .paste_clipboard, .toggle_find, .history_oldest, .history_live, .history_page => try b.add(.{ .page = .interaction, .label = definition.label, .target = .{ .binding = @intCast(index) } }),
+        else => {},
+    };
     try b.add(.{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab });
     try b.add(.{ .page = .appearance, .label = "Tab chip width", .target = .tab_width });
     try b.add(.{ .page = .appearance, .label = "Installed font family", .target = .font_family });
-    try b.add(.{ .page = .appearance, .label = "Default terminal font size (8–48)", .target = .default_font });
+    try b.add(.{ .page = .appearance, .label = "Font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
     try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });
@@ -185,10 +197,10 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .terminal_color => |index| try value.terminal_colors.set(index, text),
         .reset_app_colors => value.app_colors = .{},
         .reset_terminal_colors => value.terminal_colors = .{},
-        .hide_single_tab => value.hide_single_tab = !value.hide_single_tab,
-        .tab_width => value.tab_width = if (value.tab_width == .fixed) .fit else .fixed,
-        .discover_shells => value.discover_shells = !value.discover_shells,
-        .discover_ssh_hosts => value.discover_ssh_hosts = !value.discover_ssh_hosts,
+        .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
+        .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .discover_shells => value.discover_shells = if (text.len == 0) !value.discover_shells else try boolean(text),
+        .discover_ssh_hosts => value.discover_ssh_hosts = if (text.len == 0) !value.discover_ssh_hosts else try boolean(text),
         .font => |index| {
             if (index >= 6) return error.InvalidSetting;
             switch (index) {
@@ -312,15 +324,17 @@ fn environmentName(entries: []const config.Environment, buffer: []u8) ![]const u
 /// Small edit/search state. The live configuration owns row values; only committed candidates allocate.
 pub const Editor = struct {
     page: Page = .startup,
-    selected: usize = 0,
+    list: widgets.List = .{},
     profile: u8 = 0,
     content_focus: bool = false,
     search: bool = false,
     query: [128]u8 = @splat(0),
     query_len: usize = 0,
+    query_edit: widgets.Text = .{},
     editing: ?Target = null,
     recording: bool = false,
-    select_all: bool = false,
+    edit: widgets.Text = .{},
+    button: ?u8 = null,
     buffer: [4096]u8 = @splat(0),
     len: usize = 0,
     delete_pending: ?u8 = null,
@@ -341,6 +355,7 @@ pub const Editor = struct {
                 };
                 if (profile_index == null or profile_index.? != self.profile) continue;
             }
+            if (self.search and row.page == .interaction) continue;
             const query = self.query[0..self.query_len];
             if (self.search and !contains(row.label, query) and !contains(row.scope, query)) continue;
             out[count] = @intCast(index);
@@ -361,55 +376,86 @@ pub const Editor = struct {
         @memcpy(self.buffer[0..value.len], value);
         self.len = value.len;
         self.editing = row.target;
-        self.select_all = value.len != 0;
+        self.edit = .{ .cursor = value.len, .select_all = value.len != 0, .kind = switch (row.target) {
+            .default_font => .number,
+            .app_color, .terminal_color => .color,
+            .profile => |field| if (field.field == .font_pixels) .number else .text,
+            else => .text,
+        } };
+        self.button = null;
         self.recording = false;
     }
-    /// Appends one complete valid UTF-8 commit atomically, bounded independently of field validation.
+    /// Cycles a staged finite setting. Saving remains an explicit separate action.
+    pub fn cycle(self: *Editor, current: *const config.Config, delta: i8) !void {
+        const target = self.editing orelse return;
+        const value = self.buffer[0..self.len];
+        var next: []const u8 = undefined;
+        switch (target) {
+            .default_profile => {
+                var index: i16 = 0;
+                for (0..current.profileCount()) |i| if (std.mem.eql(u8, (try current.profile(@intCast(i))).id, value)) {
+                    index = @intCast(i);
+                    break;
+                };
+                next = (try current.profile(@intCast(@mod(index + delta, @as(i16, current.profileCount()))))).id;
+            },
+            .theme, .terminal_theme => {
+                const ids: []const []const u8 = if (target == .theme) &themes.app_ids else &colors.terminal_themes;
+                var index: i16 = 0;
+                for (ids, 0..) |id, i| if (std.mem.eql(u8, value, id)) {
+                    index = @intCast(i);
+                    break;
+                };
+                next = ids[@intCast(@mod(index + delta, @as(i16, @intCast(ids.len))))];
+            },
+            .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
+            .hide_single_tab, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
+            else => return,
+        }
+        @memcpy(self.buffer[0..next.len], next);
+        self.len = next.len;
+        self.edit = .{ .cursor = next.len };
+    }
+    /// Inserts only in a text field or active search. Choices cannot be typed into.
     pub fn append(self: *Editor, text: []const u8) error{ SettingsTextLimit, InvalidSettingsText }!void {
-        if (self.editing != null) {
-            const start = if (self.select_all) 0 else self.len;
-            if (text.len >= self.buffer.len - start) return error.SettingsTextLimit;
+        if (self.editing) |target| {
+            if ((Row{ .page = self.page, .label = "", .target = target }).choice() or self.button != null) return;
+            self.edit.insert(self.buffer[0 .. self.buffer.len - 1], &self.len, text) catch |failure| return textError(failure);
         } else if (self.search) {
-            if (text.len > self.query.len - self.query_len) return error.SettingsTextLimit;
-        } else return;
-        if (!std.unicode.utf8ValidateSlice(text) or std.mem.indexOfScalar(u8, text, 0) != null) return error.InvalidSettingsText;
-        if (self.editing != null) {
-            const start = if (self.select_all) 0 else self.len;
-            if (text.len >= self.buffer.len - start) return error.SettingsTextLimit;
-            @memcpy(self.buffer[start..][0..text.len], text);
-            self.len = start + text.len;
-            self.select_all = false;
-        } else if (self.search) {
-            if (text.len > self.query.len - self.query_len) return error.SettingsTextLimit;
-            @memcpy(self.query[self.query_len..][0..text.len], text);
-            self.query_len += text.len;
-            self.selected = 0;
+            self.query_edit.insert(&self.query, &self.query_len, text) catch |failure| return textError(failure);
+            self.list = .{};
             self.delete_pending = null;
         }
     }
-    /// Removes one complete trailing UTF-8 scalar, or the selected complete field.
+    /// Removes the previous complete scalar through the shared editor.
     pub fn backspace(self: *Editor) void {
         if (self.editing != null) {
-            if (self.select_all) self.len = 0 else trim(&self.buffer, &self.len);
-            self.select_all = false;
+            self.edit.erase(&self.buffer, &self.len, false);
         } else if (self.search) {
-            trim(&self.query, &self.query_len);
-            self.selected = 0;
+            self.query_edit.erase(&self.query, &self.query_len, false);
+            self.list = .{};
         }
     }
     /// Retires the edit transaction; it never touches a terminal or a saved file.
     pub fn cancel(self: *Editor) void {
         self.editing = null;
         self.recording = false;
-        self.select_all = false;
+        self.edit = .{};
+        self.button = null;
         self.len = 0;
         self.delete_pending = null;
     }
 };
-fn trim(bytes: []const u8, len: *usize) void {
-    if (len.* == 0) return;
-    len.* -= 1;
-    while (len.* != 0 and bytes[len.*] & 0xc0 == 0x80) len.* -= 1;
+fn boolean(text: []const u8) error{InvalidSetting}!bool {
+    if (std.mem.eql(u8, text, "On")) return true;
+    if (std.mem.eql(u8, text, "Off")) return false;
+    return error.InvalidSetting;
+}
+fn textError(failure: error{ InvalidText, TextLimit }) error{ SettingsTextLimit, InvalidSettingsText } {
+    return switch (failure) {
+        error.InvalidText => error.InvalidSettingsText,
+        error.TextLimit => error.SettingsTextLimit,
+    };
 }
 fn contains(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
@@ -544,7 +590,7 @@ test "single-tab bar preference defaults visible and toggles without editing tex
     defer current.deinit();
     const row: Row = .{ .page = .appearance, .label = "Hide top bar with one tab", .target = .hide_single_tab };
     var scratch: [32]u8 = undefined;
-    try std.testing.expect(!row.editable());
+    try std.testing.expect(row.choice());
     try std.testing.expectEqualStrings("Off", try row.text(&current, &scratch));
     try accept(&current, row.target, "");
     try std.testing.expectEqualStrings("On", try row.text(&current, &scratch));
@@ -619,4 +665,26 @@ test "tab width setting cycles fixed and fit and survives strict JSON roundtrip"
     var fixed = try change(&fitted, std.testing.io, .tab_width, "");
     defer fixed.deinit();
     try std.testing.expectEqual(config.TabWidth.fixed, fixed.value.tab_width);
+}
+
+test "finite settings stage choices, ignore text and cancel without mutating the live configuration" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    var editor: Editor = .{};
+    const row: Row = .{ .page = .startup, .label = "Discover shells", .target = .discover_shells };
+    try editor.begin(row, &current);
+    try editor.cycle(&current, 1);
+    try editor.append("garbage");
+    try std.testing.expectEqualStrings("On", editor.buffer[0..editor.len]);
+    try std.testing.expect(!current.value.discover_shells);
+    editor.cancel();
+    try std.testing.expect(!current.value.discover_shells);
+    try accept(&current, .discover_shells, "On");
+    try accept(&current, .discover_shells, "On");
+    try std.testing.expect(current.value.discover_shells);
+    try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .discover_shells, "yes"));
+    try editor.begin(.{ .page = .colors, .label = "Accent", .target = .{ .app_color = 8 } }, &current);
+    try editor.append("#123456");
+    try std.testing.expectError(error.InvalidSettingsText, editor.append("x"));
+    try std.testing.expectEqualStrings("#123456", editor.buffer[0..editor.len]);
 }

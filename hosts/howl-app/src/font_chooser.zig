@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("desktop");
+const widgets = @import("widgets.zig");
 const config = @import("config.zig");
 
 const family_limit = 256;
@@ -26,13 +27,15 @@ pub const Chooser = struct {
     count: u16 = 0,
     results: [family_limit]u16 = undefined,
     result_count: u16 = 0,
-    selected: u16 = 0,
+    list: widgets.List = .{},
+    edit: widgets.Text = .{},
     query: [128]u8 = undefined,
-    query_len: u8 = 0,
+    query_len: usize = 0,
     truncated: bool = false,
     previewed: bool = false,
+    button: ?u8 = null,
     sample_font: ?*c.TTF_Font = null,
-    sample_index: ?u16 = null,
+    sample_index: ?usize = null,
     sample_scale: f32 = 0,
 
     /// Copies the cancellation recipe before querying owned terminal-width font families.
@@ -44,7 +47,7 @@ pub const Chooser = struct {
         try self.load();
         self.refresh();
         for (self.results[0..self.result_count], 0..) |index, number| {
-            if (std.mem.eql(u8, self.families[index].path(0), regular)) self.selected = @intCast(number);
+            if (std.mem.eql(u8, self.families[index].path(0), regular)) self.list.selected = @intCast(number);
         }
         return self;
     }
@@ -139,43 +142,42 @@ pub const Chooser = struct {
                 self.result_count += 1;
             }
         };
-        self.selected = @min(self.selected, self.result_count -| 1);
+        self.list.selected = @min(self.list.selected, self.result_count -| 1);
     }
     /// Adds complete UTF-8 query text within the fixed byte budget.
     pub fn append(self: *Chooser, text: []const u8) !void {
-        if (text.len > self.query.len - 1 - self.query_len) return error.FontQueryLimit;
-        if (!std.unicode.utf8ValidateSlice(text) or std.mem.indexOfScalar(u8, text, 0) != null) return error.InvalidFontQuery;
-        @memcpy(self.query[self.query_len..][0..text.len], text);
-        self.query_len += @intCast(text.len);
-        self.selected = 0;
+        if (self.button != null) return;
+        self.edit.insert(self.query[0 .. self.query.len - 1], &self.query_len, text) catch |failure| return switch (failure) {
+            error.InvalidText => error.InvalidFontQuery,
+            error.TextLimit => error.FontQueryLimit,
+        };
+        self.list = .{};
         self.refresh();
     }
-    /// Removes one complete query scalar.
+    /// Removes a complete scalar through the shared editor.
     pub fn backspace(self: *Chooser) void {
-        if (self.query_len == 0) return;
-        self.query_len -= 1;
-        while (self.query_len != 0 and self.query[self.query_len] & 0xc0 == 0x80) self.query_len -= 1;
-        self.selected = 0;
+        self.edit.erase(&self.query, &self.query_len, false);
+        self.list = .{};
         self.refresh();
     }
     /// Moves within the exact result set without wrapping.
     pub fn move(self: *Chooser, delta: i16) void {
-        self.selected = @intCast(std.math.clamp(@as(i32, self.selected) + delta, 0, self.result_count -| 1));
+        self.list.selected = @intCast(std.math.clamp(@as(i32, @intCast(self.list.selected)) + delta, 0, self.result_count -| 1));
     }
     /// Borrows an owned name for one validated result row.
-    pub fn label(self: *const Chooser, result: u16) error{InvalidFontSelection}![]const u8 {
+    pub fn label(self: *const Chooser, result: usize) error{InvalidFontSelection}![]const u8 {
         if (result >= self.result_count) return error.InvalidFontSelection;
         return self.families[self.results[result]].name();
     }
     /// Borrows the exact owned regular path for the currently selected result.
     pub fn regularPath(self: *const Chooser) error{InvalidFontSelection}![]const u8 {
-        if (self.selected >= self.result_count) return error.InvalidFontSelection;
-        return self.families[self.results[self.selected]].path(0);
+        if (self.list.selected >= self.result_count) return error.InvalidFontSelection;
+        return self.families[self.results[self.list.selected]].path(0);
     }
     /// Builds an owned exact four-face candidate while preserving the original fallback recipe.
     pub fn candidate(self: *const Chooser, allocator: std.mem.Allocator, io: std.Io) !config.Config {
-        if (self.selected >= self.result_count) return error.InvalidFontSelection;
-        const family = &self.families[self.results[self.selected]];
+        if (self.list.selected >= self.result_count) return error.InvalidFontSelection;
+        const family = &self.families[self.results[self.list.selected]];
         var value = self.original.value;
         value.font.regular = family.path(0);
         value.font.italic = family.path(1);
@@ -185,8 +187,8 @@ pub const Chooser = struct {
     }
     /// Owns one sample font independently of the terminal transaction and rescales it for the display.
     pub fn sample(self: *Chooser, scale: f32) !?*c.TTF_Font {
-        if (self.selected >= self.result_count) return null;
-        const index = self.results[self.selected];
+        if (self.list.selected >= self.result_count) return null;
+        const index = self.results[self.list.selected];
         if (self.sample_index != index) {
             const family = &self.families[index];
             var path: [path_limit:0]u8 = undefined;
@@ -261,16 +263,18 @@ test "terminal-family catalogue owns exact styles and ranks substring before fuz
     try std.testing.expectEqual(@as(u16, 1), chooser.result_count);
     try std.testing.expectEqualStrings("JetBrains Mono", try chooser.label(0));
     chooser.query_len = 0;
+    chooser.edit = .{};
     try chooser.append("Mono");
     try std.testing.expectEqual(@as(u16, 3), chooser.result_count);
     chooser.move(300);
-    try std.testing.expectEqual(@as(u16, 2), chooser.selected);
+    try std.testing.expectEqual(@as(u16, 2), chooser.list.selected);
     chooser.move(-300);
-    try std.testing.expectEqual(@as(u16, 0), chooser.selected);
+    try std.testing.expectEqual(@as(u16, 0), chooser.list.selected);
     chooser.query_len = 0;
+    chooser.edit = .{};
     try chooser.append("中");
     chooser.backspace();
-    try std.testing.expectEqual(@as(u8, 0), chooser.query_len);
+    try std.testing.expectEqual(@as(usize, 0), chooser.query_len);
     try std.testing.expectError(error.InvalidFontQuery, chooser.append("\xff"));
     var full: [128]u8 = @splat('x');
     try std.testing.expectError(error.FontQueryLimit, chooser.append(&full));
@@ -337,6 +341,6 @@ test "font catalogue and query bounds reject overlong paths without inventing a 
     try std.testing.expectEqual(@as(u16, family_limit), chooser.result_count);
     try chooser.append("No result");
     chooser.move(100);
-    try std.testing.expectEqual(@as(u16, 0), chooser.selected);
+    try std.testing.expectEqual(@as(u16, 0), chooser.list.selected);
     try std.testing.expectError(error.InvalidFontSelection, chooser.regularPath());
 }

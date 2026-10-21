@@ -40,6 +40,40 @@ pub const Tree = struct {
         return tree;
     }
 
+    /// Cycles leaves in visual tree order, including while zoomed.
+    pub fn cycle(self: *const Tree, reverse: bool) u8 {
+        var slots: [pane_limit]u8 = undefined;
+        var count: usize = 0;
+        self.order(0, &slots, &count);
+        var active: usize = 0;
+        for (slots[0..count], 0..) |slot, index| if (slot == self.active) {
+            active = index;
+            break;
+        };
+        return slots[(active + (if (reverse) count - 1 else @as(usize, 1))) % count];
+    }
+    fn order(self: *const Tree, node: u8, slots: *[pane_limit]u8, count: *usize) void {
+        switch (self.nodes[node]) {
+            .pane => |slot| {
+                slots[count.*] = slot;
+                count.* += 1;
+            },
+            .split => |branch| {
+                self.order(branch.first, slots, count);
+                self.order(branch.second, slots, count);
+            },
+            // zig-audit: acknowledge unreachable
+            // reason: Traversal starts at the owned root and follows only live split children; detached free nodes cannot be reached.
+            .free => unreachable,
+        }
+    }
+    /// Restores equal halves without replacing panes or altering focus.
+    pub fn balance(self: *Tree) void {
+        for (&self.nodes) |*node| if (node.* == .split) {
+            node.split.ratio = 0.5;
+        };
+    }
+
     /// Splits the active leaf and returns a free pane slot; failure leaves topology untouched.
     pub fn split(self: *Tree, axis: Axis) error{PaneLimit}!u8 {
         if (self.count == pane_limit) return error.PaneLimit;
@@ -281,4 +315,26 @@ test "divider drag clamps outside the parent and rejects a nonfinite pointer" {
     const accepted = tree.layout(rect, &places, &dividers);
     try std.testing.expectEqual(@as(u8, 2), accepted.panes);
     try std.testing.expectEqual(@as(f32, 100), places[0].rect.width);
+}
+
+test "pane cycling follows visual tree order after splits, swaps, zoom and collapse" {
+    var tree = Tree.init();
+    const right = try tree.split(.horizontal);
+    const bottom = try tree.split(.vertical);
+    try std.testing.expectEqual(@as(u8, 0), tree.cycle(false));
+    try std.testing.expectEqual(right, tree.cycle(true));
+    tree.active = 0;
+    try std.testing.expectEqual(right, tree.cycle(false));
+    try std.testing.expectEqual(bottom, tree.cycle(true));
+    tree.zoomed = true;
+    try std.testing.expectEqual(right, tree.cycle(false));
+    tree.zoomed = false;
+    try std.testing.expect(tree.swap(bottom));
+    try std.testing.expectEqual(bottom, tree.cycle(false));
+    try std.testing.expect(tree.resize(.left));
+    tree.balance();
+    for (tree.nodes) |node| if (node == .split) try std.testing.expectEqual(@as(f32, 0.5), node.split.ratio);
+    const retired = try tree.close();
+    try std.testing.expectEqual(@as(u8, 0), retired);
+    try std.testing.expect(tree.cycle(false) != retired);
 }

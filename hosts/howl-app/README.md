@@ -7,9 +7,11 @@ client transport, Server/Session identity, endpoint, attachment, detach operatio
 or internal C ABI. Application allocations use Zig's SMP allocator.
 
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
-divider drag, directional focus/resize/swap, zoom, leaf collapse and restart.
+divider drag, directional focus/resize/swap, pane cycling, balanced splits, zoom,
+leaf collapse and restart. Hovering a pane divider highlights its grab surface and
+shows its horizontal/vertical resize cursor.
 One bounded mapping registry supplies shortcuts; the command palette exposes
-context-enabled actions; Ctrl+Shift+Space opens the profile menu. The compact
+every mappable command, including directional focus/resize/swap; Ctrl+Shift+Space opens the profile menu. The compact
 `>` button beside `+` opens the profile menu; `⋯` opens Settings, and
 Ctrl+Shift+P opens Command Palette. Appearance → “Hide top bar with one tab”
 reclaims the whole header for a single terminal (saved as `hide_single_tab`,
@@ -45,6 +47,16 @@ and box rules retain their raster coverage at fractional desktop scales.
 
 The right-side Settings panel retains sidebar/content focus, pointer selectors,
 profile New/Duplicate/Delete, View/Edit, Set default and inline Save/Cancel.
+Rows select on one click; Enter or double-click begins an edit. Finite profile,
+theme and toggle choices use arrows and ignore typed text. Enter/Save commits;
+Escape cancels the edit, then search, then content focus before closing Settings.
+Tab moves between sidebar/content, or field/Save/Cancel during an edit.
+Interaction exposes the existing copy/paste/find/history shortcut settings.
+Search preserves normal row geometry. Settings, installed fonts and both palettes
+share text editing, list viewports, row hit geometry and selection/hover styling.
+The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
+Ctrl+V pastes, Home/End and Left/Right move the caret, and Delete/Backspace edit
+either side. The font chooser retains its sample and explicit Preview/Save/Cancel.
 Seven settings pages edit Local shell/command/cwd/environment recipes, mappings,
 themes and exact font paths. A bounded installed-font chooser supplies preview
 and cancellation. Font updates are transactional: failed saves restore
@@ -97,7 +109,9 @@ Gruvbox Dark/Light, Solarized Dark/Light and Tokyo Night (Night, Storm, Moon and
 [THEMES.md](THEMES.md) lists exact ids, source pins and adaptation scope.
 The terminal_colors overrides cover foreground, background, cursor and a
 16-entry ansi array. Every override is exactly #RRGGBB; blank inherits the preset.
-Settings shows resolved swatches and a terminal sample. Each group has its own
+Settings shows resolved swatches and a terminal sample. Editing a role provides
+RGB sliders, a live swatch, constrained hex input and Preset inheritance; the
+candidate stays local until Save. Each group has its own
 reset-overrides action; changing a preset retains explicit overrides.
 
 Successful terminal palette changes apply to live panes and future launches.
