@@ -58,8 +58,20 @@ Inactive panes and unfocused terminals show a steady hollow cell in the effectiv
 cursor color. It uses one physical pixel per edge at every scale, preserves the
 original glyph underneath, and stays absent when the program hides its cursor.
 Focus changes compose this outline from the same immutable frame and retained
-content texture. Wide/colored glyph edge cases, thickness/contrast polish and
-motion/trails remain future cursor increments.
+content texture. Unicode wide glyphs use one complete two-cell cursor rectangle,
+including when an application positions the cursor on the continuation. Bars stay
+thin at that rectangle's leading edge; underlines and hollow outlines span it.
+DEC row scaling is applied afterward; OSC66 multirow and non-semantic allocations
+keep the existing single-grid-cell cursor.
+
+Unset cursor colors use the resolved cell foreground/background, including SGR
+inverse and global reverse. Implicit colors remain opaque under faint text and
+use black or white only to resolve exact collisions with the cell background or
+unset block ink. Explicit theme,
+configuration and application colors stay exact. Block replay preserves intrinsic
+color-glyph ink. Selection is composed above retained content and below the cursor,
+so it cannot tint the cursor or its recolored ink. Stroke/accessibility refinements,
+blink timing policy and motion/trails remain future cursor increments.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

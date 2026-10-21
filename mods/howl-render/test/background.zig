@@ -315,6 +315,16 @@ test "colour glyph frame retains intrinsic ink through cursor residency eviction
         try std.testing.expect(value.destination.height <= font.metrics().line_height);
     };
     try std.testing.expectEqual(@as(usize, 2), rgba_commands); // content + untinted cursor replay
+    try std.testing.expectEqual(font.metrics().advance_width * 2, frame.cursor.?.rect.width);
+    var content_rgba: ?RR.Command = null;
+    for (frame.commands[0..frame.content_command_count]) |command| if (command == .rgba) {
+        content_rgba = command;
+    };
+    for (frame.commands[frame.content_command_count..]) |command| if (command == .rgba) {
+        try std.testing.expectEqualDeep(content_rgba.?.rgba.destination, command.rgba.destination);
+        try std.testing.expectEqualDeep(content_rgba.?.rgba.resource, command.rgba.resource);
+        try std.testing.expectEqualDeep(content_rgba.?.rgba.clip, command.rgba.clip);
+    };
     const cached = try RR.frame(owner, &residency, .{ .commands = &output.commands, .pixels = &.{}, .uploads = &.{}, .removals = &output.removals });
     try std.testing.expectEqual(@as(usize, 0), cached.uploads.len);
     @memset(output.pixels[0..16], 0xa5);
@@ -636,4 +646,146 @@ test "retained row equality preserves drawing identity while canonical cuts and 
     try RR.updateObservationRows(owner, vt.observation(), 0, .{ .base_revision = previous, .rows = &.{ false, false, false } }, &.{});
     const reset = try out.frame(owner);
     try std.testing.expect(reset.content_revision > content);
+}
+
+test "wide cursor lead and continuation share bounds through cursor-only updates and DEC scaling" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    const cfg = fontConfig(font);
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+    defer RR.deinit(owner);
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 4, 10, 0);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: Exact cursor bounds and retained command equality below prove the resulting wide/DEC fixture.
+    _ = try vt.feed("Á界x\x1b[1;9H界\x1b[2;1H\x1b#6界\x1b[3;1H\x1b#3界\x1b[4;1H\x1b#4界");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const baseline = try allocator.create(Output);
+    defer allocator.destroy(baseline);
+    const before = try baseline.frame(owner);
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const content = vt.contentSequence();
+    const Case = struct { row: u16, col: u16, x: u16, width: u16 };
+    const cases = [_]Case{
+        .{ .row = 0, .col = 0, .x = 0, .width = 1 },
+        .{ .row = 0, .col = 8, .x = 8, .width = 2 },
+        .{ .row = 0, .col = 9, .x = 8, .width = 2 },
+        .{ .row = 0, .col = 1, .x = 1, .width = 2 },
+        .{ .row = 0, .col = 2, .x = 1, .width = 2 },
+        .{ .row = 0, .col = 5, .x = 5, .width = 1 },
+        .{ .row = 1, .col = 0, .x = 0, .width = 4 },
+        .{ .row = 1, .col = 1, .x = 0, .width = 4 },
+        .{ .row = 2, .col = 1, .x = 0, .width = 4 },
+        .{ .row = 3, .col = 0, .x = 0, .width = 4 },
+    };
+    for (cases) |case| for ([_]u8{ 2, 4, 6 }) |style| {
+        var bytes: [64]u8 = undefined;
+        // zig-audit: acknowledge discard
+        // reason: Canonical identity and complete cursor projection are the assertions, not feed counters.
+        _ = try vt.feed(try std.fmt.bufPrint(&bytes, "\x1b[{d};{d}H\x1b[{d} q", .{ case.row + 1, case.col + 1, style }));
+        try std.testing.expectEqual(content, vt.contentSequence());
+        try RR.updateObservationCursor(owner, vt.observation(), 0);
+        const frame = try output.frame(owner);
+        try std.testing.expectEqual(before.content_revision, frame.content_revision);
+        try std.testing.expectEqualDeep(before.commands[0..before.content_command_count], frame.commands[0..frame.content_command_count]);
+        const rect = frame.cursor.?.rect;
+        try std.testing.expectEqual(@as(i32, case.x) * cfg.cell_size.width, rect.x);
+        try std.testing.expectEqual(@as(i32, case.row) * cfg.cell_size.height, rect.y);
+        try std.testing.expectEqual(case.width * cfg.cell_size.width, rect.width);
+        try std.testing.expectEqual(cfg.cell_size.height, rect.height);
+        const solid = frame.commands[frame.content_command_count].solid.rect;
+        try std.testing.expectEqual(if (style == 6) @min(@as(u16, 2), rect.width) else rect.width, solid.width);
+        try std.testing.expectEqual(if (style == 4) @min(@as(u16, 2), rect.height) else rect.height, solid.height);
+    };
+    // Allocated OSC66 groups are not Unicode-wide cells, even with width two.
+    for ([_][]const u8{ "\x1b]66;s=2;A\x07", "\x1b]66;w=2;A\x07" }) |bytes| {
+        vt.hardReset();
+        // zig-audit: acknowledge discard
+        // reason: The cursor must retain its existing grid-cell geometry on explicit/scaled allocations.
+        _ = try vt.feed(bytes);
+        try RR.updateObservation(owner, vt.observation(), 0, &.{});
+        for (0..2) |row| for (0..2) |col| {
+            var position: [32]u8 = undefined;
+            // zig-audit: acknowledge discard
+            // reason: Bounds below assert each grid coordinate independently of group allocation.
+            _ = try vt.feed(try std.fmt.bufPrint(&position, "\x1b[{d};{d}H", .{ row + 1, col + 1 }));
+            try RR.updateObservationCursor(owner, vt.observation(), 0);
+            const frame = try output.frame(owner);
+            try std.testing.expectEqualDeep(RR.Rect{
+                .x = @intCast(col * cfg.cell_size.width),
+                .y = @intCast(row * cfg.cell_size.height),
+                .width = cfg.cell_size.width,
+                .height = cfg.cell_size.height,
+            }, frame.cursor.?.rect);
+        };
+    }
+}
+
+test "implicit cursor colors follow cell inverse and global reverse while explicit overrides stay exact" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    const owner = try RR.initPrivate(allocator, .{ .regular = font }, fontConfig(font));
+    defer RR.deinit(owner);
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 2, 8, 0);
+    defer vt.deinit();
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    const fg: RR.Color = .{ .r = 0x12, .g = 0xab, .b = 0x34, .a = 255 };
+    const bg: RR.Color = .{ .r = 0x10, .g = 0x20, .b = 0x30, .a = 255 };
+    for ([_]bool{ false, true }) |inverse| for ([_]bool{ false, true }) |reverse| {
+        var bytes: [128]u8 = undefined;
+        // zig-audit: acknowledge discard
+        // reason: Resolved cursor and block-ink colors are checked below for each independent inversion.
+        _ = try vt.feed(try std.fmt.bufPrint(&bytes, "\x1b[?5{c}\x1b[0;2m\x1b[38;2;18;171;52;48;2;16;32;48{s}mH\x1b[H", .{ if (reverse) @as(u8, 'h') else @as(u8, 'l'), if (inverse) ";7" else "" }));
+        try RR.updateObservation(owner, vt.observation(), 0, &.{});
+        const frame = try output.frame(owner);
+        const swapped = inverse != reverse;
+        try std.testing.expectEqualDeep(if (swapped) bg else fg, frame.cursor.?.color);
+        var ink = false;
+        for (frame.commands[frame.content_command_count..]) |command| if (command == .alpha_mask) {
+            ink = true;
+            try std.testing.expectEqualDeep(if (swapped) fg else bg, command.alpha_mask.color);
+        };
+        try std.testing.expect(ink);
+    };
+    // zig-audit: acknowledge discard
+    // reason: Equal cell colors and faint ink must still yield an opaque visible implicit cursor.
+    _ = try vt.feed("\x1b[?5l\x1b[0;2;38;2;128;128;128;48;2;128;128;128mH\x1b[H");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const collision = try output.frame(owner);
+    try std.testing.expectEqualDeep(RR.Color{ .r = 0, .g = 0, .b = 0, .a = 255 }, collision.cursor.?.color);
+    for (collision.commands[collision.content_command_count..]) |command| if (command == .alpha_mask)
+        try std.testing.expectEqualDeep(RR.Color{ .r = 128, .g = 128, .b = 128, .a = 255 }, command.alpha_mask.color);
+    var defaults: VT.ColorDefaults = .{};
+    defaults.cursor = .{ .r = bg.r, .g = bg.g, .b = bg.b };
+    vt.setColorDefaults(defaults);
+    // zig-audit: acknowledge discard
+    // reason: An explicit cursor fill matching the cell background must remain exact while unset ink resolves its collision.
+    _ = try vt.feed("\x1b[0;38;2;18;171;52;48;2;16;32;48mH\x1b[H");
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const explicit_fill = try output.frame(owner);
+    try std.testing.expectEqualDeep(bg, explicit_fill.cursor.?.color);
+    for (explicit_fill.commands[explicit_fill.content_command_count..]) |command| if (command == .alpha_mask)
+        try std.testing.expectEqualDeep(RR.Color{ .r = 255, .g = 255, .b = 255, .a = 255 }, command.alpha_mask.color);
+    defaults.cursor = null;
+    defaults.cursor_text = .{ .r = fg.r, .g = fg.g, .b = fg.b };
+    vt.setColorDefaults(defaults);
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const explicit_ink = try output.frame(owner);
+    // Explicit ink must not push the implicit fill onto the background and hide the cursor.
+    try std.testing.expectEqualDeep(fg, explicit_ink.cursor.?.color);
+    for (explicit_ink.commands[explicit_ink.content_command_count..]) |command| if (command == .alpha_mask)
+        try std.testing.expectEqualDeep(fg, command.alpha_mask.color);
+    const fixed: VT.Rgb = .{ .r = 111, .g = 22, .b = 133 };
+    defaults.cursor = fixed;
+    defaults.cursor_text = fixed;
+    vt.setColorDefaults(defaults);
+    try RR.updateObservation(owner, vt.observation(), 0, &.{});
+    const explicit = try output.frame(owner);
+    try std.testing.expectEqualDeep(RR.Color{ .r = fixed.r, .g = fixed.g, .b = fixed.b, .a = 255 }, explicit.cursor.?.color);
+    for (explicit.commands[explicit.content_command_count..]) |command| if (command == .alpha_mask)
+        try std.testing.expectEqualDeep(explicit.cursor.?.color, command.alpha_mask.color);
 }

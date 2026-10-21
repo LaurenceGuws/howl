@@ -1555,19 +1555,6 @@ const App = struct {
         self.selection_tick = now;
         try dragging.pane.submit(.{ .scroll = dragging.edge });
     }
-    fn drawSelection(self: *App, p: *Pane, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
-        const paint = &p.canvas.selection_paint;
-        // Paint belongs to the accepted frame, not a newer queued drag intent.
-        const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.w)), .h = @intFromFloat(@ceil(rect.h)) };
-        if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
-        defer clearClip(self.renderer);
-        const width = @as(f32, @floatFromInt(frame.cell_size.width)) / self.scale;
-        const height = @as(f32, @floatFromInt(frame.cell_size.height)) / self.scale;
-        const color: c.SDL_Color = .{ .r = 180, .g = 180, .b = 180, .a = 100 };
-        for (paint.spans[0..paint.rows], 0..) |span, row| if (span) |range| {
-            try fill(self.renderer, .{ .x = rect.x + @as(f32, @floatFromInt(range.first)) * width, .y = rect.y + @as(f32, @floatFromInt(row)) * height, .width = @as(f32, @floatFromInt(range.last - range.first + 1)) * width, .height = height }, color);
-        };
-    }
     fn pointerPane(self: *App, x: f32, y: f32) ?u8 {
         var places: [layout.pane_limit]layout.Placement = undefined;
         var dividers: [layout.pane_limit - 1]layout.Divider = undefined;
@@ -2441,7 +2428,6 @@ const App = struct {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {
-                    try self.drawSelection(p, placed, frame);
                     clearClip(self.renderer);
                     try self.drawScrollbar(p, placed, frame);
                 }
@@ -3254,50 +3240,6 @@ test "centred terminal lattice shares slack, clips stale frames and maps input a
     try std.testing.expectEqualDeep(available, oversized);
     const tiny: c.SDL_FRect = .{ .x = 10, .y = 20, .w = 0.125, .h = 0.25 };
     try std.testing.expectEqualDeep(tiny, terminalPlacement(tiny, .{ .width = 1, .height = 1 }, 1.7));
-}
-
-test "pending drag requests retain accepted selection paint; accepted clear removes it" {
-    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
-    defer c.SDL_Quit();
-    const surface = c.SDL_CreateSurface(40, 20, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
-    defer c.SDL_DestroySurface(surface);
-    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
-    defer c.SDL_DestroyRenderer(renderer);
-    var configuration = config.Config.defaults(std.testing.allocator);
-    defer configuration.deinit();
-    var p: Pane = .{ .recipe = undefined, .canvas = canvas.Canvas.init(std.testing.allocator), .selection_serial = 999 };
-    defer p.canvas.deinit();
-    p.canvas.selection_paint = .{ .serial = 11, .rows = 1 };
-    p.canvas.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
-    var app: App = .{ .init = undefined, .configuration = &configuration, .fonts = undefined, .window = undefined, .renderer = renderer, .ui_fonts = undefined, .geometry = undefined, .wake_event = 0, .scale = 1, .bindings = try keybindings.Bindings.init() };
-    const frame: instance.PublishedFrame = .{
-        .sequence = 1,
-        .presentation_generation = 1,
-        .revision = 1,
-        .terminal_revision = 1,
-        .history_offset = 0,
-        .history_count = 0,
-        .history_row_base = 0,
-        .alternate_screen = false,
-        .surface = .{ .width = 40, .height = 20 },
-        .cell_size = .{ .width = 10, .height = 20 },
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{},
-        .pixels = &.{},
-    };
-    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
-    for ([_]bool{ false, true }) |cleared| {
-        if (cleared) p.canvas.selection_paint = .{ .serial = 999 };
-        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
-        try std.testing.expect(c.SDL_RenderClear(renderer));
-        try app.drawSelection(&p, .{ .x = 0, .y = 0, .w = 40, .h = 20 }, frame);
-        try std.testing.expect(c.SDL_RenderPresent(renderer));
-        var red: u8 = 0;
-        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 5, 5, &red, null, null, null));
-        try std.testing.expect(if (cleared) red == 0 else red > 0);
-        try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
-    }
 }
 
 test "notice expiry wakes a quiet window once and preserves bounded selection scrolling" {

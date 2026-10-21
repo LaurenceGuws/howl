@@ -234,6 +234,7 @@ pub const Canvas = struct {
         };
         if (!c.SDL_SetRenderClipRect(renderer, &pane_clip) or
             !c.SDL_RenderTexture(renderer, target, null, &destination_rect)) return error.SDLTexture;
+        try self.drawSelection(renderer, pane, value);
         switch (cursor) {
             .shown => try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]),
             .hidden => {},
@@ -253,6 +254,26 @@ pub const Canvas = struct {
         }
         if (!c.SDL_SetRenderClipRect(renderer, null)) return error.SDLClip;
         if (!c.SDL_SetRenderScale(renderer, previous_x, previous_y)) return error.SDLScale;
+    }
+
+    fn drawSelection(self: *const Canvas, renderer: *c.SDL_Renderer, pane: c.SDL_FRect, value: instance.PublishedFrame) !void {
+        // Selection is a transient overlay, below the cursor and outside the
+        // retained content texture. Its spans belong to this exact frame.
+        if (self.selection_paint.rows == 0) return;
+        const rows = value.surface.height / value.cell_size.height;
+        const columns = value.surface.width / value.cell_size.width;
+        if (!c.SDL_SetRenderDrawColor(renderer, 180, 180, 180, 100)) return error.SDLGeometry;
+        for (self.selection_paint.spans[0..@min(self.selection_paint.spans.len, @min(self.selection_paint.rows, rows))], 0..) |span, row| if (span) |range| {
+            if (range.last < range.first or range.first >= columns) continue;
+            const last = @min(range.last, columns - 1);
+            const rect: c.SDL_FRect = .{
+                .x = pane.x + @as(f32, @floatFromInt(@as(u32, range.first) * value.cell_size.width)),
+                .y = pane.y + @as(f32, @floatFromInt(row * value.cell_size.height)),
+                .w = @floatFromInt(@as(u32, last - range.first + 1) * value.cell_size.width),
+                .h = @floatFromInt(value.cell_size.height),
+            };
+            if (!c.SDL_RenderFillRect(renderer, &rect)) return error.SDLGeometry;
+        };
     }
 
     /// Discards backend content pixels; the next draw reconstructs from the held frame.
@@ -691,7 +712,7 @@ test "SDL queue budget admits its exact limit and retires before the next packet
     try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
 }
 
-test "cursor shapes blink and outline over retained content at fractional scales without replacing texture or frame" {
+test "cursor shapes blink and outline above selection at fractional scales without replacing texture or frame" {
     if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
     defer c.SDL_Quit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -723,6 +744,7 @@ test "cursor shapes blink and outline over retained content at fractional scales
     defer c.SDL_DestroySurface(surface);
     const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
     defer c.SDL_DestroyRenderer(renderer);
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
     var backend = Canvas.init(std.testing.allocator);
     defer backend.deinit();
     const geometry = try std.testing.allocator.create(Geometry);
@@ -764,7 +786,9 @@ test "cursor shapes blink and outline over retained content at fractional scales
         try std.testing.expect(frame.content_command_count < frame.commands.len);
         if (retained_revision) |revision| try std.testing.expectEqual(revision, frame.content_revision) else retained_revision = frame.content_revision;
         const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(frame.surface.width), .h = @floatFromInt(frame.surface.height) };
-        for ([_]CursorDisplay{ .shown, .hidden, .outline }) |mode| for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| {
+        for ([_]CursorDisplay{ .shown, .hidden, .outline }) |mode| for ([_]f32{ 1, 1.25, 1.6, 2 }) |scale| for ([_]bool{ false, true }) |selected| {
+            backend.selection_paint = .{ .rows = 2 };
+            if (selected) backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
             try std.testing.expect(c.SDL_SetRenderScale(renderer, scale, scale));
             try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
             try std.testing.expect(c.SDL_RenderClear(renderer));
@@ -784,7 +808,13 @@ test "cursor shapes blink and outline over retained content at fractional scales
             try std.testing.expect(c.SDL_RenderClear(renderer));
             // Independent full-command oracle plus exact one-pixel outline edges.
             try std.testing.expect(c.SDL_SetRenderScale(renderer, 1, 1));
-            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..if (mode == .shown) frame.commands.len else frame.content_command_count]);
+            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..frame.content_command_count]);
+            if (selected) {
+                try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 180, 180, 180, 100));
+                const selected_rect: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(2 * frame.cell_size.width), .h = @floatFromInt(frame.cell_size.height) };
+                try std.testing.expect(c.SDL_RenderFillRect(renderer, &selected_rect));
+            }
+            if (mode == .shown) try backend.drawCommands(renderer, geometry, pane, frame.commands[frame.content_command_count..]);
             try std.testing.expect(c.SDL_RenderPresent(renderer));
             for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
                 var actual: [3]u8 = undefined;
@@ -804,5 +834,46 @@ test "cursor shapes blink and outline over retained content at fractional scales
             try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
             try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
         };
+    }
+}
+
+test "pending drag requests retain accepted selection paint; accepted clear removes it" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    const surface = c.SDL_CreateSurface(40, 20, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var backend = Canvas.init(std.testing.allocator);
+    defer backend.deinit();
+    backend.selection_paint = .{ .serial = 11, .rows = 1 };
+    backend.selection_paint.spans[0] = .{ .first = 0, .last = 1 };
+    const frame: instance.PublishedFrame = .{
+        .sequence = 1,
+        .presentation_generation = 1,
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .alternate_screen = false,
+        .surface = .{ .width = 40, .height = 20 },
+        .cell_size = .{ .width = 10, .height = 20 },
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .pixels = &.{},
+    };
+    try std.testing.expect(c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND));
+    for ([_]bool{ false, true }) |cleared| {
+        if (cleared) backend.selection_paint = .{ .serial = 999 };
+        try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+        try std.testing.expect(c.SDL_RenderClear(renderer));
+        try backend.drawSelection(renderer, .{ .x = 0, .y = 0, .w = 40, .h = 20 }, frame);
+        try std.testing.expect(c.SDL_RenderPresent(renderer));
+        var red: u8 = 0;
+        try std.testing.expect(c.SDL_ReadSurfacePixel(surface, 5, 5, &red, null, null, null));
+        try std.testing.expect(if (cleared) red == 0 else red > 0);
+        try std.testing.expect(!c.SDL_RenderClipEnabled(renderer));
     }
 }

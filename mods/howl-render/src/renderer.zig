@@ -3184,10 +3184,35 @@ fn contentCursor(
     if (!Source.cursorVisible(snapshot) or cursor_shape == .none) return null;
     if (cursor_row >= rows or cursor_column >= columns) return null;
     const presentation = Source.presentation(snapshot);
+    if (Source.rowCount(snapshot) != rows) return error.InvalidView;
     const row = Source.rowAt(snapshot, cursor_row);
-    if (cursor_column >= try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row)))
-        return null;
-    const base_rect = try contentCellRect(cursor_row, cursor_column, cell_size);
+    if (Source.rowCellCount(snapshot, row) != columns) return error.InvalidView;
+    const line_columns = try contentLineColumnCount(columns, Source.lineGeometry(snapshot, row));
+    if (cursor_column >= line_columns) return null;
+    var scratch: Source.CellScratch = undefined;
+    var lead_scratch: Source.CellScratch = undefined;
+    var tail_scratch: Source.CellScratch = undefined;
+    var cell = Source.cellAt(snapshot, row, cursor_column, &scratch);
+    if (cell.width == 0 or cell.height == 0) return error.InvalidView;
+    var column = cursor_column;
+    var width: u16 = 1;
+    // Unicode occupancy is distinct from OSC66's multirow/scaled allocations.
+    // Both halves of an ordinary wide grapheme present its complete cell pair.
+    if (cell.semantic_width and cell.height == 1 and cell.width == 2) {
+        if (cell.x > 1 or cell.x > column or cell.y != 0) return error.InvalidView;
+        column -= cell.x;
+        if (@as(u32, column) + 2 > line_columns) return error.InvalidView;
+        const lead = Source.cellAt(snapshot, row, column, &lead_scratch);
+        const tail = Source.cellAt(snapshot, row, column + 1, &tail_scratch);
+        if (!lead.semantic_width or lead.width != 2 or lead.height != 1 or lead.x != 0 or lead.y != 0 or
+            !tail.semantic_width or tail.width != 2 or tail.height != 1 or tail.x != 1 or tail.y != 0)
+            return error.InvalidView;
+        cell = lead;
+        width = 2;
+    }
+    var base_rect = try contentCellRect(cursor_row, column, cell_size);
+    base_rect.width = std.math.mul(u16, base_rect.width, width) catch
+        return error.InvalidPresentationGeometry;
     const rect = try contentLineClip(
         base_rect,
         cursor_row,
@@ -3195,13 +3220,36 @@ fn contentCursor(
         cell_size,
         surface,
     ) orelse return null;
+    const colors = try contentCellColors(Source, cell, presentation);
+    var color = if (presentation.cursor) |value| contentRgba(Source, value) else colors.foreground;
+    var text_color = if (presentation.cursor_text) |value| contentRgba(Source, value) else colors.background;
+    if (presentation.cursor == null) {
+        color.a = 255;
+        if (sameCursorRgb(color, colors.background)) color = contrastingCursorColor(colors.background);
+    }
+    if (presentation.cursor_text == null) {
+        text_color.a = 255;
+        if (sameCursorRgb(text_color, color)) text_color = contrastingCursorColor(color);
+    }
     return .{
         .rect = rect,
         .clip = contentSurfaceRect(surface),
         .shape = cursor_shape,
-        .color = contentRgba(Source, presentation.cursor orelse presentation.foreground),
-        .text_color = contentRgba(Source, presentation.cursor_text orelse presentation.background),
+        .color = color,
+        .text_color = text_color,
     };
+}
+
+fn sameCursorRgb(left: frame_vocabulary.Color, right: frame_vocabulary.Color) bool {
+    return left.r == right.r and left.g == right.g and left.b == right.b;
+}
+
+// Only resolves exact implicit-color collisions; explicit program/theme colors
+// remain exact. No continuous contrast heuristic changes the configured palette.
+fn contrastingCursorColor(background: frame_vocabulary.Color) frame_vocabulary.Color {
+    const brightness = @as(u32, background.r) * 299 + @as(u32, background.g) * 587 + @as(u32, background.b) * 114;
+    const channel: u8 = if (brightness >= 128000) 0 else 255;
+    return .{ .r = channel, .g = channel, .b = channel, .a = 255 };
 }
 
 fn rendererImpl(content: *Renderer) *Impl {
