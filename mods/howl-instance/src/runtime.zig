@@ -137,6 +137,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
         /// The canonical cell lattice is derived from the regular font metrics. The
         /// caller does not separately choose PTY/VT and Render pixel geometry.
         pub const PresentationConfig = struct {
+            cursor_stroke_pixels: u8 = 2,
             /// Choose process sharing deliberately; private opens a separate native family.
             text: union(enum) { private: FontFamilyConfig, shared: *PresentationStore },
             box_drawing: BoxDrawingConfig,
@@ -878,6 +879,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                             .height = metrics.line_height,
                         },
                         .box_drawing = config.box_drawing,
+                        .cursor_stroke_pixels = config.cursor_stroke_pixels,
                         .shape_cache = config.shape_cache,
                         .atlas = config.atlas,
                         .shaped_capacity = config.shaped_capacity,
@@ -1355,6 +1357,7 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     .{
                         .cell_size = cell_size,
                         .box_drawing = config.box_drawing,
+                        .cursor_stroke_pixels = config.cursor_stroke_pixels,
                         .shape_cache = config.shape_cache,
                         .atlas = config.atlas,
                         .shaped_capacity = config.shaped_capacity,

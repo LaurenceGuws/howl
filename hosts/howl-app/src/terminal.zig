@@ -116,6 +116,10 @@ pub const Terminal = opaque {
     pub fn submit(self: *Terminal, task: Task) !void {
         return self.state().submit(task);
     }
+    /// Consumes coalesced accepted typing/paste activity for host cursor presentation.
+    pub fn takeInputActivity(self: *Terminal) bool {
+        return self.state().input_activity.swap(false, .acq_rel);
+    }
     /// Copies the latest app color preference into one bounded mailbox, without allocation.
     /// The sole worker applies it canonically; stopped panes use the saved preference on restart.
     pub fn setColorDefaults(self: *Terminal, defaults: instance.Terminal.ColorDefaults) void {
@@ -214,6 +218,7 @@ const State = struct {
     paint: selection.Paint = .{},
     search: find.Find = .{},
     attention: std.atomic.Value(bool) = .init(false),
+    input_activity: std.atomic.Value(bool) = .init(false),
     clipboard: ?[]u8 = null,
     consequence_worked: bool = false,
 
@@ -327,6 +332,7 @@ const State = struct {
         }
         errdefer self.releaseTask(task);
         try self.admit(.{ .intent = task });
+        if (inputActivity(task)) self.input_activity.store(true, .release);
     }
 
     fn admit(self: *State, work: Work) error{ TerminalStopped, InputQueueFull }!void {
@@ -832,6 +838,21 @@ fn taskBytes(task: Task) []const u8 {
         .paste => |bytes| bytes,
         .key => |key| key.text,
         else => "",
+    };
+}
+
+fn inputActivity(task: Task) bool {
+    if (task != .input) return false;
+    return switch (task.input) {
+        .bytes, .paste => |bytes| bytes.len != 0,
+        .key => |key| key.action != .release and switch (key.key) {
+            .unicode => true,
+            .named => |named| switch (named) {
+                .left_shift, .right_shift, .left_control, .right_control, .left_alt, .right_alt, .left_super, .right_super, .left_hyper, .right_hyper, .left_meta, .right_meta, .caps_lock, .num_lock => false,
+                else => true,
+            },
+        },
+        else => false,
     };
 }
 
@@ -1696,4 +1717,55 @@ test "shared text serves concurrent workers while one observer stalls and native
     }
     try std.testing.expectEqual(before, held.value.terminal_revision);
     try std.testing.expectEqualDeep(command, held.value.commands[0]);
+}
+
+test "cursor activity coalesces accepted typing and paste without echo; releases modifiers and rejected work stay quiet" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const owner = try Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf '\\033]0;READY\\007'; sleep 30",
+        .rows = 2,
+        .columns = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false);
+    defer owner.destroy();
+    try waitTitle(owner, "READY");
+    const revision = owner.snapshot().revision;
+    try std.testing.expect(!owner.takeInputActivity());
+    for ([_]Task{
+        .{ .input = .{ .bytes = "" } },
+        .{ .input = .{ .paste = "" } },
+        .{ .input = .{ .focus = .in } },
+        .{ .input = .{ .key = .{ .key = .{ .named = .enter }, .action = .release } } },
+        .{ .input = .{ .key = .{ .key = .{ .named = .left_shift }, .action = .press } } },
+    }) |task| {
+        try owner.submit(task);
+        try std.testing.expect(!owner.takeInputActivity());
+    }
+    try owner.submit(.{ .input = .{ .bytes = "a" } });
+    try owner.submit(.{ .input = .{ .paste = "b" } });
+    try std.testing.expect(owner.takeInputActivity());
+    try std.testing.expect(!owner.takeInputActivity());
+    try owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .left }, .action = .repeat } } });
+    try std.testing.expect(owner.takeInputActivity());
+    try std.testing.expectError(error.BorrowedKeyText, owner.submit(.{ .input = .{ .key = .{ .key = .{ .named = .enter }, .legacy_text = "borrow" } } }));
+    try std.testing.expect(!owner.takeInputActivity());
+    try std.Io.sleep(threaded.io(), .fromMilliseconds(20), .awake);
+    try std.testing.expectEqual(revision, owner.snapshot().revision);
+    // Only these fields are reachable before the full-queue rejection; no
+    // process, descriptor, wake or uninitialized queue slot is accessed.
+    var full: State = undefined;
+    full.allocator = std.testing.allocator;
+    full.io = threaded.io();
+    full.mutex = .init;
+    full.stopping = false;
+    full.status = .{};
+    full.count = queue_limit;
+    full.input_bytes = 0;
+    full.input_activity = .init(false);
+    try std.testing.expectError(error.InputQueueFull, full.submit(.{ .input = .{ .bytes = "rejected" } }));
+    try std.testing.expect(!full.input_activity.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), full.input_bytes);
 }

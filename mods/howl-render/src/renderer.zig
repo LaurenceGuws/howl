@@ -74,6 +74,8 @@ pub const Input = frame_vocabulary.Input;
 /// Fixes every allocation and terminal presentation lattice used by one terminal Renderer.
 /// The supplied FontSet remains caller-owned and must outlive the Renderer.
 pub const Config = struct {
+    /// Physical bar width and underline height, clamped to the cursor cell.
+    cursor_stroke_pixels: u8 = 2,
     cell_size: frame_vocabulary.Size,
     box_drawing: generated.BoxDrawingConfig,
     shape_cache: ShapeCacheConfig,
@@ -578,6 +580,7 @@ pub fn initPrivate(
 ) InitError!*Renderer {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
+        config.cursor_stroke_pixels == 0 or config.cursor_stroke_pixels > 16 or
         !validCommandBounds(config) or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidConfig;
@@ -597,6 +600,7 @@ pub fn initWithStore(
 ) InitError!*Renderer {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
+        config.cursor_stroke_pixels == 0 or config.cursor_stroke_pixels > 16 or
         !validCommandBounds(config) or
         ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidConfig;
@@ -1347,9 +1351,9 @@ fn appendCursorCommands(
     var painted = cursor.rect;
     switch (cursor.shape) {
         .block => {},
-        .bar => painted.width = @min(painted.width, 2),
+        .bar => painted.width = @min(painted.width, impl.config.cursor_stroke_pixels),
         .underline => {
-            const thickness = @min(painted.height, 2);
+            const thickness = @min(painted.height, impl.config.cursor_stroke_pixels);
             painted.y = std.math.add(i32, painted.y, @as(i32, painted.height - thickness)) catch
                 return error.InvalidPresentationGeometry;
             painted.height = thickness;

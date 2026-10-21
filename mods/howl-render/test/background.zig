@@ -789,3 +789,44 @@ test "implicit cursor colors follow cell inverse and global reverse while explic
     for (explicit.commands[explicit.content_command_count..]) |command| if (command == .alpha_mask)
         try std.testing.expectEqualDeep(explicit.cursor.?.color, command.alpha_mask.color);
 }
+
+test "physical cursor stroke clamps to its cell and rejects zero or oversized configuration" {
+    const font = try render.text.FontSet.init(allocator, .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 12 } });
+    defer font.deinit();
+    var vt: VT = undefined;
+    try VT.initWithHistoryInto(&vt, allocator, 2, 8, 0);
+    defer vt.deinit();
+    // zig-audit: acknowledge discard
+    // reason: The stroke projection and retained cursor-only content identity below are the proof.
+    _ = try vt.feed("H\x1b[H");
+    const output = try allocator.create(Output);
+    defer allocator.destroy(output);
+    for ([_]u8{ 0, 17 }) |stroke| {
+        var invalid = fontConfig(font);
+        invalid.cursor_stroke_pixels = stroke;
+        try std.testing.expectError(error.InvalidConfig, RR.initPrivate(allocator, .{ .regular = font }, invalid));
+    }
+    for ([_]u8{ 1, 2, 4, 16 }) |stroke| {
+        var cfg = fontConfig(font);
+        cfg.cursor_stroke_pixels = stroke;
+        const owner = try RR.initPrivate(allocator, .{ .regular = font }, cfg);
+        defer RR.deinit(owner);
+        try RR.updateObservation(owner, vt.observation(), 0, &.{});
+        const content = (try output.frame(owner)).content_revision;
+        for ([_]u8{ 2, 4, 6 }) |shape| {
+            var bytes: [16]u8 = undefined;
+            // zig-audit: acknowledge discard
+            // reason: The exact final cursor solid geometry is asserted independently of feed counters.
+            _ = try vt.feed(try std.fmt.bufPrint(&bytes, "\x1b[{d} q", .{shape}));
+            try RR.updateObservationCursor(owner, vt.observation(), 0);
+            const frame = try output.frame(owner);
+            try std.testing.expectEqual(content, frame.content_revision);
+            const cell = frame.cursor.?.rect;
+            const solid = frame.commands[frame.content_command_count].solid.rect;
+            try std.testing.expectEqual(if (shape == 6) @min(cell.width, stroke) else cell.width, solid.width);
+            try std.testing.expectEqual(if (shape == 4) @min(cell.height, stroke) else cell.height, solid.height);
+            try std.testing.expectEqual(cell.x, solid.x);
+            try std.testing.expectEqual(if (shape == 4) cell.y + @as(i32, cell.height - solid.height) else cell.y, solid.y);
+        }
+    }
+}

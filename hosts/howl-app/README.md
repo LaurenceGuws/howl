@@ -38,8 +38,9 @@ and IME text keep their text-input path.
 Cursor shapes follow application DECSCUSR requests: block, bar and underline.
 Appearance → “Cursor blink” selects Off (the conservative default), Application
 (follow the program's blink intent) or Always (blink any visible cursor).
-A focused live pane uses a 500ms on/off phase; movement, focus and presentation
-changes restart it visibly. Hidden/history/inactive panes and modal fields do not
+A focused live pane defaults to a 500ms on/off phase; accepted typing/paste,
+canonical cursor movement, focus and presentation changes restart it visibly.
+Key releases, pure modifiers, pointer motion and unrelated output do not restart it. Hidden/history/inactive panes and modal fields do not
 schedule cursor blink work. The host only includes or omits the retained cursor
 suffix; no text shaping, frame publication or content texture rebuild runs for a
 blink tick. Off/steady presentation has no cursor timer. Terminal color overrides
@@ -70,8 +71,20 @@ use black or white only to resolve exact collisions with the cell background or
 unset block ink. Explicit theme,
 configuration and application colors stay exact. Block replay preserves intrinsic
 color-glyph ink. Selection is composed above retained content and below the cursor,
-so it cannot tint the cursor or its recolored ink. Stroke/accessibility refinements,
-blink timing policy and motion/trails remain future cursor increments.
+so it cannot tint the cursor or its recolored ink. Appearance also exposes bounded cursor controls:
+
+- Cursor stroke (px): bar width/underline height, 1–16 physical pixels, default 2.
+- Inactive cursor stroke (px): outline border, 1–16 physical pixels, default 1.
+- Blink interval (ms): each on/off phase, 100–2000ms, default 500.
+- Blink idle stop (ms): stop steadily visible after 0–60000ms without cursor activity; 0 (default) keeps blinking.
+
+Strokes clamp to the cell, including tiny fonts and fractional display scales.
+Stroke changes use the existing transactional presentation/save/rollback path;
+timing changes and accepted-input resets only change host overlay composition.
+An idle stop retires its deadline and stays stopped through unrelated redraws.
+Input resets immediately even if the program produces no echo. Hidden, inactive,
+Off and application-steady cursors have no blink deadline. Motion/trails remain
+the next cursor increment.
 
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal

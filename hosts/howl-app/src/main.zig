@@ -180,11 +180,16 @@ const App = struct {
     fn startup(self: *const App) !config.Profile {
         return self.configuration.profile(try self.configuration.defaultProfile());
     }
+    fn presentationConfig(self: *App, fonts: *font_owner.Fonts, pixels: u16, stroke: u8) !instance.PresentationConfig {
+        var result = try fonts.config(self.init.io, pixels);
+        result.cursor_stroke_pixels = stroke;
+        return result;
+    }
     fn launch(self: *App, recipe: config.Profile, font_size: u16) CreationError!*terminal.Terminal {
         const inherited = if (recipe.environment.len != 0) try profileEnvironment(allocator, self.init.environ_map, recipe.environment) else self.init.minimal.environ;
         defer if (recipe.environment.len != 0) inherited.block.deinit(allocator);
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
-        const presentation = try self.fonts.config(self.init.io, pixels);
+        const presentation = try self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels);
         errdefer self.fonts.collect();
         return terminal.Terminal.create(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
@@ -503,7 +508,7 @@ const App = struct {
             return;
         };
         defer self.fonts.collect();
-        const geometry = owner.reconfigure(try self.fonts.config(self.init.io, pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
+        const geometry = owner.reconfigure(try self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels), if (resize) self.surfaceFor(value) else null) catch |failure| {
             value.font_failure = failure;
             return failure;
         };
@@ -552,6 +557,7 @@ const App = struct {
         const next_colors = try candidate.value.terminal_colors.resolve(candidate.value.terminal_theme);
         const colors_changed = !std.meta.eql(previous_colors, next_colors);
         const cursor_changed = self.configuration.value.cursor_shape != candidate.value.cursor_shape;
+        const stroke_changed = self.configuration.value.cursor_stroke_pixels != candidate.value.cursor_stroke_pixels;
         var paths_changed = false;
         for (self.configuration.value.font.paths(), candidate.value.font.paths()) |old, new| {
             paths_changed = paths_changed or !std.mem.eql(u8, old, new);
@@ -577,11 +583,11 @@ const App = struct {
             var change: FontChange = .{ .pane = p, .size = size, .overridden = overridden };
             const status = p.snapshot();
             if (p.owner) |owner| {
-                if ((paths_changed or size != p.font_size) and status.failure == null and !status.closed) {
+                if ((paths_changed or size != p.font_size or stroke_changed) and status.failure == null and !status.closed) {
                     const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale));
                     // Stage presentation with the canonical grid unchanged. A failed save must
                     // not reset history through a temporary column change.
-                    change.geometry = try owner.reconfigure(try fonts.config(self.init.io, pixels), null);
+                    change.geometry = try owner.reconfigure(try self.presentationConfig(fonts, pixels, candidate.value.cursor_stroke_pixels), null);
                 }
             }
             changes[count] = change;
@@ -635,7 +641,7 @@ const App = struct {
             const p = change.pane;
             const owner = p.owner orelse continue;
             const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(p.font_size)) * self.scale));
-            const presentation = self.fonts.config(self.init.io, pixels) catch |failure| {
+            const presentation = self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels) catch |failure| {
                 p.font_failure = failure;
                 continue;
             };
@@ -2402,6 +2408,7 @@ const App = struct {
             if (self.selecting) |dragging| if (dragging.pane == p and dragging.edge != 0)
                 try self.selectPoint(p, dragging.x, dragging.y, .extend, true);
             const status = p.snapshot();
+            if (p.owner) |owner| if (owner.takeInputActivity()) p.blink.reset();
             if (active and status.selection_serial == p.selection_serial and status.selection_failure != null and p.selection_failure_reported != status.selection_serial) {
                 p.selection_failure_reported = status.selection_serial;
                 self.report(status.selection_failure.?);
@@ -2421,10 +2428,10 @@ const App = struct {
                 const cursor_focused = self.focused and active and !status.closed and p.graphics_failure == null and
                     self.palette == null and self.settings_editor == null and self.chooser == null and
                     c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0;
-                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, cursor_focused, self.configuration.value.cursor_blink);
+                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, cursor_focused, .{ .policy = self.configuration.value.cursor_blink, .interval_ms = self.configuration.value.cursor_blink_interval_ms, .idle_ms = self.configuration.value.cursor_blink_idle_ms });
                 const cursor_display: canvas.CursorDisplay = if (!cursor_focused) .outline else if (show_cursor) .shown else .hidden;
                 if (p.blink.deadline) |deadline| self.cursor_deadline = deadline;
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display) catch |failure| {
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, cursor_display, self.configuration.value.cursor_outline_pixels) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {
@@ -2968,7 +2975,7 @@ test "failed settings save restores fonts without changing canonical history or 
         const size: u16 = if (index == 0) 15 else 17;
         const owner = try terminal.Terminal.create(a, threaded.io(), std.testing.environ, .{
             .shell = "/bin/sh",
-            .command = "read start; i=0; while [ \"$i\" -lt 70 ]; do printf '%s\\n' \"$i\"; i=$((i+1)); done; printf '\\033]0;READY\\007'; while read line; do size=$(stty size); printf '\\033]0;%s:%s\\007' \"$line\" \"$size\"; printf '%s\\n' \"$line\"; done",
+            .command = "read start; i=0; while [ \"$i\" -lt 70 ]; do printf '%s\\n' \"$i\"; i=$((i+1)); done; printf '\\033[6 q\\033]0;READY\\007'; while read line; do size=$(stty size); printf '\\033]0;%s:%s\\007' \"$line\" \"$size\"; printf '%s\\n' \"$line\"; done",
             .rows = 4,
             .columns = 20,
             .history_rows = 64,
@@ -3009,6 +3016,7 @@ test "failed settings save restores fonts without changing canonical history or 
     const history = held.history_count;
     var candidate = try settings.change(&current, threaded.io(), .default_font, "23");
     defer candidate.deinit();
+    candidate.value.cursor_stroke_pixels = 4;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDir(threaded.io(), "occupied", .default_dir);
@@ -3019,6 +3027,7 @@ test "failed settings save restores fonts without changing canonical history or 
     try std.testing.expectEqual(@as(u16, 17), panes[1].font_size);
     try std.testing.expectEqual(generation, panes[0].canvas.frame().?.presentation_generation);
     try std.testing.expectEqual(history, panes[0].canvas.frame().?.history_count);
+    try std.testing.expectEqual(@as(u8, 2), current.value.cursor_stroke_pixels);
     proof_stage = "canonical continuity";
     try panes[0].submit(.{ .input = .{ .bytes = "CHECK\n" } });
     attempts = 0;
@@ -3034,10 +3043,12 @@ test "failed settings save restores fonts without changing canonical history or 
     while (attempts < 5000) : (attempts += 1) {
         try panes[0].canvas.update(renderer, panes[0].owner.?);
         const frame = panes[0].canvas.frame().?;
-        if (frame.presentation_generation > generation and frame.history_count >= history) break;
+        if (frame.presentation_generation > generation and frame.history_count >= history and frame.terminal_revision == panes[0].snapshot().revision) break;
         try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
     }
     try std.testing.expect(attempts < 5000);
+    const restored = panes[0].canvas.frame().?;
+    try std.testing.expectEqual(@as(u16, 2), restored.commands[restored.content_command_count].solid.rect.width);
     proof_stage = "accepted save";
     try app.applyConfigurationAt(&candidate, temporary.dir, "app.json");
     try std.testing.expectEqual(@as(i32, 23), current.value.terminal_font_pixels);
@@ -3047,6 +3058,19 @@ test "failed settings save restores fonts without changing canonical history or 
     var reopened = try config.Config.loadAt(a, threaded.io(), temporary.dir, "app.json");
     defer reopened.deinit();
     try std.testing.expectEqual(@as(i32, 23), reopened.value.terminal_font_pixels);
+    try std.testing.expectEqual(@as(u8, 4), reopened.value.cursor_stroke_pixels);
+    attempts = 0;
+    while (attempts < 5000) : (attempts += 1) {
+        try panes[0].canvas.update(renderer, panes[0].owner.?);
+        const frame = panes[0].canvas.frame().?;
+        if (frame.presentation_generation > restored.presentation_generation) {
+            try std.testing.expectEqual(@as(u16, 4), frame.commands[frame.content_command_count].solid.rect.width);
+            break;
+        }
+        panes[0].owner.?.requestFrame();
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(attempts < 5000);
 }
 
 test {

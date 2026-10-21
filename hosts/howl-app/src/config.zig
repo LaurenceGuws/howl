@@ -51,6 +51,10 @@ pub const Schema = struct {
     tab_width: TabWidth = .fixed,
     cursor_blink: cursor.Policy = .off,
     cursor_shape: cursor.Shape = .block,
+    cursor_stroke_pixels: u8 = 2,
+    cursor_outline_pixels: u8 = 1,
+    cursor_blink_interval_ms: u16 = 500,
+    cursor_blink_idle_ms: u32 = 0,
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
     font: Font = .{},
@@ -60,6 +64,8 @@ pub const Schema = struct {
 pub const ValidationError = bindings.LoadError || std.Io.Dir.AccessError || error{
     UnsupportedSchema,
     InvalidFontSize,
+    InvalidCursorStroke,
+    InvalidCursorTiming,
     InvalidTheme,
     InvalidColor,
     ProfileLimit,
@@ -273,6 +279,10 @@ fn validate(io: std.Io, supplied: Schema) ValidationError!Schema {
     if (supplied.schema != 1) return error.UnsupportedSchema;
     if (!fontSize(supplied.terminal_font_pixels, false)) return error.InvalidFontSize;
     const value = supplied;
+    if (value.cursor_stroke_pixels == 0 or value.cursor_stroke_pixels > 16 or
+        value.cursor_outline_pixels == 0 or value.cursor_outline_pixels > 16) return error.InvalidCursorStroke;
+    if (!(cursor.Options{ .interval_ms = value.cursor_blink_interval_ms, .idle_ms = value.cursor_blink_idle_ms }).valid())
+        return error.InvalidCursorTiming;
     try value.app_colors.validate();
     // zig-audit: acknowledge discard
     // reason: Parsing every resolved terminal role validates the candidate; live workers receive a separate owned value after persistence.

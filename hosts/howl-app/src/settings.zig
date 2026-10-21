@@ -32,6 +32,10 @@ pub const Target = union(enum) {
     tab_width,
     cursor_blink,
     cursor_shape,
+    cursor_stroke_pixels,
+    cursor_outline_pixels,
+    cursor_blink_interval_ms,
+    cursor_blink_idle_ms,
     discover_shells,
     discover_ssh_hosts,
     font: u8,
@@ -67,6 +71,10 @@ pub const Row = struct {
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
+            .cursor_stroke_pixels => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_stroke_pixels}),
+            .cursor_outline_pixels => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_outline_pixels}),
+            .cursor_blink_interval_ms => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_blink_interval_ms}),
+            .cursor_blink_idle_ms => try std.fmt.bufPrint(buffer, "{d}", .{value.cursor_blink_idle_ms}),
             .cursor_shape => switch (value.cursor_shape) {
                 .block => "Block",
                 .bar => "Bar",
@@ -118,7 +126,7 @@ pub const Row = struct {
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .cursor_shape, .cursor_stroke_pixels, .cursor_outline_pixels, .cursor_blink_interval_ms, .cursor_blink_idle_ms, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -150,6 +158,10 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
     try b.add(.{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink });
     try b.add(.{ .page = .appearance, .label = "Cursor shape", .target = .cursor_shape });
+    try b.add(.{ .page = .appearance, .label = "Cursor stroke (px)", .target = .cursor_stroke_pixels });
+    try b.add(.{ .page = .appearance, .label = "Inactive cursor stroke (px)", .target = .cursor_outline_pixels });
+    try b.add(.{ .page = .appearance, .label = "Blink interval (ms)", .target = .cursor_blink_interval_ms });
+    try b.add(.{ .page = .appearance, .label = "Blink idle stop (ms)", .target = .cursor_blink_idle_ms });
     try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });
     for (colors.app_labels, 0..) |label, index| try b.add(.{ .page = .colors, .scope = "App", .label = label, .target = .{ .app_color = @intCast(index) } });
     try b.add(.{ .page = .colors, .label = "Reset app overrides", .target = .reset_app_colors });
@@ -213,6 +225,10 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
         .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .cursor_stroke_pixels => value.cursor_stroke_pixels = try std.fmt.parseInt(u8, text, 10),
+        .cursor_outline_pixels => value.cursor_outline_pixels = try std.fmt.parseInt(u8, text, 10),
+        .cursor_blink_interval_ms => value.cursor_blink_interval_ms = try std.fmt.parseInt(u16, text, 10),
+        .cursor_blink_idle_ms => value.cursor_blink_idle_ms = try std.fmt.parseInt(u32, text, 10),
         .cursor_shape => value.cursor_shape = if (std.mem.eql(u8, text, "Block")) .block else if (std.mem.eql(u8, text, "Bar")) .bar else if (std.mem.eql(u8, text, "Underline")) .underline else return error.InvalidSetting,
         .cursor_blink => value.cursor_blink = if (std.mem.eql(u8, text, "Off")) .off else if (std.mem.eql(u8, text, "Application")) .application else if (std.mem.eql(u8, text, "Always")) .always else return error.InvalidSetting,
         .discover_shells => value.discover_shells = if (text.len == 0) !value.discover_shells else try boolean(text),
@@ -763,4 +779,32 @@ test "cursor shape choice stages and wraps without accepting text" {
     try std.testing.expectEqual(.underline, reopened.value.cursor_shape);
     try editor.cycle(&current, 1);
     try std.testing.expectEqualStrings("Block", editor.buffer[0..editor.len]);
+}
+
+test "cursor controls stage bounded physical strokes and blink timing without changing defaults" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    var stroke = try change(&current, std.testing.io, .cursor_stroke_pixels, "4");
+    defer stroke.deinit();
+    var outline = try change(&stroke, std.testing.io, .cursor_outline_pixels, "3");
+    defer outline.deinit();
+    var interval = try change(&outline, std.testing.io, .cursor_blink_interval_ms, "200");
+    defer interval.deinit();
+    var stop = try change(&interval, std.testing.io, .cursor_blink_idle_ms, "1000");
+    defer stop.deinit();
+    var reopened = try config.Config.fromValue(std.testing.allocator, std.testing.io, stop.value);
+    defer reopened.deinit();
+    try std.testing.expectEqual(@as(u8, 4), reopened.value.cursor_stroke_pixels);
+    try std.testing.expectEqual(@as(u8, 3), reopened.value.cursor_outline_pixels);
+    try std.testing.expectEqual(@as(u16, 200), reopened.value.cursor_blink_interval_ms);
+    try std.testing.expectEqual(@as(u32, 1000), reopened.value.cursor_blink_idle_ms);
+    try std.testing.expectEqual(@as(u8, 2), current.value.cursor_stroke_pixels);
+    try std.testing.expectEqual(@as(u8, 1), current.value.cursor_outline_pixels);
+    try std.testing.expectEqual(@as(u16, 500), current.value.cursor_blink_interval_ms);
+    try std.testing.expectEqual(@as(u32, 0), current.value.cursor_blink_idle_ms);
+    try std.testing.expectError(error.InvalidCursorStroke, change(&current, std.testing.io, .cursor_stroke_pixels, "0"));
+    try std.testing.expectError(error.InvalidCursorStroke, change(&current, std.testing.io, .cursor_outline_pixels, "17"));
+    try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_interval_ms, "99"));
+    try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_interval_ms, "2001"));
+    try std.testing.expectError(error.InvalidCursorTiming, change(&current, std.testing.io, .cursor_blink_idle_ms, "60001"));
 }
