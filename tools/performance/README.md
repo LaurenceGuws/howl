@@ -6,21 +6,27 @@ or focus follower. Update its values and named provenance together after a quali
 race, then refresh the browser. Keep separate builds/cohorts separate; unmeasured
 horses and metrics stay explicit. Raw workstream receipts remain authoritative.
 
+## Current DP-1 calibration
+
+[DP1.md](DP1.md) is the current four-horse setup: physical 1920×1080, scale 1,
+240 Hz, native fullscreen **384×83 cells**, **5×13 pixels per cell** for Howl,
+Foot, Kitty and Alacritty. It documents version-matched settings, Alacritty's
+warning repair, pacing choices and actual full-grid/corner proofs. The configs
+under configs/ contain these choices. New races must verify the whole native
+grid and use the full 384×83 producer lattice.
+
+## Historical tracks
+
 The historical `horses.sh` harness uses WMIO's retired `--environment`/`launch`
 interface and needs migration before reuse. Its recipes and old invocations below
 remain evidence context. Current private cohorts run inside kwin-seat under
 Walker; WMIO owns observation, placement and close through an exact attachment.
 
-The benchmark configs under `configs/` are intentionally separate from Captain's daily terminal settings. The optimized KDE track uses the same IosevkaTerm Nerd Font family, opaque backgrounds, no blur, no cursor animation, minimal/no window chrome and padding, and ordinary 4096-row scrollback policy where a terminal exposes line-count history.
-
-Performance-specific choices are documented product knobs:
-
-- **Howl**: isolated `XDG_CONFIG_HOME`, 10 px terminal font, ordinary 4096-row Local history retained by the product.
-- **Foot**: 7.90 pt IosevkaTerm Nerd Font (nearest size that qualifies for the common 378x74 lattice), exact-frame resizing instead of cell-multiple snapping, no decoration/padding, 4096 scrollback lines, scrollback indicator hidden, cursor blink off. Renderer worker policy remains Foot's product default.
-- **Kitty**: 8 pt, `repaint_delay 4`, `input_delay 0`, `sync_to_monitor no`; cursor trail/blink, blur and shell integration disabled; ligatures disabled for the benchmark font path.
-- **Alacritty**: 7 pt, auto renderer, no decoration/padding/blur, cursor blink off, 1 px vertical font offset for a comparable line lattice, 4096 history rows.
-- **Konsole**: built-in profile in an isolated config root, 7 pt Iosevka, chrome/transparency off, fixed 4096-line history, hidden scrollbar, blink/animation/bidi/semantic hints disabled, one unit of line spacing for comparable vertical metrics.
-- **WezTerm**: 7 pt, benchmark-only Lua config, tab/chrome/animation/blur-like extras removed, 4096 history rows, common ligatures disabled. Renderer front-end is OpenGL, selected from measured A/B evidence: WebGPU missed 240 Hz at the high-density dose-4096 canary while OpenGL sustained it with lower CPU and far lower RSS.
+Benchmark profiles are separate from daily terminal settings. Current settings
+are documented in [DP1.md](DP1.md). The older KDE recipe used different font sizes
+and Kitty input-delay/synchronization choices; its configs remain in Git and raw
+cohort evidence. Konsole/WezTerm entries are historical and are outside the current
+four-horse calibration.
 
 On Home KDE/KWin Wayland, exact 1920x1036 placement currently probes near 378-384 columns and 74-77 rows across the prepared horses. `tracks/kde.env` therefore fixes the common workload lattice at 378x74 (27,972 cells).
 
