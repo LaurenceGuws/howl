@@ -9,7 +9,9 @@ or internal C ABI. Application allocations use Zig's SMP allocator.
 The shell supports eight tabs and nested panes, duplicate/new window, tab order,
 divider drag, directional focus/resize/swap, pane cycling, balanced splits, zoom,
 leaf collapse and restart. Hovering a pane divider highlights its grab surface and
-shows its horizontal/vertical resize cursor.
+shows its horizontal/vertical resize cursor. A neutral light tint serves header
+controls, list/category chips and scrollbars. Tab bodies and their close buttons
+have independent hover rectangles shared with pointer hit geometry.
 One bounded mapping registry supplies shortcuts; the command palette exposes
 every mappable command, including directional focus/resize/swap; Ctrl+Shift+Space opens the profile menu. The compact
 `>` button beside `+` opens the profile menu; `⋯` opens Settings, and
@@ -56,7 +58,11 @@ Search preserves normal row geometry. Settings, installed fonts and both palette
 share text editing, list viewports, row hit geometry and selection/hover styling.
 The same UTF-8 caret editor also serves terminal Find; Ctrl+A selects the field,
 Ctrl+V pastes, Home/End and Left/Right move the caret, and Delete/Backspace edit
-either side. The font chooser retains its sample and explicit Preview/Save/Cancel.
+either side. Shift+arrows/Home/End extends a UTF-8 selection; typing replaces it,
+and Ctrl+C/X copies/cuts the exact selected range. Selected ink contrasts with the
+theme accent and is clipped inside the field border. The font chooser retains explicit Preview/Save/Cancel and samples Latin letters,
+ambiguous glyphs, operators, box drawing, blocks, Nerd Font icons, accented text,
+Greek/Cyrillic, Arabic/Hebrew and CJK. Missing family glyphs remain visible.
 Seven settings pages edit Local shell/command/cwd/environment recipes, mappings,
 themes and exact font paths. A bounded installed-font chooser supplies preview
 and cancellation. Font updates are transactional: failed saves restore

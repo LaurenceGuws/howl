@@ -89,3 +89,33 @@ test "every application preset resolves independently and preserves role overrid
     try std.testing.expectError(error.InvalidTheme, palette("howl_light"));
     try std.testing.expectError(error.InvalidTheme, palette("unknown"));
 }
+
+/// Small neutral light tint shared by pointer-hover surfaces.
+pub fn hover(base: c.SDL_Color) c.SDL_Color {
+    return .{ .r = @intCast((@as(u16, base.r) * 9 + 255) / 10), .g = @intCast((@as(u16, base.g) * 9 + 255) / 10), .b = @intCast((@as(u16, base.b) * 9 + 255) / 10), .a = 255 };
+}
+/// Text selection has its own contrasting ink; list-active colors are not text-selection roles.
+pub fn selection(value: Palette) struct { background: c.SDL_Color, foreground: c.SDL_Color } {
+    const background = value.accent;
+    return .{ .background = background, .foreground = if (luminance(background) > 0.179) rgb(0, 0, 0) else rgb(255, 255, 255) };
+}
+fn luminance(color: c.SDL_Color) f64 {
+    var result: f64 = 0;
+    for ([_]u8{ color.r, color.g, color.b }, [_]f64{ 0.2126, 0.7152, 0.0722 }) |component, weight| {
+        const channel = @as(f64, @floatFromInt(component)) / 255;
+        result += weight * (if (channel <= 0.04045) channel / 12.92 else std.math.pow(f64, (channel + 0.055) / 1.055, 2.4));
+    }
+    return result;
+}
+test "every theme has contrasting selected text and a neutral brighter hover tint" {
+    for (themes.app_ids) |id| {
+        const value = try palette(id);
+        const selected = selection(value);
+        const a = luminance(selected.background);
+        const b = luminance(selected.foreground);
+        try std.testing.expect((@max(a, b) + 0.05) / (@min(a, b) + 0.05) >= 4.5);
+        const tint = hover(value.idle);
+        try std.testing.expect(tint.r >= value.idle.r and tint.g >= value.idle.g and tint.b >= value.idle.b);
+        try std.testing.expect(luminance(tint) > luminance(value.idle));
+    }
+}

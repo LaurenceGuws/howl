@@ -8,15 +8,16 @@ pub const Kind = enum { text, number, color };
 pub const Text = struct {
     cursor: usize = 0,
     scroll: f32 = 0,
-    select_all: bool = false,
+    anchor: ?usize = null,
     kind: Kind = .text,
 
     /// Inserts a complete commit atomically, replacing an explicit whole-field selection.
     pub fn insert(self: *Text, buffer: []u8, len: *usize, bytes: []const u8) error{ InvalidText, TextLimit }!void {
         if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidText;
         for (bytes) |byte| if (byte < 0x20 or byte == 0x7f) return error.InvalidText;
-        const start = if (self.select_all) 0 else self.cursor;
-        const end = if (self.select_all) len.* else self.cursor;
+        const range = self.selected() orelse Range{ .start = self.cursor, .end = self.cursor };
+        const start = range.start;
+        const end = range.end;
         const next = len.* - (end - start) + bytes.len;
         if (next > buffer.len) return error.TextLimit;
         switch (self.kind) {
@@ -33,19 +34,42 @@ pub const Text = struct {
                 };
             },
         }
-        std.mem.copyBackwards(u8, buffer[start + bytes.len .. next], buffer[end..len.*]);
+        if (bytes.len > end - start) std.mem.copyBackwards(u8, buffer[start + bytes.len .. next], buffer[end..len.*]) else std.mem.copyForwards(u8, buffer[start + bytes.len .. next], buffer[end..len.*]);
         @memcpy(buffer[start..][0..bytes.len], bytes);
         len.* = next;
         self.cursor = start + bytes.len;
-        self.select_all = false;
+        self.anchor = null;
     }
-    /// Moves over complete scalars; an existing whole-field selection collapses first.
+    /// Byte range in logical order; an empty range has no selected text.
+    pub const Range = struct { start: usize, end: usize };
+    /// Borrows no bytes and retains an anchor across repeated Shift gestures.
+    pub fn selected(self: Text) ?Range {
+        const anchor = self.anchor orelse return null;
+        return if (anchor == self.cursor) null else .{ .start = @min(anchor, self.cursor), .end = @max(anchor, self.cursor) };
+    }
+    /// Selects the complete caller-owned field.
+    pub fn selectAll(self: *Text, len: usize) void {
+        self.anchor = 0;
+        self.cursor = len;
+    }
+    /// Moves to a known scalar boundary, optionally extending an existing selection.
+    pub fn jump(self: *Text, point: usize, extend: bool) void {
+        if (extend) {
+            if (self.anchor == null) self.anchor = self.cursor;
+        } else self.anchor = null;
+        self.cursor = point;
+    }
+    /// Plain arrow movement collapses a selection before moving further.
     pub fn move(self: *Text, bytes: []const u8, direction: i8) void {
-        if (self.select_all) {
-            self.cursor = if (direction < 0) 0 else bytes.len;
-            self.select_all = false;
+        self.navigate(bytes, direction, false);
+    }
+    /// Extends or reverses selection by complete UTF-8 scalars.
+    pub fn navigate(self: *Text, bytes: []const u8, direction: i8, extend: bool) void {
+        if (!extend) if (self.selected()) |range| {
+            self.jump(if (direction < 0) range.start else range.end, false);
             return;
-        }
+        };
+        const old = self.cursor;
         if (direction < 0 and self.cursor > 0) {
             self.cursor -= 1;
             while (self.cursor > 0 and bytes[self.cursor] & 0xc0 == 0x80) self.cursor -= 1;
@@ -53,21 +77,21 @@ pub const Text = struct {
             self.cursor += 1;
             while (self.cursor < bytes.len and bytes[self.cursor] & 0xc0 == 0x80) self.cursor += 1;
         }
+        if (extend) {
+            if (self.anchor == null) self.anchor = old;
+        } else self.anchor = null;
     }
-    /// Removes one scalar on either side, or the explicitly selected complete field.
+    /// Removes a selected range or one complete scalar beside the caret.
     pub fn erase(self: *Text, buffer: []u8, len: *usize, forward: bool) void {
-        if (self.select_all) {
-            len.* = 0;
-            self.* = .{ .kind = self.kind };
-            return;
-        }
-        const old = self.cursor;
-        self.move(buffer[0..len.*], if (forward) 1 else -1);
-        const start = @min(old, self.cursor);
-        const end = @max(old, self.cursor);
-        std.mem.copyForwards(u8, buffer[start .. len.* - (end - start)], buffer[end..len.*]);
-        len.* -= end - start;
-        self.cursor = start;
+        const range = self.selected() orelse blk: {
+            const old = self.cursor;
+            self.move(buffer[0..len.*], if (forward) 1 else -1);
+            break :blk Range{ .start = @min(old, self.cursor), .end = @max(old, self.cursor) };
+        };
+        std.mem.copyForwards(u8, buffer[range.start .. len.* - (range.end - range.start)], buffer[range.end..len.*]);
+        len.* -= range.end - range.start;
+        self.cursor = range.start;
+        self.anchor = null;
     }
     /// Keeps the measured caret visible after edits and window resizes.
     pub fn reveal(self: *Text, caret: f32, width: f32, available: f32) f32 {
@@ -126,6 +150,19 @@ pub const Rows = struct {
     }
 };
 
+/// Intersects measured text/hover geometry with its actual content box.
+pub fn intersection(a: layout.Rect, b: layout.Rect) ?layout.Rect {
+    const x = @max(a.x, b.x);
+    const y = @max(a.y, b.y);
+    const right = @min(a.x + a.width, b.x + b.width);
+    const bottom = @min(a.y + a.height, b.y + b.height);
+    return if (right <= x or bottom <= y) null else .{ .x = x, .y = y, .width = right - x, .height = bottom - y };
+}
+test "selection geometry never paints outside a field even with a scrolled long range" {
+    const inner: layout.Rect = .{ .x = 10, .y = 3, .width = 80, .height = 24 };
+    try std.testing.expectEqual(inner, intersection(inner, .{ .x = -100, .y = -50, .width = 4000, .height = 4000 }).?);
+    try std.testing.expect(intersection(inner, .{ .x = -100, .y = 3, .width = 20, .height = 24 }) == null);
+}
 test "shared text editing is atomic, scalar safe, bounded and constrained by field syntax" {
     var buffer: [16]u8 = undefined;
     var len: usize = 0;
@@ -140,12 +177,12 @@ test "shared text editing is atomic, scalar safe, bounded and constrained by fie
     try std.testing.expectError(error.InvalidText, text.insert(&buffer, &len, "\xff"));
     try std.testing.expectError(error.TextLimit, text.insert(&buffer, &len, "0123456789012345"));
     try std.testing.expectEqualStrings("aéz", buffer[0..len]);
-    text.select_all = true;
+    text.selectAll(len);
     text.kind = .color;
     try text.insert(&buffer, &len, "#123456");
     try std.testing.expectError(error.InvalidText, text.insert(&buffer, &len, "x"));
     try std.testing.expectEqualStrings("#123456", buffer[0..len]);
-    text.select_all = true;
+    text.selectAll(len);
     text.kind = .number;
     try std.testing.expectError(error.InvalidText, text.insert(&buffer, &len, "23x"));
     try text.insert(&buffer, &len, "23");
@@ -166,4 +203,40 @@ test "shared rows preserve hit geometry and viewport through filtering, wheel an
     list.reveal(1, 10);
     try std.testing.expectEqual(@as(usize, 0), list.first);
     try std.testing.expectEqual(@as(usize, 0), list.selected);
+}
+
+test "Shift selections reverse across UTF8 anchors and replace partial ranges atomically" {
+    var bytes: [32]u8 = undefined;
+    var len: usize = 0;
+    var text: Text = .{};
+    try text.insert(&bytes, &len, "aé界z");
+    text.navigate(bytes[0..len], -1, true);
+    text.navigate(bytes[0..len], -1, true);
+    try std.testing.expectEqualStrings("界z", bytes[text.selected().?.start..text.selected().?.end]);
+    text.navigate(bytes[0..len], 1, true);
+    try std.testing.expectEqualStrings("z", bytes[text.selected().?.start..text.selected().?.end]);
+    text.jump(0, true);
+    try text.insert(&bytes, &len, "X");
+    try std.testing.expectEqualStrings("X", bytes[0..len]);
+    try text.insert(&bytes, &len, "é界tail");
+    text.jump(1, false);
+    text.navigate(bytes[0..len], 1, true);
+    text.navigate(bytes[0..len], 1, true);
+    try text.insert(&bytes, &len, "!");
+    try std.testing.expectEqualStrings("X!tail", bytes[0..len]);
+    text.jump(1, false);
+    text.navigate(bytes[0..len], 1, true);
+    try text.insert(&bytes, &len, "longer");
+    try std.testing.expectEqualStrings("Xlongertail", bytes[0..len]);
+    text.jump(0, true);
+    const before = text;
+    try std.testing.expectError(error.InvalidText, text.insert(&bytes, &len, "\xff"));
+    const huge: [32]u8 = @splat('a');
+    try std.testing.expectError(error.TextLimit, text.insert(&bytes, &len, &huge));
+    try std.testing.expectEqualDeep(before, text);
+    text.move(bytes[0..len], 1);
+    try std.testing.expect(text.selected() == null);
+    text.selectAll(len);
+    text.erase(&bytes, &len, false);
+    try std.testing.expectEqual(@as(usize, 0), len);
 }

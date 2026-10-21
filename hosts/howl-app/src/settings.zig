@@ -376,7 +376,7 @@ pub const Editor = struct {
         @memcpy(self.buffer[0..value.len], value);
         self.len = value.len;
         self.editing = row.target;
-        self.edit = .{ .cursor = value.len, .select_all = value.len != 0, .kind = switch (row.target) {
+        self.edit = .{ .cursor = value.len, .anchor = if (value.len != 0) 0 else null, .kind = switch (row.target) {
             .default_font => .number,
             .app_color, .terminal_color => .color,
             .profile => |field| if (field.field == .font_pixels) .number else .text,

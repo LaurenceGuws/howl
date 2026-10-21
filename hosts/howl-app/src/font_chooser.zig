@@ -194,14 +194,14 @@ pub const Chooser = struct {
             var path: [path_limit:0]u8 = undefined;
             @memcpy(path[0..family.lengths[0]], family.path(0));
             path[family.lengths[0]] = 0;
-            const font = c.TTF_OpenFont(&path, 22 * scale) orelse return error.TTF;
+            const font = c.TTF_OpenFont(&path, 18 * scale) orelse return error.TTF;
             if (self.sample_font) |old| c.TTF_CloseFont(old);
             self.sample_font = font;
             self.sample_index = index;
             self.sample_scale = scale;
         }
         if (self.sample_scale != scale) {
-            if (!c.TTF_SetFontSize(self.sample_font.?, 22 * scale)) return error.TTF;
+            if (!c.TTF_SetFontSize(self.sample_font.?, 18 * scale)) return error.TTF;
             self.sample_scale = scale;
         }
         return self.sample_font;

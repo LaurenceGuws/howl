@@ -30,6 +30,17 @@ pub const Tabs = struct {
     pub fn tab(self: Tabs, index: u8) Rect {
         return .{ .x = 8 + @as(f32, @floatFromInt(index)) * self.stride, .y = 4, .width = self.stride - 3, .height = 30 };
     }
+    /// Close is an independent target; narrow and single tabs have none.
+    pub fn close(self: Tabs, index: u8) ?Rect {
+        const rect = self.tab(index);
+        return if (self.count > 1 and rect.width >= 96) .{ .x = rect.x + rect.width - 30, .y = rect.y, .width = 30, .height = rect.height } else null;
+    }
+    /// Body hover excludes the independent close button.
+    pub fn body(self: Tabs, index: u8) Rect {
+        var rect = self.tab(index);
+        if (self.close(index) != null) rect.width -= 30;
+        return rect;
+    }
     /// New-tab button immediately follows the occupied strip.
     pub fn plus(self: Tabs) Rect {
         return .{ .x = 8 + @as(f32, @floatFromInt(self.count)) * self.stride, .y = 4, .width = 32, .height = 30 };
@@ -71,6 +82,22 @@ pub fn control(button: Button, width: f32) Rect {
 pub fn buttonAt(x: f32, y: f32, width: f32) Button {
     for ([_]Button{ .minimize, .maximize, .close }) |button| if (control(button, width).contains(x, y)) return button;
     return .none;
+}
+/// Header pointer meaning, resolved with the same geometry as painting and clicks.
+pub const HeaderTarget = union(enum) { none, tab: u8, tab_close: u8, plus, profiles, settings, caption, window: Button };
+/// Close buttons take precedence over their parent chip; caption gaps stay native drag space.
+pub fn headerAt(tabs: Tabs, x: f32, y: f32) HeaderTarget {
+    const button = buttonAt(x, y, tabs.window_width);
+    if (button != .none) return .{ .window = button };
+    if (settings(tabs.window_width).contains(x, y)) return .settings;
+    if (tabs.profiles().contains(x, y)) return .profiles;
+    if (tabs.plus().contains(x, y)) return .plus;
+    for (0..tabs.count) |number| {
+        const index: u8 = @intCast(number);
+        if (tabs.close(index)) |rect| if (rect.contains(x, y)) return .{ .tab_close = index };
+        if (tabs.body(index).contains(x, y)) return .{ .tab = index };
+    }
+    return if (tabs.caption().contains(x, y)) .caption else .none;
 }
 /// Native drag/resize policy; compositor flags remain authoritative.
 pub fn hit(x: f32, y: f32, width: f32, tall: f32, tabs: Tabs, flags: c.SDL_WindowFlags, visible: bool) c.SDL_HitTestResult {
@@ -220,4 +247,27 @@ test "fit shares all tab space equally while fixed stays capped and controls rem
     try std.testing.expectEqual(@as(f32, 200), Tabs.init(2, 1000, false).stride);
     var dragging = Drag.begin(fitted.tab(0), 28);
     try std.testing.expectEqual(@as(u8, 1), dragging.move(28 + fitted.stride, fitted));
+}
+
+test "each header hover target is separate from its parent chip at fractional and fitted widths" {
+    for ([_]bool{ false, true }) |fit| for ([_]f32{ 401.25, 1000, 1536.5 }) |width| for ([_]u8{ 1, 2, 8 }) |count| {
+        const tabs = Tabs.init(count, width, fit);
+        for (0..count) |number| {
+            const index: u8 = @intCast(number);
+            const body = tabs.body(index);
+            const hit_body = headerAt(tabs, body.x + 2, body.y + 12);
+            try std.testing.expect(hit_body == .tab and hit_body.tab == index);
+            if (tabs.close(index)) |close| {
+                const hit_close = headerAt(tabs, close.x + 2, close.y + 12);
+                try std.testing.expect(hit_close == .tab_close and hit_close.tab_close == index);
+                try std.testing.expect(!body.contains(close.x + 2, close.y + 12));
+            }
+        }
+        const plus_rect = tabs.plus();
+        const profiles_rect = tabs.profiles();
+        try std.testing.expect(headerAt(tabs, plus_rect.x + 2, 12) == .plus);
+        try std.testing.expect(headerAt(tabs, profiles_rect.x + 2, 12) == .profiles);
+        try std.testing.expect(headerAt(tabs, settings(width).x + 2, 12) == .settings);
+        try std.testing.expect(headerAt(tabs, 20, height + 2) == .none);
+    };
 }

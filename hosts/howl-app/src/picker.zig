@@ -75,7 +75,7 @@ pub const Picker = struct {
     }
     /// Removes the previous scalar or an explicitly selected complete query.
     pub fn erase(self: *Picker, all: bool) void {
-        if (all) self.edit.select_all = true;
+        if (all) self.edit.selectAll(self.len);
         self.edit.erase(&self.query, &self.len, false);
         self.reset();
     }

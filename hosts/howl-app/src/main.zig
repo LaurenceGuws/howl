@@ -105,7 +105,7 @@ const App = struct {
     chooser: ?*font_chooser.Chooser = null,
     drag: Drag = .none,
     chrome_pressed: chrome.Button = .none,
-    chrome_hover: chrome.Button = .none,
+    hover_point: ?struct { x: f32, y: f32 } = null,
     pointer_buttons: u32 = 0,
     hover_divider: ?u8 = null,
     color_drag: ?u8 = null,
@@ -132,6 +132,14 @@ const App = struct {
     }
     fn pane(self: *App) *Pane {
         return self.tab().panes[self.tab().tree.active].?;
+    }
+    fn isHovered(self: *const App, rect: layout.Rect) bool {
+        return if (self.hover_point) |point| rect.contains(point.x, point.y) else false;
+    }
+    fn headerHover(self: *const App) chrome.HeaderTarget {
+        if (self.headerHeight() == 0 or self.drag != .none) return .none;
+        const point = self.hover_point orelse return .none;
+        return chrome.headerAt(self.headerTabs(self.width), point.x, point.y);
     }
     fn headerTabs(self: *const App, width: f32) chrome.Tabs {
         return chrome.Tabs.init(self.tab_count, width, self.configuration.value.tab_width == .fit);
@@ -824,8 +832,21 @@ const App = struct {
             if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
             defer clearClip(self.renderer);
             if (try chooser.sample(self.scale)) |font| {
-                for ([_][]const u8{ "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789  ()[]{}<> +-*/", "Il1 O0  -> => != ==  $@" }, 0..) |line, number| {
-                    try self.drawTextFont(font, line, sample.x, sample.y + 76 + @as(f32, @floatFromInt(number)) * 34);
+                for ([_][]const u8{
+                    "abcdefghijklmnopqrstuvwxyz",
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                    "0123456789   Il1|  O0  rn m",
+                    "() [] {} <> /\\\\ @#$%&",
+                    "-> => != == <= >= := ::",
+                    "─━│┃┌┬┐╔╦╗╭╮ └┴┘╚╩╝╰╯",
+                    "▀▄█▓▒░ ▖▗▘▝ ◀▶▲▼ ●○",
+                    "     󰆍 󰘳",
+                    "éèêë ñøå ß œ  café naïve",
+                    "Ελληνικά  Русский",
+                    "العربية  עברית",
+                    "日本語  中文  한글",
+                }, 0..) |line, number| {
+                    try self.drawTextFont(font, line, sample.x, sample.y + 76 + @as(f32, @floatFromInt(number)) * 26);
                 }
             }
         }
@@ -841,8 +862,17 @@ const App = struct {
         const key = event_value.key;
         const mods = input.semanticModifiers(event_value.mod);
         if (mods.control and key == c.SDLK_A) {
-            edit.select_all = true;
+            edit.selectAll(len.*);
             self.keyboard.suppress_text = true;
+        } else if (mods.control and (key == c.SDLK_C or key == c.SDLK_X)) {
+            self.keyboard.suppress_text = true;
+            if (edit.selected()) |range| {
+                try setClipboard(buffer[range.start..range.end]);
+                if (key == c.SDLK_X) {
+                    edit.erase(buffer, len, false);
+                    return true;
+                }
+            }
         } else if (mods.control and key == c.SDLK_V) {
             self.keyboard.suppress_text = true;
             const text = c.SDL_GetClipboardText() orelse return error.SDL;
@@ -850,13 +880,10 @@ const App = struct {
             try edit.insert(buffer, len, std.mem.span(text));
             return true;
         } else switch (key) {
-            c.SDLK_LEFT, c.SDLK_RIGHT => edit.move(buffer[0..len.*], if (key == c.SDLK_LEFT) -1 else 1),
-            c.SDLK_HOME, c.SDLK_END => {
-                edit.cursor = if (key == c.SDLK_HOME) 0 else len.*;
-                edit.select_all = false;
-            },
+            c.SDLK_LEFT, c.SDLK_RIGHT => edit.navigate(buffer[0..len.*], if (key == c.SDLK_LEFT) -1 else 1, mods.shift),
+            c.SDLK_HOME, c.SDLK_END => edit.jump(if (key == c.SDLK_HOME) 0 else len.*, mods.shift),
             c.SDLK_BACKSPACE, c.SDLK_DELETE => {
-                if (mods.control and key == c.SDLK_BACKSPACE) edit.select_all = true;
+                if (mods.control and key == c.SDLK_BACKSPACE) edit.selectAll(len.*);
                 edit.erase(buffer, len, key == c.SDLK_DELETE);
                 return true;
             },
@@ -868,13 +895,29 @@ const App = struct {
         const colors = try self.uiPalette();
         try fill(self.renderer, rect, colors.panel);
         try outline(self.renderer, rect, if (active) colors.accent else colors.border);
-        const inner: layout.Rect = .{ .x = rect.x + 7, .y = rect.y, .width = @max(1, rect.width - 14), .height = rect.height };
+        const inner: layout.Rect = .{ .x = rect.x + 7, .y = rect.y + 3, .width = @max(1, rect.width - 14), .height = @max(1, rect.height - 6) };
         const caret = try self.textWidth(text[0..edit.cursor]);
         const scroll = edit.reveal(caret, try self.textWidth(text), inner.width - 2);
-        if (active and edit.select_all) try fill(self.renderer, inner, colors.active);
-        try self.clippedTextColor(if (text.len == 0) placeholder else text, inner, inner.x - scroll, if (text.len == 0) colors.muted else colors.text);
-        if (active and self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = inner.x + caret - scroll, .y = rect.y + 6, .width = 1, .height = @min(18, @max(1, rect.height - 8)) }, colors.accent);
+        try setClip(self.renderer, inner);
+        defer clearClip(self.renderer);
+        const origin = inner.x - scroll;
+        const ink_y = rect.y + 6;
+        try self.drawTextTint(self.ui_fonts.faces[0], if (text.len == 0) placeholder else text, origin, ink_y, if (text.len == 0) colors.muted else colors.text);
+        if (active) if (edit.selected()) |range| {
+            const left = origin + try self.textWidth(text[0..range.start]);
+            const right = origin + try self.textWidth(text[0..range.end]);
+            const highlight = widgets.intersection(inner, .{ .x = left, .y = inner.y, .width = right - left, .height = inner.height });
+            if (highlight) |area| {
+                const selected = appearance.selection(colors);
+                try fill(self.renderer, area, selected.background);
+                try setClip(self.renderer, area);
+                try self.drawTextTint(self.ui_fonts.faces[0], text, origin, ink_y, selected.foreground);
+                try setClip(self.renderer, inner);
+            }
+        };
+        if (active and self.focused and self.preedit.len == 0) try fill(self.renderer, .{ .x = inner.x + caret - scroll, .y = rect.y + 6, .width = 1, .height = @min(18, inner.height) }, colors.accent);
     }
+
     fn drawListScroll(self: *App, rows: widgets.Rows, first: usize, count: usize) !void {
         const shown = @min(count, rows.visible());
         if (count <= shown) return;
@@ -882,12 +925,17 @@ const App = struct {
         const height = @as(f32, @floatFromInt(rows.visible())) * rows.stride - rows.gap;
         const thumb = @max(16, height * @as(f32, @floatFromInt(shown)) / @as(f32, @floatFromInt(count)));
         const offset = @as(f32, @floatFromInt(first)) / @as(f32, @floatFromInt(count - shown));
-        try fill(self.renderer, .{ .x = rows.rect.x + rows.rect.width - 3, .y = rows.rect.y, .width = 3, .height = height }, colors.border);
-        try fill(self.renderer, .{ .x = rows.rect.x + rows.rect.width - 3, .y = rows.rect.y + (height - thumb) * offset, .width = 3, .height = thumb }, colors.muted);
+        const track: layout.Rect = .{ .x = rows.rect.x + rows.rect.width - 3, .y = rows.rect.y, .width = 3, .height = height };
+        const chip: layout.Rect = .{ .x = track.x, .y = track.y + (height - thumb) * offset, .width = 3, .height = thumb };
+        try fill(self.renderer, track, if (self.isHovered(track)) appearance.hover(colors.border) else colors.border);
+        try fill(self.renderer, chip, if (self.isHovered(chip)) appearance.hover(colors.muted) else colors.muted);
     }
     fn drawListRow(self: *App, rect: layout.Rect, selected: bool, hovered: bool, focused: bool) !void {
         const colors = try self.uiPalette();
-        if (selected or hovered) try fill(self.renderer, rect, if (selected) colors.active else colors.idle);
+        if (selected or hovered) {
+            const base = if (selected) colors.active else colors.idle;
+            try fill(self.renderer, rect, if (hovered) appearance.hover(base) else base);
+        }
         if (selected and focused) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + 4, .width = 2, .height = @max(1, rect.height - 8) }, colors.accent);
     }
     fn settingsKey(self: *App, event_value: c.SDL_KeyboardEvent) !void {
@@ -956,7 +1004,7 @@ const App = struct {
             } else try self.toggleSettings();
             return;
         }
-        if (e.search and (key == c.SDLK_LEFT or key == c.SDLK_RIGHT or key == c.SDLK_HOME or key == c.SDLK_END or key == c.SDLK_DELETE or key == c.SDLK_BACKSPACE or (mods.control and (key == c.SDLK_A or key == c.SDLK_V)))) {
+        if (e.search and (key == c.SDLK_LEFT or key == c.SDLK_RIGHT or key == c.SDLK_HOME or key == c.SDLK_END or key == c.SDLK_DELETE or key == c.SDLK_BACKSPACE or (mods.control and (key == c.SDLK_A or key == c.SDLK_C or key == c.SDLK_X or key == c.SDLK_V)))) {
             if (try self.textKey(&e.query_edit, &e.query, &e.query_len, event_value)) e.list = .{};
             return;
         }
@@ -992,7 +1040,7 @@ const App = struct {
             c.SDLK_RETURN => try self.activateSetting(row),
             c.SDLK_BACKSPACE, c.SDLK_DELETE => if (row.target == .binding or row.target == .font) {
                 try e.begin(row, self.configuration);
-                e.edit.select_all = true;
+                e.edit.selectAll(e.len);
                 try e.append(if (key == c.SDLK_BACKSPACE and row.target == .binding) keybindings.definitions[row.target.binding].default_shortcut else "");
             },
             c.SDLK_LEFT, c.SDLK_RIGHT => {
@@ -1074,8 +1122,7 @@ const App = struct {
             c.SDLK_HOME, c.SDLK_END => if (mods & c.SDL_KMOD_CTRL != 0) {
                 self.palette.?.list.selected = if (key == c.SDLK_HOME) 0 else count -| 1;
             } else {
-                self.palette.?.edit.cursor = if (key == c.SDLK_HOME) 0 else self.palette.?.len;
-                self.palette.?.edit.select_all = false;
+                self.palette.?.edit.jump(if (key == c.SDLK_HOME) 0 else self.palette.?.len, mods & c.SDL_KMOD_SHIFT != 0);
             },
             c.SDLK_TAB => self.palette.?.cycle(mods & c.SDL_KMOD_SHIFT != 0),
 
@@ -1348,7 +1395,7 @@ const App = struct {
                 const rect = self.headerTabs(self.width).tab(index);
                 if (!rect.contains(x, y)) continue;
                 try self.selectTab(index);
-                if (self.tab_count > 1 and rect.width >= 96 and x >= rect.x + rect.width - 30) {
+                if (if (self.headerTabs(self.width).close(index)) |close| close.contains(x, y) else false) {
                     try self.closeTab();
                     self.consume_left_release = true;
                 } else self.drag = .{ .tab = chrome.Drag.begin(rect, x) };
@@ -1450,11 +1497,12 @@ const App = struct {
         try dragging.pane.submit(.{ .seek = offset });
         dragging.last = offset;
     }
-    fn drawScrollbar(self: *App, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
+    fn drawScrollbar(self: *App, p: *Pane, rect: c.SDL_FRect, frame: instance.PublishedFrame) !void {
         const bar = scrollbar.Bar.fromFrame(.{ .x = rect.x, .y = rect.y, .width = rect.w, .height = rect.h }, frame, self.scale) orelse return;
         const colors = try self.uiPalette();
-        try fill(self.renderer, bar.track, colors.idle);
-        try fill(self.renderer, bar.thumb, colors.border);
+        const dragging = if (self.scrolling) |held| held.pane == p else false;
+        try fill(self.renderer, bar.track, if (self.isHovered(bar.track) or dragging) appearance.hover(colors.idle) else colors.idle);
+        try fill(self.renderer, bar.thumb, if (self.isHovered(bar.thumb) or dragging) appearance.hover(colors.border) else colors.border);
     }
 
     fn selectPoint(self: *App, p: *Pane, x: f32, y: f32, kind: terminal.SelectKind, captured: bool) !void {
@@ -1657,7 +1705,8 @@ const App = struct {
         if (profiles) for (picker.labels, 0..) |label, index| {
             const chip = self.paletteFilterRect(index);
             const active = @backingInt(self.palette.?.filter) == index;
-            try fill(self.renderer, chip, if (active) colors.active else colors.idle);
+            const base = if (active) colors.active else colors.idle;
+            try fill(self.renderer, chip, if (self.isHovered(chip)) appearance.hover(base) else base);
             try outline(self.renderer, chip, if (active) colors.accent else colors.border);
             try self.clippedTextColor(label, .{ .x = chip.x + 7, .y = chip.y, .width = @max(1, chip.width - 14), .height = chip.height }, chip.x + 7, if (active) colors.text else colors.muted);
         };
@@ -1914,8 +1963,7 @@ const App = struct {
         return self.clippedTextColor(text, rect, x, (try self.uiPalette()).text);
     }
     fn clippedTextColor(self: *App, text: []const u8, rect: layout.Rect, x: f32, color: c.SDL_Color) !void {
-        const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.width)), .h = @intFromFloat(@ceil(rect.height)) };
-        if (!c.SDL_SetRenderClipRect(self.renderer, &clip)) return error.SDL;
+        try setClip(self.renderer, rect);
         defer clearClip(self.renderer);
         try self.drawTextTint(self.ui_fonts.faces[0], text, x, rect.y + 6, color);
     }
@@ -2201,15 +2249,16 @@ const App = struct {
         if (event_value.type == c.SDL_EVENT_WINDOW_FOCUS_LOST) {
             self.pointer_buttons = 0;
             self.chrome_pressed = .none;
+            self.hover_point = null;
         }
         if (event_value.type == c.SDL_EVENT_WINDOW_MOUSE_LEAVE) {
-            self.chrome_hover = .none;
+            self.hover_point = null;
             self.hover_divider = null;
             try self.setPointer(null);
         }
         if (event_value.type == c.SDL_EVENT_MOUSE_MOTION) {
+            self.hover_point = .{ .x = event_value.motion.x, .y = event_value.motion.y };
             try self.pointerHover(event_value.motion.x, event_value.motion.y);
-            self.chrome_hover = if (self.headerHeight() == 0) .none else chrome.buttonAt(event_value.motion.x, event_value.motion.y, self.width);
             return self.chrome_pressed != .none;
         }
         const down = event_value.type == c.SDL_EVENT_MOUSE_BUTTON_DOWN;
@@ -2257,7 +2306,10 @@ const App = struct {
         const status = value.panes[value.tree.active].?.snapshot();
         try fill(self.renderer, rect, if (index == self.active) colors.active else colors.idle);
         if (index == self.active) try fill(self.renderer, .{ .x = rect.x, .y = rect.y + rect.height - 1, .width = rect.width, .height = 1 }, colors.accent);
-        const close_width: f32 = if (self.tab_count > 1 and rect.width >= 96) 30 else 0;
+        const target = self.headerHover();
+        const close_width: f32 = if (self.headerTabs(self.width).close(index) != null) 30 else 0;
+        if (target == .tab and target.tab == index) try fill(self.renderer, .{ .x = rect.x, .y = rect.y, .width = rect.width - close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
+        if (target == .tab_close and target.tab_close == index) try fill(self.renderer, .{ .x = rect.x + rect.width - close_width, .y = rect.y, .width = close_width, .height = rect.height - 1 }, appearance.hover(if (index == self.active) colors.active else colors.idle));
         try self.clippedText(status.title[0..status.title_len], .{ .x = rect.x + 8, .y = rect.y, .width = @max(1, rect.width - close_width - 12), .height = rect.height }, rect.x + 8);
         if (close_width != 0) try self.drawText("×", rect.x + rect.width - 18, rect.y + 6);
     }
@@ -2265,8 +2317,10 @@ const App = struct {
         const colors = try self.uiPalette();
         for ([_]chrome.Button{ .minimize, .maximize, .close }) |button| {
             const rect = chrome.control(button, self.width);
-            if (self.chrome_hover == button) try fill(self.renderer, rect, if (button == .close) .{ .r = 184, .g = 46, .b = 56, .a = 255 } else colors.active);
-            const color = if (self.chrome_hover == button) colors.text else colors.muted;
+            const target = self.headerHover();
+            const hovered = target == .window and target.window == button;
+            if (hovered) try fill(self.renderer, rect, appearance.hover(colors.title));
+            const color = if (hovered) colors.text else colors.muted;
             // Switchyard's hand-tuned glyphs in a 42x26 box, centred in our caption.
             const y = rect.y + (rect.height - 26) / 2;
             switch (button) {
@@ -2301,7 +2355,9 @@ const App = struct {
             try self.drawTab(self.active, rect);
             try outline(self.renderer, rect, colors.accent);
         }
+        if (self.headerHover() == .caption) try fill(self.renderer, self.headerTabs(self.width).caption(), appearance.hover(colors.title));
         for ([_]layout.Rect{ self.headerTabs(self.width).plus(), self.headerTabs(self.width).profiles(), chrome.settings(self.width) }, [_][]const layout.Rect{ chrome.plus_icon, chrome.profile_icon, chrome.settings_icon }) |rect, glyph| {
+            if (self.isHovered(rect)) try fill(self.renderer, rect, appearance.hover(colors.title));
             for (glyph) |part| try fill(self.renderer, .{ .x = rect.x + part.x, .y = rect.y + part.y, .width = part.width, .height = part.height }, colors.text);
         }
         try self.drawWindowControls();
@@ -2357,7 +2413,7 @@ const App = struct {
                 if (p.graphics_failure == null) {
                     try self.drawSelection(p, placed, frame);
                     clearClip(self.renderer);
-                    try self.drawScrollbar(placed, frame);
+                    try self.drawScrollbar(p, placed, frame);
                 }
             }
             clearClip(self.renderer);
@@ -2553,6 +2609,10 @@ fn mouseButton(button: u8) ?instance.MouseButton {
         c.SDL_BUTTON_RIGHT => .right,
         else => null,
     };
+}
+fn setClip(renderer: *c.SDL_Renderer, rect: layout.Rect) error{SDL}!void {
+    const clip: c.SDL_Rect = .{ .x = @intFromFloat(@floor(rect.x)), .y = @intFromFloat(@floor(rect.y)), .w = @intFromFloat(@ceil(rect.x + rect.width) - @floor(rect.x)), .h = @intFromFloat(@ceil(rect.y + rect.height) - @floor(rect.y)) };
+    if (!c.SDL_SetRenderClipRect(renderer, &clip)) return error.SDL;
 }
 fn clearClip(renderer: *c.SDL_Renderer) void {
     const success = c.SDL_SetRenderClipRect(renderer, null);
@@ -3417,4 +3477,61 @@ test "settings clicks select without saving; staged choices and Escape unwind fo
     try std.testing.expect(app.settings_editor != null and !app.settings_editor.?.content_focus);
     try app.settingsKey(event_value);
     try std.testing.expect(app.settings_editor == null);
+}
+
+fn testPixel(surface: *c.SDL_Surface, x: c_int, y: c_int) !c.SDL_Color {
+    var result: c.SDL_Color = undefined;
+    if (!c.SDL_ReadSurfacePixel(surface, x, y, &result.r, &result.g, &result.b, &result.a)) return error.SDL;
+    return result;
+}
+test "Gruvbox selected text stays inside even a short scrolled text field" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    const window = c.SDL_CreateWindow("field clipping proof", 240, 100, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    const surface = c.SDL_CreateSurface(240, 100, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    configuration.value.app_theme = "gruvbox_dark";
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = undefined,
+        .wake_event = 0,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+    };
+    const colors = try app.uiPalette();
+    const sentinel: c.SDL_Color = .{ .r = 235, .g = 1, .b = 201, .a = 255 };
+    try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, sentinel.r, sentinel.g, sentinel.b, sentinel.a));
+    try std.testing.expect(c.SDL_RenderClear(renderer));
+    const text = "a long field that scrolls well beyond its content box";
+    var edit: widgets.Text = .{};
+    edit.selectAll(text.len);
+    try app.drawField(.{ .x = 10, .y = 10, .width = 80, .height = 28 }, &edit, text, "", true);
+    try std.testing.expect(c.SDL_RenderPresent(renderer));
+    try std.testing.expect(edit.scroll > 0);
+    try std.testing.expectEqual(appearance.selection(colors).background, try testPixel(surface, 18, 14));
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, 88, 18));
+    try std.testing.expectEqual(colors.panel, try testPixel(surface, 18, 36));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 9, 20));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 90, 20));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 18, 9));
+    try std.testing.expectEqual(sentinel, try testPixel(surface, 18, 38));
 }
