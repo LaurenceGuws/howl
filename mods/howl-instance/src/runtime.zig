@@ -1179,6 +1179,8 @@ pub fn Runtime(comptime Presentation: ?type) type {
                     frame.removals.len,
                     frame.commands.len,
                     external_pixel_count + frame.pixels.len,
+                    view.cursor_blink,
+                    view.cursor_movement_timestamp_ns,
                 );
             }
         };

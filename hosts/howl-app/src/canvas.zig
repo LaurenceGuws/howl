@@ -174,7 +174,7 @@ pub const Canvas = struct {
     }
 
     /// Draws canonical commands with exact pane/resource clipping using shared bounded batches.
-    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32) !void {
+    pub fn draw(self: *Canvas, renderer: *c.SDL_Renderer, geometry: *Geometry, logical_pane: c.SDL_FRect, scale: f32, show_cursor: bool) !void {
         const value = self.frame() orelse return;
         // Canonical commands already use physical pixels. Dividing then letting
         // SDL scale them back introduces fractional cell edges and visible seams.
@@ -231,7 +231,7 @@ pub const Canvas = struct {
         };
         if (!c.SDL_SetRenderClipRect(renderer, &pane_clip) or
             !c.SDL_RenderTexture(renderer, target, null, &destination_rect)) return error.SDLTexture;
-        try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]);
+        if (show_cursor) try self.drawCommands(renderer, geometry, pane, value.commands[value.content_command_count..]);
         if (!c.SDL_SetRenderClipRect(renderer, null)) return error.SDLClip;
         if (!c.SDL_SetRenderScale(renderer, previous_x, previous_y)) return error.SDLScale;
     }
@@ -459,7 +459,7 @@ test "failed backend allocation retires its candidate; a fresh presentation gene
     const geometry = try std.testing.allocator.create(Geometry);
     defer std.testing.allocator.destroy(geometry);
     geometry.* = .{};
-    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1);
+    try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, true);
     try std.testing.expect(c.SDL_RenderPresent(renderer));
     try std.testing.expectEqual(@as(?terminal.Failure, null), owner.snapshot().failure);
 }
@@ -517,7 +517,7 @@ test "repeated alternate-screen blank and text cuts retain exact backend residen
         const blank = step >= 2 and (step - 2) % 2 == 0;
         try std.testing.expectEqual(step >= 2 and (step - 2) % 4 != 3, value.alternate_screen);
         errdefer std.debug.print("alternate texture failure at step {d}, title {s}, uploads {d}, removals {d}, textures {d}\n", .{ step, title, value.uploads.len, value.removals.len, backend.count });
-        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1);
+        try backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 250, .h = 100 }, 1, true);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         try std.testing.expectEqual(@as(usize, if (blank) 0 else 1), backend.count);
         var retained: [250 * 100][3]u8 = undefined;
@@ -594,7 +594,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
             .y = 11 / scale,
             .w = @as(f32, @floatFromInt(frame.surface.width)) / scale,
             .h = @as(f32, @floatFromInt(frame.surface.height)) / scale,
-        }, scale);
+        }, scale, true);
         try std.testing.expect(c.SDL_RenderPresent(renderer));
         var restored_x: f32 = 0;
         var restored_y: f32 = 0;
@@ -639,7 +639,7 @@ test "fractional SDL projection preserves every pixel of joined generated blocks
     };
     try std.testing.expect(c.SDL_SetRenderScale(renderer, 2, 2));
     backend.clearTextures();
-    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2));
+    try std.testing.expectError(error.MissingTexture, backend.draw(renderer, geometry, .{ .x = 0, .y = 0, .w = 80, .h = 80 }, 2, true));
     var restored_x: f32 = 0;
     var restored_y: f32 = 0;
     try std.testing.expect(c.SDL_GetRenderScale(renderer, &restored_x, &restored_y));
@@ -670,4 +670,106 @@ test "SDL queue budget admits its exact limit and retires before the next packet
     geometry.queued_quads = batch_quads;
     try geometry.finish(renderer);
     try std.testing.expectEqual(@as(usize, 0), geometry.queued_quads);
+}
+
+test "all cursor shapes blink over exact retained content without replacing the texture or leased frame" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const presentation: instance.PresentationConfig = .{
+        .text = .{ .private = .{ .regular = .{ .path = .{ .primary = @import("test_fonts").primary_font, .size = .{ .pixels = 15 } } } } },
+        .box_drawing = .{ .dpi_x = .{ .numerator = 96, .denominator = 1 }, .dpi_y = .{ .numerator = 96, .denominator = 1 } },
+        .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 128, .glyph_capacity = 128, .max_sequence_scalars = 16 },
+        .atlas = .{ .width = 256, .height = 256, .entry_capacity = 128 },
+        .shaped_capacity = 128,
+        .raster_bytes = 256 * 256,
+        .command_capacity = 256,
+        .command_limit = instance.render.limits.maximum_frame_commands,
+    };
+    const owner = try terminal.Terminal.create(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo; printf 'W\\033[1;1H\\033]0;CURSOR-READY\\007'; while read line; do printf '\\033[%s q' \"$line\"; done",
+        .rows = 2,
+        .columns = 4,
+        .color_defaults = .{
+            .foreground = .{ .r = 245, .g = 245, .b = 245 },
+            .background = .{ .r = 10, .g = 20, .b = 30 },
+            .cursor = .{ .r = 240, .g = 20, .b = 30 },
+            .cursor_text = .{ .r = 20, .g = 240, .b = 30 },
+        },
+    }, presentation, 0, true);
+    defer owner.destroy();
+    const surface = c.SDL_CreateSurface(160, 160, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    var backend = Canvas.init(std.testing.allocator);
+    defer backend.deinit();
+    const geometry = try std.testing.allocator.create(Geometry);
+    defer std.testing.allocator.destroy(geometry);
+    geometry.* = .{};
+    var ready_attempts: u16 = 0;
+    while (ready_attempts < 5000) : (ready_attempts += 1) {
+        try backend.update(renderer, owner);
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (std.mem.eql(u8, status.title[0..status.title_len], "CURSOR-READY")) {
+            if (backend.frame()) |frame| if (frame.terminal_revision == status.revision) break;
+        }
+        owner.requestFrame();
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    if (ready_attempts == 5000) return error.Timeout;
+    var retained_revision: ?u64 = null;
+    var pixels: [160 * 160][3]u8 = undefined;
+    for ([_][]const u8{ "2", "1", "4", "3", "6", "5" }) |style| {
+        const before_revision = owner.snapshot().revision;
+        var input: [2]u8 = .{ style[0], '\n' };
+        try owner.submit(.{ .input = .{ .bytes = &input } });
+        var attempts: u16 = 0;
+        while (attempts < 5000) : (attempts += 1) {
+            try backend.update(renderer, owner);
+            const status = owner.snapshot();
+            if (status.failure) |failure| return failure;
+            if (status.revision > before_revision) {
+                if (backend.frame()) |frame| if (frame.terminal_revision == status.revision) break;
+            }
+            owner.requestFrame();
+            try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+        }
+        if (attempts == 5000) return error.Timeout;
+        const frame = backend.frame().?;
+        try std.testing.expectEqual((style[0] - '0') % 2 == 1, frame.cursor_blink);
+        try std.testing.expect(frame.content_command_count < frame.commands.len);
+        if (retained_revision) |revision| try std.testing.expectEqual(revision, frame.content_revision) else retained_revision = frame.content_revision;
+        const pane: c.SDL_FRect = .{ .x = 0, .y = 0, .w = @floatFromInt(frame.surface.width), .h = @floatFromInt(frame.surface.height) };
+        for ([_]bool{ true, false, true, false }) |show| {
+            try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+            try std.testing.expect(c.SDL_RenderClear(renderer));
+            try backend.draw(renderer, geometry, pane, 1, show);
+            try std.testing.expect(c.SDL_RenderPresent(renderer));
+            const target = backend.content.?;
+            var green_ink: usize = 0;
+            for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
+                const at = y * frame.surface.width + x;
+                const pixel = &pixels[at];
+                try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &pixel[0], &pixel[1], &pixel[2], null));
+                if (@as(u16, pixel[1]) > @as(u16, pixel[0]) + 50 and @as(u16, pixel[1]) > @as(u16, pixel[2]) + 50) green_ink += 1;
+            };
+            try std.testing.expect((green_ink != 0) == (show and (style[0] == '1' or style[0] == '2')));
+            try std.testing.expect(c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+            try std.testing.expect(c.SDL_RenderClear(renderer));
+            try backend.drawCommands(renderer, geometry, pane, frame.commands[0..if (show) frame.commands.len else frame.content_command_count]);
+            try std.testing.expect(c.SDL_RenderPresent(renderer));
+            for (0..frame.surface.height) |y| for (0..frame.surface.width) |x| {
+                var actual: [3]u8 = undefined;
+                try std.testing.expect(c.SDL_ReadSurfacePixel(surface, @intCast(x), @intCast(y), &actual[0], &actual[1], &actual[2], null));
+                try std.testing.expectEqual(pixels[y * frame.surface.width + x], actual);
+            };
+            try std.testing.expectEqual(target, backend.content.?);
+            try std.testing.expectEqual(frame.sequence, backend.frame().?.sequence);
+            try std.testing.expectEqual(frame.content_revision, backend.content_revision.?);
+        }
+    }
 }

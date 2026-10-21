@@ -5,6 +5,7 @@ const instance = @import("howl_instance");
 const font_owner = @import("fonts.zig");
 const terminal = @import("terminal.zig");
 const canvas = @import("canvas.zig");
+const terminal_cursor = @import("cursor.zig");
 const chrome = @import("chrome.zig");
 const layout = @import("layout.zig");
 const keybindings = @import("keybindings.zig");
@@ -37,6 +38,7 @@ const Pane = struct {
     recipe: config.Recipe,
     creation_failure: ?CreationError = null,
     canvas: canvas.Canvas,
+    blink: terminal_cursor.Blink = .{},
     rows: u16 = 0,
     columns: u16 = 0,
     size_control: bool = true,
@@ -111,6 +113,7 @@ const App = struct {
     color_drag: ?u8 = null,
     cursors: [4]?*c.SDL_Cursor = @splat(null),
     cursor_shape: ?usize = null,
+    cursor_deadline: ?u64 = null,
     consume_left_release: bool = false,
     focused: bool = false,
     running: bool = true,
@@ -161,8 +164,10 @@ const App = struct {
     }
     fn waitTimeout(self: *const App, now: u64) ?c_int {
         const scrolling = self.selecting != null and self.selecting.?.edge != 0;
-        if (self.notice_len != 0) return @intCast(@max(1, @min(self.notice_until -| now, if (scrolling) @as(u64, 50) else std.math.maxInt(c_int))));
-        return if (scrolling) 50 else null;
+        var timeout: ?u64 = if (scrolling) 50 else null;
+        if (self.notice_len != 0) timeout = @min(timeout orelse std.math.maxInt(c_int), @max(1, self.notice_until -| now));
+        if (self.cursor_deadline) |deadline| timeout = @min(timeout orelse std.math.maxInt(c_int), @max(1, deadline -| now));
+        return if (timeout) |value| @intCast(@min(value, std.math.maxInt(c_int))) else null;
     }
     // zig-audit: acknowledge anytype
     // reason: The UI formats exact inferred error sets from distinct owned operations; it neither erases nor returns their error authority.
@@ -229,6 +234,8 @@ const App = struct {
         if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
     }
     fn loseKeyboard(self: *App) !void {
+        self.cursor_deadline = null;
+        if (self.tab_count != 0) self.pane().blink.reset();
         self.hover_divider = null;
         self.setPointer(null) catch |failure| self.report(failure);
         self.cancelDrag();
@@ -1984,6 +1991,7 @@ const App = struct {
                     1 => resolved.background,
                     2 => resolved.cursor orelse resolved.foreground,
                     3...18 => resolved.palette[index - 3],
+                    19 => resolved.cursor_text orelse resolved.background,
                     else => error.InvalidColorRole,
                 };
             },
@@ -2377,6 +2385,7 @@ const App = struct {
         self.width = @floatFromInt(@max(1, width));
         self.height = @floatFromInt(@max(1, height));
         self.displayScale();
+        self.cursor_deadline = null;
         if (self.hover_point) |point| try self.pointerHover(point.x, point.y);
         const colors = try self.uiPalette();
         if (!c.SDL_SetRenderScale(self.renderer, self.scale, self.scale) or !c.SDL_SetRenderDrawBlendMode(self.renderer, c.SDL_BLENDMODE_BLEND) or
@@ -2415,7 +2424,11 @@ const App = struct {
                     p.columns = columns;
                 }
                 const placed = terminalPlacement(rect, frame.surface, self.scale);
-                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale) catch |failure| {
+                const show_cursor = p.blink.update(c.SDL_GetTicks(), frame, self.focused and active and !status.closed and p.graphics_failure == null and
+                    self.palette == null and self.settings_editor == null and self.chooser == null and
+                    c.SDL_GetWindowFlags(self.window) & (c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_MINIMIZED) == 0, self.configuration.value.cursor_blink);
+                if (p.blink.deadline) |deadline| self.cursor_deadline = deadline;
+                if (p.graphics_failure == null) p.canvas.draw(self.renderer, self.geometry, placed, self.scale, show_cursor) catch |failure| {
                     p.graphics_failure = failure;
                 };
                 if (p.graphics_failure == null) {
@@ -3575,4 +3588,21 @@ test "split reversal clips an oversized stale frame at fractional pane origins" 
             }
         }
     }
+}
+
+test "cursor deadline shares notice and selection waits and retires without polling" {
+    var app: App = .{ .init = undefined, .configuration = undefined, .fonts = undefined, .window = undefined, .renderer = undefined, .ui_fonts = undefined, .geometry = undefined, .wake_event = 0, .scale = 1, .bindings = try keybindings.Bindings.init() };
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(0));
+    app.cursor_deadline = 500;
+    try std.testing.expectEqual(@as(?c_int, 500), app.waitTimeout(0));
+    app.notice_len = 1;
+    app.notice_until = 200;
+    try std.testing.expectEqual(@as(?c_int, 200), app.waitTimeout(0));
+    app.selecting = .{ .pane = undefined, .x = 0, .y = 0, .edge = 1 };
+    try std.testing.expectEqual(@as(?c_int, 50), app.waitTimeout(0));
+    app.selecting = null;
+    app.notice_len = 0;
+    try std.testing.expectEqual(@as(?c_int, 1), app.waitTimeout(500));
+    app.cursor_deadline = null;
+    try std.testing.expectEqual(@as(?c_int, null), app.waitTimeout(500));
 }

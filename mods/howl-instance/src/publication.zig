@@ -33,6 +33,10 @@ pub const PublishedFrame = struct {
     revision: u64,
     content_revision: u64 = 0,
     content_command_count: usize = 0,
+    /// Program blink intent from the same canonical cut as the cursor commands.
+    cursor_blink: bool = false,
+    /// Canonical movement timestamp used only as a change token by presentation clocks.
+    cursor_movement: u64 = 0,
     terminal_revision: u64,
     history_offset: u32,
     history_count: u32,
@@ -58,6 +62,8 @@ const FrameSlot = struct {
     revision: u64 = 0,
     content_revision: u64 = 0,
     content_command_count: usize = 0,
+    cursor_blink: bool = false,
+    cursor_movement: u64 = 0,
     terminal_revision: u64 = 0,
     history_offset: u32 = 0,
     history_count: u32 = 0,
@@ -114,6 +120,8 @@ const FrameSlot = struct {
             .revision = self.revision,
             .content_revision = self.content_revision,
             .content_command_count = self.content_command_count,
+            .cursor_blink = self.cursor_blink,
+            .cursor_movement = self.cursor_movement,
             .terminal_revision = self.terminal_revision,
             .history_offset = self.history_offset,
             .history_count = self.history_count,
@@ -303,6 +311,8 @@ pub const Writer = struct {
         removal_count: usize,
         command_count: usize,
         pixel_count: usize,
+        cursor_blink: bool,
+        cursor_movement: u64,
     ) void {
         const impl = exchangeImpl(self.exchange);
         const value = self.slot();
@@ -324,6 +334,8 @@ pub const Writer = struct {
         value.revision = revision;
         value.content_revision = content_revision;
         value.content_command_count = content_command_count;
+        value.cursor_blink = cursor_blink;
+        value.cursor_movement = cursor_movement;
         value.terminal_revision = terminal_revision;
         value.history_offset = history_offset;
         value.history_count = history_count;
@@ -612,7 +624,7 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    first.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    first.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
 
     var lease = acquireLatest(exchange).?;
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
@@ -622,14 +634,14 @@ test "ready publications coalesce while a held lease remains immutable" {
         .rect = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
         .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
     } };
-    second.finish(1, 2, 2, 1, 2, 0, 0, 0, false, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    second.finish(1, 2, 2, 1, 2, 0, 0, 0, false, .{ .width = 2, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
 
     var third = beginWrite(exchange).?;
     third.commandStorage()[0] = .{ .solid = .{
         .rect = .{ .x = 0, .y = 0, .width = 3, .height = 1 },
         .color = .{ .r = 7, .g = 8, .b = 9, .a = 255 },
     } };
-    third.finish(1, 3, 3, 1, 3, 0, 0, 0, false, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    third.finish(1, 3, 3, 1, 3, 0, 0, 0, false, .{ .width = 3, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
 
     // Held payload cannot be overwritten by producer coalescing.
     try std.testing.expectEqual(@as(u16, 1), lease.value.commands[0].solid.rect.width);
@@ -659,7 +671,7 @@ test "lease feedback tracks applied resources without releasing immutable frame 
     defer deinit(exchange);
 
     var writer = beginWrite(exchange).?;
-    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, false, 0);
     var lease = acquireLatest(exchange).?;
     defer lease.abandon();
 
@@ -686,7 +698,7 @@ test "lease feedback tracks applied resources without releasing immutable frame 
     try std.testing.expect(takeLatestResidency(exchange, 1, &storage) == null);
 
     writer = beginWrite(exchange).?;
-    writer.finish(1, 2, 2, 0, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0);
+    writer.finish(1, 2, 2, 0, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, false, 0);
     try std.testing.expectEqual(@as(u64, 1), lease.value.revision);
     try std.testing.expect(acquireLatest(exchange) == null);
     try lease.release(&.{accepted});
@@ -745,7 +757,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    initial.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    initial.finish(1, 1, 1, 1, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
 
     var hold = ConcurrentHold{ .exchange = exchange };
     const backend = try std.Thread.spawn(.{}, ConcurrentHold.run, .{&hold});
@@ -760,7 +772,7 @@ test "backend lease remains immutable while producer coalesces a burst" {
             .rect = .{ .x = 0, .y = 0, .width = width, .height = 1 },
             .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
         } };
-        writer.finish(1, revision, revision, 1, revision, 0, 0, 0, false, .{ .width = width, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+        writer.finish(1, revision, revision, 1, revision, 0, 0, 0, false, .{ .width = width, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
     }
 
     hold.release_now.store(true, .release);
@@ -781,7 +793,7 @@ test "only completed same-generation prefixes survive slot reuse; growth and abo
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    writer.finish(7, 11, 9, 1, 11, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0);
+    writer.finish(7, 11, 9, 1, 11, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 1, 0, false, 0);
     var lease = acquireLatest(exchange).?;
     lease.abandon();
     writer = beginWrite(exchange).?;
@@ -808,4 +820,22 @@ test "registered backend prevents teardown even between leases" {
     try std.testing.expect(!retainBackend(exchange));
     releaseBackend(exchange);
     try std.testing.expect(canDeinit(exchange));
+}
+
+test "cursor timing intent stays coherent with a stalled immutable publication" {
+    const exchange = try init(std.testing.allocator, 1);
+    defer deinit(exchange);
+    var writer = beginWrite(exchange).?;
+    writer.finish(1, 1, 1, 0, 1, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, true, 123);
+    var held = acquireLatest(exchange).?;
+    var next = beginWrite(exchange).?;
+    next.finish(1, 2, 1, 0, 2, 0, 0, 0, false, .{ .width = 1, .height = 1 }, .{ .width = 1, .height = 1 }, 0, 0, 0, 0, false, 456);
+    try std.testing.expect(held.value.cursor_blink);
+    try std.testing.expectEqual(@as(u64, 123), held.value.cursor_movement);
+    held.abandon();
+    var latest = acquireLatest(exchange).?;
+    defer latest.abandon();
+    try std.testing.expect(!latest.value.cursor_blink);
+    try std.testing.expectEqual(@as(u64, 456), latest.value.cursor_movement);
+    try std.testing.expectEqual(@as(u64, 1), latest.value.content_revision);
 }

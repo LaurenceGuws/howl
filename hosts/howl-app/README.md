@@ -35,6 +35,19 @@ repeats/releases across focus changes. Programs requesting Kitty report-all get
 plain-letter press/repeat/release with owned SDL committed text; ordinary shell
 and IME text keep their text-input path.
 
+Cursor shapes follow application DECSCUSR requests: block, bar and underline.
+Appearance → “Cursor blink” selects Off (the conservative default), Application
+(follow the program's blink intent) or Always (blink any visible cursor).
+A focused live pane uses a 500ms on/off phase; movement, focus and presentation
+changes restart it visibly. Hidden/history/inactive panes and modal fields do not
+schedule cursor blink work. The host only includes or omits the retained cursor
+suffix; no text shaping, frame publication or content texture rebuild runs for a
+blink tick. Off/steady presentation has no cursor timer. Terminal color overrides
+include independent cursor and cursor_text colors; blank inherits the preset.
+The text color recolors clipped monochrome glyph ink under a block; color glyphs
+keep their colors. Shape defaults, unfocused outlines, thickness/contrast polish,
+and motion/trails remain future cursor increments.
+
 Canonical Canvas commands/resources, text, images, cursor, semantic keys/paste,
 negotiated mouse/focus, history anchors, stable selection/word/row/copy, literal
 Find and the frame-derived scrollbar use the same worker and immutable facts.
@@ -119,7 +132,7 @@ overrides in app_colors. The terminal has independent howl_dark/howl_light
 presets. Both selectors also offer Catppuccin (four flavours), Dracula, Nord,
 Gruvbox Dark/Light, Solarized Dark/Light and Tokyo Night (Night, Storm, Moon and Day);
 [THEMES.md](THEMES.md) lists exact ids, source pins and adaptation scope.
-The terminal_colors overrides cover foreground, background, cursor and a
+The terminal_colors overrides cover foreground, background, cursor, cursor text and a
 16-entry ansi array. Every override is exactly #RRGGBB; blank inherits the preset.
 Settings shows resolved swatches and a terminal sample. Editing a role provides
 RGB sliders, a live swatch, constrained hex input and Preset inheritance; the

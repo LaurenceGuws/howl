@@ -42,15 +42,17 @@ pub const TerminalColors = struct {
     foreground: []const u8 = "",
     background: []const u8 = "",
     cursor: []const u8 = "",
+    cursor_text: []const u8 = "",
     ansi: [16][]const u8 = @splat(""),
 
-    /// Reads one of three defaults or sixteen ANSI roles.
+    /// Reads terminal defaults, sixteen ANSI roles, or the block-cursor text color.
     pub fn get(self: TerminalColors, index: usize) error{InvalidColorRole}![]const u8 {
         return switch (index) {
             0 => self.foreground,
             1 => self.background,
             2 => self.cursor,
             3...18 => self.ansi[index - 3],
+            19 => self.cursor_text,
             else => error.InvalidColorRole,
         };
     }
@@ -61,6 +63,7 @@ pub const TerminalColors = struct {
             1 => self.background = value,
             2 => self.cursor = value,
             3...18 => self.ansi[index - 3] = value,
+            19 => self.cursor_text = value,
             else => return error.InvalidColorRole,
         }
     }
@@ -82,6 +85,7 @@ pub const TerminalColors = struct {
         if (self.foreground.len != 0) result.foreground = try parse(self.foreground);
         if (self.background.len != 0) result.background = try parse(self.background);
         if (self.cursor.len != 0) result.cursor = try parse(self.cursor);
+        if (self.cursor_text.len != 0) result.cursor_text = try parse(self.cursor_text);
         for (self.ansi, 0..) |value, index| if (value.len != 0) {
             result.palette[index] = try parse(value);
         };
@@ -93,7 +97,7 @@ comptime {
 }
 
 /// Terminal role labels include the complete normal/bright ANSI set in numeric order.
-pub const terminal_labels = [_][]const u8{ "Foreground", "Background", "Cursor", "Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White", "Bright black", "Bright red", "Bright green", "Bright yellow", "Bright blue", "Bright magenta", "Bright cyan", "Bright white" };
+pub const terminal_labels = [_][]const u8{ "Foreground", "Background", "Cursor", "Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White", "Bright black", "Bright red", "Bright green", "Bright yellow", "Bright blue", "Bright magenta", "Bright cyan", "Bright white", "Cursor text" };
 
 /// Accepts exactly #RRGGBB, with no alpha, whitespace, shell syntax or partial parse.
 pub fn parse(text: []const u8) error{InvalidColor}!Terminal.Rgb {
@@ -126,7 +130,7 @@ test "palette overrides are strict RGB and leave unrelated colors and app roles 
     try app.set(8, "#fedcba");
     try app.validate();
     try std.testing.expectEqual(try parse("#123456"), (try term.resolve("howl_dark")).palette[1]);
-    try std.testing.expectError(error.InvalidColorRole, term.get(19));
+    try std.testing.expectError(error.InvalidColorRole, term.get(20));
     try std.testing.expectError(error.InvalidColorRole, app.set(9, "#000000"));
     try std.testing.expectError(error.InvalidTheme, term.resolve("unknown"));
 }

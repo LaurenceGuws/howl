@@ -30,6 +30,7 @@ pub const Target = union(enum) {
     reset_terminal_colors,
     hide_single_tab,
     tab_width,
+    cursor_blink,
     discover_shells,
     discover_ssh_hosts,
     font: u8,
@@ -65,6 +66,11 @@ pub const Row = struct {
             .terminal_color => |index| try value.terminal_colors.get(index),
             .hide_single_tab => if (value.hide_single_tab) "On" else "Off",
             .tab_width => if (value.tab_width == .fixed) "Fixed" else "Fit available space",
+            .cursor_blink => switch (value.cursor_blink) {
+                .off => "Off",
+                .application => "Application",
+                .always => "Always",
+            },
             .discover_shells => if (value.discover_shells) "On" else "Off",
             .discover_ssh_hosts => if (value.discover_ssh_hosts) "On" else "Off",
             .font => |index| if (index < 6) value.font.paths()[index] else error.InvalidSetting,
@@ -99,14 +105,14 @@ pub const Row = struct {
     /// Finite settings use staged choices and never accept arbitrary text.
     pub fn choice(self: Row) bool {
         return switch (self.target) {
-            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .discover_shells, .discover_ssh_hosts => true,
+            .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .discover_shells, .discover_ssh_hosts => true,
             else => false,
         };
     }
     /// Only actual text fields enter the edit buffer; catalogue operations are explicit rows.
     pub fn editable(self: Row) bool {
         return switch (self.target) {
-            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
+            .default_font, .default_profile, .theme, .terminal_theme, .hide_single_tab, .tab_width, .cursor_blink, .discover_shells, .discover_ssh_hosts, .app_color, .terminal_color, .font, .binding, .profile, .environment => true,
             else => false,
         };
     }
@@ -136,6 +142,7 @@ pub fn rows(current: *const config.Config, out: *[row_limit]Row) !u16 {
     try b.add(.{ .page = .appearance, .label = "Font size (8–48)", .target = .default_font });
     const font_labels = [_][]const u8{ "Regular font", "Italic font", "Bold font", "Bold italic font", "Arabic fallback", "CJK fallback" };
     for (font_labels, 0..) |label, index| try b.add(.{ .page = .appearance, .label = label, .target = .{ .font = @intCast(index) } });
+    try b.add(.{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink });
     try b.add(.{ .page = .colors, .label = "App palette", .target = .theme });
     for (colors.app_labels, 0..) |label, index| try b.add(.{ .page = .colors, .scope = "App", .label = label, .target = .{ .app_color = @intCast(index) } });
     try b.add(.{ .page = .colors, .label = "Reset app overrides", .target = .reset_app_colors });
@@ -199,6 +206,7 @@ pub fn change(current: *const config.Config, io: std.Io, target: Target, text: [
         .reset_terminal_colors => value.terminal_colors = .{},
         .hide_single_tab => value.hide_single_tab = if (text.len == 0) !value.hide_single_tab else try boolean(text),
         .tab_width => value.tab_width = if (text.len == 0) (if (value.tab_width == .fixed) .fit else .fixed) else if (std.mem.eql(u8, text, "Fixed")) .fixed else if (std.mem.eql(u8, text, "Fit available space")) .fit else return error.InvalidSetting,
+        .cursor_blink => value.cursor_blink = if (std.mem.eql(u8, text, "Off")) .off else if (std.mem.eql(u8, text, "Application")) .application else if (std.mem.eql(u8, text, "Always")) .always else return error.InvalidSetting,
         .discover_shells => value.discover_shells = if (text.len == 0) !value.discover_shells else try boolean(text),
         .discover_ssh_hosts => value.discover_ssh_hosts = if (text.len == 0) !value.discover_ssh_hosts else try boolean(text),
         .font => |index| {
@@ -407,6 +415,15 @@ pub const Editor = struct {
                     break;
                 };
                 next = ids[@intCast(@mod(index + delta, @as(i16, @intCast(ids.len))))];
+            },
+            .cursor_blink => {
+                const choices = [_][]const u8{ "Off", "Application", "Always" };
+                var index: i16 = 0;
+                for (choices, 0..) |item, i| if (std.mem.eql(u8, item, value)) {
+                    index = @intCast(i);
+                    break;
+                };
+                next = choices[@intCast(@mod(index + delta, @as(i16, choices.len)))];
             },
             .tab_width => next = if (std.mem.eql(u8, value, "Fixed")) "Fit available space" else "Fixed",
             .hide_single_tab, .discover_shells, .discover_ssh_hosts => next = if (std.mem.eql(u8, value, "On")) "Off" else "On",
@@ -687,4 +704,31 @@ test "finite settings stage choices, ignore text and cancel without mutating the
     try editor.append("#123456");
     try std.testing.expectError(error.InvalidSettingsText, editor.append("x"));
     try std.testing.expectEqualStrings("#123456", editor.buffer[0..editor.len]);
+}
+
+test "blink policy stages finite choices and cursor text color roundtrips independently" {
+    var current = config.Config.defaults(std.testing.allocator);
+    defer current.deinit();
+    try std.testing.expectEqual(.off, current.value.cursor_blink);
+    var editor: Editor = .{};
+    const row: Row = .{ .page = .appearance, .label = "Cursor blink", .target = .cursor_blink };
+    try editor.begin(row, &current);
+    try editor.cycle(&current, 1);
+    try editor.append("garbage");
+    try std.testing.expectEqualStrings("Application", editor.buffer[0..editor.len]);
+    try std.testing.expectEqual(.off, current.value.cursor_blink);
+    var next = try change(&current, std.testing.io, .cursor_blink, editor.buffer[0..editor.len]);
+    defer next.deinit();
+    try std.testing.expectEqual(.application, next.value.cursor_blink);
+    try std.testing.expectError(error.InvalidSetting, change(&current, std.testing.io, .cursor_blink, "yes"));
+    var colored = try change(&next, std.testing.io, .{ .terminal_color = 19 }, "#abcdef");
+    defer colored.deinit();
+    const resolved = try colored.value.terminal_colors.resolve(colored.value.terminal_theme);
+    try std.testing.expectEqual(try colors.parse("#abcdef"), resolved.cursor_text.?);
+    try std.testing.expectEqualStrings("", colored.value.terminal_colors.cursor);
+    var reopened = try config.Config.fromValue(std.testing.allocator, std.testing.io, colored.value);
+    defer reopened.deinit();
+    try std.testing.expectEqualStrings("#abcdef", reopened.value.terminal_colors.cursor_text);
+    try std.testing.expectEqual(.application, reopened.value.cursor_blink);
+    try std.testing.expectError(error.InvalidColor, change(&current, std.testing.io, .{ .terminal_color = 19 }, "#gg0011"));
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const bindings = @import("keybindings.zig");
 const colors = @import("colors.zig");
 const themes = @import("themes.zig");
+const cursor = @import("cursor.zig");
 
 const file_limit = 2 * 1024 * 1024;
 const allocation_limit = 4 * 1024 * 1024;
@@ -48,6 +49,7 @@ pub const Schema = struct {
     terminal_colors: colors.TerminalColors = .{},
     hide_single_tab: bool = false,
     tab_width: TabWidth = .fixed,
+    cursor_blink: cursor.Policy = .off,
     discover_shells: bool = false,
     discover_ssh_hosts: bool = false,
     font: Font = .{},
